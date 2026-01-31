@@ -8,7 +8,7 @@ void sim_init(int bots) {
 void sim_step(float fwd, float strafe, float yaw, float pitch, int shoot, int jump) {
     // We are controlling Player 0 (The Agent)
     // The "bots" in the match are the opponents
-    local_update(fwd, strafe, yaw, pitch, shoot, -1, jump, 0, 0, NULL, 0);
+    local_update(fwd, strafe, yaw, pitch, shoot, -1, jump, 0, 0, 0, NULL, 0);
 }
 
 ServerState* sim_get_state() {

@@ -144,7 +144,7 @@ void server_broadcast() {
             np.reward_feedback = p->accumulated_reward;
             np.ammo = (unsigned char)p->ammo[p->current_weapon];
             np.in_vehicle = (unsigned char)p->in_vehicle;
-            np.hit_feedback = (unsigned char)p->hit_feedback;
+            np.hit_feedback = (unsigned char)p->hit_feedback; // <--- SYNC HIT
             
             p->accumulated_reward = 0;
             memcpy(buffer + cursor, &np, sizeof(NetPlayer)); cursor += sizeof(NetPlayer);
@@ -210,8 +210,7 @@ int main() {
                 }
                 
                 float wish_speed = sqrtf(wish_x*wish_x + wish_z*wish_z);
-                if (wish_speed > 1.0f) { wish_speed = 1.0f; wish_x/=wish_speed; wish_z/=wish_speed;
-                }
+                if (wish_speed > 1.0f) { wish_speed = 1.0f; wish_x/=wish_speed; wish_z/=wish_speed; }
                 wish_speed *= max_spd;
                 accelerate(p, wish_x, wish_z, wish_speed, acc);
                 

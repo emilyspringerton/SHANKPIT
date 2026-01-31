@@ -58,7 +58,7 @@ static const WeaponStats WPN_STATS[MAX_WEAPONS] = {
     {WPN_KNIFE,   200, 20, 1, 0.0f,  0},   
     {WPN_MAGNUM,  45, 25, 1, 0.0f,  6},   
     {WPN_AR,      20, 6,  1, 0.04f, 30},  
-    {WPN_SHOTGUN, 128, 17, 8, 0.15f, 8},   
+    {WPN_SHOTGUN, 64,  50, 8, 0.15f, 8},   
     {WPN_SNIPER,  101, 70, 1, 0.0f,  5}    
 };
 
@@ -99,7 +99,7 @@ typedef struct {
     int is_shooting; int jump_timer;
     int health; int shield; int shield_regen_timer; int state;
     int kills; int deaths; int hit_feedback; float recoil_anim;
-    int in_vehicle;      
+    int in_vehicle;     
     int vehicle_cooldown;
     float accumulated_reward; 
     BotGenome brain;
