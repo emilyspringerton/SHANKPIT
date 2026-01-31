@@ -19,6 +19,7 @@
 #include "../../../packages/common/protocol.h"
 #include "../../../packages/common/physics.h"
 #include "../../../packages/simulation/local_game.h"
+#include "server_mode.h"
 
 int sock = -1;
 struct sockaddr_in bind_addr;
@@ -28,6 +29,18 @@ unsigned int get_server_time() {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (unsigned int)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+}
+
+int parse_server_mode(int argc, char **argv) {
+    int mode = MODE_DEATHMATCH;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--tdm") == 0) {
+            mode = MODE_TDM;
+        } else if (strcmp(argv[i], "--deathmatch") == 0) {
+            mode = MODE_DEATHMATCH;
+        }
+    }
+    return mode;
 }
 
 void server_net_init() {
@@ -64,6 +77,7 @@ void process_user_cmd(int client_id, UserCmd *cmd) {
     p->crouching = (cmd->buttons & BTN_CROUCH);
     p->in_reload = (cmd->buttons & BTN_RELOAD);
     p->in_use = (cmd->buttons & BTN_USE);
+    p->in_ability = (cmd->buttons & BTN_ABILITY_1);
     if (cmd->weapon_idx >= 0 && cmd->weapon_idx < MAX_WEAPONS) p->current_weapon = cmd->weapon_idx;
     client_last_seq[client_id] = cmd->sequence;
 }
@@ -145,6 +159,7 @@ void server_broadcast() {
             np.ammo = (unsigned char)p->ammo[p->current_weapon];
             np.in_vehicle = (unsigned char)p->in_vehicle;
             np.hit_feedback = (unsigned char)p->hit_feedback;
+            np.storm_charges = (unsigned char)p->storm_charges;
             
             p->accumulated_reward = 0;
             memcpy(buffer + cursor, &np, sizeof(NetPlayer)); cursor += sizeof(NetPlayer);
@@ -158,9 +173,11 @@ void server_broadcast() {
     }
 }
 
-int main() {
+int main(int argc, char *argv[]) {
     server_net_init();
-    local_init_match(1, 0); 
+    int mode = parse_server_mode(argc, argv);
+    local_init_match(1, mode);
+    printf("SERVER MODE: %s\n", mode == MODE_TDM ? "TEAM DEATHMATCH" : "DEATHMATCH");
     int running = 1;
     unsigned int tick = 0;
     

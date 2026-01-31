@@ -1,0 +1,12 @@
+{
+  "id": "big_head",
+  "name": "Big Head Mode",
+  "version": "0.1.0",
+  "api_version": "1.0",
+  "type": "script",
+  "entry": "big_head.lua",
+  "priority": 60,
+  "capabilities": ["hooks", "render"],
+  "author": "modder",
+  "description": "Enlarges player heads."
+}

@@ -2,6 +2,9 @@
 #include <stdio.h>
 #include <assert.h>
 #include <string.h>
+#ifndef _WIN32
+#include <netinet/in.h>
+#endif
 #include "../../packages/common/protocol.h"
 
 // --- MICRO TEST FRAMEWORK ---
