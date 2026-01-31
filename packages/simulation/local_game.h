@@ -8,7 +8,7 @@
 ServerState local_state;
 int was_holding_jump = 0;
 
-void local_update(float fwd, float str, float yaw, float pitch, int shoot, int weapon_req, int jump, int crouch, int reload, void *server_context, unsigned int cmd_time);
+void local_update(float fwd, float str, float yaw, float pitch, int shoot, int weapon_req, int jump, int crouch, int reload, int ability, void *server_context, unsigned int cmd_time);
 void update_entity(PlayerState *p, float dt, void *server_context, unsigned int cmd_time);
 void local_init_match(int num_players, int mode);
 
@@ -115,10 +115,36 @@ void update_entity(PlayerState *p, float dt, void *server_context, unsigned int 
     if (p->recoil_anim < 0) p->recoil_anim = 0;
     if (p->hit_feedback > 0) p->hit_feedback--;
 
-    update_weapons(p, local_state.players, p->in_shoot > 0, p->in_reload > 0);
+    update_weapons(p, local_state.players, local_state.projectiles, p->in_shoot > 0, p->in_reload > 0, p->in_ability > 0);
 }
 
-void local_update(float fwd, float str, float yaw, float pitch, int shoot, int weapon_req, int jump, int crouch, int reload, void *server_context, unsigned int cmd_time) {
+static void update_projectiles() {
+    for (int i=0; i<MAX_PROJECTILES; i++) {
+        Projectile *p = &local_state.projectiles[i];
+        if (!p->active) continue;
+
+        float next_x = p->x + p->vx;
+        float next_y = p->y + p->vy;
+        float next_z = p->z + p->vz;
+
+        float hit_x, hit_y, hit_z, nx, ny, nz;
+        if (trace_map(p->x, p->y, p->z, next_x, next_y, next_z, &hit_x, &hit_y, &hit_z, &nx, &ny, &nz)) {
+            if (p->bounces_left > 0) {
+                reflect_vector(&p->vx, &p->vy, &p->vz, nx, ny, nz);
+                p->x = hit_x; p->y = hit_y; p->z = hit_z;
+                p->bounces_left--;
+            } else {
+                p->active = 0;
+            }
+        } else {
+            p->x = next_x; p->y = next_y; p->z = next_z;
+        }
+
+        if (p->x > 4000 || p->x < -4000 || p->z > 4000 || p->z < -4000 || p->y > 2000) p->active = 0;
+    }
+}
+
+void local_update(float fwd, float str, float yaw, float pitch, int shoot, int weapon_req, int jump, int crouch, int reload, int ability, void *server_context, unsigned int cmd_time) {
     PlayerState *p0 = &local_state.players[0];
     p0->yaw = yaw; p0->pitch = pitch;
     if (weapon_req >= 0 && weapon_req < MAX_WEAPONS) p0->current_weapon = weapon_req;
@@ -147,6 +173,7 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
     }
     p0->in_shoot = shoot; p0->in_reload = reload; p0->crouching = crouch;
     p0->in_jump = jump; 
+    p0->in_ability = ability;
     was_holding_jump = jump;
     
     for(int i=0; i<MAX_CLIENTS; i++) {
@@ -165,10 +192,12 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
             p->in_jump = (b_btns & BTN_JUMP);
             p->in_reload = (b_btns & BTN_RELOAD);
             p->crouching = (b_btns & BTN_CROUCH);
+            p->in_ability = 0;
             if ((b_btns & BTN_JUMP) && p->on_ground) { p->y += 0.1f; p->vy += JUMP_FORCE; }
         }
         update_entity(p, 0.016f, server_context, cmd_time);
     }
+    update_projectiles();
 }
 
 void local_init_match(int num_players, int mode) {
