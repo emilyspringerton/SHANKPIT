@@ -252,7 +252,7 @@ static inline void spawn_projectile(Projectile *projectiles, PlayerState *p, int
             proj->bounces_left = bounces;
 
             float r = -p->yaw * 0.0174533f; float rp = p->pitch * 0.0174533f;
-            float speed = 6.5f * speed_mult;
+            float speed = 8.0f * speed_mult;
             proj->vx = sinf(r) * cosf(rp) * speed;
             proj->vy = sinf(rp) * speed;
             proj->vz = -cosf(r) * cosf(rp) * speed;
@@ -287,7 +287,7 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
     if (shoot && p->attack_cooldown == 0 && p->reload_timer == 0) {
         if (p->storm_charges > 0 && w == WPN_SNIPER) {
             int storm_damage = (int)(WPN_STATS[w].dmg * 0.7f);
-            spawn_projectile(projectiles, p, storm_damage, 1, 2.0f);
+            spawn_projectile(projectiles, p, storm_damage, 1, 2.5f);
             p->storm_charges--;
             p->attack_cooldown = 8;
             p->recoil_anim = 0.5f;

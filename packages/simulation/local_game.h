@@ -132,6 +132,10 @@ static void update_projectiles() {
             PlayerState *t = &local_state.players[j];
             if (!t->active || t->state == STATE_DEAD) continue;
             if (t->id == p->owner_id) continue;
+            PlayerState *attacker = NULL;
+            if (p->owner_id >= 0 && p->owner_id < MAX_CLIENTS) {
+                attacker = &local_state.players[p->owner_id];
+            }
             float dx = t->x - p->x;
             float dz = t->z - p->z;
             float head_y = t->y + HEAD_OFFSET;
@@ -155,6 +159,10 @@ static void update_projectiles() {
                 mod_runtime_dispatch(MOD_HOOK_ENTITY_DAMAGE, &dmg_event);
                 damage = (int)dmg_event.amount;
                 t->shield_regen_timer = SHIELD_REGEN_DELAY;
+                if (attacker) {
+                    attacker->accumulated_reward += 10.0f;
+                    attacker->hit_feedback = (hit == 2 && t->shield <= 0) ? 20 : 10;
+                }
                 if (hit == 2 && t->shield <= 0) damage *= 3;
                 if (t->shield > 0) {
                     if (t->shield >= damage) { t->shield -= damage; damage = 0; }
@@ -163,6 +171,11 @@ static void update_projectiles() {
                 t->health -= damage;
                 if (t->health <= 0) {
                     t->deaths++;
+                    if (attacker) {
+                        attacker->kills++;
+                        attacker->accumulated_reward += 1000.0f;
+                        attacker->hit_feedback = 30;
+                    }
                     phys_respawn(t, 0);
                 }
                 p->active = 0;
