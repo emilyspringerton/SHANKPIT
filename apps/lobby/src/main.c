@@ -574,6 +574,16 @@ void draw_hud(PlayerState *p) {
     } else if (p->ability_cooldown == 0) {
         glColor3f(0.0f, 0.8f, 1.0f);
         draw_string("E: STORM ARROWS READY", 50, 140, 8);
+    } else {
+        float cooldown_ratio = (float)p->ability_cooldown / 480.0f;
+        if (cooldown_ratio < 0.0f) cooldown_ratio = 0.0f;
+        if (cooldown_ratio > 1.0f) cooldown_ratio = 1.0f;
+        glColor3f(0.2f, 0.2f, 0.2f);
+        glRectf(50, 140, 200, 150);
+        glColor3f(0.0f, 0.7f, 1.0f);
+        glRectf(50, 140, 50 + (150.0f * (1.0f - cooldown_ratio)), 150);
+        glColor3f(0.6f, 0.8f, 0.9f);
+        draw_string("STORM COOLDOWN", 210, 142, 6);
     }
     
     float raw_speed = sqrtf(p->vx*p->vx + p->vz*p->vz);

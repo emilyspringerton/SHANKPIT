@@ -127,6 +127,43 @@ static void update_projectiles() {
         float next_y = p->y + p->vy;
         float next_z = p->z + p->vz;
 
+        for (int j = 0; j < MAX_CLIENTS; j++) {
+            PlayerState *t = &local_state.players[j];
+            if (!t->active || t->state == STATE_DEAD) continue;
+            if (t->id == p->owner_id) continue;
+            float dx = t->x - p->x;
+            float dz = t->z - p->z;
+            float head_y = t->y + HEAD_OFFSET;
+            float body_y = t->y + 2.0f;
+            float head_dx = dx;
+            float head_dy = head_y - p->y;
+            float head_dz = dz;
+            float body_dy = body_y - p->y;
+            int hit = 0;
+            int damage = p->damage;
+            if ((head_dx*head_dx + head_dy*head_dy + head_dz*head_dz) < (HEAD_SIZE * HEAD_SIZE)) {
+                hit = 2;
+            } else if ((dx*dx + body_dy*body_dy + dz*dz) < 7.2f) {
+                hit = 1;
+            }
+            if (hit > 0) {
+                t->shield_regen_timer = SHIELD_REGEN_DELAY;
+                if (hit == 2 && t->shield <= 0) damage *= 3;
+                if (t->shield > 0) {
+                    if (t->shield >= damage) { t->shield -= damage; damage = 0; }
+                    else { damage -= t->shield; t->shield = 0; }
+                }
+                t->health -= damage;
+                if (t->health <= 0) {
+                    t->deaths++;
+                    phys_respawn(t, 0);
+                }
+                p->active = 0;
+                break;
+            }
+        }
+        if (!p->active) continue;
+
         float hit_x, hit_y, hit_z, nx, ny, nz;
         if (trace_map(p->x, p->y, p->z, next_x, next_y, next_z, &hit_x, &hit_y, &hit_z, &nx, &ny, &nz)) {
             if (p->bounces_left > 0) {
