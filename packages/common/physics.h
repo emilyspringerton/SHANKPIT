@@ -33,6 +33,7 @@ void evolve_bot(PlayerState *loser, PlayerState *winner);
 PlayerState* get_best_bot();
 
 typedef struct { float x, y, z, w, h, d; } Box;
+typedef struct { float x, y; } Vec2;
 
 // --- THE BONEYARD (Phase 489: Compressed & Dense) ---
 static Box map_geo[] = {
@@ -73,6 +74,17 @@ static Box map_geo[] = {
 static int map_count = sizeof(map_geo) / sizeof(Box);
 
 float phys_rand_f() { return ((float)(rand()%1000)/500.0f) - 1.0f; }
+
+static inline void apply_friction_2d(Vec2 *vel, float friction, float dt) {
+    float speed = sqrtf(vel->x * vel->x + vel->y * vel->y);
+    if (speed <= 0.0001f) return;
+    float drop = speed * friction * dt;
+    float newspeed = speed - drop;
+    if (newspeed < 0.0f) newspeed = 0.0f;
+    float ratio = newspeed / speed;
+    vel->x *= ratio;
+    vel->y *= ratio;
+}
 
 static inline float angle_diff(float a, float b) {
     float d = a - b;
