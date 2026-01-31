@@ -25,6 +25,17 @@ Each mod lives in its own folder with a `mod.json` manifest. Example:
 
 See `include/mod_api.h` for hook enums, payloads, and the `mod_api_t` function table passed to `mod_init`.
 
+## Game mode API
+
+Game modes can be registered via the `mod_api_t.register_gamemode` function. The `mod_gamemode_t` struct now includes
+metadata (players/teams/limits) and optional lifecycle callbacks for round start, player join/leave, kills, and score updates.
+The runtime stores registered game modes in a registry (`packages/mods/mod_gamemode.h`) for future selection and matchmaking.
+
+## MWGG scaffolding
+
+MWGG (Mod Workshop Game Guide) scaffolding lives in `packages/mods/mod_mwgg.h`. It defines placeholder rule/profile data
+structures for future mod-authored game mode generation.
+
 ## Examples
 
 ### `hello_world` (native)
