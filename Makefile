@@ -30,5 +30,15 @@ server:
 	@echo "🔨 Building Server..."
 	$(CC) $(CFLAGS) services/game-server/src/server.c -o bin/shank_server -lm
 
+server-local:
+	@echo "🔨 Building Local Server..."
+	$(CC) $(CFLAGS) apps/server/src/main.c -o bin/shank_local_server -lm
+
 clean:
-	rm -rf bin/shank_client bin/shank_server
+	rm -rf bin/shank_client bin/shank_server bin/shank_local_server bin/test_netcode bin/test_player_model bin/test_server_mode
+
+tests: setup
+	@echo "🧪 Building Tests..."
+	$(CC) $(CFLAGS) apps/tests/test_netcode.c -o bin/test_netcode
+	$(CC) $(CFLAGS) apps/tests/test_player_model.c -o bin/test_player_model -lm
+	$(CC) $(CFLAGS) apps/tests/test_server_mode.c -o bin/test_server_mode
