@@ -23,6 +23,7 @@
 
 #include "player_model.h"
 #include "../../../packages/ui/turtle_text.h"
+#include "../../../packages/mods/mod_manager.h"
 
 #include "../../../packages/common/protocol.h"
 #include "../../../packages/common/physics.h"
@@ -32,6 +33,7 @@
 #define STATE_GAME_NET 1
 #define STATE_GAME_LOCAL 2
 #define STATE_LISTEN_SERVER 99
+#define STATE_MODS_MENU 100
 
 char SERVER_HOST[64] = "s.farthq.com";
 int SERVER_PORT = 6969;
@@ -40,6 +42,8 @@ int app_state = STATE_LOBBY;
 int wpn_req = 1; 
 int my_client_id = -1;
 int lobby_selection = 0;
+ModRegistry mod_registry;
+int mod_menu_selection = 0;
 
 float cam_yaw = 0.0f;
 float cam_pitch = 0.0f;
@@ -62,6 +66,7 @@ typedef enum {
     LOBBY_CTF,
     LOBBY_EVOLUTION,
     LOBBY_JOIN,
+    LOBBY_MODS,
     LOBBY_COUNT
 } LobbyAction;
 
@@ -71,7 +76,8 @@ static const char *LOBBY_LABELS[LOBBY_COUNT] = {
     "TEAM DM (BOTS)",
     "LAN CTF",
     "EVOLUTION",
-    "JOIN S.FARTHQ.COM"
+    "JOIN S.FARTHQ.COM",
+    "MODS"
 };
 
 static void setup_lobby_2d() {
@@ -84,6 +90,10 @@ static void setup_lobby_2d() {
 }
 
 static void lobby_start_action(int action) {
+    if (action == LOBBY_MODS) {
+        app_state = STATE_MODS_MENU;
+        return;
+    }
     if (action == LOBBY_JOIN) {
         app_state = STATE_GAME_NET;
         net_connect();
@@ -111,6 +121,7 @@ static void lobby_start_action(int action) {
     }
 
     if (app_state != STATE_LOBBY) {
+        mods_on_match_start(&mod_registry);
         SDL_SetRelativeMouseMode(SDL_TRUE);
         glMatrixMode(GL_PROJECTION);
         glLoadIdentity();
@@ -118,6 +129,47 @@ static void lobby_start_action(int action) {
         glMatrixMode(GL_MODELVIEW);
         glEnable(GL_DEPTH_TEST);
     }
+}
+
+static void mods_menu_toggle(int index) {
+    if (index < 0 || index >= mod_registry.count) return;
+    mod_registry.mods[index].enabled = !mod_registry.mods[index].enabled;
+}
+
+static void draw_mods_menu() {
+    glClearColor(0.02f, 0.02f, 0.05f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    setup_lobby_2d();
+
+    glColor3f(0.0f, 1.0f, 1.0f);
+    draw_string("MODS", 560, 560, 12);
+    glColor3f(0.5f, 0.8f, 0.9f);
+    draw_string("ENTER TO TOGGLE", 470, 520, 5);
+
+    float base_x = 360.0f;
+    float base_y = 450.0f;
+    float row_gap = 40.0f;
+
+    if (mod_registry.count == 0) {
+        glColor3f(0.7f, 0.7f, 0.7f);
+        draw_string("NO MODS FOUND", 450, 360, 5);
+    } else {
+        for (int i = 0; i < mod_registry.count; i++) {
+            float y = base_y - (row_gap * i);
+            if (i == mod_menu_selection) {
+                glColor3f(1.0f, 1.0f, 0.0f);
+                draw_string(">", base_x - 30.0f, y, 5);
+            }
+            if (mod_registry.mods[i].enabled) glColor3f(0.2f, 1.0f, 0.5f);
+            else glColor3f(0.8f, 0.3f, 0.3f);
+
+            draw_string(mod_registry.mods[i].name, base_x, y, 5);
+        }
+    }
+
+    glColor3f(0.4f, 0.6f, 0.7f);
+    draw_string("ESC TO RETURN", 470, 140, 5);
+    SDL_GL_SwapWindow(SDL_GL_GetCurrentWindow());
 }
 
 #define MAX_TRAILS 4096 
@@ -457,6 +509,10 @@ void draw_player_3rd(PlayerState *p) {
         glPushMatrix();
         glTranslatef(0.0f, 1.85f, 0.0f);
         glRotatef(p->pitch, 1, 0, 0);
+        float head_scale = mods_head_scale(&mod_registry);
+        if (head_scale > 1.0f) {
+            glScalef(head_scale, head_scale, head_scale);
+        }
         draw_storm_mask();
         glPopMatrix();
         glPushMatrix(); glTranslatef(0.6f, 1.1f, 0.55f);
@@ -683,6 +739,8 @@ int main(int argc, char* argv[]) {
     SDL_Window *win = SDL_CreateWindow("SHANKPIT [BUILD 181 - CTF RELOADED]", 100, 100, 1280, 720, SDL_WINDOW_OPENGL);
     SDL_GL_CreateContext(win);
     net_init();
+    mods_init(&mod_registry);
+    mods_load(&mod_registry, "mods");
     
     local_init_match(1, 0);
     
@@ -716,6 +774,22 @@ int main(int argc, char* argv[]) {
                         lobby_start_action(LOBBY_JOIN);
                     }
                 }
+            } else if (app_state == STATE_MODS_MENU) {
+                if (e.type == SDL_KEYDOWN) {
+                    if (e.key.keysym.sym == SDLK_ESCAPE) {
+                        app_state = STATE_LOBBY;
+                    } else if (e.key.keysym.sym == SDLK_UP) {
+                        if (mod_registry.count > 0) {
+                            mod_menu_selection = (mod_menu_selection + mod_registry.count - 1) % mod_registry.count;
+                        }
+                    } else if (e.key.keysym.sym == SDLK_DOWN) {
+                        if (mod_registry.count > 0) {
+                            mod_menu_selection = (mod_menu_selection + 1) % mod_registry.count;
+                        }
+                    } else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) {
+                        mods_menu_toggle(mod_menu_selection);
+                    }
+                }
             } else {
                 if(e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
                     app_state = STATE_LOBBY;
@@ -731,7 +805,7 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
-        if (app_state != STATE_LOBBY) SDL_SetRelativeMouseMode(SDL_TRUE);
+        if (app_state != STATE_LOBBY && app_state != STATE_MODS_MENU) SDL_SetRelativeMouseMode(SDL_TRUE);
         if (app_state == STATE_LOBBY) {
              glClearColor(0.02f, 0.02f, 0.05f, 1.0f); // Dark Lobby
              glClear(GL_COLOR_BUFFER_BIT);
@@ -759,8 +833,9 @@ int main(int argc, char* argv[]) {
              glColor3f(0.4f, 0.6f, 0.7f);
              draw_string("ARROWS + ENTER TO SELECT", 410, 140, 5);
              SDL_GL_SwapWindow(win);
-        } 
-        else {
+        } else if (app_state == STATE_MODS_MENU) {
+            draw_mods_menu();
+        } else {
             const Uint8 *k = SDL_GetKeyboardState(NULL);
             float fwd=0, str=0;
             if(k[SDL_SCANCODE_W]) fwd-=1; if(k[SDL_SCANCODE_S]) fwd+=1;
