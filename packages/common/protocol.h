@@ -47,7 +47,8 @@ typedef struct {
 #define BTN_ATTACK 2
 #define BTN_CROUCH 4
 #define BTN_RELOAD 8
-#define BTN_USE    16 
+#define BTN_USE    16
+#define BTN_ABILITY_1 32
 
 typedef struct {
     int id;
@@ -64,6 +65,8 @@ static const WeaponStats WPN_STATS[MAX_WEAPONS] = {
 
 typedef struct {
     int active; float x, y, z; float vx, vy, vz; int owner_id;
+    int bounces_left;
+    int damage;
 } Projectile;
 
 typedef struct {
@@ -79,6 +82,7 @@ typedef struct {
     unsigned char ammo;
     unsigned char in_vehicle;
     unsigned char hit_feedback; 
+    unsigned char storm_charges;
 } NetPlayer;
 
 typedef struct {
@@ -94,6 +98,7 @@ typedef struct {
     float in_fwd;
     float in_strafe;
     int in_jump; int in_shoot; int in_reload; int crouching; int in_use;
+    int in_ability;
     int current_weapon; int ammo[MAX_WEAPONS];
     int reload_timer; int attack_cooldown;
     int is_shooting; int jump_timer;
@@ -105,6 +110,8 @@ typedef struct {
     BotGenome brain;
     unsigned int last_hit_time;
     unsigned int respawn_time;
+    int storm_charges;
+    int ability_cooldown;
 } PlayerState;
 
 typedef struct {

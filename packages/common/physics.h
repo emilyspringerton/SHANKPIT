@@ -33,6 +33,7 @@ void evolve_bot(PlayerState *loser, PlayerState *winner);
 PlayerState* get_best_bot();
 
 typedef struct { float x, y, z, w, h, d; } Box;
+typedef struct { float x, y; } Vec2;
 
 // --- THE BONEYARD (Phase 489: Compressed & Dense) ---
 static Box map_geo[] = {
@@ -164,11 +165,58 @@ static int map_count = sizeof(map_geo) / sizeof(Box);
 
 float phys_rand_f() { return ((float)(rand()%1000)/500.0f) - 1.0f; }
 
+static inline void apply_friction_2d(Vec2 *vel, float friction, float dt) {
+    float speed = sqrtf(vel->x * vel->x + vel->y * vel->y);
+    if (speed <= 0.0001f) return;
+    float drop = speed * friction * dt;
+    float newspeed = speed - drop;
+    if (newspeed < 0.0f) newspeed = 0.0f;
+    float ratio = newspeed / speed;
+    vel->x *= ratio;
+    vel->y *= ratio;
+}
+
 static inline float angle_diff(float a, float b) {
     float d = a - b;
     while (d < -180) d += 360;
     while (d > 180) d -= 360;
     return d;
+}
+
+void reflect_vector(float *vx, float *vy, float *vz, float nx, float ny, float nz) {
+    float dot = (*vx * nx) + (*vy * ny) + (*vz * nz);
+    *vx = *vx - 2.0f * dot * nx;
+    *vy = *vy - 2.0f * dot * ny;
+    *vz = *vz - 2.0f * dot * nz;
+}
+
+int trace_map(float x1, float y1, float z1, float x2, float y2, float z2,
+              float *out_x, float *out_y, float *out_z, float *nx, float *ny, float *nz) {
+    for(int i=1; i<map_count; i++) {
+        Box b = map_geo[i];
+        if (x2 > b.x - b.w/2 && x2 < b.x + b.w/2 &&
+            z2 > b.z - b.d/2 && z2 < b.z + b.d/2 &&
+            y2 > b.y - b.h/2 && y2 < b.y + b.h/2) {
+            float dx = x1 - b.x; float dz = z1 - b.z;
+            float w = b.w; float d = b.d;
+            if (fabs(dx)/w > fabs(dz)/d) {
+                *nx = (dx > 0) ? 1.0f : -1.0f; *ny = 0.0f; *nz = 0.0f;
+                *out_x = (dx > 0) ? b.x + b.w/2 + 0.1f : b.x - b.w/2 - 0.1f;
+                *out_y = y2; *out_z = z2;
+            } else {
+                *nx = 0.0f; *ny = 0.0f; *nz = (dz > 0) ? 1.0f : -1.0f;
+                *out_x = x2; *out_y = y2;
+                *out_z = (dz > 0) ? b.z + b.d/2 + 0.1f : b.z - b.d/2 - 0.1f;
+            }
+            return 1;
+        }
+    }
+    if (y2 < 0.0f) {
+        *nx = 0.0f; *ny = 1.0f; *nz = 0.0f;
+        *out_x = x2; *out_y = 0.1f; *out_z = z2;
+        return 1;
+    }
+    return 0;
 }
 
 int check_hit_location(float ox, float oy, float oz, float dx, float dy, float dz, PlayerState *target) {
@@ -276,17 +324,47 @@ void phys_respawn(PlayerState *p, unsigned int now) {
     }
     p->current_weapon = WPN_MAGNUM;
     for(int i=0; i<MAX_WEAPONS; i++) p->ammo[i] = WPN_STATS[i].ammo_max;
+    p->storm_charges = 0;
+    p->ability_cooldown = 0;
     if (p->is_bot) {
         PlayerState *winner = get_best_bot();
         if (winner && winner != p) evolve_bot(p, winner);
     }
 }
 
-void update_weapons(PlayerState *p, PlayerState *targets, int shoot, int reload) {
+static inline void spawn_projectile(Projectile *projectiles, PlayerState *p, int damage, int bounces, float speed_mult) {
+    for(int i=0; i<MAX_PROJECTILES; i++) {
+        if (!projectiles[i].active) {
+            Projectile *proj = &projectiles[i];
+            proj->active = 1;
+            proj->owner_id = p->id;
+            proj->damage = damage;
+            proj->bounces_left = bounces;
+
+            float r = -p->yaw * 0.0174533f; float rp = p->pitch * 0.0174533f;
+            float speed = 8.0f * speed_mult;
+            proj->vx = sinf(r) * cosf(rp) * speed;
+            proj->vy = sinf(rp) * speed;
+            proj->vz = -cosf(r) * cosf(rp) * speed;
+            proj->x = p->x;
+            proj->y = p->y + EYE_HEIGHT;
+            proj->z = p->z;
+            return;
+        }
+    }
+}
+
+void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectiles, int shoot, int reload, int ability_press) {
     if (p->in_vehicle) return; 
     if (p->reload_timer > 0) p->reload_timer--;
     if (p->attack_cooldown > 0) p->attack_cooldown--;
     if (p->is_shooting > 0) p->is_shooting--;
+    if (p->ability_cooldown > 0) p->ability_cooldown--;
+
+    if (ability_press && p->ability_cooldown == 0 && p->storm_charges == 0) {
+        p->storm_charges = 5;
+        p->ability_cooldown = 480;
+    }
 
     int w = p->current_weapon;
     if (reload && p->reload_timer == 0 && w != WPN_KNIFE) {
@@ -297,6 +375,14 @@ void update_weapons(PlayerState *p, PlayerState *targets, int shoot, int reload)
     }
     if (p->reload_timer == 1) p->ammo[w] = WPN_STATS[w].ammo_max;
     if (shoot && p->attack_cooldown == 0 && p->reload_timer == 0) {
+        if (p->storm_charges > 0 && w == WPN_SNIPER) {
+            int storm_damage = (int)(WPN_STATS[w].dmg * 0.7f);
+            spawn_projectile(projectiles, p, storm_damage, 1, 2.5f);
+            p->storm_charges--;
+            p->attack_cooldown = 8;
+            p->recoil_anim = 0.5f;
+            return;
+        }
         if (w != WPN_KNIFE && p->ammo[w] <= 0) p->reload_timer = RELOAD_TIME_FULL;
         else {
             p->is_shooting = 5; p->recoil_anim = 1.0f;
