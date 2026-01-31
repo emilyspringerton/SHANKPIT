@@ -1,0 +1,12 @@
+{
+  "id": "health_tweak",
+  "name": "Health Tweak",
+  "version": "0.1.0",
+  "api_version": "1.0",
+  "type": "native",
+  "entry": "health_tweak.so",
+  "priority": 90,
+  "capabilities": ["hooks"],
+  "author": "modder",
+  "description": "Increase player health on spawn."
+}
