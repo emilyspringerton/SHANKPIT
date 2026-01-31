@@ -21,6 +21,13 @@
 #include <SDL2/SDL_opengl.h>
 #include <GL/glu.h>
 
+#include "player_model.h"
+#include "../../../packages/ui/turtle_text.h"
+#include "../../../packages/mods/mod_manager.h"
+#include "../../../packages/mods/mod_registry.h"
+#include "../../../packages/mods/mod_loader.h"
+#include "../../../packages/mods/mod_runtime.h"
+
 #include "../../../packages/common/protocol.h"
 #include "../../../packages/common/physics.h"
 #include "../../../packages/simulation/local_game.h"
@@ -29,6 +36,7 @@
 #define STATE_GAME_NET 1
 #define STATE_GAME_LOCAL 2
 #define STATE_LISTEN_SERVER 99
+#define STATE_MODS_MENU 100
 
 char SERVER_HOST[64] = "s.farthq.com";
 int SERVER_PORT = 6969;
@@ -36,6 +44,12 @@ int SERVER_PORT = 6969;
 int app_state = STATE_LOBBY;
 int wpn_req = 1; 
 int my_client_id = -1;
+int lobby_selection = 0;
+ModRegistry mod_registry;
+int mod_menu_selection = 0;
+ModHookRegistry mod_hooks;
+ModManifestList mod_manifests;
+unsigned long long mod_tick = 0;
 
 float cam_yaw = 0.0f;
 float cam_pitch = 0.0f;
@@ -46,26 +60,124 @@ float current_fov = 75.0f;
 int sock = -1;
 struct sockaddr_in server_addr;
 
-void draw_char(char c, float x, float y, float s) {
-    glLineWidth(2.0f); glBegin(GL_LINES); // Thicker text for Cyberpunk feel
-    if(c>='0'&&c<='9'){ glVertex2f(x,y+s);glVertex2f(x+s,y+s);glVertex2f(x+s,y);glVertex2f(x,y);glVertex2f(x,y+s); }
-    else if(c=='A'){glVertex2f(x,y);glVertex2f(x,y+s/2);glVertex2f(x,y+s/2);glVertex2f(x+s,y+s/2);glVertex2f(x+s,y+s/2);glVertex2f(x+s,y);glVertex2f(x,y+s/2);glVertex2f(x+s/2,y+s);glVertex2f(x+s/2,y+s);glVertex2f(x+s,y+s/2);}
-    else if(c=='B'){glVertex2f(x,y);glVertex2f(x,y+s);glVertex2f(x,y+s);glVertex2f(x+s*0.8,y+s);glVertex2f(x+s*0.8,y+s);glVertex2f(x+s,y+s*0.75);glVertex2f(x+s,y+s*0.75);glVertex2f(x+s*0.8,y+s/2);glVertex2f(x+s*0.8,y+s/2);glVertex2f(x,y+s/2);glVertex2f(x,y+s/2);glVertex2f(x+s*0.8,y+s/2);glVertex2f(x+s*0.8,y+s/2);glVertex2f(x+s,y+s/4);glVertex2f(x+s,y+s/4);glVertex2f(x+s*0.8,y);glVertex2f(x+s*0.8,y);glVertex2f(x,y);}
-    else if(c=='C'){glVertex2f(x+s,y);glVertex2f(x,y);glVertex2f(x,y+s);glVertex2f(x+s,y+s);} // Added C for CTF
-    else if(c=='D'){glVertex2f(x,y);glVertex2f(x,y+s);glVertex2f(x,y+s);glVertex2f(x+s*0.8,y+s);glVertex2f(x+s*0.8,y+s);glVertex2f(x+s,y+s/2);glVertex2f(x+s,y+s/2);glVertex2f(x+s*0.8,y+s);glVertex2f(x+s*0.8,y+s);glVertex2f(x,y);}
-    else if(c=='J'){glVertex2f(x+s,y+s);glVertex2f(x+s,y);glVertex2f(x+s,y);glVertex2f(x,y);glVertex2f(x,y);glVertex2f(x,y+s/2);}
-    else if(c=='O'){glVertex2f(x,y);glVertex2f(x+s,y);glVertex2f(x+s,y);glVertex2f(x+s,y+s);glVertex2f(x+s,y+s);glVertex2f(x,y+s);glVertex2f(x,y+s);glVertex2f(x,y);}
-    else if(c=='I'){glVertex2f(x+s/2,y);glVertex2f(x+s/2,y+s);glVertex2f(x,y);glVertex2f(x+s,y);glVertex2f(x,y+s);glVertex2f(x+s,y+s);}
-    else if(c=='N'){glVertex2f(x,y);glVertex2f(x,y+s);glVertex2f(x,y+s);glVertex2f(x+s,y);glVertex2f(x+s,y);glVertex2f(x+s,y+s);}
-    else if(c=='S'){glVertex2f(x+s,y+s);glVertex2f(x,y+s);glVertex2f(x,y+s);glVertex2f(x,y+s/2);glVertex2f(x,y+s/2);glVertex2f(x+s,y+s/2);glVertex2f(x+s,y+s/2);glVertex2f(x+s,y);glVertex2f(x+s,y);glVertex2f(x,y);}
-    else if(c=='E'){glVertex2f(x+s,y);glVertex2f(x,y);glVertex2f(x,y);glVertex2f(x,y+s);glVertex2f(x,y+s);glVertex2f(x+s,y+s);glVertex2f(x,y+s/2);glVertex2f(x+s*0.8,y+s/2);}
-    else if(c=='R'){glVertex2f(x,y);glVertex2f(x,y+s);glVertex2f(x,y+s);glVertex2f(x+s,y+s);glVertex2f(x+s,y+s);glVertex2f(x+s,y+s/2);glVertex2f(x+s,y+s/2);glVertex2f(x,y+s/2);glVertex2f(x,y+s/2);glVertex2f(x+s,y);}
-    else if(c=='V'){glVertex2f(x,y+s);glVertex2f(x+s/2,y);glVertex2f(x+s/2,y);glVertex2f(x+s,y+s);}
-    else if(c==' '){} 
-    else { glVertex2f(x,y);glVertex2f(x+s,y);glVertex2f(x+s,y);glVertex2f(x+s,y+s);glVertex2f(x+s,y+s);glVertex2f(x,y+s);glVertex2f(x,y+s);glVertex2f(x,y); }
-    glEnd();
+void draw_string(const char* str, float x, float y, float size) {
+    TurtlePen pen = turtle_pen_create(x, y, size);
+    turtle_draw_text(&pen, str);
 }
-void draw_string(const char* str, float x, float y, float size) { while(*str) { draw_char(*str, x, y, size); x += size * 1.5f; str++; } }
+
+typedef enum {
+    LOBBY_DEMO = 0,
+    LOBBY_BATTLE,
+    LOBBY_TDM,
+    LOBBY_CTF,
+    LOBBY_EVOLUTION,
+    LOBBY_JOIN,
+    LOBBY_MODS,
+    LOBBY_COUNT
+} LobbyAction;
+
+static const char *LOBBY_LABELS[LOBBY_COUNT] = {
+    "DEMO (SOLO)",
+    "BATTLE (BOTS)",
+    "TEAM DM (BOTS)",
+    "LAN CTF",
+    "EVOLUTION",
+    "JOIN S.FARTHQ.COM",
+    "MODS"
+};
+
+static void setup_lobby_2d() {
+    glDisable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    gluOrtho2D(0, 1280, 0, 720);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+}
+
+static void lobby_start_action(int action) {
+    if (action == LOBBY_MODS) {
+        app_state = STATE_MODS_MENU;
+        return;
+    }
+    if (action == LOBBY_JOIN) {
+        app_state = STATE_GAME_NET;
+        net_connect();
+    } else {
+        app_state = STATE_GAME_LOCAL;
+        switch (action) {
+            case LOBBY_DEMO:
+                local_init_match(1, MODE_DEATHMATCH);
+                break;
+            case LOBBY_BATTLE:
+                local_init_match(12, MODE_DEATHMATCH);
+                break;
+            case LOBBY_TDM:
+                local_init_match(12, MODE_TDM);
+                break;
+            case LOBBY_CTF:
+                local_init_match(8, MODE_CTF);
+                break;
+            case LOBBY_EVOLUTION:
+                local_init_match(8, MODE_EVOLUTION);
+                break;
+            default:
+                break;
+        }
+    }
+
+    if (app_state != STATE_LOBBY) {
+        mods_on_match_start(&mod_registry);
+        mod_registry_dispatch(&mod_hooks, MOD_HOOK_STARTUP, NULL);
+        SDL_SetRelativeMouseMode(SDL_TRUE);
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        gluPerspective(75.0, 1280.0/720.0, 0.1, Z_FAR);
+        glMatrixMode(GL_MODELVIEW);
+        glEnable(GL_DEPTH_TEST);
+    }
+}
+
+static void mods_menu_toggle(int index) {
+    if (index < 0 || index >= mod_registry.count) return;
+    mod_registry.mods[index].enabled = !mod_registry.mods[index].enabled;
+}
+
+static void draw_mods_menu() {
+    glClearColor(0.02f, 0.02f, 0.05f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    setup_lobby_2d();
+
+    glColor3f(0.0f, 1.0f, 1.0f);
+    draw_string("MODS", 560, 560, 12);
+    glColor3f(0.5f, 0.8f, 0.9f);
+    draw_string("ENTER TO TOGGLE", 470, 520, 5);
+
+    float base_x = 360.0f;
+    float base_y = 450.0f;
+    float row_gap = 40.0f;
+
+    if (mod_registry.count == 0) {
+        glColor3f(0.7f, 0.7f, 0.7f);
+        draw_string("NO MODS FOUND", 450, 360, 5);
+    } else {
+        for (int i = 0; i < mod_registry.count; i++) {
+            float y = base_y - (row_gap * i);
+            if (i == mod_menu_selection) {
+                glColor3f(1.0f, 1.0f, 0.0f);
+                draw_string(">", base_x - 30.0f, y, 5);
+            }
+            if (mod_registry.mods[i].enabled) glColor3f(0.2f, 1.0f, 0.5f);
+            else glColor3f(0.8f, 0.3f, 0.3f);
+
+            draw_string(mod_registry.mods[i].name, base_x, y, 5);
+        }
+    }
+
+    glColor3f(0.4f, 0.6f, 0.7f);
+    draw_string("ESC TO RETURN", 470, 140, 5);
+    SDL_GL_SwapWindow(SDL_GL_GetCurrentWindow());
+}
 
 #define MAX_TRAILS 4096 
 #define GRID_SIZE 50.0f
@@ -268,6 +380,96 @@ void draw_gun_model(int weapon_id) {
     glEnd();
 }
 
+static void draw_box(float w, float h, float d) {
+    glPushMatrix();
+    glScalef(w, h, d);
+    glBegin(GL_QUADS);
+    // Front
+    glVertex3f(-0.5f,-0.5f,0.5f); glVertex3f(0.5f,-0.5f,0.5f); glVertex3f(0.5f,0.5f,0.5f); glVertex3f(-0.5f,0.5f,0.5f);
+    // Back
+    glVertex3f(-0.5f,-0.5f,-0.5f); glVertex3f(-0.5f,0.5f,-0.5f); glVertex3f(0.5f,0.5f,-0.5f); glVertex3f(0.5f,-0.5f,-0.5f);
+    // Left
+    glVertex3f(-0.5f,-0.5f,-0.5f); glVertex3f(-0.5f,-0.5f,0.5f); glVertex3f(-0.5f,0.5f,0.5f); glVertex3f(-0.5f,0.5f,-0.5f);
+    // Right
+    glVertex3f(0.5f,-0.5f,-0.5f); glVertex3f(0.5f,0.5f,-0.5f); glVertex3f(0.5f,0.5f,0.5f); glVertex3f(0.5f,-0.5f,0.5f);
+    // Top
+    glVertex3f(-0.5f,0.5f,0.5f); glVertex3f(0.5f,0.5f,0.5f); glVertex3f(0.5f,0.5f,-0.5f); glVertex3f(-0.5f,0.5f,-0.5f);
+    // Bottom
+    glVertex3f(-0.5f,-0.5f,0.5f); glVertex3f(-0.5f,-0.5f,-0.5f); glVertex3f(0.5f,-0.5f,-0.5f); glVertex3f(0.5f,-0.5f,0.5f);
+    glEnd();
+    glPopMatrix();
+}
+
+static void draw_box_outline(float w, float h, float d) {
+    glPushMatrix();
+    glScalef(w, h, d);
+    glLineWidth(2.0f);
+    glColor3f(1.0f, 1.0f, 0.0f);
+
+    glBegin(GL_LINE_LOOP);
+    glVertex3f(-0.5f, 0.5f, 0.5f); glVertex3f(0.5f, 0.5f, 0.5f);
+    glVertex3f(0.5f, -0.5f, 0.5f); glVertex3f(-0.5f, -0.5f, 0.5f);
+    glEnd();
+
+    glBegin(GL_LINE_LOOP);
+    glVertex3f(-0.5f, 0.5f, -0.5f); glVertex3f(0.5f, 0.5f, -0.5f);
+    glVertex3f(0.5f, -0.5f, -0.5f); glVertex3f(-0.5f, -0.5f, -0.5f);
+    glEnd();
+
+    glBegin(GL_LINES);
+    glVertex3f(-0.5f, 0.5f, 0.5f); glVertex3f(-0.5f, 0.5f, -0.5f);
+    glVertex3f(0.5f, 0.5f, 0.5f); glVertex3f(0.5f, 0.5f, -0.5f);
+    glVertex3f(0.5f, -0.5f, 0.5f); glVertex3f(0.5f, -0.5f, -0.5f);
+    glVertex3f(-0.5f, -0.5f, 0.5f); glVertex3f(-0.5f, -0.5f, -0.5f);
+    glEnd();
+
+    glPopMatrix();
+}
+
+static void draw_ronin_shell(void) {
+    // Jacket core (cropped waist, broad shoulders)
+    glColor3f(0.1f, 0.1f, 0.1f); // Matte black
+    glPushMatrix();
+    glTranslatef(0.0f, 0.9f, 0.0f);
+    draw_box(RONIN_TORSO_W, RONIN_TORSO_H, RONIN_TORSO_D);
+    draw_box_outline(RONIN_TORSO_W, RONIN_TORSO_H, RONIN_TORSO_D);
+    // Shoulder pads
+    glPushMatrix(); glTranslatef(-RONIN_SHOULDER_PAD_OFFSET, 0.35f, 0.0f); draw_box(RONIN_SHOULDER_PAD_W, RONIN_SHOULDER_PAD_H, RONIN_SHOULDER_PAD_D); draw_box_outline(RONIN_SHOULDER_PAD_W, RONIN_SHOULDER_PAD_H, RONIN_SHOULDER_PAD_D); glPopMatrix();
+    glPushMatrix(); glTranslatef(RONIN_SHOULDER_PAD_OFFSET, 0.35f, 0.0f); draw_box(RONIN_SHOULDER_PAD_W, RONIN_SHOULDER_PAD_H, RONIN_SHOULDER_PAD_D); draw_box_outline(RONIN_SHOULDER_PAD_W, RONIN_SHOULDER_PAD_H, RONIN_SHOULDER_PAD_D); glPopMatrix();
+    // Sleeves
+    glPushMatrix(); glTranslatef(-RONIN_SLEEVE_OFFSET, -0.25f, 0.0f); draw_box(RONIN_SLEEVE_W, RONIN_SLEEVE_H, RONIN_SLEEVE_D); draw_box_outline(RONIN_SLEEVE_W, RONIN_SLEEVE_H, RONIN_SLEEVE_D); glPopMatrix();
+    glPushMatrix(); glTranslatef(RONIN_SLEEVE_OFFSET, -0.25f, 0.0f); draw_box(RONIN_SLEEVE_W, RONIN_SLEEVE_H, RONIN_SLEEVE_D); draw_box_outline(RONIN_SLEEVE_W, RONIN_SLEEVE_H, RONIN_SLEEVE_D); glPopMatrix();
+    // Red satin lining at hem
+    glColor3f(0.6f, 0.0f, 0.0f);
+    glBegin(GL_QUADS);
+    glVertex3f(-0.68f, RONIN_LINING_Y_BOTTOM, 0.39f); glVertex3f(0.68f, RONIN_LINING_Y_BOTTOM, 0.39f);
+    glVertex3f(0.68f, RONIN_LINING_Y_TOP, 0.39f); glVertex3f(-0.68f, RONIN_LINING_Y_TOP, 0.39f);
+    glEnd();
+    glPopMatrix();
+
+    // Tech cargo pants (baggy)
+    glColor3f(0.18f, 0.18f, 0.2f); // Charcoal
+    glPushMatrix(); glTranslatef(-RONIN_PANTS_OFFSET, 0.0f, 0.0f); draw_box(RONIN_PANTS_W, RONIN_PANTS_H, RONIN_PANTS_D); draw_box_outline(RONIN_PANTS_W, RONIN_PANTS_H, RONIN_PANTS_D); glPopMatrix();
+    glPushMatrix(); glTranslatef(RONIN_PANTS_OFFSET, 0.0f, 0.0f); draw_box(RONIN_PANTS_W, RONIN_PANTS_H, RONIN_PANTS_D); draw_box_outline(RONIN_PANTS_W, RONIN_PANTS_H, RONIN_PANTS_D); glPopMatrix();
+}
+
+static void draw_storm_mask(void) {
+    // Head base
+    glColor3f(0.06f, 0.06f, 0.06f);
+    draw_box(RONIN_HEAD_W, RONIN_HEAD_H, RONIN_HEAD_D);
+    draw_box_outline(RONIN_HEAD_W, RONIN_HEAD_H, RONIN_HEAD_D);
+    // Faceplate
+    glColor3f(0.2f, 0.2f, 0.22f);
+    glPushMatrix(); glTranslatef(0.0f, -0.05f, 0.37f); draw_box(RONIN_FACEPLATE_W, RONIN_FACEPLATE_H, RONIN_FACEPLATE_D); draw_box_outline(RONIN_FACEPLATE_W, RONIN_FACEPLATE_H, RONIN_FACEPLATE_D); glPopMatrix();
+    // Cyan vents
+    glColor3f(0.0f, 1.0f, 1.0f);
+    glPushMatrix(); glTranslatef(RONIN_VENT_OFFSET_X, -0.08f, 0.42f); draw_box(RONIN_VENT_W, RONIN_VENT_H, RONIN_VENT_D); draw_box_outline(RONIN_VENT_W, RONIN_VENT_H, RONIN_VENT_D); glPopMatrix();
+    glPushMatrix(); glTranslatef(-RONIN_VENT_OFFSET_X, -0.08f, 0.42f); draw_box(RONIN_VENT_W, RONIN_VENT_H, RONIN_VENT_D); draw_box_outline(RONIN_VENT_W, RONIN_VENT_H, RONIN_VENT_D); glPopMatrix();
+    // Broken horn silhouette (single jagged horn)
+    glColor3f(0.08f, 0.08f, 0.08f);
+    glPushMatrix(); glTranslatef(RONIN_HORN_OFFSET_X, 0.52f, 0.05f); draw_box(RONIN_HORN_W, RONIN_HORN_H, RONIN_HORN_D); draw_box_outline(RONIN_HORN_W, RONIN_HORN_H, RONIN_HORN_D); glPopMatrix();
+}
+
 void draw_weapon_p(PlayerState *p) {
     if (p->in_vehicle) return; 
     glPushMatrix();
@@ -305,24 +507,23 @@ void draw_head(int weapon_id) {
 
 void draw_player_3rd(PlayerState *p) {
     glPushMatrix();
-    glTranslatef(p->x, p->y + 2.0f, p->z);
+    glTranslatef(p->x, p->y + 0.2f, p->z);
     glRotatef(-p->yaw, 0, 1, 0);
     if (p->in_vehicle) {
         draw_buggy_model();
     } else {
-        if(p->health <= 0) glColor3f(0.2, 0, 0); else glColor3f(1, 0, 0);
-        glPushMatrix(); glScalef(0.97f, 2.91f, 0.97f); 
-        glBegin(GL_QUADS);
-        glVertex3f(-0.5,-0.5,0.5); glVertex3f(0.5,-0.5,0.5); glVertex3f(0.5,0.5,0.5); glVertex3f(-0.5,0.5,0.5);
-        glVertex3f(-0.5,0.5,0.5); glVertex3f(0.5,0.5,0.5); glVertex3f(0.5,0.5,-0.5); glVertex3f(-0.5,0.5,-0.5);
-        glVertex3f(-0.5,-0.5,-0.5); glVertex3f(0.5,-0.5,-0.5); glVertex3f(0.5,0.5,-0.5); glVertex3f(-0.5,0.5,-0.5);
-        glVertex3f(-0.5,-0.5,-0.5); glVertex3f(-0.5,-0.5,0.5); glVertex3f(-0.5,0.5,0.5);
-        glVertex3f(-0.5,0.5,-0.5);
-        glVertex3f(0.5,-0.5,0.5); glVertex3f(0.5,-0.5,-0.5); glVertex3f(0.5,0.5,-0.5); glVertex3f(0.5,0.5,0.5);
-        glEnd(); glPopMatrix();
-        glPushMatrix(); glTranslatef(0, 1.54f, 0); draw_head(p->current_weapon); glPopMatrix();
-        glPushMatrix(); glTranslatef(0.5f, 1.0f, 0.5f);
-        glRotatef(p->pitch, 1, 0, 0);   
+        draw_ronin_shell();
+        glPushMatrix();
+        glTranslatef(0.0f, 1.85f, 0.0f);
+        glRotatef(p->pitch, 1, 0, 0);
+        float head_scale = mods_head_scale(&mod_registry);
+        if (head_scale > 1.0f) {
+            glScalef(head_scale, head_scale, head_scale);
+        }
+        draw_storm_mask();
+        glPopMatrix();
+        glPushMatrix(); glTranslatef(0.6f, 1.1f, 0.55f);
+        glRotatef(p->pitch, 1, 0, 0);
         glScalef(0.8f, 0.8f, 0.8f); draw_gun_model(p->current_weapon); glPopMatrix(); 
     }
     glPopMatrix();
@@ -371,12 +572,46 @@ void draw_hud(PlayerState *p) {
         glColor3f(0.0f, 1.0f, 0.0f);
         draw_string("BUGGY ONLINE", 50, 120, 12);
     }
+
+    if (p->storm_charges > 0) {
+        char storm_buf[32];
+        sprintf(storm_buf, "STORM ARROWS: %d", p->storm_charges);
+        glColor3f(1.0f, 0.2f, 0.2f);
+        draw_string(storm_buf, 50, 140, 8);
+    } else if (p->ability_cooldown == 0) {
+        glColor3f(0.0f, 0.8f, 1.0f);
+        draw_string("E: STORM ARROWS READY", 50, 140, 8);
+    } else {
+        float cooldown_ratio = (float)p->ability_cooldown / 480.0f;
+        if (cooldown_ratio < 0.0f) cooldown_ratio = 0.0f;
+        if (cooldown_ratio > 1.0f) cooldown_ratio = 1.0f;
+        glColor3f(0.2f, 0.2f, 0.2f);
+        glRectf(50, 140, 200, 150);
+        glColor3f(0.0f, 0.7f, 1.0f);
+        glRectf(50, 140, 50 + (150.0f * (1.0f - cooldown_ratio)), 150);
+        glColor3f(0.6f, 0.8f, 0.9f);
+        draw_string("STORM COOLDOWN", 210, 142, 6);
+    }
     
     float raw_speed = sqrtf(p->vx*p->vx + p->vz*p->vz);
     char vel_buf[32]; sprintf(vel_buf, "VEL: %.2f", raw_speed);
     glColor3f(1.0f, 1.0f, 0.0f); draw_string(vel_buf, 1100, 50, 8); 
 
     glEnable(GL_DEPTH_TEST); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW); glPopMatrix();
+}
+
+void draw_projectiles() {
+    glDisable(GL_TEXTURE_2D);
+    glPointSize(6.0f);
+    glBegin(GL_POINTS);
+    for (int i = 0; i < MAX_PROJECTILES; i++) {
+        Projectile *p = &local_state.projectiles[i];
+        if (!p->active) continue;
+        if (p->bounces_left > 0) glColor3f(1.0f, 0.4f, 0.1f);
+        else glColor3f(1.0f, 0.0f, 0.0f);
+        glVertex3f(p->x, p->y, p->z);
+    }
+    glEnd();
 }
 
 void draw_scene(PlayerState *render_p) {
@@ -395,6 +630,7 @@ void draw_scene(PlayerState *render_p) {
     draw_grid(); 
     update_and_draw_trails();
     draw_map();
+    draw_projectiles();
     if (render_p->in_vehicle) draw_player_3rd(render_p);
     for(int i=1; i<MAX_CLIENTS; i++) if(local_state.players[i].active && i != my_client_id) draw_player_3rd(&local_state.players[i]);
     draw_weapon_p(render_p); draw_hud(render_p);
@@ -429,7 +665,7 @@ void net_connect() {
     }
 }
 
-UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoot, int jump, int crouch, int reload, int use, int wpn_idx) {
+UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoot, int jump, int crouch, int reload, int use, int ability, int wpn_idx) {
     UserCmd cmd;
     memset(&cmd, 0, sizeof(UserCmd));
     static int seq = 0; cmd.sequence = ++seq; cmd.timestamp = SDL_GetTicks();
@@ -439,6 +675,7 @@ UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoo
     if(crouch) cmd.buttons |= BTN_CROUCH;
     if(reload) cmd.buttons |= BTN_RELOAD;
     if(use) cmd.buttons |= BTN_USE;
+    if(ability) cmd.buttons |= BTN_ABILITY_1;
     cmd.weapon_idx = wpn_idx; return cmd;
 }
 
@@ -472,6 +709,7 @@ void net_process_snapshot(char *buffer, int len) {
             p->current_weapon = np->current_weapon;
             p->is_shooting = np->is_shooting;
             p->in_vehicle = np->in_vehicle;
+            p->storm_charges = np->storm_charges;
             
             // --- SYNC HIT MARKER ---
             if (id == my_client_id) {
@@ -484,6 +722,7 @@ void net_process_snapshot(char *buffer, int len) {
         } else if (id == 0) {
             local_state.players[0].ammo[local_state.players[0].current_weapon] = np->ammo;
             local_state.players[0].in_vehicle = np->in_vehicle; 
+            local_state.players[0].storm_charges = np->storm_charges;
         }
     }
 }
@@ -517,6 +756,15 @@ int main(int argc, char* argv[]) {
     SDL_Window *win = SDL_CreateWindow("SHANKPIT [BUILD 181 - CTF RELOADED]", 100, 100, 1280, 720, SDL_WINDOW_OPENGL);
     SDL_GL_CreateContext(win);
     net_init();
+    mods_init(&mod_registry);
+    mods_load(&mod_registry, "mods");
+    mod_registry_init(&mod_hooks);
+    mod_manifest_list_init(&mod_manifests);
+    mod_discover_manifests(&mod_manifests, "mods");
+    for (int i = 0; i < mod_manifests.count; i++) {
+        mod_log_manifest(&mod_manifests.manifests[i]);
+    }
+    mod_runtime_set_registry(&mod_hooks);
     
     local_init_match(1, 0);
     
@@ -530,30 +778,47 @@ int main(int argc, char* argv[]) {
             
             if (app_state == STATE_LOBBY) {
                 if(e.type == SDL_KEYDOWN) {
-                    if (e.key.keysym.sym == SDLK_d) { app_state = STATE_GAME_LOCAL; local_init_match(1, MODE_DEATHMATCH); }
-                    if (e.key.keysym.sym == SDLK_b) { app_state = STATE_GAME_LOCAL; local_init_match(12, MODE_DEATHMATCH); }
-                    if (e.key.keysym.sym == SDLK_c) { app_state = STATE_GAME_LOCAL; local_init_match(8, MODE_CTF); } // Added CTF Bind
-                    if (e.key.keysym.sym == SDLK_k) { app_state = STATE_GAME_LOCAL; local_init_match(8, MODE_EVOLUTION); }
+                    if (e.key.keysym.sym == SDLK_UP) {
+                        lobby_selection = (lobby_selection + LOBBY_COUNT - 1) % LOBBY_COUNT;
+                    }
+                    if (e.key.keysym.sym == SDLK_DOWN) {
+                        lobby_selection = (lobby_selection + 1) % LOBBY_COUNT;
+                    }
+                    if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) {
+                        lobby_start_action(lobby_selection);
+                    }
+                    if (e.key.keysym.sym == SDLK_d) { lobby_selection = LOBBY_DEMO; lobby_start_action(LOBBY_DEMO); }
+                    if (e.key.keysym.sym == SDLK_b) { lobby_selection = LOBBY_BATTLE; lobby_start_action(LOBBY_BATTLE); }
+                    if (e.key.keysym.sym == SDLK_t) { lobby_selection = LOBBY_TDM; lobby_start_action(LOBBY_TDM); }
+                    if (e.key.keysym.sym == SDLK_c) { lobby_selection = LOBBY_CTF; lobby_start_action(LOBBY_CTF); }
+                    if (e.key.keysym.sym == SDLK_k) { lobby_selection = LOBBY_EVOLUTION; lobby_start_action(LOBBY_EVOLUTION); }
                     
                     if (e.key.keysym.sym == SDLK_j) { 
-                        app_state = STATE_GAME_NET;
-                        net_connect(); 
-                        SDL_SetRelativeMouseMode(SDL_TRUE);
-                        glMatrixMode(GL_PROJECTION); glLoadIdentity(); gluPerspective(75.0, 1280.0/720.0, 0.1, Z_FAR); 
-                        glMatrixMode(GL_MODELVIEW); glEnable(GL_DEPTH_TEST);
+                        lobby_selection = LOBBY_JOIN;
+                        lobby_start_action(LOBBY_JOIN);
                     }
-                    
-                    if (app_state == STATE_GAME_LOCAL) {
-                        SDL_SetRelativeMouseMode(SDL_TRUE);
-                        glMatrixMode(GL_PROJECTION); glLoadIdentity(); gluPerspective(75.0, 1280.0/720.0, 0.1, Z_FAR); 
-                        glMatrixMode(GL_MODELVIEW); glEnable(GL_DEPTH_TEST);
+                }
+            } else if (app_state == STATE_MODS_MENU) {
+                if (e.type == SDL_KEYDOWN) {
+                    if (e.key.keysym.sym == SDLK_ESCAPE) {
+                        app_state = STATE_LOBBY;
+                    } else if (e.key.keysym.sym == SDLK_UP) {
+                        if (mod_registry.count > 0) {
+                            mod_menu_selection = (mod_menu_selection + mod_registry.count - 1) % mod_registry.count;
+                        }
+                    } else if (e.key.keysym.sym == SDLK_DOWN) {
+                        if (mod_registry.count > 0) {
+                            mod_menu_selection = (mod_menu_selection + 1) % mod_registry.count;
+                        }
+                    } else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) {
+                        mods_menu_toggle(mod_menu_selection);
                     }
                 }
             } else {
                 if(e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
                     app_state = STATE_LOBBY;
                     SDL_SetRelativeMouseMode(SDL_FALSE);
-                    glDisable(GL_DEPTH_TEST); glMatrixMode(GL_PROJECTION); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720); glMatrixMode(GL_MODELVIEW);
+                    setup_lobby_2d();
                 }
                 if(e.type == SDL_MOUSEMOTION) {
                     float sens = (current_fov < 50.0f) ? 0.05f : 0.15f; 
@@ -564,19 +829,37 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
-        if (app_state != STATE_LOBBY) SDL_SetRelativeMouseMode(SDL_TRUE);
+        if (app_state != STATE_LOBBY && app_state != STATE_MODS_MENU) SDL_SetRelativeMouseMode(SDL_TRUE);
         if (app_state == STATE_LOBBY) {
              glClearColor(0.02f, 0.02f, 0.05f, 1.0f); // Dark Lobby
              glClear(GL_COLOR_BUFFER_BIT);
-             glLoadIdentity(); glColor3f(0, 1, 1); // CYAN TEXT
-             draw_string("SHANKPIT [181]", 400, 500, 20);
-             draw_string("D: DEMO", 400, 400, 10);
-             draw_string("B: BATTLE", 400, 350, 10);
-             draw_string("C: LAN CTF", 400, 300, 10); // Added Visual
-             draw_string("J: JOIN S.FARTHQ.COM", 400, 250, 10);
+             setup_lobby_2d();
+             glColor3f(0, 1, 1); // CYAN TEXT
+             draw_string("SHANKPIT", 430, 560, 12);
+             glColor3f(0.5f, 0.8f, 0.9f);
+             draw_string("SELECT MODE", 500, 520, 6);
+
+             float base_x = 420.0f;
+             float base_y = 450.0f;
+             float row_gap = 40.0f;
+             for (int i = 0; i < LOBBY_COUNT; i++) {
+                 float y = base_y - (row_gap * i);
+                 if (i == lobby_selection) {
+                     glColor3f(1.0f, 1.0f, 0.0f);
+                     draw_string(">", base_x - 30.0f, y, 6);
+                     glColor3f(0.0f, 1.0f, 1.0f);
+                 } else {
+                     glColor3f(0.0f, 0.7f, 0.8f);
+                 }
+                 draw_string(LOBBY_LABELS[i], base_x, y, 6);
+             }
+
+             glColor3f(0.4f, 0.6f, 0.7f);
+             draw_string("ARROWS + ENTER TO SELECT", 410, 140, 5);
              SDL_GL_SwapWindow(win);
-        } 
-        else {
+        } else if (app_state == STATE_MODS_MENU) {
+            draw_mods_menu();
+        } else {
             const Uint8 *k = SDL_GetKeyboardState(NULL);
             float fwd=0, str=0;
             if(k[SDL_SCANCODE_W]) fwd-=1; if(k[SDL_SCANCODE_S]) fwd+=1;
@@ -584,7 +867,8 @@ int main(int argc, char* argv[]) {
             int jump = k[SDL_SCANCODE_SPACE]; int crouch = k[SDL_SCANCODE_LCTRL];
             int shoot = (SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_LEFT));
             int reload = k[SDL_SCANCODE_R];
-            int use = k[SDL_SCANCODE_E];
+            int use = k[SDL_SCANCODE_F];
+            int ability = k[SDL_SCANCODE_E];
             if(k[SDL_SCANCODE_1]) wpn_req=0; if(k[SDL_SCANCODE_2]) wpn_req=1;
             if(k[SDL_SCANCODE_3]) wpn_req=2; if(k[SDL_SCANCODE_4]) wpn_req=3; if(k[SDL_SCANCODE_5]) wpn_req=4;
 
@@ -593,8 +877,8 @@ int main(int argc, char* argv[]) {
             glMatrixMode(GL_PROJECTION); glLoadIdentity(); gluPerspective(current_fov, 1280.0/720.0, 0.1, Z_FAR); 
             glMatrixMode(GL_MODELVIEW);
             if (app_state == STATE_GAME_NET) {
-                local_update(fwd, str, cam_yaw, cam_pitch, shoot, wpn_req, jump, crouch, reload, NULL, 0);
-                UserCmd cmd = client_create_cmd(fwd, str, cam_yaw, cam_pitch, shoot, jump, crouch, reload, use, wpn_req);
+                local_update(fwd, str, cam_yaw, cam_pitch, shoot, wpn_req, jump, crouch, reload, ability, NULL, 0);
+                UserCmd cmd = client_create_cmd(fwd, str, cam_yaw, cam_pitch, shoot, jump, crouch, reload, use, ability, wpn_req);
                 net_send_cmd(cmd);
                 net_tick();
             } else {
@@ -604,13 +888,20 @@ int main(int argc, char* argv[]) {
                      local_state.players[0].vehicle_cooldown = 30;
                 }
                 if(local_state.players[0].vehicle_cooldown > 0) local_state.players[0].vehicle_cooldown--;
-                local_update(fwd, str, cam_yaw, cam_pitch, shoot, wpn_req, jump, crouch, reload, NULL, 0);
+                local_update(fwd, str, cam_yaw, cam_pitch, shoot, wpn_req, jump, crouch, reload, ability, NULL, 0);
             }
             draw_scene(&local_state.players[0]);
             SDL_GL_SwapWindow(win);
         }
+        if (app_state != STATE_LOBBY && app_state != STATE_MODS_MENU) {
+            mod_frame_t frame = {0};
+            frame.tick = mod_tick++;
+            frame.dt = 0.016f;
+            mod_registry_dispatch(&mod_hooks, MOD_HOOK_FRAME, &frame);
+        }
         SDL_Delay(16);
     }
+    mod_registry_dispatch(&mod_hooks, MOD_HOOK_SHUTDOWN, NULL);
     SDL_Quit();
     return 0;
 }

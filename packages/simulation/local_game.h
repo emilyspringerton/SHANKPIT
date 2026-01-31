@@ -3,12 +3,13 @@
 
 #include "../common/protocol.h"
 #include "../common/physics.h"
+#include "../mods/mod_runtime.h"
 #include <string.h>
 
 ServerState local_state;
 int was_holding_jump = 0;
 
-void local_update(float fwd, float str, float yaw, float pitch, int shoot, int weapon_req, int jump, int crouch, int reload, void *server_context, unsigned int cmd_time);
+void local_update(float fwd, float str, float yaw, float pitch, int shoot, int weapon_req, int jump, int crouch, int reload, int ability, void *server_context, unsigned int cmd_time);
 void update_entity(PlayerState *p, float dt, void *server_context, unsigned int cmd_time);
 void local_init_match(int num_players, int mode);
 
@@ -115,10 +116,92 @@ void update_entity(PlayerState *p, float dt, void *server_context, unsigned int 
     if (p->recoil_anim < 0) p->recoil_anim = 0;
     if (p->hit_feedback > 0) p->hit_feedback--;
 
-    update_weapons(p, local_state.players, p->in_shoot > 0, p->in_reload > 0);
+    update_weapons(p, local_state.players, local_state.projectiles, p->in_shoot > 0, p->in_reload > 0, p->in_ability > 0);
 }
 
-void local_update(float fwd, float str, float yaw, float pitch, int shoot, int weapon_req, int jump, int crouch, int reload, void *server_context, unsigned int cmd_time) {
+static void update_projectiles() {
+    for (int i=0; i<MAX_PROJECTILES; i++) {
+        Projectile *p = &local_state.projectiles[i];
+        if (!p->active) continue;
+
+        float next_x = p->x + p->vx;
+        float next_y = p->y + p->vy;
+        float next_z = p->z + p->vz;
+
+        for (int j = 0; j < MAX_CLIENTS; j++) {
+            PlayerState *t = &local_state.players[j];
+            if (!t->active || t->state == STATE_DEAD) continue;
+            if (t->id == p->owner_id) continue;
+            PlayerState *attacker = NULL;
+            if (p->owner_id >= 0 && p->owner_id < MAX_CLIENTS) {
+                attacker = &local_state.players[p->owner_id];
+            }
+            float dx = t->x - p->x;
+            float dz = t->z - p->z;
+            float head_y = t->y + HEAD_OFFSET;
+            float body_y = t->y + 2.0f;
+            float head_dx = dx;
+            float head_dy = head_y - p->y;
+            float head_dz = dz;
+            float body_dy = body_y - p->y;
+            int hit = 0;
+            int damage = p->damage;
+            if ((head_dx*head_dx + head_dy*head_dy + head_dz*head_dz) < (HEAD_SIZE * HEAD_SIZE)) {
+                hit = 2;
+            } else if ((dx*dx + body_dy*body_dy + dz*dz) < 7.2f) {
+                hit = 1;
+            }
+            if (hit > 0) {
+                mod_entity_damage_t dmg_event = {0};
+                dmg_event.entity_id = (uint32_t)j;
+                dmg_event.amount = (float)damage;
+                dmg_event.source_id = (uint32_t)p->owner_id;
+                mod_runtime_dispatch(MOD_HOOK_ENTITY_DAMAGE, &dmg_event);
+                damage = (int)dmg_event.amount;
+                t->shield_regen_timer = SHIELD_REGEN_DELAY;
+                if (attacker) {
+                    attacker->accumulated_reward += 10.0f;
+                    attacker->hit_feedback = (hit == 2 && t->shield <= 0) ? 20 : 10;
+                }
+                if (hit == 2 && t->shield <= 0) damage *= 3;
+                if (t->shield > 0) {
+                    if (t->shield >= damage) { t->shield -= damage; damage = 0; }
+                    else { damage -= t->shield; t->shield = 0; }
+                }
+                t->health -= damage;
+                if (t->health <= 0) {
+                    t->deaths++;
+                    if (attacker) {
+                        attacker->kills++;
+                        attacker->accumulated_reward += 1000.0f;
+                        attacker->hit_feedback = 30;
+                    }
+                    phys_respawn(t, 0);
+                }
+                p->active = 0;
+                break;
+            }
+        }
+        if (!p->active) continue;
+
+        float hit_x, hit_y, hit_z, nx, ny, nz;
+        if (trace_map(p->x, p->y, p->z, next_x, next_y, next_z, &hit_x, &hit_y, &hit_z, &nx, &ny, &nz)) {
+            if (p->bounces_left > 0) {
+                reflect_vector(&p->vx, &p->vy, &p->vz, nx, ny, nz);
+                p->x = hit_x; p->y = hit_y; p->z = hit_z;
+                p->bounces_left--;
+            } else {
+                p->active = 0;
+            }
+        } else {
+            p->x = next_x; p->y = next_y; p->z = next_z;
+        }
+
+        if (p->x > 4000 || p->x < -4000 || p->z > 4000 || p->z < -4000 || p->y > 2000) p->active = 0;
+    }
+}
+
+void local_update(float fwd, float str, float yaw, float pitch, int shoot, int weapon_req, int jump, int crouch, int reload, int ability, void *server_context, unsigned int cmd_time) {
     PlayerState *p0 = &local_state.players[0];
     p0->yaw = yaw; p0->pitch = pitch;
     if (weapon_req >= 0 && weapon_req < MAX_WEAPONS) p0->current_weapon = weapon_req;
@@ -147,6 +230,7 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
     }
     p0->in_shoot = shoot; p0->in_reload = reload; p0->crouching = crouch;
     p0->in_jump = jump; 
+    p0->in_ability = ability;
     was_holding_jump = jump;
     
     for(int i=0; i<MAX_CLIENTS; i++) {
@@ -165,10 +249,12 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
             p->in_jump = (b_btns & BTN_JUMP);
             p->in_reload = (b_btns & BTN_RELOAD);
             p->crouching = (b_btns & BTN_CROUCH);
+            p->in_ability = 0;
             if ((b_btns & BTN_JUMP) && p->on_ground) { p->y += 0.1f; p->vy += JUMP_FORCE; }
         }
         update_entity(p, 0.016f, server_context, cmd_time);
     }
+    update_projectiles();
 }
 
 void local_init_match(int num_players, int mode) {
@@ -176,10 +262,18 @@ void local_init_match(int num_players, int mode) {
     local_state.game_mode = mode;
     local_state.players[0].active = 1;
     phys_respawn(&local_state.players[0], 0);
+    mod_entity_spawn_t spawn_event = {0};
+    spawn_event.entity_id = 0;
+    spawn_event.type = "player";
+    spawn_event.user_data = &local_state.players[0];
+    mod_runtime_dispatch(MOD_HOOK_ENTITY_SPAWN, &spawn_event);
     for(int i=1; i<num_players; i++) {
         local_state.players[i].active = 1;
         phys_respawn(&local_state.players[i], i*100);
         init_genome(&local_state.players[i].brain);
+        spawn_event.entity_id = (uint32_t)i;
+        spawn_event.user_data = &local_state.players[i];
+        mod_runtime_dispatch(MOD_HOOK_ENTITY_SPAWN, &spawn_event);
     }
 }
 #endif
