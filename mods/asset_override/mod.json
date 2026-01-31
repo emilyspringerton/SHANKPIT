@@ -1,0 +1,12 @@
+{
+  "id": "asset_override",
+  "name": "Asset Override",
+  "version": "0.1.0",
+  "api_version": "1.0",
+  "type": "python",
+  "entry": "asset_override.py",
+  "priority": 80,
+  "capabilities": ["assets"],
+  "author": "modder",
+  "description": "Example Python asset override mod."
+}

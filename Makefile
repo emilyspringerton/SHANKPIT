@@ -35,10 +35,12 @@ server-local:
 	$(CC) $(CFLAGS) apps/server/src/main.c -o bin/shank_local_server -lm
 
 clean:
-	rm -rf bin/shank_client bin/shank_server bin/shank_local_server bin/test_netcode bin/test_player_model bin/test_server_mode
+	rm -rf bin/shank_client bin/shank_server bin/shank_local_server bin/test_netcode bin/test_player_model bin/test_server_mode bin/test_mod_registry bin/test_mod_manifest
 
 tests: setup
 	@echo "🧪 Building Tests..."
 	$(CC) $(CFLAGS) apps/tests/test_netcode.c -o bin/test_netcode
 	$(CC) $(CFLAGS) apps/tests/test_player_model.c -o bin/test_player_model -lm
 	$(CC) $(CFLAGS) apps/tests/test_server_mode.c -o bin/test_server_mode
+	$(CC) $(CFLAGS) apps/tests/test_mod_registry.c -o bin/test_mod_registry
+	$(CC) $(CFLAGS) apps/tests/test_mod_manifest.c -o bin/test_mod_manifest

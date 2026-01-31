@@ -24,6 +24,9 @@
 #include "player_model.h"
 #include "../../../packages/ui/turtle_text.h"
 #include "../../../packages/mods/mod_manager.h"
+#include "../../../packages/mods/mod_registry.h"
+#include "../../../packages/mods/mod_loader.h"
+#include "../../../packages/mods/mod_runtime.h"
 
 #include "../../../packages/common/protocol.h"
 #include "../../../packages/common/physics.h"
@@ -44,6 +47,9 @@ int my_client_id = -1;
 int lobby_selection = 0;
 ModRegistry mod_registry;
 int mod_menu_selection = 0;
+ModHookRegistry mod_hooks;
+ModManifestList mod_manifests;
+unsigned long long mod_tick = 0;
 
 float cam_yaw = 0.0f;
 float cam_pitch = 0.0f;
@@ -122,6 +128,7 @@ static void lobby_start_action(int action) {
 
     if (app_state != STATE_LOBBY) {
         mods_on_match_start(&mod_registry);
+        mod_registry_dispatch(&mod_hooks, MOD_HOOK_STARTUP, NULL);
         SDL_SetRelativeMouseMode(SDL_TRUE);
         glMatrixMode(GL_PROJECTION);
         glLoadIdentity();
@@ -751,6 +758,13 @@ int main(int argc, char* argv[]) {
     net_init();
     mods_init(&mod_registry);
     mods_load(&mod_registry, "mods");
+    mod_registry_init(&mod_hooks);
+    mod_manifest_list_init(&mod_manifests);
+    mod_discover_manifests(&mod_manifests, "mods");
+    for (int i = 0; i < mod_manifests.count; i++) {
+        mod_log_manifest(&mod_manifests.manifests[i]);
+    }
+    mod_runtime_set_registry(&mod_hooks);
     
     local_init_match(1, 0);
     
@@ -879,8 +893,15 @@ int main(int argc, char* argv[]) {
             draw_scene(&local_state.players[0]);
             SDL_GL_SwapWindow(win);
         }
+        if (app_state != STATE_LOBBY && app_state != STATE_MODS_MENU) {
+            mod_frame_t frame = {0};
+            frame.tick = mod_tick++;
+            frame.dt = 0.016f;
+            mod_registry_dispatch(&mod_hooks, MOD_HOOK_FRAME, &frame);
+        }
         SDL_Delay(16);
     }
+    mod_registry_dispatch(&mod_hooks, MOD_HOOK_SHUTDOWN, NULL);
     SDL_Quit();
     return 0;
 }

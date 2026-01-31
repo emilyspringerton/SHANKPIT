@@ -1,0 +1,12 @@
+{
+  "id": "hello_world",
+  "name": "Hello World Mod",
+  "version": "0.1.0",
+  "api_version": "1.0",
+  "type": "native",
+  "entry": "hello_world.so",
+  "priority": 100,
+  "capabilities": ["console", "hooks"],
+  "author": "modder",
+  "description": "Logs greeting and adds a console command."
+}

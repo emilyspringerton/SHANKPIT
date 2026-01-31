@@ -1,0 +1,12 @@
+{
+  "id": "timed_message",
+  "name": "Timed Message",
+  "version": "0.1.0",
+  "api_version": "1.0",
+  "type": "native",
+  "entry": "timed_message.so",
+  "priority": 10,
+  "capabilities": ["hooks"],
+  "author": "modder",
+  "description": "Prints a message every few seconds."
+}

@@ -3,6 +3,7 @@
 
 #include "../common/protocol.h"
 #include "../common/physics.h"
+#include "../mods/mod_runtime.h"
 #include <string.h>
 
 ServerState local_state;
@@ -147,6 +148,12 @@ static void update_projectiles() {
                 hit = 1;
             }
             if (hit > 0) {
+                mod_entity_damage_t dmg_event = {0};
+                dmg_event.entity_id = (uint32_t)j;
+                dmg_event.amount = (float)damage;
+                dmg_event.source_id = (uint32_t)p->owner_id;
+                mod_runtime_dispatch(MOD_HOOK_ENTITY_DAMAGE, &dmg_event);
+                damage = (int)dmg_event.amount;
                 t->shield_regen_timer = SHIELD_REGEN_DELAY;
                 if (hit == 2 && t->shield <= 0) damage *= 3;
                 if (t->shield > 0) {
@@ -242,10 +249,18 @@ void local_init_match(int num_players, int mode) {
     local_state.game_mode = mode;
     local_state.players[0].active = 1;
     phys_respawn(&local_state.players[0], 0);
+    mod_entity_spawn_t spawn_event = {0};
+    spawn_event.entity_id = 0;
+    spawn_event.type = "player";
+    spawn_event.user_data = &local_state.players[0];
+    mod_runtime_dispatch(MOD_HOOK_ENTITY_SPAWN, &spawn_event);
     for(int i=1; i<num_players; i++) {
         local_state.players[i].active = 1;
         phys_respawn(&local_state.players[i], i*100);
         init_genome(&local_state.players[i].brain);
+        spawn_event.entity_id = (uint32_t)i;
+        spawn_event.user_data = &local_state.players[i];
+        mod_runtime_dispatch(MOD_HOOK_ENTITY_SPAWN, &spawn_event);
     }
 }
 #endif
