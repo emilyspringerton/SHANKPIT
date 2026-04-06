@@ -4,6 +4,7 @@
 #define MAX_CLIENTS 70
 #define MAX_WEAPONS 6
 #define MAX_PROJECTILES 1024
+#define MAX_HELICOPTERS 8
 #define LAG_HISTORY 64
 
 #define SCENE_GARAGE_OSAKA 0
@@ -67,6 +68,15 @@ typedef struct {
 #define VEH_NONE  0
 #define VEH_BUGGY 1
 #define VEH_BIKE  2
+#define VEH_HELICOPTER 3
+
+typedef struct {
+    float forward;
+    float strafe;
+    float yaw;
+    int ascend;
+    int descend;
+} HelicopterInput;
 
 typedef struct {
     int id;
@@ -106,6 +116,22 @@ typedef struct {
     unsigned char hit_feedback; 
     unsigned char storm_charges;
 } NetPlayer;
+
+typedef struct {
+    unsigned char id;
+    unsigned char active;
+    unsigned char scene_id;
+    unsigned char grounded;
+    int occupant_player_id;
+    int health;
+    float x, y, z;
+    float vx, vy, vz;
+    float yaw;
+    float pitch_visual;
+    float roll_visual;
+    float rotor_angle;
+    float rotor_speed;
+} NetHelicopter;
 
 typedef struct {
     int version;
@@ -155,7 +181,26 @@ typedef struct {
     unsigned int stun_immune_until_ms;
     float run_phase;
     float run_weight;
+    int occupied_heli_id;
 } PlayerState;
+
+typedef struct {
+    int id;
+    int active;
+    int scene_id;
+    float x, y, z;
+    float vx, vy, vz;
+    float yaw;
+    float pitch_visual;
+    float roll_visual;
+    float rotor_angle;
+    float rotor_speed;
+    float collective;
+    int health;
+    int occupant_player_id;
+    int grounded;
+    HelicopterInput input;
+} HelicopterState;
 
 typedef struct {
     int active; unsigned int timestamp;
@@ -174,6 +219,7 @@ typedef struct {
     int scene_id;
     int pending_scene;
     int transition_timer;
+    HelicopterState helicopters[MAX_HELICOPTERS];
     struct sockaddr_in clients[MAX_CLIENTS];
     ClientMeta client_meta[MAX_CLIENTS];
 } ServerState;

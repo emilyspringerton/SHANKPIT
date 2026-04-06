@@ -54,6 +54,61 @@ typedef struct {
 
 static RecorderState recorder = {0};
 
+static void server_init_helicopters(void) {
+    memset(local_state.helicopters, 0, sizeof(local_state.helicopters));
+    HelicopterState *h = &local_state.helicopters[0];
+    h->id = 0;
+    h->active = 1;
+    h->scene_id = SCENE_GARAGE_OSAKA;
+    h->x = 0.0f; h->y = 0.2f; h->z = 26.0f;
+    h->yaw = 180.0f;
+    h->health = 250;
+    h->occupant_player_id = -1;
+    h->rotor_speed = 10.0f;
+}
+
+static int server_find_heli_for_player(PlayerState *p) {
+    for (int i = 0; i < MAX_HELICOPTERS; i++) {
+        HelicopterState *h = &local_state.helicopters[i];
+        if (!h->active || h->scene_id != p->scene_id) continue;
+        float dx = p->x - h->x;
+        float dy = p->y - h->y;
+        float dz = p->z - h->z;
+        if ((dx * dx + dy * dy + dz * dz) <= (HELI_ENTER_RADIUS * HELI_ENTER_RADIUS)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int server_try_exit_heli(PlayerState *p, HelicopterState *h) {
+    if (!p || !h) return 0;
+    float rad = -h->yaw * 0.0174533f;
+    float side_x = cosf(rad) * HELI_EXIT_OFFSET;
+    float side_z = sinf(rad) * HELI_EXIT_OFFSET;
+    float ex = h->x + side_x;
+    float ey = h->y + 0.2f;
+    float ez = h->z + side_z;
+    float hit_x = 0.0f, hit_y = 0.0f, hit_z = 0.0f, nx = 0.0f, ny = 0.0f, nz = 0.0f;
+    if (trace_map(h->x, h->y + 0.5f, h->z, ex, ey + 0.5f, ez, &hit_x, &hit_y, &hit_z, &nx, &ny, &nz)) {
+        ex = h->x - sinf(rad) * HELI_EXIT_OFFSET;
+        ez = h->z + cosf(rad) * HELI_EXIT_OFFSET;
+        if (trace_map(h->x, h->y + 0.5f, h->z, ex, ey + 0.5f, ez, &hit_x, &hit_y, &hit_z, &nx, &ny, &nz)) {
+            printf("[HELI] exit failed player=%d heli=%d\n", p->id, h->id);
+            return 0;
+        }
+    }
+    p->in_vehicle = 0;
+    p->vehicle_type = VEH_NONE;
+    p->occupied_heli_id = -1;
+    p->x = ex; p->y = ey; p->z = ez;
+    p->vx = p->vy = p->vz = 0.0f;
+    h->occupant_player_id = -1;
+    memset(&h->input, 0, sizeof(h->input));
+    printf("[HELI] player=%d exited heli=%d\n", p->id, h->id);
+    return 1;
+}
+
 #define SERVER_SNAPSHOT_INTERVAL_TICKS 3
 
 #define RECORDER_SHAKE_POS 0.08f
@@ -405,6 +460,32 @@ void server_broadcast() {
         }
     }
 
+    unsigned char heli_count = 0;
+    for (int i = 0; i < MAX_HELICOPTERS; i++) {
+        if (local_state.helicopters[i].active) heli_count++;
+    }
+    memcpy(buffer + cursor, &heli_count, 1); cursor += 1;
+    for (int i = 0; i < MAX_HELICOPTERS; i++) {
+        HelicopterState *h = &local_state.helicopters[i];
+        if (!h->active) continue;
+        NetHelicopter nh;
+        memset(&nh, 0, sizeof(nh));
+        nh.id = (unsigned char)h->id;
+        nh.active = (unsigned char)h->active;
+        nh.scene_id = (unsigned char)h->scene_id;
+        nh.grounded = (unsigned char)h->grounded;
+        nh.occupant_player_id = h->occupant_player_id;
+        nh.health = h->health;
+        nh.x = h->x; nh.y = h->y; nh.z = h->z;
+        nh.vx = h->vx; nh.vy = h->vy; nh.vz = h->vz;
+        nh.yaw = h->yaw;
+        nh.pitch_visual = h->pitch_visual;
+        nh.roll_visual = h->roll_visual;
+        nh.rotor_angle = h->rotor_angle;
+        nh.rotor_speed = h->rotor_speed;
+        memcpy(buffer + cursor, &nh, sizeof(NetHelicopter)); cursor += (int)sizeof(NetHelicopter);
+    }
+
     for(int i=1; i<MAX_CLIENTS; i++) {
         if (slots[i].active) {
             sendto(sock, buffer, cursor, 0,
@@ -435,6 +516,7 @@ int main(int argc, char *argv[]) {
     server_net_init();
     int mode = parse_server_mode(argc, argv);
     local_init_match(1, mode);
+    server_init_helicopters();
     local_state.players[0].active = 0;
     local_state.players[0].health = 0;
     local_state.players[0].state = STATE_DEAD;
@@ -496,23 +578,58 @@ int main(int argc, char *argv[]) {
                         printf("PORTAL_TRAVEL client=%d from=%d to=%d\n", i, from_scene, dest_scene);
                     }
                 } else if (use_pressed && p->vehicle_cooldown == 0) {
-                    int in_garage = p->scene_id == SCENE_GARAGE_OSAKA;
-                    if (in_garage && scene_near_vehicle_pad(p->scene_id, p->x, p->z, 6.0f, NULL)) {
-                        p->in_vehicle = !p->in_vehicle;
-                        p->vehicle_cooldown = 30;
-                        printf("Client %d Toggle Vehicle: %d\n", i, p->in_vehicle);
-                    } else if (!in_garage) {
-                        p->in_vehicle = !p->in_vehicle;
-                        p->vehicle_cooldown = 30;
-                        printf("Client %d Toggle Vehicle: %d\n", i, p->in_vehicle);
+                    if (p->occupied_heli_id >= 0 && p->occupied_heli_id < MAX_HELICOPTERS) {
+                        server_try_exit_heli(p, &local_state.helicopters[p->occupied_heli_id]);
+                        p->vehicle_cooldown = 20;
+                    } else {
+                        int heli_id = server_find_heli_for_player(p);
+                        if (heli_id >= 0) {
+                            HelicopterState *h = &local_state.helicopters[heli_id];
+                            if (h->occupant_player_id < 0) {
+                                h->occupant_player_id = p->id;
+                                p->in_vehicle = 1;
+                                p->vehicle_type = VEH_HELICOPTER;
+                                p->occupied_heli_id = heli_id;
+                                p->vehicle_cooldown = 20;
+                                p->x = h->x; p->y = h->y; p->z = h->z;
+                                p->vx = p->vy = p->vz = 0.0f;
+                                printf("[HELI] player=%d entered heli=%d\n", p->id, heli_id);
+                            }
+                        }
                     }
                 }
                 p->use_was_down = p->in_use;
                 if (p->vehicle_cooldown > 0) p->vehicle_cooldown--;
 
                 shankpit_simulate_movement_tick(p, now);
+                if (p->in_vehicle && p->vehicle_type == VEH_HELICOPTER &&
+                    p->occupied_heli_id >= 0 && p->occupied_heli_id < MAX_HELICOPTERS) {
+                    HelicopterState *h = &local_state.helicopters[p->occupied_heli_id];
+                    h->input.forward = p->in_fwd;
+                    h->input.strafe = 0.0f;
+                    h->input.yaw = p->in_strafe;
+                    h->input.ascend = p->in_jump > 0;
+                    h->input.descend = p->crouching > 0;
+                }
             } else {
                 update_entity(p, SHANKPIT_NET_FIXED_DT, NULL, now);
+            }
+        }
+
+        for (int i = 0; i < MAX_HELICOPTERS; i++) {
+            HelicopterState *h = &local_state.helicopters[i];
+            if (!h->active) continue;
+            phys_set_scene(h->scene_id);
+            shankpit_heli_simulate(h, SHANKPIT_NET_FIXED_DT);
+            if (h->occupant_player_id >= 0 && h->occupant_player_id < MAX_CLIENTS) {
+                PlayerState *occ = &local_state.players[h->occupant_player_id];
+                occ->x = h->x;
+                occ->y = h->y;
+                occ->z = h->z;
+                occ->yaw = h->yaw;
+                occ->vx = h->vx;
+                occ->vy = h->vy;
+                occ->vz = h->vz;
             }
         }
 

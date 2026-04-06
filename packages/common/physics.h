@@ -690,6 +690,7 @@ void resolve_collision(PlayerState *p) {
 void phys_respawn(PlayerState *p, unsigned int now) {
     p->active = 1; p->state = STATE_ALIVE;
     p->health = 100; p->shield = 100; p->respawn_time = 0; p->in_vehicle = 0;
+    p->occupied_heli_id = -1;
     p->katana_slash_timer = 0;
     p->dash_timer = 0;
     p->dash_vx = p->dash_vy = p->dash_vz = 0.0f;

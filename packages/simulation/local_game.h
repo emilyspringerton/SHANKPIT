@@ -9,6 +9,19 @@
 ServerState local_state;
 int was_holding_jump = 0;
 
+static inline void heli_spawn_defaults(void) {
+    memset(local_state.helicopters, 0, sizeof(local_state.helicopters));
+    HelicopterState *h = &local_state.helicopters[0];
+    h->id = 0;
+    h->active = 1;
+    h->scene_id = SCENE_GARAGE_OSAKA;
+    h->x = 0.0f; h->y = 0.2f; h->z = 26.0f;
+    h->yaw = 180.0f;
+    h->health = 250;
+    h->occupant_player_id = -1;
+    h->rotor_speed = 8.0f;
+}
+
 void local_update(float fwd, float str, float yaw, float pitch, int shoot, int weapon_req, int jump, int crouch, int reload, int ability, void *server_context, unsigned int cmd_time);
 void update_entity(PlayerState *p, float dt, void *server_context, unsigned int cmd_time);
 void local_init_match(int num_players, int mode);
@@ -142,6 +155,11 @@ void update_entity(PlayerState *p, float dt, void *server_context, unsigned int 
         p->vz = 0.0f;
     }
 
+    if (p->in_vehicle && p->vehicle_type == VEH_HELICOPTER) {
+        update_weapons(p, local_state.players, local_state.projectiles, 0, 0, 0);
+        return;
+    }
+
     apply_friction(p);
     float g = (p->in_jump) ? GRAVITY_FLOAT : GRAVITY_DROP;
     if (p->dash_timer <= 0) p->vy -= g; 
@@ -175,6 +193,25 @@ void update_entity(PlayerState *p, float dt, void *server_context, unsigned int 
 
     update_weapons(p, local_state.players, local_state.projectiles, p->in_shoot > 0, p->in_reload > 0, p->in_ability > 0);
     scene_safety_check(p);
+}
+
+static inline void heli_tick_all(void) {
+    for (int i = 0; i < MAX_HELICOPTERS; i++) {
+        HelicopterState *h = &local_state.helicopters[i];
+        if (!h->active) continue;
+        phys_set_scene(h->scene_id);
+        shankpit_heli_simulate(h, SHANKPIT_NET_FIXED_DT);
+        if (h->occupant_player_id >= 0 && h->occupant_player_id < MAX_CLIENTS) {
+            PlayerState *p = &local_state.players[h->occupant_player_id];
+            p->x = h->x;
+            p->y = h->y;
+            p->z = h->z;
+            p->vx = h->vx;
+            p->vy = h->vy;
+            p->vz = h->vz;
+            p->yaw = h->yaw;
+        }
+    }
 }
 
 static void apply_projectile_damage(PlayerState *owner, PlayerState *target, int damage, unsigned int now_ms) {
@@ -289,6 +326,14 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
     p0->in_shoot = shoot; p0->in_reload = reload; p0->crouching = crouch;
     p0->in_jump = jump; 
     p0->in_ability = ability;
+    if (p0->in_vehicle && p0->vehicle_type == VEH_HELICOPTER && p0->occupied_heli_id >= 0 && p0->occupied_heli_id < MAX_HELICOPTERS) {
+        HelicopterState *h = &local_state.helicopters[p0->occupied_heli_id];
+        h->input.forward = p0->in_fwd;
+        h->input.strafe = 0.0f;
+        h->input.yaw = p0->in_strafe;
+        h->input.ascend = p0->in_jump > 0;
+        h->input.descend = p0->crouching > 0;
+    }
     was_holding_jump = jump;
     
     for(int i=0; i<MAX_CLIENTS; i++) {
@@ -314,6 +359,7 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
         update_entity(p, 0.016f, server_context, cmd_time);
     }
     update_projectiles(cmd_time);
+    heli_tick_all();
 }
 
 void local_init_match(int num_players, int mode) {
@@ -332,5 +378,6 @@ void local_init_match(int num_players, int mode) {
         phys_respawn(&local_state.players[i], i*100);
         init_genome(&local_state.players[i].brain);
     }
+    heli_spawn_defaults();
 }
 #endif
