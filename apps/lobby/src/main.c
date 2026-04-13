@@ -963,6 +963,21 @@ void draw_terrain() {
         for (int i = 0; i < route_count; i++) glVertex3f(routes[i].x, terrain_sample_height(t, routes[i].x, routes[i].z) + 2.0f, routes[i].z);
         glEnd();
     }
+    if (voxworld_points_debug && local_state.scene_id == SCENE_WUHU_ISLAND) {
+        int route_count = 0;
+        const VoxRouteAnchor *routes = island_get_route_anchors(&route_count);
+        glPointSize(8.0f);
+        glBegin(GL_POINTS);
+        glColor3f(0.35f, 0.95f, 1.0f);
+        for (int i = 0; i < route_count; i++) glVertex3f(routes[i].x, terrain_sample_height(t, routes[i].x, routes[i].z) + 2.0f, routes[i].z);
+        glColor3f(0.85f, 0.35f, 1.0f);
+        for (int i = 0; i < MAX_WORLD_PICKUPS; i++) {
+            WorldPickup *wp = &local_state.world_pickups[i];
+            if (!wp->active || !wp->available || wp->scene_id != SCENE_WUHU_ISLAND) continue;
+            glVertex3f(wp->x, wp->y + 1.0f, wp->z);
+        }
+        glEnd();
+    }
 }
 
 static void draw_box_solid(float hx, float hy, float hz) {
@@ -1662,6 +1677,22 @@ void draw_hud(PlayerState *p) {
     draw_string(voxworld_points_debug ? "F11 SCENE DEBUG:ON" : "F11 SCENE DEBUG:OFF", 430, 24, vs0_art_direction_enabled ? 3 : 5);
     glColor3f(0.72f, 0.74f, 0.80f);
     draw_string(vs0_art_direction_enabled ? "F12 VS0 ART:ON" : "F12 VS0 ART:OFF", 650, 24, 3);
+    for (int i = 0; i < 4; i++) {
+        float px = 52.0f + i * 18.0f;
+        float py = 118.0f;
+        if (i < p->sticky_grenades) {
+            glColor3f(0.30f, 0.90f, 1.0f);
+            glRectf(px - 4.5f, py - 4.5f, px + 4.5f, py + 4.5f);
+            glColor3f(0.85f, 0.35f, 1.0f);
+            glBegin(GL_LINE_LOOP);
+            glVertex2f(px - 6.0f, py - 6.0f); glVertex2f(px + 6.0f, py - 6.0f);
+            glVertex2f(px + 6.0f, py + 6.0f); glVertex2f(px - 6.0f, py + 6.0f);
+            glEnd();
+        } else {
+            glColor3f(0.14f, 0.22f, 0.25f);
+            glRectf(px - 4.0f, py - 4.0f, px + 4.0f, py + 4.0f);
+        }
+    }
 
     if (p->current_weapon == WPN_KATANA) {
         char katana_buf[64];
@@ -1699,6 +1730,7 @@ static const char *scene_name_ui(int scene_id) {
         case SCENE_VOXWORLD: return "VOXWORLD";
         case SCENE_DUST_COMPOUND: return "DUST_COMPOUND";
         case SCENE_OIL_TANKER: return "OIL_TANKER";
+        case SCENE_WUHU_ISLAND: return "WUHU_ISLAND";
         default: return "UNKNOWN";
     }
 }
@@ -1843,6 +1875,18 @@ static void draw_garage_portal_frame() {
         glVertex3f(-GARAGE_DUST_PORTAL_RADIUS, 6.0f, 0.0f);
         glEnd();
         glPopMatrix();
+
+        glPushMatrix();
+        glTranslatef(GARAGE_ISLAND_PORTAL_X, GARAGE_ISLAND_PORTAL_Y, GARAGE_ISLAND_PORTAL_Z);
+        glColor3f(0.2f, 0.95f, 1.0f);
+        glLineWidth(3.0f);
+        glBegin(GL_LINE_LOOP);
+        glVertex3f(-GARAGE_ISLAND_PORTAL_RADIUS, -2.0f, 0.0f);
+        glVertex3f(GARAGE_ISLAND_PORTAL_RADIUS, -2.0f, 0.0f);
+        glVertex3f(GARAGE_ISLAND_PORTAL_RADIUS, 6.0f, 0.0f);
+        glVertex3f(-GARAGE_ISLAND_PORTAL_RADIUS, 6.0f, 0.0f);
+        glEnd();
+        glPopMatrix();
     }
 }
 
@@ -1878,6 +1922,7 @@ static void draw_garage_overlay(PlayerState *p) {
     draw_string("PORTAL -> STADIUM", 40, 640, 6);
     draw_string("PORTAL -> VOXWORLD TERRAIN", 40, 620, 6);
     draw_string("PORTAL -> OIL TANKER", 40, 600, 6);
+    draw_string("PORTAL -> WUHU ISLAND", 40, 580, 6);
 
     int pad_count = 0;
     const VehiclePad *pads = scene_vehicle_pads(local_state.scene_id, &pad_count);
@@ -1907,6 +1952,7 @@ static void draw_garage_overlay(PlayerState *p) {
     int vox_portal_target = target_in_view(p, GARAGE_VOX_PORTAL_X, GARAGE_VOX_PORTAL_Y, GARAGE_VOX_PORTAL_Z, 30.0f, 0.75f);
     int tanker_portal_target = target_in_view(p, GARAGE_TANKER_PORTAL_X, GARAGE_TANKER_PORTAL_Y, GARAGE_TANKER_PORTAL_Z, 30.0f, 0.75f);
     int dust_portal_target = target_in_view(p, GARAGE_DUST_PORTAL_X, GARAGE_DUST_PORTAL_Y, GARAGE_DUST_PORTAL_Z, 30.0f, 0.75f);
+    int island_portal_target = target_in_view(p, GARAGE_ISLAND_PORTAL_X, GARAGE_ISLAND_PORTAL_Y, GARAGE_ISLAND_PORTAL_Z, 30.0f, 0.75f);
     int pad_target = 0;
     int heli_target = 0;
     if (scene_near_vehicle_pad(local_state.scene_id, p->x, p->z, 12.0f, NULL)) {
@@ -1928,7 +1974,7 @@ static void draw_garage_overlay(PlayerState *p) {
     }
 
     glColor3f(1.0f, 1.0f, 0.0f);
-    if (portal_target || vox_portal_target || tanker_portal_target || dust_portal_target) {
+    if (portal_target || vox_portal_target || tanker_portal_target || dust_portal_target || island_portal_target) {
         draw_string("TRAVEL", 600, 350, 8);
     } else if (heli_target || (p->in_vehicle && p->vehicle_type == VEH_HELICOPTER)) {
         draw_string(p->in_vehicle ? "PRESS F TO EXIT HELICOPTER" : "PRESS F TO ENTER HELICOPTER", 460, 350, 8);
@@ -1954,6 +2000,28 @@ void draw_projectiles() {
         glVertex3f(p->x, p->y, p->z);
     }
     glEnd();
+
+    glPointSize(7.0f);
+    glBegin(GL_POINTS);
+    for (int i = 0; i < MAX_STICKY_GRENADES; i++) {
+        StickyGrenadeState *g = &local_state.sticky_grenades[i];
+        if (!g->active || g->scene_id != local_state.scene_id) continue;
+        float pulse = 0.6f + 0.4f * sinf((float)SDL_GetTicks() * 0.02f);
+        glColor3f(0.30f * pulse + 0.15f, 0.90f, 1.0f);
+        glVertex3f(g->x, g->y, g->z);
+    }
+    glEnd();
+
+    glPointSize(9.0f);
+    glBegin(GL_POINTS);
+    for (int i = 0; i < MAX_WORLD_PICKUPS; i++) {
+        WorldPickup *wp = &local_state.world_pickups[i];
+        if (!wp->active || !wp->available || wp->scene_id != local_state.scene_id) continue;
+        if (wp->type == PICKUP_STICKY_GRENADE) glColor3f(0.35f, 0.95f, 1.0f);
+        else glColor3f(0.2f, 1.0f, 0.3f);
+        glVertex3f(wp->x, wp->y + 0.6f + 0.4f * sinf((SDL_GetTicks() + i * 47) * 0.004f), wp->z);
+    }
+    glEnd();
 }
 
 static void client_apply_scene_id(int scene_id, unsigned int now_ms) {
@@ -1969,6 +2037,8 @@ static void client_apply_scene_id(int scene_id, unsigned int now_ms) {
             local_state.helicopters[i].active = 0;
             local_state.helicopters[i].occupant_player_id = -1;
         }
+        for (int i = 0; i < MAX_STICKY_GRENADES; i++) local_state.sticky_grenades[i].active = 0;
+        for (int i = 0; i < MAX_WORLD_PICKUPS; i++) local_state.world_pickups[i].active = 0;
     }
 }
 
@@ -2241,7 +2311,7 @@ void net_connect() {
     }
 }
 
-UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoot, int jump, int crouch, int reload, int use, int ability, int wpn_idx) {
+UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoot, int jump, int crouch, int reload, int use, int ability, int grenade, int wpn_idx) {
     UserCmd cmd;
     memset(&cmd, 0, sizeof(UserCmd));
     cmd.sequence = ++net_cmd_seq; cmd.timestamp = SDL_GetTicks();
@@ -2252,6 +2322,7 @@ UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoo
     if(reload) cmd.buttons |= BTN_RELOAD;
     if(use) cmd.buttons |= BTN_USE;
     if(ability) cmd.buttons |= BTN_ABILITY_1;
+    if(grenade) cmd.buttons |= BTN_GRENADE;
     client_cmd_hist[cmd.sequence % CLIENT_RECON_HISTORY] = cmd;
     net_latest_seq_sent = cmd.sequence;
     cmd.weapon_idx = wpn_idx; return cmd;
@@ -2573,6 +2644,7 @@ void net_process_snapshot(char *buffer, int len) {
         p->is_shooting = now_shooting;
         p->in_vehicle = np->in_vehicle;
         p->storm_charges = np->storm_charges;
+        p->sticky_grenades = np->sticky_grenades;
         p->hit_feedback = np->hit_feedback;
         p->kills = (int)np->kills;
         p->deaths = (int)np->deaths;
@@ -2674,6 +2746,45 @@ void net_process_snapshot(char *buffer, int len) {
                 occ->in_vehicle = 1;
                 occ->vehicle_type = VEH_HELICOPTER;
             }
+        }
+    }
+
+    for (int si = 0; si < MAX_STICKY_GRENADES; si++) local_state.sticky_grenades[si].active = 0;
+    if (cursor < len) {
+        unsigned char sticky_count = *(unsigned char *)(buffer + cursor);
+        cursor++;
+        for (int si = 0; si < sticky_count; si++) {
+            if (cursor + (int)sizeof(NetStickyGrenade) > len) break;
+            NetStickyGrenade *ng = (NetStickyGrenade *)(buffer + cursor);
+            cursor += (int)sizeof(NetStickyGrenade);
+            if (ng->id >= MAX_STICKY_GRENADES) continue;
+            StickyGrenadeState *g = &local_state.sticky_grenades[ng->id];
+            g->active = ng->active;
+            g->id = ng->id;
+            g->scene_id = ng->scene_id;
+            g->attached = ng->attached;
+            g->attach_type = ng->attach_type;
+            g->attach_target_id = ng->attach_target_id;
+            g->fuse_ticks = ng->fuse_ticks;
+            g->x = ng->x; g->y = ng->y; g->z = ng->z;
+        }
+    }
+    for (int wi = 0; wi < MAX_WORLD_PICKUPS; wi++) local_state.world_pickups[wi].active = 0;
+    if (cursor < len) {
+        unsigned char pickup_count = *(unsigned char *)(buffer + cursor);
+        cursor++;
+        for (int wi = 0; wi < pickup_count; wi++) {
+            if (cursor + (int)sizeof(NetWorldPickup) > len) break;
+            NetWorldPickup *nw = (NetWorldPickup *)(buffer + cursor);
+            cursor += (int)sizeof(NetWorldPickup);
+            if (nw->id >= MAX_WORLD_PICKUPS) continue;
+            WorldPickup *wp = &local_state.world_pickups[nw->id];
+            wp->active = nw->active;
+            wp->id = nw->id;
+            wp->scene_id = nw->scene_id;
+            wp->type = nw->type;
+            wp->x = nw->x; wp->y = nw->y; wp->z = nw->z;
+            wp->available = 1;
         }
     }
 #if HELI_NET_DEBUG
@@ -3032,6 +3143,7 @@ int main(int argc, char* argv[]) {
             int reload = in_heli ? k[SDL_SCANCODE_Q] : k[SDL_SCANCODE_R];
             int use = k[SDL_SCANCODE_F];
             int ability = in_heli ? k[SDL_SCANCODE_E] : k[SDL_SCANCODE_E];
+            int grenade = k[SDL_SCANCODE_G];
             if(k[SDL_SCANCODE_1]) wpn_req=0; if(k[SDL_SCANCODE_2]) wpn_req=1;
             if(k[SDL_SCANCODE_3]) wpn_req=2; if(k[SDL_SCANCODE_4]) wpn_req=3; if(k[SDL_SCANCODE_5]) wpn_req=4; if(k[SDL_SCANCODE_6]) wpn_req=5;
 
@@ -3048,7 +3160,7 @@ int main(int argc, char* argv[]) {
                 if (net_local_pid > 0 && net_have_initial_local_snapshot_sync) {
                     unsigned int now_ms = SDL_GetTicks();
                     if (now_ms - net_last_cmd_send_ms >= CLIENT_USERCMD_INTERVAL_MS) {
-                        UserCmd cmd = client_create_cmd(fwd, str, cam_yaw, cam_pitch, shoot, jump, crouch, reload, use, ability, wpn_req);
+                        UserCmd cmd = client_create_cmd(fwd, str, cam_yaw, cam_pitch, shoot, jump, crouch, reload, use, ability, grenade, wpn_req);
                         client_apply_cmd_movement(&local_state.players[net_local_pid], &cmd, now_ms);
                         net_send_cmd(cmd);
                         net_last_cmd_send_ms = now_ms;
@@ -3111,6 +3223,7 @@ int main(int argc, char* argv[]) {
                 }
                 if(local_state.players[0].vehicle_cooldown > 0) local_state.players[0].vehicle_cooldown--;
                 unsigned int now_ms = SDL_GetTicks();
+                local_state.players[0].in_grenade = grenade;
                 local_update(fwd, str, cam_yaw, cam_pitch, shoot, wpn_req, jump, crouch, reload, ability, NULL, now_ms);
             }
             int render_pid = 0;
