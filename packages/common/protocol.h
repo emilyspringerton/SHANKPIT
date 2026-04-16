@@ -101,6 +101,10 @@ typedef struct {
     signed char team_id;
     unsigned int last_seq;
     float x, y, z; float yaw, pitch;
+    float buggy_body_yaw;
+    float buggy_yaw_rate;
+    float buggy_steer;
+    float buggy_slip_angle;
     unsigned char current_weapon;
     unsigned char state;
     unsigned char health;
@@ -164,6 +168,14 @@ typedef struct {
     int vehicle_cooldown;
     unsigned int portal_cooldown_until_ms;
     float accumulated_reward; 
+    float buggy_body_yaw;
+    float buggy_yaw_rate;
+    float buggy_steer;
+    float buggy_forward_speed;
+    float buggy_lateral_speed;
+    float buggy_slip_angle;
+    float buggy_visual_roll;
+    float buggy_visual_pitch;
     BotGenome brain;
     unsigned int last_hit_time;
     unsigned int respawn_time;

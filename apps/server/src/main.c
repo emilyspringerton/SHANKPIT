@@ -631,6 +631,10 @@ void server_broadcast() {
             np.last_seq = client_last_seq[pi];
             np.x = p->x; np.y = p->y; np.z = p->z;
             np.yaw = norm_yaw_deg(p->yaw); np.pitch = clamp_pitch_deg(p->pitch);
+            np.buggy_body_yaw = norm_yaw_deg(p->buggy_body_yaw);
+            np.buggy_yaw_rate = p->buggy_yaw_rate;
+            np.buggy_steer = p->buggy_steer;
+            np.buggy_slip_angle = p->buggy_slip_angle;
             np.current_weapon = (unsigned char)p->current_weapon;
             np.state = (unsigned char)p->state;
             np.health = (unsigned char)p->health;

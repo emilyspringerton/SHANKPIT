@@ -384,6 +384,10 @@ static void client_apply_spawn_transition_sync(PlayerState *p, const NetPlayer *
     p->z = np->z;
     p->yaw = cam_yaw;
     p->pitch = cam_pitch;
+    p->buggy_body_yaw = norm_yaw_deg(np->buggy_body_yaw);
+    p->buggy_yaw_rate = np->buggy_yaw_rate;
+    p->buggy_steer = np->buggy_steer;
+    p->buggy_slip_angle = np->buggy_slip_angle;
 
     reconcile_corr_x = 0.0f;
     reconcile_corr_y = 0.0f;
@@ -1313,6 +1317,12 @@ void draw_buggy_model(PlayerState *p) {
         glPopMatrix();
     }
 
+    float steer_vis = 0.0f;
+    if (p) {
+        steer_vis = p->buggy_steer * BUGGY_WHEEL_STEER_MAX;
+        if (steer_vis > BUGGY_WHEEL_STEER_MAX) steer_vis = BUGGY_WHEEL_STEER_MAX;
+        if (steer_vis < -BUGGY_WHEEL_STEER_MAX) steer_vis = -BUGGY_WHEEL_STEER_MAX;
+    }
     float wx[] = {-2.2f, 2.2f, -2.2f, 2.2f};
     float wz[] = {2.5f, 2.5f, -2.5f, -2.5f};
     glDisable(GL_TEXTURE_2D);
@@ -1321,6 +1331,7 @@ void draw_buggy_model(PlayerState *p) {
     for (int i = 0; i < 4; i++) {
         glPushMatrix();
         glTranslatef(wx[i], -0.5f, wz[i]);
+        if (i < 2) glRotatef(steer_vis, 0, 1, 0);
         glScalef(0.8f, 1.5f, 1.5f);
         glColor3f(0.10f, 0.10f, 0.10f);
         draw_box_solid(0.5f, 0.5f, 0.5f);
@@ -2192,12 +2203,24 @@ void draw_player_3rd(PlayerState *p) {
     float draw_yaw = norm_yaw_deg(p->yaw);
     float draw_pitch = clamp_pitch_deg(p->pitch);
     float draw_recoil = (p->is_shooting > 0) ? 1.0f : p->recoil_anim;
+    float buggy_roll = 0.0f;
+    float buggy_pitch = 0.0f;
+
+    if (p->in_vehicle && p->vehicle_type == VEH_BUGGY) {
+        draw_yaw = norm_yaw_deg(p->buggy_body_yaw);
+        buggy_roll = p->buggy_visual_roll;
+        buggy_pitch = p->buggy_visual_pitch;
+    }
 
     glPushMatrix();
     glTranslatef(p->x, p->y + 0.2f, p->z);
     // Simulation yaw assumes forward is -Z, but this model is authored facing +Z.
     glRotatef(180.0f - draw_yaw, 0, 1, 0);
     if (p->in_vehicle) {
+        if (p->vehicle_type == VEH_BUGGY) {
+            glRotatef(buggy_roll, 0, 0, 1);
+            glRotatef(buggy_pitch, 1, 0, 0);
+        }
         draw_buggy_model(p);
     } else {
         int forced_skin = -1;
@@ -2386,6 +2409,13 @@ void draw_hud(PlayerState *p) {
         }
         glColor3f(0.95f, 0.55f, 0.1f);
         draw_string(style_buf, 50, 98, vs0_art_direction_enabled ? 4 : 6);
+        if (p->vehicle_type == VEH_BUGGY) {
+            char buggy_dbg[128];
+            snprintf(buggy_dbg, sizeof(buggy_dbg), "BUG FWD:%+.2f LAT:%+.2f SLIP:%+.1f YAWR:%+.2f STR:%+.2f",
+                     p->buggy_forward_speed, p->buggy_lateral_speed, p->buggy_slip_angle, p->buggy_yaw_rate, p->buggy_steer);
+            glColor3f(0.62f, 0.93f, 0.92f);
+            draw_string(buggy_dbg, 50, 146, vs0_art_direction_enabled ? 4 : 6);
+        }
     }
     glColor3f(0.58f, 0.75f, 0.76f);
     draw_string(terrain_wireframe_debug ? "F6 TERRAIN WIRE:ON" : "F6 TERRAIN WIRE:OFF", 50, 24, vs0_art_direction_enabled ? 3 : 5);
@@ -3379,7 +3409,8 @@ static void client_decay_pending_correction(unsigned int now_ms) {
     if (fabsf(reconcile_corr_pitch) < 0.01f) reconcile_corr_pitch = 0.0f;
 }
 
-static void client_reconcile_local_player(unsigned int ack_seq, float auth_x, float auth_y, float auth_z, float auth_yaw, float auth_pitch) {
+static void client_reconcile_local_player(unsigned int ack_seq, float auth_x, float auth_y, float auth_z, float auth_yaw, float auth_pitch,
+                                          float auth_buggy_body_yaw, float auth_buggy_yaw_rate, float auth_buggy_steer, float auth_buggy_slip_angle) {
     if (my_client_id <= 0 || my_client_id >= MAX_CLIENTS) return;
     if (ack_seq <= net_last_reconciled_ack) return;
 
@@ -3400,6 +3431,10 @@ static void client_reconcile_local_player(unsigned int ack_seq, float auth_x, fl
     p->x = auth_x; p->y = auth_y; p->z = auth_z;
     p->yaw = norm_yaw_deg(auth_yaw);
     p->pitch = clamp_pitch_deg(auth_pitch);
+    p->buggy_body_yaw = norm_yaw_deg(auth_buggy_body_yaw);
+    p->buggy_yaw_rate = auth_buggy_yaw_rate;
+    p->buggy_steer = auth_buggy_steer;
+    p->buggy_slip_angle = auth_buggy_slip_angle;
 
     int replayed = 0;
     for (unsigned int seq = ack_seq + 1; seq <= net_latest_seq_sent; seq++) {
@@ -3514,6 +3549,10 @@ static void net_apply_remote_interpolation(unsigned int now_ms) {
 #endif
             p->x = ri->a.x; p->y = ri->a.y; p->z = ri->a.z;
             p->yaw = norm_yaw_deg(ri->a.yaw); p->pitch = clamp_pitch_deg(ri->a.pitch);
+            p->buggy_body_yaw = norm_yaw_deg(ri->a.buggy_body_yaw);
+            p->buggy_yaw_rate = ri->a.buggy_yaw_rate;
+            p->buggy_steer = ri->a.buggy_steer;
+            p->buggy_slip_angle = ri->a.buggy_slip_angle;
             continue;
         }
 
@@ -3525,6 +3564,10 @@ static void net_apply_remote_interpolation(unsigned int now_ms) {
 #endif
             p->x = ri->b.x; p->y = ri->b.y; p->z = ri->b.z;
             p->yaw = norm_yaw_deg(ri->b.yaw); p->pitch = clamp_pitch_deg(ri->b.pitch);
+            p->buggy_body_yaw = norm_yaw_deg(ri->b.buggy_body_yaw);
+            p->buggy_yaw_rate = ri->b.buggy_yaw_rate;
+            p->buggy_steer = ri->b.buggy_steer;
+            p->buggy_slip_angle = ri->b.buggy_slip_angle;
             continue;
         }
         float t = num / den;
@@ -3546,6 +3589,10 @@ static void net_apply_remote_interpolation(unsigned int now_ms) {
         p->z = ri->a.z + (ri->b.z - ri->a.z) * t;
         p->yaw = angle_lerp_deg(ri->a.yaw, ri->b.yaw, t);
         p->pitch = clamp_pitch_deg(ri->a.pitch + (ri->b.pitch - ri->a.pitch) * t);
+        p->buggy_body_yaw = angle_lerp_deg(ri->a.buggy_body_yaw, ri->b.buggy_body_yaw, t);
+        p->buggy_yaw_rate = ri->a.buggy_yaw_rate + (ri->b.buggy_yaw_rate - ri->a.buggy_yaw_rate) * t;
+        p->buggy_steer = ri->a.buggy_steer + (ri->b.buggy_steer - ri->a.buggy_steer) * t;
+        p->buggy_slip_angle = ri->a.buggy_slip_angle + (ri->b.buggy_slip_angle - ri->a.buggy_slip_angle) * t;
     }
 
 #if NET_JITTER_DIAG
@@ -3614,6 +3661,10 @@ void net_process_snapshot(char *buffer, int len) {
     unsigned int local_ack_seq = 0;
     float local_auth_x = 0.0f, local_auth_y = 0.0f, local_auth_z = 0.0f;
     float local_auth_yaw = 0.0f, local_auth_pitch = 0.0f;
+    float local_auth_buggy_body_yaw = 0.0f;
+    float local_auth_buggy_yaw_rate = 0.0f;
+    float local_auth_buggy_steer = 0.0f;
+    float local_auth_buggy_slip_angle = 0.0f;
 
     for(int i=0; i<count; i++) {
         if (cursor + (int)sizeof(NetPlayer) > len) break;
@@ -3633,6 +3684,10 @@ void net_process_snapshot(char *buffer, int len) {
             p->x = np->x; p->y = np->y; p->z = np->z;
             p->yaw   = norm_yaw_deg(np->yaw);
             p->pitch = clamp_pitch_deg(np->pitch);
+            p->buggy_body_yaw = norm_yaw_deg(np->buggy_body_yaw);
+            p->buggy_yaw_rate = np->buggy_yaw_rate;
+            p->buggy_steer = np->buggy_steer;
+            p->buggy_slip_angle = np->buggy_slip_angle;
         }
 
         p->state = np->state;
@@ -3670,6 +3725,10 @@ void net_process_snapshot(char *buffer, int len) {
             local_auth_z = np->z;
             local_auth_yaw = np->yaw;
             local_auth_pitch = np->pitch;
+            local_auth_buggy_body_yaw = np->buggy_body_yaw;
+            local_auth_buggy_yaw_rate = np->buggy_yaw_rate;
+            local_auth_buggy_steer = np->buggy_steer;
+            local_auth_buggy_slip_angle = np->buggy_slip_angle;
 
             int first_local_snapshot_sync = !net_have_initial_local_snapshot_sync;
 
@@ -3710,7 +3769,8 @@ void net_process_snapshot(char *buffer, int len) {
     }
 
     if (local_seen) {
-        client_reconcile_local_player(local_ack_seq, local_auth_x, local_auth_y, local_auth_z, local_auth_yaw, local_auth_pitch);
+        client_reconcile_local_player(local_ack_seq, local_auth_x, local_auth_y, local_auth_z, local_auth_yaw, local_auth_pitch,
+                                      local_auth_buggy_body_yaw, local_auth_buggy_yaw_rate, local_auth_buggy_steer, local_auth_buggy_slip_angle);
     }
 
     for (int id = 1; id < MAX_CLIENTS; id++) {

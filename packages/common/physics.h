@@ -23,6 +23,21 @@
 #define BUGGY_ACCEL 0.08f       
 #define BUGGY_FRICTION 0.03f    
 #define BUGGY_GRAVITY 0.15f     
+#define BUGGY_MIN_STEER_SPEED 0.12f
+#define BUGGY_STEER_STRENGTH 175.0f
+#define BUGGY_MAX_YAW_RATE_LOW 3.8f
+#define BUGGY_MAX_YAW_RATE_HIGH 7.4f
+#define BUGGY_YAW_RATE_RESPONSE 0.18f
+#define BUGGY_YAW_DAMPING 0.08f
+#define BUGGY_AUTO_REALIGN 0.055f
+#define BUGGY_GRIP_LOW_SPEED 0.42f
+#define BUGGY_GRIP_HIGH_SPEED 0.11f
+#define BUGGY_DRIFT_MULTIPLIER 0.72f
+#define BUGGY_LONGITUDINAL_DRAG 0.018f
+#define BUGGY_LATERAL_DRAG 0.055f
+#define BUGGY_BODY_ROLL_MAX 9.5f
+#define BUGGY_BODY_PITCH_MAX 5.5f
+#define BUGGY_WHEEL_STEER_MAX 30.0f
 
 #define EYE_HEIGHT 2.59f    
 #define PLAYER_WIDTH 0.97f  
@@ -48,6 +63,21 @@
 void evolve_bot(PlayerState *loser, PlayerState *winner);
 PlayerState* get_best_bot();
 void phys_respawn(PlayerState *p, unsigned int now);
+
+static inline void phys_init_buggy_state(PlayerState *p) {
+    if (!p) return;
+    float yaw = p->yaw;
+    while (yaw >= 360.0f) yaw -= 360.0f;
+    while (yaw < 0.0f) yaw += 360.0f;
+    p->buggy_body_yaw = yaw;
+    p->buggy_yaw_rate = 0.0f;
+    p->buggy_steer = 0.0f;
+    p->buggy_forward_speed = 0.0f;
+    p->buggy_lateral_speed = 0.0f;
+    p->buggy_slip_angle = 0.0f;
+    p->buggy_visual_roll = 0.0f;
+    p->buggy_visual_pitch = 0.0f;
+}
 
 typedef struct { float x, y, z, w, h, d; } Box;
 typedef struct { float x, y; } Vec2;
@@ -1922,7 +1952,27 @@ void apply_friction(PlayerState *p) {
     if (speed < 0.001f) { p->vx = 0; p->vz = 0; return; }
     
     float drop = 0;
-    if (p->in_vehicle) {
+    if (p->in_vehicle && p->vehicle_type == VEH_BUGGY) {
+        float yaw_rad = -p->buggy_body_yaw * 0.0174533f;
+        float fx = sinf(yaw_rad), fz = -cosf(yaw_rad);
+        float rx = cosf(yaw_rad), rz = sinf(yaw_rad);
+        float forward_speed = p->vx * fx + p->vz * fz;
+        float lateral_speed = p->vx * rx + p->vz * rz;
+        float speed_ratio = speed / BUGGY_MAX_SPEED;
+        if (speed_ratio < 0.0f) speed_ratio = 0.0f;
+        if (speed_ratio > 1.0f) speed_ratio = 1.0f;
+        float side_grip = BUGGY_GRIP_LOW_SPEED + (BUGGY_GRIP_HIGH_SPEED - BUGGY_GRIP_LOW_SPEED) * speed_ratio;
+        float drift_relief = 1.0f - fabsf(p->buggy_steer) * speed_ratio * BUGGY_DRIFT_MULTIPLIER;
+        if (drift_relief < 0.1f) drift_relief = 0.1f;
+        lateral_speed *= (1.0f - side_grip * drift_relief);
+        forward_speed *= (1.0f - BUGGY_FRICTION);
+        p->vx = fx * forward_speed + rx * lateral_speed;
+        p->vz = fz * forward_speed + rz * lateral_speed;
+        p->buggy_forward_speed = forward_speed;
+        p->buggy_lateral_speed = lateral_speed;
+        p->buggy_slip_angle = atan2f(lateral_speed, fabsf(forward_speed) + 0.01f) * 57.29578f;
+        return;
+    } else if (p->in_vehicle) {
         drop = speed * BUGGY_FRICTION;
     } 
     else if (p->on_ground) {
@@ -2007,6 +2057,7 @@ void resolve_collision(PlayerState *p) {
 void phys_respawn(PlayerState *p, unsigned int now) {
     p->active = 1; p->state = STATE_ALIVE;
     p->health = 100; p->shield = 100; p->respawn_time = 0; p->in_vehicle = 0;
+    phys_init_buggy_state(p);
     p->katana_slash_timer = 0;
     p->dash_timer = 0;
     p->dash_vx = p->dash_vy = p->dash_vz = 0.0f;
