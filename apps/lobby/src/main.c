@@ -1569,11 +1569,11 @@ static void draw_viewmodel_accent_strip(const ViewmodelPalette *p, float w, floa
 }
 
 static void draw_viewmodel_magnum(const ViewmodelPalette *p) {
-    glPushMatrix(); glTranslatef(0.00f, 0.10f, -0.03f); draw_viewmodel_box_tone(p, 1.20f, 0.34f, 1.45f, 0); glPopMatrix();
-    glPushMatrix(); glTranslatef(0.00f, -0.24f, -0.08f); draw_viewmodel_box_tone(p, 0.66f, 0.62f, 0.68f, 1); glPopMatrix();
-    glPushMatrix(); glTranslatef(0.00f, 0.02f, 0.78f); draw_viewmodel_box_tone(p, 0.76f, 0.24f, 0.36f, 1); glPopMatrix();
-    glPushMatrix(); glTranslatef(0.00f, 0.31f, 0.97f); draw_viewmodel_box_tone(p, 0.22f, 0.12f, 0.15f, 1); glPopMatrix();
-    glPushMatrix(); glTranslatef(0.00f, 0.16f, -0.68f); draw_viewmodel_accent_strip(p, 0.22f, 0.05f, 0.22f); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.00f, 0.10f, -0.03f); draw_viewmodel_box_tone(p, 0.94f, 0.31f, 1.43f, 0); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.00f, -0.24f, -0.08f); draw_viewmodel_box_tone(p, 0.52f, 0.56f, 0.66f, 1); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.00f, 0.02f, 0.78f); draw_viewmodel_box_tone(p, 0.58f, 0.22f, 0.34f, 1); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.00f, 0.31f, 0.97f); draw_viewmodel_box_tone(p, 0.16f, 0.10f, 0.14f, 1); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.00f, 0.16f, -0.68f); draw_viewmodel_accent_strip(p, 0.16f, 0.045f, 0.22f); glPopMatrix();
 }
 
 static void draw_viewmodel_ar(const ViewmodelPalette *p) {
