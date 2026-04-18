@@ -4,6 +4,107 @@
 
 SHANKPIT is a fast-paced 3D multiplayer first-person shooter built with C, SDL2, and OpenGL. The game features physics-based movement, multiple weapons, shield mechanics, and support for both human players and AI bots (including neural network-powered agents).
 
+
+## Scene Editor (Standalone First Pass)
+
+This pass introduces a **standalone scene editor app** under `apps/scene_editor/` for authoring a proposed external scene format without changing the current runtime scene-loading/build path.
+
+> Current limitation: The editor currently edits the proposed external scene format as a standalone tool. Existing runtime maps/scenes still use the current path. Runtime adoption of this format will happen in a later change once the protocol is validated.
+
+### Build and run
+
+- Build everything (including editor artifact):
+  - `make all`
+- Build only editor:
+  - `make scene_editor`
+- Run editor against default sample:
+  - `./bin/shank_scene_editor`
+- Run editor against a specific scene file:
+  - `./bin/shank_scene_editor assets/scenes/test_room.json`
+
+### Editor controls (V1)
+
+- `Alt + Left Mouse Drag`: orbit camera around anchor.
+- `Mouse Wheel`: zoom.
+- `Middle Mouse Drag` or `Alt + Right Mouse Drag`: pan / move anchor.
+- `Left Mouse`: pick box.
+- `Left Mouse Drag`: move selected box (move tool).
+- `X` / `Y` / `Z`: axis lock for move tool.
+- `G`: clear axis lock (free move).
+- `F`: frame selected box.
+- `O`: load JSON from current path.
+- `P`: save JSON to current path.
+- `[` / `]`: select previous/next stage camera.
+- `N`: create stage camera from current viewport.
+- `C`: toggle selected stage camera driving viewport.
+- `KP 4/6`: yaw selected stage camera.
+- `KP 8/2`: pitch selected stage camera.
+- `+/-`: distance selected stage camera.
+- `PageUp/PageDown`: FOV selected stage camera.
+
+### Proposed scene/map format protocol (JSON V1)
+
+This section documents the proposed external authoring protocol for future runtime adoption.
+
+Top-level JSON object:
+
+- `version` (number)
+- `scene_name` (string)
+- `boxes` (array of box objects)
+- `stage_cameras` (array of stage camera objects)
+
+Each `boxes[]` entry:
+
+- `id` (number)
+- `name` (string)
+- `position` (`[x, y, z]` float array)
+- `size` (`[x, y, z]` float array)
+- `rotation_y_degrees` (float, **Y-axis only in V1**)
+- `color` (`[r, g, b, a]` float array)
+- `flags.solid` (0/1)
+- `flags.visible` (0/1)
+
+Each `stage_cameras[]` entry:
+
+- `id` (number)
+- `name` (string)
+- `target` (`[x, y, z]` float array)
+- `distance` (float)
+- `yaw_degrees` (float)
+- `pitch_degrees` (float)
+- `fov_degrees` (float)
+
+### Example scene JSON
+
+```json
+{
+  "version": 1,
+  "scene_name": "test_room",
+  "boxes": [
+    {
+      "id": 1,
+      "name": "floor",
+      "position": [0.0, -1.0, 0.0],
+      "size": [30.0, 1.0, 30.0],
+      "rotation_y_degrees": 0.0,
+      "color": [0.25, 0.28, 0.30, 1.0],
+      "flags": { "solid": 1, "visible": 1 }
+    }
+  ],
+  "stage_cameras": [
+    {
+      "id": 1,
+      "name": "overview",
+      "target": [0.0, 1.0, 0.0],
+      "distance": 28.0,
+      "yaw_degrees": 35.0,
+      "pitch_degrees": 24.0,
+      "fov_degrees": 60.0
+    }
+  ]
+}
+```
+
 ## Controls (Player + Vehicles)
 
 ### Core movement & combat

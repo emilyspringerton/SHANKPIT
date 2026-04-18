@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "scene_name": "test_room",
+  "boxes": [
+    {
+      "id": 1,
+      "name": "floor",
+      "position": [0.0, -1.0, 0.0],
+      "size": [30.0, 1.0, 30.0],
+      "rotation_y_degrees": 0.0,
+      "color": [0.25, 0.28, 0.30, 1.0],
+      "flags": { "solid": 1, "visible": 1 }
+    },
+    {
+      "id": 2,
+      "name": "center_block",
+      "position": [0.0, 2.0, 0.0],
+      "size": [8.0, 4.0, 8.0],
+      "rotation_y_degrees": 0.0,
+      "color": [0.70, 0.20, 0.20, 1.0],
+      "flags": { "solid": 1, "visible": 1 }
+    },
+    {
+      "id": 3,
+      "name": "catwalk",
+      "position": [10.0, 4.0, -8.0],
+      "size": [12.0, 1.0, 3.0],
+      "rotation_y_degrees": 18.0,
+      "color": [0.55, 0.55, 0.75, 1.0],
+      "flags": { "solid": 1, "visible": 1 }
+    }
+  ],
+  "stage_cameras": [
+    {
+      "id": 1,
+      "name": "overview",
+      "target": [0.0, 1.0, 0.0],
+      "distance": 28.0,
+      "yaw_degrees": 35.0,
+      "pitch_degrees": 24.0,
+      "fov_degrees": 60.0
+    },
+    {
+      "id": 2,
+      "name": "arena_focus",
+      "target": [8.0, 2.0, -3.0],
+      "distance": 18.0,
+      "yaw_degrees": -30.0,
+      "pitch_degrees": 22.0,
+      "fov_degrees": 55.0
+    }
+  ]
+}
