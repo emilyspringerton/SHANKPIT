@@ -151,6 +151,24 @@ static const Box map_geo_garage[] = {
     {10.00, 5.00, -20.00, 12.00, 4.00, 12.00}
 };
 
+static const Box map_geo_story_cave[] = {
+    {0.0f, -8.0f, 0.0f, 140.0f, 8.0f, 1520.0f},
+    {0.0f, 18.0f, 0.0f, 138.0f, 8.0f, 1520.0f},
+    {-70.0f, 5.0f, 0.0f, 8.0f, 30.0f, 1520.0f},
+    {70.0f, 5.0f, 0.0f, 8.0f, 30.0f, 1520.0f},
+    {-12.0f, 2.0f, -480.0f, 42.0f, 14.0f, 80.0f},
+    {24.0f, 2.0f, -160.0f, 52.0f, 16.0f, 90.0f},
+    {-20.0f, 2.0f, 170.0f, 48.0f, 15.0f, 92.0f},
+    {12.0f, 2.0f, 500.0f, 60.0f, 17.0f, 100.0f},
+    {-18.0f, 2.0f, 780.0f, 58.0f, 15.0f, 94.0f},
+    {0.0f, 2.0f, 1020.0f, 62.0f, 18.0f, 110.0f},
+    {34.0f, 9.0f, -620.0f, 12.0f, 18.0f, 140.0f},
+    {-28.0f, 9.0f, -280.0f, 10.0f, 16.0f, 120.0f},
+    {30.0f, 9.0f, 80.0f, 12.0f, 16.0f, 130.0f},
+    {-34.0f, 9.0f, 420.0f, 10.0f, 17.0f, 128.0f},
+    {26.0f, 9.0f, 700.0f, 12.0f, 16.0f, 116.0f}
+};
+
 
 #define CITY_MAX_BOXES 2048
 static Box map_geo_voxworld[CITY_MAX_BOXES];
@@ -236,6 +254,9 @@ static int map_count = 0;
 #define POO_POO_ISLAND_ORIGIN_Z (-(POO_POO_ISLAND_TERRAIN_H * POO_POO_ISLAND_CELL * 0.5f))
 #define POO_POO_ISLAND_BOUNDS_X 1240.0f
 #define POO_POO_ISLAND_BOUNDS_Z 1240.0f
+#define STORY_CAVE_KILL_Y -80.0f
+#define STORY_CAVE_BOUNDS_X 110.0f
+#define STORY_CAVE_BOUNDS_Z 820.0f
 
 #define GARAGE_PORTAL_X 0.0f
 #define GARAGE_PORTAL_Y 6.0f
@@ -1121,6 +1142,10 @@ static inline void phys_set_scene(int scene_id) {
         map_geo = map_geo_stadium;
         map_count = (int)(sizeof(map_geo_stadium) / sizeof(Box));
         g_scene_terrain.active = (g_scene_terrain.heights != NULL);
+    } else if (scene_id == SCENE_STORY_CAVE) {
+        map_geo = map_geo_story_cave;
+        map_count = (int)(sizeof(map_geo_story_cave) / sizeof(Box));
+        g_scene_terrain.active = 0;
     } else {
         map_geo = map_geo_stadium;
         map_count = (int)(sizeof(map_geo_stadium) / sizeof(Box));
@@ -1525,6 +1550,12 @@ static inline void scene_spawn_point(int scene_id, int slot, float *out_x, float
         *out_y = stadium_height_at(*out_x, *out_z) + 6.0f;
         return;
     }
+    if (scene_id == SCENE_STORY_CAVE) {
+        *out_x = 0.0f;
+        *out_y = 4.0f;
+        *out_z = -720.0f;
+        return;
+    }
     if (slot % 2 == 0) {
         *out_x = 0.0f; *out_z = 0.0f; *out_y = 80.0f;
     } else {
@@ -1538,6 +1569,7 @@ static inline void scene_spawn_point(int scene_id, int slot, float *out_x, float
 static inline void scene_spawn_for_player(PlayerState *p, float *out_x, float *out_y, float *out_z) {
     if (p->scene_id != SCENE_VOXWORLD && p->scene_id != SCENE_DUST_COMPOUND &&
         p->scene_id != SCENE_OIL_TANKER && p->scene_id != SCENE_STADIUM &&
+        p->scene_id != SCENE_STORY_CAVE &&
         p->scene_id != SCENE_POO_POO_ISLAND) {
         scene_spawn_point(p->scene_id, p->id, out_x, out_y, out_z);
         return;
@@ -1681,6 +1713,14 @@ static inline void scene_safety_check(PlayerState *p) {
         if (p->y < POO_POO_ISLAND_KILL_Y ||
             p->x < -POO_POO_ISLAND_BOUNDS_X || p->x > POO_POO_ISLAND_BOUNDS_X ||
             p->z < -POO_POO_ISLAND_BOUNDS_Z || p->z > POO_POO_ISLAND_BOUNDS_Z) {
+            scene_force_spawn(p);
+        }
+        return;
+    }
+    if (p->scene_id == SCENE_STORY_CAVE) {
+        if (p->y < STORY_CAVE_KILL_Y ||
+            p->x < -STORY_CAVE_BOUNDS_X || p->x > STORY_CAVE_BOUNDS_X ||
+            p->z < -STORY_CAVE_BOUNDS_Z || p->z > STORY_CAVE_BOUNDS_Z) {
             scene_force_spawn(p);
         }
     }

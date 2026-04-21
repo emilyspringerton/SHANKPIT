@@ -15,6 +15,7 @@
 #define SCENE_CITY 4
 #define SCENE_OIL_TANKER 5
 #define SCENE_POO_POO_ISLAND 6
+#define SCENE_STORY_CAVE 7
 
 #define PACKET_CONNECT 0
 #define PACKET_USERCMD 1
@@ -288,7 +289,14 @@ typedef struct {
     unsigned int event_counter;
 } CtfMatchState;
 
-typedef enum { MODE_DEATHMATCH=0, MODE_TDM=1, MODE_SURVIVAL=2, MODE_CTF=3, MODE_ODDBALL=4, MODE_LOCAL=98, MODE_NET=99, MODE_EVOLUTION=100, MODE_TDMB=101, MODE_TDMO=102, MODE_CTFB=103, MODE_CTFO=104 } GameMode;
+typedef enum { MODE_DEATHMATCH=0, MODE_TDM=1, MODE_SURVIVAL=2, MODE_CTF=3, MODE_ODDBALL=4, MODE_LOCAL=98, MODE_NET=99, MODE_EVOLUTION=100, MODE_TDMB=101, MODE_TDMO=102, MODE_CTFB=103, MODE_CTFO=104, MODE_STORY=105 } GameMode;
+
+typedef enum {
+    STORY_PHASE_CUTSCENE = 0,
+    STORY_PHASE_PLAYING = 1,
+    STORY_PHASE_COMPLETE = 2,
+    STORY_PHASE_FAILED = 3
+} StoryPhase;
 
 typedef struct {
     PlayerState players[MAX_CLIENTS];
@@ -305,6 +313,14 @@ typedef struct {
     int score_limit;
     int match_over;
     int winning_team;
+    int story_phase;
+    unsigned int story_cutscene_start_ms;
+    float story_intro_yaw;
+    float story_intro_pitch;
+    float story_end_x;
+    float story_end_y;
+    float story_end_z;
+    float story_end_radius;
     CtfMatchState ctf;
     struct sockaddr_in clients[MAX_CLIENTS];
     ClientMeta client_meta[MAX_CLIENTS];

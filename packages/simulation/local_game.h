@@ -25,6 +25,8 @@ static int tdmb_last_kills[MAX_CLIENTS];
 #define CTFB_CARRY_MELEE_DAMAGE 80
 #define CTFB_CARRY_MELEE_COOLDOWN_MS 450
 #define CTFB_RESPAWN_DEBUG_LOG 0
+#define STORY_CUTSCENE_MS 5000
+#define STORY_BEAR_COUNT 6
 
 static int mode_uses_team_scores(int mode) {
     return mode == MODE_TDM || mode == MODE_TDMB || mode == MODE_TDMO || mode == MODE_CTFB;
@@ -60,12 +62,69 @@ static const char *scene_name_debug(int scene_id) {
         case SCENE_STADIUM: return "STADIUM";
         case SCENE_VOXWORLD: return "VOXWORLD";
         case SCENE_POO_POO_ISLAND: return "POO_POO_ISLAND";
+        case SCENE_STORY_CAVE: return "STORY_CAVE";
         default: return "UNKNOWN";
     }
 }
 
 static int team_id_is_valid(int team_id) {
     return team_id == TDMB_BLUE_TEAM || team_id == TDMB_RED_TEAM;
+}
+
+typedef struct {
+    float x, y, z;
+} StorySpawn;
+
+static const StorySpawn story_bear_spawns[STORY_BEAR_COUNT] = {
+    {8.0f, 4.0f, -540.0f},   /* Early isolated threat. */
+    {-18.0f, 4.0f, -260.0f},
+    {24.0f, 4.0f, -180.0f},  /* Mid double encounter. */
+    {-26.0f, 4.0f, 120.0f},  /* Around-bend surprise. */
+    {14.0f, 4.0f, 490.0f},
+    {-16.0f, 4.0f, 560.0f}   /* Stronger final stretch pair. */
+};
+
+static void story_bear_think(PlayerState *bear, PlayerState *hero, unsigned int now_ms) {
+    if (!bear || !hero || !bear->active || bear->state == STATE_DEAD) return;
+    float dx = hero->x - bear->x;
+    float dz = hero->z - bear->z;
+    float dist_sq = dx * dx + dz * dz;
+    float dist = sqrtf(dist_sq);
+
+    int phase = bear->ctf_bot_intent;
+    if (phase <= 0 && dist < 120.0f) phase = 1; /* alerted */
+    if (phase > 0) phase = (dist > 18.0f) ? 2 : 3; /* chasing vs attacking */
+    bear->ctf_bot_intent = phase;
+
+    bear->in_fwd = 0.0f;
+    bear->in_strafe = 0.0f;
+    bear->in_jump = 0;
+    bear->in_reload = 0;
+    bear->in_ability = 0;
+    bear->crouching = 0;
+    bear->in_use = 0;
+    bear->current_weapon = WPN_KNIFE;
+
+    if (phase > 0) {
+        float target_yaw = atan2f(dx, -dz) * 57.29578f;
+        bear->yaw = target_yaw;
+        if (phase == 2) {
+            MoveIntent move_intent = {
+                .forward = 1.0f,
+                .strafe = 0.0f,
+                .control_yaw_deg = bear->yaw,
+                .wants_jump = 0,
+                .wants_sprint = 0
+            };
+            MoveWish move_wish = shankpit_move_wish_from_intent(move_intent);
+            accelerate(bear, move_wish.dir_x, move_wish.dir_z, MAX_SPEED * 0.82f, ACCEL);
+        }
+    }
+
+    bear->in_shoot = (phase == 3 && dist < 24.0f) ? 1 : 0;
+    if (phase == 2 && dist < 48.0f && (now_ms % 91u) == 0u && bear->on_ground) {
+        bear->in_jump = 1;
+    }
 }
 
 typedef enum {
@@ -779,6 +838,21 @@ static void update_projectiles(unsigned int now_ms) {
 
 void local_update(float fwd, float str, float yaw, float pitch, int shoot, int weapon_req, int jump, int crouch, int reload, int ability, void *server_context, unsigned int cmd_time) {
     PlayerState *p0 = &local_state.players[0];
+    if (local_state.game_mode == MODE_STORY) {
+        if (local_state.story_cutscene_start_ms == 0) local_state.story_cutscene_start_ms = cmd_time;
+        if (local_state.story_phase == STORY_PHASE_CUTSCENE) {
+            unsigned int elapsed = cmd_time - local_state.story_cutscene_start_ms;
+            if (elapsed < STORY_CUTSCENE_MS) {
+                fwd = 0.0f; str = 0.0f; shoot = 0; jump = 0; crouch = 0; reload = 0; ability = 0;
+                yaw = local_state.story_intro_yaw;
+                pitch = local_state.story_intro_pitch;
+            } else {
+                local_state.story_phase = STORY_PHASE_PLAYING;
+            }
+        } else if (local_state.story_phase == STORY_PHASE_COMPLETE || local_state.story_phase == STORY_PHASE_FAILED) {
+            fwd = 0.0f; str = 0.0f; shoot = 0; jump = 0; crouch = 0; reload = 0; ability = 0;
+        }
+    }
     if (local_state.match_over && (local_state.game_mode == MODE_TDMB || local_state.game_mode == MODE_CTFB)) {
         fwd = 0.0f; str = 0.0f; shoot = 0; jump = 0; crouch = 0; reload = 0; ability = 0;
     }
@@ -858,6 +932,19 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
         PlayerState *p = &local_state.players[i];
         if (!p->active) continue;
         if (p->state == STATE_DEAD) {
+            if (local_state.game_mode == MODE_STORY && i > 0) {
+                p->in_shoot = 0;
+                p->in_reload = 0;
+                p->in_use = 0;
+                p->in_jump = 0;
+                p->in_ability = 0;
+                p->is_shooting = 0;
+                p->attack_cooldown = 0;
+                p->reload_timer = 0;
+                p->respawn_time = 0;
+                p->use_was_down = p->in_use;
+                continue;
+            }
             if (p->in_vehicle && p->vehicle_type == VEH_BUGGY) {
                 for (int bi = 0; bi < MAX_BUGGIES; bi++) {
                     if (local_state.buggies[bi].active && local_state.buggies[bi].occupant_player_id == i) {
@@ -891,6 +978,9 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
             continue;
         }
         if (i > 0 && p->active && p->state != STATE_DEAD) {
+            if (local_state.game_mode == MODE_STORY) {
+                story_bear_think(p, p0, cmd_time);
+            } else {
             float b_fwd=0, b_yaw=p->yaw;
             int b_btns=0;
             bot_think(i, local_state.players, &b_fwd, &b_yaw, &b_btns);
@@ -908,6 +998,7 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
             p->in_use = ((b_btns & BTN_USE) != 0);
             p->in_ability = 0;
             if ((b_btns & BTN_JUMP) && p->on_ground) { p->y += 0.1f; p->vy += JUMP_FORCE; }
+            }
         }
         if (local_state.game_mode == MODE_CTFB) {
             ctf_handle_use_interactions(p, cmd_time);
@@ -942,6 +1033,23 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
             tdmb_last_kills[i] = pp->kills;
         }
     }
+    if (local_state.game_mode == MODE_STORY) {
+        if (p0->state == STATE_DEAD) {
+            local_state.story_phase = STORY_PHASE_FAILED;
+            local_init_match(1, MODE_STORY);
+            return;
+        }
+        if (local_state.story_phase == STORY_PHASE_PLAYING) {
+            float dx = p0->x - local_state.story_end_x;
+            float dy = p0->y - local_state.story_end_y;
+            float dz = p0->z - local_state.story_end_z;
+            float rr = local_state.story_end_radius * local_state.story_end_radius;
+            if (dx*dx + dy*dy + dz*dz <= rr) {
+                local_state.story_phase = STORY_PHASE_COMPLETE;
+                local_state.match_over = 1;
+            }
+        }
+    }
 }
 
 void local_init_match(int num_players, int mode) {
@@ -953,6 +1061,14 @@ void local_init_match(int num_players, int mode) {
     local_state.transition_timer = 0;
     local_state.winning_team = -1;
     local_state.score_limit = (mode == MODE_TDMB || mode == MODE_TDMO) ? TDMB_SCORE_LIMIT : (mode == MODE_CTFB ? CTFB_SCORE_LIMIT : 0);
+    local_state.story_phase = STORY_PHASE_PLAYING;
+    local_state.story_cutscene_start_ms = 0;
+    local_state.story_intro_yaw = 180.0f;
+    local_state.story_intro_pitch = 0.0f;
+    local_state.story_end_x = 0.0f;
+    local_state.story_end_y = 4.0f;
+    local_state.story_end_z = 730.0f;
+    local_state.story_end_radius = 28.0f;
 
     if (mode == MODE_TDMB) {
         num_players = 1 + TDMB_BLUE_BOTS + TDMB_RED_BOTS;
@@ -961,6 +1077,10 @@ void local_init_match(int num_players, int mode) {
     } else if (mode == MODE_CTFB) {
         num_players = 1 + TDMB_BLUE_BOTS + TDMB_RED_BOTS;
         local_state.scene_id = SCENE_OIL_TANKER;
+    } else if (mode == MODE_STORY) {
+        num_players = 1 + STORY_BEAR_COUNT;
+        local_state.scene_id = SCENE_STORY_CAVE;
+        local_state.story_phase = STORY_PHASE_CUTSCENE;
     } else {
         local_state.scene_id = SCENE_GARAGE_OSAKA;
     }
@@ -976,11 +1096,14 @@ void local_init_match(int num_players, int mode) {
     local_state.players[0].scene_id = local_state.scene_id;
     local_state.players[0].carried_flag_team_id = -1;
     phys_respawn(&local_state.players[0], 0);
+    local_state.story_intro_yaw = local_state.players[0].yaw;
 
     for(int i=1; i<num_players; i++) {
         local_state.players[i].active = 1;
         local_state.players[i].is_bot = 1;
-        if (mode == MODE_TDMB || mode == MODE_CTFB) {
+        if (mode == MODE_STORY) {
+            local_state.players[i].team_id = 1;
+        } else if (mode == MODE_TDMB || mode == MODE_CTFB) {
             local_state.players[i].team_id = (i <= TDMB_BLUE_BOTS) ? TDMB_BLUE_TEAM : TDMB_RED_TEAM;
         } else {
             local_state.players[i].team_id = (mode == MODE_TDM || mode == MODE_CTF || mode == MODE_TDMO) ? (i % 2) : -1;
@@ -989,6 +1112,18 @@ void local_init_match(int num_players, int mode) {
         local_state.players[i].carried_flag_team_id = -1;
         phys_respawn(&local_state.players[i], i*100);
         init_genome(&local_state.players[i].brain);
+        if (mode == MODE_STORY && i - 1 < STORY_BEAR_COUNT) {
+            local_state.players[i].x = story_bear_spawns[i - 1].x;
+            local_state.players[i].y = story_bear_spawns[i - 1].y;
+            local_state.players[i].z = story_bear_spawns[i - 1].z;
+            local_state.players[i].vx = local_state.players[i].vy = local_state.players[i].vz = 0.0f;
+            local_state.players[i].yaw = 180.0f;
+            local_state.players[i].pitch = 0.0f;
+            local_state.players[i].health = (i >= 5) ? 180 : 140;
+            local_state.players[i].shield = 0;
+            local_state.players[i].current_weapon = WPN_KNIFE;
+            local_state.players[i].ctf_bot_intent = 0;
+        }
     }
     scene_load(local_state.scene_id);
     if (mode == MODE_CTFB) {

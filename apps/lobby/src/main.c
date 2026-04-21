@@ -672,6 +672,7 @@ void draw_string(const char* str, float x, float y, float size) {
 typedef enum {
     LOBBY_JOIN = 0,
     LOBBY_TDMO,
+    LOBBY_STORY,
     LOBBY_SOLO,
     LOBBY_BATTLE,
     LOBBY_TDMB,
@@ -684,6 +685,7 @@ char lobby_labels_mutable[LOBBY_COUNT][64];
 static const char *LOBBY_LABELS[LOBBY_COUNT] = {
     "JOIN",
     "TDMO",
+    "STORY",
     "SOLO",
     "TRAIN",
     "TDMB",
@@ -796,6 +798,8 @@ static void lobby_apply_scene_id(const char *scene_id) {
         scene_load(SCENE_OIL_TANKER);
     } else if (strcmp(scene_id, "POO_POO_ISLAND") == 0) {
         scene_load(SCENE_POO_POO_ISLAND);
+    } else if (strcmp(scene_id, "STORY_CAVE") == 0) {
+        scene_load(SCENE_STORY_CAVE);
     }
 }
 
@@ -822,6 +826,9 @@ static void lobby_apply_ui_state() {
     } else if (strcmp(ui_state.active_mode_id, "mode.battle") == 0) {
         app_state = STATE_GAME_LOCAL;
         local_init_match(12, MODE_DEATHMATCH);
+    } else if (strcmp(ui_state.active_mode_id, "mode.story") == 0) {
+        app_state = STATE_GAME_LOCAL;
+        local_init_match(1, MODE_STORY);
     } else if (strcmp(ui_state.active_mode_id, "mode.tdmb") == 0) {
         app_state = STATE_GAME_LOCAL;
         local_init_match(12, MODE_TDMB);
@@ -886,6 +893,9 @@ static void lobby_start_action(int action) {
     } else {
         app_state = STATE_GAME_LOCAL;
         switch (action) {
+            case LOBBY_STORY:
+                local_init_match(1, MODE_STORY);
+                break;
             case LOBBY_SOLO:
                 local_init_match(1, MODE_DEATHMATCH);
                 break;
@@ -3033,6 +3043,8 @@ void draw_player_3rd(PlayerState *p) {
         int forced_skin = -1;
         if (local_state.game_mode == MODE_TDMB || local_state.game_mode == MODE_TDMO || local_state.game_mode == MODE_CTFB) {
             forced_skin = (p->team_id == 1) ? SKIN_NINJA : SKIN_PIRATE;
+        } else if (local_state.game_mode == MODE_STORY && p->is_bot) {
+            forced_skin = SKIN_CYBORG;
         }
         int draw_skin = (forced_skin >= 0) ? forced_skin : clamp_skin_id(g_selected_skin);
         switch (draw_skin) {
@@ -3292,6 +3304,7 @@ static const char *scene_name_ui(int scene_id) {
         case SCENE_DUST_COMPOUND: return "DUST_COMPOUND";
         case SCENE_OIL_TANKER: return "OIL_TANKER";
         case SCENE_POO_POO_ISLAND: return "POO_POO_ISLAND";
+        case SCENE_STORY_CAVE: return "STORY_CAVE";
         default: return "UNKNOWN";
     }
 }
@@ -3791,6 +3804,26 @@ static void draw_tdmb_match_over_overlay(void) {
     glMatrixMode(GL_MODELVIEW); glPopMatrix();
 }
 
+static void draw_story_overlay(void) {
+    if (local_state.game_mode != MODE_STORY) return;
+    if (local_state.story_phase != STORY_PHASE_COMPLETE) return;
+    glDisable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    glColor4f(0.0f, 0.0f, 0.0f, 0.50f);
+    glBegin(GL_QUADS);
+    glVertex2f(280, 250); glVertex2f(1000, 250); glVertex2f(1000, 470); glVertex2f(280, 470);
+    glEnd();
+    glColor3f(0.92f, 1.0f, 0.45f);
+    draw_string("CAVE CLEARED", 485, 390, 10);
+    glColor3f(0.95f, 0.95f, 0.95f);
+    draw_string("STORY COMPLETE", 478, 340, 7);
+    draw_string("ESC: BACK TO MENU", 474, 300, 6);
+    glEnable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glMatrixMode(GL_MODELVIEW); glPopMatrix();
+}
+
 void draw_scene(PlayerState *render_p) {
     if (vs0_art_direction_enabled) glClearColor(0.18f, 0.25f, 0.36f, 1.0f);
     else glClearColor(0.02f, 0.02f, 0.05f, 1.0f);
@@ -3816,6 +3849,7 @@ void draw_scene(PlayerState *render_p) {
         }
     }
     static float heli_cam_x = 0.0f, heli_cam_y = 0.0f, heli_cam_z = 0.0f;
+    int story_cutscene = (local_state.game_mode == MODE_STORY && local_state.story_phase == STORY_PHASE_CUTSCENE);
     if (render_p->in_vehicle && render_p->vehicle_type == VEH_HELICOPTER) {
         HelicopterState *hh = NULL;
         for (int i = 0; i < MAX_HELICOPTERS; i++) {
@@ -3860,7 +3894,22 @@ void draw_scene(PlayerState *render_p) {
         reconcile_z = reconcile_corr_z;
     }
 
-    if (!(render_p->in_vehicle && render_p->vehicle_type == VEH_HELICOPTER)) {
+    if (story_cutscene) {
+        float rr = -render_p->yaw * 0.01745f;
+        float fx = sinf(rr);
+        float fz = -cosf(rr);
+        float cam_x = render_p->x + fx * 18.0f;
+        float cam_y_cut = render_p->y + 5.0f;
+        float cam_z = render_p->z + fz * 18.0f;
+        float look_dx = render_p->x - cam_x;
+        float look_dy = (render_p->y + 3.0f) - cam_y_cut;
+        float look_dz = render_p->z - cam_z;
+        float look_yaw = atan2f(look_dx, -look_dz) * 57.29578f;
+        float look_pitch = atan2f(look_dy, sqrtf(look_dx * look_dx + look_dz * look_dz)) * 57.29578f;
+        glRotatef(-look_pitch, 1, 0, 0);
+        glRotatef(-look_yaw, 0, 1, 0);
+        glTranslatef(-cam_x, -cam_y_cut, -cam_z);
+    } else if (!(render_p->in_vehicle && render_p->vehicle_type == VEH_HELICOPTER)) {
         float draw_cam_pitch = lerpf(cam_pitch, -14.0f, death_cam_blend);
         glRotatef(-draw_cam_pitch, 1, 0, 0); glRotatef(-cam_yaw, 0, 1, 0);
         glTranslatef(-((render_p->x + reconcile_x) - cx), -((render_p->y + reconcile_y) + cam_y), -((render_p->z + reconcile_z) - cz));
@@ -3870,6 +3919,14 @@ void draw_scene(PlayerState *render_p) {
         float sky_cam_x = (render_p->x + reconcile_x) - cx;
         float sky_cam_y = (render_p->y + reconcile_y) + cam_y;
         float sky_cam_z = (render_p->z + reconcile_z) - cz;
+        if (story_cutscene) {
+            float rr = -render_p->yaw * 0.01745f;
+            float fx = sinf(rr);
+            float fz = -cosf(rr);
+            sky_cam_x = render_p->x + fx * 18.0f;
+            sky_cam_y = render_p->y + 5.0f;
+            sky_cam_z = render_p->z + fz * 18.0f;
+        }
         if (render_p->in_vehicle && render_p->vehicle_type == VEH_HELICOPTER) {
             sky_cam_x = heli_cam_x;
             sky_cam_y = heli_cam_y;
@@ -3904,16 +3961,21 @@ void draw_scene(PlayerState *render_p) {
         draw_helicopter_model(h);
     }
     draw_projectiles();
-    if (render_p->in_vehicle && render_p->vehicle_type != VEH_BUGGY) draw_player_3rd(render_p);
+    if (story_cutscene || (render_p->in_vehicle && render_p->vehicle_type != VEH_BUGGY)) draw_player_3rd(render_p);
     for(int i=0; i<MAX_CLIENTS; i++) {
         PlayerState *p = &local_state.players[i];
         if (!p->active || p->scene_id != render_p->scene_id) continue;
         if (p == render_p) continue;
         draw_player_3rd(p);
     }
-    draw_weapon_p(render_p); draw_hud(render_p); draw_garage_overlay(render_p); draw_tab_scoreboard(render_p);
+    if (!story_cutscene) {
+        draw_weapon_p(render_p);
+        draw_hud(render_p);
+    }
+    draw_garage_overlay(render_p); draw_tab_scoreboard(render_p);
     draw_travel_overlay();
     draw_tdmb_match_over_overlay();
+    draw_story_overlay();
 }
 
 typedef struct {
@@ -5064,6 +5126,7 @@ int main(int argc, char* argv[]) {
                     }
                 }
                 if(e.type == SDL_MOUSEMOTION) {
+                    if (local_state.game_mode == MODE_STORY && local_state.story_phase == STORY_PHASE_CUTSCENE) continue;
                     if (app_state == STATE_GAME_NET && net_spawn_protect_cmds > 0) continue;
                     float sens = (current_fov < 50.0f) ? 0.05f : 0.15f; 
                     cam_yaw -= e.motion.xrel * sens;
