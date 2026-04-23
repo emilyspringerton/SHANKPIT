@@ -12,7 +12,7 @@ LIBS_GL  := -lSDL2 -lGL -lGLU -lm
 LIBS_M   := -lm
 
 # ---- Sources ----
-LOBBY_SRC    := apps/lobby/src/main.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/retro_lighting.c packages/world/terrain.c
+LOBBY_SRC    := apps/lobby/src/main.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/retro_lighting.c packages/render/shader.c packages/render/grass_renderer.c packages/world/terrain.c
 SERVER_SRC   := apps/server/src/main.c packages/world/terrain.c
 SERVERCTL_SRC:= apps/server/serverctl.c
 

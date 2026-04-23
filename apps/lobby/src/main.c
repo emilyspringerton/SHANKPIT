@@ -38,6 +38,7 @@
 #include "../../../packages/render/proc_tex.h"
 #include "../../../packages/render/retro_sky.h"
 #include "../../../packages/render/retro_lighting.h"
+#include "../../../packages/render/grass_renderer.h"
 
 #ifndef NET_VERBOSE_LOG
 #define NET_VERBOSE_LOG 1
@@ -124,10 +125,16 @@ static RetroLightingPreset g_world_lighting_preset = RETRO_LIGHTING_DAY_STATIC;
 static int terrain_wireframe_debug = 0;
 static int terrain_normals_debug = 0;
 static int voxworld_points_debug = 0;
+static int grass_shader_enabled = 1;
+static float grass_render_distance = 980.0f;
+static float grass_density_scale = 1.0f;
 static unsigned int terrain_debug_last_log_ms = 0;
 static ProcTexture g_vehicle_noise_tex = {0};
 static ProcTexture g_vehicle_glitch_tex = {0};
 static RetroSky g_retro_sky = {0};
+static GrassRenderer g_grass_renderer = {0};
+static int g_grass_shader_runtime_available = 0;
+static const char *GRASS_CONFIG_PATH = "shankpit_grass.cfg";
 
 typedef enum {
     SKIN_BAT = 0,
@@ -701,6 +708,52 @@ static void lobby_init_labels() {
 static int clamp_skin_id(int skin_id) {
     if (skin_id < SKIN_BAT || skin_id >= SKIN_COUNT) return SKIN_BAT;
     return skin_id;
+}
+
+static float clamp_grass_render_distance(float v) {
+    if (v < 220.0f) return 220.0f;
+    if (v > 2400.0f) return 2400.0f;
+    return v;
+}
+
+static float clamp_grass_density(float v) {
+    if (v < 0.25f) return 0.25f;
+    if (v > 2.0f) return 2.0f;
+    return v;
+}
+
+static void save_grass_settings(void) {
+    FILE *f = fopen(GRASS_CONFIG_PATH, "w");
+    if (!f) return;
+    fprintf(f, "grass_shader_enabled=%d\n", grass_shader_enabled ? 1 : 0);
+    fprintf(f, "grass_render_distance=%.1f\n", grass_render_distance);
+    fprintf(f, "grass_density_scale=%.2f\n", grass_density_scale);
+    fclose(f);
+}
+
+static void load_grass_settings(void) {
+    FILE *f = fopen(GRASS_CONFIG_PATH, "r");
+    if (!f) {
+        grass_shader_enabled = 1;
+        grass_render_distance = 980.0f;
+        grass_density_scale = 1.0f;
+        return;
+    }
+
+    char line[128];
+    while (fgets(line, sizeof(line), f)) {
+        char key[64];
+        char val[64];
+        if (sscanf(line, "%63[^=]=%63s", key, val) != 2) continue;
+        if (strcmp(key, "grass_shader_enabled") == 0) {
+            grass_shader_enabled = (atoi(val) != 0);
+        } else if (strcmp(key, "grass_render_distance") == 0) {
+            grass_render_distance = clamp_grass_render_distance((float)atof(val));
+        } else if (strcmp(key, "grass_density_scale") == 0) {
+            grass_density_scale = clamp_grass_density((float)atof(val));
+        }
+    }
+    fclose(f);
 }
 
 static void save_skin_selection() {
@@ -1463,23 +1516,28 @@ static float grass_hash01(float x, float z, float seed) {
     return n - floorf(n);
 }
 
-static void draw_voxworld_grass_overlay(const RetroLightingState *lighting, const PlayerState *viewer) {
-    if (local_state.scene_id != SCENE_VOXWORLD || !viewer) return;
+typedef struct VoxelGrassDrawList {
+    GrassInstance instances[8192];
+    int count;
+} VoxelGrassDrawList;
+
+static void build_voxworld_grass_draw_list(const PlayerState *viewer, VoxelGrassDrawList *out_list) {
+    if (!viewer || !out_list) return;
+    out_list->count = 0;
+    if (local_state.scene_id != SCENE_VOXWORLD) return;
+
     TerrainHeightfield *t = scene_active_terrain();
     if (!t || !t->heights) return;
 
-    const float spacing = 26.0f;
-    const float radius = 980.0f;
+    const float spacing = 26.0f / clamp_grass_density(grass_density_scale);
+    const float radius = grass_render_distance;
     const float start_x = floorf((viewer->x - radius) / spacing) * spacing;
     const float end_x = ceilf((viewer->x + radius) / spacing) * spacing;
     const float start_z = floorf((viewer->z - radius) / spacing) * spacing;
     const float end_z = ceilf((viewer->z + radius) / spacing) * spacing;
-
-    glDisable(GL_TEXTURE_2D);
-    glDisable(GL_CULL_FACE);
-    glBegin(GL_QUADS);
     for (float z = start_z; z <= end_z; z += spacing) {
         for (float x = start_x; x <= end_x; x += spacing) {
+            if (out_list->count >= (int)(sizeof(out_list->instances) / sizeof(out_list->instances[0]))) return;
             float jx = (grass_hash01(x, z, 1.0f) - 0.5f) * spacing * 0.72f;
             float jz = (grass_hash01(x, z, 2.0f) - 0.5f) * spacing * 0.72f;
             float gx = x + jx;
@@ -1494,49 +1552,83 @@ static void draw_voxworld_grass_overlay(const RetroLightingState *lighting, cons
             terrain_sample_normal(t, gx, gz, &nx, &ny, &nz);
             if (ny < 0.72f) continue;
 
-            float y = terrain_sample_height(t, gx, gz) + 0.08f;
             float dist_x = gx - viewer->x;
             float dist_z = gz - viewer->z;
             float dist = sqrtf(dist_x * dist_x + dist_z * dist_z);
-            float far_fade = 1.0f - smoothstepf(640.0f, radius, dist);
+            float far_fade = 1.0f - smoothstepf(radius * 0.65f, radius, dist);
             if (far_fade <= 0.02f) continue;
 
-            float h = 0.75f + grass_hash01(gx, gz, 5.0f) * 1.05f;
-            float half_w = 0.10f + grass_hash01(gx, gz, 7.0f) * 0.14f;
-            float yaw = grass_hash01(gx, gz, 9.0f) * 6.2831853f;
-            float dx = cosf(yaw) * half_w;
-            float dz = sinf(yaw) * half_w;
-
-            float lit_r = 1.0f, lit_g = 1.0f, lit_b = 1.0f;
-            retro_eval_brush_lighting_rgb(lighting, nx, ny, nz, 0.58f, &lit_r, &lit_g, &lit_b);
-
-            float base_r = (0.16f + mask * 0.07f) * lit_r * far_fade;
-            float base_g = (0.30f + mask * 0.18f) * lit_g * far_fade;
-            float base_b = (0.12f + mask * 0.06f) * lit_b * far_fade;
-            float top_r = (0.28f + mask * 0.09f) * lit_r * far_fade;
-            float top_g = (0.55f + mask * 0.22f) * lit_g * far_fade;
-            float top_b = (0.18f + mask * 0.08f) * lit_b * far_fade;
-            retro_apply_fog_rgb(&base_r, &base_g, &base_b, lighting, dist);
-            retro_apply_fog_rgb(&top_r, &top_g, &top_b, lighting, dist);
-
-            glColor3f(base_r, base_g, base_b);
-            glVertex3f(gx - dx, y, gz - dz);
-            glVertex3f(gx + dx, y, gz + dz);
-            glColor3f(top_r, top_g, top_b);
-            glVertex3f(gx + dx * 0.38f, y + h, gz + dz * 0.38f);
-            glVertex3f(gx - dx * 0.38f, y + h, gz - dz * 0.38f);
-
-            float dx2 = -dz;
-            float dz2 = dx;
-            glColor3f(base_r, base_g, base_b);
-            glVertex3f(gx - dx2, y, gz - dz2);
-            glVertex3f(gx + dx2, y, gz + dz2);
-            glColor3f(top_r, top_g, top_b);
-            glVertex3f(gx + dx2 * 0.38f, y + h * 0.92f, gz + dz2 * 0.38f);
-            glVertex3f(gx - dx2 * 0.38f, y + h * 0.92f, gz - dz2 * 0.38f);
+            GrassInstance *g = &out_list->instances[out_list->count++];
+            g->x = gx;
+            g->y = terrain_sample_height(t, gx, gz) + 0.08f;
+            g->z = gz;
+            g->height = 0.75f + grass_hash01(gx, gz, 5.0f) * 1.05f;
+            g->half_width = 0.10f + grass_hash01(gx, gz, 7.0f) * 0.14f;
+            g->yaw = grass_hash01(gx, gz, 9.0f) * 6.2831853f;
+            g->mask = mask;
+            g->fade = far_fade;
+            g->tint = grass_hash01(gx, gz, 13.0f);
         }
     }
+}
+
+static void draw_voxworld_grass_overlay_legacy(const RetroLightingState *lighting, const PlayerState *viewer, const VoxelGrassDrawList *list) {
+    if (local_state.scene_id != SCENE_VOXWORLD || !viewer) return;
+    TerrainHeightfield *t = scene_active_terrain();
+    if (!t || !t->heights) return;
+    if (!list || list->count <= 0) return;
+
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_CULL_FACE);
+    glBegin(GL_QUADS);
+    for (int i = 0; i < list->count; i++) {
+        const GrassInstance *g = &list->instances[i];
+        float gx = g->x, y = g->y, gz = g->z;
+        float nx, ny, nz;
+        terrain_sample_normal(t, gx, gz, &nx, &ny, &nz);
+        float lit_r = 1.0f, lit_g = 1.0f, lit_b = 1.0f;
+        retro_eval_brush_lighting_rgb(lighting, nx, ny, nz, 0.58f, &lit_r, &lit_g, &lit_b);
+        float base_r = (0.16f + g->mask * 0.07f + g->tint * 0.04f) * lit_r * g->fade;
+        float base_g = (0.30f + g->mask * 0.18f + g->tint * 0.06f) * lit_g * g->fade;
+        float base_b = (0.12f + g->mask * 0.06f + g->tint * 0.03f) * lit_b * g->fade;
+        float top_r = (0.28f + g->mask * 0.09f + g->tint * 0.05f) * lit_r * g->fade;
+        float top_g = (0.55f + g->mask * 0.22f + g->tint * 0.08f) * lit_g * g->fade;
+        float top_b = (0.18f + g->mask * 0.08f + g->tint * 0.03f) * lit_b * g->fade;
+        float dist_x = gx - viewer->x;
+        float dist_z = gz - viewer->z;
+        float dist = sqrtf(dist_x * dist_x + dist_z * dist_z);
+        retro_apply_fog_rgb(&base_r, &base_g, &base_b, lighting, dist);
+        retro_apply_fog_rgb(&top_r, &top_g, &top_b, lighting, dist);
+
+        float dx = cosf(g->yaw) * g->half_width;
+        float dz = sinf(g->yaw) * g->half_width;
+        glColor3f(base_r, base_g, base_b);
+        glVertex3f(gx - dx, y, gz - dz);
+        glVertex3f(gx + dx, y, gz + dz);
+        glColor3f(top_r, top_g, top_b);
+        glVertex3f(gx + dx * 0.38f, y + g->height, gz + dz * 0.38f);
+        glVertex3f(gx - dx * 0.38f, y + g->height, gz - dz * 0.38f);
+
+        float dx2 = -dz;
+        float dz2 = dx;
+        glColor3f(base_r, base_g, base_b);
+        glVertex3f(gx - dx2, y, gz - dz2);
+        glVertex3f(gx + dx2, y, gz + dz2);
+        glColor3f(top_r, top_g, top_b);
+        glVertex3f(gx + dx2 * 0.38f, y + g->height * 0.92f, gz + dz2 * 0.38f);
+        glVertex3f(gx - dx2 * 0.38f, y + g->height * 0.92f, gz - dz2 * 0.38f);
+    }
     glEnd();
+}
+
+static void draw_voxworld_grass_overlay(const RetroLightingState *lighting, const PlayerState *viewer) {
+    VoxelGrassDrawList draw_list = {0};
+    build_voxworld_grass_draw_list(viewer, &draw_list);
+    if (grass_shader_enabled && g_grass_shader_runtime_available && grass_renderer_can_render(&g_grass_renderer)) {
+        grass_renderer_render(&g_grass_renderer, draw_list.instances, draw_list.count);
+        return;
+    }
+    draw_voxworld_grass_overlay_legacy(lighting, viewer, &draw_list);
 }
 
 static void draw_voxworld_bushes(void) {
@@ -3277,13 +3369,21 @@ void draw_hud(PlayerState *p) {
         draw_string(style_buf, 50, 98, vs0_art_direction_enabled ? 4 : 6);
     }
     glColor3f(0.58f, 0.75f, 0.76f);
-    draw_string(terrain_wireframe_debug ? "F6 TERRAIN WIRE:ON" : "F6 TERRAIN WIRE:OFF", 50, 24, vs0_art_direction_enabled ? 3 : 5);
+    draw_string(grass_shader_enabled ? "F5 GRASS SHADER:ON" : "F5 GRASS SHADER:OFF", 50, 24, vs0_art_direction_enabled ? 3 : 5);
     glColor3f(0.68f, 0.56f, 0.76f);
-    draw_string(terrain_normals_debug ? "F7 TERRAIN NORMALS:ON" : "F7 TERRAIN NORMALS:OFF", 220, 24, vs0_art_direction_enabled ? 3 : 5);
+    draw_string(terrain_wireframe_debug ? "F6 TERRAIN WIRE:ON" : "F6 TERRAIN WIRE:OFF", 260, 24, vs0_art_direction_enabled ? 3 : 5);
+    glColor3f(0.64f, 0.82f, 0.74f);
+    draw_string(terrain_normals_debug ? "F7 TERRAIN NORMALS:ON" : "F7 TERRAIN NORMALS:OFF", 470, 24, vs0_art_direction_enabled ? 3 : 5);
     glColor3f(0.78f, 0.69f, 0.48f);
-    draw_string(voxworld_points_debug ? "F11 SCENE DEBUG:ON" : "F11 SCENE DEBUG:OFF", 430, 24, vs0_art_direction_enabled ? 3 : 5);
+    draw_string(voxworld_points_debug ? "F11 SCENE DEBUG:ON" : "F11 SCENE DEBUG:OFF", 710, 24, vs0_art_direction_enabled ? 3 : 5);
     glColor3f(0.72f, 0.74f, 0.80f);
-    draw_string(vs0_art_direction_enabled ? "F12 VS0 ART:ON" : "F12 VS0 ART:OFF", 650, 24, 3);
+    draw_string(vs0_art_direction_enabled ? "F12 VS0 ART:ON" : "F12 VS0 ART:OFF", 930, 24, 3);
+    if (local_state.scene_id == SCENE_VOXWORLD) {
+        char grass_dist_buf[72];
+        snprintf(grass_dist_buf, sizeof(grass_dist_buf), "[ ] GRASS DIST: %.0f", grass_render_distance);
+        glColor3f(0.53f, 0.81f, 0.64f);
+        draw_string(grass_dist_buf, 50, 46, vs0_art_direction_enabled ? 3 : 4);
+    }
 
     if (p->current_weapon == WPN_KATANA) {
         char katana_buf[64];
@@ -4921,10 +5021,20 @@ int main(int argc, char* argv[]) {
     proctex_make_glitch_marks_rgba(&g_vehicle_glitch_tex, 64, 64, g_vehicle_style.seed ^ 0xA53u);
     proctex_upload_to_gl(&g_vehicle_glitch_tex);
     retro_sky_init(&g_retro_sky);
+    grass_renderer_init(&g_grass_renderer);
+    g_grass_shader_runtime_available = grass_renderer_can_render(&g_grass_renderer);
     net_init();
     
     local_init_match(1, 0);
     load_skin_selection();
+    load_grass_settings();
+    if (!g_grass_shader_runtime_available && grass_shader_enabled) {
+        printf("[GRASS_SHADER] disabled at runtime: shader path unavailable, using legacy renderer\n");
+    }
+    printf("[GRASS] startup shader_enabled=%s shader_available=%s render_distance=%.1f density=%.2f\n",
+           grass_shader_enabled ? "on" : "off",
+           g_grass_shader_runtime_available ? "yes" : "no",
+           grass_render_distance, grass_density_scale);
     lobby_init_labels();
     ui_bridge_init("127.0.0.1", 17777);
     if (ui_bridge_fetch_state(&ui_state)) {
@@ -5088,6 +5198,10 @@ int main(int argc, char* argv[]) {
                     } else if (e.key.keysym.sym == SDLK_F6) {
                         terrain_wireframe_debug = !terrain_wireframe_debug;
                         printf("[TERRAIN] wireframe=%s\n", terrain_wireframe_debug ? "on" : "off");
+                    } else if (e.key.keysym.sym == SDLK_F5) {
+                        grass_shader_enabled = !grass_shader_enabled;
+                        printf("[GRASS] shader: %s\n", (grass_shader_enabled && g_grass_shader_runtime_available) ? "ON" : "OFF (legacy)");
+                        save_grass_settings();
                     } else if (e.key.keysym.sym == SDLK_F7) {
                         terrain_normals_debug = !terrain_normals_debug;
                         printf("[TERRAIN] normals=%s\n", terrain_normals_debug ? "on" : "off");
@@ -5103,6 +5217,14 @@ int main(int argc, char* argv[]) {
                     } else if (e.key.keysym.sym == SDLK_F12) {
                         vs0_art_direction_enabled = !vs0_art_direction_enabled;
                         printf("[VS0 ART] enabled=%s\n", vs0_art_direction_enabled ? "on" : "off");
+                    } else if (e.key.keysym.sym == SDLK_LEFTBRACKET) {
+                        grass_render_distance = clamp_grass_render_distance(grass_render_distance - 80.0f);
+                        printf("[GRASS] render_distance=%.1f\n", grass_render_distance);
+                        save_grass_settings();
+                    } else if (e.key.keysym.sym == SDLK_RIGHTBRACKET) {
+                        grass_render_distance = clamp_grass_render_distance(grass_render_distance + 80.0f);
+                        printf("[GRASS] render_distance=%.1f\n", grass_render_distance);
+                        save_grass_settings();
                     }
                 }
                 if(e.type == SDL_MOUSEMOTION) {
@@ -5338,6 +5460,8 @@ int main(int argc, char* argv[]) {
     }
     proc_tex_destroy(&g_vehicle_noise_tex);
     proc_tex_destroy(&g_vehicle_glitch_tex);
+    save_grass_settings();
+    grass_renderer_shutdown(&g_grass_renderer);
     retro_sky_shutdown(&g_retro_sky);
     SDL_Quit();
     return 0;

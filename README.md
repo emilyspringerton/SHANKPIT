@@ -658,3 +658,17 @@ Python (PyTorch/TF) ←→ C Extension ←→ Headless Sim
 - No dynamic memory allocation in hot paths
 - Inline hit detection in combat loop
 - Minimal function call overhead
+
+## Grass shader path (hybrid + fallback)
+
+A grass-only GLSL render path now exists for Voxworld and can be toggled at runtime without touching the rest of the legacy renderer.
+
+- Procedural placement remains the source of truth.
+- `F5` toggles shader grass on/off live (`ON` uses shader path, `OFF` forces legacy path).
+- `[` / `]` decrease/increase `grass_render_distance` during runtime.
+- Grass settings persist to `shankpit_grass.cfg`:
+  - `grass_shader_enabled=0|1`
+  - `grass_render_distance=<float>`
+  - `grass_density_scale=<float>`
+
+If shader compile/link or shader texture setup fails, SHANKPIT logs the failure and immediately falls back to the legacy grass renderer.

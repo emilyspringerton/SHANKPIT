@@ -70,7 +70,7 @@ jobs:
           set -euo pipefail
           test -f apps/lobby/src/main.c
 
-          x86_64-w64-mingw32-gcc apps/lobby/src/main.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/retro_lighting.c packages/world/terrain.c \
+          x86_64-w64-mingw32-gcc apps/lobby/src/main.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/retro_lighting.c packages/render/shader.c packages/render/grass_renderer.c packages/world/terrain.c \
             -o ShankPit.exe \
             -O2 -static-libgcc \
             -I./sdl2_mingw/include \
