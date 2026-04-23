@@ -238,6 +238,29 @@ This reflects the current direction of the project:
 - `F12`: VS0 art direction toggle.
 - `Esc`: return to lobby (or quit focused session state).
 
+## Grass shader path (hybrid, runtime toggle)
+
+SHANKPIT now keeps the original procedural Voxworld grass placement logic as the source of truth, then routes those placements into either:
+
+- legacy immediate-mode grass rendering (fallback/default-safe path), or
+- a grass-only GLSL render path with alpha-cutout cards, subtle color variation, and top/bottom tinting.
+
+### Runtime controls
+
+- `F5`: toggle grass shader path ON/OFF at runtime (`[GRASS]` log prints current mode).
+- `-` / `=`: decrease/increase grass render distance live (distance culling).
+
+### Persistent config keys
+
+`shankpit_grass.cfg` is now written/read at startup with:
+
+- `grass_shader_enabled=0|1`
+- `grass_render_distance=<float>`
+
+### Fallback behavior
+
+If grass texture creation/upload or shader compile/link fails, SHANKPIT logs a clear `[GRASS]` fallback message and automatically uses legacy grass rendering so grass does not disappear.
+
 ## System Architecture
 
 ### High-Level Components
