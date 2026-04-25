@@ -848,12 +848,16 @@ static void update_projectiles(unsigned int now_ms) {
 
 void local_update(float fwd, float str, float yaw, float pitch, int shoot, int weapon_req, int jump, int crouch, int reload, int ability, void *server_context, unsigned int cmd_time) {
     PlayerState *p0 = &local_state.players[0];
+    int story_cutscene = (local_state.game_mode == MODE_STORY && local_state.story_phase == STORY_PHASE_CUTSCENE);
     if (local_state.game_mode == MODE_STORY) {
         if (local_state.story_phase == STORY_PHASE_CUTSCENE) {
+            yaw = p0->yaw;
+            pitch = p0->pitch;
             fwd = 0.0f; str = 0.0f; shoot = 0; jump = 0; crouch = 0; reload = 0; ability = 0;
             if (cmd_time - local_state.story_phase_start_ms >= STORY_CUTSCENE_DURATION_MS) {
                 local_state.story_phase = STORY_PHASE_PLAYING;
                 local_state.story_phase_start_ms = cmd_time;
+                story_cutscene = 0;
             }
         } else if (local_state.story_phase == STORY_PHASE_COMPLETE || local_state.story_phase == STORY_PHASE_FAILED) {
             fwd = 0.0f; str = 0.0f; shoot = 0; jump = 0; crouch = 0; reload = 0; ability = 0;
@@ -872,12 +876,12 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
         reload = 0;
         ability = 0;
     }
-    if (!(local_state.game_mode == MODE_STORY && local_state.story_phase == STORY_PHASE_CUTSCENE)) {
+    if (!story_cutscene) {
         p0->yaw = yaw; p0->pitch = pitch;
     }
     p0->in_fwd = fwd;
     p0->in_strafe = str;
-    if (weapon_req >= 0 && weapon_req < MAX_WEAPONS) p0->current_weapon = weapon_req;
+    if (!story_cutscene && weapon_req >= 0 && weapon_req < MAX_WEAPONS) p0->current_weapon = weapon_req;
     if (p0->state == STATE_DEAD) {
         fwd = 0.0f; str = 0.0f; shoot = 0; jump = 0; crouch = 0; reload = 0; ability = 0;
     }

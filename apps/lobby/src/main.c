@@ -3883,15 +3883,16 @@ void draw_scene(PlayerState *render_p) {
         reconcile_z = reconcile_corr_z;
     }
 
+    float story_cam_x = 0.0f, story_cam_y = 0.0f, story_cam_z = 0.0f;
     if (story_cutscene) {
         float look_x = render_p->x;
         float look_y = render_p->y + 3.0f;
         float look_z = render_p->z;
         float yaw_rad = (180.0f - render_p->yaw) * 0.0174533f;
-        float cam_x = look_x + sinf(yaw_rad) * 18.0f;
-        float cam_y = look_y + 3.0f;
-        float cam_z = look_z + cosf(yaw_rad) * 18.0f;
-        gluLookAt(cam_x, cam_y, cam_z, look_x, look_y, look_z, 0.0f, 1.0f, 0.0f);
+        story_cam_x = look_x + sinf(yaw_rad) * 18.0f;
+        story_cam_y = look_y + 3.0f;
+        story_cam_z = look_z + cosf(yaw_rad) * 18.0f;
+        gluLookAt(story_cam_x, story_cam_y, story_cam_z, look_x, look_y, look_z, 0.0f, 1.0f, 0.0f);
     } else if (!(render_p->in_vehicle && render_p->vehicle_type == VEH_HELICOPTER)) {
         float draw_cam_pitch = lerpf(cam_pitch, -14.0f, death_cam_blend);
         glRotatef(-draw_cam_pitch, 1, 0, 0); glRotatef(-cam_yaw, 0, 1, 0);
@@ -3906,6 +3907,10 @@ void draw_scene(PlayerState *render_p) {
             sky_cam_x = heli_cam_x;
             sky_cam_y = heli_cam_y;
             sky_cam_z = heli_cam_z;
+        } else if (story_cutscene) {
+            sky_cam_x = story_cam_x;
+            sky_cam_y = story_cam_y;
+            sky_cam_z = story_cam_z;
         }
         /* draw_sky call here keeps sky rotation-locked to the camera, but camera-centered
            in world space so the background feels infinitely distant (no translation parallax). */
@@ -3943,7 +3948,8 @@ void draw_scene(PlayerState *render_p) {
         if (p == render_p) continue;
         draw_player_3rd(p);
     }
-    draw_weapon_p(render_p); draw_hud(render_p); draw_garage_overlay(render_p); draw_tab_scoreboard(render_p);
+    if (!story_cutscene) draw_weapon_p(render_p);
+    draw_hud(render_p); draw_garage_overlay(render_p); draw_tab_scoreboard(render_p);
     draw_travel_overlay();
     draw_tdmb_match_over_overlay();
 }
