@@ -3829,11 +3829,17 @@ void draw_scene(PlayerState *render_p) {
     float base_cam_y = (render_p->crouching ? 2.5f : EYE_HEIGHT);
     float cam_y = lerpf(base_cam_y, 4.5f, death_cam_blend);
     float cx = 0.0f, cz = 0.0f;
+    float cam_focus_x = render_p->x;
+    float cam_focus_y = render_p->y;
+    float cam_focus_z = render_p->z;
     BuggyState *cam_buggy = NULL;
     if (render_p->in_vehicle && render_p->vehicle_type == VEH_BUGGY) {
         for (int bi = 0; bi < MAX_BUGGIES; bi++) {
             if (local_state.buggies[bi].active && local_state.buggies[bi].occupant_player_id == render_p->id) {
                 cam_buggy = &local_state.buggies[bi];
+                cam_focus_x = cam_buggy->x;
+                cam_focus_y = cam_buggy->y;
+                cam_focus_z = cam_buggy->z;
                 break;
             }
         }
@@ -3863,14 +3869,18 @@ void draw_scene(PlayerState *render_p) {
             glTranslatef(-heli_cam_x, -heli_cam_y, -heli_cam_z);
         }
     } else {
-        float follow_yaw = cam_buggy ? cam_buggy->yaw : cam_yaw;
-        float cam_z_off = cam_buggy ? 16.5f : (render_p->in_vehicle ? 10.0f : lerpf(0.0f, 8.5f, death_cam_blend));
+        float follow_yaw = cam_yaw;
+        float cam_z_off = cam_buggy ? BUGGY_CAMERA_BACKUP : (render_p->in_vehicle ? 10.0f : lerpf(0.0f, 8.5f, death_cam_blend));
         float rad = -follow_yaw * 0.01745f;
         cx = sinf(rad) * cam_z_off;
         cz = cosf(rad) * cam_z_off;
         if (cam_buggy) {
-            cam_y = 5.2f;
-            cam_yaw = follow_yaw;
+            float buggy_rad = -cam_buggy->yaw * 0.01745f;
+            float fwd_x = sinf(buggy_rad);
+            float fwd_z = -cosf(buggy_rad);
+            cam_focus_x += fwd_x * BUGGY_CAMERA_LOOKAHEAD;
+            cam_focus_z += fwd_z * BUGGY_CAMERA_LOOKAHEAD;
+            cam_y = BUGGY_CAMERA_HEIGHT;
         }
     }
     
@@ -3881,6 +3891,11 @@ void draw_scene(PlayerState *render_p) {
         reconcile_x = reconcile_corr_x;
         reconcile_y = reconcile_corr_y;
         reconcile_z = reconcile_corr_z;
+    }
+    if (!cam_buggy) {
+        cam_focus_x += reconcile_x;
+        cam_focus_y += reconcile_y;
+        cam_focus_z += reconcile_z;
     }
 
     if (story_cutscene) {
@@ -3895,13 +3910,13 @@ void draw_scene(PlayerState *render_p) {
     } else if (!(render_p->in_vehicle && render_p->vehicle_type == VEH_HELICOPTER)) {
         float draw_cam_pitch = lerpf(cam_pitch, -14.0f, death_cam_blend);
         glRotatef(-draw_cam_pitch, 1, 0, 0); glRotatef(-cam_yaw, 0, 1, 0);
-        glTranslatef(-((render_p->x + reconcile_x) - cx), -((render_p->y + reconcile_y) + cam_y), -((render_p->z + reconcile_z) - cz));
+        glTranslatef(-(cam_focus_x - cx), -(cam_focus_y + cam_y), -(cam_focus_z - cz));
     }
 
     {
-        float sky_cam_x = (render_p->x + reconcile_x) - cx;
-        float sky_cam_y = (render_p->y + reconcile_y) + cam_y;
-        float sky_cam_z = (render_p->z + reconcile_z) - cz;
+        float sky_cam_x = cam_focus_x - cx;
+        float sky_cam_y = cam_focus_y + cam_y;
+        float sky_cam_z = cam_focus_z - cz;
         if (render_p->in_vehicle && render_p->vehicle_type == VEH_HELICOPTER) {
             sky_cam_x = heli_cam_x;
             sky_cam_y = heli_cam_y;
@@ -4772,7 +4787,6 @@ void net_process_snapshot(char *buffer, int len) {
                 occ->in_vehicle = 1;
                 occ->vehicle_type = VEH_BUGGY;
                 occ->x = b->x; occ->y = b->y; occ->z = b->z;
-                occ->yaw = b->yaw;
             }
         }
     }

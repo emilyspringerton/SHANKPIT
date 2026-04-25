@@ -25,9 +25,6 @@
 #define BUGGY_BASE_DRIVE_FORCE 0.0364f
 #define BUGGY_COAST_FRICTION 0.0048f
 #define BUGGY_BRAKE_FRICTION 0.022f
-#define BUGGY_TURN_RATE_LOW 3.1f
-#define BUGGY_TURN_RATE_HIGH 0.9f
-#define BUGGY_LATERAL_GRIP 0.12f
 #define BUGGY_TRANSMISSION_BAND1_END 0.22f
 #define BUGGY_TRANSMISSION_BAND2_END 0.52f
 #define BUGGY_TRANSMISSION_BAND3_END 0.78f
@@ -36,6 +33,29 @@
 #define BUGGY_TRACK_WIDTH 3.8f
 #define BUGGY_WHEEL_RADIUS 1.05f
 #define BUGGY_CHASSIS_CLEARANCE 0.95f
+
+// Camera-led steering + yaw/slip tuning.
+#define BUGGY_STEER_DEADZONE_DEG 2.0f
+#define BUGGY_STEER_YAW_FOR_FULL_LOCK 68.0f
+#define BUGGY_STEER_RESPONSE_IN 0.16f
+#define BUGGY_STEER_RESPONSE_OUT 0.28f
+#define BUGGY_STEER_SPEED_FADE_START 2.6f
+#define BUGGY_STEER_SPEED_FADE_END 6.2f
+#define BUGGY_YAW_RATE_LOW_SPEED 1.0f
+#define BUGGY_YAW_RATE_HIGH_SPEED 4.35f
+#define BUGGY_YAW_DAMPING 0.095f
+#define BUGGY_STEER_BITE 0.24f
+#define BUGGY_LATERAL_GRIP_LOW 0.20f
+#define BUGGY_LATERAL_GRIP_HIGH 0.08f
+#define BUGGY_LATERAL_DRIFT_FACTOR 0.58f
+#define BUGGY_AIR_STEER_FACTOR 0.16f
+#define BUGGY_AIR_LATERAL_DAMP 0.035f
+#define BUGGY_GROUND_REACQUIRE_TOLERANCE 0.02f
+
+// Third-person buggy chase camera tuning.
+#define BUGGY_CAMERA_BACKUP 19.0f
+#define BUGGY_CAMERA_HEIGHT 5.8f
+#define BUGGY_CAMERA_LOOKAHEAD 2.25f
 
 #define EYE_HEIGHT 2.59f    
 #define PLAYER_WIDTH 0.97f  
@@ -2483,18 +2503,35 @@ static inline void simulate_buggy_state(BuggyState *b, float throttle, float ste
     float abs_norm = fabsf(forward_speed) / BUGGY_TOP_SPEED;
     if (abs_norm > 1.0f) abs_norm = 1.0f;
 
-    float steer_rate = BUGGY_TURN_RATE_LOW + (BUGGY_TURN_RATE_HIGH - BUGGY_TURN_RATE_LOW) * abs_norm;
-    float steer_authority = 0.38f + 0.62f * abs_norm;
     float steer_sign = (forward_speed < -0.03f) ? -1.0f : 1.0f;
-    float steer_response = apply_input ? 0.22f : 0.10f;
-    b->steer += (steer - b->steer) * steer_response * dt_scale;
+    float steer_delta = steer - b->steer;
+    float steer_response = BUGGY_STEER_RESPONSE_IN;
+    if ((steer_delta > 0.0f && b->steer > 0.0f && steer > 0.0f && fabsf(steer) < fabsf(b->steer)) ||
+        (steer_delta < 0.0f && b->steer < 0.0f && steer < 0.0f && fabsf(steer) < fabsf(b->steer)) ||
+        (steer > 0.0f && b->steer < 0.0f) || (steer < 0.0f && b->steer > 0.0f)) {
+        steer_response = BUGGY_STEER_RESPONSE_OUT;
+    }
+    if (!apply_input) steer_response *= 0.65f;
+    b->steer += steer_delta * steer_response * dt_scale;
     if (b->steer > 1.0f) b->steer = 1.0f;
     if (b->steer < -1.0f) b->steer = -1.0f;
-    b->yaw = norm_yaw_deg(b->yaw + b->steer * steer_rate * steer_authority * steer_sign * dt_scale);
 
-    float grip = BUGGY_LATERAL_GRIP * (0.62f + 0.68f * abs_norm) * dt_scale;
-    if (grip > 1.0f) grip = 1.0f;
-    lateral_speed *= (1.0f - grip);
+    float yaw_rate = BUGGY_YAW_RATE_LOW_SPEED + (BUGGY_YAW_RATE_HIGH_SPEED - BUGGY_YAW_RATE_LOW_SPEED) * abs_norm;
+    yaw_rate *= (1.0f - 0.33f * abs_norm * abs_norm);
+    float steer_bite = 1.0f - fminf(0.42f, fabsf(lateral_speed) * BUGGY_YAW_DAMPING);
+    if (steer_bite < 0.58f) steer_bite = 0.58f;
+    float grounded_factor = b->grounded ? 1.0f : BUGGY_AIR_STEER_FACTOR;
+    b->yaw = norm_yaw_deg(b->yaw + b->steer * yaw_rate * steer_sign * steer_bite * grounded_factor * dt_scale);
+
+    float desired_lateral = b->steer * forward_speed * BUGGY_LATERAL_DRIFT_FACTOR;
+    float grip = BUGGY_LATERAL_GRIP_LOW + (BUGGY_LATERAL_GRIP_HIGH - BUGGY_LATERAL_GRIP_LOW) * abs_norm;
+    if (!b->grounded) grip = BUGGY_AIR_LATERAL_DAMP;
+    lateral_speed += (desired_lateral - lateral_speed) * BUGGY_STEER_BITE * grounded_factor * dt_scale;
+    float lateral_rel = lateral_speed - desired_lateral;
+    float lateral_damp = grip * dt_scale;
+    if (lateral_damp > 1.0f) lateral_damp = 1.0f;
+    lateral_rel *= (1.0f - lateral_damp);
+    lateral_speed = desired_lateral + lateral_rel;
 
     float r2 = -b->yaw * (3.14159265358979323846f / 180.0f);
     float new_fwd_x = sinf(r2);
@@ -2524,9 +2561,10 @@ static inline void simulate_buggy_state(BuggyState *b, float throttle, float ste
     float support_max = heights[0];
     for (int i = 1; i < 4; i++) if (heights[i] > support_max) support_max = heights[i];
     float support_y = support_max + BUGGY_WHEEL_RADIUS + BUGGY_CHASSIS_CLEARANCE;
-    if (b->y <= support_y + 0.05f) {
+    int allow_reacquire = (b->vy <= 0.0f) || (b->y <= support_y);
+    if (allow_reacquire && b->y <= support_y + BUGGY_GROUND_REACQUIRE_TOLERANCE) {
         b->y = support_y;
-        b->vy = 0.0f;
+        if (b->vy < 0.0f) b->vy = 0.0f;
         b->grounded = 1;
         b->pitch += (target_pitch - b->pitch) * 0.35f;
         b->roll += (target_roll - b->roll) * 0.35f;

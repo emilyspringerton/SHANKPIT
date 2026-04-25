@@ -256,6 +256,7 @@ typedef struct {
     float yaw;
     float pitch;
     float roll;
+    float steer_target;
     float steer;
     float throttle;
     int health;

@@ -311,7 +311,7 @@ static inline void buggy_tick_all(void) {
         BuggyState *b = &local_state.buggies[i];
         if (!b->active) continue;
         float throttle = 0.0f;
-        float steer_intent = 0.0f;
+        float desired_steer = 0.0f;
         if (b->occupant_player_id >= 0 && b->occupant_player_id < MAX_CLIENTS) {
             PlayerState *occ = &local_state.players[b->occupant_player_id];
             b->scene_id = occ->scene_id;
@@ -319,18 +319,32 @@ static inline void buggy_tick_all(void) {
             float yaw_err = norm_yaw_deg(occ->yaw - b->yaw);
             if (yaw_err > 180.0f) yaw_err -= 360.0f;
             if (yaw_err < -180.0f) yaw_err += 360.0f;
-            steer_intent = yaw_err / 75.0f;
-            if (steer_intent > 1.0f) steer_intent = 1.0f;
-            if (steer_intent < -1.0f) steer_intent = -1.0f;
+            float abs_err = fabsf(yaw_err);
+            if (abs_err > BUGGY_STEER_DEADZONE_DEG) {
+                float signed_mag = (yaw_err < 0.0f) ? -1.0f : 1.0f;
+                float mapped = (abs_err - BUGGY_STEER_DEADZONE_DEG) /
+                               (BUGGY_STEER_YAW_FOR_FULL_LOCK - BUGGY_STEER_DEADZONE_DEG);
+                if (mapped < 0.0f) mapped = 0.0f;
+                if (mapped > 1.0f) mapped = 1.0f;
+                mapped = mapped * mapped * (3.0f - 2.0f * mapped); // smoothstep mids
+                float speed = sqrtf(b->vx * b->vx + b->vz * b->vz);
+                float fade_t = (speed - BUGGY_STEER_SPEED_FADE_START) /
+                               (BUGGY_STEER_SPEED_FADE_END - BUGGY_STEER_SPEED_FADE_START);
+                if (fade_t < 0.0f) fade_t = 0.0f;
+                if (fade_t > 1.0f) fade_t = 1.0f;
+                float speed_scale = 1.0f - 0.25f * fade_t;
+                desired_steer = signed_mag * mapped * speed_scale;
+            }
+            b->steer_target = desired_steer;
         } else {
             b->occupant_player_id = -1;
+            b->steer_target = 0.0f;
         }
         phys_set_scene(b->scene_id);
-        simulate_buggy_state(b, throttle, steer_intent, SHANKPIT_NET_FIXED_DT, b->occupant_player_id >= 0);
+        simulate_buggy_state(b, throttle, b->steer_target, SHANKPIT_NET_FIXED_DT, b->occupant_player_id >= 0);
         if (b->occupant_player_id >= 0 && b->occupant_player_id < MAX_CLIENTS) {
             PlayerState *occ = &local_state.players[b->occupant_player_id];
             occ->x = b->x; occ->y = b->y; occ->z = b->z;
-            occ->yaw = b->yaw;
             occ->vx = occ->vy = occ->vz = 0.0f;
             occ->on_ground = b->grounded;
         }
