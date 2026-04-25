@@ -3340,11 +3340,8 @@ void draw_player_3rd(PlayerState *p) {
         /* Buggy is rendered from buggy world entities, not player pose. */
     } else {
         int forced_skin = -1;
-        int story_bear = (local_state.game_mode == MODE_STORY && p->id > 0);
         if (local_state.game_mode == MODE_TDMB || local_state.game_mode == MODE_TDMO || local_state.game_mode == MODE_CTFB) {
             forced_skin = (p->team_id == 1) ? SKIN_NINJA : SKIN_PIRATE;
-        } else if (story_bear) {
-            forced_skin = SKIN_CYBORG;
         }
         int draw_skin = (forced_skin >= 0) ? forced_skin : clamp_skin_id(g_selected_skin);
         switch (draw_skin) {
@@ -3437,6 +3434,75 @@ void draw_circle(float x, float y, float r, int segments) {
         glVertex2f(x + cx, y + cy);
     }
     glEnd();
+}
+
+static void draw_story_boss_world(unsigned int now_ms) {
+    if (local_state.game_mode != MODE_STORY) return;
+    StoryBossState *boss = &local_state.story_boss;
+    if (!boss->active && !boss->defeated) return;
+    if (local_state.scene_id != SCENE_VOXWORLD) return;
+
+    float t = now_ms * 0.001f;
+    float pulse = 0.5f + 0.5f * sinf(t * 2.2f + boss->x * 0.03f);
+    float fissure = (now_ms < boss->hurt_flash_until_ms) ? 1.0f : pulse * 0.35f;
+
+    glPushMatrix();
+    glTranslatef(boss->x, boss->y, boss->z);
+    glRotatef(boss->yaw, 0, 1, 0);
+    glScalef(3.0f, 3.0f, 3.0f);
+
+    glColor3f(0.20f, 0.22f, 0.25f); draw_box(8.5f, 10.5f, 5.8f);
+    glPushMatrix(); glTranslatef(0.6f, 4.8f, 0.8f); glColor3f(0.28f, 0.24f, 0.34f); draw_box(6.0f, 6.0f, 4.6f); glPopMatrix();
+    glPushMatrix(); glTranslatef(-0.8f, 10.5f, 0.7f); glColor3f(0.20f + 0.12f * pulse, 0.16f + 0.20f * pulse, 0.26f + 0.22f * pulse); draw_box(3.8f, 2.8f, 3.1f); glPopMatrix();
+    glPushMatrix(); glTranslatef(-4.8f, 5.8f, 0.4f); glColor3f(0.18f, 0.20f, 0.23f); draw_box(2.8f, 7.8f, 2.6f); glPopMatrix();
+    glPushMatrix(); glTranslatef(5.3f, 5.2f, -0.6f); glColor3f(0.25f, 0.21f, 0.27f); draw_box(2.3f, 8.8f, 2.2f); glPopMatrix();
+    glPushMatrix(); glTranslatef(-4.5f, 9.4f, 0.1f); glColor3f(0.25f, 0.30f, 0.25f); draw_box(3.8f, 1.8f, 2.6f); glPopMatrix();
+    glPushMatrix(); glTranslatef(4.8f, 9.2f, -0.3f); glColor3f(0.30f, 0.23f, 0.32f); draw_box(4.4f, 2.2f, 2.7f); glPopMatrix();
+
+    for (int i = 0; i < 6; i++) {
+        float off = (float)i * 1.2f;
+        glPushMatrix();
+        glTranslatef(((i % 2) ? 2.0f : -2.3f), 6.5f + off, -2.2f - off * 0.55f);
+        glRotatef((i % 2) ? 22.0f : -20.0f, 1, 0, 0);
+        glColor3f(0.21f + 0.08f * pulse, 0.18f + 0.12f * pulse, 0.30f + 0.10f * pulse);
+        draw_box(0.8f - off * 0.05f, 1.0f - off * 0.06f, 1.9f);
+        glPopMatrix();
+    }
+
+    glColor3f(0.05f + 0.45f * fissure, 0.03f + 0.30f * fissure, 0.08f + 0.50f * fissure);
+    glBegin(GL_QUADS);
+    glVertex3f(-0.5f, 1.0f, 3.0f); glVertex3f(0.3f, 1.0f, 3.0f); glVertex3f(0.2f, 8.8f, 2.9f); glVertex3f(-0.6f, 8.8f, 2.9f);
+    glVertex3f(-2.2f, 2.2f, 2.9f); glVertex3f(-1.5f, 2.2f, 2.9f); glVertex3f(-1.9f, 9.0f, 2.7f); glVertex3f(-2.5f, 9.0f, 2.7f);
+    glVertex3f(1.5f, 2.3f, 2.8f); glVertex3f(2.1f, 2.3f, 2.8f); glVertex3f(2.0f, 9.5f, 2.5f); glVertex3f(1.4f, 9.5f, 2.5f);
+    glEnd();
+
+    for (int i = 0; i < 22; i++) {
+        float fi = (float)i;
+        float px = sinf(t * 1.5f + fi * 0.8f) * (7.0f + (fi * 0.23f));
+        float py = 2.0f + fmodf(fi * 2.4f + t * 6.0f, 16.0f);
+        float pz = cosf(t * 1.2f + fi * 0.6f) * (4.0f + (fi * 0.12f));
+        float c = 0.35f + 0.65f * sinf(fi * 1.7f + t * 3.2f);
+        glPushMatrix();
+        glTranslatef(px, py, pz);
+        glColor3f(0.22f + 0.4f * c, 0.15f + 0.5f * (1.0f - c), 0.28f + 0.45f * c);
+        draw_box(0.22f, 0.22f, 0.22f);
+        glPopMatrix();
+    }
+    glPopMatrix();
+
+    if (!boss->defeated && local_state.story_phase == STORY_PHASE_PLAYING) {
+        float shock_t = (now_ms - boss->last_attack_ms);
+        if (shock_t < 420.0f) {
+            float ring_r = 30.0f + shock_t * 0.22f;
+            glColor4f(0.65f, 0.15f, 0.82f, 0.55f);
+            glBegin(GL_LINE_LOOP);
+            for (int i = 0; i < 48; i++) {
+                float a = (float)i / 48.0f * 6.28318f;
+                glVertex3f(boss->x + cosf(a) * ring_r, boss->y - 24.5f, boss->z + sinf(a) * ring_r);
+            }
+            glEnd();
+        }
+    }
 }
 
 static void draw_ammo_bars(const PlayerState *p) {
@@ -3620,18 +3686,40 @@ void draw_hud(PlayerState *p) {
     } else if (local_state.game_mode == MODE_STORY) {
         glColor3f(0.85f, 0.92f, 0.95f);
         if (local_state.story_phase == STORY_PHASE_CUTSCENE) {
-            draw_string("STORY: CAVE ENTRY", 500, 682, 6);
+            draw_string("STORY: VOXWORLD BREACH", 452, 682, 6);
             draw_string("INTRO IN PROGRESS...", 500, 658, 4);
         } else if (local_state.story_phase == STORY_PHASE_COMPLETE) {
             glColor3f(0.55f, 1.0f, 0.65f);
-            draw_string("STORY COMPLETE", 510, 682, 8);
+            draw_string("BREACH TITAN DEFEATED", 430, 682, 7);
             glColor3f(0.85f, 0.92f, 0.95f);
             draw_string("PRESS ESC TO RETURN", 500, 650, 4);
         } else if (local_state.story_phase == STORY_PHASE_FAILED) {
             glColor3f(1.0f, 0.45f, 0.35f);
             draw_string("MISSION FAILED", 520, 682, 7);
         } else {
-            draw_string("OBJECTIVE: REACH THE END OF THE CAVE", 410, 682, 4);
+            draw_string("OBJECTIVE: DEFEAT THE BREACH TITAN", 420, 682, 4);
+        }
+
+        if (local_state.story_boss.active || local_state.story_boss.defeated) {
+            float max_hp = local_state.story_boss.max_health > 1.0f ? local_state.story_boss.max_health : 1.0f;
+            float hp = local_state.story_boss.health;
+            if (hp < 0.0f) hp = 0.0f;
+            float pct = hp / max_hp;
+            if (pct < 0.0f) pct = 0.0f;
+            if (pct > 1.0f) pct = 1.0f;
+            float bx0 = 320.0f, bx1 = 960.0f, by0 = 628.0f, by1 = 646.0f;
+            glColor4f(0.06f, 0.03f, 0.09f, 0.85f);
+            glRectf(bx0 - 2.0f, by0 - 2.0f, bx1 + 2.0f, by1 + 2.0f);
+            glColor3f(0.35f, 0.09f, 0.19f);
+            glRectf(bx0, by0, bx1, by1);
+            glColor3f(0.82f, 0.10f, 0.44f);
+            glRectf(bx0, by0, bx0 + (bx1 - bx0) * pct, by1);
+            glColor3f(0.94f, 0.88f, 0.98f);
+            draw_string("BREACH TITAN", 548, 650, 4);
+            if (local_state.story_boss.defeated) {
+                glColor3f(0.55f, 1.0f, 0.65f);
+                draw_string("DEFEATED", 600, 632, 4);
+            }
         }
     }
     float x0 = 50.0f, x1 = vs0_art_direction_enabled ? 220.0f : 250.0f;
@@ -4241,13 +4329,12 @@ void draw_scene(PlayerState *render_p) {
     }
 
     if (story_cutscene) {
-        float look_x = render_p->x;
-        float look_y = render_p->y + 3.0f;
-        float look_z = render_p->z;
-        float yaw_rad = (180.0f - render_p->yaw) * 0.0174533f;
-        float cam_x = look_x + sinf(yaw_rad) * 18.0f;
-        float cam_y = look_y + 3.0f;
-        float cam_z = look_z + cosf(yaw_rad) * 18.0f;
+        float look_x = local_state.story_boss.x;
+        float look_y = local_state.story_boss.y + 5.0f;
+        float look_z = local_state.story_boss.z;
+        float cam_x = look_x + 90.0f;
+        float cam_y = look_y + 40.0f;
+        float cam_z = look_z + 120.0f;
         gluLookAt(cam_x, cam_y, cam_z, look_x, look_y, look_z, 0.0f, 1.0f, 0.0f);
     } else if (!(render_p->in_vehicle && render_p->vehicle_type == VEH_HELICOPTER)) {
         float draw_cam_pitch = lerpf(cam_pitch, -14.0f, death_cam_blend);
@@ -4279,6 +4366,7 @@ void draw_scene(PlayerState *render_p) {
     draw_voxworld_grass_overlay(&world_lighting, render_p);
     draw_voxworld_bushes();
     draw_map(&world_lighting);
+    draw_story_boss_world(now_ms);
     draw_team_map_markers(local_state.scene_id, local_state.game_mode);
     draw_garage_vehicle_pads();
     draw_garage_portal_frame();

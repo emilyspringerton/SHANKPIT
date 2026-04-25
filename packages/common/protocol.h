@@ -293,6 +293,17 @@ typedef enum { MODE_DEATHMATCH=0, MODE_TDM=1, MODE_SURVIVAL=2, MODE_CTF=3, MODE_
 typedef enum { STORY_PHASE_CUTSCENE=0, STORY_PHASE_PLAYING=1, STORY_PHASE_COMPLETE=2, STORY_PHASE_FAILED=3 } StoryPhase;
 
 typedef struct {
+    int active;
+    int defeated;
+    float x, y, z;
+    float yaw;
+    float health;
+    float max_health;
+    unsigned int last_attack_ms;
+    unsigned int hurt_flash_until_ms;
+} StoryBossState;
+
+typedef struct {
     PlayerState players[MAX_CLIENTS];
     Projectile projectiles[MAX_PROJECTILES];
     HelicopterState helicopters[MAX_HELICOPTERS];
@@ -309,6 +320,7 @@ typedef struct {
     int winning_team;
     int story_phase;
     unsigned int story_phase_start_ms;
+    StoryBossState story_boss;
     CtfMatchState ctf;
     struct sockaddr_in clients[MAX_CLIENTS];
     ClientMeta client_meta[MAX_CLIENTS];
