@@ -1,7 +1,6 @@
 #ifndef STORY_AI_H
 #define STORY_AI_H
 
-#include <netinet/in.h>
 #include "../common/protocol.h"
 
 #define STORY_AI_MAX 16
