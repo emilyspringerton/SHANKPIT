@@ -3494,6 +3494,108 @@ static void draw_story_boss_world(const StoryBossState *boss, unsigned int now_m
     }
 }
 
+static void draw_story_cutscene_portal(const StoryPortalFx *portal, unsigned int now_ms) {
+    if (!portal || !portal->active) return;
+    float pulse = portal->pulse;
+    float ring_r = portal->radius;
+    glDisable(GL_CULL_FACE);
+    glPushMatrix();
+    glTranslatef(portal->x, portal->y, portal->z);
+    glRotatef(portal->spin_deg, 0, 1, 0);
+    glColor4f(0.95f, 0.12f + 0.25f * pulse, 0.78f, 0.35f + 0.4f * portal->open_alpha);
+    for (int ring = 0; ring < 3; ring++) {
+        float r = ring_r * (0.68f + (float)ring * 0.26f);
+        glBegin(GL_LINE_LOOP);
+        for (int i = 0; i < 48; i++) {
+            float a = ((float)i / 48.0f) * 6.28318f;
+            glVertex3f(cosf(a) * r, sinf(a * 2.0f + ring * 0.7f) * (3.0f + ring * 1.4f), sinf(a) * r);
+        }
+        glEnd();
+    }
+    glColor4f(0.75f, 0.08f + pulse * 0.40f, 0.95f, 0.22f + 0.28f * portal->open_alpha);
+    glBegin(GL_QUADS);
+    for (int i = 0; i < 16; i++) {
+        float a0 = ((float)i / 16.0f) * 6.28318f;
+        float a1 = ((float)(i + 1) / 16.0f) * 6.28318f;
+        float r0 = ring_r * 0.35f;
+        float r1 = ring_r * 0.95f;
+        glVertex3f(cosf(a0) * r0, -2.0f, sinf(a0) * r0);
+        glVertex3f(cosf(a0) * r1, 2.0f, sinf(a0) * r1);
+        glVertex3f(cosf(a1) * r1, 2.0f, sinf(a1) * r1);
+        glVertex3f(cosf(a1) * r0, -2.0f, sinf(a1) * r0);
+    }
+    glEnd();
+    for (int i = 0; i < 20; i++) {
+        float fi = (float)i;
+        float ang = fi * 0.93f + (float)now_ms * 0.0018f;
+        float rr = ring_r * (0.45f + 0.50f * (sinf(fi * 1.7f + (float)now_ms * 0.002f) * 0.5f + 0.5f));
+        glPushMatrix();
+        glTranslatef(cosf(ang) * rr, sinf(ang * 2.0f) * 6.5f, sinf(ang) * rr);
+        glColor3f((i % 3 == 0) ? 0.96f : 0.64f, 0.16f + 0.32f * pulse, 0.88f);
+        draw_box(2.2f, 2.2f, 2.2f);
+        glPopMatrix();
+    }
+    glPopMatrix();
+    glEnable(GL_CULL_FACE);
+}
+
+static void draw_story_cutscene_puppet(const StoryPuppetActor *p, unsigned int now_ms) {
+    if (!p || !p->active) return;
+    float pulse = 0.5f + 0.5f * sinf((float)now_ms * 0.008f + p->x * 0.03f);
+    glPushMatrix();
+    glTranslatef(p->x, p->y, p->z);
+    glRotatef(180.0f - norm_yaw_deg(p->yaw), 0, 1, 0);
+    glScalef(p->scale_x, p->scale_y, p->scale_z);
+    glColor3f(0.10f, 0.10f, 0.11f);
+    if (p->type == STORY_PUPPET_RIFT_HOUND) {
+        glPushMatrix(); glTranslatef(0.0f, 2.3f, 0.0f); draw_box(3.6f, 1.4f, 2.8f); glPopMatrix();
+        glPushMatrix(); glTranslatef(0.0f, 2.2f, 2.1f); draw_box(2.0f, 1.0f, 2.2f); glPopMatrix();
+        glColor3f(0.85f, 0.15f + pulse * 0.5f, 0.24f);
+        glPushMatrix(); glTranslatef(0.0f, 2.0f, 3.0f); draw_box(1.1f, 0.3f, 0.6f); glPopMatrix();
+        glColor3f(0.12f, 0.12f, 0.14f);
+        glPushMatrix(); glTranslatef(1.0f, 1.2f, 1.6f); draw_box(0.6f, 1.8f, 0.6f); glPopMatrix();
+        glPushMatrix(); glTranslatef(-1.0f, 1.2f, 1.6f); draw_box(0.6f, 1.8f, 0.6f); glPopMatrix();
+        glPushMatrix(); glTranslatef(1.3f, 1.1f, -1.5f); draw_box(0.5f, 1.7f, 0.5f); glPopMatrix();
+        glPushMatrix(); glTranslatef(-1.3f, 1.1f, -1.5f); draw_box(0.5f, 1.7f, 0.5f); glPopMatrix();
+    } else if (p->type == STORY_PUPPET_SHAMBLER_TROOPER) {
+        glPushMatrix(); glTranslatef(0.0f, 3.2f, 0.0f); draw_box(2.2f, 3.6f, 1.4f); glPopMatrix();
+        glPushMatrix(); glTranslatef(0.0f, 5.4f, 0.0f); draw_box(1.4f, 1.3f, 1.2f); glPopMatrix();
+        glPushMatrix(); glTranslatef(-1.6f, 3.4f, 0.0f); draw_box(0.8f, 2.4f, 0.8f); glPopMatrix();
+        glPushMatrix(); glTranslatef(1.9f, 2.9f, 0.0f); draw_box(1.2f, 3.1f, 1.0f); glPopMatrix();
+        glPushMatrix(); glTranslatef(-0.6f, 1.0f, 0.0f); draw_box(0.8f, 2.0f, 0.8f); glPopMatrix();
+        glPushMatrix(); glTranslatef(0.8f, 1.0f, 0.0f); draw_box(0.8f, 2.0f, 0.8f); glPopMatrix();
+    } else if (p->type == STORY_PUPPET_SHRIEKER) {
+        glPushMatrix(); glTranslatef(0.0f, 3.5f, 0.0f); draw_box(2.0f, 2.6f, 1.5f); glPopMatrix();
+        glColor3f(0.86f, 0.12f + pulse * 0.45f, 0.30f);
+        glPushMatrix(); glTranslatef(0.0f, 3.2f, 1.0f); draw_box(1.4f, 0.9f, 0.2f); glPopMatrix();
+        glColor3f(0.14f, 0.14f, 0.18f);
+        glPushMatrix(); glTranslatef(0.0f, 1.8f, 0.0f); draw_box(0.9f, 0.9f, 0.9f); glPopMatrix();
+    } else if (p->type == STORY_PUPPET_GORE_BRUTE) {
+        glPushMatrix(); glTranslatef(0.0f, 4.2f, 0.0f); draw_box(4.4f, 4.8f, 3.4f); glPopMatrix();
+        glPushMatrix(); glTranslatef(0.0f, 7.2f, 0.3f); draw_box(2.4f, 1.8f, 1.8f); glPopMatrix();
+        glPushMatrix(); glTranslatef(-2.7f, 4.0f, 0.0f); draw_box(1.1f, 3.4f, 1.1f); glPopMatrix();
+        glPushMatrix(); glTranslatef(3.1f, 3.5f, 0.0f); draw_box(1.8f, 4.6f, 1.6f); glPopMatrix();
+        glPushMatrix(); glTranslatef(-1.3f, 1.2f, 0.3f); draw_box(1.3f, 2.4f, 1.3f); glPopMatrix();
+        glPushMatrix(); glTranslatef(1.2f, 1.2f, 0.3f); draw_box(1.3f, 2.4f, 1.3f); glPopMatrix();
+    } else if (p->type == STORY_PUPPET_PORTAL_SHEPHERD) {
+        glPushMatrix(); glTranslatef(0.0f, 5.2f, 0.0f); draw_box(1.7f, 6.2f, 1.3f); glPopMatrix();
+        glColor3f(0.72f, 0.18f + pulse * 0.35f, 0.88f);
+        glPushMatrix(); glTranslatef(0.0f, 8.6f, 0.2f); draw_box(1.0f, 1.0f, 1.0f); glPopMatrix();
+        glColor3f(0.11f, 0.11f, 0.12f);
+        glPushMatrix(); glTranslatef(-1.2f, 5.0f, 0.0f); draw_box(0.4f, 3.5f, 0.4f); glPopMatrix();
+        glPushMatrix(); glTranslatef(1.2f, 5.0f, 0.0f); draw_box(0.4f, 3.5f, 0.4f); glPopMatrix();
+    }
+    glPopMatrix();
+}
+
+static void draw_story_cutscene_world(const StoryCutsceneState *cs, unsigned int now_ms) {
+    if (!cs) return;
+    draw_story_cutscene_portal(&cs->portal, now_ms);
+    for (int i = 0; i < STORY_CUTSCENE_MAX_PUPPETS; i++) {
+        draw_story_cutscene_puppet(&cs->puppets[i], now_ms);
+    }
+}
+
 static void draw_story_boss_hud(const StoryBossState *boss) {
     if (!boss || (!boss->active && !boss->defeated)) return;
     float pct = (boss->max_health > 0.0f) ? (boss->health / boss->max_health) : 0.0f;
@@ -3702,9 +3804,12 @@ void draw_hud(PlayerState *p) {
         }
     } else if (local_state.game_mode == MODE_STORY) {
         glColor3f(0.85f, 0.92f, 0.95f);
-        if (local_state.story_phase == STORY_PHASE_CUTSCENE) {
+        if (local_state.story_phase == STORY_PHASE_INTRO_CUTSCENE) {
             draw_string("STORY: VOXWORLD BREACH", 452, 682, 6);
             draw_string("INTRO IN PROGRESS...", 500, 658, 4);
+        } else if (local_state.story_phase == STORY_PHASE_POST_BOSS_BREACH_CUTSCENE) {
+            draw_string("STORY: MASSIVE PORTAL BREACH", 400, 682, 6);
+            draw_string("RIFT-BORN SPEW EVENT IN PROGRESS...", 380, 658, 4);
         } else if (local_state.story_phase == STORY_PHASE_COMPLETE) {
             glColor3f(0.55f, 1.0f, 0.65f);
             draw_string("BREACH TITAN DEFEATED", 420, 682, 7);
@@ -4261,7 +4366,9 @@ void draw_scene(PlayerState *render_p) {
     local_state.scene_id = render_p->scene_id;
     phys_set_scene(render_p->scene_id);
     unsigned int now_ms = SDL_GetTicks();
-    int story_cutscene = (local_state.game_mode == MODE_STORY && local_state.story_phase == STORY_PHASE_CUTSCENE);
+    int story_cutscene = (local_state.game_mode == MODE_STORY &&
+                          (local_state.story_phase == STORY_PHASE_INTRO_CUTSCENE ||
+                           local_state.story_phase == STORY_PHASE_POST_BOSS_BREACH_CUTSCENE));
     int local_dead = (render_p->state == STATE_DEAD);
     float death_target = (local_state.game_mode == MODE_STORY) ? 0.0f : (local_dead ? 1.0f : 0.0f);
     death_cam_blend += (death_target - death_cam_blend) * 0.18f;
@@ -4323,15 +4430,23 @@ void draw_scene(PlayerState *render_p) {
         reconcile_z = reconcile_corr_z;
     }
 
-    if (story_cutscene) {
-        const StoryBossState *boss = &local_state.story_boss;
-        float look_x = boss->x;
-        float look_y = boss->y + 24.0f;
-        float look_z = boss->z;
-        float cam_x = boss->x + 140.0f;
-        float cam_y = boss->y + 70.0f;
-        float cam_z = boss->z + 190.0f;
-        gluLookAt(cam_x, cam_y, cam_z, look_x, look_y, look_z, 0.0f, 1.0f, 0.0f);
+    if (story_cutscene && local_state.story_cutscene.camera.active) {
+        float shake_x = 0.0f;
+        float shake_y = 0.0f;
+        float shake_z = 0.0f;
+        if (local_state.story_cutscene.shake_amp > 0.01f) {
+            float amp = local_state.story_cutscene.shake_amp;
+            shake_x = sinf((float)now_ms * 0.048f) * amp;
+            shake_y = cosf((float)now_ms * 0.041f) * amp * 0.5f;
+            shake_z = sinf((float)now_ms * 0.053f) * amp;
+        }
+        gluLookAt(local_state.story_cutscene.camera.pos[0] + shake_x,
+                  local_state.story_cutscene.camera.pos[1] + shake_y,
+                  local_state.story_cutscene.camera.pos[2] + shake_z,
+                  local_state.story_cutscene.camera.look[0],
+                  local_state.story_cutscene.camera.look[1],
+                  local_state.story_cutscene.camera.look[2],
+                  0.0f, 1.0f, 0.0f);
     } else if (!(render_p->in_vehicle && render_p->vehicle_type == VEH_HELICOPTER)) {
         float draw_cam_pitch = lerpf(cam_pitch, -14.0f, death_cam_blend);
         glRotatef(-draw_cam_pitch, 1, 0, 0); glRotatef(-cam_yaw, 0, 1, 0);
@@ -4377,6 +4492,7 @@ void draw_scene(PlayerState *render_p) {
     }
     if (local_state.game_mode == MODE_STORY && render_p->scene_id == SCENE_VOXWORLD) {
         draw_story_boss_world(&local_state.story_boss, now_ms);
+        draw_story_cutscene_world(&local_state.story_cutscene, now_ms);
     }
     draw_projectiles();
     if (render_p->in_vehicle && render_p->vehicle_type != VEH_BUGGY) draw_player_3rd(render_p);
@@ -5541,7 +5657,8 @@ int main(int argc, char* argv[]) {
                     if (app_state == STATE_GAME_NET && net_spawn_protect_cmds > 0) continue;
                     if (app_state == STATE_GAME_LOCAL &&
                         local_state.game_mode == MODE_STORY &&
-                        local_state.story_phase == STORY_PHASE_CUTSCENE) {
+                        (local_state.story_phase == STORY_PHASE_INTRO_CUTSCENE ||
+                         local_state.story_phase == STORY_PHASE_POST_BOSS_BREACH_CUTSCENE)) {
                         continue;
                     }
                     float sens = (current_fov < 50.0f) ? 0.05f : 0.15f; 
@@ -5640,7 +5757,8 @@ int main(int argc, char* argv[]) {
                 net_emit_client_summaries(now_ms);
             } else {
                 if (local_state.game_mode == MODE_STORY &&
-                    (local_state.story_phase == STORY_PHASE_CUTSCENE ||
+                    (local_state.story_phase == STORY_PHASE_INTRO_CUTSCENE ||
+                     local_state.story_phase == STORY_PHASE_POST_BOSS_BREACH_CUTSCENE ||
                      local_state.story_phase == STORY_PHASE_COMPLETE ||
                      local_state.story_phase == STORY_PHASE_FAILED)) {
                     fwd = 0.0f; str = 0.0f;
@@ -5708,7 +5826,8 @@ int main(int argc, char* argv[]) {
                 if(local_state.players[0].vehicle_cooldown > 0) local_state.players[0].vehicle_cooldown--;
                 unsigned int now_ms = SDL_GetTicks();
                 if (local_state.game_mode == MODE_STORY &&
-                    local_state.story_phase == STORY_PHASE_CUTSCENE &&
+                    (local_state.story_phase == STORY_PHASE_INTRO_CUTSCENE ||
+                     local_state.story_phase == STORY_PHASE_POST_BOSS_BREACH_CUTSCENE) &&
                     local_state.story_phase_start_ms == 0) {
                     local_state.story_phase_start_ms = now_ms;
                 }

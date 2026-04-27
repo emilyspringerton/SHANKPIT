@@ -290,7 +290,98 @@ typedef struct {
 } CtfMatchState;
 
 typedef enum { MODE_DEATHMATCH=0, MODE_TDM=1, MODE_SURVIVAL=2, MODE_CTF=3, MODE_ODDBALL=4, MODE_LOCAL=98, MODE_NET=99, MODE_EVOLUTION=100, MODE_TDMB=101, MODE_TDMO=102, MODE_CTFB=103, MODE_CTFO=104, MODE_STORY=105 } GameMode;
-typedef enum { STORY_PHASE_CUTSCENE=0, STORY_PHASE_PLAYING=1, STORY_PHASE_COMPLETE=2, STORY_PHASE_FAILED=3 } StoryPhase;
+typedef enum {
+    STORY_PHASE_INTRO_CUTSCENE = 0,
+    STORY_PHASE_BOSS_PLAYING = 1,
+    STORY_PHASE_POST_BOSS_BREACH_CUTSCENE = 2,
+    STORY_PHASE_COMPLETE = 3,
+    STORY_PHASE_FAILED = 4
+} StoryPhase;
+
+#define STORY_CUTSCENE_MAX_SHOTS 12
+#define STORY_CUTSCENE_MAX_PUPPETS 48
+
+typedef enum {
+    STORY_CUTSCENE_NONE = 0,
+    STORY_CUTSCENE_INTRO = 1,
+    STORY_CUTSCENE_BOSS_DEFEAT_BREACH = 2
+} StoryCutsceneId;
+
+typedef enum {
+    STORY_PUPPET_NONE = 0,
+    STORY_PUPPET_RIFT_HOUND = 1,
+    STORY_PUPPET_SHAMBLER_TROOPER = 2,
+    STORY_PUPPET_SHRIEKER = 3,
+    STORY_PUPPET_GORE_BRUTE = 4,
+    STORY_PUPPET_PORTAL_SHEPHERD = 5
+} StoryPuppetType;
+
+typedef enum {
+    STORY_PUPPET_MOVE_BURST = 0,
+    STORY_PUPPET_MOVE_HEAVY_WALK = 1,
+    STORY_PUPPET_MOVE_HOVER = 2,
+    STORY_PUPPET_MOVE_STOMP = 3,
+    STORY_PUPPET_MOVE_PRESENCE = 4
+} StoryPuppetMoveMode;
+
+typedef struct {
+    unsigned int start_ms;
+    unsigned int end_ms;
+    float start_pos[3];
+    float end_pos[3];
+    float start_look[3];
+    float end_look[3];
+    int lerp_mode;
+} StoryCutsceneShot;
+
+typedef struct {
+    int active;
+    int shot_index;
+    float pos[3];
+    float look[3];
+} StoryCutsceneCamera;
+
+typedef struct {
+    int active;
+    int type;
+    int move_mode;
+    float x, y, z;
+    float yaw;
+    float scale_x, scale_y, scale_z;
+    float base_y;
+    float vel_x, vel_y, vel_z;
+    float jitter_amp;
+    unsigned int spawn_time_ms;
+    unsigned int lifetime_ms;
+} StoryPuppetActor;
+
+typedef struct {
+    int active;
+    float x, y, z;
+    float radius;
+    float open_alpha;
+    float pulse;
+    float spin_deg;
+    float rupture_alpha;
+} StoryPortalFx;
+
+typedef struct {
+    int active;
+    int id;
+    unsigned int start_ms;
+    unsigned int elapsed_ms;
+    int finished;
+    int completion_marked;
+    int shot_count;
+    StoryCutsceneShot shots[STORY_CUTSCENE_MAX_SHOTS];
+    StoryCutsceneCamera camera;
+    StoryPortalFx portal;
+    int puppet_count;
+    StoryPuppetActor puppets[STORY_CUTSCENE_MAX_PUPPETS];
+    int event_flags;
+    float shake_amp;
+    float glow_pulse;
+} StoryCutsceneState;
 
 typedef struct {
     int active;
@@ -321,6 +412,7 @@ typedef struct {
     int story_phase;
     unsigned int story_phase_start_ms;
     StoryBossState story_boss;
+    StoryCutsceneState story_cutscene;
     CtfMatchState ctf;
     struct sockaddr_in clients[MAX_CLIENTS];
     ClientMeta client_meta[MAX_CLIENTS];

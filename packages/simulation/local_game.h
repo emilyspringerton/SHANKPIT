@@ -25,7 +25,8 @@ static int tdmb_last_kills[MAX_CLIENTS];
 #define CTFB_CARRY_MELEE_DAMAGE 80
 #define CTFB_CARRY_MELEE_COOLDOWN_MS 450
 #define CTFB_RESPAWN_DEBUG_LOG 0
-#define STORY_CUTSCENE_DURATION_MS 5000
+#define STORY_INTRO_CUTSCENE_DURATION_MS 5000
+#define STORY_BREACH_CUTSCENE_DURATION_MS 20000
 #define STORY_BOSS_ATTACK_MIN_MS 2500U
 #define STORY_BOSS_ATTACK_MAX_MS 4000U
 #define STORY_BOSS_ATTACK_RADIUS 125.0f
@@ -546,6 +547,295 @@ static void ctf_try_carry_melee(PlayerState *attacker, unsigned int now_ms) {
     phys_try_melee_strike(attacker, local_state.players, CTFB_CARRY_MELEE_DAMAGE, 16, 0, now_ms, mode_respawn_delay_ms(local_state.game_mode));
 }
 
+static float story_cutscene_lerp(float a, float b, float t) {
+    return a + (b - a) * t;
+}
+
+static void story_cutscene_clear_runtime(StoryCutsceneState *cs) {
+    memset(cs, 0, sizeof(*cs));
+    cs->id = STORY_CUTSCENE_NONE;
+}
+
+static const char *story_cutscene_name(int id) {
+    switch (id) {
+        case STORY_CUTSCENE_INTRO: return "INTRO";
+        case STORY_CUTSCENE_BOSS_DEFEAT_BREACH: return "BOSS_DEFEAT_BREACH";
+        default: return "NONE";
+    }
+}
+
+static const char *story_puppet_name(int type) {
+    switch (type) {
+        case STORY_PUPPET_RIFT_HOUND: return "RIFT_HOUND";
+        case STORY_PUPPET_SHAMBLER_TROOPER: return "SHAMBLER_TROOPER";
+        case STORY_PUPPET_SHRIEKER: return "SHRIEKER";
+        case STORY_PUPPET_GORE_BRUTE: return "GORE_BRUTE";
+        case STORY_PUPPET_PORTAL_SHEPHERD: return "PORTAL_SHEPHERD";
+        default: return "UNKNOWN";
+    }
+}
+
+static void story_cutscene_set_shot(StoryCutsceneShot *shot,
+                                    unsigned int start_ms, unsigned int end_ms,
+                                    float sx, float sy, float sz,
+                                    float ex, float ey, float ez,
+                                    float slx, float sly, float slz,
+                                    float elx, float ely, float elz,
+                                    int lerp_mode) {
+    shot->start_ms = start_ms;
+    shot->end_ms = end_ms;
+    shot->start_pos[0] = sx; shot->start_pos[1] = sy; shot->start_pos[2] = sz;
+    shot->end_pos[0] = ex; shot->end_pos[1] = ey; shot->end_pos[2] = ez;
+    shot->start_look[0] = slx; shot->start_look[1] = sly; shot->start_look[2] = slz;
+    shot->end_look[0] = elx; shot->end_look[1] = ely; shot->end_look[2] = elz;
+    shot->lerp_mode = lerp_mode;
+}
+
+static StoryPuppetActor *story_cutscene_spawn_puppet(StoryCutsceneState *cs, int type, int move_mode,
+                                                      float x, float y, float z, float yaw,
+                                                      float scale_x, float scale_y, float scale_z,
+                                                      unsigned int now_ms, unsigned int lifetime_ms,
+                                                      float vel_x, float vel_y, float vel_z, float jitter_amp) {
+    for (int i = 0; i < STORY_CUTSCENE_MAX_PUPPETS; i++) {
+        StoryPuppetActor *p = &cs->puppets[i];
+        if (p->active) continue;
+        memset(p, 0, sizeof(*p));
+        p->active = 1;
+        p->type = type;
+        p->move_mode = move_mode;
+        p->x = x; p->y = y; p->z = z;
+        p->base_y = y;
+        p->yaw = yaw;
+        p->scale_x = scale_x; p->scale_y = scale_y; p->scale_z = scale_z;
+        p->spawn_time_ms = now_ms;
+        p->lifetime_ms = lifetime_ms;
+        p->vel_x = vel_x; p->vel_y = vel_y; p->vel_z = vel_z;
+        p->jitter_amp = jitter_amp;
+        cs->puppet_count++;
+        printf("[CUTSCENE] spawn puppet type=%s slot=%d\n", story_puppet_name(type), i);
+        return p;
+    }
+    return NULL;
+}
+
+static void story_cutscene_start_intro(unsigned int now_ms) {
+    StoryCutsceneState *cs = &local_state.story_cutscene;
+    story_cutscene_clear_runtime(cs);
+    cs->active = 1;
+    cs->id = STORY_CUTSCENE_INTRO;
+    cs->start_ms = now_ms;
+    cs->portal.active = 0;
+    cs->shot_count = 2;
+    StoryBossState *boss = &local_state.story_boss;
+    story_cutscene_set_shot(&cs->shots[0], 0, 2500,
+                            boss->x + 180.0f, boss->y + 88.0f, boss->z + 220.0f,
+                            boss->x + 180.0f, boss->y + 88.0f, boss->z + 220.0f,
+                            boss->x, boss->y + 24.0f, boss->z,
+                            boss->x, boss->y + 24.0f, boss->z, 0);
+    story_cutscene_set_shot(&cs->shots[1], 2500, STORY_INTRO_CUTSCENE_DURATION_MS,
+                            boss->x + 220.0f, boss->y + 120.0f, boss->z + 260.0f,
+                            boss->x + 150.0f, boss->y + 92.0f, boss->z + 180.0f,
+                            boss->x, boss->y + 30.0f, boss->z,
+                            boss->x, boss->y + 20.0f, boss->z, 1);
+    cs->camera.shot_index = -1;
+    printf("[CUTSCENE] start id=%s\n", story_cutscene_name(cs->id));
+}
+
+static void story_cutscene_start_breach(unsigned int now_ms) {
+    StoryCutsceneState *cs = &local_state.story_cutscene;
+    StoryBossState *boss = &local_state.story_boss;
+    story_cutscene_clear_runtime(cs);
+    cs->active = 1;
+    cs->id = STORY_CUTSCENE_BOSS_DEFEAT_BREACH;
+    cs->start_ms = now_ms;
+    cs->portal.active = 1;
+    cs->portal.x = boss->x;
+    cs->portal.y = boss->y + 140.0f;
+    cs->portal.z = boss->z - 40.0f;
+    cs->portal.radius = 5.0f;
+    cs->shot_count = 8;
+    cs->camera.shot_index = -1;
+
+    story_cutscene_set_shot(&cs->shots[0], 0, 1000,
+                            boss->x + 120.0f, boss->y + 65.0f, boss->z + 170.0f,
+                            boss->x + 120.0f, boss->y + 65.0f, boss->z + 170.0f,
+                            boss->x, boss->y + 20.0f, boss->z,
+                            boss->x, boss->y + 20.0f, boss->z, 0);
+    story_cutscene_set_shot(&cs->shots[1], 1000, 3000,
+                            boss->x + 170.0f, boss->y + 110.0f, boss->z + 260.0f,
+                            boss->x + 210.0f, boss->y + 140.0f, boss->z + 300.0f,
+                            cs->portal.x, cs->portal.y - 25.0f, cs->portal.z,
+                            cs->portal.x, cs->portal.y, cs->portal.z, 1);
+    story_cutscene_set_shot(&cs->shots[2], 3000, 6000,
+                            boss->x + 190.0f, boss->y + 120.0f, boss->z + 280.0f,
+                            boss->x + 110.0f, boss->y + 100.0f, boss->z + 215.0f,
+                            cs->portal.x, cs->portal.y, cs->portal.z,
+                            cs->portal.x, cs->portal.y, cs->portal.z, 1);
+    story_cutscene_set_shot(&cs->shots[3], 6000, 9000,
+                            boss->x + 70.0f, boss->y + 64.0f, boss->z + 145.0f,
+                            boss->x + 10.0f, boss->y + 52.0f, boss->z + 120.0f,
+                            boss->x + 20.0f, boss->y + 20.0f, boss->z + 20.0f,
+                            boss->x + 8.0f, boss->y + 20.0f, boss->z + 10.0f, 1);
+    story_cutscene_set_shot(&cs->shots[4], 9000, 12000,
+                            boss->x + 130.0f, boss->y + 80.0f, boss->z + 230.0f,
+                            boss->x + 75.0f, boss->y + 68.0f, boss->z + 182.0f,
+                            cs->portal.x, cs->portal.y - 10.0f, cs->portal.z,
+                            cs->portal.x, cs->portal.y - 8.0f, cs->portal.z, 1);
+    story_cutscene_set_shot(&cs->shots[5], 12000, 15000,
+                            boss->x + 90.0f, boss->y + 70.0f, boss->z + 165.0f,
+                            boss->x + 60.0f, boss->y + 64.0f, boss->z + 146.0f,
+                            boss->x + 16.0f, boss->y + 20.0f, boss->z + 20.0f,
+                            boss->x + 10.0f, boss->y + 20.0f, boss->z + 20.0f, 1);
+    story_cutscene_set_shot(&cs->shots[6], 15000, 18000,
+                            boss->x + 165.0f, boss->y + 100.0f, boss->z + 220.0f,
+                            boss->x + 122.0f, boss->y + 90.0f, boss->z + 190.0f,
+                            cs->portal.x, cs->portal.y + 10.0f, cs->portal.z,
+                            cs->portal.x, cs->portal.y + 8.0f, cs->portal.z, 1);
+    story_cutscene_set_shot(&cs->shots[7], 18000, STORY_BREACH_CUTSCENE_DURATION_MS,
+                            boss->x + 160.0f, boss->y + 92.0f, boss->z + 215.0f,
+                            boss->x + 138.0f, boss->y + 88.0f, boss->z + 205.0f,
+                            cs->portal.x, cs->portal.y + 6.0f, cs->portal.z,
+                            cs->portal.x, cs->portal.y + 6.0f, cs->portal.z, 1);
+    printf("[CUTSCENE] start id=%s\n", story_cutscene_name(cs->id));
+}
+
+static void story_cutscene_update(unsigned int now_ms) {
+    StoryCutsceneState *cs = &local_state.story_cutscene;
+    if (!cs->active) return;
+    cs->elapsed_ms = now_ms - cs->start_ms;
+    unsigned int t_ms = cs->elapsed_ms;
+
+    int shot_index = cs->shot_count - 1;
+    for (int i = 0; i < cs->shot_count; i++) {
+        if (t_ms >= cs->shots[i].start_ms && t_ms < cs->shots[i].end_ms) {
+            shot_index = i;
+            break;
+        }
+    }
+    if (shot_index != cs->camera.shot_index) {
+        cs->camera.shot_index = shot_index;
+        printf("[CUTSCENE] shot change id=%s shot=%d\n", story_cutscene_name(cs->id), shot_index);
+    }
+
+    StoryCutsceneShot *shot = &cs->shots[shot_index];
+    float t = 0.0f;
+    if (shot->end_ms > shot->start_ms) {
+        t = (float)(t_ms - shot->start_ms) / (float)(shot->end_ms - shot->start_ms);
+        if (t < 0.0f) t = 0.0f;
+        if (t > 1.0f) t = 1.0f;
+    }
+    cs->camera.active = 1;
+    if (shot->lerp_mode) {
+        for (int k = 0; k < 3; k++) {
+            cs->camera.pos[k] = story_cutscene_lerp(shot->start_pos[k], shot->end_pos[k], t);
+            cs->camera.look[k] = story_cutscene_lerp(shot->start_look[k], shot->end_look[k], t);
+        }
+    } else {
+        for (int k = 0; k < 3; k++) {
+            cs->camera.pos[k] = shot->start_pos[k];
+            cs->camera.look[k] = shot->start_look[k];
+        }
+    }
+
+    cs->shake_amp = 0.0f;
+    cs->glow_pulse = 0.0f;
+    if (cs->id == STORY_CUTSCENE_BOSS_DEFEAT_BREACH) {
+        StoryPortalFx *portal = &cs->portal;
+        if (t_ms >= 1000 && t_ms < 3000) {
+            float stage = (float)(t_ms - 1000) / 2000.0f;
+            portal->rupture_alpha = stage;
+            portal->open_alpha = stage * 0.35f;
+            portal->radius = 7.0f + stage * 20.0f;
+            cs->shake_amp = 1.8f + stage * 2.4f;
+            cs->glow_pulse = stage;
+        } else if (t_ms >= 3000) {
+            float stage = (float)(t_ms - 3000) / 3000.0f;
+            if (stage > 1.0f) stage = 1.0f;
+            portal->rupture_alpha = 1.0f;
+            portal->open_alpha = 0.35f + stage * 0.65f;
+            portal->radius = 27.0f + stage * 45.0f;
+            cs->glow_pulse = 0.7f + 0.3f * sinf((float)t_ms * 0.01f);
+        }
+        if (t_ms >= 12000 && t_ms < 15000) cs->shake_amp = 2.8f;
+        portal->pulse = 0.5f + 0.5f * sinf((float)t_ms * 0.0085f);
+        portal->spin_deg += 0.28f + portal->open_alpha * 1.2f;
+
+        StoryBossState *boss = &local_state.story_boss;
+        if ((cs->event_flags & 1) == 0 && t_ms >= 6000) {
+            cs->event_flags |= 1;
+            for (int i = 0; i < 8; i++) {
+                float lane = (float)i - 3.5f;
+                story_cutscene_spawn_puppet(cs, STORY_PUPPET_RIFT_HOUND, STORY_PUPPET_MOVE_BURST,
+                                            boss->x + lane * 5.6f, voxworld_height_at(boss->x + lane * 5.6f, boss->z + 26.0f) + 2.5f, boss->z + 26.0f,
+                                            180.0f, 1.0f, 1.0f, 1.0f, now_ms, 11000,
+                                            lane * 0.16f, 0.0f, 7.0f + ((i % 2) ? 0.9f : -0.5f), 0.7f);
+            }
+        }
+        if ((cs->event_flags & 2) == 0 && t_ms >= 9000) {
+            cs->event_flags |= 2;
+            for (int i = 0; i < 5; i++) {
+                float lane = (float)i - 2.0f;
+                story_cutscene_spawn_puppet(cs, STORY_PUPPET_SHAMBLER_TROOPER, STORY_PUPPET_MOVE_HEAVY_WALK,
+                                            boss->x + lane * 9.0f, voxworld_height_at(boss->x + lane * 9.0f, boss->z + 28.0f) + 3.5f, boss->z + 28.0f,
+                                            180.0f, 1.25f, 1.25f, 1.25f, now_ms, 12000,
+                                            lane * 0.08f, 0.0f, 3.3f, 0.0f);
+            }
+            for (int i = 0; i < 3; i++) {
+                float side = (i == 0) ? -1.0f : (i == 1 ? 1.0f : 0.0f);
+                story_cutscene_spawn_puppet(cs, STORY_PUPPET_SHRIEKER, STORY_PUPPET_MOVE_HOVER,
+                                            boss->x + side * 34.0f, boss->y + 88.0f + (float)i * 7.0f, boss->z + 8.0f + (float)i * 8.0f,
+                                            180.0f, 1.12f, 1.12f, 1.12f, now_ms, 12000,
+                                            side * 0.45f, 0.0f, 0.3f + 0.2f * (float)i, 0.0f);
+            }
+        }
+        if ((cs->event_flags & 4) == 0 && t_ms >= 12000) {
+            cs->event_flags |= 4;
+            story_cutscene_spawn_puppet(cs, STORY_PUPPET_GORE_BRUTE, STORY_PUPPET_MOVE_STOMP,
+                                        boss->x + 8.0f, voxworld_height_at(boss->x + 8.0f, boss->z + 32.0f) + 4.8f, boss->z + 32.0f,
+                                        180.0f, 1.9f, 1.9f, 1.9f, now_ms, 12000,
+                                        0.0f, 0.0f, 2.2f, 0.0f);
+        }
+        if ((cs->event_flags & 8) == 0 && t_ms >= 15000) {
+            cs->event_flags |= 8;
+            story_cutscene_spawn_puppet(cs, STORY_PUPPET_PORTAL_SHEPHERD, STORY_PUPPET_MOVE_PRESENCE,
+                                        boss->x, boss->y + 84.0f, boss->z + 2.0f,
+                                        180.0f, 1.5f, 1.5f, 1.5f, now_ms, 12000,
+                                        0.0f, 0.2f, 0.0f, 0.0f);
+        }
+    }
+
+    for (int i = 0; i < STORY_CUTSCENE_MAX_PUPPETS; i++) {
+        StoryPuppetActor *p = &cs->puppets[i];
+        if (!p->active) continue;
+        unsigned int alive_ms = now_ms - p->spawn_time_ms;
+        if (p->lifetime_ms > 0 && alive_ms >= p->lifetime_ms) {
+            p->active = 0;
+            continue;
+        }
+        float dt = SHANKPIT_NET_FIXED_DT;
+        p->x += p->vel_x * dt;
+        p->z += p->vel_z * dt;
+        if (p->move_mode == STORY_PUPPET_MOVE_BURST) {
+            p->x += sinf((float)alive_ms * 0.03f + (float)i) * p->jitter_amp * 0.08f;
+        } else if (p->move_mode == STORY_PUPPET_MOVE_HOVER) {
+            p->y = p->base_y + sinf((float)alive_ms * 0.007f + (float)i) * 2.6f;
+        } else if (p->move_mode == STORY_PUPPET_MOVE_STOMP) {
+            p->y = p->base_y + fabsf(sinf((float)alive_ms * 0.0045f)) * 1.5f;
+        } else if (p->move_mode == STORY_PUPPET_MOVE_PRESENCE) {
+            p->y = p->base_y + sinf((float)alive_ms * 0.0035f) * 1.4f;
+        }
+    }
+
+    if (!cs->finished) {
+        unsigned int end_ms = (cs->id == STORY_CUTSCENE_INTRO) ? STORY_INTRO_CUTSCENE_DURATION_MS : STORY_BREACH_CUTSCENE_DURATION_MS;
+        if (t_ms >= end_ms) {
+            cs->finished = 1;
+            cs->active = 0;
+            printf("[CUTSCENE] finished id=%s\n", story_cutscene_name(cs->id));
+        }
+    }
+}
+
 static float story_boss_weapon_damage(int weapon) {
     if (weapon >= 0 && weapon < MAX_WEAPONS) return (float)WPN_STATS[weapon].dmg;
     return 8.0f;
@@ -569,7 +859,7 @@ static int story_boss_is_targeted(const PlayerState *hero, const StoryBossState 
 
 static void story_boss_apply_player_hit(PlayerState *hero, unsigned int now_ms) {
     StoryBossState *boss = &local_state.story_boss;
-    if (local_state.game_mode != MODE_STORY || local_state.story_phase != STORY_PHASE_PLAYING) return;
+    if (local_state.game_mode != MODE_STORY || local_state.story_phase != STORY_PHASE_BOSS_PLAYING) return;
     if (!boss->active || boss->defeated || hero->state == STATE_DEAD) return;
     int weapon = hero->current_weapon;
     float max_dist = 560.0f;
@@ -593,16 +883,16 @@ static void story_boss_apply_player_hit(PlayerState *hero, unsigned int now_ms) 
     if (boss->health <= 0.0f) {
         boss->defeated = 1;
         boss->active = 0;
-        local_state.story_phase = STORY_PHASE_COMPLETE;
+        local_state.story_phase = STORY_PHASE_POST_BOSS_BREACH_CUTSCENE;
         local_state.story_phase_start_ms = now_ms;
-        local_state.match_over = 1;
-        printf("[STORY] boss defeated\n");
+        story_cutscene_start_breach(now_ms);
+        printf("[STORY] boss defeated -> breach cutscene\n");
     }
 }
 
 static void story_boss_tick(PlayerState *hero, unsigned int now_ms) {
     StoryBossState *boss = &local_state.story_boss;
-    if (local_state.game_mode != MODE_STORY || local_state.story_phase != STORY_PHASE_PLAYING) return;
+    if (local_state.game_mode != MODE_STORY || local_state.story_phase != STORY_PHASE_BOSS_PLAYING) return;
     if (!boss->active || boss->defeated || hero->state == STATE_DEAD) return;
     unsigned int cooldown = STORY_BOSS_ATTACK_MIN_MS + (unsigned int)(((boss->x + boss->z) < 0.0f ? -boss->z : boss->z));
     cooldown = STORY_BOSS_ATTACK_MIN_MS + (cooldown % (STORY_BOSS_ATTACK_MAX_MS - STORY_BOSS_ATTACK_MIN_MS + 1U));
@@ -874,16 +1164,38 @@ static void update_projectiles(unsigned int now_ms) {
 void local_update(float fwd, float str, float yaw, float pitch, int shoot, int weapon_req, int jump, int crouch, int reload, int ability, void *server_context, unsigned int cmd_time) {
     PlayerState *p0 = &local_state.players[0];
     if (local_state.game_mode == MODE_STORY) {
-        if (local_state.story_phase == STORY_PHASE_CUTSCENE) {
-            fwd = 0.0f; str = 0.0f; shoot = 0; jump = 0; crouch = 0; reload = 0; ability = 0;
-            if (cmd_time - local_state.story_phase_start_ms >= STORY_CUTSCENE_DURATION_MS) {
-                local_state.story_phase = STORY_PHASE_PLAYING;
-                local_state.story_phase_start_ms = cmd_time;
+        if (local_state.story_phase_start_ms == 0) {
+            local_state.story_phase_start_ms = cmd_time;
+            if (local_state.story_cutscene.active && local_state.story_cutscene.start_ms == 0) {
+                local_state.story_cutscene.start_ms = cmd_time;
             }
-            float dx = local_state.story_boss.x - p0->x;
-            float dz = local_state.story_boss.z - p0->z;
-            yaw = atan2f(dx, dz) * (180.0f / 3.14159f);
-            pitch = -5.0f;
+        }
+        if (local_state.story_phase == STORY_PHASE_INTRO_CUTSCENE ||
+            local_state.story_phase == STORY_PHASE_POST_BOSS_BREACH_CUTSCENE) {
+            fwd = 0.0f; str = 0.0f; shoot = 0; jump = 0; crouch = 0; reload = 0; ability = 0;
+            story_cutscene_update(cmd_time);
+            if (local_state.story_cutscene.camera.active) {
+                float dx = local_state.story_cutscene.camera.look[0] - p0->x;
+                float dz = local_state.story_cutscene.camera.look[2] - p0->z;
+                yaw = atan2f(dx, dz) * (180.0f / 3.14159f);
+            }
+            if (local_state.story_phase == STORY_PHASE_INTRO_CUTSCENE &&
+                local_state.story_cutscene.finished &&
+                local_state.story_cutscene.id == STORY_CUTSCENE_INTRO) {
+                local_state.story_phase = STORY_PHASE_BOSS_PLAYING;
+                local_state.story_phase_start_ms = cmd_time;
+                printf("[STORY] intro cutscene complete -> boss phase\n");
+            }
+            if (local_state.story_phase == STORY_PHASE_POST_BOSS_BREACH_CUTSCENE &&
+                local_state.story_cutscene.finished &&
+                local_state.story_cutscene.id == STORY_CUTSCENE_BOSS_DEFEAT_BREACH &&
+                !local_state.story_cutscene.completion_marked) {
+                local_state.story_cutscene.completion_marked = 1;
+                local_state.story_phase = STORY_PHASE_COMPLETE;
+                local_state.story_phase_start_ms = cmd_time;
+                local_state.match_over = 1;
+                printf("[STORY] breach cutscene complete -> story complete\n");
+            }
         } else if (local_state.story_phase == STORY_PHASE_COMPLETE || local_state.story_phase == STORY_PHASE_FAILED) {
             fwd = 0.0f; str = 0.0f; shoot = 0; jump = 0; crouch = 0; reload = 0; ability = 0;
         }
@@ -901,7 +1213,9 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
         reload = 0;
         ability = 0;
     }
-    if (!(local_state.game_mode == MODE_STORY && local_state.story_phase == STORY_PHASE_CUTSCENE)) {
+    if (!(local_state.game_mode == MODE_STORY &&
+          (local_state.story_phase == STORY_PHASE_INTRO_CUTSCENE ||
+           local_state.story_phase == STORY_PHASE_POST_BOSS_BREACH_CUTSCENE))) {
         p0->yaw = yaw; p0->pitch = pitch;
     }
     p0->in_fwd = fwd;
@@ -1038,7 +1352,7 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
     }
     buggy_tick_all();
     update_projectiles(cmd_time);
-    if (local_state.game_mode == MODE_STORY && local_state.story_phase == STORY_PHASE_PLAYING) {
+    if (local_state.game_mode == MODE_STORY && local_state.story_phase == STORY_PHASE_BOSS_PLAYING) {
         if (p0->is_shooting >= 5 || (p0->current_weapon == WPN_KNIFE && p0->in_shoot) || (p0->current_weapon == WPN_KATANA && p0->in_shoot)) {
             story_boss_apply_player_hit(p0, cmd_time);
         }
@@ -1074,8 +1388,9 @@ void local_init_match(int num_players, int mode) {
     local_state.transition_timer = 0;
     local_state.winning_team = -1;
     local_state.score_limit = (mode == MODE_TDMB || mode == MODE_TDMO) ? TDMB_SCORE_LIMIT : (mode == MODE_CTFB ? CTFB_SCORE_LIMIT : 0);
-    local_state.story_phase = (mode == MODE_STORY) ? STORY_PHASE_CUTSCENE : STORY_PHASE_PLAYING;
+    local_state.story_phase = (mode == MODE_STORY) ? STORY_PHASE_INTRO_CUTSCENE : STORY_PHASE_BOSS_PLAYING;
     local_state.story_phase_start_ms = 0;
+    story_cutscene_clear_runtime(&local_state.story_cutscene);
 
     if (mode == MODE_TDMB) {
         num_players = 1 + TDMB_BLUE_BOTS + TDMB_RED_BOTS;
@@ -1134,6 +1449,7 @@ void local_init_match(int num_players, int mode) {
         boss->last_attack_ms = 0;
         boss->hurt_flash_until_ms = 0;
         printf("[STORY] boss spawned at %.1f/%.1f/%.1f hp=%.1f\n", boss->x, boss->y, boss->z, boss->max_health);
+        story_cutscene_start_intro(0);
     }
     if (mode == MODE_CTFB) {
         ctf_init_match_state(local_state.scene_id);
