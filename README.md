@@ -170,7 +170,10 @@ The current skin list is:
 - WANDERER
 - PINK
 - GEISHA
-- ALPINE. :contentReference[oaicite:27]{index=27}
+- ALPINE
+- EMIREE. :contentReference[oaicite:27]{index=27}
+
+Emiree is the first PS2/FFXI-inspired premium low-poly skin pass: material-zoned, silhouette-first, with subtle authored glow accents.
 
 Skin selection is persisted through:
 

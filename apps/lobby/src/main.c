@@ -2512,6 +2512,178 @@ static void draw_storm_mask(void) {
     glPushMatrix(); glTranslatef(RONIN_HORN_OFFSET_X, 0.52f, 0.05f); draw_box(RONIN_HORN_W, RONIN_HORN_H, RONIN_HORN_D); draw_box_outline(RONIN_HORN_W, RONIN_HORN_H, RONIN_HORN_D); glPopMatrix();
 }
 
+typedef struct PlayerSkinPalette {
+    float skin_r, skin_g, skin_b;
+    float hair_r, hair_g, hair_b;
+    float body_r, body_g, body_b;
+    float coat_r, coat_g, coat_b;
+    float coat_dark_r, coat_dark_g, coat_dark_b;
+    float trim_r, trim_g, trim_b;
+    float metal_r, metal_g, metal_b;
+    float glow_r, glow_g, glow_b;
+    float glow_strength;
+} PlayerSkinPalette;
+
+static PlayerSkinPalette player_skin_palette(int skin_id) {
+    PlayerSkinPalette palette = {
+        0.78f, 0.66f, 0.56f, /* skin */
+        0.16f, 0.12f, 0.10f, /* hair */
+        0.18f, 0.22f, 0.28f, /* body */
+        0.12f, 0.13f, 0.15f, /* coat */
+        0.08f, 0.09f, 0.11f, /* coat_dark */
+        0.56f, 0.58f, 0.64f, /* trim */
+        0.38f, 0.40f, 0.44f, /* metal */
+        0.48f, 0.24f, 0.76f, /* glow */
+        0.35f               /* glow strength */
+    };
+
+    if (skin_id == SKIN_EMIREE) {
+        palette.skin_r = 0.88f; palette.skin_g = 0.85f; palette.skin_b = 0.90f;
+        palette.hair_r = 0.03f; palette.hair_g = 0.03f; palette.hair_b = 0.05f;
+        palette.body_r = 0.08f; palette.body_g = 0.09f; palette.body_b = 0.11f;
+        palette.coat_r = 0.10f; palette.coat_g = 0.11f; palette.coat_b = 0.14f;
+        palette.coat_dark_r = 0.05f; palette.coat_dark_g = 0.06f; palette.coat_dark_b = 0.08f;
+        palette.trim_r = 0.62f; palette.trim_g = 0.60f; palette.trim_b = 0.70f;
+        palette.metal_r = 0.34f; palette.metal_g = 0.36f; palette.metal_b = 0.40f;
+        palette.glow_r = 0.56f; palette.glow_g = 0.28f; palette.glow_b = 0.86f;
+        palette.glow_strength = 0.75f;
+    }
+
+    return palette;
+}
+
+static void draw_skin_glow_begin(void) {
+    glPushAttrib(GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_LIGHTING_BIT | GL_DEPTH_BUFFER_BIT);
+    glDisable(GL_LIGHTING);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    glDepthMask(GL_FALSE);
+}
+
+static void draw_skin_glow_end(void) {
+    glPopAttrib();
+}
+
+static void draw_emiree_high_collar(const PlayerSkinPalette *palette) {
+    glColor3f(palette->coat_dark_r, palette->coat_dark_g, palette->coat_dark_b);
+    glPushMatrix(); glTranslatef(-0.34f, 1.30f, 0.26f); glRotatef(14.0f, 0, 1, 0); draw_box(0.22f, 0.54f, 0.10f); draw_box_outline(0.22f, 0.54f, 0.10f); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.34f, 1.30f, 0.26f); glRotatef(-14.0f, 0, 1, 0); draw_box(0.22f, 0.54f, 0.10f); draw_box_outline(0.22f, 0.54f, 0.10f); glPopMatrix();
+}
+
+static void draw_emiree_coat(const PlayerSkinPalette *palette) {
+    glColor3f(palette->coat_r, palette->coat_g, palette->coat_b);
+    glPushMatrix(); glTranslatef(0.0f, 0.66f, -0.24f); draw_box(1.28f, 1.68f, 0.30f); draw_box_outline(1.28f, 1.68f, 0.30f); glPopMatrix();
+    glPushMatrix(); glTranslatef(-0.56f, 0.90f, 0.0f); draw_box(0.34f, 1.26f, 0.40f); draw_box_outline(0.34f, 1.26f, 0.40f); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.56f, 0.90f, 0.0f); draw_box(0.34f, 1.26f, 0.40f); draw_box_outline(0.34f, 1.26f, 0.40f); glPopMatrix();
+    glPushMatrix(); glTranslatef(-0.42f, -0.38f, -0.30f); glRotatef(-8.0f, 0, 1, 0); draw_box(0.58f, 1.58f, 0.16f); draw_box_outline(0.58f, 1.58f, 0.16f); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.42f, -0.38f, -0.30f); glRotatef(8.0f, 0, 1, 0); draw_box(0.58f, 1.58f, 0.16f); draw_box_outline(0.58f, 1.58f, 0.16f); glPopMatrix();
+
+    glColor3f(palette->coat_dark_r, palette->coat_dark_g, palette->coat_dark_b);
+    glPushMatrix(); glTranslatef(0.0f, 0.66f, 0.27f); draw_box(0.98f, 1.42f, 0.08f); draw_box_outline(0.98f, 1.42f, 0.08f); glPopMatrix();
+
+    glColor3f(palette->glow_r * 0.55f, palette->glow_g * 0.55f, palette->glow_b * 0.55f);
+    glBegin(GL_QUADS);
+    glVertex3f(-0.70f, -1.18f, -0.30f); glVertex3f(-0.18f, -1.18f, -0.12f);
+    glVertex3f(-0.18f, -0.10f, -0.12f); glVertex3f(-0.70f, -0.10f, -0.30f);
+    glVertex3f(0.70f, -1.18f, -0.30f); glVertex3f(0.18f, -1.18f, -0.12f);
+    glVertex3f(0.18f, -0.10f, -0.12f); glVertex3f(0.70f, -0.10f, -0.30f);
+    glEnd();
+}
+
+static void draw_emiree_chest_crystal(const PlayerSkinPalette *palette) {
+    glColor3f(palette->glow_r, palette->glow_g, palette->glow_b);
+    glPushMatrix(); glTranslatef(0.0f, 0.82f, 0.42f); draw_box(0.18f, 0.28f, 0.05f); draw_box_outline(0.18f, 0.28f, 0.05f); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.0f, 1.02f, 0.40f); draw_box(0.10f, 0.10f, 0.04f); draw_box_outline(0.10f, 0.10f, 0.04f); glPopMatrix();
+    glColor3f(palette->metal_r, palette->metal_g, palette->metal_b);
+    glPushMatrix(); glTranslatef(0.0f, 1.14f, 0.34f); draw_box(0.04f, 0.18f, 0.03f); draw_box_outline(0.04f, 0.18f, 0.03f); glPopMatrix();
+}
+
+static void draw_emiree_earrings(const PlayerSkinPalette *palette) {
+    glColor3f(palette->trim_r, palette->trim_g, palette->trim_b);
+    glPushMatrix(); glTranslatef(-0.44f, -0.03f, 0.31f); draw_box(0.03f, 0.12f, 0.03f); draw_box_outline(0.03f, 0.12f, 0.03f); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.44f, -0.03f, 0.31f); draw_box(0.03f, 0.12f, 0.03f); draw_box_outline(0.03f, 0.12f, 0.03f); glPopMatrix();
+    glColor3f(palette->glow_r, palette->glow_g, palette->glow_b);
+    glPushMatrix(); glTranslatef(-0.44f, -0.14f, 0.33f); draw_box(0.05f, 0.06f, 0.04f); draw_box_outline(0.05f, 0.06f, 0.04f); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.44f, -0.14f, 0.33f); draw_box(0.05f, 0.06f, 0.04f); draw_box_outline(0.05f, 0.06f, 0.04f); glPopMatrix();
+}
+
+static void draw_emiree_back_crystal(const PlayerSkinPalette *palette) {
+    glColor3f(palette->glow_r, palette->glow_g, palette->glow_b);
+    glPushMatrix(); glTranslatef(0.0f, 1.02f, -0.40f); draw_box(0.22f, 0.36f, 0.05f); draw_box_outline(0.22f, 0.36f, 0.05f); glPopMatrix();
+    glColor3f(palette->trim_r, palette->trim_g, palette->trim_b);
+    glPushMatrix(); glTranslatef(0.0f, 0.74f, -0.38f); draw_box(0.12f, 0.18f, 0.04f); draw_box_outline(0.12f, 0.18f, 0.04f); glPopMatrix();
+}
+
+static void draw_emiree_glow(const PlayerSkinPalette *palette) {
+    float glow_alpha = 0.22f + 0.30f * palette->glow_strength;
+    draw_skin_glow_begin();
+    glColor4f(palette->glow_r, palette->glow_g, palette->glow_b, glow_alpha);
+    glPushMatrix(); glTranslatef(0.0f, 0.82f, 0.44f); draw_box(0.24f, 0.36f, 0.08f); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.0f, 1.02f, -0.42f); draw_box(0.30f, 0.48f, 0.08f); glPopMatrix();
+    glPushMatrix(); glTranslatef(-0.44f, -0.14f, 0.34f); draw_box(0.08f, 0.10f, 0.06f); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.44f, -0.14f, 0.34f); draw_box(0.08f, 0.10f, 0.06f); glPopMatrix();
+    glColor4f(palette->glow_r, palette->glow_g, palette->glow_b, 0.12f + 0.20f * palette->glow_strength);
+    glBegin(GL_QUADS);
+    glVertex3f(-0.72f, -1.20f, -0.31f); glVertex3f(-0.16f, -1.20f, -0.10f);
+    glVertex3f(-0.16f, -0.08f, -0.10f); glVertex3f(-0.72f, -0.08f, -0.31f);
+    glVertex3f(0.72f, -1.20f, -0.31f); glVertex3f(0.16f, -1.20f, -0.10f);
+    glVertex3f(0.16f, -0.08f, -0.10f); glVertex3f(0.72f, -0.08f, -0.31f);
+    glEnd();
+    draw_skin_glow_end();
+}
+
+/*
+ * Emiree is the first PS2/FFXI-inspired premium low-poly skin pass:
+ * material-zoned, silhouette-first, with subtle authored glow accents.
+ */
+static void draw_player_skin_emiree(PlayerState *p, float draw_pitch, float draw_recoil) {
+    PlayerSkinPalette palette = player_skin_palette(SKIN_EMIREE);
+
+    glColor3f(palette.body_r, palette.body_g, palette.body_b);
+    glPushMatrix(); glTranslatef(0.0f, 0.78f, 0.0f); draw_box(1.10f, 1.38f, 0.64f); draw_box_outline(1.10f, 1.38f, 0.64f); glPopMatrix();
+    glColor3f(palette.coat_dark_r, palette.coat_dark_g, palette.coat_dark_b);
+    glPushMatrix(); glTranslatef(0.0f, 0.98f, 0.35f); draw_box(0.82f, 0.72f, 0.10f); draw_box_outline(0.82f, 0.72f, 0.10f); glPopMatrix();
+
+    glColor3f(palette.coat_r, palette.coat_g, palette.coat_b);
+    glPushMatrix(); glTranslatef(-0.70f, 0.80f, 0.0f); draw_box(0.32f, 1.26f, 0.36f); draw_box_outline(0.32f, 1.26f, 0.36f); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.70f, 0.80f, 0.0f); draw_box(0.32f, 1.26f, 0.36f); draw_box_outline(0.32f, 1.26f, 0.36f); glPopMatrix();
+
+    glColor3f(palette.coat_dark_r, palette.coat_dark_g, palette.coat_dark_b);
+    glPushMatrix(); glTranslatef(-0.30f, -0.12f, 0.0f); draw_box(0.38f, 1.44f, 0.40f); draw_box_outline(0.38f, 1.44f, 0.40f); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.30f, -0.12f, 0.0f); draw_box(0.38f, 1.44f, 0.40f); draw_box_outline(0.38f, 1.44f, 0.40f); glPopMatrix();
+
+    glColor3f(palette.metal_r, palette.metal_g, palette.metal_b);
+    glPushMatrix(); glTranslatef(-0.30f, -0.86f, 0.18f); draw_box(0.44f, 0.22f, 0.46f); draw_box_outline(0.44f, 0.22f, 0.46f); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.30f, -0.86f, 0.18f); draw_box(0.44f, 0.22f, 0.46f); draw_box_outline(0.44f, 0.22f, 0.46f); glPopMatrix();
+
+    draw_emiree_coat(&palette);
+    draw_emiree_high_collar(&palette);
+    draw_emiree_chest_crystal(&palette);
+    draw_emiree_back_crystal(&palette);
+
+    glPushMatrix();
+    glTranslatef(0.0f, 1.94f, 0.0f);
+    glRotatef(draw_pitch, 1, 0, 0);
+    glColor3f(palette.skin_r, palette.skin_g, palette.skin_b);
+    draw_box(0.66f, 0.82f, 0.66f);
+    draw_box_outline(0.66f, 0.82f, 0.66f);
+    glColor3f(palette.hair_r, palette.hair_g, palette.hair_b);
+    glPushMatrix(); glTranslatef(0.0f, 0.34f, -0.02f); draw_box(0.88f, 0.34f, 0.76f); draw_box_outline(0.88f, 0.34f, 0.76f); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.0f, 0.54f, -0.14f); draw_box(0.54f, 0.24f, 0.50f); draw_box_outline(0.54f, 0.24f, 0.50f); glPopMatrix();
+    glColor3f(palette.trim_r, palette.trim_g, palette.trim_b);
+    glPushMatrix(); glTranslatef(0.0f, -0.02f, 0.41f); draw_box(0.22f, 0.06f, 0.03f); draw_box_outline(0.22f, 0.06f, 0.03f); glPopMatrix();
+    draw_emiree_earrings(&palette);
+    glPopMatrix();
+
+    draw_emiree_glow(&palette);
+
+    glPushMatrix(); glTranslatef(0.64f, 1.03f, 0.57f);
+    glRotatef(draw_pitch, 1, 0, 0);
+    glRotatef(-draw_recoil * 10.0f, 1, 0, 0);
+    glTranslatef(0.0f, 0.0f, -draw_recoil * 0.08f);
+    glScalef(0.8f, 0.8f, 0.8f); draw_gun_model(p->current_weapon); glPopMatrix();
+}
+
 static void draw_mayrice_beard(void) {
     glColor3f(0.30f, 0.21f, 0.14f);
     glPushMatrix(); glTranslatef(0.0f, -0.14f, 0.38f); draw_box(0.62f, 0.32f, 0.10f); draw_box_outline(0.62f, 0.32f, 0.10f); glPopMatrix();
