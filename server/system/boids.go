@@ -21,6 +21,15 @@ func StepBoids(boids []BoidState, cfg BoidConfig) []BoidState {
 		return nil
 	}
 	updated := make([]BoidState, len(boids))
+	neighborCells := make(map[boidCell][]int, len(boids))
+
+	if cfg.NeighborRadius > 0 {
+		invCellSize := 1.0 / cfg.NeighborRadius
+		for i, b := range boids {
+			cell := boidCellForPos(b.Pos, invCellSize)
+			neighborCells[cell] = append(neighborCells[cell], i)
+		}
+	}
 
 	for i := range boids {
 		b := boids[i]
@@ -28,24 +37,14 @@ func StepBoids(boids []BoidState, cfg BoidConfig) []BoidState {
 		var cohesion Vec3
 		var separation Vec3
 		count := 0
-
-		for j := range boids {
-			if i == j {
-				continue
-			}
-			o := boids[j]
-			delta := vec3Sub(o.Pos, b.Pos)
-			d := vec3Len(delta)
-			if d <= 0 || d > cfg.NeighborRadius {
-				continue
-			}
+		eachNeighbor(boids, neighborCells, i, b, cfg.NeighborRadius, func(o BoidState, d float64) {
 			align = align.Add(o.Vel)
 			cohesion = cohesion.Add(o.Pos)
 			if d < cfg.SeparationRadius {
 				separation = separation.Add(vec3Sub(b.Pos, o.Pos))
 			}
 			count++
-		}
+		})
 
 		if count > 0 {
 			inv := 1.0 / float64(count)
@@ -70,6 +69,59 @@ func StepBoids(boids []BoidState, cfg BoidConfig) []BoidState {
 	}
 
 	return updated
+}
+
+type boidCell struct {
+	X int
+	Y int
+	Z int
+}
+
+func boidCellForPos(pos Vec3, invCellSize float64) boidCell {
+	return boidCell{
+		X: int(math.Floor(pos.X * invCellSize)),
+		Y: int(math.Floor(pos.Y * invCellSize)),
+		Z: int(math.Floor(pos.Z * invCellSize)),
+	}
+}
+
+func eachNeighbor(boids []BoidState, cells map[boidCell][]int, self int, selfBoid BoidState, neighborRadius float64, fn func(BoidState, float64)) {
+	if neighborRadius <= 0 {
+		for j := range boids {
+			if self == j {
+				continue
+			}
+			o := boids[j]
+			d := vec3Len(vec3Sub(o.Pos, selfBoid.Pos))
+			if d <= 0 {
+				continue
+			}
+			fn(o, d)
+		}
+		return
+	}
+
+	invCellSize := 1.0 / neighborRadius
+	origin := boidCellForPos(selfBoid.Pos, invCellSize)
+	for dz := -1; dz <= 1; dz++ {
+		for dy := -1; dy <= 1; dy++ {
+			for dx := -1; dx <= 1; dx++ {
+				cell := boidCell{X: origin.X + dx, Y: origin.Y + dy, Z: origin.Z + dz}
+				for _, j := range cells[cell] {
+					if self == j {
+						continue
+					}
+					o := boids[j]
+					delta := vec3Sub(o.Pos, selfBoid.Pos)
+					d := vec3Len(delta)
+					if d <= 0 || d > neighborRadius {
+						continue
+					}
+					fn(o, d)
+				}
+			}
+		}
+	}
 }
 
 func vec3Sub(a, b Vec3) Vec3 {
