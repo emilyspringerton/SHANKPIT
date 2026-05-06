@@ -28,16 +28,58 @@ PlayerState world_state[MAX_CLIENTS]; // What I see
 BotGenome brain;
 unsigned int cmd_seq = 0;
 char brain_filename[64];
+int headed_mode = 0;
+float last_self_x = 0.0f;
+float last_self_z = 0.0f;
+int have_last_self = 0;
+
+typedef struct {
+    float mu_fwd;
+    float mu_strafe;
+    float mu_yaw_delta;
+    float var_fwd;
+    float var_strafe;
+    float var_yaw_delta;
+    int samples;
+} GaussianPolicy;
+
+GaussianPolicy predator_policy;
+
+void predator_init() {
+    memset(&predator_policy, 0, sizeof(predator_policy));
+    predator_policy.var_fwd = 1.0f;
+    predator_policy.var_strafe = 1.0f;
+    predator_policy.var_yaw_delta = 6.0f;
+}
+
+void predator_learn(float fwd, float strafe, float yaw_delta) {
+    predator_policy.samples++;
+    float n = (float)predator_policy.samples;
+
+    float prev_mu_fwd = predator_policy.mu_fwd;
+    float prev_mu_strafe = predator_policy.mu_strafe;
+    float prev_mu_yaw = predator_policy.mu_yaw_delta;
+
+    predator_policy.mu_fwd += (fwd - predator_policy.mu_fwd) / n;
+    predator_policy.mu_strafe += (strafe - predator_policy.mu_strafe) / n;
+    predator_policy.mu_yaw_delta += (yaw_delta - predator_policy.mu_yaw_delta) / n;
+
+    predator_policy.var_fwd += (fwd - prev_mu_fwd) * (fwd - predator_policy.mu_fwd);
+    predator_policy.var_strafe += (strafe - prev_mu_strafe) * (strafe - predator_policy.mu_strafe);
+    predator_policy.var_yaw_delta += (yaw_delta - prev_mu_yaw) * (yaw_delta - predator_policy.mu_yaw_delta);
+}
+
+float rand_w() { return ((float)(rand()%2000)/1000.0f) - 1.0f; }
+
+float predator_predict(float mu, float variance_accum, float scale) {
+    if (predator_policy.samples < 2) return mu;
+    float variance = variance_accum / (float)(predator_policy.samples - 1);
+    if (variance < 0.0001f) variance = 0.0001f;
+    return mu + rand_w() * sqrtf(variance) * scale;
+}
 
 // --- UTILS ---
 float rand_f() { return ((float)(rand()%1000)/1000.0f); }
-float rand_w() { return ((float)(rand()%2000)/1000.0f) - 1.0f; }
-
-static inline float angle_diff(float a, float b) {
-    float d = a - b;
-    while (d < -180) d += 360; while (d > 180) d -= 360;
-    return d;
-}
 
 // --- BRAIN IO ---
 void load_brain(const char* filename) {
@@ -139,6 +181,21 @@ UserCmd bot_think() {
         
         // Strafe
         cmd.yaw += brain.w_strafe * 5.0f; 
+
+        if (headed_mode) {
+            float predicted_fwd = predator_predict(predator_policy.mu_fwd, predator_policy.var_fwd, 0.65f);
+            float predicted_strafe = predator_predict(predator_policy.mu_strafe, predator_policy.var_strafe, 0.65f);
+            float predicted_yaw = predator_predict(predator_policy.mu_yaw_delta, predator_policy.var_yaw_delta, 0.8f);
+
+            if (predicted_fwd > 1.0f) predicted_fwd = 1.0f;
+            if (predicted_fwd < -1.0f) predicted_fwd = -1.0f;
+            if (predicted_strafe > 1.0f) predicted_strafe = 1.0f;
+            if (predicted_strafe < -1.0f) predicted_strafe = -1.0f;
+
+            cmd.fwd = 0.35f * cmd.fwd + 0.65f * predicted_fwd;
+            cmd.str = predicted_strafe;
+            cmd.yaw += predicted_yaw;
+        }
         
         // Jump/Slide Random
         if ((rand()%1000) < (brain.w_jump * 1000.0f)) cmd.buttons |= BTN_JUMP;
@@ -148,6 +205,10 @@ UserCmd bot_think() {
         // Patrol
         cmd.yaw = my_state.yaw + 2.0f;
         cmd.fwd = 0.5f;
+        if (headed_mode) {
+            cmd.fwd = predator_predict(predator_policy.mu_fwd, predator_policy.var_fwd, 0.75f);
+            cmd.str = predator_predict(predator_policy.mu_strafe, predator_policy.var_strafe, 0.75f);
+        }
     }
     
     return cmd;
@@ -191,6 +252,20 @@ void process_packet(char *buf, int len) {
                     // If reward is good, reinforce current behavior weights?
                     // For now, we just track score to save on exit.
                 }
+
+                if (headed_mode && np->id == my_state.id) {
+                    float fwd_est = 0.0f;
+                    float strafe_est = 0.0f;
+                    if (have_last_self) {
+                        fwd_est = (np->z - last_self_z) * 0.2f;
+                        strafe_est = (np->x - last_self_x) * 0.2f;
+                    }
+                    float yaw_delta = angle_diff(np->yaw, my_state.yaw);
+                    predator_learn(fwd_est, strafe_est, yaw_delta);
+                    last_self_x = np->x;
+                    last_self_z = np->z;
+                    have_last_self = 1;
+                }
             }
         }
     }
@@ -204,12 +279,17 @@ int main(int argc, char* argv[]) {
     for(int i=1; i<argc; i++) {
         if(strcmp(argv[i], "--host")==0) host = argv[++i];
         if(strcmp(argv[i], "--brain")==0) bfile = argv[++i];
+        if(strcmp(argv[i], "--headed")==0) headed_mode = 1;
     }
     
     load_brain(bfile);
+    predator_init();
     net_init(host, 6969);
     
     printf("🤖 SHANKBOT ACTIVE. Target: %s. Brain: %s\n", host, bfile);
+    if (headed_mode) {
+        printf("🧠 APEX PREDATOR MODE ENABLED: Gaussian packet/intent predictor online\n");
+    }
     
     int running = 1;
     while(running) {
