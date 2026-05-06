@@ -1478,8 +1478,8 @@ static void draw_voxworld_grass_overlay(const RetroLightingState *lighting, cons
     TerrainHeightfield *t = scene_active_terrain();
     if (!t || !t->heights) return;
 
-    const float spacing = 26.0f;
-    const float radius = 980.0f;
+    const float spacing = 30.0f;
+    const float radius = 900.0f;
     const float start_x = floorf((viewer->x - radius) / spacing) * spacing;
     const float end_x = ceilf((viewer->x + radius) / spacing) * spacing;
     const float start_z = floorf((viewer->z - radius) / spacing) * spacing;
@@ -1510,6 +1510,9 @@ static void draw_voxworld_grass_overlay(const RetroLightingState *lighting, cons
             float dist = sqrtf(dist_x * dist_x + dist_z * dist_z);
             float far_fade = 1.0f - smoothstepf(640.0f, radius, dist);
             if (far_fade <= 0.02f) continue;
+
+            float density_gate = 0.62f + 0.38f * far_fade;
+            if (grass_hash01(gx, gz, 11.0f) > density_gate) continue;
 
             float h = 0.75f + grass_hash01(gx, gz, 5.0f) * 1.05f;
             float half_w = 0.10f + grass_hash01(gx, gz, 7.0f) * 0.14f;
