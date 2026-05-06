@@ -124,6 +124,12 @@ static RetroLightingPreset g_world_lighting_preset = RETRO_LIGHTING_DAY_STATIC;
 static int terrain_wireframe_debug = 0;
 static int terrain_normals_debug = 0;
 static int voxworld_points_debug = 0;
+static int g_enemy_outline_enabled = 1;
+static int g_enemy_nameplates_enabled = 1;
+#define ENEMY_OUTLINE_MAX_DIST 1600.0f
+#define ENEMY_NAMEPLATE_MAX_DIST 420.0f
+#define ENEMY_NAMEPLATE_FADE_START_DIST 300.0f
+#define ENEMY_NAMEPLATE_HEAD_OFFSET_Y 24.0f
 static unsigned int terrain_debug_last_log_ms = 0;
 static ProcTexture g_vehicle_noise_tex = {0};
 static ProcTexture g_vehicle_glitch_tex = {0};
@@ -165,6 +171,8 @@ static const char *SKIN_LABELS[SKIN_COUNT] = {
     "EMIREE"
 };
 static const char *SKIN_CONFIG_PATH = "shankpit_skin.cfg";
+static int g_toggle_enemy_outline_down = 0;
+static int g_toggle_enemy_nameplates_down = 0;
 static void ensure_skin_selection_visible(void);
 
 static float clamp01f(float v) {
@@ -324,6 +332,7 @@ static void retro_tune_world_fog(RetroLightingState *lighting, int scene_id) {
 #define Z_FAR 8000.0f
 
 static void draw_box(float w, float h, float d);
+static void draw_box_outline(float w, float h, float d);
 
 int sock = -1;
 struct sockaddr_in server_addr;
@@ -3916,6 +3925,201 @@ static int is_valid_scoreboard_team_id(int team_id) {
     return team_id == TDMB_BLUE_TEAM || team_id == TDMB_RED_TEAM;
 }
 
+static int is_enemy_for_outline(const PlayerState *self, const PlayerState *other, int other_id) {
+    if (!self || !other) return 0;
+    if (!other->active) return 0;
+    if (other->state == STATE_DEAD) return 0;
+    if (other == self) return 0;
+    if (other_id == self->id) return 0;
+    if (other->scene_id != self->scene_id) return 0;
+
+    if (mode_uses_team_scoreboard(local_state.game_mode)) {
+        if (!is_valid_scoreboard_team_id(self->team_id) || !is_valid_scoreboard_team_id(other->team_id)) return 0;
+        return other->team_id != self->team_id;
+    }
+    return 1;
+}
+
+static void format_player_display_name(char *out, size_t out_sz, const PlayerState *p, int player_id) {
+    if (!out || out_sz == 0) return;
+    if (!p) {
+        out[0] = '\0';
+        return;
+    }
+    snprintf(out, out_sz, "%s%02d", p->is_bot ? "BOT-" : "P", player_id);
+}
+
+static int world_to_screen(float wx, float wy, float wz, float *out_x, float *out_y) {
+    GLdouble model[16];
+    GLdouble proj[16];
+    GLint viewport[4];
+    GLdouble sx = 0.0, sy = 0.0, sz = 0.0;
+    glGetDoublev(GL_MODELVIEW_MATRIX, model);
+    glGetDoublev(GL_PROJECTION_MATRIX, proj);
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    if (viewport[2] <= 0 || viewport[3] <= 0) return 0;
+    if (gluProject((GLdouble)wx, (GLdouble)wy, (GLdouble)wz, model, proj, viewport, &sx, &sy, &sz) != GL_TRUE) return 0;
+    if (sz < 0.0 || sz > 1.0) return 0;
+    if (out_x) *out_x = (float)sx * (1280.0f / (float)viewport[2]);
+    if (out_y) *out_y = 720.0f - ((float)sy * (720.0f / (float)viewport[3]));
+    return 1;
+}
+
+static void draw_wire_box(float cx, float cy, float cz, float sx, float sy, float sz) {
+    float hx = sx * 0.5f;
+    float hy = sy * 0.5f;
+    float hz = sz * 0.5f;
+    float x0 = cx - hx, x1 = cx + hx;
+    float y0 = cy - hy, y1 = cy + hy;
+    float z0 = cz - hz, z1 = cz + hz;
+    glBegin(GL_LINES);
+    glVertex3f(x0, y0, z0); glVertex3f(x1, y0, z0);
+    glVertex3f(x1, y0, z0); glVertex3f(x1, y1, z0);
+    glVertex3f(x1, y1, z0); glVertex3f(x0, y1, z0);
+    glVertex3f(x0, y1, z0); glVertex3f(x0, y0, z0);
+    glVertex3f(x0, y0, z1); glVertex3f(x1, y0, z1);
+    glVertex3f(x1, y0, z1); glVertex3f(x1, y1, z1);
+    glVertex3f(x1, y1, z1); glVertex3f(x0, y1, z1);
+    glVertex3f(x0, y1, z1); glVertex3f(x0, y0, z1);
+    glVertex3f(x0, y0, z0); glVertex3f(x0, y0, z1);
+    glVertex3f(x1, y0, z0); glVertex3f(x1, y0, z1);
+    glVertex3f(x1, y1, z0); glVertex3f(x1, y1, z1);
+    glVertex3f(x0, y1, z0); glVertex3f(x0, y1, z1);
+    glEnd();
+}
+
+static void draw_enemy_outline_proxy(const PlayerState *p, float alpha) {
+    if (!p) return;
+    glColor4f(1.0f, 0.04f, 0.02f, alpha);
+    glPushMatrix();
+    glTranslatef(p->x, p->y, p->z);
+    glRotatef(p->yaw, 0, 1, 0);
+    draw_wire_box(0.0f, 12.0f, 0.0f, 8.0f, 14.0f, 4.0f);
+    draw_wire_box(0.0f, 23.0f, 0.0f, 6.0f, 6.0f, 6.0f);
+    draw_wire_box(-6.0f, 13.0f, 0.0f, 3.0f, 12.0f, 3.0f);
+    draw_wire_box(6.0f, 13.0f, 0.0f, 3.0f, 12.0f, 3.0f);
+    draw_wire_box(-2.5f, 4.0f, 0.0f, 3.0f, 9.0f, 3.0f);
+    draw_wire_box(2.5f, 4.0f, 0.0f, 3.0f, 9.0f, 3.0f);
+    glPopMatrix();
+}
+
+static void draw_enemy_outlines(PlayerState *self, unsigned int now_ms) {
+    (void)now_ms;
+    if (!g_enemy_outline_enabled || !self) return;
+    const float max_dist_sq = ENEMY_OUTLINE_MAX_DIST * ENEMY_OUTLINE_MAX_DIST;
+    const int was_depth_test = glIsEnabled(GL_DEPTH_TEST);
+    const int was_blend = glIsEnabled(GL_BLEND);
+    const int was_tex2d = glIsEnabled(GL_TEXTURE_2D);
+    const int was_lighting = glIsEnabled(GL_LIGHTING);
+    GLfloat old_line_width = 1.0f;
+    GLfloat old_color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    GLboolean old_depth_mask = GL_TRUE;
+    glGetFloatv(GL_LINE_WIDTH, &old_line_width);
+    glGetFloatv(GL_CURRENT_COLOR, old_color);
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &old_depth_mask);
+
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_LIGHTING);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glLineWidth(3.0f);
+    /* v1 intentionally uses x-ray readability. Later we can switch to depth-tested/LOS-gated outlines. */
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+
+    float yaw_rad = cam_yaw * 0.0174533f;
+    float pitch_rad = cam_pitch * 0.0174533f;
+    float fwd_x = sinf(yaw_rad) * cosf(pitch_rad);
+    float fwd_y = -sinf(pitch_rad);
+    float fwd_z = cosf(yaw_rad) * cosf(pitch_rad);
+
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        PlayerState *p = &local_state.players[i];
+        if (!is_enemy_for_outline(self, p, i)) continue;
+        float dx = p->x - self->x;
+        float dy = (p->y + 1.8f) - (self->y + 1.6f);
+        float dz = p->z - self->z;
+        float dist_sq = dx * dx + dy * dy + dz * dz;
+        if (dist_sq > max_dist_sq) continue;
+        float fwd_dot = dx * fwd_x + dy * fwd_y + dz * fwd_z;
+        if (fwd_dot < -0.5f) continue;
+
+        float dist = sqrtf(dist_sq);
+        float t = clamp01f(dist / ENEMY_OUTLINE_MAX_DIST);
+        float alpha = lerpf(0.95f, 0.25f, t);
+        draw_enemy_outline_proxy(p, alpha);
+    }
+
+    glDepthMask(old_depth_mask);
+    if (was_depth_test) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+    if (was_blend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+    if (was_tex2d) glEnable(GL_TEXTURE_2D); else glDisable(GL_TEXTURE_2D);
+    if (was_lighting) glEnable(GL_LIGHTING); else glDisable(GL_LIGHTING);
+    glLineWidth(old_line_width);
+    glColor4f(old_color[0], old_color[1], old_color[2], old_color[3]);
+}
+
+static void draw_enemy_nameplates(PlayerState *self) {
+    if (!g_enemy_nameplates_enabled || !self) return;
+    const float max_dist_sq = ENEMY_NAMEPLATE_MAX_DIST * ENEMY_NAMEPLATE_MAX_DIST;
+
+    float sx[MAX_CLIENTS];
+    float sy[MAX_CLIENTS];
+    char names[MAX_CLIENTS][16];
+    int valid[MAX_CLIENTS];
+    float alphas[MAX_CLIENTS];
+    memset(valid, 0, sizeof(valid));
+
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        PlayerState *p = &local_state.players[i];
+        if (!is_enemy_for_outline(self, p, i)) continue;
+        float dx = p->x - self->x;
+        float dy = p->y - self->y;
+        float dz = p->z - self->z;
+        float dist_sq = dx * dx + dy * dy + dz * dz;
+        if (dist_sq > max_dist_sq) continue;
+        if (!world_to_screen(p->x, p->y + ENEMY_NAMEPLATE_HEAD_OFFSET_Y, p->z, &sx[i], &sy[i])) continue;
+        float dist = sqrtf(dist_sq);
+        float alpha = 1.0f;
+        if (dist > ENEMY_NAMEPLATE_FADE_START_DIST) {
+            float fade_t = clamp01f((dist - ENEMY_NAMEPLATE_FADE_START_DIST) /
+                                    (ENEMY_NAMEPLATE_MAX_DIST - ENEMY_NAMEPLATE_FADE_START_DIST));
+            alpha = lerpf(1.0f, 0.20f, fade_t);
+        }
+        format_player_display_name(names[i], sizeof(names[i]), p, i);
+        alphas[i] = alpha;
+        valid[i] = 1;
+    }
+
+    const int was_depth_test = glIsEnabled(GL_DEPTH_TEST);
+    const int was_blend = glIsEnabled(GL_BLEND);
+    GLfloat old_color[4] = {1, 1, 1, 1};
+    glGetFloatv(GL_CURRENT_COLOR, old_color);
+
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (!valid[i]) continue;
+        float text_size = 3.8f;
+        float name_w = (float)strlen(names[i]) * text_size * 3.8f;
+        float text_x = sx[i] - name_w * 0.5f;
+        float text_y = sy[i];
+        float pad = 2.5f;
+        glColor4f(0.02f, 0.0f, 0.0f, 0.30f * alphas[i]);
+        glRectf(text_x - pad, text_y - pad, text_x + name_w + pad, text_y + text_size * 6.0f + pad);
+        glColor4f(1.0f, 0.18f, 0.12f, alphas[i]);
+        draw_string(names[i], text_x, text_y, text_size);
+    }
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glMatrixMode(GL_MODELVIEW); glPopMatrix();
+    if (was_depth_test) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+    if (was_blend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+    glColor4f(old_color[0], old_color[1], old_color[2], old_color[3]);
+}
+
 static void scoreboard_team_totals(int mode, int *out_blue, int *out_red) {
     int blue = 0;
     int red = 0;
@@ -4497,7 +4701,11 @@ void draw_scene(PlayerState *render_p) {
         if (p == render_p) continue;
         draw_player_3rd(p);
     }
-    draw_weapon_p(render_p); draw_hud(render_p); draw_garage_overlay(render_p); draw_tab_scoreboard(render_p);
+    draw_enemy_outlines(render_p, now_ms);
+    draw_weapon_p(render_p);
+    draw_hud(render_p);
+    draw_enemy_nameplates(render_p);
+    draw_garage_overlay(render_p); draw_tab_scoreboard(render_p);
     draw_travel_overlay();
     draw_tdmb_match_over_overlay();
 }
@@ -5637,9 +5845,17 @@ int main(int argc, char* argv[]) {
                     } else if (e.key.keysym.sym == SDLK_F8) {
                         vehicle_style_enabled = !vehicle_style_enabled;
                     } else if (e.key.keysym.sym == SDLK_F9) {
-                        vehicle_underglow_enabled = !vehicle_underglow_enabled;
+                        if (!g_toggle_enemy_outline_down && e.key.repeat == 0) {
+                            g_enemy_outline_enabled = !g_enemy_outline_enabled;
+                            g_toggle_enemy_outline_down = 1;
+                            printf("[RENDER_UI] enemy_outline=%d enemy_nameplates=%d\n", g_enemy_outline_enabled, g_enemy_nameplates_enabled);
+                        }
                     } else if (e.key.keysym.sym == SDLK_F10) {
-                        vehicle_worklights_enabled = !vehicle_worklights_enabled;
+                        if (!g_toggle_enemy_nameplates_down && e.key.repeat == 0) {
+                            g_enemy_nameplates_enabled = !g_enemy_nameplates_enabled;
+                            g_toggle_enemy_nameplates_down = 1;
+                            printf("[RENDER_UI] enemy_outline=%d enemy_nameplates=%d\n", g_enemy_outline_enabled, g_enemy_nameplates_enabled);
+                        }
                     } else if (e.key.keysym.sym == SDLK_F11) {
                         voxworld_points_debug = !voxworld_points_debug;
                         printf("[SCENE DEBUG] points_debug=%s\n", voxworld_points_debug ? "on" : "off");
@@ -5647,6 +5863,9 @@ int main(int argc, char* argv[]) {
                         vs0_art_direction_enabled = !vs0_art_direction_enabled;
                         printf("[VS0 ART] enabled=%s\n", vs0_art_direction_enabled ? "on" : "off");
                     }
+                } else if (e.type == SDL_KEYUP) {
+                    if (e.key.keysym.sym == SDLK_F9) g_toggle_enemy_outline_down = 0;
+                    else if (e.key.keysym.sym == SDLK_F10) g_toggle_enemy_nameplates_down = 0;
                 }
                 if(e.type == SDL_MOUSEMOTION) {
                     if (app_state == STATE_GAME_NET && net_spawn_protect_cmds > 0) continue;
