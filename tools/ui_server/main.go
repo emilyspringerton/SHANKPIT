@@ -143,6 +143,7 @@ func defaultMenuEntries() []MenuEntry {
 		{ID: "mode.tdm", Label: "TEAM DM (BOTS)", Kind: "action", Enabled: true},
 		{ID: "mode.ctf", Label: "LAN CTF", Kind: "action", Enabled: true},
 		{ID: "mode.training", Label: "TRAINING", Kind: "action", Enabled: true},
+		{ID: "mode.headed_bot", Label: "HEADED BOT", Kind: "action", Enabled: true},
 		{ID: "mode.recorder", Label: "RECORDER", Kind: "action", Enabled: true},
 		{ID: "mode.garage", Label: "OSAKA GARAGE", Kind: "action", Enabled: true},
 		{ID: "mode.city", Label: "CITY", Kind: "action", Enabled: true},

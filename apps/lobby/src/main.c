@@ -679,6 +679,7 @@ typedef enum {
     LOBBY_BATTLE,
     LOBBY_TDMB,
     LOBBY_CTFB,
+    LOBBY_HEADED_BOT,
     LOBBY_COUNT
 } LobbyAction;
 
@@ -691,7 +692,8 @@ static const char *LOBBY_LABELS[LOBBY_COUNT] = {
     "SOLO",
     "TRAIN",
     "TDMB",
-    "CTFB"
+    "CTFB",
+    "HEADED BOT"
 };
 
 static void lobby_init_labels() {
@@ -844,6 +846,9 @@ static void lobby_apply_ui_state() {
     } else if (strcmp(ui_state.active_mode_id, "mode.training") == 0) {
         app_state = STATE_GAME_LOCAL;
         local_init_match(1, MODE_DEATHMATCH);
+    } else if (strcmp(ui_state.active_mode_id, "mode.headed_bot") == 0) {
+        app_state = STATE_GAME_LOCAL;
+        local_init_match(12, MODE_HEADED_BOT);
     } else if (strcmp(ui_state.active_mode_id, "mode.recorder") == 0) {
         app_state = STATE_GAME_LOCAL;
         local_init_match(1, MODE_DEATHMATCH);
@@ -911,6 +916,9 @@ static void lobby_start_action(int action) {
                 break;
             case LOBBY_CTFB:
                 local_init_match(12, MODE_CTFB);
+                break;
+            case LOBBY_HEADED_BOT:
+                local_init_match(12, MODE_HEADED_BOT);
                 break;
             default:
                 break;

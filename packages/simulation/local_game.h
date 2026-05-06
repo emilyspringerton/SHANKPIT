@@ -88,6 +88,47 @@ typedef enum {
 } CtfBotIntent;
 
 typedef struct {
+    float mu_fwd;
+    float mu_strafe;
+    float mu_yaw_delta;
+    float var_fwd;
+    float var_strafe;
+    float var_yaw_delta;
+    int samples;
+} HeadedBotPolicy;
+
+static HeadedBotPolicy headed_policy[MAX_CLIENTS];
+
+static void headed_policy_init(int bot_id) {
+    if (bot_id < 0 || bot_id >= MAX_CLIENTS) return;
+    memset(&headed_policy[bot_id], 0, sizeof(HeadedBotPolicy));
+    headed_policy[bot_id].var_fwd = 1.0f;
+    headed_policy[bot_id].var_strafe = 1.0f;
+    headed_policy[bot_id].var_yaw_delta = 6.0f;
+}
+
+static void headed_policy_learn(int bot_id, float fwd, float strafe, float yaw_delta) {
+    HeadedBotPolicy *p = &headed_policy[bot_id];
+    p->samples++;
+    float n = (float)p->samples;
+    float pmf = p->mu_fwd, pms = p->mu_strafe, pmy = p->mu_yaw_delta;
+    p->mu_fwd += (fwd - p->mu_fwd) / n;
+    p->mu_strafe += (strafe - p->mu_strafe) / n;
+    p->mu_yaw_delta += (yaw_delta - p->mu_yaw_delta) / n;
+    p->var_fwd += (fwd - pmf) * (fwd - p->mu_fwd);
+    p->var_strafe += (strafe - pms) * (strafe - p->mu_strafe);
+    p->var_yaw_delta += (yaw_delta - pmy) * (yaw_delta - p->mu_yaw_delta);
+}
+
+static float headed_policy_predict(int bot_id, float mu, float variance_accum, float scale) {
+    HeadedBotPolicy *p = &headed_policy[bot_id];
+    if (p->samples < 2) return mu;
+    float variance = variance_accum / (float)(p->samples - 1);
+    if (variance < 0.0001f) variance = 0.0001f;
+    return mu + rand_weight() * sqrtf(variance) * scale;
+}
+
+typedef struct {
     int bot_id;
     int my_team_id;
     int enemy_team_id;
@@ -898,6 +939,19 @@ void bot_think(int bot_idx, PlayerState *players, float *out_fwd, float *out_yaw
         else *out_fwd = 0.2f; 
         
         *out_yaw += me->brain.w_strafe * 10.0f;
+        if (local_state.game_mode == MODE_HEADED_BOT) {
+            float pf = headed_policy_predict(bot_idx, headed_policy[bot_idx].mu_fwd, headed_policy[bot_idx].var_fwd, 0.65f);
+            float ps = headed_policy_predict(bot_idx, headed_policy[bot_idx].mu_strafe, headed_policy[bot_idx].var_strafe, 0.65f);
+            float py = headed_policy_predict(bot_idx, headed_policy[bot_idx].mu_yaw_delta, headed_policy[bot_idx].var_yaw_delta, 0.8f);
+            if (pf > 1.0f) pf = 1.0f;
+            if (pf < -1.0f) pf = -1.0f;
+            if (ps > 1.0f) ps = 1.0f;
+            if (ps < -1.0f) ps = -1.0f;
+            *out_fwd = 0.35f * (*out_fwd) + 0.65f * pf;
+            me->vx += ps * 0.04f;
+            *out_yaw += py;
+            headed_policy_learn(bot_idx, *out_fwd, ps, py);
+        }
         if (me->on_ground && (rand()%1000 < (me->brain.w_jump * 1000.0f))) *out_buttons |= BTN_JUMP;
         if (me->on_ground && (rand()%1000 < (me->brain.w_slide * 1000.0f))) *out_buttons |= BTN_CROUCH;
         if (me->ammo[me->current_weapon] <= 0) *out_buttons |= BTN_RELOAD;
@@ -1289,15 +1343,16 @@ void local_init_match(int num_players, int mode) {
     local_state.pending_scene = -1;
     local_state.transition_timer = 0;
     local_state.winning_team = -1;
-    local_state.score_limit = (mode == MODE_TDMB || mode == MODE_TDMO) ? TDMB_SCORE_LIMIT : (mode == MODE_CTFB ? CTFB_SCORE_LIMIT : 0);
+    local_state.score_limit = (mode == MODE_TDMB || mode == MODE_TDMO || mode == MODE_HEADED_BOT) ? TDMB_SCORE_LIMIT : (mode == MODE_CTFB ? CTFB_SCORE_LIMIT : 0);
     local_state.story_phase = (mode == MODE_STORY) ? STORY_PHASE_CUTSCENE : STORY_PHASE_PLAYING;
     local_state.story_phase_start_ms = 0;
     story_clear_swarm();
 
-    if (mode == MODE_TDMB) {
+    if (mode == MODE_TDMB || mode == MODE_HEADED_BOT) {
         num_players = 1 + TDMB_BLUE_BOTS + TDMB_RED_BOTS;
         local_state.scene_id = scene_random_tdmb_map();
-        printf("[TDMB] random map selected: %s\n", scene_name_debug(local_state.scene_id));
+        if (mode == MODE_HEADED_BOT) printf("[HEADED_BOT] random map selected: %s\n", scene_name_debug(local_state.scene_id));
+        else printf("[TDMB] random map selected: %s\n", scene_name_debug(local_state.scene_id));
     } else if (mode == MODE_CTFB) {
         num_players = 1 + TDMB_BLUE_BOTS + TDMB_RED_BOTS;
         local_state.scene_id = SCENE_OIL_TANKER;
@@ -1327,7 +1382,8 @@ void local_init_match(int num_players, int mode) {
     for(int i=1; i<num_players; i++) {
         local_state.players[i].active = 1;
         local_state.players[i].is_bot = 1;
-        if (mode == MODE_TDMB || mode == MODE_CTFB) {
+        headed_policy_init(i);
+        if (mode == MODE_TDMB || mode == MODE_CTFB || mode == MODE_HEADED_BOT) {
             local_state.players[i].team_id = (i <= TDMB_BLUE_BOTS) ? TDMB_BLUE_TEAM : TDMB_RED_TEAM;
         } else {
             local_state.players[i].team_id = (mode == MODE_TDM || mode == MODE_CTF || mode == MODE_TDMO) ? (i % 2) : -1;
