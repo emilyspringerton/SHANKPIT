@@ -1,6 +1,13 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
+#ifndef _WIN32
+#include <netinet/in.h>
+#else
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#endif
+
 #define MAX_CLIENTS 70
 #define MAX_WEAPONS 6
 #define MAX_PROJECTILES 1024
