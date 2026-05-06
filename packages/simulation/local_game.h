@@ -34,6 +34,7 @@ static int tdmb_last_kills[MAX_CLIENTS];
 #define STORY_RIFT_SPEW_INTERVAL_MS 180U
 #define STORY_SWARM_CLEAR_TO_COMPLETE_MS 2500U
 
+float rand_weight(void);
 
 static int mode_uses_team_scores(int mode) {
     return mode == MODE_TDM || mode == MODE_TDMB || mode == MODE_TDMO || mode == MODE_CTFB;
@@ -178,7 +179,7 @@ static inline void buggy_tick_all(void);
 static void ctf_init_match_state(int scene_id);
 void local_init_match(int num_players, int mode);
 
-float rand_weight() { return ((float)(rand()%2000)/1000.0f) - 1.0f; } 
+float rand_weight(void) { return ((float)(rand()%2000)/1000.0f) - 1.0f; } 
 float rand_pos() { return ((float)(rand()%1000)/1000.0f); } 
 
 void init_genome(BotGenome *g) {
