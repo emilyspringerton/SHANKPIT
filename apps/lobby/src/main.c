@@ -5,8 +5,10 @@
 #include <math.h>
 #include <assert.h>
 #include <stdint.h>
+#include <time.h>
 
 #ifdef _WIN32
+    #include <windows.h>
     #include <winsock2.h>
     #include <ws2tcpip.h>
     #pragma comment(lib, "ws2_32.lib")
@@ -5457,6 +5459,31 @@ void net_tick() {
 }
 
 
+
+#define TICK_RATE 64
+#define TICK_DT (1.0f / TICK_RATE)
+
+static double get_time(void) {
+#ifdef _WIN32
+    static LARGE_INTEGER freq;
+    static int init = 0;
+    LARGE_INTEGER counter;
+    if (!init) { QueryPerformanceFrequency(&freq); init = 1; }
+    QueryPerformanceCounter(&counter);
+    return (double)counter.QuadPart / (double)freq.QuadPart;
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1000000000.0;
+#endif
+}
+
+static PlayerState render_prev_players[MAX_CLIENTS];
+
+static void snapshot_prev_players(void) {
+    memcpy(render_prev_players, local_state.players, sizeof(render_prev_players));
+}
+
 int main(int argc, char* argv[]) {
     for(int i=1; i<argc; i++) {
         if(strcmp(argv[i], "--host") == 0 && i+1<argc) {
@@ -5487,7 +5514,17 @@ int main(int argc, char* argv[]) {
     }
     
     int running = 1;
+    double previous = get_time();
+    double accumulator = 0.0;
+    float input_fwd = 0.0f, input_str = 0.0f;
+    int input_jump = 0, input_crouch = 0, input_shoot = 0, input_reload = 0, input_use = 0, input_ability = 0;
     while(running) {
+        double now = get_time();
+        double frame_time = now - previous;
+        if (frame_time > 0.25) frame_time = 0.25;
+        previous = now;
+        accumulator += frame_time;
+
         SDL_Event e;
         while(SDL_PollEvent(&e)) {
             if(e.type == SDL_QUIT) running = 0;
@@ -5721,6 +5758,8 @@ int main(int argc, char* argv[]) {
             int reload = in_heli ? k[SDL_SCANCODE_Q] : k[SDL_SCANCODE_R];
             int use = k[SDL_SCANCODE_F];
             int ability = in_heli ? k[SDL_SCANCODE_E] : k[SDL_SCANCODE_E];
+            input_fwd = fwd; input_str = str;
+            input_jump = jump; input_crouch = crouch; input_shoot = shoot; input_reload = reload; input_use = use; input_ability = ability;
             if(k[SDL_SCANCODE_1]) wpn_req=0; if(k[SDL_SCANCODE_2]) wpn_req=1;
             if(k[SDL_SCANCODE_3]) wpn_req=2; if(k[SDL_SCANCODE_4]) wpn_req=3; if(k[SDL_SCANCODE_5]) wpn_req=4; if(k[SDL_SCANCODE_6]) wpn_req=5;
 
@@ -5731,6 +5770,8 @@ int main(int argc, char* argv[]) {
             current_fov += (target_fov - current_fov) * 0.2f;
             glMatrixMode(GL_PROJECTION); glLoadIdentity(); gluPerspective(current_fov, 1280.0/720.0, 0.1, Z_FAR); 
             glMatrixMode(GL_MODELVIEW);
+            while (accumulator >= TICK_DT) {
+                snapshot_prev_players();
             if (app_state == STATE_GAME_NET) {
                 net_local_pid = (my_client_id > 0 && my_client_id < MAX_CLIENTS) ? my_client_id : -1;
                 net_tick();
@@ -5744,7 +5785,7 @@ int main(int argc, char* argv[]) {
                                            my_client_id, net_local_pid,
                                            net_diag.connect_started ? (now_ms - net_diag.connect_start_ms) : 0);
                         }
-                        UserCmd cmd = client_create_cmd(fwd, str, cam_yaw, cam_pitch, shoot, jump, crouch, reload, use, ability, wpn_req);
+                        UserCmd cmd = client_create_cmd(input_fwd, input_str, cam_yaw, cam_pitch, input_shoot, input_jump, input_crouch, input_reload, input_use, input_ability, wpn_req);
                         client_apply_cmd_movement(&local_state.players[net_local_pid], &cmd, now_ms);
                         net_send_cmd(cmd);
                         net_last_cmd_send_ms = now_ms;
@@ -5765,11 +5806,11 @@ int main(int argc, char* argv[]) {
                     (local_state.story_phase == STORY_PHASE_CUTSCENE ||
                      local_state.story_phase == STORY_PHASE_COMPLETE ||
                      local_state.story_phase == STORY_PHASE_FAILED)) {
-                    fwd = 0.0f; str = 0.0f;
-                    jump = 0; crouch = 0; shoot = 0; reload = 0; use = 0; ability = 0;
+                    input_fwd = 0.0f; input_str = 0.0f;
+                    input_jump = 0; input_crouch = 0; input_shoot = 0; input_reload = 0; input_use = 0; input_ability = 0;
                 }
-                local_state.players[0].in_use = use;
-                if (use && local_state.players[0].vehicle_cooldown == 0 && local_state.transition_timer == 0) {
+                local_state.players[0].in_use = input_use;
+                if (input_use && local_state.players[0].vehicle_cooldown == 0 && local_state.transition_timer == 0) {
                     PlayerState *p0 = &local_state.players[0];
                     HelicopterState *near_h = NULL;
                     for (int hi = 0; hi < MAX_HELICOPTERS; hi++) {
@@ -5834,8 +5875,11 @@ int main(int argc, char* argv[]) {
                     local_state.story_phase_start_ms == 0) {
                     local_state.story_phase_start_ms = now_ms;
                 }
-                local_update(fwd, str, cam_yaw, cam_pitch, shoot, wpn_req, jump, crouch, reload, ability, NULL, now_ms);
+                local_update(input_fwd, input_str, cam_yaw, cam_pitch, input_shoot, wpn_req, input_jump, input_crouch, input_reload, input_ability, NULL, now_ms);
             }
+                accumulator -= TICK_DT;
+            }
+
             int render_pid = 0;
             if (app_state == STATE_GAME_NET &&
                 my_client_id > 0 && my_client_id < MAX_CLIENTS &&
@@ -5879,10 +5923,16 @@ int main(int argc, char* argv[]) {
                            phys_last_grounded_on_terrain() ? "terrain" : "box");
                 }
             }
-            draw_scene(render_p);
+            double alpha = accumulator / TICK_DT;
+            if (alpha < 0.0) alpha = 0.0;
+            if (alpha > 1.0) alpha = 1.0;
+            PlayerState blended = *render_p;
+            blended.x = render_prev_players[render_pid].x + (render_p->x - render_prev_players[render_pid].x) * (float)alpha;
+            blended.y = render_prev_players[render_pid].y + (render_p->y - render_prev_players[render_pid].y) * (float)alpha;
+            blended.z = render_prev_players[render_pid].z + (render_p->z - render_prev_players[render_pid].z) * (float)alpha;
+            draw_scene(&blended);
             SDL_GL_SwapWindow(win);
         }
-        SDL_Delay(16);
     }
     proc_tex_destroy(&g_vehicle_noise_tex);
     proc_tex_destroy(&g_vehicle_glitch_tex);

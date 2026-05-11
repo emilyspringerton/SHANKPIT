@@ -860,7 +860,7 @@ static void story_swarm_tick(PlayerState *hero, unsigned int now_ms) {
 }
 
 // --- BOT AI ---
-void bot_think(int bot_idx, PlayerState *players, float *out_fwd, float *out_yaw, int *out_buttons) {
+void bot_think(int bot_idx, PlayerState *players, float dt, float *out_fwd, float *out_yaw, int *out_buttons) {
     PlayerState *me = &players[bot_idx];
     if (me->state == STATE_DEAD || local_state.match_over) { *out_buttons = 0; return; }
     if (local_state.game_mode == MODE_STORY) { *out_buttons = 0; *out_fwd = 0.0f; *out_yaw = me->yaw; return; }
@@ -927,7 +927,7 @@ void bot_think(int bot_idx, PlayerState *players, float *out_fwd, float *out_yaw
         float dz = t->z - me->z;
         float target_yaw = atan2f(dx, dz) * (180.0f / 3.14159f);
         
-        float turn_speed = (me->brain.w_turret > 1.0f) ? me->brain.w_turret : 10.0f;
+        float turn_speed = ((me->brain.w_turret > 1.0f) ? me->brain.w_turret : 10.0f) * (dt * 60.0f);
         float diff = angle_diff(target_yaw, *out_yaw);
         if (diff > turn_speed) diff = turn_speed;
         if (diff < -turn_speed) diff = -turn_speed;
@@ -939,7 +939,7 @@ void bot_think(int bot_idx, PlayerState *players, float *out_fwd, float *out_yaw
         else if (min_dist < 5.0f) *out_fwd = -me->brain.w_aggro; 
         else *out_fwd = 0.2f; 
         
-        *out_yaw += me->brain.w_strafe * 10.0f;
+        *out_yaw += me->brain.w_strafe * (600.0f * dt);
         if (local_state.game_mode == MODE_HEADED_BOT) {
             float pf = headed_policy_predict(bot_idx, headed_policy[bot_idx].mu_fwd, headed_policy[bot_idx].var_fwd, 0.65f);
             float ps = headed_policy_predict(bot_idx, headed_policy[bot_idx].mu_strafe, headed_policy[bot_idx].var_strafe, 0.65f);
@@ -949,7 +949,7 @@ void bot_think(int bot_idx, PlayerState *players, float *out_fwd, float *out_yaw
             if (ps > 1.0f) ps = 1.0f;
             if (ps < -1.0f) ps = -1.0f;
             *out_fwd = 0.35f * (*out_fwd) + 0.65f * pf;
-            me->vx += ps * 0.04f;
+            me->vx += ps * (2.4f * dt);
             *out_yaw += py;
             headed_policy_learn(bot_idx, *out_fwd, ps, py);
         }
@@ -957,7 +957,7 @@ void bot_think(int bot_idx, PlayerState *players, float *out_fwd, float *out_yaw
         if (me->on_ground && (rand()%1000 < (me->brain.w_slide * 1000.0f))) *out_buttons |= BTN_CROUCH;
         if (me->ammo[me->current_weapon] <= 0) *out_buttons |= BTN_RELOAD;
     } else {
-        *out_yaw += 2.0f;
+        *out_yaw += 120.0f * dt;
         *out_fwd = 0.5f;
     }
 }
@@ -1115,6 +1115,7 @@ static void update_projectiles(unsigned int now_ms) {
 
 void local_update(float fwd, float str, float yaw, float pitch, int shoot, int weapon_req, int jump, int crouch, int reload, int ability, void *server_context, unsigned int cmd_time) {
     PlayerState *p0 = &local_state.players[0];
+    const float dt = SHANKPIT_NET_FIXED_DT;
     if (local_state.game_mode == MODE_STORY) {
         if (local_state.story_phase == STORY_PHASE_CUTSCENE) {
             fwd = 0.0f; str = 0.0f; shoot = 0; jump = 0; crouch = 0; reload = 0; ability = 0;
@@ -1273,7 +1274,7 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
             } else {
                 float b_fwd=0, b_yaw=p->yaw;
                 int b_btns=0;
-                bot_think(i, local_state.players, &b_fwd, &b_yaw, &b_btns);
+                bot_think(i, local_state.players, dt, &b_fwd, &b_yaw, &b_btns);
                 p->yaw = b_yaw;
                 if (!p->in_vehicle) {
                     float brad = b_yaw * 3.14159f / 180.0f;
