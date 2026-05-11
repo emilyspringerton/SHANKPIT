@@ -102,6 +102,22 @@ float cam_pitch = 0.0f;
 float current_fov = 75.0f;
 static float death_cam_blend = 0.0f;
 
+#define MAX_TRACERS 16
+typedef struct {
+    float start[3];
+    float end[3];
+    float lifetime;
+    float age;
+    int active;
+} SniperTracer;
+typedef struct {
+    SniperTracer entries[MAX_TRACERS];
+    int head;
+} SniperTracerPool;
+static SniperTracerPool g_tracer_game_write = {0};
+static SniperTracerPool g_tracer_render_read = {0};
+static int g_tracer_dirty = 0;
+
 typedef struct VehicleStyle {
     float matte;
     float spec;
@@ -180,6 +196,39 @@ static float lerpf(float a, float b, float t) {
 static float smoothstepf(float edge0, float edge1, float x) {
     float t = clamp01f((x - edge0) / (edge1 - edge0));
     return t * t * (3.0f - 2.0f * t);
+}
+
+static void spawn_sniper_tracer(float start[3], float end[3]) {
+    int idx = g_tracer_game_write.head % MAX_TRACERS;
+    SniperTracer *tr = &g_tracer_game_write.entries[idx];
+    tr->start[0] = start[0]; tr->start[1] = start[1]; tr->start[2] = start[2];
+    tr->end[0] = end[0]; tr->end[1] = end[1]; tr->end[2] = end[2];
+    tr->lifetime = 0.3f;
+    tr->age = 0.0f;
+    tr->active = 1;
+    g_tracer_game_write.head = (g_tracer_game_write.head + 1) % MAX_TRACERS;
+    g_tracer_dirty = 1;
+}
+
+static void compute_sniper_trace_end(const PlayerState *p, float out_start[3], float out_end[3]) {
+    const float max_range = (WPN_STATS[WPN_SNIPER].rng > 10.0f) ? WPN_STATS[WPN_SNIPER].rng : 2500.0f;
+    float yaw_r = p->yaw * 0.0174532925f;
+    float pitch_r = p->pitch * 0.0174532925f;
+    float dx = sinf(yaw_r) * cosf(pitch_r);
+    float dy = -sinf(pitch_r);
+    float dz = cosf(yaw_r) * cosf(pitch_r);
+    out_start[0] = p->x;
+    out_start[1] = p->y + EYE_HEIGHT;
+    out_start[2] = p->z;
+    float tx = out_start[0] + dx * max_range;
+    float ty = out_start[1] + dy * max_range;
+    float tz = out_start[2] + dz * max_range;
+    float hx = tx, hy = ty, hz = tz, nx = 0.0f, ny = 0.0f, nz = 0.0f;
+    if (trace_map(out_start[0], out_start[1], out_start[2], tx, ty, tz, &hx, &hy, &hz, &nx, &ny, &nz)) {
+        out_end[0] = hx; out_end[1] = hy; out_end[2] = hz;
+    } else {
+        out_end[0] = tx; out_end[1] = ty; out_end[2] = tz;
+    }
 }
 
 static float death_pose_progress(const PlayerState *p, unsigned int now_ms) {
@@ -4319,6 +4368,59 @@ void draw_projectiles() {
     glEnd();
 }
 
+static void draw_sniper_tracers(float delta_time) {
+    if (g_tracer_dirty) {
+        g_tracer_render_read = g_tracer_game_write;
+        g_tracer_dirty = 0;
+    }
+    if (delta_time <= 0.0f) delta_time = 0.016f;
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    glDepthMask(GL_FALSE);
+    for (int i = 0; i < MAX_TRACERS; i++) {
+        SniperTracer *tr = &g_tracer_render_read.entries[i];
+        if (!tr->active || tr->lifetime <= 0.0f) continue;
+        float t = tr->age / tr->lifetime;
+        if (t < 0.0f) t = 0.0f;
+        if (t > 1.0f) t = 1.0f;
+        float alpha = (1.0f - t);
+        alpha *= alpha;
+
+        glLineWidth(6.5f);
+        glColor4f(0.62f, 0.82f, 1.0f, alpha * 0.45f);
+        glBegin(GL_LINES);
+        glVertex3f(tr->start[0], tr->start[1], tr->start[2]);
+        glVertex3f(tr->end[0], tr->end[1], tr->end[2]);
+        glEnd();
+
+        glLineWidth(2.2f);
+        glColor4f(1.0f, 1.0f, 1.0f, alpha * 0.95f);
+        glBegin(GL_LINES);
+        glVertex3f(tr->start[0], tr->start[1], tr->start[2]);
+        glVertex3f(tr->end[0], tr->end[1], tr->end[2]);
+        glEnd();
+
+        if (t < 0.05f) {
+            float flash = (0.05f - t) / 0.05f;
+            float sz = 1.4f + flash * 2.0f;
+            glColor4f(1.0f, 1.0f, 1.0f, 0.9f * flash);
+            glBegin(GL_QUADS);
+            glVertex3f(tr->start[0] - sz, tr->start[1] + sz, tr->start[2]);
+            glVertex3f(tr->start[0] + sz, tr->start[1] + sz, tr->start[2]);
+            glVertex3f(tr->start[0] + sz, tr->start[1] - sz, tr->start[2]);
+            glVertex3f(tr->start[0] - sz, tr->start[1] - sz, tr->start[2]);
+            glEnd();
+        }
+
+        tr->age += delta_time;
+        if (tr->age >= tr->lifetime) tr->active = 0;
+    }
+    glDepthMask(GL_TRUE);
+    glLineWidth(1.0f);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+}
+
 static void client_apply_scene_id(int scene_id, unsigned int now_ms) {
     if (scene_id < 0) return;
     if (local_state.scene_id != scene_id) {
@@ -4373,6 +4475,10 @@ static void draw_tdmb_match_over_overlay(void) {
 }
 
 void draw_scene(PlayerState *render_p) {
+    static unsigned int last_draw_ms = 0;
+    unsigned int draw_now_ms = SDL_GetTicks();
+    float tracer_dt = (last_draw_ms > 0 && draw_now_ms > last_draw_ms) ? ((float)(draw_now_ms - last_draw_ms) * 0.001f) : 0.016f;
+    last_draw_ms = draw_now_ms;
     if (vs0_art_direction_enabled) glClearColor(0.18f, 0.25f, 0.36f, 1.0f);
     else glClearColor(0.02f, 0.02f, 0.05f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); glLoadIdentity();
@@ -4501,6 +4607,7 @@ void draw_scene(PlayerState *render_p) {
         }
     }
     draw_projectiles();
+    draw_sniper_tracers(tracer_dt);
     if (render_p->in_vehicle && render_p->vehicle_type != VEH_BUGGY) draw_player_3rd(render_p);
     for(int i=0; i<MAX_CLIENTS; i++) {
         PlayerState *p = &local_state.players[i];
@@ -5723,6 +5830,20 @@ int main(int argc, char* argv[]) {
             int ability = in_heli ? k[SDL_SCANCODE_E] : k[SDL_SCANCODE_E];
             if(k[SDL_SCANCODE_1]) wpn_req=0; if(k[SDL_SCANCODE_2]) wpn_req=1;
             if(k[SDL_SCANCODE_3]) wpn_req=2; if(k[SDL_SCANCODE_4]) wpn_req=3; if(k[SDL_SCANCODE_5]) wpn_req=4; if(k[SDL_SCANCODE_6]) wpn_req=5;
+            {
+                static int prev_attack_down = 0;
+                int attack_pressed = shoot ? 1 : 0;
+                if (attack_pressed && !prev_attack_down) {
+                    int shooter_id = (app_state == STATE_GAME_NET && my_client_id > 0 && my_client_id < MAX_CLIENTS) ? my_client_id : 0;
+                    PlayerState *shooter = &local_state.players[shooter_id];
+                    if (shooter->active && shooter->current_weapon == WPN_SNIPER) {
+                        float tr_start[3], tr_end[3];
+                        compute_sniper_trace_end(shooter, tr_start, tr_end);
+                        spawn_sniper_tracer(tr_start, tr_end);
+                    }
+                }
+                prev_attack_down = attack_pressed;
+            }
 
             int fov_pid = (app_state == STATE_GAME_NET && net_local_pid > 0 && local_state.players[net_local_pid].active)
                 ? net_local_pid
