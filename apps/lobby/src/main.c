@@ -144,6 +144,7 @@ typedef enum {
     SKIN_GEISHA,
     SKIN_ALPINE,
     SKIN_EMIREE,
+    SKIN_WHITE,
     SKIN_COUNT
 } PlayerSkin;
 
@@ -162,7 +163,8 @@ static const char *SKIN_LABELS[SKIN_COUNT] = {
     "PINK",
     "GEISHA",
     "ALPINE",
-    "EMIREE"
+    "EMIREE",
+    "WHITE"
 };
 static const char *SKIN_CONFIG_PATH = "shankpit_skin.cfg";
 static void ensure_skin_selection_visible(void);
@@ -2275,6 +2277,16 @@ static PlayerSkinPalette player_skin_palette(int skin_id) {
         pal.metal_r = 0.36f; pal.metal_g = 0.38f; pal.metal_b = 0.44f;
         pal.glow_r = 0.58f; pal.glow_g = 0.30f; pal.glow_b = 0.88f;
         pal.glow_strength = 0.75f;
+    } else if (skin_id == SKIN_WHITE) {
+        pal.skin_r = 0.97f; pal.skin_g = 0.95f; pal.skin_b = 0.96f;
+        pal.hair_r = 0.10f; pal.hair_g = 0.10f; pal.hair_b = 0.12f;
+        pal.body_r = 0.92f; pal.body_g = 0.93f; pal.body_b = 0.96f;
+        pal.coat_r = 0.95f; pal.coat_g = 0.96f; pal.coat_b = 0.98f;
+        pal.coat_dark_r = 0.82f; pal.coat_dark_g = 0.84f; pal.coat_dark_b = 0.89f;
+        pal.trim_r = 0.86f; pal.trim_g = 0.84f; pal.trim_b = 0.93f;
+        pal.metal_r = 0.78f; pal.metal_g = 0.80f; pal.metal_b = 0.86f;
+        pal.glow_r = 0.80f; pal.glow_g = 0.74f; pal.glow_b = 0.96f;
+        pal.glow_strength = 0.68f;
     }
     return pal;
 }
@@ -3056,10 +3068,10 @@ static void draw_player_skin_alpine(PlayerState *p, float draw_pitch, float draw
     glScalef(0.8f, 0.8f, 0.8f); draw_gun_model(p->current_weapon); glPopMatrix();
 }
 
-static void draw_player_skin_emiree(PlayerState *p, float draw_pitch, float draw_recoil) {
+static void draw_player_skin_emiree(PlayerState *p, float draw_pitch, float draw_recoil, int skin_id) {
     /* Emiree is the first PS2/FFXI-inspired premium low-poly skin pass: material-zoned, silhouette-first, with subtle authored glow accents. */
     PlayerAnimPose pose = compute_player_anim_pose(p);
-    PlayerSkinPalette pal = player_skin_palette(SKIN_EMIREE);
+    PlayerSkinPalette pal = player_skin_palette(skin_id);
 
     glPushMatrix();
     glTranslatef(0.0f, 0.9f + pose.torso_bob, 0.0f);
@@ -3395,7 +3407,10 @@ void draw_player_3rd(PlayerState *p) {
                 draw_player_skin_alpine(p, draw_pitch, draw_recoil);
                 break;
             case SKIN_EMIREE:
-                draw_player_skin_emiree(p, draw_pitch, draw_recoil);
+                draw_player_skin_emiree(p, draw_pitch, draw_recoil, SKIN_EMIREE);
+                break;
+            case SKIN_WHITE:
+                draw_player_skin_emiree(p, draw_pitch, draw_recoil, SKIN_WHITE);
                 break;
             case SKIN_BAT:
             default:
