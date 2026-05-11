@@ -5,8 +5,10 @@
 #include <math.h>
 #include <assert.h>
 #include <stdint.h>
+#include <time.h>
 
 #ifdef _WIN32
+    #include <windows.h>
     #include <winsock2.h>
     #include <ws2tcpip.h>
     #pragma comment(lib, "ws2_32.lib")
@@ -38,6 +40,29 @@
 #include "../../../packages/render/proc_tex.h"
 #include "../../../packages/render/retro_sky.h"
 #include "../../../packages/render/retro_lighting.h"
+
+#define TICK_RATE 64
+#define TICK_DT (1.0 / (double)TICK_RATE)
+
+#ifdef _WIN32
+static double get_time(void) {
+    static LARGE_INTEGER freq;
+    static int init = 0;
+    LARGE_INTEGER now;
+    if (!init) {
+        QueryPerformanceFrequency(&freq);
+        init = 1;
+    }
+    QueryPerformanceCounter(&now);
+    return (double)now.QuadPart / (double)freq.QuadPart;
+}
+#else
+static double get_time(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1000000000.0;
+}
+#endif
 
 #ifndef NET_VERBOSE_LOG
 #define NET_VERBOSE_LOG 1
@@ -5457,6 +5482,43 @@ void net_tick() {
 }
 
 
+typedef struct SimInput {
+    float fwd, str;
+    int shoot, jump, crouch, reload, use, ability;
+    int wpn_req;
+    unsigned int now_ms;
+} SimInput;
+
+static PlayerState prev_players[MAX_CLIENTS];
+static PlayerState curr_players[MAX_CLIENTS];
+
+static void snapshot_prev_state(void) {
+    memcpy(prev_players, local_state.players, sizeof(prev_players));
+}
+
+static void simulate(float dt, const SimInput *in) {
+    (void)dt;
+    if (app_state == STATE_GAME_NET) {
+        net_local_pid = (my_client_id > 0 && my_client_id < MAX_CLIENTS) ? my_client_id : -1;
+        net_tick();
+        net_check_diag_timeouts(in->now_ms);
+        if (net_local_pid > 0 && net_have_initial_local_snapshot_sync) {
+            if (in->now_ms - net_last_cmd_send_ms >= CLIENT_USERCMD_INTERVAL_MS) {
+                UserCmd cmd = client_create_cmd(in->fwd, in->str, cam_yaw, cam_pitch, in->shoot, in->jump, in->crouch, in->reload, in->use, in->ability, in->wpn_req);
+                client_apply_cmd_movement(&local_state.players[net_local_pid], &cmd, in->now_ms);
+                net_send_cmd(cmd);
+                net_last_cmd_send_ms = in->now_ms;
+                if (net_spawn_protect_cmds > 0) net_spawn_protect_cmds--;
+            }
+        }
+        client_decay_pending_correction(in->now_ms);
+        net_apply_remote_interpolation(in->now_ms);
+        net_emit_client_summaries(in->now_ms);
+        return;
+    }
+    local_update(in->fwd, in->str, cam_yaw, cam_pitch, in->shoot, in->wpn_req, in->jump, in->crouch, in->reload, in->ability, NULL, in->now_ms);
+}
+
 int main(int argc, char* argv[]) {
     for(int i=1; i<argc; i++) {
         if(strcmp(argv[i], "--host") == 0 && i+1<argc) {
@@ -5487,6 +5549,8 @@ int main(int argc, char* argv[]) {
     }
     
     int running = 1;
+    double previous = get_time();
+    double accumulator = 0.0;
     while(running) {
         SDL_Event e;
         while(SDL_PollEvent(&e)) {
@@ -5700,6 +5764,12 @@ int main(int argc, char* argv[]) {
              SDL_GL_SwapWindow(win);
         } 
         else {
+            double now_time = get_time();
+            double frame_time = now_time - previous;
+            if (frame_time > 0.25) frame_time = 0.25;
+            if (frame_time < 0.0) frame_time = 0.0;
+            previous = now_time;
+            accumulator += frame_time;
             const Uint8 *k = SDL_GetKeyboardState(NULL);
             int control_pid = (app_state == STATE_GAME_NET && my_client_id > 0 && my_client_id < MAX_CLIENTS) ? my_client_id : 0;
             int in_heli = local_state.players[control_pid].in_vehicle && local_state.players[control_pid].vehicle_type == VEH_HELICOPTER;
@@ -5731,36 +5801,7 @@ int main(int argc, char* argv[]) {
             current_fov += (target_fov - current_fov) * 0.2f;
             glMatrixMode(GL_PROJECTION); glLoadIdentity(); gluPerspective(current_fov, 1280.0/720.0, 0.1, Z_FAR); 
             glMatrixMode(GL_MODELVIEW);
-            if (app_state == STATE_GAME_NET) {
-                net_local_pid = (my_client_id > 0 && my_client_id < MAX_CLIENTS) ? my_client_id : -1;
-                net_tick();
-                unsigned int now_ms = SDL_GetTicks();
-                net_check_diag_timeouts(now_ms);
-                if (net_local_pid > 0 && net_have_initial_local_snapshot_sync) {
-                    if (now_ms - net_last_cmd_send_ms >= CLIENT_USERCMD_INTERVAL_MS) {
-                        if (!net_diag.control_unlocked_logged) {
-                            net_diag.control_unlocked_logged = 1;
-                            NET_CLIENT_LOG("CONTROL_UNLOCKED client_id=%d local_pid=%d dt_ms=%u",
-                                           my_client_id, net_local_pid,
-                                           net_diag.connect_started ? (now_ms - net_diag.connect_start_ms) : 0);
-                        }
-                        UserCmd cmd = client_create_cmd(fwd, str, cam_yaw, cam_pitch, shoot, jump, crouch, reload, use, ability, wpn_req);
-                        client_apply_cmd_movement(&local_state.players[net_local_pid], &cmd, now_ms);
-                        net_send_cmd(cmd);
-                        net_last_cmd_send_ms = now_ms;
-                        if (net_spawn_protect_cmds > 0) net_spawn_protect_cmds--;
-                    }
-                } else if (net_should_log_every(&net_diag.last_blocked_input_log_ms, 1000, now_ms)) {
-                    if (!(net_local_pid > 0)) {
-                        NET_WARN_LOG("INPUT_BLOCKED reason=invalid_client_id my_client_id=%d local_pid=%d", my_client_id, net_local_pid);
-                    } else if (!net_have_initial_local_snapshot_sync) {
-                        NET_WARN_LOG("INPUT_BLOCKED reason=awaiting_local_snapshot_sync client_id=%d", my_client_id);
-                    }
-                }
-                client_decay_pending_correction(now_ms);
-                net_apply_remote_interpolation(now_ms);
-                net_emit_client_summaries(now_ms);
-            } else {
+            if (app_state != STATE_GAME_NET) {
                 if (local_state.game_mode == MODE_STORY &&
                     (local_state.story_phase == STORY_PHASE_CUTSCENE ||
                      local_state.story_phase == STORY_PHASE_COMPLETE ||
@@ -5828,13 +5869,21 @@ int main(int argc, char* argv[]) {
                     }
                 }
                 if(local_state.players[0].vehicle_cooldown > 0) local_state.players[0].vehicle_cooldown--;
-                unsigned int now_ms = SDL_GetTicks();
-                if (local_state.game_mode == MODE_STORY &&
-                    local_state.story_phase == STORY_PHASE_CUTSCENE &&
-                    local_state.story_phase_start_ms == 0) {
-                    local_state.story_phase_start_ms = now_ms;
-                }
-                local_update(fwd, str, cam_yaw, cam_pitch, shoot, wpn_req, jump, crouch, reload, ability, NULL, now_ms);
+            }
+            SimInput sim_input = { fwd, str, shoot, jump, crouch, reload, use, ability, wpn_req, SDL_GetTicks() };
+            while (accumulator >= TICK_DT) {
+                snapshot_prev_state();
+                sim_input.now_ms = SDL_GetTicks();
+                simulate((float)TICK_DT, &sim_input);
+                accumulator -= TICK_DT;
+            }
+            double alpha = accumulator / TICK_DT;
+            memcpy(curr_players, local_state.players, sizeof(curr_players));
+            for (int i = 0; i < MAX_CLIENTS; i++) {
+                if (!local_state.players[i].active) continue;
+                local_state.players[i].x = prev_players[i].x + (curr_players[i].x - prev_players[i].x) * (float)alpha;
+                local_state.players[i].y = prev_players[i].y + (curr_players[i].y - prev_players[i].y) * (float)alpha;
+                local_state.players[i].z = prev_players[i].z + (curr_players[i].z - prev_players[i].z) * (float)alpha;
             }
             int render_pid = 0;
             if (app_state == STATE_GAME_NET &&
@@ -5880,9 +5929,10 @@ int main(int argc, char* argv[]) {
                 }
             }
             draw_scene(render_p);
+            memcpy(local_state.players, curr_players, sizeof(curr_players));
             SDL_GL_SwapWindow(win);
         }
-        SDL_Delay(16);
+        SDL_Delay(1);
     }
     proc_tex_destroy(&g_vehicle_noise_tex);
     proc_tex_destroy(&g_vehicle_glitch_tex);
