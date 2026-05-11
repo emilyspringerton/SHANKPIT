@@ -4507,7 +4507,7 @@ void draw_scene(PlayerState *render_p) {
     for(int i=0; i<MAX_CLIENTS; i++) {
         PlayerState *p = &local_state.players[i];
         if (!p->active || p->scene_id != render_p->scene_id) continue;
-        if (p == render_p) continue;
+        if (p->id == render_p->id) continue;
         draw_player_3rd(p);
     }
     draw_weapon_p(render_p); draw_hud(render_p); draw_garage_overlay(render_p); draw_tab_scoreboard(render_p);
