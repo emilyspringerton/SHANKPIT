@@ -211,7 +211,7 @@ static void spawn_sniper_tracer(float start[3], float end[3]) {
 }
 
 static void compute_sniper_trace_end(const PlayerState *p, float out_start[3], float out_end[3]) {
-    const float max_range = (WPN_STATS[WPN_SNIPER].rng > 10.0f) ? WPN_STATS[WPN_SNIPER].rng : 2500.0f;
+    const float max_range = 2500.0f;
     float yaw_r = p->yaw * 0.0174532925f;
     float pitch_r = p->pitch * 0.0174532925f;
     float dx = sinf(yaw_r) * cosf(pitch_r);
