@@ -974,7 +974,7 @@ int main(int argc, char *argv[]) {
                 float b_fwd = 0.0f;
                 float b_yaw = p->yaw;
                 int b_btns = 0;
-                bot_think(i, local_state.players, &b_fwd, &b_yaw, &b_btns);
+                bot_think(i, local_state.players, SHANKPIT_NET_FIXED_DT, &b_fwd, &b_yaw, &b_btns);
                 p->yaw = b_yaw;
                 float brad = b_yaw * 3.14159f / 180.0f;
                 float bx = sinf(brad) * b_fwd;
