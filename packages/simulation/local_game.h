@@ -860,7 +860,7 @@ static void story_swarm_tick(PlayerState *hero, unsigned int now_ms) {
 }
 
 // --- BOT AI ---
-void bot_think(int bot_idx, PlayerState *players, float *out_fwd, float *out_yaw, int *out_buttons) {
+void bot_think(int bot_idx, PlayerState *players, float dt, float *out_fwd, float *out_yaw, int *out_buttons) {
     PlayerState *me = &players[bot_idx];
     if (me->state == STATE_DEAD || local_state.match_over) { *out_buttons = 0; return; }
     if (local_state.game_mode == MODE_STORY) { *out_buttons = 0; *out_fwd = 0.0f; *out_yaw = me->yaw; return; }
@@ -893,8 +893,9 @@ void bot_think(int bot_idx, PlayerState *players, float *out_fwd, float *out_yaw
         float dz = tz - me->z;
         float target_yaw = atan2f(dx, dz) * (180.0f / 3.14159f);
         float diff = angle_diff(target_yaw, *out_yaw);
-        if (diff > 8.0f) diff = 8.0f;
-        if (diff < -8.0f) diff = -8.0f;
+        float max_turn = 120.0f * dt;
+        if (diff > max_turn) diff = max_turn;
+        if (diff < -max_turn) diff = -max_turn;
         *out_yaw += diff;
         *out_fwd = 0.9f;
         float dist_sq = dx*dx + dz*dz;
@@ -927,7 +928,7 @@ void bot_think(int bot_idx, PlayerState *players, float *out_fwd, float *out_yaw
         float dz = t->z - me->z;
         float target_yaw = atan2f(dx, dz) * (180.0f / 3.14159f);
         
-        float turn_speed = (me->brain.w_turret > 1.0f) ? me->brain.w_turret : 10.0f;
+        float turn_speed = ((me->brain.w_turret > 1.0f) ? me->brain.w_turret : 10.0f) * 12.0f * dt;
         float diff = angle_diff(target_yaw, *out_yaw);
         if (diff > turn_speed) diff = turn_speed;
         if (diff < -turn_speed) diff = -turn_speed;
@@ -1273,7 +1274,7 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
             } else {
                 float b_fwd=0, b_yaw=p->yaw;
                 int b_btns=0;
-                bot_think(i, local_state.players, &b_fwd, &b_yaw, &b_btns);
+                bot_think(i, local_state.players, SHANKPIT_NET_FIXED_DT, &b_fwd, &b_yaw, &b_btns);
                 p->yaw = b_yaw;
                 if (!p->in_vehicle) {
                     float brad = b_yaw * 3.14159f / 180.0f;
@@ -1298,7 +1299,7 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
             }
         }
         phys_set_scene(p->scene_id);
-        update_entity(p, 0.016f, server_context, cmd_time);
+        update_entity(p, SHANKPIT_NET_FIXED_DT, server_context, cmd_time);
         if (local_state.game_mode == MODE_CTFB) ctf_try_capture(p, cmd_time);
         p->use_was_down = p->in_use;
     }
