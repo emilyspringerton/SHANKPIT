@@ -5940,3 +5940,21 @@ int main(int argc, char* argv[]) {
     SDL_Quit();
     return 0;
 }
+    if (p) {
+        int sticky = p->sticky_grenades;
+        if (sticky < 0) sticky = 0;
+        if (sticky > 6) sticky = 6;
+        float sx = 24.0f, sy = 88.0f;
+        for (int i = 0; i < sticky; i++) {
+            float x = sx + i * 10.0f;
+            glColor4f(0.22f, 1.0f, 1.0f, 0.95f);
+            glBegin(GL_QUADS);
+            glVertex2f(x, sy); glVertex2f(x + 7.0f, sy); glVertex2f(x + 7.0f, sy + 7.0f); glVertex2f(x, sy + 7.0f);
+            glEnd();
+            glColor4f(0.75f, 0.5f, 1.0f, 0.6f);
+            glBegin(GL_LINE_LOOP);
+            glVertex2f(x-1.0f, sy-1.0f); glVertex2f(x+8.0f, sy-1.0f); glVertex2f(x+8.0f, sy+8.0f); glVertex2f(x-1.0f, sy+8.0f);
+            glEnd();
+        }
+    }
+

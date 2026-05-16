@@ -36,6 +36,34 @@ static int tdmb_last_kills[MAX_CLIENTS];
 
 float rand_weight(void);
 
+#define STICKY_MAX_RESERVE 4
+#define STICKY_FUSE_MS 1750U
+#define STICKY_THROW_COOLDOWN_MS 700U
+
+typedef struct {
+    int active;
+    int attached;
+    int attach_player_id;
+    float x,y,z;
+    unsigned int explode_at_ms;
+} StickyState;
+static StickyState g_sticky[MAX_PROJECTILES];
+
+static void sticky_try_throw(PlayerState *p, unsigned int now_ms){
+    if (!p || p->state!=STATE_ALIVE || p->sticky_grenades<=0) return;
+    if (now_ms < p->sticky_cooldown_until_ms) return;
+    int slot=-1; for(int i=0;i<MAX_PROJECTILES;i++){ if(!local_state.projectiles[i].active){slot=i;break;}}
+    if(slot<0) return;
+    Projectile *pr=&local_state.projectiles[slot];
+    pr->active=1; pr->owner_id=p->id; pr->scene_id=(unsigned char)p->scene_id; pr->damage=120; pr->bounces_left=-99;
+    float yaw=p->yaw*(3.1415926f/180.0f); float pitch=p->pitch*(3.1415926f/180.0f);
+    float fx=cosf(yaw)*cosf(pitch), fy=sinf(pitch), fz=sinf(yaw)*cosf(pitch);
+    pr->x=p->x+fx*8.0f; pr->y=p->y+24.0f; pr->z=p->z+fz*8.0f;
+    pr->vx=fx*90.0f; pr->vy=fy*90.0f+10.0f; pr->vz=fz*90.0f;
+    g_sticky[slot].active=1; g_sticky[slot].attached=0; g_sticky[slot].attach_player_id=-1; g_sticky[slot].explode_at_ms=now_ms+STICKY_FUSE_MS;
+    p->sticky_grenades--; p->sticky_cooldown_until_ms=now_ms+STICKY_THROW_COOLDOWN_MS;
+}
+
 static int mode_uses_team_scores(int mode) {
     return mode == MODE_TDM || mode == MODE_TDMB || mode == MODE_TDMO || mode == MODE_CTFB;
 }
@@ -1287,6 +1315,7 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
                 p->in_reload = (b_btns & BTN_RELOAD);
                 p->crouching = (b_btns & BTN_CROUCH);
                 p->in_use = ((b_btns & BTN_USE) != 0);
+                if ((b_btns & BTN_GRENADE) != 0) sticky_try_throw(p, cmd_time);
                 p->in_ability = 0;
                 if ((b_btns & BTN_JUMP) && p->on_ground) { p->y += 0.1f; p->vy += JUMP_FORCE; }
             }
