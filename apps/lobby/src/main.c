@@ -98,6 +98,8 @@ unsigned int ui_last_click_ms = 0;
 int ui_last_click_index = -1;
 char ui_edit_buffer[64];
 unsigned int travel_overlay_until_ms = 0;
+static int g_enemy_outline_toggle_prev = 0;
+static int g_enemy_nameplates_toggle_prev = 0;
 
 float cam_yaw = 0.0f;
 float cam_pitch = 0.0f;
@@ -127,6 +129,10 @@ static int terrain_wireframe_debug = 0;
 static int terrain_normals_debug = 0;
 static int voxworld_points_debug = 0;
 static unsigned int terrain_debug_last_log_ms = 0;
+static int g_enemy_outline_enabled = 1;
+static int g_enemy_nameplates_enabled = 1;
+#define ENEMY_OUTLINE_MAX_DIST 2200.0f
+#define ENEMY_NAMEPLATE_MAX_DIST 2600.0f
 static ProcTexture g_vehicle_noise_tex = {0};
 static ProcTexture g_vehicle_glitch_tex = {0};
 static RetroSky g_retro_sky = {0};
@@ -2145,6 +2151,30 @@ static void draw_box_outline(float w, float h, float d) {
     glPopMatrix();
 }
 
+static void draw_box_outline_plain(float w, float h, float d) {
+    glPushMatrix();
+    glScalef(w, h, d);
+
+    glBegin(GL_LINE_LOOP);
+    glVertex3f(-0.5f, 0.5f, 0.5f); glVertex3f(0.5f, 0.5f, 0.5f);
+    glVertex3f(0.5f, -0.5f, 0.5f); glVertex3f(-0.5f, -0.5f, 0.5f);
+    glEnd();
+
+    glBegin(GL_LINE_LOOP);
+    glVertex3f(-0.5f, 0.5f, -0.5f); glVertex3f(0.5f, 0.5f, -0.5f);
+    glVertex3f(0.5f, -0.5f, -0.5f); glVertex3f(-0.5f, -0.5f, -0.5f);
+    glEnd();
+
+    glBegin(GL_LINES);
+    glVertex3f(-0.5f, 0.5f, 0.5f); glVertex3f(-0.5f, 0.5f, -0.5f);
+    glVertex3f(0.5f, 0.5f, 0.5f); glVertex3f(0.5f, 0.5f, -0.5f);
+    glVertex3f(0.5f, -0.5f, 0.5f); glVertex3f(0.5f, -0.5f, -0.5f);
+    glVertex3f(-0.5f, -0.5f, 0.5f); glVertex3f(-0.5f, -0.5f, -0.5f);
+    glEnd();
+
+    glPopMatrix();
+}
+
 typedef struct PlayerAnimPose {
     float locomotion;
     float grounded_locomotion;
@@ -3929,6 +3959,194 @@ static int is_valid_scoreboard_team_id(int team_id) {
     return team_id == TDMB_BLUE_TEAM || team_id == TDMB_RED_TEAM;
 }
 
+static int is_enemy_for_outline(const PlayerState *self, const PlayerState *other, int other_id) {
+    (void)other_id;
+    if (!self || !other) return 0;
+    if (!other->active) return 0;
+    if (other->state == STATE_DEAD) return 0;
+    if (other == self) return 0;
+    if (other->scene_id != self->scene_id) return 0;
+
+    if (!mode_uses_team_scoreboard(local_state.game_mode)) return 1;
+
+    if (!is_valid_scoreboard_team_id(self->team_id) || !is_valid_scoreboard_team_id(other->team_id)) return 0;
+    return other->team_id != self->team_id;
+}
+
+static void format_player_display_name(char *out, size_t out_sz, const PlayerState *p, int player_id) {
+    if (!out || out_sz == 0) return;
+    if (p && p->is_bot) snprintf(out, out_sz, "BOT-%02d", player_id);
+    else snprintf(out, out_sz, "P%02d", player_id);
+}
+
+static int world_to_screen(float wx, float wy, float wz, float *out_x, float *out_y) {
+    if (!out_x || !out_y) return 0;
+    GLdouble model[16], proj[16];
+    GLint viewport[4];
+    GLdouble sx = 0.0, sy = 0.0, sz = 0.0;
+    glGetDoublev(GL_MODELVIEW_MATRIX, model);
+    glGetDoublev(GL_PROJECTION_MATRIX, proj);
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    if (viewport[2] <= 0 || viewport[3] <= 0) return 0;
+    if (!gluProject((GLdouble)wx, (GLdouble)wy, (GLdouble)wz, model, proj, viewport, &sx, &sy, &sz)) return 0;
+    if (sz < 0.0 || sz > 1.0) return 0;
+
+    *out_x = (float)((sx - (double)viewport[0]) * (1280.0 / (double)viewport[2]));
+    *out_y = 720.0f - (float)((sy - (double)viewport[1]) * (720.0 / (double)viewport[3]));
+    return 1;
+}
+
+static void draw_enemy_outline_player(const PlayerState *p, unsigned int now_ms) {
+    if (!p) return;
+    float t = 0.0f;
+    if (ENEMY_OUTLINE_MAX_DIST > 0.0f) {
+        /* Caller clamps distance; keep this available for future tuning hooks. */
+        t = (float)(now_ms & 0xFFu) * 0.0f;
+    }
+    (void)t;
+
+    glPushMatrix();
+    glTranslatef(p->x, p->y, p->z);
+    glRotatef(180.0f - norm_yaw_deg(p->yaw), 0, 1, 0);
+
+    glPushMatrix(); glTranslatef(0.0f, 1.00f, 0.0f); draw_box_outline_plain(1.28f, 1.62f, 0.86f); glPopMatrix();  /* torso */
+    glPushMatrix(); glTranslatef(0.0f, 2.18f, 0.0f); draw_box_outline_plain(0.72f, 0.84f, 0.72f); glPopMatrix();  /* head */
+    glPushMatrix(); glTranslatef(-0.82f, 1.12f, 0.0f); draw_box_outline_plain(0.34f, 1.28f, 0.36f); glPopMatrix(); /* left arm */
+    glPushMatrix(); glTranslatef(0.82f, 1.12f, 0.0f); draw_box_outline_plain(0.34f, 1.28f, 0.36f); glPopMatrix();  /* right arm */
+    glPushMatrix(); glTranslatef(-0.32f, -0.02f, 0.0f); draw_box_outline_plain(0.44f, 1.48f, 0.44f); glPopMatrix(); /* left leg */
+    glPushMatrix(); glTranslatef(0.32f, -0.02f, 0.0f); draw_box_outline_plain(0.44f, 1.48f, 0.44f); glPopMatrix();  /* right leg */
+    glPopMatrix();
+}
+
+static void draw_enemy_outlines(PlayerState *self, unsigned int now_ms) {
+    if (!self || !g_enemy_outline_enabled) return;
+
+    GLboolean was_depth_test = glIsEnabled(GL_DEPTH_TEST);
+    GLboolean was_texture_2d = glIsEnabled(GL_TEXTURE_2D);
+    GLboolean was_lighting = glIsEnabled(GL_LIGHTING);
+    GLboolean was_blend = glIsEnabled(GL_BLEND);
+    GLboolean was_depth_writemask = GL_TRUE;
+    GLfloat prev_line_width = 1.0f;
+    GLfloat prev_color[4] = {1, 1, 1, 1};
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &was_depth_writemask);
+    glGetFloatv(GL_LINE_WIDTH, &prev_line_width);
+    glGetFloatv(GL_CURRENT_COLOR, prev_color);
+
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_LIGHTING);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glLineWidth(3.6f);
+    /* v1 keeps this in xray mode for readability; can be depth-tested later for stricter balance. */
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        PlayerState *other = &local_state.players[i];
+        if (!is_enemy_for_outline(self, other, i)) continue;
+
+        float dx = other->x - self->x;
+        float dy = other->y - self->y;
+        float dz = other->z - self->z;
+        float dist_sq = dx * dx + dy * dy + dz * dz;
+        if (dist_sq > ENEMY_OUTLINE_MAX_DIST * ENEMY_OUTLINE_MAX_DIST) continue;
+
+        float yaw_rad = self->yaw * 0.0174532925f;
+        float fwd_x = sinf(yaw_rad);
+        float fwd_z = cosf(yaw_rad);
+        if ((dx * fwd_x + dz * fwd_z) < -2.0f) continue;
+
+        float dist = sqrtf(dist_sq);
+        float fade_t = clamp01f(dist / ENEMY_OUTLINE_MAX_DIST);
+        float alpha = lerpf(0.95f, 0.35f, fade_t);
+        glColor4f(1.0f, 0.05f, 0.02f, alpha);
+        draw_enemy_outline_player(other, now_ms);
+    }
+
+    glColor4fv(prev_color);
+    glLineWidth(prev_line_width);
+    glDepthMask(was_depth_writemask);
+    if (was_depth_test) glEnable(GL_DEPTH_TEST);
+    else glDisable(GL_DEPTH_TEST);
+    if (was_texture_2d) glEnable(GL_TEXTURE_2D);
+    else glDisable(GL_TEXTURE_2D);
+    if (was_lighting) glEnable(GL_LIGHTING);
+    else glDisable(GL_LIGHTING);
+    if (was_blend) glEnable(GL_BLEND);
+    else glDisable(GL_BLEND);
+}
+
+static void draw_enemy_nameplates(PlayerState *self) {
+    if (!self || !g_enemy_nameplates_enabled) return;
+
+    typedef struct EnemyPlate {
+        float x;
+        float y;
+        char name[16];
+    } EnemyPlate;
+    EnemyPlate plates[MAX_CLIENTS];
+    int plate_count = 0;
+
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        PlayerState *other = &local_state.players[i];
+        if (!is_enemy_for_outline(self, other, i)) continue;
+
+        float dx = other->x - self->x;
+        float dy = (other->y + 2.8f) - self->y;
+        float dz = other->z - self->z;
+        float dist_sq = dx * dx + dy * dy + dz * dz;
+        if (dist_sq > ENEMY_NAMEPLATE_MAX_DIST * ENEMY_NAMEPLATE_MAX_DIST) continue;
+
+        float sx = 0.0f, sy = 0.0f;
+        if (!world_to_screen(other->x, other->y + 2.8f, other->z, &sx, &sy)) continue;
+
+        EnemyPlate *plate = &plates[plate_count++];
+        plate->x = sx;
+        plate->y = sy;
+        format_player_display_name(plate->name, sizeof(plate->name), other, i);
+    }
+    if (plate_count == 0) return;
+
+    GLboolean was_depth_test = glIsEnabled(GL_DEPTH_TEST);
+    GLboolean was_texture_2d = glIsEnabled(GL_TEXTURE_2D);
+    GLboolean was_blend = glIsEnabled(GL_BLEND);
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity();
+    glOrtho(0, 1280, 0, 720, -1, 1);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+
+    for (int i = 0; i < plate_count; i++) {
+        float text_w = (float)strlen(plates[i].name) * 12.0f;
+        float text_x = plates[i].x - text_w * 0.5f;
+        float text_y = plates[i].y + 10.0f;
+
+        glColor4f(0.02f, 0.0f, 0.0f, 0.45f);
+        glBegin(GL_QUADS);
+        glVertex2f(text_x - 8.0f, text_y - 4.0f);
+        glVertex2f(text_x + text_w + 8.0f, text_y - 4.0f);
+        glVertex2f(text_x + text_w + 8.0f, text_y + 17.0f);
+        glVertex2f(text_x - 8.0f, text_y + 17.0f);
+        glEnd();
+
+        glColor3f(1.0f, 0.18f, 0.12f);
+        draw_string(plates[i].name, text_x, text_y, 5.0f);
+    }
+
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glMatrixMode(GL_MODELVIEW); glPopMatrix();
+    if (was_depth_test) glEnable(GL_DEPTH_TEST);
+    else glDisable(GL_DEPTH_TEST);
+    if (was_texture_2d) glEnable(GL_TEXTURE_2D);
+    else glDisable(GL_TEXTURE_2D);
+    if (was_blend) glEnable(GL_BLEND);
+    else glDisable(GL_BLEND);
+}
+
 static void scoreboard_team_totals(int mode, int *out_blue, int *out_red) {
     int blue = 0;
     int red = 0;
@@ -4510,6 +4728,8 @@ void draw_scene(PlayerState *render_p) {
         if (p->id == render_p->id) continue;
         draw_player_3rd(p);
     }
+    draw_enemy_outlines(render_p, now_ms);
+    draw_enemy_nameplates(render_p);
     draw_weapon_p(render_p); draw_hud(render_p); draw_garage_overlay(render_p); draw_tab_scoreboard(render_p);
     draw_travel_overlay();
     draw_tdmb_match_over_overlay();
@@ -5684,10 +5904,6 @@ int main(int argc, char* argv[]) {
                         printf("[TERRAIN] normals=%s\n", terrain_normals_debug ? "on" : "off");
                     } else if (e.key.keysym.sym == SDLK_F8) {
                         vehicle_style_enabled = !vehicle_style_enabled;
-                    } else if (e.key.keysym.sym == SDLK_F9) {
-                        vehicle_underglow_enabled = !vehicle_underglow_enabled;
-                    } else if (e.key.keysym.sym == SDLK_F10) {
-                        vehicle_worklights_enabled = !vehicle_worklights_enabled;
                     } else if (e.key.keysym.sym == SDLK_F11) {
                         voxworld_points_debug = !voxworld_points_debug;
                         printf("[SCENE DEBUG] points_debug=%s\n", voxworld_points_debug ? "on" : "off");
@@ -5738,6 +5954,19 @@ int main(int argc, char* argv[]) {
         } 
         else {
             const Uint8 *k = SDL_GetKeyboardState(NULL);
+            int f9_down = k[SDL_SCANCODE_F9] ? 1 : 0;
+            int f10_down = k[SDL_SCANCODE_F10] ? 1 : 0;
+            if (f9_down && !g_enemy_outline_toggle_prev) {
+                g_enemy_outline_enabled = !g_enemy_outline_enabled;
+                printf("[RENDER_UI] enemy_outline=%d enemy_nameplates=%d\n", g_enemy_outline_enabled, g_enemy_nameplates_enabled);
+            }
+            if (f10_down && !g_enemy_nameplates_toggle_prev) {
+                g_enemy_nameplates_enabled = !g_enemy_nameplates_enabled;
+                printf("[RENDER_UI] enemy_outline=%d enemy_nameplates=%d\n", g_enemy_outline_enabled, g_enemy_nameplates_enabled);
+            }
+            g_enemy_outline_toggle_prev = f9_down;
+            g_enemy_nameplates_toggle_prev = f10_down;
+
             int control_pid = (app_state == STATE_GAME_NET && my_client_id > 0 && my_client_id < MAX_CLIENTS) ? my_client_id : 0;
             int in_heli = local_state.players[control_pid].in_vehicle && local_state.players[control_pid].vehicle_type == VEH_HELICOPTER;
             float fwd=0, str=0;
