@@ -146,6 +146,7 @@ typedef enum {
     SKIN_GEISHA,
     SKIN_ALPINE,
     SKIN_EMIREE,
+    SKIN_REXX,
     SKIN_COUNT
 } PlayerSkin;
 
@@ -164,10 +165,18 @@ static const char *SKIN_LABELS[SKIN_COUNT] = {
     "PINK",
     "GEISHA",
     "ALPINE",
-    "EMIREE"
+    "EMIREE",
+    "REXX"
 };
 static const char *SKIN_CONFIG_PATH = "shankpit_skin.cfg";
 static void ensure_skin_selection_visible(void);
+static const CharacterDefinition* character_definition_for_skin(int skin_id);
+
+typedef void (*CharacterDrawFn)(PlayerState *p, float draw_pitch, float draw_recoil);
+typedef struct CharacterRenderBinding {
+    CharacterDefinition def;
+    CharacterDrawFn draw_fn;
+} CharacterRenderBinding;
 
 static float clamp01f(float v) {
     if (v < 0.0f) return 0.0f;
@@ -707,6 +716,13 @@ static void lobby_init_labels() {
 static int clamp_skin_id(int skin_id) {
     if (skin_id < SKIN_BAT || skin_id >= SKIN_COUNT) return SKIN_BAT;
     return skin_id;
+}
+
+static const CharacterDefinition* character_definition_for_skin(int skin_id) {
+    static const CharacterDefinition HUM = {"bat", SKIN_BAT, {1.0f,1.0f,1.0f}, {0.75f,1.85f,0.75f}, {0.0f,0.92f,0.0f}, {0.0f,1.45f,-3.2f}, {0.64f,1.03f,0.57f}, {0.0f,1.96f,0.0f}, {0.0f,0.0f,0.0f}, {0.0f,0.0f,0.0f}, 1.0f, 0.0f, 0, 1};
+    static const CharacterDefinition REXX = {"rexx", SKIN_REXX, {1.12f,1.12f,1.12f}, {1.05f,1.70f,1.80f}, {0.0f,0.85f,-0.12f}, {0.0f,1.38f,-3.8f}, {0.64f,1.10f,0.72f}, {0.0f,1.42f,1.24f}, {0.0f,-0.12f,-0.08f}, {0.0f,-0.18f,0.0f}, 0.88f, 0.02f, 1, 0};
+    if (skin_id == SKIN_REXX) return &REXX;
+    return &HUM;
 }
 
 static void save_skin_selection() {
@@ -3058,6 +3074,54 @@ static void draw_player_skin_alpine(PlayerState *p, float draw_pitch, float draw
     glScalef(0.8f, 0.8f, 0.8f); draw_gun_model(p->current_weapon); glPopMatrix();
 }
 
+static void draw_player_skin_rexx(PlayerState *p, float draw_pitch, float draw_recoil) {
+    float t = SDL_GetTicks() * 0.001f;
+    float sway = sinf(t * 2.2f) * 4.0f;
+    float stomp = sinf(t * 5.8f) * 0.08f;
+
+    glPushMatrix();
+    glTranslatef(0.0f, 0.74f + stomp, -0.05f);
+    glRotatef(sway * 0.45f, 0, 1, 0);
+    glColor3f(0.47f, 0.23f, 0.16f);
+    draw_box(1.32f, 1.26f, 2.14f); draw_box_outline(1.32f, 1.26f, 2.14f);
+    glColor3f(0.86f, 0.78f, 0.62f);
+    glPushMatrix(); glTranslatef(0.0f, -0.22f, 0.26f); draw_box(0.84f, 0.62f, 1.28f); draw_box_outline(0.84f, 0.62f, 1.28f); glPopMatrix();
+    glColor3f(0.24f, 0.10f, 0.08f);
+    glPushMatrix(); glTranslatef(-0.46f, 0.10f, -0.12f); draw_box(0.18f, 0.16f, 0.18f); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.34f, -0.05f, 0.18f); draw_box(0.16f, 0.14f, 0.18f); glPopMatrix();
+    glPopMatrix();
+
+    glPushMatrix();
+    glTranslatef(0.0f, 1.42f + stomp * 0.5f, 1.24f);
+    glRotatef(draw_pitch * 0.4f + sway * 0.2f, 1, 0, 0);
+    glColor3f(0.52f, 0.25f, 0.15f); draw_box(1.62f, 1.14f, 1.36f); draw_box_outline(1.62f, 1.14f, 1.36f);
+    glColor3f(0.58f, 0.28f, 0.17f); glPushMatrix(); glTranslatef(0.0f, -0.18f, 0.88f); draw_box(0.98f, 0.48f, 0.88f); draw_box_outline(0.98f, 0.48f, 0.88f); glPopMatrix();
+    glColor3f(0.96f, 0.91f, 0.82f); glPushMatrix(); glTranslatef(0.0f, -0.30f, 1.20f); draw_box(0.72f, 0.18f, 0.20f); draw_box_outline(0.72f, 0.18f, 0.20f); glPopMatrix();
+    glColor3f(1.0f, 0.12f, 0.10f); glPushMatrix(); glTranslatef(0.42f, 0.10f, 0.71f); draw_box(0.12f, 0.12f, 0.06f); glPopMatrix();
+    glColor3f(0.12f, 0.02f, 0.02f); glPushMatrix(); glTranslatef(0.42f, 0.10f, 0.69f); draw_box(0.16f, 0.16f, 0.03f); glPopMatrix();
+    glPopMatrix();
+
+    for (int i=0;i<2;i++) {
+        float side=i?1.0f:-1.0f;
+        glPushMatrix();
+        glTranslatef(side*0.44f, -0.10f + fabsf(stomp), 0.12f);
+        glColor3f(0.43f, 0.20f, 0.14f); draw_box(0.52f, 1.34f, 0.62f); draw_box_outline(0.52f, 1.34f, 0.62f);
+        glTranslatef(0.0f, -0.78f, 0.26f);
+        glColor3f(0.30f, 0.14f, 0.10f); draw_box(0.62f, 0.26f, 0.82f); draw_box_outline(0.62f, 0.26f, 0.82f);
+        glPopMatrix();
+    }
+
+    glPushMatrix();
+    glTranslatef(0.0f, 0.92f, -1.26f);
+    glRotatef(-18.0f + sway * 0.7f, 1, 0, 0);
+    glColor3f(0.40f, 0.18f, 0.12f);
+    glPushMatrix(); glTranslatef(0.0f, 0.0f, -0.46f); draw_box(0.56f, 0.50f, 1.10f); draw_box_outline(0.56f, 0.50f, 1.10f); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.0f, -0.04f, -1.14f); draw_box(0.42f, 0.38f, 0.78f); draw_box_outline(0.42f, 0.38f, 0.78f); glPopMatrix();
+    glPopMatrix();
+
+    glPushMatrix(); glTranslatef(0.64f, 1.10f, 0.72f); glRotatef(draw_pitch,1,0,0); glRotatef(-draw_recoil*10.0f,1,0,0); glScalef(0.72f,0.72f,0.72f); draw_gun_model(p->current_weapon); glPopMatrix();
+}
+
 static void draw_player_skin_emiree(PlayerState *p, float draw_pitch, float draw_recoil) {
     /* Emiree is the first PS2/FFXI-inspired premium low-poly skin pass: material-zoned, silhouette-first, with subtle authored glow accents. */
     PlayerAnimPose pose = compute_player_anim_pose(p);
@@ -3359,6 +3423,9 @@ void draw_player_3rd(PlayerState *p) {
             forced_skin = (p->team_id == 1) ? SKIN_NINJA : SKIN_PIRATE;
         }
         int draw_skin = (forced_skin >= 0) ? forced_skin : clamp_skin_id(g_selected_skin);
+        const CharacterDefinition *def = character_definition_for_skin(draw_skin);
+        glTranslatef(def->anim_root_offset[0], def->anim_root_offset[1], def->anim_root_offset[2]);
+        glScalef(def->render_scale[0], def->render_scale[1], def->render_scale[2]);
         switch (draw_skin) {
             case SKIN_WANDERER:
                 draw_player_skin_wanderer(p, draw_pitch, draw_recoil);
@@ -3398,6 +3465,9 @@ void draw_player_3rd(PlayerState *p) {
                 break;
             case SKIN_EMIREE:
                 draw_player_skin_emiree(p, draw_pitch, draw_recoil);
+                break;
+            case SKIN_REXX:
+                draw_player_skin_rexx(p, draw_pitch, draw_recoil);
                 break;
             case SKIN_BAT:
             default:
