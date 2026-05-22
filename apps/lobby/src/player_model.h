@@ -64,4 +64,23 @@
 #define RONIN_HORN_D 0.12f
 #define RONIN_HORN_OFFSET_X 0.28f
 
+
+
+typedef struct CharacterDefinition {
+    const char *id;
+    int skin_id;
+    float render_scale[3];
+    float collider_size[3];
+    float collider_offset[3];
+    float camera_offset[3];
+    float weapon_socket[3];
+    float head_socket[3];
+    float anim_root_offset[3];
+    float selection_offset[3];
+    float selection_scale;
+    float ground_offset;
+    int has_tail;
+    int is_humanoid;
+} CharacterDefinition;
+
 #endif
