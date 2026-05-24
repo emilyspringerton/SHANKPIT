@@ -3959,6 +3959,24 @@ void draw_hud(PlayerState *p) {
         draw_string("STORM ARROWS READY", 132, 154, vs0_art_direction_enabled ? 3 : 4);
     }
     
+    if (p) {
+        int sticky = p->sticky_grenades;
+        if (sticky < 0) sticky = 0;
+        if (sticky > 6) sticky = 6;
+        float sx = 50.0f, sy = 112.0f;
+        for (int i = 0; i < sticky; i++) {
+            float x = sx + i * 10.0f;
+            glColor4f(0.22f, 1.0f, 1.0f, 0.95f);
+            glBegin(GL_QUADS);
+            glVertex2f(x, sy); glVertex2f(x + 7.0f, sy); glVertex2f(x + 7.0f, sy + 7.0f); glVertex2f(x, sy + 7.0f);
+            glEnd();
+            glColor4f(0.75f, 0.5f, 1.0f, 0.6f);
+            glBegin(GL_LINE_LOOP);
+            glVertex2f(x-1.0f, sy-1.0f); glVertex2f(x+8.0f, sy-1.0f); glVertex2f(x+8.0f, sy+8.0f); glVertex2f(x-1.0f, sy+8.0f);
+            glEnd();
+        }
+    }
+
     draw_ammo_bars(p);
 
     glEnable(GL_DEPTH_TEST); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW); glPopMatrix();
@@ -4921,7 +4939,7 @@ void net_connect() {
     }
 }
 
-UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoot, int jump, int crouch, int reload, int use, int ability, int wpn_idx) {
+UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoot, int jump, int crouch, int reload, int use, int ability, int grenade, int wpn_idx) {
     UserCmd cmd;
     memset(&cmd, 0, sizeof(UserCmd));
     cmd.sequence = ++net_cmd_seq; cmd.timestamp = SDL_GetTicks();
@@ -4932,6 +4950,7 @@ UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoo
     if(reload) cmd.buttons |= BTN_RELOAD;
     if(use) cmd.buttons |= BTN_USE;
     if(ability) cmd.buttons |= BTN_ABILITY_1;
+    if(grenade) cmd.buttons |= BTN_GRENADE;
     client_cmd_hist[cmd.sequence % CLIENT_RECON_HISTORY] = cmd;
     net_latest_seq_sent = cmd.sequence;
     cmd.weapon_idx = wpn_idx; return cmd;
@@ -5828,6 +5847,7 @@ int main(int argc, char* argv[]) {
             int reload = in_heli ? k[SDL_SCANCODE_Q] : k[SDL_SCANCODE_R];
             int use = k[SDL_SCANCODE_F];
             int ability = in_heli ? k[SDL_SCANCODE_E] : k[SDL_SCANCODE_E];
+            int grenade = k[SDL_SCANCODE_G];
             input_fwd = fwd; input_str = str;
             input_jump = jump; input_crouch = crouch; input_shoot = shoot; input_reload = reload; input_use = use; input_ability = ability;
             if(k[SDL_SCANCODE_1]) wpn_req=0; if(k[SDL_SCANCODE_2]) wpn_req=1;
@@ -5855,7 +5875,7 @@ int main(int argc, char* argv[]) {
                                            my_client_id, net_local_pid,
                                            net_diag.connect_started ? (now_ms - net_diag.connect_start_ms) : 0);
                         }
-                        UserCmd cmd = client_create_cmd(input_fwd, input_str, cam_yaw, cam_pitch, input_shoot, input_jump, input_crouch, input_reload, input_use, input_ability, wpn_req);
+                        UserCmd cmd = client_create_cmd(input_fwd, input_str, cam_yaw, cam_pitch, input_shoot, input_jump, input_crouch, input_reload, input_use, input_ability, grenade, wpn_req);
                         client_apply_cmd_movement(&local_state.players[net_local_pid], &cmd, now_ms);
                         net_send_cmd(cmd);
                         net_last_cmd_send_ms = now_ms;
@@ -6010,3 +6030,4 @@ int main(int argc, char* argv[]) {
     SDL_Quit();
     return 0;
 }
+

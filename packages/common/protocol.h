@@ -76,6 +76,7 @@ typedef struct {
 #define BTN_USE    16
 #define BTN_ABILITY_1 32
 #define BTN_VEHICLE_2 64
+#define BTN_GRENADE 128
 
 #define VEH_NONE  0
 #define VEH_BUGGY 1
@@ -216,6 +217,8 @@ typedef struct {
     unsigned int ctf_last_flag_event_ms;
     unsigned int ctf_melee_cooldown_ms;
     int ctf_bot_intent;
+    int sticky_grenades;
+    unsigned int sticky_cooldown_until_ms;
     float ctf_cumulative_reward;
     float ctf_last_reward;
     unsigned int ctf_last_stuck_ms;
