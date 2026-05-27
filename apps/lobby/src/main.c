@@ -682,6 +682,367 @@ void draw_string(const char* str, float x, float y, float size) {
     turtle_draw_text(&pen, str);
 }
 
+typedef enum OverlayMode {
+    OVERLAY_OFF = 0,
+    OVERLAY_SCAN,
+    OVERLAY_COMBAT,
+    OVERLAY_AI,
+    OVERLAY_EDU,
+    OVERLAY_VM,
+    OVERLAY_DEBUG
+} OverlayMode;
+
+typedef enum AIOverlayState {
+    AI_OVERLAY_IDLE = 0,
+    AI_OVERLAY_PATROL,
+    AI_OVERLAY_SUSPICIOUS,
+    AI_OVERLAY_INVESTIGATING,
+    AI_OVERLAY_HUNTING,
+    AI_OVERLAY_COMBAT,
+    AI_OVERLAY_FLANKING,
+    AI_OVERLAY_RETREATING,
+    AI_OVERLAY_STUNNED,
+    AI_OVERLAY_SCRIPTED,
+    AI_OVERLAY_PUPPET
+} AIOverlayState;
+
+typedef struct OverlayInfo {
+    int enabled;
+    const char *display_name;
+    const char *type_label;
+    int show_nameplate;
+    int show_interact_prompt;
+    int show_state;
+    int show_health;
+    int show_weakpoint;
+    int show_debug;
+    float importance;
+    float max_visible_distance;
+    const char *state_label;
+    const char *prompt_label;
+    const char *lore_label;
+} OverlayInfo;
+
+typedef struct AIOverlayInfo {
+    AIOverlayState state;
+    float alertness;
+    float aggression;
+    float confidence;
+    int has_target;
+    int target_entity_id;
+    float last_seen_seconds_ago;
+    const char *squad_order;
+} AIOverlayInfo;
+
+#define MAX_OVERLAY_ITEMS 256
+
+typedef struct OverlayItem {
+    int entity_id;
+    float world_x, world_y, world_z;
+    OverlayInfo info;
+    AIOverlayInfo ai;
+    float distance_to_camera;
+    float screen_x, screen_y;
+    int visible;
+    int occluded;
+    float priority;
+} OverlayItem;
+
+typedef struct OverlaySystem {
+    OverlayMode mode;
+    OverlayItem items[MAX_OVERLAY_ITEMS];
+    int item_count;
+    int show_occluded;
+    int show_debug;
+    float global_alpha;
+} OverlaySystem;
+
+static OverlaySystem g_overlay = { OVERLAY_OFF, {{0}}, 0, 0, 0, 1.0f };
+
+static const char *overlay_mode_name(OverlayMode mode) {
+    switch (mode) {
+        case OVERLAY_SCAN: return "SCAN";
+        case OVERLAY_COMBAT: return "COMBAT";
+        case OVERLAY_AI: return "AI";
+        case OVERLAY_EDU: return "EDU";
+        case OVERLAY_VM: return "VM";
+        case OVERLAY_DEBUG: return "DEBUG";
+        case OVERLAY_OFF:
+        default: return "OFF";
+    }
+}
+
+static const char *ai_overlay_state_name(AIOverlayState state) {
+    switch (state) {
+        case AI_OVERLAY_PATROL: return "PATROL";
+        case AI_OVERLAY_SUSPICIOUS: return "SUSPICIOUS";
+        case AI_OVERLAY_INVESTIGATING: return "INVESTIGATING";
+        case AI_OVERLAY_HUNTING: return "HUNTING";
+        case AI_OVERLAY_COMBAT: return "COMBAT";
+        case AI_OVERLAY_FLANKING: return "FLANKING";
+        case AI_OVERLAY_RETREATING: return "RETREATING";
+        case AI_OVERLAY_STUNNED: return "STUNNED";
+        case AI_OVERLAY_SCRIPTED: return "SCRIPTED";
+        case AI_OVERLAY_PUPPET: return "PUPPET";
+        case AI_OVERLAY_IDLE:
+        default: return "IDLE";
+    }
+}
+
+static void overlay_cycle_mode(OverlaySystem *overlay) {
+    if (!overlay) return;
+    overlay->mode = (OverlayMode)(((int)overlay->mode + 1) % ((int)OVERLAY_DEBUG + 1));
+}
+
+static void overlay_begin_frame(OverlaySystem *overlay) {
+    if (!overlay) return;
+    overlay->item_count = 0;
+}
+
+static void overlay_submit_entity(OverlaySystem *overlay, int entity_id, float world_x, float world_y, float world_z, OverlayInfo info, AIOverlayInfo ai) {
+    if (!overlay || !info.enabled) return;
+    if (overlay->item_count >= MAX_OVERLAY_ITEMS) return;
+    OverlayItem *item = &overlay->items[overlay->item_count++];
+    memset(item, 0, sizeof(*item));
+    item->entity_id = entity_id;
+    item->world_x = world_x;
+    item->world_y = world_y;
+    item->world_z = world_z;
+    item->info = info;
+    item->ai = ai;
+}
+
+static int overlay_mode_allows_item(OverlayMode mode, const OverlayItem *item) {
+    if (!item) return 0;
+    switch (mode) {
+        case OVERLAY_OFF: return 0;
+        case OVERLAY_SCAN:
+            return item->info.show_interact_prompt || item->info.lore_label != NULL || item->info.show_nameplate;
+        case OVERLAY_COMBAT:
+            return item->info.show_health || item->info.show_weakpoint || item->info.show_state;
+        case OVERLAY_AI:
+            return item->info.show_state || item->ai.state != AI_OVERLAY_IDLE;
+        case OVERLAY_EDU:
+            return (item->info.type_label && strstr(item->info.type_label, "Education")) || item->info.lore_label != NULL;
+        case OVERLAY_VM:
+            return (item->info.type_label && (strstr(item->info.type_label, "Portal") || strstr(item->info.type_label, "Reality"))) || item->ai.state == AI_OVERLAY_PUPPET || item->ai.state == AI_OVERLAY_SCRIPTED;
+        case OVERLAY_DEBUG:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+static void overlay_sort_by_priority(OverlaySystem *overlay) {
+    if (!overlay) return;
+    for (int i = 0; i < overlay->item_count - 1; i++) {
+        for (int j = i + 1; j < overlay->item_count; j++) {
+            if (overlay->items[j].priority > overlay->items[i].priority) {
+                OverlayItem tmp = overlay->items[i];
+                overlay->items[i] = overlay->items[j];
+                overlay->items[j] = tmp;
+            }
+        }
+    }
+}
+
+static void overlay_filter_items(OverlaySystem *overlay, const PlayerState *viewer) {
+    if (!overlay || !viewer) return;
+    GLdouble model[16], proj[16];
+    GLint viewport[4];
+    glGetDoublev(GL_MODELVIEW_MATRIX, model);
+    glGetDoublev(GL_PROJECTION_MATRIX, proj);
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    int write_idx = 0;
+    for (int i = 0; i < overlay->item_count; i++) {
+        OverlayItem item = overlay->items[i];
+        if (!overlay_mode_allows_item(overlay->mode, &item)) continue;
+        if (item.info.max_visible_distance <= 0.0f) item.info.max_visible_distance = 60.0f;
+        float dx = item.world_x - viewer->x;
+        float dy = item.world_y - (viewer->y + EYE_HEIGHT);
+        float dz = item.world_z - viewer->z;
+        item.distance_to_camera = sqrtf(dx * dx + dy * dy + dz * dz);
+        if (item.distance_to_camera > item.info.max_visible_distance && item.info.importance < 0.95f) continue;
+
+        GLdouble sx = 0.0, sy = 0.0, sz = 0.0;
+        if (gluProject(item.world_x, item.world_y, item.world_z, model, proj, viewport, &sx, &sy, &sz) == GL_FALSE) continue;
+        item.visible = (sz >= 0.0 && sz <= 1.0);
+        if (!item.visible) continue;
+        item.screen_x = (float)sx;
+        item.screen_y = (float)(720.0 - sy);
+        item.occluded = 0;
+        item.priority = item.info.importance * 3.0f + (60.0f - item.distance_to_camera) * 0.03f;
+        overlay->items[write_idx++] = item;
+    }
+    overlay->item_count = write_idx;
+    overlay_sort_by_priority(overlay);
+}
+
+static void overlay_draw_world_ring(float x, float y, float z, float radius) {
+    glBegin(GL_LINE_LOOP);
+    for (int i = 0; i < 20; i++) {
+        float a = ((float)i / 20.0f) * 6.2831853f;
+        glVertex3f(x + cosf(a) * radius, y, z + sinf(a) * radius);
+    }
+    glEnd();
+}
+
+static void overlay_draw_world_glyphs(OverlaySystem *overlay) {
+    if (!overlay || overlay->mode == OVERLAY_OFF) return;
+    glDisable(GL_TEXTURE_2D);
+    glLineWidth(1.5f);
+    for (int i = 0; i < overlay->item_count; i++) {
+        OverlayItem *item = &overlay->items[i];
+        if (item->distance_to_camera > 25.0f && item->info.importance < 0.85f) continue;
+        if (overlay->mode == OVERLAY_COMBAT) glColor4f(1.0f, 0.32f, 0.24f, 0.85f);
+        else if (overlay->mode == OVERLAY_AI) glColor4f(1.0f, 0.6f, 0.2f, 0.82f);
+        else if (overlay->mode == OVERLAY_EDU) glColor4f(0.95f, 0.9f, 0.66f, 0.82f);
+        else if (overlay->mode == OVERLAY_VM) glColor4f(0.9f, 0.35f, 1.0f, 0.9f);
+        else if (overlay->mode == OVERLAY_SCAN) glColor4f(0.4f, 0.95f, 1.0f, 0.8f);
+        else glColor4f(0.85f, 0.85f, 0.85f, 0.7f);
+        overlay_draw_world_ring(item->world_x, item->world_y, item->world_z, 3.5f);
+        glBegin(GL_LINES);
+        glVertex3f(item->world_x, item->world_y, item->world_z);
+        glVertex3f(item->world_x, item->world_y + 7.0f, item->world_z);
+        glEnd();
+    }
+    glLineWidth(1.0f);
+}
+
+static void overlay_draw_screen_labels(OverlaySystem *overlay) {
+    if (!overlay || overlay->mode == OVERLAY_OFF) return;
+    glDisable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    int labels_drawn = 0;
+    for (int i = 0; i < overlay->item_count && labels_drawn < 24; i++) {
+        OverlayItem *item = &overlay->items[i];
+        int close_range = item->distance_to_camera <= 12.0f;
+        int medium_range = item->distance_to_camera <= 25.0f;
+        int far_objective = item->distance_to_camera <= 60.0f && item->info.importance >= 0.92f;
+        if (!close_range && !far_objective) {
+            if (medium_range) {
+                glColor4f(1.0f, 1.0f, 1.0f, 0.75f);
+                glBegin(GL_QUADS);
+                glVertex2f(item->screen_x - 2.0f, item->screen_y - 2.0f);
+                glVertex2f(item->screen_x + 2.0f, item->screen_y - 2.0f);
+                glVertex2f(item->screen_x + 2.0f, item->screen_y + 2.0f);
+                glVertex2f(item->screen_x - 2.0f, item->screen_y + 2.0f);
+                glEnd();
+            }
+            continue;
+        }
+        float x = item->screen_x + 8.0f;
+        float y = item->screen_y + 12.0f;
+        glColor4f(0.04f, 0.04f, 0.07f, 0.68f);
+        glRectf(x - 4.0f, y - 2.0f, x + 250.0f, y + 36.0f);
+        glColor3f(0.93f, 0.96f, 1.0f);
+        if (item->info.display_name) draw_string(item->info.display_name, x, y + 18.0f, 3.0f);
+
+        char detail[192];
+        detail[0] = '\0';
+        if (overlay->mode == OVERLAY_AI) {
+            snprintf(detail, sizeof(detail), "state:%s alert:%.2f conf:%.2f", ai_overlay_state_name(item->ai.state), item->ai.alertness, item->ai.confidence);
+        } else if (overlay->mode == OVERLAY_DEBUG) {
+            snprintf(detail, sizeof(detail), "id:%d dist:%.1fm type:%s", item->entity_id, item->distance_to_camera, item->info.type_label ? item->info.type_label : "unknown");
+        } else if (item->info.state_label) {
+            snprintf(detail, sizeof(detail), "%s", item->info.state_label);
+        } else if (item->info.prompt_label) {
+            snprintf(detail, sizeof(detail), "%s", item->info.prompt_label);
+        } else if (item->info.lore_label) {
+            snprintf(detail, sizeof(detail), "%s", item->info.lore_label);
+        }
+        if (detail[0]) {
+            glColor3f(0.75f, 0.88f, 0.97f);
+            draw_string(detail, x, y + 3.0f, 2.2f);
+        }
+        labels_drawn++;
+    }
+    glEnable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glMatrixMode(GL_MODELVIEW); glPopMatrix();
+}
+
+static AIOverlayInfo overlay_default_ai(void) {
+    AIOverlayInfo ai;
+    memset(&ai, 0, sizeof(ai));
+    ai.state = AI_OVERLAY_IDLE;
+    ai.confidence = 0.5f;
+    return ai;
+}
+
+static void overlay_collect_items(const PlayerState *viewer, unsigned int now_ms) {
+    if (!viewer || g_overlay.mode == OVERLAY_OFF) return;
+    if (local_state.game_mode == MODE_STORY && viewer->scene_id == SCENE_VOXWORLD) {
+        if (local_state.story_boss.active || local_state.story_boss.defeated) {
+            OverlayInfo boss_info = {1, local_state.story_boss.defeated ? "Breach Titan Corpse" : "Breach Titan", "Boss Entity", 1, 0, 1, 1, 1, 1, 1.0f, 75.0f,
+                                     local_state.story_boss.defeated ? "Corpse instability detected" : "Combatant", NULL, "First breach commander."};
+            AIOverlayInfo boss_ai = overlay_default_ai();
+            boss_ai.state = local_state.story_boss.defeated ? AI_OVERLAY_SCRIPTED : AI_OVERLAY_COMBAT;
+            overlay_submit_entity(&g_overlay, 9000, local_state.story_boss.x, local_state.story_boss.y + 34.0f, local_state.story_boss.z, boss_info, boss_ai);
+        }
+        if (local_state.story_rift.active) {
+            OverlayInfo rift_info = {1, "PORTAL SPEW DETECTED", "Portal Breach", 1, 0, 1, 0, 0, 1, 1.0f, 110.0f,
+                                     "Reality seam unstable", "Seal breach by killing anchor brute", "VM anomaly signature."};
+            AIOverlayInfo rift_ai = overlay_default_ai();
+            rift_ai.state = AI_OVERLAY_SCRIPTED;
+            overlay_submit_entity(&g_overlay, 9001, local_state.story_rift.x, local_state.story_rift.y + 14.0f, local_state.story_rift.z, rift_info, rift_ai);
+        }
+        for (int si = 0; si < STORY_MAX_SWARM_ENEMIES; si++) {
+            const StoryEnemy *e = &local_state.story_swarm[si];
+            if (!e->active) continue;
+            const char *name = "Swarm Entity";
+            const char *type = "Corrupted Hostile";
+            const char *state = "Emerging";
+            float importance = 0.8f;
+            AIOverlayState ai_state = AI_OVERLAY_HUNTING;
+            if (e->type == STORY_ENEMY_RIFT_HOUND) {
+                name = "Rift Hound"; type = "Corrupted Beast"; state = (now_ms - e->spawn_ms < 1200U) ? "Pouncing" : "Hunting";
+                ai_state = (e->speed > 13.0f) ? AI_OVERLAY_FLANKING : AI_OVERLAY_HUNTING;
+            } else if (e->type == STORY_ENEMY_SHAMBLER_TROOPER) {
+                name = "Shambler Trooper"; type = "Corrupted Infantry"; state = (now_ms - e->spawn_ms < 1000U) ? "Emerging" : "Suppressing";
+                ai_state = AI_OVERLAY_COMBAT;
+            } else if (e->type == STORY_ENEMY_GORE_BRUTE) {
+                name = "Gore Brute"; type = "Breach Anchor"; state = "BREACH ANCHOR";
+                ai_state = AI_OVERLAY_COMBAT;
+                importance = 1.0f;
+            }
+            OverlayInfo enemy_info = {1, name, type, 1, 0, 1, 1, 1, 1, importance, 48.0f, state, NULL, NULL};
+            AIOverlayInfo ai = overlay_default_ai();
+            ai.state = ai_state;
+            ai.alertness = 0.75f;
+            ai.aggression = 0.8f;
+            ai.confidence = (e->type == STORY_ENEMY_GORE_BRUTE) ? 0.93f : 0.74f;
+            ai.has_target = 1;
+            ai.target_entity_id = viewer->id;
+            ai.last_seen_seconds_ago = 0.2f;
+            ai.squad_order = (e->type == STORY_ENEMY_GORE_BRUTE) ? "anchor_breach" : "pressure_player";
+            overlay_submit_entity(&g_overlay, 9100 + si, e->x, e->y + e->height + 8.0f, e->z, enemy_info, ai);
+        }
+    }
+
+    if (scene_portal_active(viewer->scene_id)) {
+        float px = 0.0f, py = 0.0f, pz = 0.0f, pr = 0.0f;
+        scene_portal_info(viewer->scene_id, &px, &py, &pz, &pr);
+        OverlayInfo tele_info = {1, "Telecrystal Ring", "Portal Gate", 1, 1, 1, 0, 0, 1, 0.72f, 40.0f,
+                                 "Stable", "F: Travel", "Linked transit aperture."};
+        overlay_submit_entity(&g_overlay, 9200, px, py + 8.0f, pz, tele_info, overlay_default_ai());
+    }
+
+    if (local_state.game_mode == MODE_STORY && viewer->scene_id == SCENE_VOXWORLD) {
+        OverlayInfo edu_info = {1, "Photosynthesis Node", "Education Annotation", 1, 1, 1, 0, 0, 1, 0.86f, 65.0f,
+                                "Light + CO2 + Water -> Glucose + O2", "F: Open lesson shard", "Bio-lore micro lesson."};
+        overlay_submit_entity(&g_overlay, 9300, local_state.story_boss.x + 120.0f, local_state.story_boss.y + 16.0f, local_state.story_boss.z - 90.0f, edu_info, overlay_default_ai());
+    }
+}
+
+static void overlay_render(OverlaySystem *overlay, const PlayerState *viewer) {
+    if (!overlay || overlay->mode == OVERLAY_OFF || !viewer) return;
+    overlay_filter_items(overlay, viewer);
+    overlay_draw_world_glyphs(overlay);
+    overlay_draw_screen_labels(overlay);
+}
+
 typedef enum {
     LOBBY_JOIN = 0,
     LOBBY_TDMO,
@@ -3961,6 +4322,19 @@ void draw_hud(PlayerState *p) {
     
     draw_ammo_bars(p);
 
+    {
+        char overlay_buf[96];
+        snprintf(overlay_buf, sizeof(overlay_buf), "M OVERLAY: %s", overlay_mode_name(g_overlay.mode));
+        glColor4f(0.06f, 0.08f, 0.10f, 0.72f);
+        glRectf(980.0f, 680.0f, 1260.0f, 714.0f);
+        if (g_overlay.mode == OVERLAY_OFF) glColor3f(0.72f, 0.78f, 0.84f);
+        else if (g_overlay.mode == OVERLAY_VM) glColor3f(1.0f, 0.38f, 1.0f);
+        else if (g_overlay.mode == OVERLAY_EDU) glColor3f(0.98f, 0.92f, 0.66f);
+        else if (g_overlay.mode == OVERLAY_COMBAT) glColor3f(1.0f, 0.42f, 0.34f);
+        else glColor3f(0.62f, 0.92f, 1.0f);
+        draw_string(overlay_buf, 992.0f, 692.0f, 3.4f);
+    }
+
     glEnable(GL_DEPTH_TEST); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW); glPopMatrix();
 }
 
@@ -4580,6 +4954,9 @@ void draw_scene(PlayerState *render_p) {
         if (p->id == render_p->id) continue;
         draw_player_3rd(p);
     }
+    overlay_begin_frame(&g_overlay);
+    overlay_collect_items(render_p, now_ms);
+    overlay_render(&g_overlay, render_p);
     draw_weapon_p(render_p); draw_hud(render_p); draw_garage_overlay(render_p); draw_tab_scoreboard(render_p);
     draw_travel_overlay();
     draw_tdmb_match_over_overlay();
@@ -5741,6 +6118,9 @@ int main(int argc, char* argv[]) {
                 if (e.type == SDL_KEYDOWN) {
                     if ((local_state.game_mode == MODE_TDMB || local_state.game_mode == MODE_TDMO || local_state.game_mode == MODE_CTFB) && local_state.match_over && e.key.keysym.sym == SDLK_r) {
                         local_init_match(12, local_state.game_mode);
+                    } else if (e.key.keysym.sym == SDLK_m) {
+                        overlay_cycle_mode(&g_overlay);
+                        printf("[OVERLAY] mode=%s\n", overlay_mode_name(g_overlay.mode));
                     } else if (e.key.keysym.sym == SDLK_ESCAPE) {
                         if (app_state == STATE_GAME_NET) net_shutdown();
                         app_state = STATE_LOBBY;
