@@ -52,10 +52,10 @@ int main(void) {
     ASSERT_TRUE(enemy_flag->dropped_until_ms == death_ms + CTFB_DROPPED_RETURN_MS,
                 "Dropped flag return timer is updated");
 
-    local_update(0, 0, carrier->yaw, carrier->pitch, 0, carrier->current_weapon, 0, 0, 0, 0, NULL, death_ms + 1000);
+    local_update(0, 0, carrier->yaw, carrier->pitch, 0, carrier->current_weapon, 0, 0, 0, 0, 0, NULL, death_ms + 1000);
     ASSERT_TRUE(carrier->state == STATE_DEAD, "Carrier stays dead before 3000ms delay expires");
 
-    local_update(0, 0, carrier->yaw, carrier->pitch, 0, carrier->current_weapon, 0, 0, 0, 0, NULL, death_ms + CTFB_RESPAWN_DELAY_MS);
+    local_update(0, 0, carrier->yaw, carrier->pitch, 0, carrier->current_weapon, 0, 0, 0, 0, 0, NULL, death_ms + CTFB_RESPAWN_DELAY_MS);
     ASSERT_TRUE(carrier->state == STATE_ALIVE, "Carrier respawns after 3000ms delay");
     ASSERT_TRUE(carrier->carried_flag_team_id == -1, "Respawned carrier does not keep enemy flag state");
 

@@ -168,7 +168,7 @@ typedef struct {
 
 static int ctf_enemy_team(int team_id) { return team_id == 0 ? 1 : 0; }
 
-void local_update(float fwd, float str, float yaw, float pitch, int shoot, int weapon_req, int jump, int crouch, int reload, int ability, void *server_context, unsigned int cmd_time);
+void local_update(float fwd, float str, float yaw, float pitch, int shoot, int weapon_req, int jump, int crouch, int reload, int ability, int bike, void *server_context, unsigned int cmd_time);
 void update_entity(PlayerState *p, float dt, void *server_context, unsigned int cmd_time);
 static inline void heli_spawn_defaults(HelicopterState *h, int id, int scene_id, float x, float y, float z);
 static inline void buggy_spawn_defaults(BuggyState *b, int id, int scene_id, float x, float z, float yaw);
@@ -1113,7 +1113,7 @@ static void update_projectiles(unsigned int now_ms) {
     }
 }
 
-void local_update(float fwd, float str, float yaw, float pitch, int shoot, int weapon_req, int jump, int crouch, int reload, int ability, void *server_context, unsigned int cmd_time) {
+void local_update(float fwd, float str, float yaw, float pitch, int shoot, int weapon_req, int jump, int crouch, int reload, int ability, int bike, void *server_context, unsigned int cmd_time) {
     PlayerState *p0 = &local_state.players[0];
     const float dt = SHANKPIT_NET_FIXED_DT;
     if (local_state.game_mode == MODE_STORY) {
@@ -1154,9 +1154,10 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
     }
     p0->in_fwd = fwd;
     p0->in_strafe = str;
+    p0->in_bike = bike;
     if (weapon_req >= 0 && weapon_req < MAX_WEAPONS) p0->current_weapon = weapon_req;
     if (p0->state == STATE_DEAD) {
-        fwd = 0.0f; str = 0.0f; shoot = 0; jump = 0; crouch = 0; reload = 0; ability = 0;
+        fwd = 0.0f; str = 0.0f; shoot = 0; jump = 0; crouch = 0; reload = 0; ability = 0; bike = 0;
     }
     if (p0->state != STATE_DEAD && !(p0->in_vehicle && p0->vehicle_type == VEH_HELICOPTER) &&
         !(p0->in_vehicle && p0->vehicle_type == VEH_BUGGY)) {

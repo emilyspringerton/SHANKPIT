@@ -5298,7 +5298,7 @@ void net_connect() {
     }
 }
 
-UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoot, int jump, int crouch, int reload, int use, int ability, int wpn_idx) {
+UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoot, int jump, int crouch, int reload, int use, int ability, int bike, int wpn_idx) {
     UserCmd cmd;
     memset(&cmd, 0, sizeof(UserCmd));
     cmd.sequence = ++net_cmd_seq; cmd.timestamp = SDL_GetTicks();
@@ -5309,6 +5309,7 @@ UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoo
     if(reload) cmd.buttons |= BTN_RELOAD;
     if(use) cmd.buttons |= BTN_USE;
     if(ability) cmd.buttons |= BTN_ABILITY_1;
+    if(bike) cmd.buttons |= BTN_VEHICLE_2;
     client_cmd_hist[cmd.sequence % CLIENT_RECON_HISTORY] = cmd;
     net_latest_seq_sent = cmd.sequence;
     cmd.weapon_idx = wpn_idx; return cmd;
@@ -5964,7 +5965,7 @@ int main(int argc, char* argv[]) {
     double previous = get_time();
     double accumulator = 0.0;
     float input_fwd = 0.0f, input_str = 0.0f;
-    int input_jump = 0, input_crouch = 0, input_shoot = 0, input_reload = 0, input_use = 0, input_ability = 0;
+    int input_jump = 0, input_crouch = 0, input_shoot = 0, input_reload = 0, input_use = 0, input_ability = 0, input_bike = 0;
     while(running) {
         double now = get_time();
         double frame_time = now - previous;
@@ -6205,11 +6206,12 @@ int main(int argc, char* argv[]) {
             }
             int jump = k[SDL_SCANCODE_SPACE]; int crouch = k[SDL_SCANCODE_LCTRL];
             int shoot = (SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_LEFT));
-            int reload = in_heli ? k[SDL_SCANCODE_Q] : k[SDL_SCANCODE_R];
+            int reload = in_heli ? 0 : k[SDL_SCANCODE_R];
+            int bike = in_heli ? k[SDL_SCANCODE_Q] : 0;
             int use = k[SDL_SCANCODE_F];
             int ability = in_heli ? k[SDL_SCANCODE_E] : k[SDL_SCANCODE_E];
             input_fwd = fwd; input_str = str;
-            input_jump = jump; input_crouch = crouch; input_shoot = shoot; input_reload = reload; input_use = use; input_ability = ability;
+            input_jump = jump; input_crouch = crouch; input_shoot = shoot; input_reload = reload; input_use = use; input_ability = ability; input_bike = bike;
             if(k[SDL_SCANCODE_1]) wpn_req=0; if(k[SDL_SCANCODE_2]) wpn_req=1;
             if(k[SDL_SCANCODE_3]) wpn_req=2; if(k[SDL_SCANCODE_4]) wpn_req=3; if(k[SDL_SCANCODE_5]) wpn_req=4; if(k[SDL_SCANCODE_6]) wpn_req=5;
 
@@ -6235,7 +6237,7 @@ int main(int argc, char* argv[]) {
                                            my_client_id, net_local_pid,
                                            net_diag.connect_started ? (now_ms - net_diag.connect_start_ms) : 0);
                         }
-                        UserCmd cmd = client_create_cmd(input_fwd, input_str, cam_yaw, cam_pitch, input_shoot, input_jump, input_crouch, input_reload, input_use, input_ability, wpn_req);
+                        UserCmd cmd = client_create_cmd(input_fwd, input_str, cam_yaw, cam_pitch, input_shoot, input_jump, input_crouch, input_reload, input_use, input_ability, input_bike, wpn_req);
                         client_apply_cmd_movement(&local_state.players[net_local_pid], &cmd, now_ms);
                         net_send_cmd(cmd);
                         net_last_cmd_send_ms = now_ms;
@@ -6325,7 +6327,7 @@ int main(int argc, char* argv[]) {
                     local_state.story_phase_start_ms == 0) {
                     local_state.story_phase_start_ms = now_ms;
                 }
-                local_update(input_fwd, input_str, cam_yaw, cam_pitch, input_shoot, wpn_req, input_jump, input_crouch, input_reload, input_ability, NULL, now_ms);
+                local_update(input_fwd, input_str, cam_yaw, cam_pitch, input_shoot, wpn_req, input_jump, input_crouch, input_reload, input_ability, input_bike, NULL, now_ms);
             }
                 accumulator -= TICK_DT;
             }
