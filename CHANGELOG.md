@@ -2,6 +2,9 @@
 
 ## Recent changes
 
+### 2026-05-29
+- Fixed helicopter strafe-right being completely non-functional: `client_create_cmd` now accepts a `bike` param and sets `BTN_VEHICLE_2`; Q is correctly bound to strafe-right in helicopter mode (was incorrectly wired to the unused `BTN_RELOAD`); `local_update` now sets `p0->in_bike` so offline play is also fixed.
+
 ### 2026-04-26
 - Fixed buggy camera yaw decoupling from body steering and added steering catch-up behavior for tighter vehicle control feel (`cf9a35d`, merged in #273).
 - Replaced STORY mode with a Voxworld breach titan boss prototype to refocus the mode direction (`7a772f7`, merged in #271).
