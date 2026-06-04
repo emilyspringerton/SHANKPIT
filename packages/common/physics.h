@@ -2521,10 +2521,9 @@ static inline void simulate_buggy_state(BuggyState *b, float throttle, float ste
     if (target_pitch < -28.0f) target_pitch = -28.0f;
     if (target_roll > 22.0f) target_roll = 22.0f;
     if (target_roll < -22.0f) target_roll = -22.0f;
-    float support_max = heights[0];
-    for (int i = 1; i < 4; i++) if (heights[i] > support_max) support_max = heights[i];
-    float support_y = support_max + BUGGY_WHEEL_RADIUS + BUGGY_CHASSIS_CLEARANCE;
-    if (b->y <= support_y + 0.05f) {
+    float support_avg = (heights[0] + heights[1] + heights[2] + heights[3]) * 0.25f;
+    float support_y = support_avg + BUGGY_WHEEL_RADIUS + BUGGY_CHASSIS_CLEARANCE;
+    if (b->y <= support_y + 0.15f) {
         b->y = support_y;
         b->vy = 0.0f;
         b->grounded = 1;

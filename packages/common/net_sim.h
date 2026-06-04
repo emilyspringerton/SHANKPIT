@@ -28,7 +28,7 @@ typedef struct {
 } HelicopterTuning;
 
 static const HelicopterTuning g_heli_tuning = {
-    0.018f, 0.026f, 0.030f, 0.040f, 0.032f,
+    0.075f, 0.060f, 0.060f, 0.040f, 0.032f,
     0.08f, 0.16f, 0.95f, 0.42f, 0.58f, 95.0f,
     14.0f, 16.0f, 7.0f, 4.5f, 3.4f, 2.6f
 };
