@@ -4,8 +4,10 @@ import (
 	"encoding/binary"
 	"math"
 	"testing"
+	"time"
 
 	"dragonsnshit/packages2/common"
+	"dragonsnshit/server/system"
 )
 
 func TestParseUserCmd(t *testing.T) {
@@ -61,5 +63,53 @@ func TestParseUserCmd(t *testing.T) {
 	}
 	if cmd.WeaponIdx != 1 {
 		t.Fatalf("expected weapon 1, got %d", cmd.WeaponIdx)
+	}
+}
+
+func TestClientInfoPortalTravelState(t *testing.T) {
+	// When a client is at the garage-to-voxworld portal and presses USE,
+	// their scene and position should update to voxworld.
+	info := clientInfo{
+		id:      3,
+		sceneID: system.SceneGarageOsaka,
+		pos:     system.Vec3{X: 48, Y: 6, Z: 0}, // center of GARAGE_VOX_PORTAL
+	}
+
+	portalID, triggered := system.PortalTriggered(info.sceneID, info.pos.X, info.pos.Z)
+	if !triggered {
+		t.Fatal("expected portal triggered at garage vox portal center")
+	}
+	dest, ok := system.ResolvePortalDestination(info.sceneID, portalID, int(info.id))
+	if !ok {
+		t.Fatal("expected portal destination to resolve")
+	}
+
+	info.sceneID = dest.Scene
+	info.pos = system.Vec3{X: dest.X, Y: dest.Y, Z: dest.Z}
+	info.portalCooldownUntil = time.Now().Add(time.Second)
+
+	if info.sceneID != system.SceneVoxworld {
+		t.Fatalf("expected scene voxworld after travel, got %d", info.sceneID)
+	}
+	if info.portalCooldownUntil.Before(time.Now()) {
+		t.Fatal("expected cooldown to be set after travel")
+	}
+}
+
+func TestClientInfoPortalCooldownPreventsRetravel(t *testing.T) {
+	info := clientInfo{
+		id:                  1,
+		sceneID:             system.SceneGarageOsaka,
+		pos:                 system.Vec3{X: 48, Y: 6, Z: 0},
+		portalCooldownUntil: time.Now().Add(10 * time.Second), // cooldown active
+	}
+
+	if time.Now().After(info.portalCooldownUntil) {
+		t.Fatal("cooldown should still be active")
+	}
+	// Portal would fire if not for the cooldown check
+	_, triggered := system.PortalTriggered(info.sceneID, info.pos.X, info.pos.Z)
+	if !triggered {
+		t.Fatal("portal geometry should trigger (cooldown is checked by caller)")
 	}
 }

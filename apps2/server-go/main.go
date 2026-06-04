@@ -53,9 +53,12 @@ type chunkCoord struct {
 }
 
 type clientInfo struct {
-	id            uint8
-	lastVoxelSent time.Time
-	chunkIndex    int
+	id                  uint8
+	lastVoxelSent       time.Time
+	chunkIndex          int
+	sceneID             int
+	portalCooldownUntil time.Time
+	pos                 system.Vec3
 }
 
 func main() {
@@ -128,6 +131,20 @@ func main() {
 					sendImpact(conn, remote, pos, hitEntity, 0)
 				}
 			}
+			if cmd.Buttons&common.BtnUse != 0 && time.Now().After(info.portalCooldownUntil) {
+				portalID, triggered := system.PortalTriggered(info.sceneID, info.pos.X, info.pos.Z)
+				if triggered {
+					dest, ok := system.ResolvePortalDestination(info.sceneID, portalID, int(info.id))
+					if ok {
+						fmt.Printf("[PORTAL] client=%d from_scene=%d to_scene=%d dest=(%.1f,%.1f,%.1f)\n",
+							info.id, info.sceneID, dest.Scene, dest.X, dest.Y, dest.Z)
+						info.sceneID = dest.Scene
+						info.pos = system.Vec3{X: dest.X, Y: dest.Y, Z: dest.Z}
+						info.portalCooldownUntil = time.Now().Add(time.Second)
+					}
+				}
+			}
+			clients[remote.String()] = info
 			_ = remote
 		}
 	}

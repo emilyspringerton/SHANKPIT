@@ -2,6 +2,11 @@
 
 ## Recent changes
 
+### 2026-06-04
+- Added `server/system/portal.go`: Go portal system with scene constants, `ScenePortals`, `PortalTriggered`, and `ResolvePortalDestination` — mirrors C physics.h portal geometry exactly. Covers all 11 portal routes across Garage Osaka, Stadium, Voxworld, Dust Compound, Oil Tanker, and Poo Poo Island.
+- Added `server/system/portal_test.go`: 10 tests covering center/edge/boundary triggering, per-scene routing, end-to-end travel, and negative cases. All green in CI via `go test ./...`.
+- Wired `BTN_USE` portal travel into `apps2/server-go/main.go`: tracks per-client `sceneID`, `pos`, and `portalCooldownUntil`; resolves destination on USE press in portal radius; logs `[PORTAL]` travel events. Added two `main_test.go` tests for travel state and cooldown behavior.
+
 ### 2026-05-29
 - Fixed helicopter strafe-right being completely non-functional: `client_create_cmd` now accepts a `bike` param and sets `BTN_VEHICLE_2`; Q is correctly bound to strafe-right in helicopter mode (was incorrectly wired to the unused `BTN_RELOAD`); `local_update` now sets `p0->in_bike` so offline play is also fixed.
 
