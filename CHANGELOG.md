@@ -2,6 +2,10 @@
 
 ## Recent changes
 
+### 2026-06-06 (continued 2)
+- Fixed snapshot serialization count mismatch: `server_broadcast` now writes the count byte *after* serializing players so the declared count always matches the actual bytes written. The old pre-counted value could exceed the actual serialized entities when the buffer was full, causing the client to reject the entire snapshot. Buffer resized to `MAX_CLIENTS * sizeof(NetPlayer) + headroom` so the guard is no longer needed.
+- Fixed remote player interpolation cross-scene blending: interp buffer is now flushed when a snapshot shows a player's `scene_id` changed (portal travel), preventing brief teleport-smearing between two different map locations.
+
 ### 2026-06-06 (continued)
 - Fixed DNS stall on JOIN: `net_connect()` now tries `inet_pton` first (no DNS call for IP addresses) and caches the resolved address so repeated JOIN attempts don't re-resolve.
 - Fixed orphaned-projectile teamfire bug: lingering projectiles from disconnected players (zeroed slot, team_id=0) could incorrectly block damage to team-0 players; owner pointer is now nulled when the owner slot is inactive.

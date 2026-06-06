@@ -5817,6 +5817,11 @@ void net_process_snapshot(char *buffer, int len) {
             }
         } else {
             RemoteInterp *ri = &rinterp[id];
+            /* Flush interp buffer on scene change to prevent cross-scene blending. */
+            if (ri->has_a && np->scene_id != ri->a.scene_id) {
+                ri->has_a = 0;
+                ri->has_b = 0;
+            }
             if (!ri->has_a) {
                 ri->a = *np;
                 ri->a_time_ms = head->timestamp;

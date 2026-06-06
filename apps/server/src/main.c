@@ -747,23 +747,12 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
 }
 
 void server_broadcast() {
-    char buffer[4096];
+    /* Buffer sized for worst-case: all MAX_CLIENTS in one scene + heli/buggy headers. */
+    char buffer[sizeof(NetHeader) + 1 + MAX_CLIENTS * sizeof(NetPlayer) + 256];
     for (int i = 1; i < MAX_CLIENTS; i++) {
         if (!slots[i].active || !slots[i].welcomed) continue;
         int recipient_scene = local_state.players[i].scene_id;
         int cursor = 0;
-        unsigned char count = 0;
-
-        for (int pi = 1; pi < MAX_CLIENTS; pi++) {
-            PlayerState *p = &local_state.players[pi];
-            if (!p->active || p->scene_id != recipient_scene) continue;
-            if (p->is_bot) {
-                count++;
-                continue;
-            }
-            if (!(slots[pi].active && slots[pi].welcomed)) continue;
-            count++;
-        }
 
         NetHeader head;
         head.type = PACKET_SNAPSHOT;
@@ -771,27 +760,17 @@ void server_broadcast() {
         head.sequence = local_state.server_tick;
         head.timestamp = get_server_time();
         head.scene_id = (unsigned char)(recipient_scene < 0 ? 0 : recipient_scene);
-        head.entity_count = count;
-        g_net_diag.snapshots_tx++;
-        g_net_diag.snapshot_ents_total += count;
-        if (!g_net_diag.first_snapshot_logged[i]) {
-            g_net_diag.first_snapshot_logged[i] = 1;
-            unsigned int now_ms = get_server_time();
-            unsigned int dt_ms = g_net_diag.connect_ms[i] ? (now_ms - g_net_diag.connect_ms[i]) : 0;
-            NET_SERVER_LOG("SNAPSHOT_TX_FIRST client_id=%d ents=%u scene=%d dt_since_connect=%u",
-                           i, count, recipient_scene, dt_ms);
-            (void)dt_ms;
-        }
-
+        head.entity_count = 0;
         memcpy(buffer + cursor, &head, sizeof(NetHeader)); cursor += (int)sizeof(NetHeader);
-        memcpy(buffer + cursor, &count, 1); cursor += 1;
+
+        /* Reserve the count byte; fill it after serialization so it matches actual written count. */
+        int count_offset = cursor; cursor += 1;
+        unsigned char count = 0;
 
         for (int pi = 1; pi < MAX_CLIENTS; pi++) {
             PlayerState *p = &local_state.players[pi];
             if (!p->active || p->scene_id != recipient_scene) continue;
             if (!p->is_bot && !(slots[pi].active && slots[pi].welcomed)) continue;
-
-            if (cursor + (int)sizeof(NetPlayer) + 1 > (int)sizeof(buffer)) break;
             NetPlayer np;
             np.id = (unsigned char)pi;
             np.scene_id = (unsigned char)p->scene_id;
@@ -825,6 +804,22 @@ void server_broadcast() {
             np.death_dir_z = p->death_dir_z;
             p->accumulated_reward = 0;
             memcpy(buffer + cursor, &np, sizeof(NetPlayer)); cursor += (int)sizeof(NetPlayer);
+            count++;
+        }
+
+        /* Patch count byte and header with actual serialized count. */
+        buffer[count_offset] = count;
+        ((NetHeader*)buffer)->entity_count = count;
+
+        g_net_diag.snapshots_tx++;
+        g_net_diag.snapshot_ents_total += count;
+        if (!g_net_diag.first_snapshot_logged[i]) {
+            g_net_diag.first_snapshot_logged[i] = 1;
+            unsigned int now_ms = get_server_time();
+            unsigned int dt_ms = g_net_diag.connect_ms[i] ? (now_ms - g_net_diag.connect_ms[i]) : 0;
+            NET_SERVER_LOG("SNAPSHOT_TX_FIRST client_id=%d ents=%u scene=%d dt_since_connect=%u",
+                           i, count, recipient_scene, dt_ms);
+            (void)dt_ms;
         }
 
         unsigned char heli_count = 0;
