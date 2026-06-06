@@ -957,10 +957,10 @@ int main(int argc, char *argv[]) {
         if (local_state.game_mode == MODE_TDMO) {
             tdmo_ensure_population(now);
         }
-        // TIMEOUT_SWEEP
+        double now_sec = now_seconds();
         for (int i = 1; i < MAX_CLIENTS; i++) {
-            if (slots[i].active && now_seconds() - slots[i].last_heard > 5.0) {
-                NET_WARN_LOG("SLOT_TIMEOUT client_id=%d idle_s=%.2f", i, now_seconds() - slots[i].last_heard);
+            if (slots[i].active && now_sec - slots[i].last_heard > 5.0) {
+                NET_WARN_LOG("SLOT_TIMEOUT client_id=%d idle_s=%.2f", i, now_sec - slots[i].last_heard);
                 free_slot(i);
             }
         }
@@ -1153,7 +1153,7 @@ int main(int argc, char *argv[]) {
         }
         active_count = connected;
         
-        if (tick % 60 == 0) {
+        if (tick % 60 == 0 && (active_count > 0 || tick % 600 == 0)) {
             printf("[STATUS] Tick: %u | Clients: %d\n", tick, active_count);
             for (int i = 1; i < MAX_CLIENTS; i++) {
                 if (!slots[i].active && !slots[i].welcomed && !slots[i].cmd_seen) continue;
