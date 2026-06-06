@@ -7,6 +7,10 @@
 #include "protocol.h"
 #include "../world/terrain.h"
 
+#ifndef PHYS_COMBAT_LOG
+#define PHYS_COMBAT_LOG 0
+#endif
+
 // --- TUNING ---
 #define GRAVITY_FLOAT 0.025f 
 #define GRAVITY_DROP 0.075f  
@@ -2750,7 +2754,9 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
                 if (phys_is_friendly(p, &targets[i])) continue;
                 int hit_type = check_hit_location(p->x, p->y + EYE_HEIGHT, p->z, dx, dy, dz, &targets[i]);
                 if (hit_type > 0) {
-                    printf("🔫 HIT! Dmg: %d on Target %d\n", WPN_STATS[w].dmg, i);
+#if PHYS_COMBAT_LOG
+                    printf("[HIT] dmg=%d target=%d\n", WPN_STATS[w].dmg, i);
+#endif
                     int damage = WPN_STATS[w].dmg;
                     if (hit_type == 2 && targets[i].shield <= 0) { damage *= 3; p->hit_feedback = 20;
                     } else { p->hit_feedback = 10; } 
