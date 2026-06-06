@@ -4,13 +4,19 @@
 
 ### 2026-06-06
 - Added ESC pause menu: RESUME / QUIT TO LOBBY items with keyboard navigation (UP/DOWN/W/S, ENTER); ESC no longer immediately exits to lobby.
-- Server disconnect detection: client times out after 5 s of no snapshots, shows red overlay ("SERVER DISCONNECTED") for 2.5 s, then auto-returns to lobby.
+- Server disconnect detection: client times out after 5 s of no snapshots, shows red overlay ("SERVER DISCONNECTED") for 2.5 s, then auto-returns to lobby; tick loop breaks cleanly on state change.
 - Fixed remote player interpolation: `INTERP_DELAY_MS` corrected to 24 ms (was 220 ms), server snapshot interval reduced to 32 ms (was 48 ms). Old values caused extrapolation (t < 0) instead of smooth interpolation.
 - Fixed reconcile correction runaway: correction vector capped at 1.2 units per frame (`RECONCILE_CORR_MAX`).
 - Fixed terrain downslope jitter: step-down snap of 0.55 units in `resolve_collision()` keeps players glued to downslopes.
+- Fixed frame accumulator tick-spike on game entry: accumulator now resets to 0 when transitioning from lobby to game, preventing dozens of physics ticks in the first game frame.
+- Fixed pause input leak: weapon hotkeys (1-6) and sniper RMB zoom no longer fire while paused.
+- Fixed `net_local_pid` stale value: explicitly reset to -1 in `reset_client_render_state_for_net()`.
+- Hit detection printf gated behind `PHYS_COMBAT_LOG=0` macro (was printing on every bullet impact).
 - Reduced client/server log noise: `NET_VERBOSE_LOG`, `NET_LOG_SNAPSHOT`, `NET_LOG_USERCMD`, `NET_LOG_HANDSHAKE` default to 0; only `NET_LOG_TIMEOUT` stays on.
+- Server: timeout sweep now computes `now_seconds()` once per sweep; idle status log throttled when no clients connected.
 - Removed stale `.bak` files.
 - Added `docs2/NORTHSTAR.md`: system northstar covering FPS core, scene correctness, DragonsNShit backend, season lineage, and documentation-powered RSI.
+- Added `docs2/CLIENT_PREDICTION_SPEC.md`: documents the two-snapshot interpolator math, prediction + reconcile algorithm, and all tuning constants.
 
 ### 2026-06-04
 - Added `server/system/portal.go`: Go portal system with scene constants, `ScenePortals`, `PortalTriggered`, and `ResolvePortalDestination` — mirrors C physics.h portal geometry exactly. Covers all 11 portal routes across Garage Osaka, Stadium, Voxworld, Dust Compound, Oil Tanker, and Poo Poo Island.
