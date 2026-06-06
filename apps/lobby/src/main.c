@@ -6352,6 +6352,7 @@ int main(int argc, char* argv[]) {
                     g_paused = 0;
                     SDL_SetRelativeMouseMode(SDL_FALSE);
                     setup_lobby_2d();
+                    break;
                 }
                 if (net_local_pid > 0 && net_have_initial_local_snapshot_sync) {
                     if (now_ms - net_last_cmd_send_ms >= CLIENT_USERCMD_INTERVAL_MS) {

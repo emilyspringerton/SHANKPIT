@@ -2,6 +2,16 @@
 
 ## Recent changes
 
+### 2026-06-06
+- Added ESC pause menu: RESUME / QUIT TO LOBBY items with keyboard navigation (UP/DOWN/W/S, ENTER); ESC no longer immediately exits to lobby.
+- Server disconnect detection: client times out after 5 s of no snapshots, shows red overlay ("SERVER DISCONNECTED") for 2.5 s, then auto-returns to lobby.
+- Fixed remote player interpolation: `INTERP_DELAY_MS` corrected to 24 ms (was 220 ms), server snapshot interval reduced to 32 ms (was 48 ms). Old values caused extrapolation (t < 0) instead of smooth interpolation.
+- Fixed reconcile correction runaway: correction vector capped at 1.2 units per frame (`RECONCILE_CORR_MAX`).
+- Fixed terrain downslope jitter: step-down snap of 0.55 units in `resolve_collision()` keeps players glued to downslopes.
+- Reduced client/server log noise: `NET_VERBOSE_LOG`, `NET_LOG_SNAPSHOT`, `NET_LOG_USERCMD`, `NET_LOG_HANDSHAKE` default to 0; only `NET_LOG_TIMEOUT` stays on.
+- Removed stale `.bak` files.
+- Added `docs2/NORTHSTAR.md`: system northstar covering FPS core, scene correctness, DragonsNShit backend, season lineage, and documentation-powered RSI.
+
 ### 2026-06-04
 - Added `server/system/portal.go`: Go portal system with scene constants, `ScenePortals`, `PortalTriggered`, and `ResolvePortalDestination` — mirrors C physics.h portal geometry exactly. Covers all 11 portal routes across Garage Osaka, Stadium, Voxworld, Dust Compound, Oil Tanker, and Poo Poo Island.
 - Added `server/system/portal_test.go`: 10 tests covering center/edge/boundary triggering, per-scene routing, end-to-end travel, and negative cases. All green in CI via `go test ./...`.
