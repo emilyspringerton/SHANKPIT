@@ -398,6 +398,7 @@ static int last_applied_scene_id = -999;
 typedef struct {
     unsigned int connect_start_ms;
     unsigned int welcome_ms;
+    unsigned int last_connect_send_ms;
     int connect_started;
     int got_welcome;
     int got_any_snapshot;
@@ -467,6 +468,18 @@ static void net_check_diag_timeouts(unsigned int now_ms) {
         NET_WARN_LOG("SNAPSHOT_SYNC_TIMEOUT client_id=%d dt_ms=%u", my_client_id, now_ms - net_diag.welcome_ms);
     }
 #endif
+    /* Retry CONNECT if no WELCOME received after 1.5 s (handles lost initial packet). */
+    if (!net_diag.got_welcome && net_diag.last_connect_send_ms > 0 &&
+        now_ms - net_diag.last_connect_send_ms >= 1500 && sock >= 0) {
+        char buf[sizeof(NetHeader) + 1];
+        NetHeader *rh = (NetHeader*)buf;
+        memset(buf, 0, sizeof(buf));
+        rh->type = PACKET_CONNECT;
+        buf[sizeof(NetHeader)] = (unsigned char)(net_requested_mode & 0xFF);
+        sendto(sock, buf, sizeof(buf), 0, (struct sockaddr*)&server_addr, sizeof(server_addr));
+        net_diag.last_connect_send_ms = now_ms;
+        printf("[NET] CONNECT_RETRY dt_ms=%u\n", now_ms - net_diag.connect_start_ms);
+    }
     /* Server disconnect detection: if we had a live connection and stopped
        receiving snapshots, flag and schedule return to lobby. */
     if (net_diag.got_any_snapshot && !net_diag.server_disconnected &&
@@ -5362,6 +5375,7 @@ void net_connect() {
                        (unsigned char)buffer[4], (unsigned char)buffer[5], (unsigned char)buffer[6], (unsigned char)buffer[7], sent);
         net_diag.connect_started = 1;
         net_diag.connect_start_ms = SDL_GetTicks();
+        net_diag.last_connect_send_ms = SDL_GetTicks();
         net_diag.got_welcome = 0;
         net_diag.got_any_snapshot = 0;
         net_diag.got_local_snapshot = 0;
