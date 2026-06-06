@@ -362,7 +362,7 @@ static int net_requested_mode = MODE_DEATHMATCH;
 #define RECONCILE_CORR_MAX 1.2f
 UserCmd net_cmd_history[NET_CMD_HISTORY];
 int net_cmd_history_count = 0;
-int net_cmd_seq = 0;
+unsigned int net_cmd_seq = 0;
 unsigned int net_last_cmd_send_ms = 0;
 UserCmd client_cmd_hist[CLIENT_RECON_HISTORY];
 unsigned int net_latest_seq_sent = 0;

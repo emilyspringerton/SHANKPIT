@@ -2,6 +2,10 @@
 
 ## Recent changes
 
+### 2026-06-06 (continued 4)
+- Fixed `net_cmd_seq` type mismatch: changed from `int` to `unsigned int` to match `cmd.sequence` (unsigned) and prevent sign-extension on assignment.
+- Fixed `CLIENT_RECON_HISTORY` in `docs2/CLIENT_PREDICTION_SPEC.md`: was documented as 64, actual value is 256.
+
 ### 2026-06-06 (continued 3)
 - Fixed helicopter and buggy snapshot count mismatch: same two-pass fix applied — `heli_count` and `buggy_count` bytes are now written after serialization. Buffer enlarged to exact worst-case: `MAX_CLIENTS * sizeof(NetPlayer) + MAX_HELICOPTERS * sizeof(NetHelicopter) + MAX_BUGGIES * sizeof(NetBuggy) + headers`.
 

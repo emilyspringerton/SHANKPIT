@@ -113,7 +113,7 @@ The cap prevents runaway correction accumulation when the player teleports or si
 | `SERVER_SNAPSHOT_INTERVAL_TICKS` | 2 | Server sends snapshot every 2 ticks × 16 ms = 32 ms |
 | `INTERP_DELAY_MS` | 24 | Render timestamp offset; must be < 32 ms |
 | `NET_CMD_HISTORY` | 5 | Redundant cmds per packet (packet loss robustness) |
-| `CLIENT_RECON_HISTORY` | 64 | Circular buffer of cmds for replay |
+| `CLIENT_RECON_HISTORY` | 256 | Circular buffer of cmds for replay |
 | `RECONCILE_DECAY_LAMBDA` | 12.0 | Exponential decay of correction each 16 ms tick |
 | `RECONCILE_HARD_SNAP_DIST` | 2.0 m | Position error threshold for hard snap |
 | `RECONCILE_HARD_SNAP_YAW` | 45° | Yaw error threshold for hard snap |
