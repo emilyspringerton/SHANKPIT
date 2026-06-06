@@ -415,7 +415,13 @@ typedef struct {
     unsigned int last_blocked_input_log_ms;
     unsigned int last_dup_welcome_log_ms;
     unsigned int last_invalid_packet_log_ms;
+    unsigned int last_snapshot_rx_ms;
+    int server_disconnected;
+    unsigned int server_disconnect_ms;
 } NetClientDiag;
+
+#define NET_SERVER_TIMEOUT_MS 5000
+#define NET_DISCONNECT_OVERLAY_MS 2500
 
 static NetClientDiag net_diag;
 
@@ -460,9 +466,16 @@ static void net_check_diag_timeouts(unsigned int now_ms) {
         net_should_log_every(&net_diag.last_snapshot_sync_timeout_log_ms, 1000, now_ms)) {
         NET_WARN_LOG("SNAPSHOT_SYNC_TIMEOUT client_id=%d dt_ms=%u", my_client_id, now_ms - net_diag.welcome_ms);
     }
-#else
-    (void)now_ms;
 #endif
+    /* Server disconnect detection: if we had a live connection and stopped
+       receiving snapshots, flag and schedule return to lobby. */
+    if (net_diag.got_any_snapshot && !net_diag.server_disconnected &&
+        net_diag.last_snapshot_rx_ms > 0 &&
+        now_ms - net_diag.last_snapshot_rx_ms >= NET_SERVER_TIMEOUT_MS) {
+        net_diag.server_disconnected = 1;
+        net_diag.server_disconnect_ms = now_ms;
+        printf("[NET] server timeout — no snapshot for %ums\n", now_ms - net_diag.last_snapshot_rx_ms);
+    }
 }
 
 #ifndef NET_PARITY_DEBUG
@@ -4830,6 +4843,25 @@ static void draw_tdmb_match_over_overlay(void) {
     glMatrixMode(GL_MODELVIEW); glPopMatrix();
 }
 
+static void draw_disconnect_overlay(void) {
+    glDisable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f(0.12f, 0.0f, 0.0f, 0.85f);
+    glBegin(GL_QUADS);
+    glVertex2f(310, 270); glVertex2f(970, 270); glVertex2f(970, 450); glVertex2f(310, 450);
+    glEnd();
+    glDisable(GL_BLEND);
+    glColor3f(1.0f, 0.3f, 0.2f);
+    draw_string("SERVER DISCONNECTED", 400, 390, 8);
+    glColor3f(0.75f, 0.75f, 0.75f);
+    draw_string("RETURNING TO LOBBY...", 440, 325, 5);
+    glEnable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glMatrixMode(GL_MODELVIEW); glPopMatrix();
+}
+
 static void draw_pause_overlay(void) {
     glDisable(GL_DEPTH_TEST);
     glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
@@ -5002,6 +5034,7 @@ void draw_scene(PlayerState *render_p) {
     draw_weapon_p(render_p); draw_hud(render_p); draw_garage_overlay(render_p); draw_tab_scoreboard(render_p);
     draw_travel_overlay();
     draw_tdmb_match_over_overlay();
+    if (app_state == STATE_GAME_NET && net_diag.server_disconnected) draw_disconnect_overlay();
     if (g_paused) draw_pause_overlay();
 }
 
@@ -5906,6 +5939,8 @@ void net_tick() {
             net_diag.snapshots_rx++;
             net_diag.latest_snapshot_len = len;
             net_diag.latest_entity_count = (int)head->entity_count;
+            net_diag.last_snapshot_rx_ms = now_ms;
+            net_diag.server_disconnected = 0;
             net_process_snapshot(buffer, len);
         } else if (head->type == PACKET_WELCOME) {
             my_client_id = head->client_id;
@@ -6310,6 +6345,14 @@ int main(int argc, char* argv[]) {
                 net_tick();
                 unsigned int now_ms = SDL_GetTicks();
                 net_check_diag_timeouts(now_ms);
+                if (net_diag.server_disconnected &&
+                    now_ms - net_diag.server_disconnect_ms >= NET_DISCONNECT_OVERLAY_MS) {
+                    net_shutdown();
+                    app_state = STATE_LOBBY;
+                    g_paused = 0;
+                    SDL_SetRelativeMouseMode(SDL_FALSE);
+                    setup_lobby_2d();
+                }
                 if (net_local_pid > 0 && net_have_initial_local_snapshot_sync) {
                     if (now_ms - net_last_cmd_send_ms >= CLIENT_USERCMD_INTERVAL_MS) {
                         if (!net_diag.control_unlocked_logged) {

@@ -2581,6 +2581,16 @@ void resolve_collision(PlayerState *p) {
         p->vy = 0.0f;
         p->on_ground = 1;
         g_last_ground_source_terrain = terrain_ok ? 1 : 0;
+    } else if (terrain_ok && p->vy <= 0.0f) {
+        /* Step-down snap: keep the player glued to downslopes without requiring
+           them to fall back through the surface after each horizontal step. */
+        float above = p->y - ground_floor;
+        if (above >= 0.0f && above < 0.55f) {
+            p->y = ground_floor;
+            p->vy = 0.0f;
+            p->on_ground = 1;
+            g_last_ground_source_terrain = 1;
+        }
     }
     for(int i=1; i<map_count; i++) {
         Box b = map_geo[i];
