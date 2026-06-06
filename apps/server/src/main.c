@@ -747,8 +747,11 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
 }
 
 void server_broadcast() {
-    /* Buffer sized for worst-case: all MAX_CLIENTS in one scene + heli/buggy headers. */
-    char buffer[sizeof(NetHeader) + 1 + MAX_CLIENTS * sizeof(NetPlayer) + 256];
+    /* Buffer sized for worst-case: all entities in one scene. */
+    char buffer[sizeof(NetHeader) + 1 +
+                MAX_CLIENTS * sizeof(NetPlayer) + 1 +
+                MAX_HELICOPTERS * sizeof(NetHelicopter) + 1 +
+                MAX_BUGGIES * sizeof(NetBuggy) + 1];
     for (int i = 1; i < MAX_CLIENTS; i++) {
         if (!slots[i].active || !slots[i].welcomed) continue;
         int recipient_scene = local_state.players[i].scene_id;
@@ -822,19 +825,11 @@ void server_broadcast() {
             (void)dt_ms;
         }
 
+        int heli_count_offset = cursor; cursor += 1;
         unsigned char heli_count = 0;
         for (int hi = 0; hi < MAX_HELICOPTERS; hi++) {
             HelicopterState *h = &local_state.helicopters[hi];
             if (!h->active || h->scene_id != recipient_scene) continue;
-            heli_count++;
-        }
-
-        if (cursor + 1 > (int)sizeof(buffer)) continue;
-        memcpy(buffer + cursor, &heli_count, 1); cursor += 1;
-        for (int hi = 0; hi < MAX_HELICOPTERS; hi++) {
-            HelicopterState *h = &local_state.helicopters[hi];
-            if (!h->active || h->scene_id != recipient_scene) continue;
-            if (cursor + (int)sizeof(NetHelicopter) > (int)sizeof(buffer)) break;
             NetHelicopter nh;
             memset(&nh, 0, sizeof(nh));
             nh.id = (unsigned char)h->id;
@@ -851,19 +846,15 @@ void server_broadcast() {
             nh.health = (unsigned char)(h->health < 0 ? 0 : (h->health > 255 ? 255 : h->health));
             nh.occupant_player_id = (signed char)h->occupant_player_id;
             memcpy(buffer + cursor, &nh, sizeof(NetHelicopter)); cursor += (int)sizeof(NetHelicopter);
+            heli_count++;
         }
+        buffer[heli_count_offset] = heli_count;
+
+        int buggy_count_offset = cursor; cursor += 1;
         unsigned char buggy_count = 0;
         for (int bi = 0; bi < MAX_BUGGIES; bi++) {
             BuggyState *b = &local_state.buggies[bi];
             if (!b->active || b->scene_id != recipient_scene) continue;
-            buggy_count++;
-        }
-        if (cursor + 1 > (int)sizeof(buffer)) continue;
-        memcpy(buffer + cursor, &buggy_count, 1); cursor += 1;
-        for (int bi = 0; bi < MAX_BUGGIES; bi++) {
-            BuggyState *b = &local_state.buggies[bi];
-            if (!b->active || b->scene_id != recipient_scene) continue;
-            if (cursor + (int)sizeof(NetBuggy) > (int)sizeof(buffer)) break;
             NetBuggy nb;
             memset(&nb, 0, sizeof(nb));
             nb.id = (unsigned char)b->id;
@@ -878,7 +869,9 @@ void server_broadcast() {
             nb.steer = b->steer;
             nb.occupant_player_id = (signed char)b->occupant_player_id;
             memcpy(buffer + cursor, &nb, sizeof(NetBuggy)); cursor += (int)sizeof(NetBuggy);
+            buggy_count++;
         }
+        buffer[buggy_count_offset] = buggy_count;
 #if HELI_NET_DEBUG
         printf("[VEH SNAPSHOT][TX] client=%d scene=%d heli_count=%u buggy_count=%u players=%u\n", i, recipient_scene, heli_count, buggy_count, count);
 #endif

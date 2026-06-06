@@ -2,6 +2,9 @@
 
 ## Recent changes
 
+### 2026-06-06 (continued 3)
+- Fixed helicopter and buggy snapshot count mismatch: same two-pass fix applied — `heli_count` and `buggy_count` bytes are now written after serialization. Buffer enlarged to exact worst-case: `MAX_CLIENTS * sizeof(NetPlayer) + MAX_HELICOPTERS * sizeof(NetHelicopter) + MAX_BUGGIES * sizeof(NetBuggy) + headers`.
+
 ### 2026-06-06 (continued 2)
 - Fixed snapshot serialization count mismatch: `server_broadcast` now writes the count byte *after* serializing players so the declared count always matches the actual bytes written. The old pre-counted value could exceed the actual serialized entities when the buffer was full, causing the client to reject the entire snapshot. Buffer resized to `MAX_CLIENTS * sizeof(NetPlayer) + headroom` so the guard is no longer needed.
 - Fixed remote player interpolation cross-scene blending: interp buffer is now flushed when a snapshot shows a player's `scene_id` changed (portal travel), preventing brief teleport-smearing between two different map locations.
