@@ -6056,6 +6056,7 @@ int main(int argc, char* argv[]) {
     int running = 1;
     double previous = get_time();
     double accumulator = 0.0;
+    int prev_app_state = STATE_LOBBY;
     float input_fwd = 0.0f, input_str = 0.0f;
     int input_jump = 0, input_crouch = 0, input_shoot = 0, input_reload = 0, input_use = 0, input_ability = 0, input_bike = 0;
     while(running) {
@@ -6063,6 +6064,12 @@ int main(int argc, char* argv[]) {
         double frame_time = now - previous;
         if (frame_time > 0.25) frame_time = 0.25;
         previous = now;
+        /* Reset accumulator on first game frame to avoid draining a large lobby-idle
+           backlog into a burst of physics ticks at game entry. */
+        if (prev_app_state == STATE_LOBBY && app_state != STATE_LOBBY) {
+            accumulator = 0.0;
+        }
+        prev_app_state = app_state;
         accumulator += frame_time;
 
         SDL_Event e;
@@ -6300,7 +6307,7 @@ int main(int argc, char* argv[]) {
              glColor3f(0.4f, 0.6f, 0.7f);
              draw_string("DOUBLE CLICK TO SELECT MODE", LOBBY_LAYOUT.footer_x, LOBBY_LAYOUT.footer_y, 5);
              SDL_GL_SwapWindow(win);
-        } 
+        }
         else {
             const Uint8 *k = SDL_GetKeyboardState(NULL);
             int control_pid = (app_state == STATE_GAME_NET && my_client_id > 0 && my_client_id < MAX_CLIENTS) ? my_client_id : 0;
