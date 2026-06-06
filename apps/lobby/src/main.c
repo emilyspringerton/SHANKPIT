@@ -682,6 +682,7 @@ static void client_apply_spawn_transition_sync(PlayerState *p, const NetPlayer *
 
     cam_yaw = norm_yaw_deg(np->yaw);
     cam_pitch = clamp_pitch_deg(np->pitch);
+    death_cam_blend = 0.0f;
 
     p->x = np->x;
     p->y = np->y;
@@ -1346,6 +1347,7 @@ static void lobby_start_action(int action) {
     }
 
     if (app_state != STATE_LOBBY) {
+        death_cam_blend = 0.0f;
         SDL_SetRelativeMouseMode(SDL_TRUE);
         glMatrixMode(GL_PROJECTION);
         glLoadIdentity();
@@ -4818,6 +4820,10 @@ static void client_apply_scene_id(int scene_id, unsigned int now_ms) {
         for (int i = 0; i < MAX_HELICOPTERS; i++) {
             local_state.helicopters[i].active = 0;
             local_state.helicopters[i].occupant_player_id = -1;
+        }
+        for (int i = 0; i < MAX_BUGGIES; i++) {
+            local_state.buggies[i].active = 0;
+            local_state.buggies[i].occupant_player_id = -1;
         }
     }
 }

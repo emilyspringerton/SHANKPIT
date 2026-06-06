@@ -2,6 +2,10 @@
 
 ## Recent changes
 
+### 2026-06-06 (continued 5)
+- Fixed death camera blend not resetting between sessions: `death_cam_blend` is now cleared on spawn transition sync (network) and on lobby→game transition, preventing a tilted death-camera perspective at the start of a new game after dying in the previous one.
+- Fixed scene transition not clearing buggies: `client_apply_scene_id` now zeroes buggy slots (was already doing helis and projectiles).
+
 ### 2026-06-06 (continued 4)
 - Fixed `net_cmd_seq` type mismatch: changed from `int` to `unsigned int` to match `cmd.sequence` (unsigned) and prevent sign-extension on assignment.
 - Fixed `CLIENT_RECON_HISTORY` in `docs2/CLIENT_PREDICTION_SPEC.md`: was documented as 64, actual value is 256.
