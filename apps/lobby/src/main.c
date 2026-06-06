@@ -78,6 +78,8 @@
 
 char SERVER_HOST[64] = "s.farthq.com";
 int SERVER_PORT = 6969;
+static struct in_addr g_resolved_server_addr;
+static int g_server_addr_cached = 0;
 
 int app_state = STATE_LOBBY;
 int wpn_req = 1;
@@ -5350,11 +5352,30 @@ void net_connect() {
     if (sock < 0) return;
     local_state.game_mode = net_requested_mode;
     NET_CLIENT_LOG("CONNECT_BEGIN host=%s port=%d mode=%d", SERVER_HOST, SERVER_PORT, net_requested_mode);
-    struct hostent *he = gethostbyname(SERVER_HOST);
-    if (he) {
-        server_addr.sin_family = AF_INET; 
-        server_addr.sin_port = htons(SERVER_PORT); 
-        memcpy(&server_addr.sin_addr, he->h_addr_list[0], he->h_length);
+    /* Try numeric IP first (no DNS stall); fall back to gethostbyname only for hostnames.
+       Cache the result so repeated JOIN attempts don't re-resolve. */
+    int resolved = 0;
+    if (!g_server_addr_cached) {
+        struct in_addr numeric_addr;
+        if (inet_pton(AF_INET, SERVER_HOST, &numeric_addr) == 1) {
+            g_resolved_server_addr = numeric_addr;
+            g_server_addr_cached = 1;
+            NET_CLIENT_LOG("DNS_NUMERIC host=%s", SERVER_HOST);
+        } else {
+            struct hostent *he = gethostbyname(SERVER_HOST);
+            if (he) {
+                memcpy(&g_resolved_server_addr, he->h_addr_list[0], he->h_length);
+                g_server_addr_cached = 1;
+            }
+        }
+    }
+    if (g_server_addr_cached) {
+        server_addr.sin_family = AF_INET;
+        server_addr.sin_port = htons(SERVER_PORT);
+        server_addr.sin_addr = g_resolved_server_addr;
+        resolved = 1;
+    }
+    if (resolved) {
         char ip_buf[INET_ADDRSTRLEN] = {0};
         inet_ntop(AF_INET, &server_addr.sin_addr, ip_buf, sizeof(ip_buf));
         NET_CLIENT_LOG("DNS_OK host=%s ip=%s", SERVER_HOST, ip_buf);
@@ -6046,7 +6067,7 @@ int main(int argc, char* argv[]) {
     }
 
     SDL_Init(SDL_INIT_VIDEO);
-    SDL_Window *win = SDL_CreateWindow("SHANKPIT [BUILD 181 - CTF RELOADED]", 100, 100, 1280, 720, SDL_WINDOW_OPENGL);
+    SDL_Window *win = SDL_CreateWindow("SHANKPIT", 100, 100, 1280, 720, SDL_WINDOW_OPENGL);
     SDL_GL_CreateContext(win);
     proctex_init();
     proc_tex_create(&g_vehicle_noise_tex, 64, 64);

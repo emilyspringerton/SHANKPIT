@@ -153,6 +153,7 @@ static void net_format_addr(const struct sockaddr_in *addr, char *out, size_t ou
 static void net_server_emit_summary(unsigned int now_ms) {
     if (!net_should_log_every(&g_net_diag.last_summary_ms, 1000, now_ms)) return;
     unsigned int avg_ents = g_net_diag.snapshots_tx ? (g_net_diag.snapshot_ents_total / g_net_diag.snapshots_tx) : 0;
+    (void)avg_ents;
     int clients = 0;
     for (int i = 1; i < MAX_CLIENTS; i++) {
         if (slots[i].active && slots[i].welcomed) clients++;
@@ -660,7 +661,6 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
             requested_mode = (unsigned char)buffer[sizeof(NetHeader)];
         }
         NET_SERVER_LOG("CONNECT_RX src=%s size=%d requested_mode=%d", addr_buf, size, requested_mode);
-        int mode_before = local_state.game_mode;
         if (requested_mode == MODE_TDMO && local_state.game_mode != MODE_TDMO) {
             tdmo_activate_match(get_server_time());
         }
@@ -728,6 +728,7 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
             g_net_diag.first_usercmd_pkt_seen[client_id] = 1;
             unsigned int newest_seq = count > 0 ? cmds[0].sequence : 0;
             NET_SERVER_LOG("USERCMD_RX_FIRST client_id=%d count=%u newest_seq=%u size=%d", client_id, count, newest_seq, size);
+            (void)newest_seq;
         }
 
         // process oldest->newest to preserve chronological intent
@@ -779,6 +780,7 @@ void server_broadcast() {
             unsigned int dt_ms = g_net_diag.connect_ms[i] ? (now_ms - g_net_diag.connect_ms[i]) : 0;
             NET_SERVER_LOG("SNAPSHOT_TX_FIRST client_id=%d ents=%u scene=%d dt_since_connect=%u",
                            i, count, recipient_scene, dt_ms);
+            (void)dt_ms;
         }
 
         memcpy(buffer + cursor, &head, sizeof(NetHeader)); cursor += (int)sizeof(NetHeader);

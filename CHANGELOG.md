@@ -2,6 +2,15 @@
 
 ## Recent changes
 
+### 2026-06-06 (continued)
+- Fixed DNS stall on JOIN: `net_connect()` now tries `inet_pton` first (no DNS call for IP addresses) and caches the resolved address so repeated JOIN attempts don't re-resolve.
+- Fixed orphaned-projectile teamfire bug: lingering projectiles from disconnected players (zeroed slot, team_id=0) could incorrectly block damage to team-0 players; owner pointer is now nulled when the owner slot is inactive.
+- Fixed bot targeting across scenes: bot AI now excludes players in a different scene_id from the target candidate list, preventing bots from rotating/shooting at invisible targets.
+- Fixed projectile lower-bounds escape: added `y < -100` floor check in `update_projectiles` (was only checking the upper bound `y > 2000`).
+- Removed dead code: `ctf_schedule_respawn` (its logic was already inlined in `apply_projectile_damage`).
+- Cleaned up server compile warnings: `(void)` casts for log-macro-gated variables (`avg_ents`, `newest_seq`, `dt_ms`); removed unused `mode_before`.
+- Updated window title from stale "BUILD 181 - CTF RELOADED" to "SHANKPIT".
+
 ### 2026-06-06
 - Added ESC pause menu: RESUME / QUIT TO LOBBY items with keyboard navigation (UP/DOWN/W/S, ENTER); ESC no longer immediately exits to lobby.
 - Server disconnect detection: client times out after 5 s of no snapshots, shows red overlay ("SERVER DISCONNECTED") for 2.5 s, then auto-returns to lobby; tick loop breaks cleanly on state change.

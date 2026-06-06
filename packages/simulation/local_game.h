@@ -462,18 +462,6 @@ static void ctf_drop_flag_from_carrier(int player_id, unsigned int now_ms) {
     p->carried_flag_team_id = -1;
 }
 
-static void ctf_schedule_respawn(PlayerState *attacker, PlayerState *victim, unsigned int now_ms, float incoming_x, float incoming_z) {
-    if (!victim) return;
-#if CTFB_RESPAWN_DEBUG_LOG
-    int dropped_team = victim->carried_flag_team_id;
-#endif
-    phys_enter_death_state(attacker, victim, now_ms, mode_respawn_delay_ms(MODE_CTFB), incoming_x, incoming_z);
-    victim->carried_flag_team_id = -1;
-#if CTFB_RESPAWN_DEBUG_LOG
-    printf("[CTFB] carrier %d died, dropped flag team %d, respawn in %d ms\n",
-           victim->id, dropped_team, CTFB_RESPAWN_DELAY_MS);
-#endif
-}
 
 static void build_ctf_bot_observation(int bot_id, CtfBotObservation *out) {
     memset(out, 0, sizeof(*out));
@@ -909,6 +897,7 @@ void bot_think(int bot_idx, PlayerState *players, float dt, float *out_fwd, floa
         if (i == bot_idx) continue;
         if (!players[i].active) continue;
         if (players[i].state == STATE_DEAD) continue;
+        if (players[i].scene_id != me->scene_id) continue;
         if (team_mode && players[i].team_id == me->team_id) continue;
         
         float dx = players[i].x - me->x;
@@ -1099,7 +1088,8 @@ static void update_projectiles(unsigned int now_ms) {
                 float dist_sq = dx * dx + dy * dy + dz * dz;
                 if (dist_sq < 4.0f) {
                     PlayerState *owner = NULL;
-                    if (p->owner_id >= 0 && p->owner_id < MAX_CLIENTS) {
+                    if (p->owner_id >= 0 && p->owner_id < MAX_CLIENTS &&
+                        local_state.players[p->owner_id].active) {
                         owner = &local_state.players[p->owner_id];
                     }
                     apply_projectile_damage(owner, target, p->damage, now_ms, p->vx, p->vz);
@@ -1109,7 +1099,7 @@ static void update_projectiles(unsigned int now_ms) {
             }
         }
 
-        if (p->x > 4000 || p->x < -4000 || p->z > 4000 || p->z < -4000 || p->y > 2000) p->active = 0;
+        if (p->x > 4000 || p->x < -4000 || p->z > 4000 || p->z < -4000 || p->y > 2000 || p->y < -100.0f) p->active = 0;
     }
 }
 
