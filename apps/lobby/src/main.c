@@ -659,6 +659,7 @@ static void reset_client_render_state_for_net() {
     local_state.players[0].scene_id = local_state.scene_id;
     g_paused = 0;
     g_pause_sel = 0;
+    net_local_pid = -1;
 }
 
 static void client_apply_spawn_transition_sync(PlayerState *p, const NetPlayer *np, const char *reason_tag) {
