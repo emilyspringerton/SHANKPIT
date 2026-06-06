@@ -42,16 +42,16 @@
 #include "../../../packages/render/retro_lighting.h"
 
 #ifndef NET_VERBOSE_LOG
-#define NET_VERBOSE_LOG 1
+#define NET_VERBOSE_LOG 0
 #endif
 #ifndef NET_LOG_HANDSHAKE
-#define NET_LOG_HANDSHAKE 1
+#define NET_LOG_HANDSHAKE 0
 #endif
 #ifndef NET_LOG_SNAPSHOT
-#define NET_LOG_SNAPSHOT 1
+#define NET_LOG_SNAPSHOT 0
 #endif
 #ifndef NET_LOG_USERCMD
-#define NET_LOG_USERCMD 1
+#define NET_LOG_USERCMD 0
 #endif
 #ifndef NET_LOG_TIMEOUT
 #define NET_LOG_TIMEOUT 1
@@ -80,12 +80,18 @@ char SERVER_HOST[64] = "s.farthq.com";
 int SERVER_PORT = 6969;
 
 int app_state = STATE_LOBBY;
-int wpn_req = 1; 
+int wpn_req = 1;
 int my_client_id = -1;
 int lobby_selection = 0;
 int skin_menu_selection = 0;
 int skin_menu_open = 0;
 int skin_menu_scroll = 0;
+
+static int g_paused = 0;
+static int g_pause_sel = 0;
+#define PAUSE_RESUME 0
+#define PAUSE_QUIT   1
+#define PAUSE_ITEMS  2
 
 enum { SKIN_MENU_BACK = -1 };
 
@@ -340,14 +346,15 @@ int sock = -1;
 struct sockaddr_in server_addr;
 static int net_requested_mode = MODE_DEATHMATCH;
 
-#define NET_CMD_HISTORY 3
+#define NET_CMD_HISTORY 5
 #define CLIENT_USERCMD_HZ 60
 #define CLIENT_USERCMD_INTERVAL_MS (1000 / CLIENT_USERCMD_HZ)
 #define CLIENT_RECON_HISTORY 256
-#define INTERP_DELAY_MS 220
-#define RECONCILE_DECAY_LAMBDA 10.0f
+#define INTERP_DELAY_MS 100
+#define RECONCILE_DECAY_LAMBDA 12.0f
 #define RECONCILE_HARD_SNAP_DIST 2.0f
 #define RECONCILE_HARD_SNAP_YAW 45.0f
+#define RECONCILE_CORR_MAX 1.2f
 UserCmd net_cmd_history[NET_CMD_HISTORY];
 int net_cmd_history_count = 0;
 int net_cmd_seq = 0;
@@ -634,6 +641,8 @@ static void reset_client_render_state_for_net() {
     local_state.scene_id = SCENE_GARAGE_OSAKA;
     phys_set_scene(local_state.scene_id);
     local_state.players[0].scene_id = local_state.scene_id;
+    g_paused = 0;
+    g_pause_sel = 0;
 }
 
 static void client_apply_spawn_transition_sync(PlayerState *p, const NetPlayer *np, const char *reason_tag) {
@@ -4818,6 +4827,36 @@ static void draw_tdmb_match_over_overlay(void) {
     glMatrixMode(GL_MODELVIEW); glPopMatrix();
 }
 
+static void draw_pause_overlay(void) {
+    glDisable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f(0.0f, 0.0f, 0.0f, 0.72f);
+    glBegin(GL_QUADS);
+    glVertex2f(390, 200); glVertex2f(890, 200); glVertex2f(890, 520); glVertex2f(390, 520);
+    glEnd();
+    glDisable(GL_BLEND);
+    glColor3f(0.0f, 1.0f, 1.0f);
+    draw_string("PAUSED", 552, 450, 12);
+    const char *items[PAUSE_ITEMS] = { "RESUME", "QUIT TO LOBBY" };
+    for (int i = 0; i < PAUSE_ITEMS; i++) {
+        float y = 360.0f - (float)i * 72.0f;
+        if (i == g_pause_sel) {
+            glColor3f(1.0f, 1.0f, 0.0f);
+            draw_string(">", 420, y, 7);
+        } else {
+            glColor3f(0.65f, 0.65f, 0.65f);
+        }
+        draw_string(items[i], 450, y, 7);
+    }
+    glColor3f(0.38f, 0.38f, 0.38f);
+    draw_string("ESC: RESUME    ENTER: SELECT", 430, 222, 4);
+    glEnable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glMatrixMode(GL_MODELVIEW); glPopMatrix();
+}
+
 void draw_scene(PlayerState *render_p) {
     if (vs0_art_direction_enabled) glClearColor(0.18f, 0.25f, 0.36f, 1.0f);
     else glClearColor(0.02f, 0.02f, 0.05f, 1.0f);
@@ -4960,6 +4999,7 @@ void draw_scene(PlayerState *render_p) {
     draw_weapon_p(render_p); draw_hud(render_p); draw_garage_overlay(render_p); draw_tab_scoreboard(render_p);
     draw_travel_overlay();
     draw_tdmb_match_over_overlay();
+    if (g_paused) draw_pause_overlay();
 }
 
 typedef struct {
@@ -5409,15 +5449,28 @@ static void client_reconcile_local_player(unsigned int ack_seq, float auth_x, fl
         reconcile_corr_z += ez;
         reconcile_corr_yaw += yaw_err;
         reconcile_corr_pitch += pitch_err;
+        float corr_mag = sqrtf(reconcile_corr_x*reconcile_corr_x + reconcile_corr_y*reconcile_corr_y + reconcile_corr_z*reconcile_corr_z);
+        if (corr_mag > RECONCILE_CORR_MAX) {
+            float scale = RECONCILE_CORR_MAX / corr_mag;
+            reconcile_corr_x *= scale;
+            reconcile_corr_y *= scale;
+            reconcile_corr_z *= scale;
+        }
     }
     net_last_reconciled_ack = ack_seq;
 
-    static unsigned int last_recon_dbg = 0;
+#if NET_JITTER_DIAG || NET_PARITY_DEBUG
     unsigned int now = SDL_GetTicks();
-    if (now - last_recon_dbg >= 1000) {
-        last_recon_dbg = now;
-        printf("[NET] reconcile err=%.3f replayed=%d ack=%u latest=%u\n", pos_err, replayed, ack_seq, net_latest_seq_sent);
+#endif
+#if NET_JITTER_DIAG
+    {
+        static unsigned int last_recon_dbg = 0;
+        if (now - last_recon_dbg >= 1000) {
+            last_recon_dbg = now;
+            printf("[NET] reconcile err=%.3f replayed=%d ack=%u latest=%u\n", pos_err, replayed, ack_seq, net_latest_seq_sent);
+        }
     }
+#endif
 
 #if NET_JITTER_DIAG
     if (net_reconcile_diag.window_start_ms == 0) {
@@ -6117,16 +6170,37 @@ int main(int argc, char* argv[]) {
                 }
             } else {
                 if (e.type == SDL_KEYDOWN) {
+                    if (g_paused) {
+                        if (e.key.keysym.sym == SDLK_ESCAPE) {
+                            g_paused = 0;
+                            SDL_SetRelativeMouseMode(SDL_TRUE);
+                        } else if (e.key.keysym.sym == SDLK_UP || e.key.keysym.sym == SDLK_w) {
+                            g_pause_sel = (g_pause_sel - 1 + PAUSE_ITEMS) % PAUSE_ITEMS;
+                        } else if (e.key.keysym.sym == SDLK_DOWN || e.key.keysym.sym == SDLK_s) {
+                            g_pause_sel = (g_pause_sel + 1) % PAUSE_ITEMS;
+                        } else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) {
+                            if (g_pause_sel == PAUSE_RESUME) {
+                                g_paused = 0;
+                                SDL_SetRelativeMouseMode(SDL_TRUE);
+                            } else if (g_pause_sel == PAUSE_QUIT) {
+                                g_paused = 0;
+                                if (app_state == STATE_GAME_NET) net_shutdown();
+                                app_state = STATE_LOBBY;
+                                SDL_SetRelativeMouseMode(SDL_FALSE);
+                                setup_lobby_2d();
+                            }
+                        }
+                        continue;
+                    }
                     if ((local_state.game_mode == MODE_TDMB || local_state.game_mode == MODE_TDMO || local_state.game_mode == MODE_CTFB) && local_state.match_over && e.key.keysym.sym == SDLK_r) {
                         local_init_match(12, local_state.game_mode);
                     } else if (e.key.keysym.sym == SDLK_m) {
                         overlay_cycle_mode(&g_overlay);
                         printf("[OVERLAY] mode=%s\n", overlay_mode_name(g_overlay.mode));
                     } else if (e.key.keysym.sym == SDLK_ESCAPE) {
-                        if (app_state == STATE_GAME_NET) net_shutdown();
-                        app_state = STATE_LOBBY;
+                        g_paused = 1;
+                        g_pause_sel = 0;
                         SDL_SetRelativeMouseMode(SDL_FALSE);
-                        setup_lobby_2d();
                     } else if (e.key.keysym.sym == SDLK_F6) {
                         terrain_wireframe_debug = !terrain_wireframe_debug;
                         printf("[TERRAIN] wireframe=%s\n", terrain_wireframe_debug ? "on" : "off");
@@ -6148,6 +6222,7 @@ int main(int argc, char* argv[]) {
                     }
                 }
                 if(e.type == SDL_MOUSEMOTION) {
+                    if (g_paused) continue;
                     if (app_state == STATE_GAME_NET && net_spawn_protect_cmds > 0) continue;
                     if (app_state == STATE_GAME_LOCAL &&
                         local_state.game_mode == MODE_STORY &&
@@ -6162,7 +6237,7 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
-        if (app_state != STATE_LOBBY) SDL_SetRelativeMouseMode(SDL_TRUE);
+        if (app_state != STATE_LOBBY && !g_paused) SDL_SetRelativeMouseMode(SDL_TRUE);
         if (app_state == STATE_LOBBY) {
              unsigned int now = SDL_GetTicks();
              if (ui_use_server && (now - ui_last_poll) > 1000) {
@@ -6210,6 +6285,9 @@ int main(int argc, char* argv[]) {
             int bike = in_heli ? k[SDL_SCANCODE_Q] : 0;
             int use = k[SDL_SCANCODE_F];
             int ability = in_heli ? k[SDL_SCANCODE_E] : k[SDL_SCANCODE_E];
+            if (g_paused) {
+                fwd = 0.0f; str = 0.0f; jump = 0; crouch = 0; shoot = 0; reload = 0; use = 0; ability = 0; bike = 0;
+            }
             input_fwd = fwd; input_str = str;
             input_jump = jump; input_crouch = crouch; input_shoot = shoot; input_reload = reload; input_use = use; input_ability = ability; input_bike = bike;
             if(k[SDL_SCANCODE_1]) wpn_req=0; if(k[SDL_SCANCODE_2]) wpn_req=1;
@@ -6360,19 +6438,21 @@ int main(int argc, char* argv[]) {
                 render_p = &local_state.players[render_pid];
             }
             phys_set_scene(render_p->scene_id);
-            unsigned int terrain_now_ms = SDL_GetTicks();
-            if (terrain_now_ms - terrain_debug_last_log_ms >= 1000) {
-                terrain_debug_last_log_ms = terrain_now_ms;
-                TerrainHeightfield *terrain = scene_active_terrain();
-                printf("[TERRAIN] active=%s scene=%d\n", (terrain && terrain->active) ? "yes" : "no", render_p->scene_id);
-                if (terrain && terrain->active) {
-                    float th = terrain_sample_height(terrain, render_p->x, render_p->z);
-                    int ground_source_terrain = 0;
-                    float gh = phys_sample_ground_height(render_p->x, render_p->z, &ground_source_terrain);
-                    printf("[TERRAIN] sample x=%.2f z=%.2f h=%.2f ground=%.2f source=%s last=%s\n",
-                           render_p->x, render_p->z, th, gh,
-                           ground_source_terrain ? "terrain" : "box",
-                           phys_last_grounded_on_terrain() ? "terrain" : "box");
+            if (terrain_wireframe_debug || terrain_normals_debug) {
+                unsigned int terrain_now_ms = SDL_GetTicks();
+                if (terrain_now_ms - terrain_debug_last_log_ms >= 1000) {
+                    terrain_debug_last_log_ms = terrain_now_ms;
+                    TerrainHeightfield *terrain = scene_active_terrain();
+                    printf("[TERRAIN] active=%s scene=%d\n", (terrain && terrain->active) ? "yes" : "no", render_p->scene_id);
+                    if (terrain && terrain->active) {
+                        float th = terrain_sample_height(terrain, render_p->x, render_p->z);
+                        int ground_source_terrain = 0;
+                        float gh = phys_sample_ground_height(render_p->x, render_p->z, &ground_source_terrain);
+                        printf("[TERRAIN] sample x=%.2f z=%.2f h=%.2f ground=%.2f source=%s last=%s\n",
+                               render_p->x, render_p->z, th, gh,
+                               ground_source_terrain ? "terrain" : "box",
+                               phys_last_grounded_on_terrain() ? "terrain" : "box");
+                    }
                 }
             }
             double alpha = accumulator / TICK_DT;
