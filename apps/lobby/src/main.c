@@ -350,7 +350,10 @@ static int net_requested_mode = MODE_DEATHMATCH;
 #define CLIENT_USERCMD_HZ 60
 #define CLIENT_USERCMD_INTERVAL_MS (1000 / CLIENT_USERCMD_HZ)
 #define CLIENT_RECON_HISTORY 256
-#define INTERP_DELAY_MS 100
+/* INTERP_DELAY_MS must be LESS than the server snapshot interval
+   (SERVER_SNAPSHOT_INTERVAL_TICKS * 16ms = 32ms) for the two-snapshot
+   interpolator to produce t in [0,1].  Keep this at ~0.75x the interval. */
+#define INTERP_DELAY_MS 24
 #define RECONCILE_DECAY_LAMBDA 12.0f
 #define RECONCILE_HARD_SNAP_DIST 2.0f
 #define RECONCILE_HARD_SNAP_YAW 45.0f

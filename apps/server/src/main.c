@@ -26,16 +26,16 @@
 #include "server_state.h"
 
 #ifndef NET_VERBOSE_LOG
-#define NET_VERBOSE_LOG 1
+#define NET_VERBOSE_LOG 0
 #endif
 #ifndef NET_LOG_HANDSHAKE
 #define NET_LOG_HANDSHAKE 1
 #endif
 #ifndef NET_LOG_SNAPSHOT
-#define NET_LOG_SNAPSHOT 1
+#define NET_LOG_SNAPSHOT 0
 #endif
 #ifndef NET_LOG_USERCMD
-#define NET_LOG_USERCMD 1
+#define NET_LOG_USERCMD 0
 #endif
 #ifndef NET_LOG_TIMEOUT
 #define NET_LOG_TIMEOUT 1
@@ -103,7 +103,7 @@ typedef struct {
 
 static NetServerDiag g_net_diag;
 
-#define SERVER_SNAPSHOT_INTERVAL_TICKS 3
+#define SERVER_SNAPSHOT_INTERVAL_TICKS 2
 #define SERVER_DM_FRAG_LIMIT 25
 #define SERVER_DM_ROUND_MS (6 * 60 * 1000)
 #define TDMO_TEAM_SIZE 6
