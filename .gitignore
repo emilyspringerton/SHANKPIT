@@ -17,3 +17,13 @@ __pycache__/
 
 # Ignore local config
 .ssh/
+
+# Compiled test/server binaries built at repo root.
+run_tests
+run_server_test
+run_integration
+run_stuffing
+server-go
+
+# Claude Code session directory.
+.claude/
