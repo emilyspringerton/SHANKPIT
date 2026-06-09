@@ -128,13 +128,15 @@ These are tracked in `SHANKPIT_DRAGONSNSHIT_SYSTEMS_SPEC.md` section 4. Summary:
 
 | Gap | What exists | What's missing |
 |-----|-------------|----------------|
-| Scene correctness | `scene_id` on wire, portal geometry | Per-player physics isolation, authoritative travel |
-| Portal travel | Trigger + constants | Travel state machine, server validation |
+| Scene correctness | `scene_id` on wire, portal geometry, per-player sceneID, 20Hz scene-filtered snapshot | Per-player physics isolation (C server), cross-scene attack guard |
+| Portal travel | Trigger + constants + Go server ack (PacketSceneChange) | Travel state machine in C server, client-side scene transition |
 | USE verb | `BTN_USE` wired | Not a first-class gameplay action yet |
-| Transition state | `pending_scene`, `transition_timer` | State machine consuming them |
+| Transition state | `pending_scene`, `transition_timer` | State machine consuming them (C server) |
 | Dragonfly backend | Plan + code in repo | Construct inclusion, bridge seam interface |
 | Season lineage | Concept | Snapshot schema, identity durability spec |
 | Construct coverage | Core FPS files | Dragon bridge, world code, scene code |
+
+**Layer 2 progress (2026-06-09):** Go server now sends PacketSceneChange (type=6) immediately after portal travel, giving the traveling client their new scene ID and spawn position. broadcastSnapshots() goroutine runs at 20Hz and sends each client a PacketSnapshot containing only peers in the same scene (18 bytes/entity: clientID + sceneID + pos + yaw). yaw is now tracked per-client from UserCmds. Mutex protects the clients map. SHANKPIT commit beb975b.
 
 ---
 
