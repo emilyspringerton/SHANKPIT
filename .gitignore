@@ -23,7 +23,7 @@ run_tests
 run_server_test
 run_integration
 run_stuffing
-server-go
+/server-go
 
 # Claude Code session directory.
 .claude/

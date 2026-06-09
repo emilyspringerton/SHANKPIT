@@ -18,6 +18,7 @@
 #define PACKET_WELCOME 3
 #define PACKET_VOXEL_DATA 4
 #define PACKET_IMPACT 5
+#define PACKET_SCENE_CHANGE 6
 
 #define STATE_ALIVE 0
 #define STATE_DEAD 1

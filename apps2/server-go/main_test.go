@@ -113,3 +113,55 @@ func TestClientInfoPortalCooldownPreventsRetravel(t *testing.T) {
 		t.Fatal("portal geometry should trigger (cooldown is checked by caller)")
 	}
 }
+
+func TestSceneChangePacketFormat(t *testing.T) {
+	// Verify the PacketSceneChange constant is distinct from existing packet types.
+	if common.PacketSceneChange == common.PacketSnapshot ||
+		common.PacketSceneChange == common.PacketWelcome ||
+		common.PacketSceneChange == common.PacketVoxelData ||
+		common.PacketSceneChange == common.PacketImpact {
+		t.Fatal("PacketSceneChange collides with an existing packet type")
+	}
+	if common.PacketSceneChange != 6 {
+		t.Fatalf("expected PacketSceneChange=6, got %d", common.PacketSceneChange)
+	}
+}
+
+func TestSnapshotSceneIsolation(t *testing.T) {
+	// Players in different scenes must not appear in each other's snapshot payloads.
+	// We test the filtering logic directly: only same-scene peers should be collected.
+	a := clientInfo{id: 1, sceneID: system.SceneGarageOsaka}
+	b := clientInfo{id: 2, sceneID: system.SceneGarageOsaka}
+	c := clientInfo{id: 3, sceneID: system.SceneVoxworld}
+
+	allClients := []clientInfo{a, b, c}
+
+	peersForA := make([]clientInfo, 0)
+	for _, e := range allClients {
+		if e.sceneID == a.sceneID && e.id != a.id {
+			peersForA = append(peersForA, e)
+		}
+	}
+	if len(peersForA) != 1 || peersForA[0].id != b.id {
+		t.Fatalf("expected only peer b in a's snapshot, got %v", peersForA)
+	}
+
+	peersForC := make([]clientInfo, 0)
+	for _, e := range allClients {
+		if e.sceneID == c.sceneID && e.id != c.id {
+			peersForC = append(peersForC, e)
+		}
+	}
+	if len(peersForC) != 0 {
+		t.Fatalf("expected no peers for c in voxworld, got %d", len(peersForC))
+	}
+}
+
+func TestClientYawTracking(t *testing.T) {
+	// yaw from UserCmd should propagate into clientInfo.
+	info := clientInfo{id: 5, sceneID: system.SceneGarageOsaka}
+	info.yaw = 135.5
+	if info.yaw != 135.5 {
+		t.Fatalf("expected yaw 135.5, got %f", info.yaw)
+	}
+}

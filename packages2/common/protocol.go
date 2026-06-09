@@ -8,12 +8,13 @@ const (
 )
 
 const (
-	PacketConnect   = 0
-	PacketUserCmd   = 1
-	PacketSnapshot  = 2
-	PacketWelcome   = 3
-	PacketVoxelData = 4
-	PacketImpact    = 5
+	PacketConnect     = 0
+	PacketUserCmd     = 1
+	PacketSnapshot    = 2
+	PacketWelcome     = 3
+	PacketVoxelData   = 4
+	PacketImpact      = 5
+	PacketSceneChange = 6
 )
 
 const (

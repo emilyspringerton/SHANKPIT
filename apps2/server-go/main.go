@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"sync"
 	"time"
 
 	"dragonsnshit/packages2/common"
@@ -59,6 +60,8 @@ type clientInfo struct {
 	sceneID             int
 	portalCooldownUntil time.Time
 	pos                 system.Vec3
+	yaw                 float32
+	remote              *net.UDPAddr
 }
 
 func main() {
@@ -78,6 +81,9 @@ func main() {
 	clientStore := store.NewMemoryClientStore()
 	clients := make(map[string]clientInfo)
 	nextClientID := uint8(0)
+	var mu sync.Mutex
+
+	go broadcastSnapshots(conn, &mu, clients)
 
 	for {
 		conn.SetReadDeadline(time.Now().Add(250 * time.Millisecond))
@@ -96,35 +102,43 @@ func main() {
 		const userCmdSize = 36
 		switch buf[0] {
 		case common.PacketConnect:
+			mu.Lock()
 			info, ok := clients[remote.String()]
 			if !ok {
-				info = clientInfo{id: nextClientID}
+				info = clientInfo{id: nextClientID, remote: remote}
 				if nextClientID < 255 {
 					nextClientID++
 				}
 				clients[remote.String()] = info
 			}
+			mu.Unlock()
 			sendWelcome(conn, remote, info.id)
 			sendVoxelPacket(conn, remote, info)
 		case common.PacketUserCmd:
 			if n < netHeaderSize+1+userCmdSize {
 				continue
 			}
+			mu.Lock()
 			info, ok := clients[remote.String()]
 			if !ok {
-				info = clientInfo{id: nextClientID}
+				info = clientInfo{id: nextClientID, remote: remote}
 				if nextClientID < 255 {
 					nextClientID++
 				}
 			}
+			info.remote = remote
+			mu.Unlock()
 			info = sendVoxelPacket(conn, remote, info)
-			clients[remote.String()] = info
 			count := int(buf[netHeaderSize])
 			if count < 1 {
+				mu.Lock()
+				clients[remote.String()] = info
+				mu.Unlock()
 				continue
 			}
 			cmd := parseUserCmd(buf, netHeaderSize+1)
 			clientStore.Upsert(remote.String(), cmd)
+			info.yaw = cmd.Yaw
 			if cmd.Buttons&common.BtnAttack != 0 {
 				hit, pos, hitEntity := player.HandleShankFire(p, float64(cmd.Yaw), float64(cmd.Pitch), int(cmd.WeaponIdx))
 				if hit {
@@ -141,11 +155,13 @@ func main() {
 						info.sceneID = dest.Scene
 						info.pos = system.Vec3{X: dest.X, Y: dest.Y, Z: dest.Z}
 						info.portalCooldownUntil = time.Now().Add(time.Second)
+						sendSceneChange(conn, remote, dest.Scene, info.pos)
 					}
 				}
 			}
+			mu.Lock()
 			clients[remote.String()] = info
-			_ = remote
+			mu.Unlock()
 		}
 	}
 }
@@ -206,6 +222,66 @@ func sendImpact(conn *net.UDPConn, remote *net.UDPAddr, pos system.Vec3, hitEnti
 	binary.LittleEndian.PutUint32(payload[12:], math.Float32bits(float32(pos.Z)))
 	binary.LittleEndian.PutUint16(payload[16:], blockID)
 	_, _ = conn.WriteToUDP(payload, remote)
+}
+
+// sendSceneChange tells a client their new scene and spawn position after portal travel.
+// Format: type(1) + sceneID(1) + x(4) + y(4) + z(4) = 14 bytes.
+func sendSceneChange(conn *net.UDPConn, remote *net.UDPAddr, sceneID int, pos system.Vec3) {
+	payload := make([]byte, 14)
+	payload[0] = common.PacketSceneChange
+	payload[1] = uint8(sceneID)
+	binary.LittleEndian.PutUint32(payload[2:], math.Float32bits(float32(pos.X)))
+	binary.LittleEndian.PutUint32(payload[6:], math.Float32bits(float32(pos.Y)))
+	binary.LittleEndian.PutUint32(payload[10:], math.Float32bits(float32(pos.Z)))
+	_, _ = conn.WriteToUDP(payload, remote)
+}
+
+// broadcastSnapshots runs at 20Hz and sends each client a PacketSnapshot of all peers
+// in their scene. Per-entity: clientID(1) + sceneID(1) + x(4) + y(4) + z(4) + yaw(4) = 18 bytes.
+func broadcastSnapshots(conn *net.UDPConn, mu *sync.Mutex, clients map[string]clientInfo) {
+	const entitySize = 18
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for range ticker.C {
+		mu.Lock()
+		type peerEntry struct {
+			info   clientInfo
+			remote *net.UDPAddr
+		}
+		all := make([]peerEntry, 0, len(clients))
+		for _, info := range clients {
+			if info.remote != nil {
+				all = append(all, peerEntry{info, info.remote})
+			}
+		}
+		mu.Unlock()
+
+		for _, recv := range all {
+			var peers []clientInfo
+			for _, e := range all {
+				if e.info.sceneID == recv.info.sceneID && e.info.id != recv.info.id {
+					peers = append(peers, e.info)
+				}
+			}
+			if len(peers) == 0 {
+				continue
+			}
+			payload := make([]byte, 2+len(peers)*entitySize)
+			payload[0] = common.PacketSnapshot
+			payload[1] = uint8(len(peers))
+			off := 2
+			for _, peer := range peers {
+				payload[off] = peer.id
+				payload[off+1] = uint8(peer.sceneID)
+				binary.LittleEndian.PutUint32(payload[off+2:], math.Float32bits(float32(peer.pos.X)))
+				binary.LittleEndian.PutUint32(payload[off+6:], math.Float32bits(float32(peer.pos.Y)))
+				binary.LittleEndian.PutUint32(payload[off+10:], math.Float32bits(float32(peer.pos.Z)))
+				binary.LittleEndian.PutUint32(payload[off+14:], math.Float32bits(peer.yaw))
+				off += entitySize
+			}
+			_, _ = conn.WriteToUDP(payload, recv.remote)
+		}
+	}
 }
 
 func parseUserCmd(data []byte, offset int) common.UserCmd {
