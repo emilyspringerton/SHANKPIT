@@ -2,6 +2,11 @@
 
 ## Recent changes
 
+### 2026-06-09
+- Cross-scene attack guard: `gameWorld` replaces the `world{}` stub in `apps2/server-go`. `RayTrace` iterates same-scene clients only (skips clients with a different `sceneID`), using ray-sphere intersection (hitbox radius 0.4, sphere centered at chest height). Shooter is excluded. Per-shot `shankPlayer` now uses real client position and `sceneID` from `clientInfo`.
+- Added `Vec3.Sub`, `Vec3.Len`, `Vec3.Dot` to `server/system/ballistics.go` for ray-sphere math.
+- Tests: `TestCrossSceneAttackGuard`, `TestCrossSceneNoHit`, `TestShooterDoesNotHitSelf`.
+
 ### 2026-06-06 (continued 5)
 - Fixed death camera blend not resetting between sessions: `death_cam_blend` is now cleared on spawn transition sync (network) and on lobby→game transition, preventing a tilted death-camera perspective at the start of a new game after dying in the previous one.
 - Fixed scene transition not clearing buggies: `client_apply_scene_id` now zeroes buggy slots (was already doing helis and projectiles).

@@ -128,7 +128,7 @@ These are tracked in `SHANKPIT_DRAGONSNSHIT_SYSTEMS_SPEC.md` section 4. Summary:
 
 | Gap | What exists | What's missing |
 |-----|-------------|----------------|
-| Scene correctness | `scene_id` on wire, portal geometry, per-player sceneID, 20Hz scene-filtered snapshot | Per-player physics isolation (C server), cross-scene attack guard |
+| Scene correctness | `scene_id` on wire, portal geometry, per-player sceneID, 20Hz scene-filtered snapshot, cross-scene attack guard (Go server) | Per-player physics isolation (C server) |
 | Portal travel | Trigger + constants + Go server ack (PacketSceneChange) | Travel state machine in C server, client-side scene transition |
 | USE verb | `BTN_USE` wired | Not a first-class gameplay action yet |
 | Transition state | `pending_scene`, `transition_timer` | State machine consuming them (C server) |
@@ -137,6 +137,8 @@ These are tracked in `SHANKPIT_DRAGONSNSHIT_SYSTEMS_SPEC.md` section 4. Summary:
 | Construct coverage | Core FPS files | Dragon bridge, world code, scene code |
 
 **Layer 2 progress (2026-06-09):** Go server now sends PacketSceneChange (type=6) immediately after portal travel, giving the traveling client their new scene ID and spawn position. broadcastSnapshots() goroutine runs at 20Hz and sends each client a PacketSnapshot containing only peers in the same scene (18 bytes/entity: clientID + sceneID + pos + yaw). yaw is now tracked per-client from UserCmds. Mutex protects the clients map. SHANKPIT commit beb975b.
+
+**Layer 2 progress (2026-06-09, continued):** Cross-scene attack guard implemented in Go server. gameWorld replaces the world{} stub — RayTrace iterates same-scene clients only, using ray-sphere intersection (hitbox radius 0.4, sphere centered at chest height). Shooter is excluded from hits. Vec3.Sub/Len/Dot added to ballistics.go. Per-shot shankPlayer uses real client position and sceneID. Tests: TestCrossSceneAttackGuard, TestCrossSceneNoHit, TestShooterDoesNotHitSelf. go test ./apps2/server-go/ ./server/system/ passes.
 
 ---
 

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/binary"
 	"math"
+	"sync"
 	"testing"
 	"time"
 
@@ -163,5 +164,61 @@ func TestClientYawTracking(t *testing.T) {
 	info.yaw = 135.5
 	if info.yaw != 135.5 {
 		t.Fatalf("expected yaw 135.5, got %f", info.yaw)
+	}
+}
+
+func TestCrossSceneAttackGuard(t *testing.T) {
+	// Shooter in scene 0. EnemyA in scene 0 (same). EnemyB in scene 1 (different).
+	// Both are at the same position along the ray. Only EnemyA should be hit.
+	var mu sync.Mutex
+	clients := map[string]clientInfo{
+		"shooter": {id: 1, sceneID: 0, pos: system.Vec3{X: 0, Y: 0, Z: 0}},
+		"enemyA":  {id: 2, sceneID: 0, pos: system.Vec3{X: 0, Y: 0, Z: 5}},
+		"enemyB":  {id: 3, sceneID: 1, pos: system.Vec3{X: 0, Y: 0, Z: 5}},
+	}
+	gw := &gameWorld{clients: clients, mu: &mu, shooterID: 1, sceneID: 0}
+	start := system.Vec3{X: 0, Y: 0.9, Z: 0}
+	end := system.Vec3{X: 0, Y: 0.9, Z: 20}
+	res, hit := gw.RayTrace(start, end)
+	if !hit {
+		t.Fatal("expected hit on same-scene enemy")
+	}
+	eh, ok := res.(gameEntityHit)
+	if !ok {
+		t.Fatal("expected gameEntityHit result type")
+	}
+	if eh.clientID != 2 {
+		t.Fatalf("expected hit on clientID=2 (enemyA), got clientID=%d", eh.clientID)
+	}
+}
+
+func TestCrossSceneNoHit(t *testing.T) {
+	// Shooter in scene 0. Only enemy is in scene 1. No hit expected.
+	var mu sync.Mutex
+	clients := map[string]clientInfo{
+		"shooter": {id: 1, sceneID: 0, pos: system.Vec3{X: 0, Y: 0, Z: 0}},
+		"enemyB":  {id: 3, sceneID: 1, pos: system.Vec3{X: 0, Y: 0, Z: 5}},
+	}
+	gw := &gameWorld{clients: clients, mu: &mu, shooterID: 1, sceneID: 0}
+	start := system.Vec3{X: 0, Y: 0.9, Z: 0}
+	end := system.Vec3{X: 0, Y: 0.9, Z: 20}
+	_, hit := gw.RayTrace(start, end)
+	if hit {
+		t.Fatal("cross-scene attack guard: hit on different-scene enemy must be rejected")
+	}
+}
+
+func TestShooterDoesNotHitSelf(t *testing.T) {
+	// The shooter's own clientID must be excluded from hitscan.
+	var mu sync.Mutex
+	clients := map[string]clientInfo{
+		"shooter": {id: 1, sceneID: 0, pos: system.Vec3{X: 0, Y: 0, Z: 0}},
+	}
+	gw := &gameWorld{clients: clients, mu: &mu, shooterID: 1, sceneID: 0}
+	start := system.Vec3{X: 0, Y: 0.9, Z: -1}
+	end := system.Vec3{X: 0, Y: 0.9, Z: 1}
+	_, hit := gw.RayTrace(start, end)
+	if hit {
+		t.Fatal("shooter must not register a hit on themselves")
 	}
 }

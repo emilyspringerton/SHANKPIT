@@ -14,29 +14,80 @@ import (
 	"dragonsnshit/server/system"
 )
 
-type world struct{}
-
-type rayResult struct {
-	pos system.Vec3
+// gameWorld implements player.RaycastWorld and enforces scene isolation:
+// RayTrace only hits clients in the same scene as the shooter.
+type gameWorld struct {
+	clients   map[string]clientInfo
+	mu        *sync.Mutex
+	shooterID uint8
+	sceneID   int
 }
 
-func (r rayResult) Position() system.Vec3 { return r.pos }
+// gameEntityHit is the result when the ray intersects a same-scene client.
+type gameEntityHit struct {
+	pos      system.Vec3
+	clientID uint8
+}
 
-func (w world) RayTrace(start, end system.Vec3) (player.RaycastResult, bool) {
-	return rayResult{}, false
+func (h gameEntityHit) Position() system.Vec3        { return h.pos }
+func (h gameEntityHit) Entity() player.LivingEntity  { return nopEntity{} }
+
+// nopEntity satisfies player.LivingEntity; actual damage routing is handled
+// by the caller after HandleShankFire returns hitEntity=true.
+type nopEntity struct{}
+
+func (nopEntity) Hurt(_ float64, _ player.DamageSource) {}
+
+const hitboxRadius = 0.4
+
+func (gw *gameWorld) RayTrace(start, end system.Vec3) (player.RaycastResult, bool) {
+	dir := end.Sub(start)
+	maxDist := dir.Len()
+	if maxDist < 1e-6 {
+		return nil, false
+	}
+	dirN := dir.Mul(1.0 / maxDist)
+
+	gw.mu.Lock()
+	defer gw.mu.Unlock()
+
+	bestT := maxDist + 1
+	var bestHit *gameEntityHit
+
+	for _, c := range gw.clients {
+		if c.id == gw.shooterID || c.sceneID != gw.sceneID {
+			continue // cross-scene attack guard: skip other-scene clients
+		}
+		// Approximate each player as a sphere centered at chest height.
+		center := system.Vec3{X: c.pos.X, Y: c.pos.Y + 0.9, Z: c.pos.Z}
+		w := center.Sub(start)
+		t := w.Dot(dirN)
+		if t < 0 || t > maxDist {
+			continue
+		}
+		closest := start.Add(dirN.Mul(t))
+		if center.Sub(closest).Len() < hitboxRadius && t < bestT {
+			bestT = t
+			h := gameEntityHit{pos: closest, clientID: c.id}
+			bestHit = &h
+		}
+	}
+
+	if bestHit != nil {
+		return *bestHit, true
+	}
+	return nil, false
 }
 
 type shankPlayer struct {
 	pos       system.Vec3
 	eyeHeight float64
-	world     world
+	rw        player.RaycastWorld
 }
 
-func (p *shankPlayer) Position() system.Vec3 { return p.pos }
-func (p *shankPlayer) EyeHeight() float64    { return p.eyeHeight }
-func (p *shankPlayer) World() player.RaycastWorld {
-	return p.world
-}
+func (p *shankPlayer) Position() system.Vec3        { return p.pos }
+func (p *shankPlayer) EyeHeight() float64           { return p.eyeHeight }
+func (p *shankPlayer) World() player.RaycastWorld   { return p.rw }
 func (p *shankPlayer) SendSound(name string, pos system.Vec3) {
 	fmt.Printf("[sound] %s at %.2f %.2f %.2f\n", name, pos.X, pos.Y, pos.Z)
 }
@@ -77,7 +128,6 @@ func main() {
 
 	fmt.Println("Go backend listening on :6969")
 	buf := make([]byte, 2048)
-	p := &shankPlayer{pos: system.Vec3{}, eyeHeight: 1.62, world: world{}}
 	clientStore := store.NewMemoryClientStore()
 	clients := make(map[string]clientInfo)
 	nextClientID := uint8(0)
@@ -140,7 +190,9 @@ func main() {
 			clientStore.Upsert(remote.String(), cmd)
 			info.yaw = cmd.Yaw
 			if cmd.Buttons&common.BtnAttack != 0 {
-				hit, pos, hitEntity := player.HandleShankFire(p, float64(cmd.Yaw), float64(cmd.Pitch), int(cmd.WeaponIdx))
+				gw := &gameWorld{clients: clients, mu: &mu, shooterID: info.id, sceneID: info.sceneID}
+				shooter := &shankPlayer{pos: info.pos, eyeHeight: 1.62, rw: gw}
+				hit, pos, hitEntity := player.HandleShankFire(shooter, float64(cmd.Yaw), float64(cmd.Pitch), int(cmd.WeaponIdx))
 				if hit {
 					sendImpact(conn, remote, pos, hitEntity, 0)
 				}
