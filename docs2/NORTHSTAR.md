@@ -156,10 +156,41 @@ These are tracked in `SHANKPIT_DRAGONSNSHIT_SYSTEMS_SPEC.md` section 4. Summary:
 
 ---
 
+## GoblinFoxDragon Repo Relationship
+
+**GoblinFoxDragon** (`github.com/emilyspringerton/GoblinFoxDragon`) and **SHANKPIT**
+(`github.com/emilyspringerton/SHANKPIT`) share `module dragonsnshit` in `go.mod` because
+they are development forks of the same codebase, not competing codebases.
+
+| Repo | Focus | Key additions |
+|------|-------|---------------|
+| SHANKPIT | FPS game server — combat, portal travel, physics, matchmaker | `server/system/portal.go`, `server/system/backend.go`, `apps2/server-go/` |
+| GoblinFoxDragon | Persistent world layer — entity management, EduScript, world scripting | EduScript entity system, Architect Orb reality manipulation, sandboxed scripting |
+
+**GoblinFoxDragon is the DragonsNShit backend fork.** It is where the Dragonfly-derived
+persistent world systems are built. SHANKPIT is where the FPS mechanics live.
+
+**Intended merge direction:** When Milestone 4 (Construct expansion) lands and `DragonflyBackend`
+is implemented, the bridge surface (`server/system/backend.go`) will pull GoblinFoxDragon's
+entity/persistence systems in as a `DragonflyBackend` implementation. The two forks converge
+at the `WorldBackend` interface seam.
+
+**Why the same module name:** Both repos were originally one codebase. The module name
+`dragonsnshit` is shared intentionally — it signals they are two halves of the same system.
+When the merge happens, the combined module stays `dragonsnshit`.
+
+**For agent context:** When working on FPS mechanics, hitscan, portal travel, physics — work in
+SHANKPIT. When working on entity persistence, scripting, zone evolution, Dragonfly integration —
+work in GoblinFoxDragon. Don't cross-modify: agents reading only SHANKPIT or only GoblinFoxDragon
+should understand they hold half the picture.
+
+---
+
 ## Related Specs
 
 - `docs2/specs/SHANKPIT_DRAGONSNSHIT_SYSTEMS_SPEC.md` — full systems map for the FPS→persistent world bridge
 - `docs2/specs/THE_BRIDGE_SPEC.md` — wire protocol for Shankpit ↔ Bedrock voxel data
+- `docs2/specs/WORLD_BACKEND_INTERFACE_SPEC.md` — WorldBackend Go interface (Milestone 3)
 - `docs2/NETCODE_CONTRACT_SPEC.md` — UDP protocol contract
 - `docs/M_OVERLAY_PROTOCOL.md` — overlay protocol
 - `CHANGELOG.md` — living change log
