@@ -3,6 +3,7 @@
 ## Recent changes
 
 ### 2026-06-12 (continued 3)
+- Season lineage snapshot schema spec at docs2/specs/SEASON_LINEAGE_SCHEMA_SPEC.md: player records, zone records, events, lineage block, v0.1 --no-apple
 - Document GoblinFoxDragon repo relationship in NORTHSTAR.md: FPS fork (SHANKPIT) vs persistent world fork (GoblinFoxDragon), intended merge at WorldBackend seam --no-apple
 - Milestone 3: WorldBackend Go interface + StaticBackend; portal travel wired through backend in apps2/server-go/main.go; spec at docs2/specs/WORLD_BACKEND_INTERFACE_SPEC.md; 3 new tests --no-apple
 - True lobby + CTF matchmaker. Server: connecting clients placed in DM warm-up (SCENE_DUST_COMPOUND=3) immediately; mode byte from PacketConnect (buf[12]) parsed and stored in clientInfo.requestedMode. matchmaker struct tracks ctfQueue; when ≥2 CTF players queued → match fires, all moved to SCENE_STADIUM=1 via PacketSceneChange with gameMode byte. sendWelcome extended 12→13 bytes (payload[9]=sceneID, payload[12]=gameMode). sendSceneChange extended 14→15 bytes (payload[14]=gameMode). GameMode constants added to packages2/common. Client: LOBBY_JOIN now sends MODE_CTF (label "FIND CTF"); PacketSceneChange handler in net_tick applies new scene + game_mode + player spawn position; animated "SEARCHING FOR CTF..." HUD banner shown while in DM warm-up; live CTF score header (BLUE N — N RED) shown once matched into MODE_CTF.
