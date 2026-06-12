@@ -134,6 +134,7 @@ static RetroLightingPreset g_world_lighting_preset = RETRO_LIGHTING_DAY_STATIC;
 static int terrain_wireframe_debug = 0;
 static int terrain_normals_debug = 0;
 static int voxworld_points_debug = 0;
+static VoxelChunkCache g_voxel_chunks[VOXEL_CHUNK_CACHE_SIZE];
 static unsigned int terrain_debug_last_log_ms = 0;
 static ProcTexture g_vehicle_noise_tex = {0};
 static ProcTexture g_vehicle_glitch_tex = {0};
@@ -1603,6 +1604,65 @@ static void draw_team_map_markers(int scene_id, int game_mode) {
             glPushMatrix(); glTranslatef(flag->x, fy + 1.0f, flag->z); draw_box(3.0f, 8.0f, 3.0f); glPopMatrix();
         } else {
             glPushMatrix(); glTranslatef(flag->x, fy, flag->z); draw_box(3.0f, 12.0f, 3.0f); glPopMatrix();
+        }
+    }
+}
+
+static void draw_voxel_chunks(const RetroLightingState *lighting) {
+    (void)lighting;
+    for (int ci = 0; ci < VOXEL_CHUNK_CACHE_SIZE; ci++) {
+        const VoxelChunkCache *chunk = &g_voxel_chunks[ci];
+        if (!chunk->active || chunk->block_count == 0) continue;
+        for (int bi = 0; bi < chunk->block_count; bi++) {
+            float wx = (float)(chunk->chunk_x * VOXEL_CHUNK_SIZE + chunk->bx[bi]) + 0.5f;
+            float wy = (float)chunk->by[bi] + 0.5f;
+            float wz = (float)(chunk->chunk_z * VOXEL_CHUNK_SIZE + chunk->bz[bi]) + 0.5f;
+            int is_leaf = (chunk->block_id[bi] == VOXEL_BLOCK_LEAF);
+            float br, bg, bb, tr, tg, tb, er, eg, eb;
+            if (is_leaf) {
+                br=0.08f; bg=0.24f; bb=0.09f;
+                tr=0.14f; tg=0.38f; tb=0.15f;
+                er=0.20f; eg=0.80f; eb=0.22f;
+            } else {
+                br=0.26f; bg=0.16f; bb=0.06f;
+                tr=0.36f; tg=0.24f; tb=0.10f;
+                er=0.80f; eg=0.45f; eb=0.10f;
+            }
+            glPushMatrix();
+            glTranslatef(wx, wy, wz);
+            glBegin(GL_QUADS);
+            glColor3f(tr, tg, tb);
+            glVertex3f(-0.5f, 0.5f, 0.5f); glVertex3f(0.5f, 0.5f, 0.5f);
+            glVertex3f(0.5f, 0.5f,-0.5f); glVertex3f(-0.5f, 0.5f,-0.5f);
+            glColor3f(br*0.6f, bg*0.6f, bb*0.6f);
+            glVertex3f(-0.5f,-0.5f, 0.5f); glVertex3f(0.5f,-0.5f, 0.5f);
+            glVertex3f(0.5f,-0.5f,-0.5f); glVertex3f(-0.5f,-0.5f,-0.5f);
+            glColor3f(br, bg, bb);
+            glVertex3f(-0.5f,-0.5f, 0.5f); glVertex3f(0.5f,-0.5f, 0.5f);
+            glVertex3f(0.5f, 0.5f, 0.5f); glVertex3f(-0.5f, 0.5f, 0.5f);
+            glColor3f(br*0.8f, bg*0.8f, bb*0.8f);
+            glVertex3f(-0.5f,-0.5f,-0.5f); glVertex3f(0.5f,-0.5f,-0.5f);
+            glVertex3f(0.5f, 0.5f,-0.5f); glVertex3f(-0.5f, 0.5f,-0.5f);
+            glColor3f(br*0.9f, bg*0.9f, bb*0.9f);
+            glVertex3f(-0.5f,-0.5f,-0.5f); glVertex3f(-0.5f,-0.5f, 0.5f);
+            glVertex3f(-0.5f, 0.5f, 0.5f); glVertex3f(-0.5f, 0.5f,-0.5f);
+            glColor3f(br*0.95f, bg*0.95f, bb*0.95f);
+            glVertex3f(0.5f,-0.5f, 0.5f); glVertex3f(0.5f,-0.5f,-0.5f);
+            glVertex3f(0.5f, 0.5f,-0.5f); glVertex3f(0.5f, 0.5f, 0.5f);
+            glEnd();
+            glLineWidth(1.5f);
+            glColor3f(er, eg, eb);
+            glBegin(GL_LINE_LOOP);
+            glVertex3f(-0.5f, 0.5f, 0.5f); glVertex3f(0.5f, 0.5f, 0.5f);
+            glVertex3f(0.5f, 0.5f,-0.5f); glVertex3f(-0.5f, 0.5f,-0.5f);
+            glEnd();
+            glBegin(GL_LINES);
+            glVertex3f(-0.5f,-0.5f, 0.5f); glVertex3f(-0.5f, 0.5f, 0.5f);
+            glVertex3f( 0.5f,-0.5f, 0.5f); glVertex3f( 0.5f, 0.5f, 0.5f);
+            glVertex3f( 0.5f,-0.5f,-0.5f); glVertex3f( 0.5f, 0.5f,-0.5f);
+            glVertex3f(-0.5f,-0.5f,-0.5f); glVertex3f(-0.5f, 0.5f,-0.5f);
+            glEnd();
+            glPopMatrix();
         }
     }
 }
@@ -5028,6 +5088,7 @@ void draw_scene(PlayerState *render_p) {
     draw_voxworld_grass_overlay(&world_lighting, render_p);
     draw_voxworld_bushes();
     draw_map(&world_lighting);
+    draw_voxel_chunks(&world_lighting);
     draw_team_map_markers(local_state.scene_id, local_state.game_mode);
     draw_garage_vehicle_pads();
     draw_garage_portal_frame();
@@ -5974,6 +6035,45 @@ void net_process_snapshot(char *buffer, int len) {
 }
 
 
+static void net_apply_voxel_packet(const char *buf, int len) {
+    if (len < 16) return;
+    int chunk_x, chunk_z;
+    unsigned short block_count;
+    memcpy(&chunk_x,    buf + 4,  4);
+    memcpy(&chunk_z,    buf + 8,  4);
+    memcpy(&block_count, buf + 12, 2);
+    if (block_count > VOXEL_MAX_BLOCKS_PER_CHUNK)
+        block_count = VOXEL_MAX_BLOCKS_PER_CHUNK;
+    if (len < 16 + (int)block_count * 6) return;
+
+    VoxelChunkCache *slot = NULL;
+    for (int i = 0; i < VOXEL_CHUNK_CACHE_SIZE; i++) {
+        if (g_voxel_chunks[i].active &&
+            g_voxel_chunks[i].chunk_x == chunk_x &&
+            g_voxel_chunks[i].chunk_z == chunk_z) {
+            slot = &g_voxel_chunks[i]; break;
+        }
+    }
+    if (!slot) {
+        for (int i = 0; i < VOXEL_CHUNK_CACHE_SIZE; i++) {
+            if (!g_voxel_chunks[i].active) { slot = &g_voxel_chunks[i]; break; }
+        }
+    }
+    if (!slot) slot = &g_voxel_chunks[0];
+
+    slot->active      = 1;
+    slot->chunk_x     = chunk_x;
+    slot->chunk_z     = chunk_z;
+    slot->block_count = (int)block_count;
+    const unsigned char *p = (const unsigned char *)(buf + 16);
+    for (int i = 0; i < (int)block_count; i++, p += 6) {
+        slot->bx[i] = p[0];
+        slot->by[i] = p[1];
+        slot->bz[i] = p[2];
+        memcpy(&slot->block_id[i], p + 4, 2);
+    }
+}
+
 void net_tick() {
     char buffer[4096];
     while (1) {
@@ -6058,6 +6158,8 @@ void net_tick() {
                 local_state.game_mode = (unsigned char)buffer[sizeof(NetHeader)];
             }
             printf("✅ JOINED SERVER AS CLIENT ID: %d (welcome received)\n", my_client_id);
+        } else if (head->type == PACKET_VOXEL_DATA) {
+            net_apply_voxel_packet(buffer, len);
         } else {
             unsigned int now_ms = SDL_GetTicks();
             if (net_should_log_every(&net_diag.last_invalid_packet_log_ms, 1000, now_ms)) {

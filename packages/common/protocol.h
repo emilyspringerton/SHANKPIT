@@ -28,7 +28,26 @@
 #define PACKET_USERCMD 1
 #define PACKET_SNAPSHOT 2
 #define PACKET_WELCOME  3
-#define PACKET_DISCONNECT 4
+#define PACKET_VOXEL_DATA    4
+#define PACKET_IMPACT        5
+#define PACKET_SCENE_CHANGE  6
+
+#define VOXEL_CHUNK_SIZE            16
+#define VOXEL_MAX_BLOCKS_PER_CHUNK  512
+#define VOXEL_BLOCK_LOG             17
+#define VOXEL_BLOCK_LEAF            18
+#define VOXEL_CHUNK_CACHE_SIZE      32
+
+typedef struct {
+    int            active;
+    int            chunk_x;
+    int            chunk_z;
+    int            block_count;
+    unsigned char  bx[VOXEL_MAX_BLOCKS_PER_CHUNK];
+    unsigned char  by[VOXEL_MAX_BLOCKS_PER_CHUNK];
+    unsigned char  bz[VOXEL_MAX_BLOCKS_PER_CHUNK];
+    unsigned short block_id[VOXEL_MAX_BLOCKS_PER_CHUNK];
+} VoxelChunkCache;
 
 #define STATE_ALIVE 0
 #define STATE_DEAD  1

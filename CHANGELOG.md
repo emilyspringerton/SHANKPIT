@@ -2,6 +2,9 @@
 
 ## Recent changes
 
+### 2026-06-12 (continued 2)
+- Implemented voxel chunk rendering in C client (THE_BRIDGE_SPEC.md). Resolved `PACKET_DISCONNECT=4` / `PacketVoxelData=4` type ID conflict by renaming DISCONNECT to `PACKET_VOXEL_DATA=4` in `packages/common/protocol.h` (DISCONNECT was never handled by the client). Added `PACKET_IMPACT=5`, `PACKET_SCENE_CHANGE=6`, `VoxelChunkCache` typedef, and voxel constants to protocol.h. Added 32-slot `g_voxel_chunks` cache, `net_apply_voxel_packet()` parser (parses chunk_x/z + block array from 16-byte header + 6-byte blocks), `PACKET_VOXEL_DATA` handler in `net_tick()`, and `draw_voxel_chunks()` renderer (retro brutalist style: GL_QUADS body + GL_LINE_LOOP neon wireframe; logs=brown/amber, leaves=forest green). Render call inserted after `draw_map()` in draw_scene. Go server builds clean, packet type IDs now match across C and Go.
+
 ### 2026-06-12 (continued)
 - Fixed buggy jitter: added velocity-based extrapolation for all buggies between server snapshots. Added `snap_x/y/z`, `snap_vx/vy/vz`, `snap_yaw`, `snap_yaw_rate_dps`, `snap_recv_ms` to `BuggyState` (local only, not in `NetBuggy`). On each snapshot receive, these are set as an anchor. `buggy_advance_remote_positions()` is called every game tick and extrapolates position + yaw from the anchor, capped at 150 ms. Prevents the hard-position-snap that caused visible stutter at ~32 ms snapshot intervals.
 - Fixed voxworld FPS drop: `draw_voxworld_grass_overlay` radius reduced from 900 to 600 units (~55% fewer candidate positions). Added early distance-squared reject before any terrain query to avoid sqrtf on grid cells outside the circle. Smoothstep fade adjusted to match new radius.
