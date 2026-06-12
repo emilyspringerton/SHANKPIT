@@ -2,6 +2,9 @@
 
 ## Recent changes
 
+### 2026-06-12 (continued 3)
+- True lobby + CTF matchmaker. Server: connecting clients placed in DM warm-up (SCENE_DUST_COMPOUND=3) immediately; mode byte from PacketConnect (buf[12]) parsed and stored in clientInfo.requestedMode. matchmaker struct tracks ctfQueue; when ≥2 CTF players queued → match fires, all moved to SCENE_STADIUM=1 via PacketSceneChange with gameMode byte. sendWelcome extended 12→13 bytes (payload[9]=sceneID, payload[12]=gameMode). sendSceneChange extended 14→15 bytes (payload[14]=gameMode). GameMode constants added to packages2/common. Client: LOBBY_JOIN now sends MODE_CTF (label "FIND CTF"); PacketSceneChange handler in net_tick applies new scene + game_mode + player spawn position; animated "SEARCHING FOR CTF..." HUD banner shown while in DM warm-up; live CTF score header (BLUE N — N RED) shown once matched into MODE_CTF.
+
 ### 2026-06-12 (continued 2)
 - Implemented voxel chunk rendering in C client (THE_BRIDGE_SPEC.md). Resolved `PACKET_DISCONNECT=4` / `PacketVoxelData=4` type ID conflict by renaming DISCONNECT to `PACKET_VOXEL_DATA=4` in `packages/common/protocol.h` (DISCONNECT was never handled by the client). Added `PACKET_IMPACT=5`, `PACKET_SCENE_CHANGE=6`, `VoxelChunkCache` typedef, and voxel constants to protocol.h. Added 32-slot `g_voxel_chunks` cache, `net_apply_voxel_packet()` parser (parses chunk_x/z + block array from 16-byte header + 6-byte blocks), `PACKET_VOXEL_DATA` handler in `net_tick()`, and `draw_voxel_chunks()` renderer (retro brutalist style: GL_QUADS body + GL_LINE_LOOP neon wireframe; logs=brown/amber, leaves=forest green). Render call inserted after `draw_map()` in draw_scene. Go server builds clean, packet type IDs now match across C and Go.
 
