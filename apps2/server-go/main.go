@@ -136,6 +136,10 @@ func main() {
 	go broadcastSnapshots(conn, &mu, clients)
 
 	for {
+		// 250 ms is the read *poll timeout* — not the tick rate.
+		// The server processes packets immediately as they arrive; this deadline
+		// just prevents the loop from blocking forever when the server is idle.
+		// Snapshots are sent independently by broadcastSnapshots at ~30 Hz.
 		conn.SetReadDeadline(time.Now().Add(250 * time.Millisecond))
 		n, remote, err := conn.ReadFromUDP(buf)
 		if err != nil {
@@ -288,11 +292,12 @@ func sendSceneChange(conn *net.UDPConn, remote *net.UDPAddr, sceneID int, pos sy
 	_, _ = conn.WriteToUDP(payload, remote)
 }
 
-// broadcastSnapshots runs at 20Hz and sends each client a PacketSnapshot of all peers
-// in their scene. Per-entity: clientID(1) + sceneID(1) + x(4) + y(4) + z(4) + yaw(4) = 18 bytes.
+// broadcastSnapshots runs at ~30Hz (matching the C server's SERVER_SNAPSHOT_INTERVAL_TICKS=2
+// at 60Hz tick = 32ms) and sends each client a PacketSnapshot of peers in the same scene.
+// Per-entity: clientID(1) + sceneID(1) + x(4) + y(4) + z(4) + yaw(4) = 18 bytes.
 func broadcastSnapshots(conn *net.UDPConn, mu *sync.Mutex, clients map[string]clientInfo) {
 	const entitySize = 18
-	ticker := time.NewTicker(50 * time.Millisecond)
+	ticker := time.NewTicker(33 * time.Millisecond)
 	defer ticker.Stop()
 	for range ticker.C {
 		mu.Lock()

@@ -1901,7 +1901,8 @@ static void draw_voxworld_grass_overlay(const RetroLightingState *lighting, cons
     if (!t || !t->heights) return;
 
     const float spacing = 30.0f;
-    const float radius = 900.0f;
+    const float radius = 600.0f;  /* was 900 — reduced to cut grass quad count ~55% */
+    const float radius2 = radius * radius;
     const float start_x = floorf((viewer->x - radius) / spacing) * spacing;
     const float end_x = ceilf((viewer->x + radius) / spacing) * spacing;
     const float start_z = floorf((viewer->z - radius) / spacing) * spacing;
@@ -1916,6 +1917,13 @@ static void draw_voxworld_grass_overlay(const RetroLightingState *lighting, cons
             float jz = (grass_hash01(x, z, 2.0f) - 0.5f) * spacing * 0.72f;
             float gx = x + jx;
             float gz = z + jz;
+            /* Fast reject: grid cell corners can be inside the bounding box but
+               outside the circular draw radius. Reject before any terrain query. */
+            float dist_x = gx - viewer->x;
+            float dist_z = gz - viewer->z;
+            float dist2 = dist_x * dist_x + dist_z * dist_z;
+            if (dist2 > radius2) continue;
+
             if (!terrain_contains_world(t, gx, gz)) continue;
 
             float mask = voxworld_canyon_grass_mask(gx, gz);
@@ -1927,10 +1935,8 @@ static void draw_voxworld_grass_overlay(const RetroLightingState *lighting, cons
             if (ny < 0.72f) continue;
 
             float y = terrain_sample_height(t, gx, gz) + 0.08f;
-            float dist_x = gx - viewer->x;
-            float dist_z = gz - viewer->z;
-            float dist = sqrtf(dist_x * dist_x + dist_z * dist_z);
-            float far_fade = 1.0f - smoothstepf(640.0f, radius, dist);
+            float dist = sqrtf(dist2);
+            float far_fade = 1.0f - smoothstepf(480.0f, radius, dist);
             if (far_fade <= 0.02f) continue;
 
             float density_gate = 0.62f + 0.38f * far_fade;
@@ -5907,6 +5913,18 @@ void net_process_snapshot(char *buffer, int len) {
             cursor += (int)sizeof(NetBuggy);
             if (nb->id >= MAX_BUGGIES) continue;
             BuggyState *b = &local_state.buggies[nb->id];
+            unsigned int snap_now_ms = SDL_GetTicks();
+            /* Compute yaw rate from consecutive snapshots for extrapolation. */
+            if (b->snap_recv_ms > 0 && snap_now_ms > b->snap_recv_ms &&
+                    (snap_now_ms - b->snap_recv_ms) < 200) {
+                float snap_dt = (float)(snap_now_ms - b->snap_recv_ms) * 0.001f;
+                float dyaw = nb->yaw - b->snap_yaw;
+                while (dyaw > 180.0f) dyaw -= 360.0f;
+                while (dyaw < -180.0f) dyaw += 360.0f;
+                b->snap_yaw_rate_dps = dyaw / snap_dt;
+            } else {
+                b->snap_yaw_rate_dps = 0.0f;
+            }
             b->active = nb->active;
             b->id = nb->id;
             b->scene_id = nb->scene_id;
@@ -5918,6 +5936,11 @@ void net_process_snapshot(char *buffer, int len) {
             b->roll = nb->roll;
             b->steer = nb->steer;
             b->occupant_player_id = nb->occupant_player_id;
+            /* Save snap anchor for velocity extrapolation between snapshots. */
+            b->snap_x = nb->x; b->snap_y = nb->y; b->snap_z = nb->z;
+            b->snap_vx = nb->vx; b->snap_vy = nb->vy; b->snap_vz = nb->vz;
+            b->snap_yaw = nb->yaw;
+            b->snap_recv_ms = snap_now_ms;
             if (b->occupant_player_id > 0 && b->occupant_player_id < MAX_CLIENTS) {
                 PlayerState *occ = &local_state.players[b->occupant_player_id];
                 occ->in_vehicle = 1;
@@ -6068,6 +6091,25 @@ static PlayerState render_prev_players[MAX_CLIENTS];
 
 static void snapshot_prev_players(void) {
     memcpy(render_prev_players, local_state.players, sizeof(render_prev_players));
+}
+
+/* Extrapolate all active buggy positions by their snapshot velocity so they
+   move smoothly between server snapshots instead of hard-snapping. */
+static void buggy_advance_remote_positions(unsigned int now_ms) {
+    for (int i = 0; i < MAX_BUGGIES; i++) {
+        BuggyState *b = &local_state.buggies[i];
+        if (!b->active || b->snap_recv_ms == 0) continue;
+        float dt = (float)(now_ms - b->snap_recv_ms) * 0.001f;
+        if (dt <= 0.0f) continue;
+        if (dt > 0.15f) dt = 0.15f; /* cap: don't extrapolate past 150 ms */
+        b->x = b->snap_x + b->snap_vx * dt;
+        b->y = b->snap_y + b->snap_vy * dt;
+        b->z = b->snap_z + b->snap_vz * dt;
+        float yaw = b->snap_yaw + b->snap_yaw_rate_dps * dt;
+        while (yaw >= 360.0f) yaw -= 360.0f;
+        while (yaw <   0.0f) yaw += 360.0f;
+        b->yaw = yaw;
+    }
 }
 
 int main(int argc, char* argv[]) {
@@ -6433,6 +6475,7 @@ int main(int argc, char* argv[]) {
                 }
                 client_decay_pending_correction(now_ms);
                 net_apply_remote_interpolation(now_ms);
+                buggy_advance_remote_positions(now_ms);
                 net_emit_client_summaries(now_ms);
             } else {
                 if (local_state.game_mode == MODE_STORY &&

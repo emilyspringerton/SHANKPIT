@@ -268,6 +268,12 @@ typedef struct {
     int health;
     int occupant_player_id;
     int grounded;
+    /* extrapolation anchor — not serialised, local client only */
+    float snap_x, snap_y, snap_z;
+    float snap_vx, snap_vy, snap_vz;
+    float snap_yaw;
+    float snap_yaw_rate_dps; /* deg/s measured from consecutive snapshots */
+    unsigned int snap_recv_ms;
 } BuggyState;
 
 typedef enum {

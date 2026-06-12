@@ -2,6 +2,11 @@
 
 ## Recent changes
 
+### 2026-06-12 (continued)
+- Fixed buggy jitter: added velocity-based extrapolation for all buggies between server snapshots. Added `snap_x/y/z`, `snap_vx/vy/vz`, `snap_yaw`, `snap_yaw_rate_dps`, `snap_recv_ms` to `BuggyState` (local only, not in `NetBuggy`). On each snapshot receive, these are set as an anchor. `buggy_advance_remote_positions()` is called every game tick and extrapolates position + yaw from the anchor, capped at 150 ms. Prevents the hard-position-snap that caused visible stutter at ~32 ms snapshot intervals.
+- Fixed voxworld FPS drop: `draw_voxworld_grass_overlay` radius reduced from 900 to 600 units (~55% fewer candidate positions). Added early distance-squared reject before any terrain query to avoid sqrtf on grid cells outside the circle. Smoothstep fade adjusted to match new radius.
+- Go server snapshot rate increased from 20 Hz (50 ms) to ~30 Hz (33 ms) to match the C server's `SERVER_SNAPSHOT_INTERVAL_TICKS=2` at 60 Hz. Added comment clarifying the 250 ms `SetReadDeadline` is a read poll timeout, not the tick rate.
+
 ### 2026-06-12
 - Verified Dragonfly Go backend (apps2/server-go) builds clean and serves UDP on :6969. PacketConnect → PacketWelcome handshake confirmed. VoxelData streaming, portal travel (BTN_USE → system.PortalTriggered → ResolvePortalDestination → sendSceneChange), and 20Hz per-scene snapshot broadcast all operational. Milestones 1 and 2 (portal travel + per-player scene isolation + cross-scene attack guard) confirmed complete per docs2/NORTHSTAR.md.
 - Architecture memo filed to Emily Prime (EMILY/signals/tasks/) requesting: WorldBackend Go interface spec, GoblinFoxDragon repo relationship clarification, season lineage snapshot schema, and Construct expansion plan. Emily to doc-first before any Milestone 3 implementation.
