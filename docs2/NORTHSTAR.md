@@ -142,17 +142,49 @@ These are tracked in `SHANKPIT_DRAGONSNSHIT_SYSTEMS_SPEC.md` section 4. Summary:
 
 ---
 
+## Steam Launch Plan (Revenue Track 1)
+
+**Strategy:** Ship Early Access with FPS core only. Dragonfly/BedWars lands as major post-launch update.
+No need to wait for full persistent world — the FPS core is already differentiated.
+
+### Milestone 5: Steam EA Build (FPS core only)
+- Client-side portal travel ✓ (PACKET_SCENE_CHANGE received + client_apply_scene_id + travel overlay)
+- Per-player physics isolation ✓ (C server calls phys_set_scene(p->scene_id) per player)
+- Cross-scene attack prevention ✓ (Go server, Milestone 2)
+- Package: headless Go server binary + C client build for Linux/Windows
+- Target: 4-player LAN/internet session without local setup beyond running two binaries
+- Price point: $9.99 USD EA
+
+### Milestone 6: Steam Direct + Launch
+- Steam Direct account ($100, human action required)
+- Page assets: 3 screenshots, 30-second capsule trailer, short description
+- Launch: EA store page live, builds uploaded via Steamworks SDK
+- BLOCKED until: Milestone 5 ✓ + Steam account created (human action)
+
+### Milestone 7: BedWars + Dragonfly (post-EA major update)
+- GoblinFoxDragon DragonflyBackend implements WorldBackend interface
+- Shankpit client connects to Dragonfly world, mines/places/destroys blocks
+- BedWars game mode: beds, island progression, team elimination
+- Season 1 lineage: snapshot written at season-end, loadable for next season
+
+---
+
 ## What "Done" Looks Like
 
-**FPS Core done:** Scenes fully traversable, portal travel server-authoritative, per-player physics isolated, cross-scene attacks impossible.
+**FPS Core done (Milestone 5 EA):** Scenes fully traversable ✓, portal travel server-authoritative ✓,
+per-player physics isolated ✓, cross-scene attacks impossible ✓. Packaged into standalone EA build.
 
-**Dragonfly bridge done:** Minimal `world_backend_*` interface defined and stubbed in the Shankpit server. Construct includes all bridge surfaces. A Dragonfly-backed world boots and accepts a Shankpit client via the bridge protocol.
+**Dragonfly bridge done (Milestone 7):** Minimal `world_backend_*` interface defined and stubbed.
+Construct includes all bridge surfaces. A Dragonfly-backed world boots and accepts a Shankpit client.
 
-**BedWars / destructible modes done:** A Shankpit client connects to a Dragonfly world, can mine/place/destroy blocks within game rules, and voxel state is authoritative and persistent across sessions.
+**BedWars / destructible modes done (Milestone 7):** A Shankpit client connects to a Dragonfly world,
+can mine/place/destroy blocks within game rules, voxel state authoritative and persistent.
 
-**Season lineage done:** A season-end snapshot is written. A subsequent server spin-up can read the snapshot and present lineage data for players who opt in. Zone history is queryable.
+**Season lineage done:** A season-end snapshot is written. A subsequent server spin-up can read the
+snapshot and present lineage data. Zone history is queryable.
 
-**Documentation done:** The Construct includes all active subsystems. A new agent dropped into the repo can reconstruct the full system from docs alone. Every spec in `docs2/specs/` is current with the code it describes.
+**Documentation done:** The Construct includes all active subsystems. A new agent dropped into the repo
+can reconstruct the full system from docs alone. Every spec in `docs2/specs/` is current.
 
 ---
 
