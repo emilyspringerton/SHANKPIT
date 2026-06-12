@@ -24,6 +24,13 @@ const (
 )
 
 const (
+	GameModeDeathmatch uint8 = 0
+	GameModeTDM        uint8 = 1
+	GameModeSurvival   uint8 = 2
+	GameModeCTF        uint8 = 3
+)
+
+const (
 	WpnKnife   = 0
 	WpnMagnum  = 1
 	WpnAR      = 2

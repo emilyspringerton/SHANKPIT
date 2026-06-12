@@ -104,15 +104,64 @@ type chunkCoord struct {
 	z int
 }
 
+const (
+	ctfMinPlayers = 2           // start a CTF match when this many players are queued
+	dmWarmupScene = 3           // SCENE_DUST_COMPOUND: where players warm up while searching
+	ctfScene      = 1           // SCENE_STADIUM: where CTF matches take place
+)
+
 type clientInfo struct {
 	id                  uint8
 	lastVoxelSent       time.Time
 	chunkIndex          int
 	sceneID             int
+	requestedMode       uint8
 	portalCooldownUntil time.Time
 	pos                 system.Vec3
 	yaw                 float32
 	remote              *net.UDPAddr
+}
+
+// matchmaker queues players for specific game modes. Players immediately join a
+// DM warm-up session; once enough players share a mode, they are moved together.
+type matchmaker struct {
+	mu       sync.Mutex
+	ctfQueue []string // client remote-addr keys
+}
+
+func (m *matchmaker) enqueue(key string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, k := range m.ctfQueue {
+		if k == key {
+			return
+		}
+	}
+	m.ctfQueue = append(m.ctfQueue, key)
+}
+
+func (m *matchmaker) remove(key string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, k := range m.ctfQueue {
+		if k == key {
+			m.ctfQueue = append(m.ctfQueue[:i], m.ctfQueue[i+1:]...)
+			return
+		}
+	}
+}
+
+// pollForMatch returns the matched client keys and clears the queue if the
+// threshold is met, otherwise returns nil.
+func (m *matchmaker) pollForMatch() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.ctfQueue) < ctfMinPlayers {
+		return nil
+	}
+	matched := append([]string{}, m.ctfQueue...)
+	m.ctfQueue = m.ctfQueue[:0]
+	return matched
 }
 
 func main() {
@@ -132,6 +181,7 @@ func main() {
 	clients := make(map[string]clientInfo)
 	nextClientID := uint8(0)
 	var mu sync.Mutex
+	mm := &matchmaker{}
 
 	go broadcastSnapshots(conn, &mu, clients)
 
@@ -156,18 +206,48 @@ func main() {
 		const userCmdSize = 36
 		switch buf[0] {
 		case common.PacketConnect:
+			var requestedMode uint8 = common.GameModeDeathmatch
+			if n > netHeaderSize {
+				requestedMode = buf[netHeaderSize]
+			}
 			mu.Lock()
 			info, ok := clients[remote.String()]
 			if !ok {
-				info = clientInfo{id: nextClientID, remote: remote}
+				info = clientInfo{
+					id:            nextClientID,
+					remote:        remote,
+					sceneID:       dmWarmupScene,
+					requestedMode: requestedMode,
+				}
 				if nextClientID < 255 {
 					nextClientID++
 				}
 				clients[remote.String()] = info
 			}
 			mu.Unlock()
-			sendWelcome(conn, remote, info.id)
+			// Always place the connecting player in the DM warm-up session immediately.
+			sendWelcome(conn, remote, info.id, dmWarmupScene, common.GameModeDeathmatch)
 			sendVoxelPacket(conn, remote, info)
+			fmt.Printf("[LOBBY] client=%d addr=%s requested_mode=%d → warm-up dm scene=%d\n",
+				info.id, remote.String(), requestedMode, dmWarmupScene)
+
+			if requestedMode == common.GameModeCTF {
+				mm.enqueue(remote.String())
+				fmt.Printf("[MATCHMAKER] CTF queue size=%d threshold=%d\n", len(mm.ctfQueue)+1, ctfMinPlayers)
+				if matched := mm.pollForMatch(); matched != nil {
+					fmt.Printf("[MATCHMAKER] CTF match starting — moving %d players to scene=%d\n", len(matched), ctfScene)
+					spawn := system.Vec3{X: 0, Y: 5, Z: 0}
+					mu.Lock()
+					for _, key := range matched {
+						if ci, ok2 := clients[key]; ok2 {
+							ci.sceneID = ctfScene
+							clients[key] = ci
+							sendSceneChange(conn, ci.remote, ctfScene, spawn, common.GameModeCTF)
+						}
+					}
+					mu.Unlock()
+				}
+			}
 		case common.PacketUserCmd:
 			if n < netHeaderSize+1+userCmdSize {
 				continue
@@ -211,7 +291,7 @@ func main() {
 						info.sceneID = dest.Scene
 						info.pos = system.Vec3{X: dest.X, Y: dest.Y, Z: dest.Z}
 						info.portalCooldownUntil = time.Now().Add(time.Second)
-						sendSceneChange(conn, remote, dest.Scene, info.pos)
+						sendSceneChange(conn, remote, dest.Scene, info.pos, common.GameModeDeathmatch)
 					}
 				}
 			}
@@ -222,13 +302,17 @@ func main() {
 	}
 }
 
-func sendWelcome(conn *net.UDPConn, remote *net.UDPAddr, id uint8) {
-	payload := make([]byte, 12)
+// sendWelcome sends a 13-byte welcome packet.
+// Layout mirrors the C NetHeader (12 bytes with padding) + 1 game_mode byte:
+//   [0]=type [1]=clientID [2:4]=seq [4:8]=timestamp [8]=entity_count [9]=scene_id [10:12]=pad [12]=game_mode
+func sendWelcome(conn *net.UDPConn, remote *net.UDPAddr, id uint8, sceneID int, gameMode uint8) {
+	payload := make([]byte, 13)
 	payload[0] = common.PacketWelcome
 	payload[1] = id
-	binary.LittleEndian.PutUint16(payload[2:], 0)
 	binary.LittleEndian.PutUint32(payload[4:], uint32(time.Now().UnixMilli()))
-	payload[8] = 0
+	payload[8] = 0 // entity_count
+	payload[9] = uint8(sceneID)
+	payload[12] = gameMode
 	_, _ = conn.WriteToUDP(payload, remote)
 }
 
@@ -280,15 +364,16 @@ func sendImpact(conn *net.UDPConn, remote *net.UDPAddr, pos system.Vec3, hitEnti
 	_, _ = conn.WriteToUDP(payload, remote)
 }
 
-// sendSceneChange tells a client their new scene and spawn position after portal travel.
-// Format: type(1) + sceneID(1) + x(4) + y(4) + z(4) = 14 bytes.
-func sendSceneChange(conn *net.UDPConn, remote *net.UDPAddr, sceneID int, pos system.Vec3) {
-	payload := make([]byte, 14)
+// sendSceneChange tells a client their new scene, spawn position, and game mode.
+// Format: type(1) + sceneID(1) + x(4) + y(4) + z(4) + gameMode(1) = 15 bytes.
+func sendSceneChange(conn *net.UDPConn, remote *net.UDPAddr, sceneID int, pos system.Vec3, gameMode uint8) {
+	payload := make([]byte, 15)
 	payload[0] = common.PacketSceneChange
 	payload[1] = uint8(sceneID)
 	binary.LittleEndian.PutUint32(payload[2:], math.Float32bits(float32(pos.X)))
 	binary.LittleEndian.PutUint32(payload[6:], math.Float32bits(float32(pos.Y)))
 	binary.LittleEndian.PutUint32(payload[10:], math.Float32bits(float32(pos.Z)))
+	payload[14] = gameMode
 	_, _ = conn.WriteToUDP(payload, remote)
 }
 

@@ -1101,7 +1101,7 @@ typedef enum {
 char lobby_labels_mutable[LOBBY_COUNT][64];
 
 static const char *LOBBY_LABELS[LOBBY_COUNT] = {
-    "JOIN",
+    "FIND CTF",
     "TDMO",
     "STORY",
     "SOLO",
@@ -1234,7 +1234,7 @@ static void lobby_apply_ui_state() {
     if (strcmp(ui_state.active_mode_id, "mode.join") == 0) {
         app_state = STATE_GAME_NET;
         reset_client_render_state_for_net();
-        net_requested_mode = MODE_DEATHMATCH;
+        net_requested_mode = MODE_CTF;
         net_connect();
         return;
     }
@@ -1313,7 +1313,7 @@ static void lobby_start_action(int action) {
     if (action == LOBBY_JOIN) {
         app_state = STATE_GAME_NET;
         reset_client_render_state_for_net();
-        net_requested_mode = MODE_DEATHMATCH;
+        net_requested_mode = MODE_CTF;
         net_connect();
     } else if (action == LOBBY_TDMO) {
         app_state = STATE_GAME_NET;
@@ -4377,6 +4377,33 @@ void draw_hud(PlayerState *p) {
             draw_string("MISSION FAILED", 520, 682, 7);
         }
         draw_story_boss_hud(&local_state.story_boss);
+    } else if (local_state.game_mode == MODE_DEATHMATCH && app_state == STATE_GAME_NET
+               && net_requested_mode == MODE_CTF) {
+        /* DM warm-up while matchmaker searches for a CTF game */
+        unsigned int now_ms = SDL_GetTicks();
+        int dot_count = (now_ms / 400) % 4;
+        char search_buf[64];
+        snprintf(search_buf, sizeof(search_buf), "SEARCHING FOR CTF%s",
+                 dot_count == 0 ? "" : dot_count == 1 ? "." : dot_count == 2 ? ".." : "...");
+        glColor4f(0.08f, 0.08f, 0.10f, 0.62f);
+        glRectf(380.0f, 676.0f, 900.0f, 718.0f);
+        glColor3f(0.40f, 1.0f, 0.58f);
+        draw_string(search_buf, 400, 690, 6);
+        glColor3f(0.65f, 0.75f, 0.70f);
+        draw_string("PLAYING DEATHMATCH WHILE YOU WAIT", 412, 668, 3.5f);
+    } else if (local_state.game_mode == MODE_CTF && app_state == STATE_GAME_NET) {
+        /* Live CTF match — show capture scores */
+        char score_buf[96];
+        snprintf(score_buf, sizeof(score_buf), "CTF  BLUE %d  —  %d  RED",
+                 local_state.team_scores[1], local_state.team_scores[0]);
+        glColor3f(0.40f, 0.75f, 1.0f);
+        draw_string(score_buf, 440, 682, 7);
+        glColor3f(0.82f, 0.86f, 0.94f);
+        draw_string("CAPTURE THE FLAG · FIRST TO 3", 442, 658, 4);
+        if (p->carried_flag_team_id >= 0) {
+            glColor3f(1.0f, 0.85f, 0.2f);
+            draw_string("YOU HAVE THE FLAG", 530, 634, 5);
+        }
     }
     float x0 = 50.0f, x1 = vs0_art_direction_enabled ? 220.0f : 250.0f;
     float y_health0 = 50.0f, y_health1 = vs0_art_direction_enabled ? 66.0f : 70.0f;
@@ -6160,6 +6187,24 @@ void net_tick() {
             printf("✅ JOINED SERVER AS CLIENT ID: %d (welcome received)\n", my_client_id);
         } else if (head->type == PACKET_VOXEL_DATA) {
             net_apply_voxel_packet(buffer, len);
+        } else if (head->type == PACKET_SCENE_CHANGE) {
+            if (len >= 14) {
+                int new_scene = (unsigned char)buffer[1];
+                float sx = 0.0f, sy = 0.0f, sz = 0.0f;
+                memcpy(&sx, buffer + 2,  4);
+                memcpy(&sy, buffer + 6,  4);
+                memcpy(&sz, buffer + 10, 4);
+                if (len >= 15) local_state.game_mode = (unsigned char)buffer[14];
+                client_apply_scene_id(new_scene, SDL_GetTicks());
+                if (my_client_id >= 0 && my_client_id < MAX_CLIENTS) {
+                    PlayerState *lp = &local_state.players[my_client_id];
+                    lp->x = sx; lp->y = sy; lp->z = sz;
+                    lp->vx = lp->vy = lp->vz = 0.0f;
+                    lp->scene_id = new_scene;
+                }
+                NET_CLIENT_LOG("SCENE_CHANGE scene=%d mode=%d spawn=(%.1f,%.1f,%.1f)",
+                               new_scene, local_state.game_mode, sx, sy, sz);
+            }
         } else {
             unsigned int now_ms = SDL_GetTicks();
             if (net_should_log_every(&net_diag.last_invalid_packet_log_ms, 1000, now_ms)) {
