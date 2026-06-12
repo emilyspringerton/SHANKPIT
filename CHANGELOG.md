@@ -2,6 +2,10 @@
 
 ## Recent changes
 
+### 2026-06-12
+- Verified Dragonfly Go backend (apps2/server-go) builds clean and serves UDP on :6969. PacketConnect → PacketWelcome handshake confirmed. VoxelData streaming, portal travel (BTN_USE → system.PortalTriggered → ResolvePortalDestination → sendSceneChange), and 20Hz per-scene snapshot broadcast all operational. Milestones 1 and 2 (portal travel + per-player scene isolation + cross-scene attack guard) confirmed complete per docs2/NORTHSTAR.md.
+- Architecture memo filed to Emily Prime (EMILY/signals/tasks/) requesting: WorldBackend Go interface spec, GoblinFoxDragon repo relationship clarification, season lineage snapshot schema, and Construct expansion plan. Emily to doc-first before any Milestone 3 implementation.
+
 ### 2026-06-09
 - Cross-scene attack guard: `gameWorld` replaces the `world{}` stub in `apps2/server-go`. `RayTrace` iterates same-scene clients only (skips clients with a different `sceneID`), using ray-sphere intersection (hitbox radius 0.4, sphere centered at chest height). Shooter is excluded. Per-shot `shankPlayer` now uses real client position and `sceneID` from `clientInfo`.
 - Added `Vec3.Sub`, `Vec3.Len`, `Vec3.Dot` to `server/system/ballistics.go` for ray-sphere math.
