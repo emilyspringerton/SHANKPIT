@@ -3,6 +3,7 @@
 ## Recent changes
 
 ### 2026-06-12 (continued 3)
+- Construct Phase 508: expanded to include Go server (apps2/server-go/main.go), portal system (server/system/portal.go), WorldBackend interface (backend.go), and WorldBackend spec --no-apple
 - Season lineage snapshot schema spec at docs2/specs/SEASON_LINEAGE_SCHEMA_SPEC.md: player records, zone records, events, lineage block, v0.1 --no-apple
 - Document GoblinFoxDragon repo relationship in NORTHSTAR.md: FPS fork (SHANKPIT) vs persistent world fork (GoblinFoxDragon), intended merge at WorldBackend seam --no-apple
 - Milestone 3: WorldBackend Go interface + StaticBackend; portal travel wired through backend in apps2/server-go/main.go; spec at docs2/specs/WORLD_BACKEND_INTERFACE_SPEC.md; 3 new tests --no-apple
