@@ -2,6 +2,9 @@
 
 ## Recent changes
 
+### 2026-06-12 (continued 4)
+- feat(s19-04): EA build packaging — Makefile targets: go-server (GOWORK=off), ea (Linux dist), ea-windows (mingw cross-compile); docs/EA_BUILD.md install/run guide; 4-player LAN/internet session instructions
+
 ### 2026-06-12 (continued 3)
 - docs: Steam launch plan added to NORTHSTAR — M5 EA build (FPS core), M6 Steam Direct, M7 BedWars post-launch; S19-01/02 verified implemented
 - Construct Phase 508: expanded to include Go server (apps2/server-go/main.go), portal system (server/system/portal.go), WorldBackend interface (backend.go), and WorldBackend spec --no-apple
