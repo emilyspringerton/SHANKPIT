@@ -57,3 +57,11 @@ cd /home/fatbaby/EMILY && git add BACKLOG.md && git commit -m "backlog: ✓ <ite
 - Portal system: `server/system/portal.go` — 8 scenes, 10 portals, full routing table
 - Bridge protocol: `docs2/specs/THE_BRIDGE_SPEC.md` — voxel data via `PACKET_VOXEL_DATA`
 - Northstar: `docs2/NORTHSTAR.md` — current status: Milestones 1+2 complete, Milestone 3 next
+
+## Apple Filing Protocol
+
+After any meaningful change, file an Apple:
+```bash
+emily apples post -t completion "<title>" "<body with commit hash>"
+```
+Then mark the item done in EMILY/BACKLOG.md and commit: `git add BACKLOG.md && git commit && git push`
