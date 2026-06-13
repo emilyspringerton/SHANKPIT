@@ -3169,14 +3169,103 @@ static void draw_player_skin_cyborg(PlayerState *p, float draw_pitch, float draw
     glScalef(0.8f, 0.8f, 0.8f); draw_gun_model(p->current_weapon); glPopMatrix();
 }
 
+static void draw_bat_head(void) {
+    glColor3f(0.07f, 0.05f, 0.09f);
+    draw_box(0.60f, 0.68f, 0.58f);
+    draw_box_outline(0.60f, 0.68f, 0.58f);
+    glColor3f(0.06f, 0.04f, 0.08f);
+    glPushMatrix(); glTranslatef(-0.20f, 0.46f, -0.02f); glRotatef(10.0f, 0, 0, 1); draw_box(0.13f, 0.34f, 0.11f); draw_box_outline(0.13f, 0.34f, 0.11f); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.20f, 0.46f, -0.02f); glRotatef(-10.0f, 0, 0, 1); draw_box(0.13f, 0.34f, 0.11f); draw_box_outline(0.13f, 0.34f, 0.11f); glPopMatrix();
+    glColor3f(0.16f, 0.05f, 0.05f);
+    glPushMatrix(); glTranslatef(0.0f, -0.10f, 0.32f); draw_box(0.20f, 0.12f, 0.09f); draw_box_outline(0.20f, 0.12f, 0.09f); glPopMatrix();
+    glColor3f(0.72f, 0.07f, 0.07f);
+    glPushMatrix(); glTranslatef(-0.14f, 0.05f, 0.31f); draw_box(0.09f, 0.07f, 0.04f); draw_box_outline(0.09f, 0.07f, 0.04f); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.14f, 0.05f, 0.31f); draw_box(0.09f, 0.07f, 0.04f); draw_box_outline(0.09f, 0.07f, 0.04f); glPopMatrix();
+}
+
+static void draw_bat_arm(int right_side, const PlayerAnimPose *pose, float draw_pitch, float draw_recoil, int weapon_id) {
+    float side = right_side ? 1.0f : -1.0f;
+    float shoulder_x = side * RONIN_SLEEVE_OFFSET;
+    float shoulder_y = 1.18f;
+    float shoulder_z = right_side ? 0.14f : -0.04f;
+    float upper_pitch = right_side ? pose->right_upper_arm_pitch : pose->left_upper_arm_pitch;
+    float upper_yaw   = right_side ? pose->right_upper_arm_yaw   : pose->left_upper_arm_yaw;
+    float elbow_pitch = right_side ? pose->right_elbow            : pose->left_elbow;
+
+    glPushMatrix();
+    glTranslatef(shoulder_x, shoulder_y, shoulder_z);
+    glRotatef(upper_yaw, 0, 1, 0);
+    glRotatef(upper_pitch, 1, 0, 0);
+    glRotatef(-side * 6.0f, 0, 0, 1);
+
+    glColor3f(0.09f, 0.07f, 0.11f);
+    draw_player_limb_segment(RONIN_ARM_UPPER_W, RONIN_ARM_UPPER_H, RONIN_ARM_UPPER_D);
+
+    /* Wing membrane panel — extends laterally from the upper arm, rotates with it. */
+    glColor3f(0.05f, 0.03f, 0.07f);
+    glPushMatrix();
+    glTranslatef(side * 0.22f, -RONIN_ARM_UPPER_H * 0.5f, 0.0f);
+    draw_box(0.30f, RONIN_ARM_UPPER_H * 0.88f, 0.06f);
+    draw_box_outline(0.30f, RONIN_ARM_UPPER_H * 0.88f, 0.06f);
+    glPopMatrix();
+
+    glTranslatef(0.0f, -RONIN_ARM_UPPER_H, 0.0f);
+    glRotatef(elbow_pitch, 1, 0, 0);
+    glColor3f(0.09f, 0.07f, 0.11f);
+    draw_player_limb_segment(RONIN_ARM_LOWER_W, RONIN_ARM_LOWER_H, RONIN_ARM_LOWER_D);
+
+    glTranslatef(0.0f, -RONIN_ARM_LOWER_H, 0.10f);
+    glColor3f(0.07f, 0.05f, 0.09f);
+    draw_player_limb_segment(RONIN_HAND_W, RONIN_HAND_H, RONIN_HAND_D);
+
+    if (right_side) {
+        glPushMatrix();
+        glTranslatef(0.07f, -0.03f, 0.42f);
+        glRotatef(7.0f, 0, 1, 0);
+        glRotatef(-6.0f, 0, 0, 1);
+        glRotatef(draw_pitch, 1, 0, 0);
+        glRotatef(-draw_recoil * 10.0f, 1, 0, 0);
+        glTranslatef(0.0f, 0.0f, -draw_recoil * 0.08f);
+        glScalef(0.8f, 0.8f, 0.8f);
+        draw_gun_model(weapon_id);
+        glPopMatrix();
+    }
+    glPopMatrix();
+}
+
 static void draw_player_skin_bat(PlayerState *p, float draw_pitch, float draw_recoil) {
     PlayerAnimPose pose = compute_player_anim_pose(p);
-    draw_ronin_shell_articulated(&pose, draw_pitch, draw_recoil, p->current_weapon);
+
+    /* Torso */
+    glPushMatrix();
+    glTranslatef(0.0f, 0.9f + pose.torso_bob, 0.0f);
+    glRotatef(pose.torso_yaw, 0, 1, 0);
+    glRotatef(pose.torso_pitch, 1, 0, 0);
+    glColor3f(0.08f, 0.06f, 0.10f);
+    draw_box(1.28f, 1.10f, 0.68f);
+    draw_box_outline(1.28f, 1.10f, 0.68f);
+    /* Chest accent */
+    glColor3f(0.20f, 0.04f, 0.04f);
+    glPushMatrix(); glTranslatef(0.0f, 0.28f, 0.36f); draw_box(0.26f, 0.46f, 0.06f); draw_box_outline(0.26f, 0.46f, 0.06f); glPopMatrix();
+    /* Shoulder caps */
+    glColor3f(0.10f, 0.08f, 0.12f);
+    glPushMatrix(); glTranslatef(-RONIN_SHOULDER_PAD_OFFSET, 0.28f, 0.0f); draw_box(0.36f, 0.34f, 0.58f); draw_box_outline(0.36f, 0.34f, 0.58f); glPopMatrix();
+    glPushMatrix(); glTranslatef( RONIN_SHOULDER_PAD_OFFSET, 0.28f, 0.0f); draw_box(0.36f, 0.34f, 0.58f); draw_box_outline(0.36f, 0.34f, 0.58f); glPopMatrix();
+    draw_bat_arm(0, &pose, draw_pitch, draw_recoil, p->current_weapon);
+    draw_bat_arm(1, &pose, draw_pitch, draw_recoil, p->current_weapon);
+    glPopMatrix();
+
+    /* Legs */
+    glColor3f(0.09f, 0.07f, 0.11f);
+    draw_player_leg(0, &pose);
+    draw_player_leg(1, &pose);
+
+    /* Head */
     glPushMatrix();
     glTranslatef(0.0f, 1.85f + pose.torso_bob, 0.0f);
     glRotatef(pose.torso_yaw * 0.35f, 0, 1, 0);
     glRotatef(draw_pitch, 1, 0, 0);
-    draw_storm_mask();
+    draw_bat_head();
     glPopMatrix();
 }
 
