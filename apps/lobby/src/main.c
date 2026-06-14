@@ -112,6 +112,13 @@ float cam_pitch = 0.0f;
 float current_fov = 75.0f;
 static float death_cam_blend = 0.0f;
 
+#define VIRTUAL_W 1280
+#define VIRTUAL_H 720
+static int g_win_w = 1280, g_win_h = 720;
+static int g_vp_x = 0, g_vp_y = 0, g_vp_w = 1280, g_vp_h = 720;
+static int g_fullscreen = 0;
+static SDL_Window *g_win = NULL;
+
 typedef struct VehicleStyle {
     float matte;
     float spec;
@@ -1151,6 +1158,56 @@ static void load_skin_selection() {
     fclose(f);
 }
 
+static void recalc_viewport(void) {
+    float target = (float)VIRTUAL_W / (float)VIRTUAL_H;
+    float actual = (float)g_win_w / (float)g_win_h;
+    if (actual > target) {
+        g_vp_h = g_win_h;
+        g_vp_w = (int)(g_win_h * target);
+        g_vp_x = (g_win_w - g_vp_w) / 2;
+        g_vp_y = 0;
+    } else {
+        g_vp_w = g_win_w;
+        g_vp_h = (int)(g_win_w / target);
+        g_vp_x = 0;
+        g_vp_y = (g_win_h - g_vp_h) / 2;
+    }
+}
+
+static const char *DISPLAY_CONFIG_PATH = "shankpit_display.cfg";
+
+static void save_display_config(void) {
+    FILE *f = fopen(DISPLAY_CONFIG_PATH, "w");
+    if (!f) return;
+    fprintf(f, "%d\n", g_fullscreen);
+    fclose(f);
+}
+
+static void load_display_config(void) {
+    FILE *f = fopen(DISPLAY_CONFIG_PATH, "r");
+    if (!f) return;
+    int fs = 0;
+    if (fscanf(f, "%d", &fs) == 1 && fs) {
+        g_fullscreen = 1;
+        SDL_SetWindowFullscreen(g_win, SDL_WINDOW_FULLSCREEN_DESKTOP);
+        SDL_GetWindowSize(g_win, &g_win_w, &g_win_h);
+    }
+    fclose(f);
+}
+
+static void remap_mouse(int wx, int wy, int *vx, int *vy) {
+    *vx = (int)((float)(wx - g_vp_x) / g_vp_w * VIRTUAL_W);
+    *vy = (int)((float)(g_win_h - wy - g_vp_y) / g_vp_h * VIRTUAL_H);
+}
+
+static void toggle_fullscreen(void) {
+    g_fullscreen = !g_fullscreen;
+    SDL_SetWindowFullscreen(g_win, g_fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+    SDL_GetWindowSize(g_win, &g_win_w, &g_win_h);
+    recalc_viewport();
+    save_display_config();
+}
+
 static int lobby_menu_count() {
     if (ui_use_server && ui_state.entry_count > 0) {
         return ui_state.entry_count + 1;
@@ -1352,7 +1409,7 @@ static void lobby_start_action(int action) {
         SDL_SetRelativeMouseMode(SDL_TRUE);
         glMatrixMode(GL_PROJECTION);
         glLoadIdentity();
-        gluPerspective(75.0, 1280.0/720.0, 0.1, Z_FAR);
+        gluPerspective(75.0, (float)VIRTUAL_W/(float)VIRTUAL_H, 0.1, Z_FAR);
         glMatrixMode(GL_MODELVIEW);
         glEnable(GL_DEPTH_TEST);
     }
@@ -6356,7 +6413,8 @@ int main(int argc, char* argv[]) {
     }
 
     SDL_Init(SDL_INIT_VIDEO);
-    SDL_Window *win = SDL_CreateWindow("SHANKPIT", 100, 100, 1280, 720, SDL_WINDOW_OPENGL);
+    SDL_Window *win = SDL_CreateWindow("SHANKPIT", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+    g_win = win;
     SDL_GL_CreateContext(win);
     proctex_init();
     proc_tex_create(&g_vehicle_noise_tex, 64, 64);
@@ -6370,6 +6428,8 @@ int main(int argc, char* argv[]) {
     
     local_init_match(1, 0);
     load_skin_selection();
+    load_display_config();
+    recalc_viewport();
     lobby_init_labels();
     ui_bridge_init("127.0.0.1", 17777);
     if (ui_bridge_fetch_state(&ui_state)) {
@@ -6399,6 +6459,11 @@ int main(int argc, char* argv[]) {
         SDL_Event e;
         while(SDL_PollEvent(&e)) {
             if(e.type == SDL_QUIT) running = 0;
+            if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_RESIZED) {
+                g_win_w = e.window.data1;
+                g_win_h = e.window.data2;
+                recalc_viewport();
+            }
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED && app_state != STATE_LOBBY) SDL_SetRelativeMouseMode(SDL_TRUE);
             if (e.type == SDL_MOUSEBUTTONDOWN && app_state != STATE_LOBBY) SDL_SetRelativeMouseMode(SDL_TRUE);
             
@@ -6478,7 +6543,11 @@ int main(int argc, char* argv[]) {
                             lobby_selection = lobby_nav_move(lobby_selection, count, 1, 0);
                         }
                         if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) {
-                            lobby_start_action(lobby_selection);
+                            if (e.key.keysym.mod & KMOD_ALT) {
+                                toggle_fullscreen();
+                            } else {
+                                lobby_start_action(lobby_selection);
+                            }
                         }
                     }
                 }
@@ -6489,8 +6558,10 @@ int main(int argc, char* argv[]) {
                     if (skin_menu_scroll > max_scroll) skin_menu_scroll = max_scroll;
                 }
                 if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
-                    float mx = (float)e.button.x;
-                    float my = 720.0f - (float)e.button.y;
+                    int _rmx, _rmy;
+                    remap_mouse(e.button.x, e.button.y, &_rmx, &_rmy);
+                    float mx = (float)_rmx;
+                    float my = (float)_rmy;
                     if (skin_menu_open) {
                         int back_hit = skin_hit_test_back_row(mx, my, 790.0f, 455.0f, 290.0f, 50.0f, 60.0f);
                         if (back_hit == SKIN_MENU_BACK) {
@@ -6589,6 +6660,8 @@ int main(int argc, char* argv[]) {
                     } else if (e.key.keysym.sym == SDLK_F12) {
                         vs0_art_direction_enabled = !vs0_art_direction_enabled;
                         printf("[VS0 ART] enabled=%s\n", vs0_art_direction_enabled ? "on" : "off");
+                    } else if ((e.key.keysym.mod & KMOD_ALT) && e.key.keysym.sym == SDLK_RETURN) {
+                        toggle_fullscreen();
                     }
                 }
                 if(e.type == SDL_MOUSEMOTION) {
@@ -6617,6 +6690,7 @@ int main(int argc, char* argv[]) {
                      if (lobby_selection >= count) lobby_selection = 0;
                  }
              }
+             glViewport(g_vp_x, g_vp_y, g_vp_w, g_vp_h);
              glClearColor(0.02f, 0.02f, 0.05f, 1.0f); // Dark Lobby
              glClear(GL_COLOR_BUFFER_BIT);
              setup_lobby_2d();
@@ -6670,7 +6744,8 @@ int main(int argc, char* argv[]) {
                 : 0;
             float target_fov = (!g_paused && local_state.players[fov_pid].current_weapon == WPN_SNIPER && (SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_RIGHT))) ? 20.0f : 75.0f;
             current_fov += (target_fov - current_fov) * 0.2f;
-            glMatrixMode(GL_PROJECTION); glLoadIdentity(); gluPerspective(current_fov, 1280.0/720.0, 0.1, Z_FAR); 
+            glViewport(g_vp_x, g_vp_y, g_vp_w, g_vp_h);
+            glMatrixMode(GL_PROJECTION); glLoadIdentity(); gluPerspective(current_fov, (float)VIRTUAL_W/(float)VIRTUAL_H, 0.1, Z_FAR);
             glMatrixMode(GL_MODELVIEW);
             while (accumulator >= TICK_DT) {
                 snapshot_prev_players();

@@ -2,6 +2,9 @@
 
 ## Recent changes
 
+### 2026-06-14
+- feat(display): Virtual canvas letterboxing + borderless fullscreen — VIRTUAL_W/H 1280×720 defines; g_vp_x/y/w/h computed by recalc_viewport(); glViewport applied each frame before 3D and 2D draws; SDL_WINDOW_RESIZABLE + SDL_WINDOWEVENT_RESIZED handler; Alt+Enter toggle_fullscreen() in lobby and in-game; remap_mouse() applied to all lobby SDL_MOUSEBUTTONDOWN hits; gluPerspective aspect ratio now uses VIRTUAL_W/H; shankpit_display.cfg persists fullscreen state. Unblocks Milestone 5 (Steam EA build).
+
 ### 2026-06-13
 - docs(display): DISPLAY_FULLSCREEN_SPEC.md — pre-Steam critical spec: virtual canvas letterboxing, borderless fullscreen, display.cfg, mouse remapping, all hardcoded 1280×720 sites audited; added as ✗ BLOCKING item to NORTHSTAR Milestone 5
 - feat(bat-skin): Implement proper bat character geometry — draw_bat_head (skull, pointed ears, red eyes, snout), draw_bat_arm (dark articulated arm with wing membrane panel that rotates with upper arm), custom bat torso/legs replacing Ronin shell placeholder; all limbs driven by compute_player_anim_pose, weapon socket preserved on right arm
