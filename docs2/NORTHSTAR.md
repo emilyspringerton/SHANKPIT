@@ -1,6 +1,6 @@
 # SHANKPIT — Northstar
 
-*Last updated: 2026-06-06*
+*Last updated: 2026-06-14*
 
 ---
 
@@ -147,16 +147,16 @@ These are tracked in `SHANKPIT_DRAGONSNSHIT_SYSTEMS_SPEC.md` section 4. Summary:
 **Strategy:** Ship Early Access with FPS core only. Dragonfly/BedWars lands as major post-launch update.
 No need to wait for full persistent world — the FPS core is already differentiated.
 
-### Milestone 5: Steam EA Build (FPS core only)
+### Milestone 5: Steam EA Build (FPS core only) ✓ COMPLETE 2026-06-14
 - Client-side portal travel ✓ (PACKET_SCENE_CHANGE received + client_apply_scene_id + travel overlay)
 - Per-player physics isolation ✓ (C server calls phys_set_scene(p->scene_id) per player)
 - Cross-scene attack prevention ✓ (Go server, Milestone 2)
-- **Display/fullscreen** ✗ BLOCKING — see `docs2/specs/DISPLAY_FULLSCREEN_SPEC.md`
+- **Display/fullscreen** ✓ — Apple #496, commit 3599517
   - Borderless fullscreen (SDL_WINDOW_FULLSCREEN_DESKTOP) with Alt+Enter toggle
   - Virtual canvas letterboxing — 1280×720 virtual maps to any display via glViewport
-  - display.cfg persistence (fullscreen default on, windowed size saved)
-  - Mouse coordinate remapping for lobby UI at non-native sizes
-  - 3D projection aspect ratio dynamic (currently hardcoded 1280/720)
+  - shankpit_display.cfg persists fullscreen state across sessions
+  - Mouse coordinate remapping via remap_mouse() for lobby UI at non-native sizes
+  - 3D projection aspect ratio via VIRTUAL_W/H constants
 - Package: headless Go server binary + C client build for Linux/Windows
 - Target: 4-player LAN/internet session without local setup beyond running two binaries
 - Price point: $9.99 USD EA
