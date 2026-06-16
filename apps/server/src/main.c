@@ -22,6 +22,12 @@
 #include "../../../packages/common/shared_movement.h"
 #include "../../../packages/common/net_sim.h"
 #include "../../../packages/simulation/local_game.h"
+
+/* cutscene handshake globals — defined in lobby/main.c for the client;
+   server sim uses local_game.h but never renders cutscenes, so stub to 0. */
+int g_story_cutscene_done   = 0;
+int g_story_outro_requested = 0;
+
 #include "server_mode.h"
 #include "server_state.h"
 

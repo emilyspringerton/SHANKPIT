@@ -31,6 +31,7 @@
 #define PACKET_VOXEL_DATA    4
 #define PACKET_IMPACT        5
 #define PACKET_SCENE_CHANGE  6
+#define PACKET_DISCONNECT    7
 
 #define VOXEL_CHUNK_SIZE            16
 #define VOXEL_MAX_BLOCKS_PER_CHUNK  512
