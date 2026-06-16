@@ -3,6 +3,7 @@
 ## 2026-06-16
 
 - feat(story): TYLER × SHANKPIT cutscene system — typewriter slide sequencer, letterbox renderer, 7-slide TYLER lore woven through story mode (intro + outro)
+- feat(cutscene): bureaucratic horror arc — intro expanded to 5 slides (ACR-089 intake form, Jiangshi conditional clearance, council override directive); outro expanded to 6 slides (ACR classification failure, council motions defeated, Working Group on Zero-Taxonomy adjourned without resolution); "Nothing. And I was there." closes the loop (Build 0103)
 
 
 ## Recent changes

@@ -4,15 +4,20 @@
  * TYLER × TIDES OF PARADOX episodes are woven into SHANKPIT story mode:
  *
  *   INTRO:  Tyler arrives at the breach site. The mechanism starts recording.
+ *           The archive has a procedure for this. The procedure fails.
  *           (Before gameplay — STORY_PHASE_CUTSCENE)
  *
  *   OUTRO:  The breach is sealed. The mechanism returns a zero reading.
+ *           The council forms a working group. The form stays open.
  *           Tyler files the observation: "Nothing. And I was there."
  *           (After swarm cleared — STORY_PHASE_OUTRO)
  *
- * All lore content is written in the TYLER in-universe voice:
- * Camera Op sealed log, Jiangshi Syndicate memos, Eastwind archive entries.
- * These are extensions of the canonical Tyler archive (post Build 0102).
+ * Lore voice: Camera Op sealed log, Jiangshi Syndicate memos,
+ * Eastwind Archive entries (ACR forms, clearance docs, meeting minutes).
+ * Bureaucratic horror: every artifact is a record of procedure
+ * meeting something procedure cannot contain.
+ *
+ * Build 0103 — extended S10 bureaucratic horror arc.
  */
 
 #include "cutscene.h"
@@ -25,12 +30,38 @@ const CutsceneSlide g_cutscene_intro[] = {
         /* chapter */ "CHAPTER I",
         /* title   */ "THE MECHANISM RECORDS",
         /* lines   */ {
-            "I arrived at the cave before sunrise.",
-            "The mechanism was already active — recording,",
-            "cataloguing, adding to the archive the way",
-            "it has done in every city since 1127.",
+            "The archive has a procedure for this.",
+            "Every site has a form. Every form",
+            "has a number. TYLER-089 is the number.",
             "",
-            "But what it found inside had no name in the taxonomy.",
+            "The mechanism opened intake at 05:12.",
+            "Field one asks for taxonomy class.",
+        },
+        /* line_count */ 6
+    },
+    {
+        /* chapter */ "EASTWIND ARCHIVE — ACR-089",
+        /* title   */ "ANOMALY CLASSIFICATION REQUEST",
+        /* lines   */ {
+            "Site: [RESTRICTED]           2026-06-16",
+            "Taxonomy class: __________ [REQUIRED]",
+            "Prior precedent: [ ] YES    [X] NO",
+            "Goetia signature: #72 / #36 — PEAK",
+            "Recommended action: _______ [REQUIRED]",
+            "STATUS: OPEN. DO NOT PROCEED.",
+        },
+        /* line_count */ 6
+    },
+    {
+        /* chapter */ "JIANGSHI SYNDICATE — CLEARANCE #089",
+        /* title   */ "CONDITIONAL SITE AUTHORIZATION",
+        /* lines   */ {
+            "Tyler (Archive Ref: T-001) is authorized",
+            "to enter the site pending classification.",
+            "Authorization CONDITIONAL: file ACR-089",
+            "taxonomy class within 24 hrs of exit.",
+            "",
+            "NOTE: No prior clearance covers this.",
         },
         /* line_count */ 6
     },
@@ -38,30 +69,30 @@ const CutsceneSlide g_cutscene_intro[] = {
         /* chapter */ "CAMERA OP — ENTRY 80",
         /* title   */ NULL,
         /* lines   */ {
-            "Tyler stood at the entrance for nine minutes.",
-            "He did not go inside.",
+            "Tyler read the ACR at the entrance.",
+            "Nine minutes. He did not go inside.",
             "",
-            "\"The archive logs construction.",
-            " It logs departure. It logs farewell.",
-            " Whatever is in that cave is doing something else.\"",
+            "\"The form wants a taxonomy class.",
+            " The mechanism has no record of this.",
+            " I am calling it: the thing in the cave.\"",
         },
         /* line_count */ 6
     },
     {
-        /* chapter */ "EASTWIND ARCHIVE — TYLER-089",
-        /* title   */ "FIELD NOTE: 2026-06-16",
+        /* chapter */ "EASTWIND ARCHIVE — ADVISORY",
+        /* title   */ "COUNCIL DIRECTIVE: TYLER-089",
         /* lines   */ {
-            "All five Goetia frequencies: ACTIVE.",
-            "Andrealphus #72 (geometric transformation): PEAK.",
-            "Stolas #36 (deep time sight): ELEVATED.",
+            "Council reviewed ACR-089 at 05:21.",
+            "Motion to delay entry: DEFEATED (4-1).",
             "",
-            "The mechanism is attempting to measure.",
-            "TEAM: FOLLOW. THE ARCHIVE CANNOT AFFORD A GAP.",
+            "DIRECTIVE: FOLLOW.",
+            "THE ARCHIVE CANNOT AFFORD A GAP.",
+            "CLASSIFICATION IS A POST-ENTRY QUESTION.",
         },
         /* line_count */ 6
     },
 };
-const int g_cutscene_intro_count = 3;
+const int g_cutscene_intro_count = 5;
 
 
 /* ── OUTRO: Post-breach. The mechanism returns zero. ─────────────── */
@@ -94,15 +125,41 @@ const CutsceneSlide g_cutscene_outro[] = {
         /* line_count */ 6
     },
     {
-        /* chapter */ "JIANGSHI MEMO #089 — DIRECTOR",
-        /* title   */ "FOR INTERNAL DISTRIBUTION",
+        /* chapter */ "EASTWIND ARCHIVE — ACR-089",
+        /* title   */ "CLASSIFICATION RESULT",
         /* lines   */ {
-            "The breach generated zero farewell reading.",
-            "The council will convene on a single question:",
-            "",
-            "What leaves nothing?",
-            "",
-            "The archive has no record. Tyler was there.",
+            "Taxonomy class: __________ [STILL OPEN]",
+            "Post-entry reading: 0 ft.      [VALID]",
+            "Precedent match: NONE FOUND",
+            "Recommended closure: CANNOT CLOSE.",
+            "REASON: No taxonomy entry exists.",
+            "STATUS: OPEN INDEFINITELY.",
+        },
+        /* line_count */ 6
+    },
+    {
+        /* chapter */ "JIANGSHI MEMO #089 — DIRECTOR",
+        /* title   */ "RE: ACR-089 — ZERO READING",
+        /* lines   */ {
+            "Zero farewell reading confirmed.",
+            "Council convened 07:14 to resolve.",
+            "Motion to classify as VOID: FAILED (3-2).",
+            "Motion to close ACR-089: FAILED (4-1).",
+            "RESOLUTION: Working Group on Zero-Taxonomy.",
+            "First meeting: PENDING. ACR-089: OPEN.",
+        },
+        /* line_count */ 6
+    },
+    {
+        /* chapter */ "WORKING GROUP — ZERO-TAXONOMY EVENTS",
+        /* title   */ "MEETING MINUTES: 2026-06-16",
+        /* lines   */ {
+            "Quorum: 3 of 5. Called to order 08:00.",
+            "Item 1: Define zero-taxonomy event — TABLED",
+            "Item 2: Amend ACR for null readings — TABLED",
+            "Item 3: Request Tyler testimony — APPROVED",
+            "Item 4: Schedule next meeting — APPROVED",
+            "ADJOURNED. ACR-089: OPEN INDEFINITELY.",
         },
         /* line_count */ 6
     },
@@ -120,7 +177,7 @@ const CutsceneSlide g_cutscene_outro[] = {
         /* line_count */ 6
     },
 };
-const int g_cutscene_outro_count = 4;
+const int g_cutscene_outro_count = 6;
 
 
 /* ── sequencer ────────────────────────────────────────────────────── */
