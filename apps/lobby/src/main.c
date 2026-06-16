@@ -36,6 +36,7 @@
 #include "../../../packages/common/physics.h"
 #include "../../../packages/common/shared_movement.h"
 #include "../../../packages/common/net_sim.h"
+#include "../../../packages/simulation/cutscene.h"
 #include "../../../packages/simulation/local_game.h"
 #include "../../../packages/render/proc_tex.h"
 #include "../../../packages/render/retro_sky.h"
@@ -118,6 +119,13 @@ static int g_win_w = 1280, g_win_h = 720;
 static int g_vp_x = 0, g_vp_y = 0, g_vp_w = 1280, g_vp_h = 720;
 static int g_fullscreen = 0;
 static SDL_Window *g_win = NULL;
+
+/* ── TYLER cutscene state ─────────────────────────────────────────── */
+static CutsceneState g_story_cs;
+
+/* Handshake flags used by local_game.h tick (declared extern there). */
+int g_story_cutscene_done    = 0;
+int g_story_outro_requested  = 0;
 
 typedef struct VehicleStyle {
     float matte;
@@ -1310,6 +1318,11 @@ static void lobby_apply_ui_state() {
         app_state = STATE_GAME_LOCAL;
         local_init_match(1, MODE_STORY);
         local_state.story_phase_start_ms = SDL_GetTicks();
+        g_story_cutscene_done   = 0;
+        g_story_outro_requested = 0;
+        cutscene_start(&g_story_cs,
+                       g_cutscene_intro, g_cutscene_intro_count,
+                       SDL_GetTicks());
     } else if (strcmp(ui_state.active_mode_id, "mode.battle") == 0) {
         app_state = STATE_GAME_LOCAL;
         local_init_match(12, MODE_DEATHMATCH);
@@ -4125,6 +4138,116 @@ static void draw_helicopter_model(const HelicopterState *h) {
     glPopMatrix();
 }
 
+/* ── TYLER cutscene renderer ──────────────────────────────────────── *
+ *
+ * Visual language (TYLER archive aesthetic):
+ *   Background:  near-black  #0b0c0e
+ *   Letterbox:   pure black bars top + bottom
+ *   Chapter tag: muted teal  #4a8a70 — small, dim
+ *   Title:       cool grey   #c2ccd6 — medium weight
+ *   Body text:   warm white  #e8e4dc — typewriter reveal
+ *   Prompt:      dim amber   #a09060 — blinks when text done
+ *
+ * Coordinate system: gluOrtho2D(0,1280,0,720). Y up.
+ */
+#define CS_BAR_H      108.0f   /* letterbox bar height (top + bottom)  */
+#define CS_CONTENT_Y0  (CS_BAR_H + 20.0f)
+#define CS_CONTENT_Y1  (720.0f - CS_BAR_H - 10.0f)
+#define CS_LEFT        96.0f
+#define CS_RIGHT       1184.0f
+
+static void draw_tyler_cutscene(CutsceneState *cs, unsigned int now_ms) {
+    if (!cs || !cs->slides || cs->slide_count == 0) return;
+
+    /* Full black background */
+    glColor3f(0.044f, 0.047f, 0.056f);
+    glRectf(0.0f, 0.0f, 1280.0f, 720.0f);
+
+    /* Letterbox bars */
+    glColor3f(0.0f, 0.0f, 0.0f);
+    glRectf(0.0f, 720.0f - CS_BAR_H, 1280.0f, 720.0f);
+    glRectf(0.0f, 0.0f, 1280.0f, CS_BAR_H);
+
+    /* Subtle top-bar separator line */
+    glColor3f(0.14f, 0.16f, 0.18f);
+    glRectf(CS_LEFT, 720.0f - CS_BAR_H, CS_RIGHT, 720.0f - CS_BAR_H + 1.0f);
+    glRectf(CS_LEFT, CS_BAR_H - 1.0f,   CS_RIGHT, CS_BAR_H);
+
+    if (cs->done) return;
+
+    const CutsceneSlide *s = &cs->slides[cs->current];
+    float y = CS_CONTENT_Y1;
+
+    /* Chapter tag — small, muted teal */
+    if (s->chapter) {
+        glColor3f(0.29f, 0.54f, 0.44f);
+        draw_string(s->chapter, CS_LEFT, y - 2.0f, 3.2f);
+        y -= 28.0f;
+    }
+
+    /* Title — cool grey, medium */
+    if (s->title) {
+        glColor3f(0.76f, 0.80f, 0.85f);
+        draw_string(s->title, CS_LEFT, y - 2.0f, 5.5f);
+        y -= 46.0f;
+
+        /* Thin rule under title */
+        glColor3f(0.20f, 0.22f, 0.26f);
+        glRectf(CS_LEFT, y + 10.0f, CS_LEFT + 320.0f, y + 11.5f);
+        y -= 22.0f;
+    } else {
+        y -= 14.0f;
+    }
+
+    /* Body text — typewriter reveal, warm white */
+    int chars_left = cs->chars_revealed;
+    for (int i = 0; i < s->line_count && chars_left >= 0; i++) {
+        const char *line = s->lines[i];
+        if (!line) { y -= 22.0f; continue; }
+        int len = (int)strlen(line);
+        if (len == 0) { y -= 22.0f; continue; }
+
+        /* How many chars of this line to reveal */
+        int reveal = chars_left > len ? len : chars_left;
+        chars_left -= len;
+
+        if (reveal <= 0) { y -= 22.0f; continue; }
+
+        /* Copy revealed portion and draw */
+        char buf[CUTSCENE_LINE_LEN + 1];
+        int copy = reveal < CUTSCENE_LINE_LEN ? reveal : CUTSCENE_LINE_LEN;
+        memcpy(buf, line, (size_t)copy);
+        buf[copy] = '\0';
+
+        glColor3f(0.91f, 0.89f, 0.87f);
+        draw_string(buf, CS_LEFT, y, 4.0f);
+        y -= 28.0f;
+    }
+
+    /* "SPACE / ENTER" prompt — blinks when text done */
+    if (cs->text_done) {
+        int blink_on = ((now_ms / 500) % 2) == 0;
+        if (blink_on) {
+            glColor3f(0.62f, 0.56f, 0.38f);
+            draw_string("SPACE  /  ENTER  TO  CONTINUE", CS_RIGHT - 400.0f, CS_BAR_H - 30.0f, 3.0f);
+        }
+    }
+
+    /* Slide counter dots at bottom centre */
+    if (cs->slide_count > 1) {
+        float dot_spacing = 16.0f;
+        float dots_x = 640.0f - (cs->slide_count * dot_spacing * 0.5f);
+        for (int d = 0; d < cs->slide_count; d++) {
+            if (d == cs->current)
+                glColor3f(0.76f, 0.80f, 0.85f);
+            else
+                glColor3f(0.22f, 0.24f, 0.28f);
+            float dx = dots_x + d * dot_spacing;
+            glRectf(dx, CS_BAR_H * 0.42f - 3.0f, dx + 6.0f, CS_BAR_H * 0.42f + 3.0f);
+        }
+    }
+}
+
 static void draw_story_boss_world(const StoryBossState *boss, unsigned int now_ms) {
     if (!boss || !boss->active) return;
     float pulse = 0.5f + 0.5f * sinf((float)now_ms * 0.004f);
@@ -4492,11 +4615,28 @@ void draw_hud(PlayerState *p) {
             draw_string("YOU HAVE THE FLAG · FIRE = 80 DMG MELEE", 430, 618, 4);
         }
     } else if (local_state.game_mode == MODE_STORY) {
+        /* Cutscene phases — full-screen TYLER rendering, suppress normal HUD */
+        if (local_state.story_phase == STORY_PHASE_CUTSCENE ||
+            local_state.story_phase == STORY_PHASE_OUTRO) {
+            draw_tyler_cutscene(&g_story_cs, now_ms);
+            /* Tick the sequencer */
+            cutscene_tick(&g_story_cs, now_ms);
+            /* Fire handshake when all slides consumed */
+            if (g_story_cs.done && !g_story_cutscene_done) {
+                g_story_cutscene_done = 1;
+            }
+            /* If outro was requested by the tick, start it */
+            if (g_story_outro_requested) {
+                g_story_outro_requested = 0;
+                cutscene_start(&g_story_cs,
+                               g_cutscene_outro, g_cutscene_outro_count,
+                               now_ms);
+            }
+            goto story_hud_done; /* skip normal story HUD */
+        }
+
         glColor3f(0.85f, 0.92f, 0.95f);
-        if (local_state.story_phase == STORY_PHASE_CUTSCENE) {
-            draw_string("STORY: VOXWORLD BREACH", 452, 682, 6);
-            draw_string("INTRO IN PROGRESS...", 500, 658, 4);
-        } else if (local_state.story_phase == STORY_PHASE_PLAYING) {
+        if (local_state.story_phase == STORY_PHASE_PLAYING) {
             draw_string("OBJECTIVE: DEFEAT THE BREACH TITAN", 390, 682, 4);
         } else if (local_state.story_phase == STORY_PHASE_RIFT_OPENING) {
             glColor3f(0.9f, 0.6f, 1.0f);
@@ -4523,6 +4663,7 @@ void draw_hud(PlayerState *p) {
             draw_string("MISSION FAILED", 520, 682, 7);
         }
         draw_story_boss_hud(&local_state.story_boss);
+        story_hud_done:;
     } else if (local_state.game_mode == MODE_DEATHMATCH && app_state == STATE_GAME_NET
                && net_requested_mode == MODE_CTF) {
         /* DM warm-up while matchmaker searches for a CTF game */
@@ -6611,6 +6752,23 @@ int main(int argc, char* argv[]) {
                 }
             } else {
                 if (e.type == SDL_KEYDOWN) {
+                    /* TYLER cutscene advance — SPACE or ENTER while in cutscene */
+                    if (local_state.game_mode == MODE_STORY &&
+                        (local_state.story_phase == STORY_PHASE_CUTSCENE ||
+                         local_state.story_phase == STORY_PHASE_OUTRO)) {
+                        if (e.key.keysym.sym == SDLK_SPACE ||
+                            e.key.keysym.sym == SDLK_RETURN ||
+                            e.key.keysym.sym == SDLK_KP_ENTER) {
+                            cutscene_advance(&g_story_cs, SDL_GetTicks());
+                        }
+                        /* Still allow ESC to pause during cutscene */
+                        if (e.key.keysym.sym == SDLK_ESCAPE) {
+                            g_paused = 1;
+                            g_pause_sel = 0;
+                            SDL_SetRelativeMouseMode(SDL_FALSE);
+                        }
+                        continue;
+                    }
                     if (g_paused) {
                         if (e.key.keysym.sym == SDLK_ESCAPE) {
                             g_paused = 0;

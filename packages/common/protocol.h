@@ -323,13 +323,14 @@ typedef struct {
 
 typedef enum { MODE_DEATHMATCH=0, MODE_TDM=1, MODE_SURVIVAL=2, MODE_CTF=3, MODE_ODDBALL=4, MODE_LOCAL=98, MODE_NET=99, MODE_EVOLUTION=100, MODE_TDMB=101, MODE_TDMO=102, MODE_CTFB=103, MODE_CTFO=104, MODE_STORY=105, MODE_HEADED_BOT=106 } GameMode;
 typedef enum {
-    STORY_PHASE_CUTSCENE = 0,
+    STORY_PHASE_CUTSCENE = 0,    /* intro cutscene (TYLER episode — Tyler arrives) */
     STORY_PHASE_PLAYING = 1,
     STORY_PHASE_RIFT_OPENING = 2,
     STORY_PHASE_SWARM = 3,
     STORY_PHASE_AFTER_SWARM = 4,
     STORY_PHASE_FAILED = 5,
-    STORY_PHASE_COMPLETE = 6
+    STORY_PHASE_COMPLETE = 6,
+    STORY_PHASE_OUTRO = 7        /* outro cutscene (Tyler files zero-reading observation) */
 } StoryPhase;
 
 #define STORY_MAX_SWARM_ENEMIES 24

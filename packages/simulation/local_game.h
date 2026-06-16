@@ -12,6 +12,20 @@
 ServerState local_state;
 int was_holding_jump = 0;
 static int tdmb_last_kills[MAX_CLIENTS];
+
+/*
+ * Cutscene handshake flags — set/cleared by main.c (client renderer).
+ * local_game.h tick reads these to drive phase transitions without
+ * pulling CutsceneState into the simulation layer.
+ *
+ * g_story_cutscene_done:    set to 1 by renderer when CutsceneState.done
+ *                           fires for the current cutscene; tick clears it
+ *                           and advances the story phase.
+ * g_story_outro_requested:  set to 1 by tick when AFTER_SWARM expires;
+ *                           renderer reads this, starts outro cutscene, clears it.
+ */
+extern int g_story_cutscene_done;
+extern int g_story_outro_requested;
 #define SHANKPIT_HELI_DEBUG 0
 #define TDMB_BLUE_TEAM 1
 #define TDMB_RED_TEAM 0
@@ -1107,22 +1121,38 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
     PlayerState *p0 = &local_state.players[0];
     const float dt = SHANKPIT_NET_FIXED_DT;
     if (local_state.game_mode == MODE_STORY) {
-        if (local_state.story_phase == STORY_PHASE_CUTSCENE) {
+        if (local_state.story_phase == STORY_PHASE_CUTSCENE ||
+            local_state.story_phase == STORY_PHASE_OUTRO) {
+            /* Lock all player inputs during cutscene/outro */
             fwd = 0.0f; str = 0.0f; shoot = 0; jump = 0; crouch = 0; reload = 0; ability = 0;
-            if (cmd_time - local_state.story_phase_start_ms >= STORY_CUTSCENE_DURATION_MS) {
-                local_state.story_phase = STORY_PHASE_PLAYING;
-                local_state.story_phase_start_ms = cmd_time;
+            if (local_state.story_phase == STORY_PHASE_CUTSCENE) {
+                /* Camera slowly faces boss position during intro cutscene */
+                float dx = local_state.story_boss.x - p0->x;
+                float dz = local_state.story_boss.z - p0->z;
+                yaw   = atan2f(dx, dz) * (180.0f / 3.14159f);
+                pitch = -5.0f;
             }
-            float dx = local_state.story_boss.x - p0->x;
-            float dz = local_state.story_boss.z - p0->z;
-            yaw = atan2f(dx, dz) * (180.0f / 3.14159f);
-            pitch = -5.0f;
-        } else if (local_state.story_phase == STORY_PHASE_COMPLETE || local_state.story_phase == STORY_PHASE_FAILED) {
+            /* Phase advance is driven by g_story_cutscene_done set by the
+             * client renderer (main.c) after CutsceneState.done fires. */
+            if (g_story_cutscene_done) {
+                g_story_cutscene_done = 0;
+                if (local_state.story_phase == STORY_PHASE_CUTSCENE) {
+                    local_state.story_phase          = STORY_PHASE_PLAYING;
+                    local_state.story_phase_start_ms = cmd_time;
+                } else { /* OUTRO */
+                    local_state.story_phase          = STORY_PHASE_COMPLETE;
+                    local_state.story_phase_start_ms = cmd_time;
+                }
+            }
+        } else if (local_state.story_phase == STORY_PHASE_COMPLETE ||
+                   local_state.story_phase == STORY_PHASE_FAILED) {
             fwd = 0.0f; str = 0.0f; shoot = 0; jump = 0; crouch = 0; reload = 0; ability = 0;
         } else if (local_state.story_phase == STORY_PHASE_AFTER_SWARM) {
+            /* Brief hold then enter outro cutscene instead of jumping to COMPLETE */
             if (cmd_time - local_state.story_phase_start_ms >= STORY_SWARM_CLEAR_TO_COMPLETE_MS) {
-                local_state.story_phase = STORY_PHASE_COMPLETE;
+                local_state.story_phase          = STORY_PHASE_OUTRO;
                 local_state.story_phase_start_ms = cmd_time;
+                g_story_outro_requested          = 1;
             }
         }
     }
@@ -1139,7 +1169,9 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
         reload = 0;
         ability = 0;
     }
-    if (!(local_state.game_mode == MODE_STORY && local_state.story_phase == STORY_PHASE_CUTSCENE)) {
+    if (!(local_state.game_mode == MODE_STORY &&
+          (local_state.story_phase == STORY_PHASE_CUTSCENE ||
+           local_state.story_phase == STORY_PHASE_OUTRO))) {
         p0->yaw = yaw; p0->pitch = pitch;
     }
     p0->in_fwd = fwd;
