@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-06-17
+
+- feat(hud): chat/log pane — bottom-left overlay, 8-line ring buffer, T to type, Enter to send, ESC to cancel; kill events auto-pushed from net_process_snapshot
+
 ## 2026-06-16
 
 - feat(story): TYLER × SHANKPIT cutscene system — typewriter slide sequencer, letterbox renderer, 7-slide TYLER lore woven through story mode (intro + outro)

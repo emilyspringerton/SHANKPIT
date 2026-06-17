@@ -411,6 +411,7 @@ static int net_have_initial_local_snapshot_sync = 0;
 static unsigned char net_last_life_state = STATE_DEAD;
 static unsigned char net_last_scene_id = 255;
 static unsigned char net_prev_is_shooting[MAX_CLIENTS];
+static int net_prev_kills[MAX_CLIENTS];
 static int last_applied_scene_id = -999;
 
 typedef struct {
@@ -682,6 +683,7 @@ static void reset_client_render_state_for_net() {
     net_last_life_state = STATE_DEAD;
     net_last_scene_id = 255;
     memset(net_prev_is_shooting, 0, sizeof(net_prev_is_shooting));
+    memset(net_prev_kills, -1, sizeof(net_prev_kills));
     memset(&net_diag, 0, sizeof(net_diag));
     travel_overlay_until_ms = 0;
     local_state.pending_scene = -1;
@@ -816,6 +818,25 @@ typedef struct OverlaySystem {
 } OverlaySystem;
 
 static OverlaySystem g_overlay = { OVERLAY_OFF, {{0}}, 0, 0, 0, 1.0f };
+
+/* ── Chat / log pane ─────────────────────────────────────────────────── */
+#define CHAT_CAPACITY 12
+#define CHAT_LINE_MAX 72
+#define CHAT_VISIBLE  8
+typedef struct {
+    char lines[CHAT_CAPACITY][CHAT_LINE_MAX];
+    int  head;
+    char input[CHAT_LINE_MAX];
+    int  input_len;
+} ChatPane;
+static ChatPane g_chat;
+static int      g_chat_open = 0;
+
+static void chat_pane_push(const char *msg) {
+    if (!msg) return;
+    snprintf(g_chat.lines[g_chat.head], CHAT_LINE_MAX, "%s", msg);
+    g_chat.head = (g_chat.head + 1) % CHAT_CAPACITY;
+}
 
 static const char *overlay_mode_name(OverlayMode mode) {
     switch (mode) {
@@ -4802,6 +4823,36 @@ static void draw_mechanism_hud(const MechanismReading *m, int story_phase) {
     }
 }
 
+static void draw_chat_pane(unsigned int now_ms) {
+    const float SZ  = 3.5f;
+    const float LH  = 18.0f;
+    const float BX0 = 6.0f,  BX1 = 308.0f;
+    const float BY0 = 74.0f;
+    float by1 = BY0 + (float)CHAT_VISIBLE * LH + 6.0f;
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f(0.0f, 0.0f, 0.0f, 0.42f);
+    glRectf(BX0, g_chat_open ? BY0 - LH : BY0, BX1, by1);
+    glDisable(GL_BLEND);
+
+    for (int i = 0; i < CHAT_VISIBLE; i++) {
+        int idx = (g_chat.head - CHAT_VISIBLE + i + CHAT_CAPACITY) % CHAT_CAPACITY;
+        if (g_chat.lines[idx][0] == '\0') continue;
+        float y = BY0 + 4.0f + (float)i * LH;
+        glColor3f(0.84f, 0.92f, 0.84f);
+        draw_string(g_chat.lines[idx], 12.0f, y, SZ);
+    }
+
+    if (g_chat_open) {
+        int blink = (int)(now_ms / 500) % 2;
+        char buf[CHAT_LINE_MAX + 4];
+        snprintf(buf, sizeof(buf), "> %s%s", g_chat.input, blink ? "_" : "");
+        glColor3f(0.48f, 0.88f, 0.48f);
+        draw_string(buf, 12.0f, BY0 - LH + 4.0f, SZ);
+    }
+}
+
 void draw_hud(PlayerState *p) {
     glDisable(GL_DEPTH_TEST);
     glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
@@ -5065,6 +5116,8 @@ void draw_hud(PlayerState *p) {
         else glColor3f(0.62f, 0.92f, 1.0f);
         draw_string(overlay_buf, 992.0f, 692.0f, 3.4f);
     }
+
+    draw_chat_pane(SDL_GetTicks());
 
     glEnable(GL_DEPTH_TEST); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW); glPopMatrix();
 }
@@ -6465,6 +6518,14 @@ void net_process_snapshot(char *buffer, int len) {
         p->carried_flag_team_id = np->carried_flag_team_id;
         p->storm_charges = np->storm_charges;
         p->hit_feedback = np->hit_feedback;
+        if (net_prev_kills[id] >= 0 && (int)np->kills > net_prev_kills[id]) {
+            char kill_msg[CHAT_LINE_MAX];
+            const char *tag = (id == my_client_id) ? "[you]" : "[bot]";
+            snprintf(kill_msg, sizeof(kill_msg), "%s P%d  K:%u  D:%u",
+                     tag, id, (unsigned)np->kills, (unsigned)np->deaths);
+            chat_pane_push(kill_msg);
+        }
+        net_prev_kills[id] = (int)np->kills;
         p->kills = (int)np->kills;
         p->deaths = (int)np->deaths;
         p->death_duration_ms = np->death_duration_ms;
@@ -6549,6 +6610,7 @@ void net_process_snapshot(char *buffer, int len) {
             local_state.players[id].active = 0;
             local_state.players[id].is_shooting = 0;
             net_prev_is_shooting[id] = 0;
+            net_prev_kills[id] = -1;
             rinterp[id].has_a = 0;
             rinterp[id].has_b = 0;
         }
@@ -7064,6 +7126,16 @@ int main(int argc, char* argv[]) {
                     }
                 }
             } else {
+                /* chat pane: capture text input when open */
+                if (g_chat_open && e.type == SDL_TEXTINPUT) {
+                    size_t tlen = strlen(e.text.text);
+                    if (g_chat.input_len + (int)tlen < CHAT_LINE_MAX - 1) {
+                        memcpy(g_chat.input + g_chat.input_len, e.text.text, tlen);
+                        g_chat.input_len += (int)tlen;
+                        g_chat.input[g_chat.input_len] = '\0';
+                    }
+                    continue;
+                }
                 if (e.type == SDL_KEYDOWN) {
                     /* TYLER cutscene advance — SPACE or ENTER while in cutscene */
                     if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
@@ -7102,6 +7174,38 @@ int main(int argc, char* argv[]) {
                                 setup_lobby_2d();
                             }
                         }
+                        continue;
+                    }
+                    /* chat pane key handling */
+                    if (g_chat_open) {
+                        if (e.key.keysym.sym == SDLK_BACKSPACE && g_chat.input_len > 0) {
+                            g_chat.input[--g_chat.input_len] = '\0';
+                        } else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) {
+                            if (g_chat.input_len > 0) {
+                                char out[CHAT_LINE_MAX];
+                                snprintf(out, sizeof(out), "[me] %s", g_chat.input);
+                                chat_pane_push(out);
+                                g_chat.input[0] = '\0';
+                                g_chat.input_len = 0;
+                            }
+                            g_chat_open = 0;
+                            SDL_StopTextInput();
+                            SDL_SetRelativeMouseMode(SDL_TRUE);
+                        } else if (e.key.keysym.sym == SDLK_ESCAPE) {
+                            g_chat.input[0] = '\0';
+                            g_chat.input_len = 0;
+                            g_chat_open = 0;
+                            SDL_StopTextInput();
+                            SDL_SetRelativeMouseMode(SDL_TRUE);
+                        }
+                        continue;
+                    }
+                    if (e.key.keysym.sym == SDLK_t) {
+                        g_chat_open = 1;
+                        g_chat.input[0] = '\0';
+                        g_chat.input_len = 0;
+                        SDL_StartTextInput();
+                        SDL_SetRelativeMouseMode(SDL_FALSE);
                         continue;
                     }
                     if ((local_state.game_mode == MODE_TDMB || local_state.game_mode == MODE_TDMO || local_state.game_mode == MODE_CTFB) && local_state.match_over && e.key.keysym.sym == SDLK_r) {
