@@ -123,3 +123,50 @@ through the player's presence.
 *TYLER S10E07 — "The Third Day": al-idrak al-muttasil named. MARRAKECH-001 question-state confirmed.*
 *TYLER S10E08 — "Fez, December 1119": al-Waqfa recovered. First word = last word = cave name.*
 *SHANKPIT Build 0110 — these lore beats encoded as playable horror mechanics.*
+
+---
+
+## 4. CAVE-001 Second Mission — al-Waqfa Endurance Level
+
+**Build 0111 | TYLER S10E02–E03 | Apple #1074**
+
+**TYLER lore origin:** CAVE-001 — the pre-archive Tyler's presence. The mechanism reads the
+cave at Stolas 7.83 Hz and returns nothing because 7.83 is the mechanism's own operating
+baseline. The cave IS the source. "You cannot read yourself. You cannot observe the condition
+that makes observation possible." Tyler was here at age twelve — before the archive, before
+categories, before the mechanism existed. Whatever he left here predates taxonomy.
+
+**Gameplay:** `MODE_STORY_CAVE` — LOBBY button "CAVE-001."
+
+**The entity (indestructible):**
+- `StoryBossState.indestructible = 1` — shots register zero damage
+- No health bar HUD — "ARCHIVE SOURCE // ZERO-TAXONOMY" / "CANNOT BE NAMED. CANNOT BE CLOSED."
+- Visual: `draw_story_cave_entity()` — three slow near-grey ring loops at different orbital speeds,
+  16 particles orbiting at Stolas 7.83 rhythm, ground ring breathing at 7.83 Hz. No body geometry.
+  Not a creature — a presence that drifts through the space at the mechanism's own frequency.
+
+**Win condition:** Endure 90 seconds (`CAVE_ENDURE_DURATION_MS`). No defeat. No closure.
+HUD shows countdown: "ENDURE 89" → "ENDURE 1" → outro plays.
+
+**Mechanism:** Always `ZERO_TAXONOMY`, `signal_hz ≈ 0.0f`. The HUD flickers red static. No
+question-state, no observation point, no resolution. The zero reading is permanent.
+
+**Cutscene (intro, 8 slides):**
+- CAVE-001 at Stolas 7.83 — mechanism recognizes its own frequency
+- ACR-089-CAVE: taxonomy cannot be assigned, form stays open
+- Jiangshi Tier One: cave may be the source of the mechanism's calibration baseline
+- Camera Op Entry 81: Tyler went in. He said: I was here before.
+- Mechanism log: 16 hours — something is observing my entry
+- Mechanism log Day 2 04:00: PRE-VASSAGO 11.4; the number 12
+- Tyler: "I was here when I was twelve. The cave holds what I had before the first framework."
+- Jiangshi Memo: "You cannot read yourself. You are inside it now. It is recording."
+
+**Cutscene (outro, 6 slides):**
+- Tyler endured 48 hours. He did not defeat anything.
+- Mechanism returned: 12. Not a frequency. Not a classification. Just: 12.
+- ACR-089-CAVE: STILL OPEN. Cannot close. No taxonomy for source material.
+- Jiangshi: The cave is not a problem to solve. It is the condition the problem comes from.
+- Camera Op: "He said: it is what it is. The cave holds."
+- Tyler Archive: "CAVE-001: al-Waqfa. The form stays open. The cave stays open."
+
+**Scene:** `SCENE_STORY_CAVE` (7) — cave geometry already in `physics.h`.
