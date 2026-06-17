@@ -741,6 +741,8 @@ static void story_boss_apply_player_hit(PlayerState *hero, unsigned int now_ms) 
     }
     if (!story_target_is_in_cone(hero, boss->x, boss->y + 36.0f, boss->z, max_dist, cone_dot)) return;
     float dmg = story_boss_weapon_damage(weapon);
+    /* question-state: boss is partially outside the archive — takes 10% damage */
+    if (boss->question_state == 1) dmg *= 0.10f;
     boss->health -= dmg;
     if (boss->health < 0.0f) boss->health = 0.0f;
     boss->hurt_flash_until_ms = now_ms + 130;
@@ -780,6 +782,145 @@ static void story_boss_tick(PlayerState *hero, unsigned int now_ms) {
             local_state.story_phase = STORY_PHASE_FAILED;
             local_state.story_phase_start_ms = now_ms;
             local_state.match_over = 1;
+        }
+    }
+}
+
+/* ── Mechanism Reader — TYLER archive frequency reader ─────────────────
+ *
+ * Tyler's archive mechanism measures Goetia Hz at sites.  In story mode:
+ *   - Baseline: Stolas 7.83 Hz with slow oscillation
+ *   - Boss active: frequency climbs toward 14–18 Hz (LIMINAL/FAREWELL)
+ *   - Enemies nearby: +0.3 Hz per active enemy
+ *   - Question-state: collapses toward 0 (ZERO_TAXONOMY — mechanism finds
+ *     its own source and cannot classify itself)
+ *   - After question resolved: snaps back to Stolas baseline
+ *
+ * The "archive_pressure" field maps 0..1: how intensely the site is being
+ * observed.  At 1.0 the site is fully in the archive; at 0 it is invisible.
+ */
+
+#define STOLAS_BASE_HZ       7.83f
+#define QUESTION_STATE_HP_THRESHOLD  0.33f  /* trigger question-state at 33% */
+#define QUESTION_OBS_RADIUS  32.0f          /* player must get this close to resolve */
+#define QUESTION_MIN_ACTIVE_MS 4000U        /* can't resolve instantly */
+
+static float mechanism_derive_hz(unsigned int now_ms) {
+    const StoryBossState *boss = &local_state.story_boss;
+    const StoryRiftState *rift = &local_state.story_rift;
+    PlayerState *hero = &local_state.players[0];
+
+    /* base oscillation around Stolas 7.83 */
+    float t = (float)now_ms * 0.0006f;
+    float hz = STOLAS_BASE_HZ + sinf(t * 0.71f) * 0.38f + sinf(t * 1.3f) * 0.19f;
+
+    if (boss->active && !boss->defeated) {
+        /* boss proximity spike */
+        float dx = hero->x - boss->x, dz = hero->z - boss->z;
+        float dist = sqrtf(dx*dx + dz*dz);
+        float prox = (dist < 400.0f) ? (1.0f - dist / 400.0f) : 0.0f;
+        float boss_pct = (boss->max_health > 0.0f) ? (boss->health / boss->max_health) : 0.0f;
+        float intensity = prox * (1.0f + (1.0f - boss_pct) * 6.0f);
+        hz += intensity * 7.5f;
+    } else if (rift->active) {
+        /* rift open: high-frequency farewell reading */
+        hz += 10.0f + sinf(t * 2.1f) * 2.0f;
+    }
+
+    /* enemy presence: +0.3 Hz each */
+    for (int i = 0; i < STORY_MAX_SWARM_ENEMIES; i++) {
+        if (local_state.story_swarm[i].active) hz += 0.3f;
+    }
+
+    return hz;
+}
+
+static SiteClass mechanism_classify(float hz, int question_state, int zero_reading) {
+    if (zero_reading || question_state == 1) return SITE_CLASS_ZERO_TAXONOMY;
+    if (hz < 2.0f)  return SITE_CLASS_ZERO_TAXONOMY;
+    if (hz < 6.0f)  return SITE_CLASS_PASSAGE;
+    if (hz < 8.5f)  return SITE_CLASS_WITNESS;
+    if (hz < 12.0f) return SITE_CLASS_DWELLING;
+    if (hz < 18.0f) return SITE_CLASS_LIMINAL;
+    return SITE_CLASS_FAREWELL;
+}
+
+static void mechanism_tick(unsigned int now_ms) {
+    MechanismReading *m = &local_state.mechanism;
+    int phase = local_state.story_phase;
+    if (phase == STORY_PHASE_CUTSCENE || phase == STORY_PHASE_OUTRO) return;
+
+    /* tick at ~30Hz max */
+    if (now_ms - m->last_tick_ms < 32U) return;
+    m->last_tick_ms = now_ms;
+
+    const StoryBossState *boss = &local_state.story_boss;
+
+    /* question-state active → mechanism collapses toward zero */
+    if (boss->question_state == 1) {
+        m->question_state = 1;
+        /* fade out toward 0 over 2 seconds */
+        float age_s = (float)(now_ms - boss->question_entered_ms) * 0.001f;
+        float fade = 1.0f - age_s * 0.5f;
+        if (fade < 0.0f) fade = 0.0f;
+        m->signal_hz = STOLAS_BASE_HZ * fade * (0.8f + sinf((float)now_ms * 0.007f) * 0.2f);
+        m->zero_reading = (fade < 0.15f) ? 1 : 0;
+        m->archive_pressure = fade * 0.25f;
+    } else if (boss->question_state == 2) {
+        /* resolved: snap back to Stolas baseline with a ping */
+        m->question_state = 0;
+        m->zero_reading = 0;
+        float age_s = (float)(now_ms - boss->question_resolved_ms) * 0.001f;
+        float recovery = age_s * 2.0f;
+        if (recovery > 1.0f) recovery = 1.0f;
+        m->signal_hz = STOLAS_BASE_HZ * recovery + mechanism_derive_hz(now_ms) * recovery;
+        m->archive_pressure = recovery;
+    } else {
+        m->question_state = 0;
+        m->zero_reading = 0;
+        m->signal_hz = mechanism_derive_hz(now_ms);
+        /* archive_pressure: 0 at idle, spikes near boss */
+        const StoryBossState *b = &local_state.story_boss;
+        if (b->active) {
+            float boss_pct = (b->max_health > 0.0f) ? (b->health / b->max_health) : 0.0f;
+            m->archive_pressure = 0.3f + (1.0f - boss_pct) * 0.7f;
+        } else if (local_state.story_rift.active) {
+            m->archive_pressure = 1.0f;
+        } else {
+            m->archive_pressure = 0.08f + sinf((float)now_ms * 0.0004f) * 0.06f;
+        }
+    }
+    m->site_class = mechanism_classify(m->signal_hz, m->question_state, m->zero_reading);
+}
+
+/* question-state: triggered at 33% boss health; resolved by approaching observation point */
+static void story_boss_question_state_tick(PlayerState *hero, unsigned int now_ms) {
+    StoryBossState *boss = &local_state.story_boss;
+    if (!boss->active || boss->defeated) return;
+    if (local_state.story_phase != STORY_PHASE_PLAYING) return;
+
+    float hp_pct = (boss->max_health > 0.0f) ? (boss->health / boss->max_health) : 1.0f;
+
+    /* enter question-state at 33% */
+    if (boss->question_state == 0 && hp_pct <= QUESTION_STATE_HP_THRESHOLD) {
+        boss->question_state = 1;
+        boss->question_entered_ms = now_ms;
+        /* observation point: 60 units in front of boss, toward rift */
+        boss->observation_x = boss->x;
+        boss->observation_z = boss->z + 60.0f;
+        printf("[STORY] boss question-state entered — player must file observation\n");
+    }
+
+    /* check resolution: player reaches observation point */
+    if (boss->question_state == 1 &&
+        now_ms - boss->question_entered_ms >= QUESTION_MIN_ACTIVE_MS) {
+        float dx = hero->x - boss->observation_x;
+        float dz = hero->z - boss->observation_z;
+        float dist = sqrtf(dx*dx + dz*dz);
+        if (dist <= QUESTION_OBS_RADIUS) {
+            boss->question_state = 2;
+            boss->question_resolved_ms = now_ms;
+            printf("[STORY] question-state RESOLVED — boss fully vulnerable\n");
         }
     }
 }
@@ -1337,7 +1478,9 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
     }
     if (local_state.game_mode == MODE_STORY) {
         story_boss_tick(p0, cmd_time);
+        story_boss_question_state_tick(p0, cmd_time);
         story_swarm_tick(p0, cmd_time);
+        mechanism_tick(cmd_time);
     }
     if (local_state.game_mode == MODE_CTFB) {
         ctf_tick_flags(cmd_time);

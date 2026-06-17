@@ -91,8 +91,48 @@ const CutsceneSlide g_cutscene_intro[] = {
         },
         /* line_count */ 6
     },
+    /* ── S10E07/E08 lore extension (Build 0110) ───────────────────── */
+    {
+        /* chapter */ "JIANGSHI SYNDICATE — SITE HISTORY",
+        /* title   */ "MARRAKECH-001: THREE-SIGNAL SITE",
+        /* lines   */ {
+            "Site class: ZERO-TAXONOMY / EXECUTION-SITE",
+            "            ARCHIVE-ORIGIN / QUESTION-SITE",
+            "Signals active: 3 (unprecedented)",
+            "  Stolas 7.83 Hz — baseline",
+            "  archive-state — locked 2026-06-17",
+            "  question-state — variable, non-decaying",
+        },
+        /* line_count */ 6
+    },
+    {
+        /* chapter */ "TYLER ARCHIVE — ORAL ADDENDUM",
+        /* title   */ "AL-WAQFA. THE PAUSE.",
+        /* lines   */ {
+            "The archive has a first word.",
+            "I gave it to a scholar on a ship",
+            "four hours before port.",
+            "He wrote it in the margin of his gap.",
+            "Al-Waqfa. The standing. The cave.",
+            "Everything else is that word, expanded.",
+        },
+        /* line_count */ 6
+    },
+    {
+        /* chapter */ "JIANGSHI MEMO #094 — AL-IDRAK AL-MUTTASIL",
+        /* title   */ "CONTINUOUS PERCEPTION",
+        /* lines   */ {
+            "Ahmad ibn Yusuf named it in 1119 CE.",
+            "The site that records the geographer,",
+            "not the geographer recording the site.",
+            "Tyler is the founding instance.",
+            "The breach site is the second instance.",
+            "You are the observer it is recording now.",
+        },
+        /* line_count */ 6
+    },
 };
-const int g_cutscene_intro_count = 5;
+const int g_cutscene_intro_count = 8;
 
 
 /* ── OUTRO: Post-breach. The mechanism returns zero. ─────────────── */
@@ -176,8 +216,35 @@ const CutsceneSlide g_cutscene_outro[] = {
         },
         /* line_count */ 6
     },
+    /* ── S10E08 extension: question-state resolution ──────────────── */
+    {
+        /* chapter */ "JIANGSHI MEMO #094-B — POST-BREACH",
+        /* title   */ "QUESTION-STATE: RESOLVED",
+        /* lines   */ {
+            "Mechanism reading restored: Stolas 7.83",
+            "Question-state signal: DECAYED (resolved)",
+            "Observer filed the observation.",
+            "The paragraph has a close.",
+            "ACR-089 updated: ZERO-TAXONOMY / CLOSED",
+            "Ahmad ibn Yusuf's gap: filed.",
+        },
+        /* line_count */ 6
+    },
+    {
+        /* chapter */ "CAMERA OP — FIELD LOG",
+        /* title   */ "ENTRY 88",
+        /* lines   */ {
+            "Tyler read the post-breach mechanism log.",
+            "Stolas 7.83 Hz. Stable. Nothing unusual.",
+            "",
+            "He said: \"It knows what this site is now.",
+            " Something stayed. Something was recorded.\"",
+            "He didn't look relieved. He looked right.",
+        },
+        /* line_count */ 6
+    },
 };
-const int g_cutscene_outro_count = 6;
+const int g_cutscene_outro_count = 8;
 
 
 /* ── sequencer ────────────────────────────────────────────────────── */

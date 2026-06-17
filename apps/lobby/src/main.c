@@ -4314,6 +4314,68 @@ static void draw_story_boss_world(const StoryBossState *boss, unsigned int now_m
         draw_box(1.8f, 1.8f, 1.8f);
         glPopMatrix();
     }
+
+    /* ── Question-state aura ─────────────────────────────────────────
+     * When the boss is in question-state (mechanism zero-reading phase),
+     * render a second ring system in muted grey-violet — the boss is
+     * partially outside the archive and cannot be fully read.
+     * The observation point glows as a ground marker so the player knows
+     * where to go to "file the observation."
+     */
+    if (boss->question_state == 1) {
+        float qt = (float)(now_ms - boss->question_entered_ms) * 0.001f;
+        float fade = qt > 2.0f ? 1.0f : qt * 0.5f;
+        float qpulse = 0.4f + 0.6f * sinf((float)now_ms * 0.009f);
+
+        glDisable(GL_CULL_FACE);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+
+        /* drifting grey ring — mechanism cannot classify */
+        glColor4f(0.62f * fade, 0.60f * fade, 0.70f * fade, 0.35f * qpulse);
+        glBegin(GL_LINE_LOOP);
+        for (int i = 0; i < 48; i++) {
+            float a = ((float)i / 48.0f) * 6.28318f;
+            float wobble = 1.0f + 0.08f * sinf(a * 7.0f + (float)now_ms * 0.006f);
+            glVertex3f(boss->x + cosf(a) * 130.0f * wobble,
+                       boss->y + 40.0f + sinf((float)now_ms * 0.003f + a) * 20.0f,
+                       boss->z + sinf(a) * 130.0f * wobble);
+        }
+        glEnd();
+
+        /* eroding particle cloud — archive dissolving around boss */
+        for (int i = 0; i < 20; i++) {
+            float fi = (float)i;
+            float a = fi * 0.628f + (float)now_ms * 0.0007f;
+            float r = 60.0f + 40.0f * sinf(fi * 2.3f + (float)now_ms * 0.001f);
+            float ox2 = cosf(a) * r;
+            float oz2 = sinf(a) * r;
+            float oy2 = 30.0f + sinf(fi * 1.7f + (float)now_ms * 0.0015f) * 25.0f;
+            float blink = (((now_ms / 300U) + (unsigned int)i) % 2 == 0) ? 0.8f : 0.2f;
+            glColor4f(0.5f * blink * fade, 0.5f * blink * fade, 0.55f * blink * fade, 0.5f);
+            glPushMatrix();
+            glTranslatef(boss->x + ox2, boss->y + oy2, boss->z + oz2);
+            draw_box(2.4f, 2.4f, 2.4f);
+            glPopMatrix();
+        }
+
+        /* observation point ground marker — where player must go */
+        float obs_pulse = 0.6f + 0.4f * sinf((float)now_ms * 0.012f);
+        glColor4f(0.55f * obs_pulse, 0.95f * obs_pulse, 0.70f * obs_pulse, 0.7f);
+        glBegin(GL_LINE_LOOP);
+        for (int i = 0; i < 24; i++) {
+            float a = ((float)i / 24.0f) * 6.28318f;
+            float obs_y = voxworld_height_at(boss->observation_x, boss->observation_z) + 2.0f;
+            glVertex3f(boss->observation_x + cosf(a) * 28.0f,
+                       obs_y,
+                       boss->observation_z + sinf(a) * 28.0f);
+        }
+        glEnd();
+
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDisable(GL_BLEND);
+        glEnable(GL_CULL_FACE);
+    }
 }
 
 static void draw_story_boss_hud(const StoryBossState *boss) {
@@ -4324,11 +4386,22 @@ static void draw_story_boss_hud(const StoryBossState *boss) {
     float x0 = 320.0f, x1 = 960.0f, y0 = 690.0f, y1 = 710.0f;
     glColor4f(0.06f, 0.04f, 0.08f, 0.78f); glRectf(x0 - 8.0f, y0 - 10.0f, x1 + 8.0f, y1 + 10.0f);
     glColor3f(0.25f, 0.10f, 0.16f); glRectf(x0, y0, x1, y1);
-    glColor3f(0.84f, 0.20f, 0.34f); glRectf(x0, y0, x0 + (x1 - x0) * pct, y1);
-    glColor3f(0.95f, 0.70f, 0.90f); draw_string("BREACH TITAN", 530, 714, 4);
-    if (boss->defeated) {
-        glColor3f(0.55f, 1.0f, 0.65f);
-        draw_string("DEFEATED", 600, 694, 4);
+    /* question-state: bar desaturates to grey to show boss is partially outside archive */
+    if (boss->question_state == 1) {
+        float qf = 0.5f + 0.5f * sinf((float)SDL_GetTicks() * 0.009f);
+        glColor3f(0.35f * qf, 0.30f * qf, 0.42f * qf);
+        glRectf(x0, y0, x0 + (x1 - x0) * pct, y1);
+        glColor3f(0.68f, 0.62f, 0.80f);
+        draw_string("BREACH TITAN  //  TAXONOMY: ????????", 390, 714, 4);
+        glColor3f(0.55f * qf, 0.52f * qf, 0.70f * qf);
+        draw_string("MECHANISM: NO READING", 490, 694, 4);
+    } else {
+        glColor3f(0.84f, 0.20f, 0.34f); glRectf(x0, y0, x0 + (x1 - x0) * pct, y1);
+        glColor3f(0.95f, 0.70f, 0.90f); draw_string("BREACH TITAN", 530, 714, 4);
+        if (boss->defeated) {
+            glColor3f(0.55f, 1.0f, 0.65f);
+            draw_string("DEFEATED", 600, 694, 4);
+        }
     }
 }
 
@@ -4560,6 +4633,76 @@ static void draw_ability_one_tile(const PlayerState *p) {
     draw_string("E", tile_x + tile_size - 10.0f, tile_y - 14.0f, keybind_size);
 }
 
+/* ── Mechanism Reader HUD — TYLER archive frequency display ────────────
+ * Renders the mechanism's current Hz reading and site taxonomy at
+ * bottom-left in story mode.  Matches the "bureaucratic horror" aesthetic:
+ * monospace readout, color shifts with intensity, collapses to red/zero
+ * during question-state.
+ */
+static void draw_mechanism_hud(const MechanismReading *m, int story_phase) {
+    if (!m) return;
+    if (story_phase == STORY_PHASE_CUTSCENE || story_phase == STORY_PHASE_OUTRO) return;
+    if (story_phase == STORY_PHASE_COMPLETE || story_phase == STORY_PHASE_FAILED) return;
+
+    /* background panel */
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f(0.04f, 0.04f, 0.06f, 0.74f);
+    glRectf(8.0f, 8.0f, 290.0f, 78.0f);
+    glDisable(GL_BLEND);
+
+    /* label */
+    glColor3f(0.45f, 0.55f, 0.52f);
+    draw_string("MECHANISM READER", 14, 62, 3);
+
+    if (m->zero_reading || m->question_state == 1) {
+        /* zero-taxonomy: machine has found itself, cannot classify */
+        float flicker = (sinf((float)SDL_GetTicks() * 0.018f) > 0.0f) ? 1.0f : 0.6f;
+        glColor3f(0.85f * flicker, 0.10f, 0.10f * flicker);
+        draw_string("NO READING", 14, 42, 5);
+        glColor3f(0.55f * flicker, 0.08f, 0.08f);
+        draw_string("ZERO TAXONOMY — PROCEED AT OWN RISK", 14, 22, 3);
+    } else {
+        /* normal reading */
+        char hz_buf[48];
+        snprintf(hz_buf, sizeof(hz_buf), "%.2f Hz", m->signal_hz);
+
+        /* color: green near Stolas baseline, shifts red as intensity climbs */
+        float excess = (m->signal_hz - STOLAS_BASE_HZ) / 12.0f;
+        if (excess < 0.0f) excess = 0.0f;
+        if (excess > 1.0f) excess = 1.0f;
+        glColor3f(0.2f + excess * 0.75f, 0.9f - excess * 0.65f, 0.3f - excess * 0.25f);
+        draw_string(hz_buf, 14, 42, 5);
+
+        /* taxonomy class */
+        const char *class_name = "UNCLASSIFIED";
+        switch (m->site_class) {
+            case SITE_CLASS_DWELLING:     class_name = "DWELLING";     break;
+            case SITE_CLASS_WITNESS:      class_name = "WITNESS";      break;
+            case SITE_CLASS_FAREWELL:     class_name = "FAREWELL";     break;
+            case SITE_CLASS_PASSAGE:      class_name = "PASSAGE";      break;
+            case SITE_CLASS_LIMINAL:      class_name = "LIMINAL";      break;
+            case SITE_CLASS_ZERO_TAXONOMY:class_name = "ZERO TAXONOMY";break;
+            default:                      class_name = "UNCLASSIFIED"; break;
+        }
+        glColor3f(0.55f, 0.70f, 0.65f);
+        draw_string(class_name, 14, 22, 3);
+    }
+
+    /* archive pressure bar */
+    float bar_x0 = 14.0f, bar_x1 = 280.0f, bar_y0 = 10.0f, bar_y1 = 17.0f;
+    glColor3f(0.12f, 0.16f, 0.14f);
+    glRectf(bar_x0, bar_y0, bar_x1, bar_y1);
+    float p_fill = m->archive_pressure;
+    if (p_fill > 0.0f) {
+        float pr = m->zero_reading ? 0.8f : 0.2f + p_fill * 0.3f;
+        float pg = m->zero_reading ? 0.1f : 0.6f + p_fill * 0.2f;
+        float pb = m->zero_reading ? 0.1f : 0.3f;
+        glColor3f(pr, pg, pb);
+        glRectf(bar_x0, bar_y0, bar_x0 + (bar_x1 - bar_x0) * p_fill, bar_y1);
+    }
+}
+
 void draw_hud(PlayerState *p) {
     glDisable(GL_DEPTH_TEST);
     glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
@@ -4635,9 +4778,24 @@ void draw_hud(PlayerState *p) {
             goto story_hud_done; /* skip normal story HUD */
         }
 
+        /* mechanism reader — always shown in story mode (except cutscene/complete/fail) */
+        draw_mechanism_hud(&local_state.mechanism, local_state.story_phase);
+
         glColor3f(0.85f, 0.92f, 0.95f);
         if (local_state.story_phase == STORY_PHASE_PLAYING) {
-            draw_string("OBJECTIVE: DEFEAT THE BREACH TITAN", 390, 682, 4);
+            const StoryBossState *_boss = &local_state.story_boss;
+            if (_boss->active && _boss->question_state == 1) {
+                /* question-state: objective changes */
+                float flicker = (sinf((float)SDL_GetTicks() * 0.012f) > 0.3f) ? 1.0f : 0.72f;
+                glColor3f(0.9f * flicker, 0.62f * flicker, 0.95f * flicker);
+                draw_string("MECHANISM: ZERO READING", 430, 700, 5);
+                glColor3f(0.78f, 0.88f, 0.84f);
+                draw_string("FILE OBSERVATION — APPROACH THE BREACH SITE", 340, 674, 4);
+                glColor3f(0.48f, 0.56f, 0.52f);
+                draw_string("AL-WAQFA  //  THE PAUSE", 490, 656, 3);
+            } else {
+                draw_string("OBJECTIVE: DEFEAT THE BREACH TITAN", 390, 682, 4);
+            }
         } else if (local_state.story_phase == STORY_PHASE_RIFT_OPENING) {
             glColor3f(0.9f, 0.6f, 1.0f);
             draw_string("RIFT DETECTED", 520, 682, 6);

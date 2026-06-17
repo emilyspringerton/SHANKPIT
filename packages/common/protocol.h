@@ -343,6 +343,43 @@ typedef enum {
     STORY_ENEMY_GORE_BRUTE = 3
 } StoryEnemyType;
 
+/* ── Mechanism Reader — TYLER lore tool ───────────────────────────────
+ * Tyler's archive mechanism measures Goetia frequencies at sites.
+ * In story mode the mechanism ticks continuously, producing a Hz reading
+ * and a site taxonomy class.  When the boss enters question-state the
+ * reading collapses to zero (the mechanism cannot read itself).
+ *
+ * Site taxonomy mirrors the TYLER archive classification system:
+ *   UNCLASSIFIED → baseline, no pattern detected
+ *   DWELLING / WITNESS / FAREWELL / PASSAGE / LIMINAL → standard types
+ *   ZERO_TAXONOMY → the cave phenomenon; mechanism returns nothing
+ */
+typedef enum {
+    SITE_CLASS_UNCLASSIFIED = 0,
+    SITE_CLASS_DWELLING,
+    SITE_CLASS_WITNESS,
+    SITE_CLASS_FAREWELL,
+    SITE_CLASS_PASSAGE,
+    SITE_CLASS_LIMINAL,
+    SITE_CLASS_ZERO_TAXONOMY   /* mechanism returns no reading */
+} SiteClass;
+
+typedef struct {
+    float     signal_hz;          /* current Goetia frequency (Stolas baseline 7.83) */
+    SiteClass site_class;         /* derived taxonomy from frequency pattern          */
+    int       question_state;     /* 1 = question-state active (boss phase)           */
+    int       zero_reading;       /* 1 = mechanism returning nothing                  */
+    float     archive_pressure;   /* 0..1 — how much the site is "being recorded"     */
+    unsigned int last_tick_ms;
+} MechanismReading;
+
+/* Boss question-state phase:
+ * - Triggered at 33% health
+ * - Boss becomes semi-invulnerable (10% damage only)
+ * - Mechanism reading collapses to zero
+ * - Resolved when player reaches observation_x/z (the rift core)
+ * - Once resolved, boss fully vulnerable again and mechanism rereads
+ */
 typedef struct {
     int active;
     int defeated;
@@ -352,6 +389,11 @@ typedef struct {
     float max_health;
     unsigned int last_attack_ms;
     unsigned int hurt_flash_until_ms;
+    /* question-state fields */
+    int question_state;           /* 0=off 1=active 2=resolved */
+    float observation_x, observation_z; /* point player must reach */
+    unsigned int question_entered_ms;
+    unsigned int question_resolved_ms;
 } StoryBossState;
 
 typedef struct {
@@ -407,6 +449,7 @@ typedef struct {
     StoryBossState story_boss;
     StoryRiftState story_rift;
     StoryEnemy story_swarm[STORY_MAX_SWARM_ENEMIES];
+    MechanismReading mechanism;   /* TYLER archive mechanism — frequency reader */
     CtfMatchState ctf;
     struct sockaddr_in clients[MAX_CLIENTS];
     ClientMeta client_meta[MAX_CLIENTS];
