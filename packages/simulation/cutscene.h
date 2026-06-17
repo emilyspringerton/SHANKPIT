@@ -66,4 +66,11 @@ extern const int           g_cutscene_intro_count;
 extern const CutsceneSlide g_cutscene_outro[];
 extern const int           g_cutscene_outro_count;
 
+/* CAVE-001 (al-Waqfa) — second story mission: the archive finds its source */
+extern const CutsceneSlide g_cutscene_cave_intro[];
+extern const int           g_cutscene_cave_intro_count;
+
+extern const CutsceneSlide g_cutscene_cave_outro[];
+extern const int           g_cutscene_cave_outro_count;
+
 #endif /* CUTSCENE_H */

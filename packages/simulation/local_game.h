@@ -728,8 +728,11 @@ static void story_swarm_apply_player_hit(PlayerState *hero, unsigned int now_ms)
 
 static void story_boss_apply_player_hit(PlayerState *hero, unsigned int now_ms) {
     StoryBossState *boss = &local_state.story_boss;
-    if (local_state.game_mode != MODE_STORY || local_state.story_phase != STORY_PHASE_PLAYING) return;
+    if ((local_state.game_mode != MODE_STORY && local_state.game_mode != MODE_STORY_CAVE) ||
+        local_state.story_phase != STORY_PHASE_PLAYING) return;
     if (!boss->active || boss->defeated || hero->state == STATE_DEAD) return;
+    /* CAVE-001: the archive source cannot be destroyed — it predates the weapon */
+    if (boss->indestructible) { hero->hit_feedback = 2; return; }
     int weapon = hero->current_weapon;
     float max_dist = 560.0f;
     float cone_dot = 0.93f;
@@ -758,7 +761,8 @@ static void story_boss_apply_player_hit(PlayerState *hero, unsigned int now_ms) 
 
 static void story_boss_tick(PlayerState *hero, unsigned int now_ms) {
     StoryBossState *boss = &local_state.story_boss;
-    if (local_state.game_mode != MODE_STORY || local_state.story_phase != STORY_PHASE_PLAYING) return;
+    if ((local_state.game_mode != MODE_STORY && local_state.game_mode != MODE_STORY_CAVE) ||
+        local_state.story_phase != STORY_PHASE_PLAYING) return;
     if (!boss->active || boss->defeated || hero->state == STATE_DEAD) return;
     unsigned int cooldown = STORY_BOSS_ATTACK_MIN_MS + (unsigned int)(((boss->x + boss->z) < 0.0f ? -boss->z : boss->z));
     cooldown = STORY_BOSS_ATTACK_MIN_MS + (cooldown % (STORY_BOSS_ATTACK_MAX_MS - STORY_BOSS_ATTACK_MIN_MS + 1U));
@@ -800,10 +804,11 @@ static void story_boss_tick(PlayerState *hero, unsigned int now_ms) {
  * observed.  At 1.0 the site is fully in the archive; at 0 it is invisible.
  */
 
-#define STOLAS_BASE_HZ       7.83f
+#define STOLAS_BASE_HZ               7.83f
 #define QUESTION_STATE_HP_THRESHOLD  0.33f  /* trigger question-state at 33% */
-#define QUESTION_OBS_RADIUS  32.0f          /* player must get this close to resolve */
-#define QUESTION_MIN_ACTIVE_MS 4000U        /* can't resolve instantly */
+#define QUESTION_OBS_RADIUS          32.0f  /* player must get this close to resolve */
+#define QUESTION_MIN_ACTIVE_MS       4000U  /* can't resolve instantly */
+#define CAVE_ENDURE_DURATION_MS      90000U /* CAVE-001: endure 90s — cannot close, only survive */
 
 static float mechanism_derive_hz(unsigned int now_ms) {
     const StoryBossState *boss = &local_state.story_boss;
@@ -849,6 +854,22 @@ static void mechanism_tick(unsigned int now_ms) {
     MechanismReading *m = &local_state.mechanism;
     int phase = local_state.story_phase;
     if (phase == STORY_PHASE_CUTSCENE || phase == STORY_PHASE_OUTRO) return;
+
+    /* CAVE-001: mechanism always at zero — it cannot read its own source.
+     * Stolas 7.83 IS the cave's frequency; the mechanism recognizes itself
+     * and returns nothing.  No classification is possible. */
+    if (local_state.game_mode == MODE_STORY_CAVE) {
+        if (now_ms - m->last_tick_ms < 32U) return;
+        m->last_tick_ms = now_ms;
+        m->zero_reading = 1;
+        m->question_state = 0;
+        m->site_class = SITE_CLASS_ZERO_TAXONOMY;
+        /* hz oscillates near Stolas but collapses to 0 — the source reading */
+        float t = (float)now_ms * 0.0004f;
+        m->signal_hz = STOLAS_BASE_HZ * (0.04f + 0.03f * sinf(t * 0.3f));
+        m->archive_pressure = 0.02f + 0.015f * sinf(t * 0.7f + 1.2f);
+        return;
+    }
 
     /* tick at ~30Hz max */
     if (now_ms - m->last_tick_ms < 32U) return;
@@ -922,6 +943,24 @@ static void story_boss_question_state_tick(PlayerState *hero, unsigned int now_m
             boss->question_resolved_ms = now_ms;
             printf("[STORY] question-state RESOLVED — boss fully vulnerable\n");
         }
+    }
+}
+
+/* CAVE-001 endurance: player cannot close this breach — only endure it.
+ * When cave_endure_until_ms expires, trigger the outro cutscene.
+ * The cave does not close. The form stays open. */
+static void story_cave_endure_tick(unsigned int now_ms) {
+    if (local_state.game_mode != MODE_STORY_CAVE) return;
+    if (local_state.story_phase != STORY_PHASE_PLAYING) return;
+    if (local_state.cave_endure_until_ms == 0) {
+        local_state.cave_endure_until_ms = now_ms + CAVE_ENDURE_DURATION_MS;
+        printf("[CAVE] endurance started — %u ms\n", CAVE_ENDURE_DURATION_MS);
+    }
+    if (now_ms >= local_state.cave_endure_until_ms) {
+        local_state.story_phase          = STORY_PHASE_OUTRO;
+        local_state.story_phase_start_ms = now_ms;
+        g_story_outro_requested          = 1;
+        printf("[CAVE] endurance complete — entering outro\n");
     }
 }
 
@@ -1261,7 +1300,7 @@ static void update_projectiles(unsigned int now_ms) {
 void local_update(float fwd, float str, float yaw, float pitch, int shoot, int weapon_req, int jump, int crouch, int reload, int ability, int bike, void *server_context, unsigned int cmd_time) {
     PlayerState *p0 = &local_state.players[0];
     const float dt = SHANKPIT_NET_FIXED_DT;
-    if (local_state.game_mode == MODE_STORY) {
+    if (local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) {
         if (local_state.story_phase == STORY_PHASE_CUTSCENE ||
             local_state.story_phase == STORY_PHASE_OUTRO) {
             /* Lock all player inputs during cutscene/outro */
@@ -1297,7 +1336,8 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
             }
         }
     }
-    if (local_state.match_over && (local_state.game_mode == MODE_TDMB || local_state.game_mode == MODE_CTFB)) {
+    if (local_state.match_over && (local_state.game_mode == MODE_TDMB || local_state.game_mode == MODE_CTFB ||
+        local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE)) {
         fwd = 0.0f; str = 0.0f; shoot = 0; jump = 0; crouch = 0; reload = 0; ability = 0;
     }
     scene_tick_transition();
@@ -1377,7 +1417,8 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
         }
     }
 
-    if (local_state.game_mode == MODE_STORY && local_state.story_phase == STORY_PHASE_PLAYING) {
+    if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
+        local_state.story_phase == STORY_PHASE_PLAYING) {
         story_ai_tick(&local_state, cmd_time);
     }
 
@@ -1385,7 +1426,7 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
         PlayerState *p = &local_state.players[i];
         if (!p->active) continue;
         if (p->state == STATE_DEAD) {
-            if (local_state.game_mode == MODE_STORY && i > 0) {
+            if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) && i > 0) {
                 p->respawn_time = 0;
                 continue;
             }
@@ -1422,7 +1463,8 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
             continue;
         }
         if (i > 0 && p->active && p->state != STATE_DEAD) {
-            if (local_state.game_mode == MODE_STORY && local_state.story_phase == STORY_PHASE_PLAYING) {
+            if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
+                local_state.story_phase == STORY_PHASE_PLAYING) {
                 if (!p->in_vehicle) {
                     MoveIntent bot_move_intent = {
                         .forward = p->in_fwd,
@@ -1469,7 +1511,7 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
     }
     buggy_tick_all();
     update_projectiles(cmd_time);
-    if (local_state.game_mode == MODE_STORY &&
+    if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
         (local_state.story_phase == STORY_PHASE_PLAYING || local_state.story_phase == STORY_PHASE_SWARM)) {
         if (p0->is_shooting >= 5 || (p0->current_weapon == WPN_KNIFE && p0->in_shoot) || (p0->current_weapon == WPN_KATANA && p0->in_shoot)) {
             if (local_state.story_phase == STORY_PHASE_PLAYING) story_boss_apply_player_hit(p0, cmd_time);
@@ -1480,6 +1522,11 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
         story_boss_tick(p0, cmd_time);
         story_boss_question_state_tick(p0, cmd_time);
         story_swarm_tick(p0, cmd_time);
+        mechanism_tick(cmd_time);
+    }
+    if (local_state.game_mode == MODE_STORY_CAVE) {
+        story_boss_tick(p0, cmd_time);
+        story_cave_endure_tick(cmd_time);
         mechanism_tick(cmd_time);
     }
     if (local_state.game_mode == MODE_CTFB) {
@@ -1512,7 +1559,7 @@ void local_init_match(int num_players, int mode) {
     local_state.transition_timer = 0;
     local_state.winning_team = -1;
     local_state.score_limit = (mode == MODE_TDMB || mode == MODE_TDMO || mode == MODE_HEADED_BOT) ? TDMB_SCORE_LIMIT : (mode == MODE_CTFB ? CTFB_SCORE_LIMIT : 0);
-    local_state.story_phase = (mode == MODE_STORY) ? STORY_PHASE_CUTSCENE : STORY_PHASE_PLAYING;
+    local_state.story_phase = (mode == MODE_STORY || mode == MODE_STORY_CAVE) ? STORY_PHASE_CUTSCENE : STORY_PHASE_PLAYING;
     local_state.story_phase_start_ms = 0;
     story_clear_swarm();
 
@@ -1528,6 +1575,11 @@ void local_init_match(int num_players, int mode) {
         num_players = 1;
         local_state.scene_id = SCENE_VOXWORLD;
         printf("[STORY] starting Voxworld boss encounter\n");
+    } else if (mode == MODE_STORY_CAVE) {
+        num_players = 1;
+        local_state.scene_id = SCENE_STORY_CAVE;
+        local_state.cave_endure_until_ms = 0;
+        printf("[CAVE] starting CAVE-001 endurance encounter\n");
     } else {
         local_state.scene_id = SCENE_GARAGE_OSAKA;
     }
@@ -1568,6 +1620,7 @@ void local_init_match(int num_players, int mode) {
         StoryBossState *boss = &local_state.story_boss;
         boss->active = 1;
         boss->defeated = 0;
+        boss->indestructible = 0;
         boss->x = 0.0f;
         boss->z = -420.0f;
         boss->y = voxworld_height_at(boss->x, boss->z) + 42.0f;
@@ -1577,6 +1630,22 @@ void local_init_match(int num_players, int mode) {
         boss->last_attack_ms = 0;
         boss->hurt_flash_until_ms = 0;
         printf("[STORY] boss spawned at %.1f/%.1f/%.1f hp=%.1f\n", boss->x, boss->y, boss->z, boss->max_health);
+    }
+    if (mode == MODE_STORY_CAVE) {
+        story_ai_reset(&local_state);
+        StoryBossState *boss = &local_state.story_boss;
+        boss->active = 1;
+        boss->defeated = 0;
+        boss->indestructible = 1;   /* cannot be killed — predates the weapon */
+        boss->x = 0.0f;
+        boss->z = -120.0f;
+        boss->y = 2.0f;
+        boss->yaw = 180.0f;
+        boss->max_health = 0.0f;    /* no health bar */
+        boss->health = 0.0f;
+        boss->last_attack_ms = 0;
+        boss->hurt_flash_until_ms = 0;
+        printf("[CAVE] cave entity active at %.1f/%.1f/%.1f (indestructible)\n", boss->x, boss->y, boss->z);
     }
     if (mode == MODE_CTFB) {
         ctf_init_match_state(local_state.scene_id);

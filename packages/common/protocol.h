@@ -322,7 +322,7 @@ typedef struct {
     unsigned int event_counter;
 } CtfMatchState;
 
-typedef enum { MODE_DEATHMATCH=0, MODE_TDM=1, MODE_SURVIVAL=2, MODE_CTF=3, MODE_ODDBALL=4, MODE_LOCAL=98, MODE_NET=99, MODE_EVOLUTION=100, MODE_TDMB=101, MODE_TDMO=102, MODE_CTFB=103, MODE_CTFO=104, MODE_STORY=105, MODE_HEADED_BOT=106 } GameMode;
+typedef enum { MODE_DEATHMATCH=0, MODE_TDM=1, MODE_SURVIVAL=2, MODE_CTF=3, MODE_ODDBALL=4, MODE_LOCAL=98, MODE_NET=99, MODE_EVOLUTION=100, MODE_TDMB=101, MODE_TDMO=102, MODE_CTFB=103, MODE_CTFO=104, MODE_STORY=105, MODE_HEADED_BOT=106, MODE_STORY_CAVE=107 } GameMode;
 typedef enum {
     STORY_PHASE_CUTSCENE = 0,    /* intro cutscene (TYLER episode — Tyler arrives) */
     STORY_PHASE_PLAYING = 1,
@@ -383,6 +383,7 @@ typedef struct {
 typedef struct {
     int active;
     int defeated;
+    int indestructible;           /* 1 = cannot be killed (CAVE-001 entity) */
     float x, y, z;
     float yaw;
     float health;
@@ -450,6 +451,7 @@ typedef struct {
     StoryRiftState story_rift;
     StoryEnemy story_swarm[STORY_MAX_SWARM_ENEMIES];
     MechanismReading mechanism;   /* TYLER archive mechanism — frequency reader */
+    unsigned int cave_endure_until_ms; /* CAVE-001: endurance win condition timestamp */
     CtfMatchState ctf;
     struct sockaddr_in clients[MAX_CLIENTS];
     ClientMeta client_meta[MAX_CLIENTS];

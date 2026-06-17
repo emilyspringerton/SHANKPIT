@@ -1105,6 +1105,7 @@ typedef enum {
     LOBBY_JOIN = 0,
     LOBBY_TDMO,
     LOBBY_STORY,
+    LOBBY_STORY_CAVE,
     LOBBY_SOLO,
     LOBBY_BATTLE,
     LOBBY_TDMB,
@@ -1119,6 +1120,7 @@ static const char *LOBBY_LABELS[LOBBY_COUNT] = {
     "FIND CTF",
     "TDMO",
     "STORY",
+    "CAVE-001",
     "SOLO",
     "TRAIN",
     "TDMB",
@@ -1323,6 +1325,15 @@ static void lobby_apply_ui_state() {
         cutscene_start(&g_story_cs,
                        g_cutscene_intro, g_cutscene_intro_count,
                        SDL_GetTicks());
+    } else if (strcmp(ui_state.active_mode_id, "mode.story_cave") == 0) {
+        app_state = STATE_GAME_LOCAL;
+        local_init_match(1, MODE_STORY_CAVE);
+        local_state.story_phase_start_ms = SDL_GetTicks();
+        g_story_cutscene_done   = 0;
+        g_story_outro_requested = 0;
+        cutscene_start(&g_story_cs,
+                       g_cutscene_cave_intro, g_cutscene_cave_intro_count,
+                       SDL_GetTicks());
     } else if (strcmp(ui_state.active_mode_id, "mode.battle") == 0) {
         app_state = STATE_GAME_LOCAL;
         local_init_match(12, MODE_DEATHMATCH);
@@ -1399,6 +1410,20 @@ static void lobby_start_action(int action) {
             case LOBBY_STORY:
                 local_init_match(1, MODE_STORY);
                 local_state.story_phase_start_ms = SDL_GetTicks();
+                g_story_cutscene_done   = 0;
+                g_story_outro_requested = 0;
+                cutscene_start(&g_story_cs,
+                               g_cutscene_intro, g_cutscene_intro_count,
+                               SDL_GetTicks());
+                break;
+            case LOBBY_STORY_CAVE:
+                local_init_match(1, MODE_STORY_CAVE);
+                local_state.story_phase_start_ms = SDL_GetTicks();
+                g_story_cutscene_done   = 0;
+                g_story_outro_requested = 0;
+                cutscene_start(&g_story_cs,
+                               g_cutscene_cave_intro, g_cutscene_cave_intro_count,
+                               SDL_GetTicks());
                 break;
             case LOBBY_BATTLE:
                 local_init_match(12, MODE_DEATHMATCH);
@@ -4380,6 +4405,15 @@ static void draw_story_boss_world(const StoryBossState *boss, unsigned int now_m
 
 static void draw_story_boss_hud(const StoryBossState *boss) {
     if (!boss || (!boss->active && !boss->defeated)) return;
+    /* CAVE-001: indestructible entity has no health bar */
+    if (boss->indestructible) {
+        float flicker = (sinf((float)SDL_GetTicks() * 0.007f) > 0.0f) ? 0.85f : 0.55f;
+        glColor3f(0.68f * flicker, 0.68f * flicker, 0.72f * flicker);
+        draw_string("ARCHIVE SOURCE  //  ZERO-TAXONOMY", 420, 714, 4);
+        glColor3f(0.42f * flicker, 0.42f * flicker, 0.48f * flicker);
+        draw_string("CANNOT BE NAMED. CANNOT BE CLOSED.", 430, 694, 4);
+        return;
+    }
     float pct = (boss->max_health > 0.0f) ? (boss->health / boss->max_health) : 0.0f;
     if (pct < 0.0f) pct = 0.0f;
     if (pct > 1.0f) pct = 1.0f;
@@ -4495,6 +4529,71 @@ static void draw_story_swarm_enemy_world(const StoryEnemy *enemy, unsigned int n
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDisable(GL_BLEND);
     glPopMatrix();
+}
+
+/* CAVE-001 entity — the pre-archive Tyler, made external.
+ * No body. No health bar. Not a creature — a presence.
+ * Stolas 7.83 slow-field: near-invisible geometry that drifts
+ * through the space at the mechanism's own baseline frequency.
+ */
+static void draw_story_cave_entity(const StoryBossState *boss, unsigned int now_ms) {
+    if (!boss || !boss->active) return;
+    float t = (float)now_ms * 0.0008f;  /* very slow — 7.83 Hz rhythm */
+
+    glDisable(GL_CULL_FACE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+
+    /* three concentric rings at different speeds — all near-grey */
+    static const float radii[3] = { 48.0f, 72.0f, 96.0f };
+    for (int ring = 0; ring < 3; ring++) {
+        float r = radii[ring];
+        float speed = 0.00038f + (float)ring * 0.00011f;
+        float phase_off = (float)ring * 1.047f;
+        float alpha = 0.12f - (float)ring * 0.028f;
+        float height = boss->y + 18.0f + (float)ring * 12.0f +
+                       sinf(t * 0.72f + phase_off) * 8.0f;
+        glColor4f(0.72f, 0.72f, 0.76f, alpha);
+        glBegin(GL_LINE_LOOP);
+        for (int i = 0; i < 48; i++) {
+            float a = ((float)i / 48.0f) * 6.28318f + (float)now_ms * speed + phase_off;
+            float wobble = 1.0f + 0.05f * sinf(a * 4.0f + t * 0.4f);
+            glVertex3f(boss->x + cosf(a) * r * wobble,
+                       height,
+                       boss->z + sinf(a) * r * wobble);
+        }
+        glEnd();
+    }
+
+    /* slow-orbit particles — like memory before language */
+    for (int i = 0; i < 16; i++) {
+        float fi = (float)i;
+        float orbit_speed = 0.00032f + fi * 0.000014f;
+        float a = fi * 0.3927f + (float)now_ms * orbit_speed;
+        float r = 36.0f + sinf(fi * 1.9f + t * 0.3f) * 18.0f;
+        float oy = boss->y + 14.0f + sinf(fi * 2.3f + t * 0.5f) * 20.0f;
+        unsigned int blink_period = 1800U + (unsigned int)(fi * 170.0f);
+        float blink = ((now_ms / blink_period) % 2 == 0) ? 0.55f : 0.12f;
+        glColor4f(0.78f * blink, 0.78f * blink, 0.82f * blink, 0.35f);
+        glPushMatrix();
+        glTranslatef(boss->x + cosf(a) * r, oy, boss->z + sinf(a) * r);
+        draw_box(1.6f, 1.6f, 1.6f);
+        glPopMatrix();
+    }
+
+    /* ground ring — Stolas 7.83 breathing */
+    float ground_pulse = 0.55f + 0.45f * sinf(t * 0.783f);  /* 7.83 Hz */
+    glColor4f(0.62f * ground_pulse, 0.62f * ground_pulse, 0.68f * ground_pulse, 0.25f);
+    glBegin(GL_LINE_LOOP);
+    for (int i = 0; i < 36; i++) {
+        float a = ((float)i / 36.0f) * 6.28318f;
+        glVertex3f(boss->x + cosf(a) * 80.0f, boss->y + 1.0f, boss->z + sinf(a) * 80.0f);
+    }
+    glEnd();
+
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDisable(GL_BLEND);
+    glEnable(GL_CULL_FACE);
 }
 
 // --- NEW HELPER: Wireframe Circle ---
@@ -4822,6 +4921,57 @@ void draw_hud(PlayerState *p) {
         }
         draw_story_boss_hud(&local_state.story_boss);
         story_hud_done:;
+    } else if (local_state.game_mode == MODE_STORY_CAVE) {
+        /* CAVE-001 — cutscene/outro phases */
+        if (local_state.story_phase == STORY_PHASE_CUTSCENE ||
+            local_state.story_phase == STORY_PHASE_OUTRO) {
+            draw_tyler_cutscene(&g_story_cs, now_ms);
+            cutscene_tick(&g_story_cs, now_ms);
+            if (g_story_cs.done && !g_story_cutscene_done) {
+                g_story_cutscene_done = 1;
+            }
+            if (g_story_outro_requested) {
+                g_story_outro_requested = 0;
+                cutscene_start(&g_story_cs,
+                               g_cutscene_cave_outro, g_cutscene_cave_outro_count,
+                               now_ms);
+            }
+            goto cave_hud_done;
+        }
+
+        /* mechanism always zero in cave mode */
+        draw_mechanism_hud(&local_state.mechanism, local_state.story_phase);
+
+        if (local_state.story_phase == STORY_PHASE_PLAYING) {
+            /* endurance countdown */
+            char endure_buf[64];
+            if (local_state.cave_endure_until_ms > 0 && now_ms < local_state.cave_endure_until_ms) {
+                unsigned int ms_left = local_state.cave_endure_until_ms - now_ms;
+                unsigned int s_left  = (ms_left + 999U) / 1000U;
+                snprintf(endure_buf, sizeof(endure_buf), "ENDURE  %u", s_left);
+            } else {
+                snprintf(endure_buf, sizeof(endure_buf), "ENDURE");
+            }
+            float ef = (sinf((float)now_ms * 0.006f) > 0.0f) ? 0.78f : 0.52f;
+            glColor3f(0.62f * ef, 0.62f * ef, 0.68f * ef);
+            draw_string(endure_buf, 510, 700, 5);
+            glColor3f(0.36f, 0.36f, 0.42f);
+            draw_string("CAVE-001 — AL-WAQFA — ZERO-TAXONOMY", 390, 674, 3.5f);
+            glColor3f(0.28f, 0.28f, 0.34f);
+            draw_string("THE ARCHIVE CANNOT READ ITSELF", 440, 658, 3.5f);
+        } else if (local_state.story_phase == STORY_PHASE_COMPLETE) {
+            glColor3f(0.60f, 0.60f, 0.68f);
+            draw_string("ENDURANCE COMPLETE", 490, 682, 7);
+            glColor3f(0.40f, 0.40f, 0.48f);
+            draw_string("THE CAVE DOES NOT CLOSE.", 480, 658, 4);
+            glColor3f(0.32f, 0.32f, 0.38f);
+            draw_string("PRESS ESC TO RETURN", 498, 634, 4);
+        } else if (local_state.story_phase == STORY_PHASE_FAILED) {
+            glColor3f(0.55f, 0.30f, 0.30f);
+            draw_string("YOU DID NOT ENDURE", 490, 682, 7);
+        }
+        draw_story_boss_hud(&local_state.story_boss);
+        cave_hud_done:;
     } else if (local_state.game_mode == MODE_DEATHMATCH && app_state == STATE_GAME_NET
                && net_requested_mode == MODE_CTF) {
         /* DM warm-up while matchmaker searches for a CTF game */
@@ -5459,9 +5609,9 @@ void draw_scene(PlayerState *render_p) {
     local_state.scene_id = render_p->scene_id;
     phys_set_scene(render_p->scene_id);
     unsigned int now_ms = SDL_GetTicks();
-    int story_cutscene = (local_state.game_mode == MODE_STORY && local_state.story_phase == STORY_PHASE_CUTSCENE);
+    int story_cutscene = ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) && local_state.story_phase == STORY_PHASE_CUTSCENE);
     int local_dead = (render_p->state == STATE_DEAD);
-    float death_target = (local_state.game_mode == MODE_STORY) ? 0.0f : (local_dead ? 1.0f : 0.0f);
+    float death_target = (local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) ? 0.0f : (local_dead ? 1.0f : 0.0f);
     death_cam_blend += (death_target - death_cam_blend) * 0.18f;
     if (death_cam_blend < 0.001f) death_cam_blend = 0.0f;
     if (death_cam_blend > 0.999f) death_cam_blend = 1.0f;
@@ -5579,6 +5729,11 @@ void draw_scene(PlayerState *render_p) {
         draw_story_rift_world(&local_state.story_rift, now_ms, local_state.story_phase);
         for (int si = 0; si < STORY_MAX_SWARM_ENEMIES; si++) {
             draw_story_swarm_enemy_world(&local_state.story_swarm[si], now_ms);
+        }
+    }
+    if (local_state.game_mode == MODE_STORY_CAVE && render_p->scene_id == SCENE_STORY_CAVE) {
+        if (local_state.story_phase == STORY_PHASE_PLAYING) {
+            draw_story_cave_entity(&local_state.story_boss, now_ms);
         }
     }
     draw_projectiles();
@@ -6911,7 +7066,7 @@ int main(int argc, char* argv[]) {
             } else {
                 if (e.type == SDL_KEYDOWN) {
                     /* TYLER cutscene advance — SPACE or ENTER while in cutscene */
-                    if (local_state.game_mode == MODE_STORY &&
+                    if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
                         (local_state.story_phase == STORY_PHASE_CUTSCENE ||
                          local_state.story_phase == STORY_PHASE_OUTRO)) {
                         if (e.key.keysym.sym == SDLK_SPACE ||
@@ -6984,7 +7139,7 @@ int main(int argc, char* argv[]) {
                     if (g_paused) continue;
                     if (app_state == STATE_GAME_NET && net_spawn_protect_cmds > 0) continue;
                     if (app_state == STATE_GAME_LOCAL &&
-                        local_state.game_mode == MODE_STORY &&
+                        (local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
                         local_state.story_phase == STORY_PHASE_CUTSCENE) {
                         continue;
                     }
@@ -7105,7 +7260,7 @@ int main(int argc, char* argv[]) {
                 buggy_advance_remote_positions(now_ms);
                 net_emit_client_summaries(now_ms);
             } else {
-                if (local_state.game_mode == MODE_STORY &&
+                if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
                     (local_state.story_phase == STORY_PHASE_CUTSCENE ||
                      local_state.story_phase == STORY_PHASE_COMPLETE ||
                      local_state.story_phase == STORY_PHASE_FAILED)) {
@@ -7173,7 +7328,7 @@ int main(int argc, char* argv[]) {
                 }
                 if(local_state.players[0].vehicle_cooldown > 0) local_state.players[0].vehicle_cooldown--;
                 unsigned int now_ms = SDL_GetTicks();
-                if (local_state.game_mode == MODE_STORY &&
+                if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
                     local_state.story_phase == STORY_PHASE_CUTSCENE &&
                     local_state.story_phase_start_ms == 0) {
                     local_state.story_phase_start_ms = now_ms;

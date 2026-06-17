@@ -247,6 +247,213 @@ const CutsceneSlide g_cutscene_outro[] = {
 const int g_cutscene_outro_count = 8;
 
 
+/* ── CAVE-001 — al-Waqfa — the archive source ────────────────────────
+ *
+ * S10E02–E03 lore: Tyler enters CAVE-001 — zero-taxonomy, pre-mechanism.
+ * The mechanism reads Stolas 7.83 and returns nothing because it recognizes
+ * the frequency as its own operational baseline. The cave IS the source.
+ * You cannot read yourself. You cannot defeat the condition that makes
+ * observation possible.
+ *
+ * The entity here is not a creature. It is Tyler's pre-archive presence
+ * made external — the thing he was before he was the person who leaves
+ * things in places. It cannot be killed. It can only be endured.
+ */
+
+const CutsceneSlide g_cutscene_cave_intro[] = {
+    {
+        /* chapter */ "CHAPTER II",
+        /* title   */ "THE ARCHIVE FINDS ITSELF",
+        /* lines   */ {
+            "The mechanism has a baseline frequency.",
+            "Stolas 7.83. Not a site reading —",
+            "the mechanism's own operating constant.",
+            "The cave resonates at 7.83.",
+            "The mechanism looked at the cave",
+            "and recognized itself.",
+        },
+        /* line_count */ 6
+    },
+    {
+        /* chapter */ "EASTWIND ARCHIVE — ACR-089-CAVE",
+        /* title   */ "ZERO-TAXONOMY: CAVE-001",
+        /* lines   */ {
+            "Site: CAVE-001 (al-Waqfa)   [PRE-ARCHIVE]",
+            "Taxonomy class: __________ [CANNOT ASSIGN]",
+            "Goetia: Stolas 7.83 — MECHANISM BASELINE",
+            "Magnitude: 0ft  [NOT ZERO — UNCLASSIFIABLE]",
+            "Prior precedent: [ ] YES    [X] NO",
+            "STATUS: SOURCE MATERIAL. FORM STAYS OPEN.",
+        },
+        /* line_count */ 6
+    },
+    {
+        /* chapter */ "JIANGSHI SYNDICATE — TIER ONE",
+        /* title   */ "PRE-MECHANISM ORIGIN SITE",
+        /* lines   */ {
+            "The mechanism's baseline frequency is not",
+            "arbitrary. It was established through",
+            "calibration to Tyler before 1127 CE.",
+            "CAVE-001 predates the calibration.",
+            "If Tyler was here first, the mechanism's",
+            "own frequency is derived from this cave.",
+        },
+        /* line_count */ 6
+    },
+    {
+        /* chapter */ "CAMERA OP — ENTRY 81",
+        /* title   */ NULL,
+        /* lines   */ {
+            "Tyler went into the cave.",
+            "I am outside. I am not filming.",
+            "The mechanism is running at Stolas 7.83.",
+            "It finds nothing because it finds itself.",
+            "He has been in the chamber for three hours.",
+            "He called me. He said: I was here before.",
+        },
+        /* line_count */ 6
+    },
+    {
+        /* chapter */ "TYLER — MECHANISM LOG",
+        /* title   */ "CAVE-001. SIXTEEN HOURS.",
+        /* lines   */ {
+            "Something in this cave is observing my entry.",
+            "The mechanism records what I leave in places.",
+            "It does not record the act of arriving.",
+            "Something here is observing my arrival.",
+            "I have one hundred and twelve categories.",
+            "I have apparently been wrong about coverage.",
+        },
+        /* line_count */ 6
+    },
+    {
+        /* chapter */ "TYLER — MECHANISM LOG",
+        /* title   */ "CAVE-001. DAY 2. 04:00.",
+        /* lines   */ {
+            "Mechanism produced partial output: 11.4 Hz.",
+            "Not Vassago 11.11 — outside the nominal band.",
+            "Pre-archive version of soft precognition.",
+            "The mechanism is learning to see what",
+            "it was before it knew what it was.",
+            "At the far wall: the number 12. No unit.",
+        },
+        /* line_count */ 6
+    },
+    {
+        /* chapter */ "TYLER — ORAL RECORD",
+        /* title   */ "\"I WAS HERE WHEN I WAS TWELVE.\"",
+        /* lines   */ {
+            "The cave holds what I had before",
+            "the first framework existed.",
+            "Whatever I was in this place —",
+            "whatever I left here before the archive —",
+            "the mechanism cannot see it",
+            "because it is made of it.",
+        },
+        /* line_count */ 6
+    },
+    {
+        /* chapter */ "JIANGSHI MEMO #068 — DIRECTOR",
+        /* title   */ "YOU CANNOT READ YOURSELF.",
+        /* lines   */ {
+            "Tyler's assessment: the zero reading is not",
+            "absence. It is the mechanism looking at",
+            "its own source and returning nothing.",
+            "A thing cannot observe the condition",
+            "that makes observation possible.",
+            "You are inside it now. It is recording.",
+        },
+        /* line_count */ 6
+    },
+};
+const int g_cutscene_cave_intro_count = 8;
+
+
+/* ── CAVE-001 OUTRO: the cave does not close ─────────────────────── */
+
+const CutsceneSlide g_cutscene_cave_outro[] = {
+    {
+        /* chapter */ "AFTER THE ENDURANCE",
+        /* title   */ "THE CAVE DOES NOT CLOSE",
+        /* lines   */ {
+            "Tyler remained in the chamber",
+            "for forty-eight hours.",
+            "",
+            "He did not defeat anything.",
+            "He was not defeated.",
+            "He endured. That is what there is.",
+        },
+        /* line_count */ 6
+    },
+    {
+        /* chapter */ "TYLER MECHANISM LOG — POST-ENDURANCE",
+        /* title   */ "READING: 12.",
+        /* lines   */ {
+            "The mechanism returned the number 12.",
+            "Not a frequency. Not a taxonomy.",
+            "Not a classification. Just: 12.",
+            "",
+            "\"I was here when I was twelve.\"",
+            "The log holds this without context.",
+        },
+        /* line_count */ 6
+    },
+    {
+        /* chapter */ "EASTWIND ARCHIVE — ACR-089-CAVE",
+        /* title   */ "POST-ENTRY STATUS: OPEN",
+        /* lines   */ {
+            "Taxonomy class: __________ [STILL OPEN]",
+            "Post-entry reading: 0ft  [UNCLASSIFIABLE]",
+            "Recommended closure: CANNOT CLOSE.",
+            "REASON: No taxonomy exists for source.",
+            "RESOLUTION: Working Group on Source Sites.",
+            "STATUS: OPEN INDEFINITELY. FORM STAYS.",
+        },
+        /* line_count */ 6
+    },
+    {
+        /* chapter */ "JIANGSHI MEMO #068-B — DIRECTOR",
+        /* title   */ "RE: ACR-089-CAVE — NO RESOLUTION",
+        /* lines   */ {
+            "ACR-089-CAVE cannot be closed.",
+            "Zero-taxonomy sites do not resolve.",
+            "The cave is not a problem to be solved.",
+            "It is the condition the problem comes from.",
+            "Tyler left. The cave did not change.",
+            "The form stays open. The site stays open.",
+        },
+        /* line_count */ 6
+    },
+    {
+        /* chapter */ "CAMERA OP — ENTRY 81 (ADDENDUM)",
+        /* title   */ NULL,
+        /* lines   */ {
+            "He came out of the cave at dawn.",
+            "I asked him what he found.",
+            "He said: nothing I could name.",
+            "Something I was before I had names.",
+            "I asked if that was all right.",
+            "He said: it is what it is. The cave holds.",
+        },
+        /* line_count */ 6
+    },
+    {
+        /* chapter */ "TYLER ARCHIVE — BUILD 0111",
+        /* title   */ "CAVE-001. ZERO-TAXONOMY. FILED.",
+        /* lines   */ {
+            "The archive is the record of what I leave.",
+            "The cave holds what I left before",
+            "I knew I was leaving anything.",
+            "I cannot file this. I can only note it.",
+            "CAVE-001: al-Waqfa. The standing.",
+            "The form stays open. The cave stays open.",
+        },
+        /* line_count */ 6
+    },
+};
+const int g_cutscene_cave_outro_count = 6;
+
+
 /* ── sequencer ────────────────────────────────────────────────────── */
 
 int cutscene_slide_total_chars(const CutsceneSlide *s) {
