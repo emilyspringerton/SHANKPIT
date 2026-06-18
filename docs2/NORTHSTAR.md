@@ -168,10 +168,21 @@ No need to wait for full persistent world — the FPS core is already differenti
 - BLOCKED until: Milestone 5 ✓ + Steam account created (human action)
 
 ### Milestone 7: BedWars + Dragonfly (post-EA major update)
-- GoblinFoxDragon DragonflyBackend implements WorldBackend interface
-- Shankpit client connects to Dragonfly world, mines/places/destroys blocks
-- BedWars game mode: beds, island progression, team elimination
-- Season 1 lineage: snapshot written at season-end, loadable for next season
+
+Full spec: `docs2/specs/BEDWARS_SPEC.md`
+
+- `DragonflyBackend` implements `WorldBackend` interface (replaces `StaticBackend`)
+- `SceneVoxelPayload()` returns real Dragonfly chunks for SCENE_VOXWORLD
+- 4-team island layout in SCENE_VOXWORLD (±80 blocks on X/Z axis)
+- **Bed** entity per island — destroyable objective; losing it blocks team respawns
+- **Resource generators**: iron (2s), gold (8s), diamond (30s) — island economy
+- **Shop NPC**: `BTN_USE` interaction, gear upgrades, wool/TNT build materials
+- Block mining via `BTN_ATTACK` ray-trace; placement via `BTN_USE`
+- Win: last team standing after enemy beds destroyed + all players eliminated
+- Client: block color table extended (wool/bed/TNT); bed status HUD; resource counter
+- Season 1 lineage: island snapshot written at season-end, loadable for next season
+
+**Prerequisite chain:** Milestone 5 (EA FPS) ✓ → Milestone 4 (DragonflyBackend wired) → Milestone 7
 
 ---
 
@@ -183,8 +194,10 @@ per-player physics isolated ✓, cross-scene attacks impossible ✓. Packaged in
 **Dragonfly bridge done (Milestone 7):** Minimal `world_backend_*` interface defined and stubbed.
 Construct includes all bridge surfaces. A Dragonfly-backed world boots and accepts a Shankpit client.
 
-**BedWars / destructible modes done (Milestone 7):** A Shankpit client connects to a Dragonfly world,
-can mine/place/destroy blocks within game rules, voxel state authoritative and persistent.
+**BedWars / destructible modes done (Milestone 7):** 4-team island game in SCENE_VOXWORLD. Each team has
+a bed (persistent objective block). Beds are mineable; losing yours ends respawns. Resource generators
+spawn iron/gold/diamond. Shop NPC accepts resources for gear. Last team standing wins. Full game spec
+in `docs2/specs/BEDWARS_SPEC.md`.
 
 **Season lineage done:** A season-end snapshot is written. A subsequent server spin-up can read the
 snapshot and present lineage data. Zone history is queryable.
@@ -226,6 +239,7 @@ should understand they hold half the picture.
 
 ## Related Specs
 
+- `docs2/specs/BEDWARS_SPEC.md` — BedWars game mode full spec (Milestone 7)
 - `docs2/specs/SHANKPIT_DRAGONSNSHIT_SYSTEMS_SPEC.md` — full systems map for the FPS→persistent world bridge
 - `docs2/specs/THE_BRIDGE_SPEC.md` — wire protocol for Shankpit ↔ Bedrock voxel data
 - `docs2/specs/WORLD_BACKEND_INTERFACE_SPEC.md` — WorldBackend Go interface (Milestone 3)

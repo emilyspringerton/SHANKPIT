@@ -453,10 +453,14 @@ func parseUserCmd(data []byte, offset int) common.UserCmd {
 }
 
 const (
-	chunkSize   = 16
-	chunkHeight = 16
-	logBlockID  = 17
-	leafBlockID = 18
+	chunkSize    = 16
+	chunkHeight  = 16
+	stoneBlockID = 1
+	grassBlockID = 2
+	dirtBlockID  = 3
+	logBlockID   = 17
+	leafBlockID  = 18
+	groundY      = 2 // grass surface y; trees grow at groundY+1
 )
 
 func nearbyChunks(centerX, centerZ, radius int) []chunkCoord {
@@ -474,16 +478,27 @@ func nearbyChunks(centerX, centerZ, radius int) []chunkCoord {
 
 func scanChunkForVoxelBlocks(chunkX, chunkZ int) []voxelBlock {
 	blocks := make([]uint16, chunkSize*chunkHeight*chunkSize)
-	for _, tree := range treeSeedsForChunk(chunkX, chunkZ) {
-		placeTree(blocks, tree.x, tree.z, tree.baseY)
+
+	// Flat ground: stone subsurface (y=0,1), grass surface (y=groundY).
+	for z := 0; z < chunkSize; z++ {
+		for x := 0; x < chunkSize; x++ {
+			setBlock(blocks, x, 0, z, stoneBlockID)
+			setBlock(blocks, x, 1, z, stoneBlockID)
+			setBlock(blocks, x, groundY, z, grassBlockID)
+		}
 	}
 
-	results := make([]voxelBlock, 0, 64)
+	// Trees grow one block above the grass surface.
+	for _, tree := range treeSeedsForChunk(chunkX, chunkZ) {
+		placeTree(blocks, tree.x, tree.z, groundY+1)
+	}
+
+	results := make([]voxelBlock, 0, 300)
 	for y := 0; y < chunkHeight; y++ {
 		for z := 0; z < chunkSize; z++ {
 			for x := 0; x < chunkSize; x++ {
 				blockID := blocks[chunkIndex(x, y, z)]
-				if blockID != logBlockID && blockID != leafBlockID {
+				if blockID == 0 {
 					continue
 				}
 				results = append(results, voxelBlock{
@@ -499,26 +514,18 @@ func scanChunkForVoxelBlocks(chunkX, chunkZ int) []voxelBlock {
 }
 
 type treeSeed struct {
-	x     int
-	z     int
-	baseY int
+	x int
+	z int
 }
 
 func treeSeedsForChunk(chunkX, chunkZ int) []treeSeed {
 	switch {
 	case chunkX == 0 && chunkZ == 0:
-		return []treeSeed{
-			{x: 8, z: 8, baseY: 0},
-			{x: 3, z: 12, baseY: 0},
-		}
+		return []treeSeed{{x: 8, z: 8}, {x: 3, z: 12}}
 	case chunkX == 1 && chunkZ == 0:
-		return []treeSeed{
-			{x: 6, z: 5, baseY: 0},
-		}
+		return []treeSeed{{x: 6, z: 5}}
 	case chunkX == -1 && chunkZ == -1:
-		return []treeSeed{
-			{x: 11, z: 4, baseY: 0},
-		}
+		return []treeSeed{{x: 11, z: 4}}
 	default:
 		return nil
 	}

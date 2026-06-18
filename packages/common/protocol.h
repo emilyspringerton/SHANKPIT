@@ -34,7 +34,10 @@
 #define PACKET_DISCONNECT    7
 
 #define VOXEL_CHUNK_SIZE            16
-#define VOXEL_MAX_BLOCKS_PER_CHUNK  512
+#define VOXEL_MAX_BLOCKS_PER_CHUNK  1024
+#define VOXEL_BLOCK_STONE           1
+#define VOXEL_BLOCK_GRASS           2
+#define VOXEL_BLOCK_DIRT            3
 #define VOXEL_BLOCK_LOG             17
 #define VOXEL_BLOCK_LEAF            18
 #define VOXEL_CHUNK_CACHE_SIZE      32

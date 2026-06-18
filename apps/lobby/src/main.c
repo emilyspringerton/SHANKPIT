@@ -1733,12 +1733,24 @@ static void draw_voxel_chunks(const RetroLightingState *lighting) {
             float wx = (float)(chunk->chunk_x * VOXEL_CHUNK_SIZE + chunk->bx[bi]) + 0.5f;
             float wy = (float)chunk->by[bi] + 0.5f;
             float wz = (float)(chunk->chunk_z * VOXEL_CHUNK_SIZE + chunk->bz[bi]) + 0.5f;
-            int is_leaf = (chunk->block_id[bi] == VOXEL_BLOCK_LEAF);
+            unsigned short bid = chunk->block_id[bi];
             float br, bg, bb, tr, tg, tb, er, eg, eb;
-            if (is_leaf) {
+            if (bid == VOXEL_BLOCK_LEAF) {
                 br=0.08f; bg=0.24f; bb=0.09f;
                 tr=0.14f; tg=0.38f; tb=0.15f;
                 er=0.20f; eg=0.80f; eb=0.22f;
+            } else if (bid == VOXEL_BLOCK_GRASS) {
+                br=0.12f; bg=0.30f; bb=0.10f;
+                tr=0.18f; tg=0.48f; tb=0.14f;
+                er=0.30f; eg=0.90f; eb=0.20f;
+            } else if (bid == VOXEL_BLOCK_DIRT) {
+                br=0.28f; bg=0.18f; bb=0.09f;
+                tr=0.38f; tg=0.26f; tb=0.13f;
+                er=0.60f; eg=0.38f; eb=0.18f;
+            } else if (bid == VOXEL_BLOCK_STONE) {
+                br=0.28f; bg=0.28f; bb=0.28f;
+                tr=0.42f; tg=0.42f; tb=0.42f;
+                er=0.65f; eg=0.65f; eb=0.65f;
             } else {
                 br=0.26f; bg=0.16f; bb=0.06f;
                 tr=0.36f; tg=0.24f; tb=0.10f;
