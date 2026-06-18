@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-06-18
+
+- feat(emily-bot): S38-01 apps2/emily-bot — Go headless SHANKPIT player; PacketConnect + PacketSnapshot receive + seek-and-shoot heuristic AI + 20 Hz PacketUserCmd; make emily-bot target
+
 ## 2026-06-17
 
 - feat(hud): chat/log pane — bottom-left overlay, 8-line ring buffer, T to type, Enter to send, ESC to cancel; kill events auto-pushed from net_process_snapshot

@@ -21,10 +21,11 @@ LOBBY_BIN    := $(BIN_DIR)/shank_lobby
 SERVER_BIN   := $(BIN_DIR)/shank_server
 SERVERCTL_BIN:= $(BIN_DIR)/serverctl
 GO_SERVER_BIN := $(BIN_DIR)/shank_go_server
+EMILY_BOT_BIN := $(BIN_DIR)/emily-bot
 EA_DIR       := dist/ea
 
 # ---- Targets ----
-.PHONY: all lobby server serverctl clean setup print go-server ea ea-windows
+.PHONY: all lobby server serverctl clean setup print go-server ea ea-windows emily-bot
 
 all: $(LOBBY_BIN) $(SERVER_BIN)
 
@@ -61,6 +62,13 @@ go-server: $(GO_SERVER_BIN)
 $(GO_SERVER_BIN): $(BIN_DIR)
 	@echo "🔨 Building Go scene server..."
 	GOWORK=off go build -o $(GO_SERVER_BIN) ./apps2/server-go/
+
+# ---- EMILY BOT (Go headless player) ----
+emily-bot: $(EMILY_BOT_BIN)
+
+$(EMILY_BOT_BIN): $(BIN_DIR)
+	@echo "Building Emily bot client..."
+	GOWORK=off go build -o $(EMILY_BOT_BIN) ./apps2/emily-bot/
 
 # ---- STEAM EA BUILD (Linux) ----
 # Packages: headless Go scene server + C lobby client + README into dist/ea/
