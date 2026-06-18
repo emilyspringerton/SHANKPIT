@@ -24,6 +24,7 @@ run_server_test
 run_integration
 run_stuffing
 /server-go
+/emily-bot
 
 # Go module cache (appears when GOPATH is set to repo root).
 pkg/
