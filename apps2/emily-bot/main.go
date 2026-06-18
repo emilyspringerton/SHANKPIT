@@ -14,12 +14,14 @@ package main
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"math"
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -79,6 +81,11 @@ type botState struct {
 	sessionStart  time.Time
 	lastObserved  time.Time
 	observeMinGap time.Duration
+
+	// Replay logging
+	replayFile *os.File
+	replayTick uint64
+	lastSnap   []byte // most recent raw PacketSnapshot for state encoding
 }
 
 func main() {
@@ -86,6 +93,7 @@ func main() {
 	port := flag.Int("port", 6969, "game server UDP port")
 	verbose := flag.Bool("v", false, "verbose packet logging")
 	noReport := flag.Bool("no-report", false, "disable Emily Prime kill/event reporting")
+	replayDir := flag.String("replay-dir", "", "directory to write replay NDJSON (empty = no replay log)")
 	flag.Parse()
 
 	addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%d", *host, *port))
@@ -108,6 +116,22 @@ func main() {
 		sessionStart:  now,
 		lastObserved:  now,
 		observeMinGap: 15 * time.Second,
+	}
+
+	if *replayDir != "" {
+		if err := os.MkdirAll(*replayDir, 0755); err != nil {
+			fmt.Fprintf(os.Stderr, "[emily-bot] replay dir: %v\n", err)
+		} else {
+			fname := filepath.Join(*replayDir, now.UTC().Format("20060102-150405Z")+".ndjson")
+			f, err := os.Create(fname)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[emily-bot] replay open: %v\n", err)
+			} else {
+				state.replayFile = f
+				defer f.Close()
+				fmt.Printf("[emily-bot] replay → %s\n", fname)
+			}
+		}
 	}
 
 	fmt.Printf("[emily-bot] connecting to %s as EMILY_PRIME\n", addr)
@@ -213,6 +237,16 @@ func (s *botState) think() common.UserCmd {
 	s.drFwd = fwd
 	s.drStr = str
 
+	weaponName := []string{"knife", "magnum", "ar", "shotgun", "sniper", "katana"}
+	wname := "magnum"
+	wi := weaponForRange(nearestDist)
+	if wi >= 0 && wi < len(weaponName) {
+		wname = weaponName[wi]
+	}
+	actionStr := fmt.Sprintf("fwd:%.2f str:%.2f yaw_delta:%.1f shoot:%d jump:0 crouch:0 weapon:%s",
+		fwd, str, 0.0, btoi(buttons&common.BtnAttack != 0), wname)
+	s.logReplay(s.serializeState(uint64(s.seq)), actionStr)
+
 	return common.UserCmd{
 		Sequence:  s.seq,
 		Timestamp: uint32(now.UnixMilli()),
@@ -226,6 +260,13 @@ func (s *botState) think() common.UserCmd {
 	}
 }
 
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 // weaponForRange selects the best weapon for the given target distance.
 func weaponForRange(dist float32) int {
 	switch {
@@ -236,6 +277,51 @@ func weaponForRange(dist float32) int {
 	default:
 		return common.WpnMagnum
 	}
+}
+
+type replayRecord struct {
+	Tick   uint64 `json:"tick"`
+	State  string `json:"state"`
+	Action string `json:"action"`
+}
+
+// logReplay writes one NDJSON record per tick to the replay file.
+// state is a natural-language snapshot string; action is an action token string.
+func (s *botState) logReplay(stateStr, actionStr string) {
+	if s.replayFile == nil {
+		return
+	}
+	s.replayTick++
+	rec := replayRecord{Tick: s.replayTick, State: stateStr, Action: actionStr}
+	line, err := json.Marshal(rec)
+	if err != nil {
+		return
+	}
+	s.replayFile.Write(line)
+	s.replayFile.Write([]byte{'\n'})
+}
+
+// serializeState builds a compact state string from current bot position + known peers.
+// This is a lightweight Go version of scripts/game_state.py serialize_snapshot.
+func (s *botState) serializeState(tick uint64) string {
+	selfStr := fmt.Sprintf("self pos:%.1f,%.1f yaw:%.0f", s.myX, s.myZ, s.myYaw)
+	enemies := ""
+	count := 0
+	for _, p := range s.peers {
+		if count >= 4 {
+			break
+		}
+		dx := p.x - s.myX
+		dz := p.z - s.myZ
+		dist := float32(math.Sqrt(float64(dx*dx + dz*dz)))
+		enemies += fmt.Sprintf(" | pos:%.1f,%.1f dist:%.1f", p.x, p.z, dist)
+		count++
+	}
+	if enemies == "" {
+		enemies = " none"
+	}
+	return fmt.Sprintf("shankpit state tick:%d scene:%d\n%s\nenemy:%s",
+		tick, s.sceneID, selfStr, enemies)
 }
 
 // observe posts a summary to Emily Prime via `emily observe` if reporting is
