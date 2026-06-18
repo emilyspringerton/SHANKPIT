@@ -115,6 +115,7 @@ typedef struct {
     float w_slide;
     float w_turret;
     float w_repel;
+    float w_retreat; /* health-aware retreat multiplier (activated when hp < 30%) */
 } BotGenome;
 
 typedef struct {

@@ -2134,7 +2134,7 @@ static inline void phys_enter_death_state(PlayerState *attacker, PlayerState *ta
     if (!target || target->state == STATE_DEAD) return;
     if (attacker) {
         attacker->kills++;
-        attacker->accumulated_reward += 1000.0f;
+        attacker->accumulated_reward += 150.0f;
         attacker->hit_feedback = 30;
     }
     target->deaths++;
@@ -2163,7 +2163,6 @@ static inline void phys_enter_death_state(PlayerState *attacker, PlayerState *ta
 
 static inline void katana_apply_damage(PlayerState *attacker, PlayerState *target, int damage, int hit_feedback, unsigned int now_ms, unsigned int respawn_delay_ms) {
     if (!target->active || target->state == STATE_DEAD) return;
-    attacker->accumulated_reward += 10.0f;
     target->shield_regen_timer = SHIELD_REGEN_DELAY;
     attacker->hit_feedback = hit_feedback;
     if (target->shield > 0) {
@@ -2171,6 +2170,7 @@ static inline void katana_apply_damage(PlayerState *attacker, PlayerState *targe
         else { damage -= target->shield; target->shield = 0; }
     }
     target->health -= damage;
+    attacker->accumulated_reward += (float)damage * 0.5f;
     if (target->health <= 0) {
         float incoming_x = target->x - attacker->x;
         float incoming_z = target->z - attacker->z;

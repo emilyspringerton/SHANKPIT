@@ -186,7 +186,8 @@ typedef struct {
 typedef struct {
     int version;
     float w_aggro;
-    float w_strafe; float w_jump; float w_slide; float w_turret; float w_repel;      
+    float w_strafe; float w_jump; float w_slide; float w_turret; float w_repel;
+    float w_retreat; /* health-aware retreat multiplier (activated when hp < 30%) */
 } BotGenome;
 
 typedef struct {

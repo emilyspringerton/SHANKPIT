@@ -143,6 +143,22 @@ static float headed_policy_predict(int bot_id, float mu, float variance_accum, f
     return mu + rand_weight() * sqrtf(variance) * scale;
 }
 
+/* Reward signal shrinks variance (positive → exploit) or grows it (negative → explore). */
+static void headed_policy_reinforce(int bot_id, float reward) {
+    HeadedBotPolicy *p = &headed_policy[bot_id];
+    if (p->samples < 2) return;
+    float factor = (reward > 0.0f) ? 0.92f : 1.12f;
+    p->var_fwd        *= factor;
+    p->var_strafe     *= factor;
+    p->var_yaw_delta  *= factor;
+    if (p->var_fwd       < 0.01f) p->var_fwd       = 0.01f;
+    if (p->var_strafe    < 0.01f) p->var_strafe    = 0.01f;
+    if (p->var_yaw_delta < 0.05f) p->var_yaw_delta = 0.05f;
+    if (p->var_fwd       > 4.0f)  p->var_fwd       = 4.0f;
+    if (p->var_strafe    > 4.0f)  p->var_strafe    = 4.0f;
+    if (p->var_yaw_delta > 12.0f) p->var_yaw_delta = 12.0f;
+}
+
 typedef struct {
     int bot_id;
     int my_team_id;
@@ -197,21 +213,41 @@ float rand_weight(void) { return ((float)(rand()%2000)/1000.0f) - 1.0f; }
 float rand_pos() { return ((float)(rand()%1000)/1000.0f); } 
 
 void init_genome(BotGenome *g) {
-    g->version = 1;
-    g->w_aggro = 0.5f + rand_weight() * 0.5f;
-    g->w_strafe = rand_weight();
-    g->w_jump = 0.05f + rand_pos() * 0.1f; 
-    g->w_slide = 0.01f + rand_pos() * 0.05f;
-    g->w_turret = 5.0f + rand_pos() * 10.0f;
-    g->w_repel = 1.0f + rand_pos();
+    g->version = 2;
+    g->w_aggro   = 0.5f + rand_weight() * 0.5f;
+    g->w_strafe  = rand_weight();
+    g->w_jump    = 0.05f + rand_pos() * 0.1f;
+    g->w_slide   = 0.01f + rand_pos() * 0.05f;
+    g->w_turret  = 5.0f + rand_pos() * 10.0f;
+    g->w_repel   = 0.5f + rand_pos() * 1.5f;
+    g->w_retreat = 0.5f + rand_pos() * 1.0f;
 }
 
+/* Two-parent crossover + per-gene mutation with clamping.
+ * Loser receives a blend of winner and its own genome, then gets nudged.
+ * This gives richer search than pure winner-copy + noise. */
 void evolve_bot(PlayerState *loser, PlayerState *winner) {
-    loser->brain = winner->brain;
-    loser->brain.w_aggro += rand_weight() * 0.1f;
-    loser->brain.w_strafe += rand_weight() * 0.1f;
-    loser->brain.w_jump += rand_weight() * 0.01f;
-    loser->brain.w_slide += rand_weight() * 0.01f;
+    float a = 0.3f + rand_pos() * 0.4f; /* 30–70% winner contribution */
+#define XOVER(f) loser->brain.f = a * winner->brain.f + (1.0f - a) * loser->brain.f
+    XOVER(w_aggro); XOVER(w_strafe); XOVER(w_jump);
+    XOVER(w_slide); XOVER(w_turret); XOVER(w_repel); XOVER(w_retreat);
+#undef XOVER
+    loser->brain.w_aggro   += rand_weight() * 0.15f;
+    loser->brain.w_strafe  += rand_weight() * 0.15f;
+    loser->brain.w_jump    += rand_weight() * 0.015f;
+    loser->brain.w_slide   += rand_weight() * 0.01f;
+    loser->brain.w_turret  += rand_weight() * 1.5f;
+    loser->brain.w_repel   += rand_weight() * 0.2f;
+    loser->brain.w_retreat += rand_weight() * 0.15f;
+    /* clamp to sane ranges */
+    if (loser->brain.w_aggro  < -1.0f) loser->brain.w_aggro  = -1.0f;
+    if (loser->brain.w_aggro  >  1.5f) loser->brain.w_aggro  =  1.5f;
+    if (loser->brain.w_turret <  1.0f) loser->brain.w_turret =  1.0f;
+    if (loser->brain.w_turret > 25.0f) loser->brain.w_turret = 25.0f;
+    if (loser->brain.w_repel  <  0.0f) loser->brain.w_repel  =  0.0f;
+    if (loser->brain.w_repel  >  3.0f) loser->brain.w_repel  =  3.0f;
+    if (loser->brain.w_retreat < 0.1f) loser->brain.w_retreat = 0.1f;
+    if (loser->brain.w_retreat > 3.0f) loser->brain.w_retreat = 3.0f;
 }
 
 PlayerState* get_best_bot() {
@@ -431,6 +467,8 @@ static void ctf_add_reward(int player_id, float amount, const char *reason, CtfB
     p->ctf_last_reward = amount;
     p->accumulated_reward += amount;
     if (b) b->total += amount;
+    if (local_state.game_mode == MODE_HEADED_BOT)
+        headed_policy_reinforce(player_id, amount);
     if (reason && (amount != 0.0f)) {
         printf("[CTFB_REWARD] bot=%d reason=%s amount=%.2f total=%.2f\n", player_id, reason, amount, p->ctf_cumulative_reward);
     }
@@ -528,7 +566,7 @@ static void ctf_handle_use_interactions(PlayerState *p, unsigned int now_ms) {
             enemy_flag->carrier_id = p->id;
             enemy_flag->last_interaction_ms = now_ms;
             p->carried_flag_team_id = enemy;
-            ctf_add_reward(p->id, 20.0f, "pickup_enemy_flag", NULL);
+            ctf_add_reward(p->id, 80.0f, "pickup_enemy_flag", NULL);
             return;
         }
     }
@@ -537,7 +575,7 @@ static void ctf_handle_use_interactions(PlayerState *p, unsigned int now_ms) {
         if ((dx*dx + dz*dz) <= (CTFB_USE_RADIUS * CTFB_USE_RADIUS)) {
             ctf_reset_flag(my_team);
             my_flag->last_interaction_ms = now_ms;
-            ctf_add_reward(p->id, 12.0f, "return_own_flag", NULL);
+            ctf_add_reward(p->id, 40.0f, "return_own_flag", NULL);
             return;
         }
     }
@@ -575,7 +613,7 @@ static void ctf_try_capture(PlayerState *p, unsigned int now_ms) {
     local_state.team_scores[my_team]++;
     local_state.ctf.capture_scores[my_team] = local_state.team_scores[my_team];
     local_state.ctf.event_counter++;
-    ctf_add_reward(p->id, 120.0f, "capture_flag", NULL);
+    ctf_add_reward(p->id, 500.0f, "capture_flag", NULL);
     ctf_reset_flag(enemy);
     p->carried_flag_team_id = -1;
     if (local_state.team_scores[my_team] >= local_state.score_limit) {
@@ -1109,20 +1147,31 @@ void bot_think(int bot_idx, PlayerState *players, float dt, float *out_fwd, floa
         float dx = t->x - me->x;
         float dz = t->z - me->z;
         float target_yaw = atan2f(dx, dz) * (180.0f / 3.14159f);
-        
+
         float turn_speed = ((me->brain.w_turret > 1.0f) ? me->brain.w_turret : 10.0f) * (dt * 60.0f);
         float diff = angle_diff(target_yaw, *out_yaw);
         if (diff > turn_speed) diff = turn_speed;
         if (diff < -turn_speed) diff = -turn_speed;
         *out_yaw += diff;
-        
+
         *out_buttons |= BTN_ATTACK;
-        
-        if (min_dist > 15.0f) *out_fwd = me->brain.w_aggro;
-        else if (min_dist < 5.0f) *out_fwd = -me->brain.w_aggro; 
-        else *out_fwd = 0.2f; 
-        
+
+        /* Health-aware positioning: retreat aggressively when hp < 30% */
+        float health_frac = (float)me->health / 100.0f;
+        if (health_frac < 0.3f) {
+            *out_fwd = -me->brain.w_aggro * me->brain.w_retreat;
+        } else if (min_dist > 15.0f) {
+            *out_fwd = me->brain.w_aggro;
+        } else if (min_dist < 5.0f) {
+            *out_fwd = -me->brain.w_aggro;
+        } else {
+            *out_fwd = 0.2f;
+        }
+
+        /* w_repel: evasive strafe burst when taking fire */
         *out_yaw += me->brain.w_strafe * (600.0f * dt);
+        if (me->hit_feedback > 0)
+            *out_yaw += me->brain.w_repel * (300.0f * dt);
         if (local_state.game_mode == MODE_HEADED_BOT) {
             float pf = headed_policy_predict(bot_idx, headed_policy[bot_idx].mu_fwd, headed_policy[bot_idx].var_fwd, 0.65f);
             float ps = headed_policy_predict(bot_idx, headed_policy[bot_idx].mu_strafe, headed_policy[bot_idx].var_strafe, 0.65f);
@@ -1142,6 +1191,17 @@ void bot_think(int bot_idx, PlayerState *players, float dt, float *out_fwd, floa
     } else {
         *out_yaw += 120.0f * dt;
         *out_fwd = 0.5f;
+    }
+
+    /* Per-tick shaping for training modes: survival + engagement density. */
+    int training_mode = (local_state.game_mode == MODE_EVOLUTION  ||
+                         local_state.game_mode == MODE_TDMB        ||
+                         local_state.game_mode == MODE_CTFB        ||
+                         local_state.game_mode == MODE_HEADED_BOT);
+    if (training_mode) {
+        me->accumulated_reward += 0.05f;                      /* alive = good */
+        if (target_idx != -1 && min_dist < 25.0f)
+            me->accumulated_reward += 0.1f;                   /* in combat = better */
     }
 }
 
@@ -1226,17 +1286,20 @@ static void apply_projectile_damage(PlayerState *owner, PlayerState *target, int
         else { damage -= target->shield; target->shield = 0; }
     }
     target->health -= damage;
+    /* Per-damage reward: accurate shooting is rewarded independent of kill. */
+    if (owner && owner->is_bot && damage > 0)
+        owner->accumulated_reward += (float)damage * 0.5f;
     if (target->health <= 0) {
         if (local_state.game_mode == MODE_CTFB) {
             int carried_flag_team_id = target->carried_flag_team_id;
             ctf_drop_flag_from_carrier(target->id, now_ms);
-            if (owner && local_state.ctf.flags[target->team_id].carrier_id == target->id) ctf_add_reward(owner->id, 25.0f, "kill_enemy_carrier", NULL);
-            if (carried_flag_team_id >= 0) ctf_add_reward(target->id, -20.0f, "died_with_flag", NULL);
+            if (owner && local_state.ctf.flags[target->team_id].carrier_id == target->id) ctf_add_reward(owner->id, 100.0f, "kill_enemy_carrier", NULL);
+            if (carried_flag_team_id >= 0) ctf_add_reward(target->id, -100.0f, "died_with_flag", NULL);
         }
-        if (owner) {
-            owner->accumulated_reward += 500.0f;
-        }
+        /* phys_enter_death_state awards the kill reward (+150). No separate bonus here. */
         phys_enter_death_state(owner, target, now_ms, mode_respawn_delay_ms(local_state.game_mode), hit_vx, hit_vz);
+        if (owner && owner->is_bot && local_state.game_mode == MODE_HEADED_BOT)
+            headed_policy_reinforce(owner->id, 150.0f);
     }
 
     if (now_ms >= target->stun_immune_until_ms) {
