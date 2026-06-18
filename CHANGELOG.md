@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-06-18
+- feat(ai): reward system improvements — kill 1000→150, remove +500 double-count, per-damage +0.5/hp, CTF objectives 5x scaled (capture 500, carrier_kill 100), w_retreat gene (retreat at <30% HP), w_repel activated under fire, two-parent genome crossover, headed_policy_reinforce(), per-tick survival reward (Apple #1268)
 - feat(voxel): ground plane in all chunks — stone (y=0,1) + grass (y=2); trees at groundY+1; stone/grass/dirt colors in C renderer; VOXEL_MAX_BLOCKS_PER_CHUNK→1024; BedWars spec + NORTHSTAR Milestone 7 expanded (Apple #1260)
 
 - feat(emily-bot): S38-01 apps2/emily-bot — Go headless SHANKPIT player; PacketConnect + PacketSnapshot receive + seek-and-shoot heuristic AI + 20 Hz PacketUserCmd; make emily-bot target
