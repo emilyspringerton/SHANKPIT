@@ -228,7 +228,7 @@ func main() {
 			mu.Unlock()
 			// Always place the connecting player in the DM warm-up session immediately.
 			sendWelcome(conn, remote, info.id, dmWarmupScene, common.GameModeDeathmatch)
-			sendVoxelPacket(conn, remote, info)
+			sendVoxelPacket(conn, remote, info, backend)
 			fmt.Printf("[LOBBY] client=%d addr=%s requested_mode=%d → warm-up dm scene=%d\n",
 				info.id, remote.String(), requestedMode, dmWarmupScene)
 
@@ -263,7 +263,7 @@ func main() {
 			}
 			info.remote = remote
 			mu.Unlock()
-			info = sendVoxelPacket(conn, remote, info)
+			info = sendVoxelPacket(conn, remote, info, backend)
 			count := int(buf[netHeaderSize])
 			if count < 1 {
 				mu.Lock()
@@ -319,7 +319,7 @@ func sendWelcome(conn *net.UDPConn, remote *net.UDPAddr, id uint8, sceneID int, 
 	_, _ = conn.WriteToUDP(payload, remote)
 }
 
-func sendVoxelPacket(conn *net.UDPConn, remote *net.UDPAddr, info clientInfo) clientInfo {
+func sendVoxelPacket(conn *net.UDPConn, remote *net.UDPAddr, info clientInfo, backend system.WorldBackend) clientInfo {
 	now := time.Now()
 	if now.Sub(info.lastVoxelSent) < 500*time.Millisecond {
 		return info
@@ -329,7 +329,16 @@ func sendVoxelPacket(conn *net.UDPConn, remote *net.UDPAddr, info clientInfo) cl
 		return info
 	}
 	chunk := chunks[info.chunkIndex%len(chunks)]
-	blocks := scanChunkForVoxelBlocks(chunk.x, chunk.z)
+
+	// Route through WorldBackend seam; fall back to procedural generator when backend returns nil.
+	var blocks []voxelBlock
+	if backendBlocks := backend.SceneVoxelPayload(info.sceneID, chunk.x, chunk.z); backendBlocks != nil {
+		for _, b := range backendBlocks {
+			blocks = append(blocks, voxelBlock{x: b.X, y: b.Y, z: b.Z, blockID: b.BlockID})
+		}
+	} else {
+		blocks = scanChunkForVoxelBlocks(chunk.x, chunk.z)
+	}
 
 	headerSize := 16
 	blockSize := 6

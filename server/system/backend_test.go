@@ -42,8 +42,8 @@ func TestStaticBackendMatchesDirectCall(t *testing.T) {
 func TestStaticBackendVoxelPayloadNil(t *testing.T) {
 	backend := &StaticBackend{}
 	for _, sceneID := range []int{SceneGarageOsaka, SceneStadium, SceneVoxworld} {
-		if p := backend.SceneVoxelPayload(sceneID); p != nil {
-			t.Errorf("scene=%d: expected nil voxel payload, got %d bytes", sceneID, len(p))
+		if p := backend.SceneVoxelPayload(sceneID, 0, 0); p != nil {
+			t.Errorf("scene=%d: expected nil voxel payload, got %d blocks", sceneID, len(p))
 		}
 	}
 }

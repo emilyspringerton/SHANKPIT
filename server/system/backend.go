@@ -14,9 +14,15 @@ type WorldBackend interface {
 	// OnPlayerLeaveScene notifies the backend when a player leaves a scene.
 	OnPlayerLeaveScene(playerSlot, sceneID int)
 
-	// SceneVoxelPayload returns a voxel chunk payload for snapshot extension (THE_BRIDGE_SPEC).
-	// Returns nil in FPS-only mode; nil is always safe for the snapshot builder.
-	SceneVoxelPayload(sceneID int) []byte
+	// SceneVoxelPayload returns the voxel blocks for a given chunk in a scene.
+	// Returns nil when no voxel data is available for this chunk (FPS-only mode).
+	SceneVoxelPayload(sceneID, chunkX, chunkZ int) []VoxelBlock
+}
+
+// VoxelBlock is the minimal block descriptor used by SceneVoxelPayload.
+type VoxelBlock struct {
+	X, Y, Z uint8
+	BlockID  uint16
 }
 
 // StaticBackend delegates to the hardcoded portal routing table in portal.go.
@@ -29,4 +35,4 @@ func (s *StaticBackend) ResolvePortalDestination(scene, portal, slot int) (Porta
 
 func (s *StaticBackend) OnPlayerEnterScene(_, _ int) {}
 func (s *StaticBackend) OnPlayerLeaveScene(_, _ int) {}
-func (s *StaticBackend) SceneVoxelPayload(_ int) []byte { return nil }
+func (s *StaticBackend) SceneVoxelPayload(_, _, _ int) []VoxelBlock { return nil }
