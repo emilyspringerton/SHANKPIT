@@ -2165,6 +2165,8 @@ static inline void katana_apply_damage(PlayerState *attacker, PlayerState *targe
     if (!target->active || target->state == STATE_DEAD) return;
     target->shield_regen_timer = SHIELD_REGEN_DELAY;
     attacker->hit_feedback = hit_feedback;
+    /* Defender knows it was hit — drives w_repel evasive strafe in bot_think. */
+    if (target->hit_feedback < 15) target->hit_feedback = 15;
     if (target->shield > 0) {
         if (target->shield >= damage) { target->shield -= damage; damage = 0; }
         else { damage -= target->shield; target->shield = 0; }
@@ -2650,6 +2652,7 @@ void phys_respawn(PlayerState *p, unsigned int now) {
     if (p->is_bot) {
         PlayerState *winner = get_best_bot();
         if (winner && winner != p) evolve_bot(p, winner);
+        p->accumulated_reward = 0.0f; /* reset after selection so next life competes on its own merit */
     }
 }
 
