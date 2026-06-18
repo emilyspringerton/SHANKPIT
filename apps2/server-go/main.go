@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/binary"
+	"flag"
 	"fmt"
 	"math"
 	"net"
@@ -165,6 +166,9 @@ func (m *matchmaker) pollForMatch() []string {
 }
 
 func main() {
+	dragonflyURL := flag.String("dragonfly-url", "", "GoblinFoxDragon world API URL (e.g. http://localhost:7070); enables DragonflyBackend")
+	flag.Parse()
+
 	addr, err := net.ResolveUDPAddr("udp", ":6969")
 	if err != nil {
 		panic(err)
@@ -182,7 +186,14 @@ func main() {
 	nextClientID := uint8(0)
 	var mu sync.Mutex
 	mm := &matchmaker{}
-	var backend system.WorldBackend = &system.StaticBackend{}
+
+	var backend system.WorldBackend
+	if *dragonflyURL != "" {
+		backend = &system.DragonflyBackend{APIURL: *dragonflyURL}
+		fmt.Printf("WorldBackend: DragonflyBackend → %s\n", *dragonflyURL)
+	} else {
+		backend = &system.StaticBackend{}
+	}
 
 	go broadcastSnapshots(conn, &mu, clients)
 
