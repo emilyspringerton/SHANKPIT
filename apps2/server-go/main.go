@@ -167,6 +167,8 @@ func (m *matchmaker) pollForMatch() []string {
 
 func main() {
 	dragonflyURL := flag.String("dragonfly-url", "", "GoblinFoxDragon world API URL (e.g. http://localhost:7070); enables DragonflyBackend")
+	adminPort    := flag.Int("admin-port", 6970, "HTTP admin API port (0 = disabled)")
+	adminToken   := flag.String("admin-token", "", "Bearer token for write endpoints (empty = no auth)")
 	flag.Parse()
 
 	addr, err := net.ResolveUDPAddr("udp", ":6969")
@@ -193,6 +195,11 @@ func main() {
 		fmt.Printf("WorldBackend: DragonflyBackend → %s\n", *dragonflyURL)
 	} else {
 		backend = &system.StaticBackend{}
+	}
+
+	if *adminPort > 0 {
+		admin := newAdminServer(&mu, &clients, *adminToken)
+		go admin.start(*adminPort)
 	}
 
 	go broadcastSnapshots(conn, &mu, clients)
