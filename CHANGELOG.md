@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-06-18
+- feat(emily-bot): S39-04 GPT-2 policy — -gpt2-url activates 4Hz inference loop (POST /generate → action tokens → UserCmd); 200ms timeout; heuristic fallback (Apple #1408)
 - feat(emily-bot): S39-02 replay logger — -replay-dir writes NDJSON {tick,state,action} per think() tick; state/action format matches gpt2-alpine-c game_state.py (Apple #1403)
 - fix(evolution): S38-06 reset accumulated_reward after evolve_bot so per-life selection works; S38-07 set target->hit_feedback=15 in katana_apply_damage so w_repel fires on incoming damage not outgoing (Apple #1398)
 - fix(bot_client): S38-05 genome version guard — v<2 files get w_retreat=0.5 default; new brains init at v2 with w_retreat randomised (Apple #1396)
