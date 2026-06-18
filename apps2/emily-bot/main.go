@@ -13,15 +13,18 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"math"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -86,6 +89,10 @@ type botState struct {
 	replayFile *os.File
 	replayTick uint64
 	lastSnap   []byte // most recent raw PacketSnapshot for state encoding
+
+	// GPT-2 policy
+	gpt2URL    string        // empty = use heuristic
+	gpt2Client *http.Client
 }
 
 func main() {
@@ -94,6 +101,7 @@ func main() {
 	verbose := flag.Bool("v", false, "verbose packet logging")
 	noReport := flag.Bool("no-report", false, "disable Emily Prime kill/event reporting")
 	replayDir := flag.String("replay-dir", "", "directory to write replay NDJSON (empty = no replay log)")
+	gpt2URL := flag.String("gpt2-url", "", "GPT-2 inference server URL e.g. http://localhost:8088 (empty = heuristic)")
 	flag.Parse()
 
 	addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%d", *host, *port))
@@ -116,6 +124,11 @@ func main() {
 		sessionStart:  now,
 		lastObserved:  now,
 		observeMinGap: 15 * time.Second,
+		gpt2URL:       *gpt2URL,
+		gpt2Client:    &http.Client{Timeout: 200 * time.Millisecond},
+	}
+	if *gpt2URL != "" {
+		fmt.Printf("[emily-bot] GPT-2 policy active → %s\n", *gpt2URL)
 	}
 
 	if *replayDir != "" {
@@ -155,6 +168,17 @@ func (s *botState) think() common.UserCmd {
 
 	s.seq++
 	now := time.Now()
+
+	// GPT-2 policy path (4 Hz = every 5 ticks at 20 Hz).
+	// Falls back to heuristic if server unreachable or returns bad output.
+	if s.gpt2URL != "" && s.seq%5 == 0 {
+		stateStr := s.serializeState(uint64(s.seq))
+		if cmd, err := s.gpt2Policy(stateStr, s.seq, now); err == nil {
+			s.drFwd = cmd.Fwd
+			s.drStr = cmd.Str
+			return cmd
+		}
+	}
 
 	// Dead-reckoning: advance own position from last tick's inputs.
 	yawRad := float64(s.myYaw) * math.Pi / 180.0
@@ -258,6 +282,87 @@ func (s *botState) think() common.UserCmd {
 		Buttons:   buttons,
 		WeaponIdx: int32(weaponForRange(nearestDist)),
 	}
+}
+
+// gpt2Policy calls the GPT-2 inference server with the current state string
+// and returns a UserCmd decoded from the generated action tokens.
+// Returns an error if the server is unavailable or returns unusable output.
+func (s *botState) gpt2Policy(stateStr string, seq uint32, now time.Time) (common.UserCmd, error) {
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"prompt":      stateStr,
+		"max_tokens":  24,
+		"temperature": 0.7,
+	})
+	resp, err := s.gpt2Client.Post(
+		strings.TrimRight(s.gpt2URL, "/")+"/generate",
+		"application/json",
+		bytes.NewReader(reqBody),
+	)
+	if err != nil {
+		return common.UserCmd{}, err
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return common.UserCmd{}, err
+	}
+
+	// Decode action tokens to movement fields.
+	fwd, str, yawDelta, shoot, wpn := parseActionTokens(result.Text)
+	s.myYaw += yawDelta
+
+	return common.UserCmd{
+		Sequence:  seq,
+		Timestamp: uint32(now.UnixMilli()),
+		Msec:      uint16(tickInterval.Milliseconds()),
+		Fwd:       fwd,
+		Str:       str,
+		Yaw:       s.myYaw,
+		Pitch:     s.myPitch,
+		Buttons:   shoot,
+		WeaponIdx: int32(wpn),
+	}, nil
+}
+
+// parseActionTokens extracts movement fields from a GPT-2 action token string.
+// Format: "fwd:0.8 str:0.2 yaw_delta:-2.3 shoot:1 weapon:ar"
+func parseActionTokens(s string) (fwd, str, yawDelta float32, buttons uint32, weaponIdx int) {
+	weaponIdx = common.WpnMagnum
+	weaponMap := map[string]int{"knife": 0, "magnum": 1, "ar": 2, "shotgun": 3, "sniper": 4, "katana": 5}
+	for _, tok := range strings.Fields(s) {
+		parts := strings.SplitN(tok, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		var f float64
+		switch parts[0] {
+		case "fwd":
+			fmt.Sscanf(parts[1], "%f", &f)
+			fwd = float32(f)
+		case "str":
+			fmt.Sscanf(parts[1], "%f", &f)
+			str = float32(f)
+		case "yaw_delta":
+			fmt.Sscanf(parts[1], "%f", &f)
+			yawDelta = float32(f)
+		case "shoot":
+			if parts[1] == "1" {
+				buttons |= common.BtnAttack
+			}
+		case "jump":
+			if parts[1] == "1" {
+				buttons |= common.BtnJump
+			}
+		case "weapon":
+			if idx, ok := weaponMap[parts[1]]; ok {
+				weaponIdx = idx
+			}
+		}
+	}
+	return
 }
 
 func btoi(b bool) int {
