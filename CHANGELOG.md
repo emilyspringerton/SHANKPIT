@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-06-18
+- feat(server): S40-02 DragonflyBackend — WorldBackend impl using GFD /chunks HTTP API (Apple #1412)
 - feat(server): S40-01 WorldBackend seam wired — SceneVoxelPayload(sceneID,chunkX,chunkZ) in interface + VoxelBlock type; sendVoxelPacket routes through backend, falls back to procedural; StaticBackend unchanged (Apple #1410)
 - feat(emily-bot): S39-04 GPT-2 policy — -gpt2-url activates 4Hz inference loop (POST /generate → action tokens → UserCmd); 200ms timeout; heuristic fallback (Apple #1408)
 - feat(emily-bot): S39-02 replay logger — -replay-dir writes NDJSON {tick,state,action} per think() tick; state/action format matches gpt2-alpine-c game_state.py (Apple #1403)
