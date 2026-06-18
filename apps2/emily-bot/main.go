@@ -19,6 +19,7 @@ import (
 	"math"
 	"net"
 	"os"
+	"os/exec"
 	"sync"
 	"time"
 
@@ -67,12 +68,19 @@ type botState struct {
 	// Dead-reckoning: last sent inputs, integrated each tick.
 	drFwd float32
 	drStr float32
+
+	// Reporting
+	report        bool
+	sessionStart  time.Time
+	lastObserved  time.Time
+	observeMinGap time.Duration
 }
 
 func main() {
 	host := flag.String("host", "127.0.0.1", "game server host")
 	port := flag.Int("port", 6969, "game server UDP port")
 	verbose := flag.Bool("v", false, "verbose packet logging")
+	noReport := flag.Bool("no-report", false, "disable Emily Prime kill/event reporting")
 	flag.Parse()
 
 	addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%d", *host, *port))
@@ -87,13 +95,19 @@ func main() {
 	}
 	defer conn.Close()
 
+	now := time.Now()
 	state := &botState{
-		peers: make(map[uint8]*peer),
-		myY:   spawnY,
+		peers:         make(map[uint8]*peer),
+		myY:           spawnY,
+		report:        !*noReport,
+		sessionStart:  now,
+		lastObserved:  now,
+		observeMinGap: 15 * time.Second,
 	}
 
 	fmt.Printf("[emily-bot] connecting to %s as EMILY_PRIME\n", addr)
 	sendConnect(conn)
+	state.observe("emily-bot: session start — connecting to SHANKPIT server", "info")
 
 	go receiveLoop(conn, state, *verbose)
 
@@ -204,6 +218,28 @@ func (s *botState) think() common.UserCmd {
 	}
 }
 
+// observe posts a summary to Emily Prime via `emily observe` if reporting is
+// enabled and the rate-limit gap has passed. Non-blocking (goroutine).
+func (s *botState) observe(summary, severity string) {
+	if !s.report {
+		return
+	}
+	s.mu.Lock()
+	if time.Since(s.lastObserved) < s.observeMinGap {
+		s.mu.Unlock()
+		return
+	}
+	s.lastObserved = time.Now()
+	s.mu.Unlock()
+
+	go func() {
+		cmd := exec.Command("emily", "observe", "-s", severity, summary)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "[emily-bot] observe err: %v — %s\n", err, out)
+		}
+	}()
+}
+
 func receiveLoop(conn *net.UDPConn, state *botState, verbose bool) {
 	buf := make([]byte, 4096)
 	for {
@@ -227,6 +263,7 @@ func receiveLoop(conn *net.UDPConn, state *botState, verbose bool) {
 			}
 			state.mu.Unlock()
 			fmt.Printf("[emily-bot] welcomed: clientID=%d sceneID=%d\n", buf[1], state.sceneID)
+			state.observe(fmt.Sprintf("emily-bot: connected — clientID=%d sceneID=%d", buf[1], state.sceneID), "info")
 
 		case common.PacketSnapshot:
 			if n < 2 {
@@ -278,9 +315,17 @@ func receiveLoop(conn *net.UDPConn, state *botState, verbose bool) {
 				buf[1], state.myX, state.myY, state.myZ)
 
 		case common.PacketImpact:
-			if verbose {
-				hitEntity := n >= 2 && buf[1] == 1
-				fmt.Printf("[emily-bot] impact: hit_entity=%v\n", hitEntity)
+			hitEntity := n >= 2 && buf[1] == 1
+			if hitEntity {
+				state.mu.Lock()
+				state.kills++
+				kills := state.kills
+				seq := state.seq
+				state.mu.Unlock()
+				fmt.Printf("[emily-bot] kill confirmed — total=%d seq=%d\n", kills, seq)
+				state.observe(fmt.Sprintf("emily-bot: kill confirmed — total=%d seq=%d", kills, seq), "info")
+			} else if verbose {
+				fmt.Printf("[emily-bot] impact: hit_entity=false\n")
 			}
 		}
 	}
