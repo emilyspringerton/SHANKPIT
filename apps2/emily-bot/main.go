@@ -37,6 +37,10 @@ const (
 	turnRate      = float32(0.15) // lerp factor toward desired yaw
 	pitchRate     = float32(0.10)
 	patrolYawRate = float32(5.0) // degrees/tick when no target
+
+	// Dead-reckoning
+	moveSpeed = float32(8.0) // server move speed in units/s
+	tickDT    = float32(tickInterval) / float32(time.Second)
 )
 
 type peer struct {
@@ -59,6 +63,10 @@ type botState struct {
 	peers   map[uint8]*peer
 	seq     uint32
 	kills   int
+
+	// Dead-reckoning: last sent inputs, integrated each tick.
+	drFwd float32
+	drStr float32
 }
 
 func main() {
@@ -104,6 +112,12 @@ func (s *botState) think() common.UserCmd {
 
 	s.seq++
 	now := time.Now()
+
+	// Dead-reckoning: advance own position from last tick's inputs.
+	yawRad := float64(s.myYaw) * math.Pi / 180.0
+	sinY, cosY := float32(math.Sin(yawRad)), float32(math.Cos(yawRad))
+	s.myX += (s.drFwd*sinY + s.drStr*cosY) * moveSpeed * tickDT
+	s.myZ += (s.drFwd*(-cosY) + s.drStr*sinY) * moveSpeed * tickDT
 
 	// Prune stale peers.
 	for id, p := range s.peers {
@@ -174,6 +188,9 @@ func (s *botState) think() common.UserCmd {
 		fwd = 0.3
 	}
 
+	s.drFwd = fwd
+	s.drStr = str
+
 	return common.UserCmd{
 		Sequence:  s.seq,
 		Timestamp: uint32(now.UnixMilli()),
@@ -227,10 +244,18 @@ func receiveLoop(conn *net.UDPConn, state *botState, verbose bool) {
 				y := math.Float32frombits(binary.LittleEndian.Uint32(buf[off+6:]))
 				z := math.Float32frombits(binary.LittleEndian.Uint32(buf[off+10:]))
 				yaw := math.Float32frombits(binary.LittleEndian.Uint32(buf[off+14:]))
-				state.peers[id] = &peer{
-					id: id, sceneID: sceneID,
-					x: x, y: y, z: z, yaw: yaw,
-					seen: now,
+				if id == state.myID {
+					// Server-authoritative position update — reset dead-reckoning anchor.
+					state.myX, state.myY, state.myZ = x, y, z
+					if sceneID == state.sceneID {
+						state.myYaw = yaw
+					}
+				} else {
+					state.peers[id] = &peer{
+						id: id, sceneID: sceneID,
+						x: x, y: y, z: z, yaw: yaw,
+						seen: now,
+					}
 				}
 				off += entitySize
 			}
