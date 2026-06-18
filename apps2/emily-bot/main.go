@@ -42,6 +42,11 @@ const (
 	// Dead-reckoning
 	moveSpeed = float32(8.0) // server move speed in units/s
 	tickDT    = float32(tickInterval) / float32(time.Second)
+
+	// Weapon range thresholds (units)
+	rangeClose  = float32(8.0)
+	rangeMid    = float32(30.0)
+	rangeLong   = float32(50.0)
 )
 
 type peer struct {
@@ -155,6 +160,9 @@ func (s *botState) think() common.UserCmd {
 
 	var fwd, str float32
 	var buttons uint32
+	if nearest == nil {
+		nearestDist = 0 // no target — weaponForRange returns Magnum as default
+	}
 
 	if nearest != nil {
 		// Aim yaw.
@@ -214,7 +222,19 @@ func (s *botState) think() common.UserCmd {
 		Yaw:       s.myYaw,
 		Pitch:     s.myPitch,
 		Buttons:   buttons,
-		WeaponIdx: int32(common.WpnMagnum),
+		WeaponIdx: int32(weaponForRange(nearestDist)),
+	}
+}
+
+// weaponForRange selects the best weapon for the given target distance.
+func weaponForRange(dist float32) int {
+	switch {
+	case dist > rangeLong:
+		return common.WpnSniper
+	case dist > rangeMid:
+		return common.WpnAR
+	default:
+		return common.WpnMagnum
 	}
 }
 
