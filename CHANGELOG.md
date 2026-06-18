@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-06-18
+- fix(bot_client): S38-05 genome version guard — v<2 files get w_retreat=0.5 default; new brains init at v2 with w_retreat randomised (Apple #1396)
 - feat(emily-bot): S38-04 weapon rotation — Magnum <30u, AR 30-50u, Sniper >50u; weaponForRange helper (Apple #1393)
 - feat(emily-bot): S38-03 kill/event reporting — emily observe on session start, connect, and kill (PacketImpact hit_entity=1); rate-limited 15s gap; -no-report flag (Apple #1388)
 - feat(emily-bot): S38-02 dead-reckoning — server-authoritative position from PacketSnapshot own-entity + per-tick fwd/str integration at 8u/s; fix: own entity no longer added to peers map (Apple #1377)
