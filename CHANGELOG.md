@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-06-18
+- fix(evolution): S38-06 reset accumulated_reward after evolve_bot so per-life selection works; S38-07 set target->hit_feedback=15 in katana_apply_damage so w_repel fires on incoming damage not outgoing (Apple #1398)
 - fix(bot_client): S38-05 genome version guard — v<2 files get w_retreat=0.5 default; new brains init at v2 with w_retreat randomised (Apple #1396)
 - feat(emily-bot): S38-04 weapon rotation — Magnum <30u, AR 30-50u, Sniper >50u; weaponForRange helper (Apple #1393)
 - feat(emily-bot): S38-03 kill/event reporting — emily observe on session start, connect, and kill (PacketImpact hit_entity=1); rate-limited 15s gap; -no-report flag (Apple #1388)
