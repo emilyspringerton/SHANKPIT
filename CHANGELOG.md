@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-06-18
+- feat(server): S42-A admin HTTP API :6970 — /healthz + /admin/status + /admin/players + /admin/kick; --admin-port/token flags; 5 tests (Apple #1434)
 - docs: SHANKPIT_AI_ARCHITECTURE.md — complete AI architecture doc covering C evolution bots + emily-bot heuristic/GPT-2 + Dragonfly backend (Apple #1430)
 - feat(server): S41-01 --dragonfly-url flag — activates DragonflyBackend at runtime; default StaticBackend unchanged (Apple #1419)
 - feat(common): S40-03 block ID mapping table — packages2/common/block_map.go + packages/common/block_map.h; Dragonfly name→SHANKPIT ID mapping, 24 entries; tests pass (Apple #1417)
