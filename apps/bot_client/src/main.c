@@ -87,16 +87,22 @@ void load_brain(const char* filename) {
     if (f) {
         fread(&brain, sizeof(BotGenome), 1, f);
         fclose(f);
-        printf("🧠 LOADED BRAIN v%d from %s\n", brain.version, filename);
+        if (brain.version < 2) {
+            brain.w_retreat = 0.5f;
+            printf("🧠 LOADED BRAIN v%d from %s (upgraded: w_retreat=0.5)\n", brain.version, filename);
+        } else {
+            printf("🧠 LOADED BRAIN v%d from %s\n", brain.version, filename);
+        }
     } else {
         printf("🧠 NEW BRAIN (Randomized)\n");
-        brain.version = 1;
+        brain.version = 2;
         brain.w_aggro = 0.5f + rand_w() * 0.5f;
         brain.w_strafe = rand_w();
         brain.w_jump = 0.05f + rand_f() * 0.1f;
         brain.w_slide = 0.01f + rand_f() * 0.05f;
         brain.w_turret = 10.0f + rand_f() * 10.0f;
         brain.w_repel = 1.0f + rand_f();
+        brain.w_retreat = 0.5f + rand_f();
     }
     strcpy(brain_filename, filename);
 }
