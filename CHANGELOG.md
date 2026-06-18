@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-06-18
+- feat(server): S40-01 WorldBackend seam wired — SceneVoxelPayload(sceneID,chunkX,chunkZ) in interface + VoxelBlock type; sendVoxelPacket routes through backend, falls back to procedural; StaticBackend unchanged (Apple #1410)
 - feat(emily-bot): S39-04 GPT-2 policy — -gpt2-url activates 4Hz inference loop (POST /generate → action tokens → UserCmd); 200ms timeout; heuristic fallback (Apple #1408)
 - feat(emily-bot): S39-02 replay logger — -replay-dir writes NDJSON {tick,state,action} per think() tick; state/action format matches gpt2-alpine-c game_state.py (Apple #1403)
 - fix(evolution): S38-06 reset accumulated_reward after evolve_bot so per-life selection works; S38-07 set target->hit_feedback=15 in katana_apply_damage so w_repel fires on incoming damage not outgoing (Apple #1398)
