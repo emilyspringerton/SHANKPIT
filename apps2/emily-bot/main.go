@@ -70,6 +70,7 @@ type botState struct {
 	myZ     float32
 	myYaw   float32
 	myPitch float32
+	myHealth float32 // estimated health 0-100; decrements near enemies, resets on respawn
 	sceneID uint8
 	peers   map[uint8]*peer
 	seq     uint32
@@ -93,6 +94,9 @@ type botState struct {
 	// GPT-2 policy
 	gpt2URL    string        // empty = use heuristic
 	gpt2Client *http.Client
+
+	// Session management
+	done chan struct{} // closed by receiveLoop on disconnect
 }
 
 func main() {
@@ -102,17 +106,33 @@ func main() {
 	noReport := flag.Bool("no-report", false, "disable Emily Prime kill/event reporting")
 	replayDir := flag.String("replay-dir", "", "directory to write replay NDJSON (empty = no replay log)")
 	gpt2URL := flag.String("gpt2-url", "", "GPT-2 inference server URL e.g. http://localhost:8088 (empty = heuristic)")
+	sessions := flag.Int("sessions", 0, "number of self-play sessions (0 = infinite)")
+	sessionDur := flag.Duration("session-duration", 60*time.Second, "max duration per session")
 	flag.Parse()
 
-	addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%d", *host, *port))
+	for i := 1; *sessions == 0 || i <= *sessions; i++ {
+		if *sessions > 0 {
+			fmt.Printf("[emily-bot] session %d/%d\n", i, *sessions)
+		}
+		runSession(*host, *port, *verbose, !*noReport, *replayDir, *gpt2URL, *sessionDur)
+		if *sessions > 0 && i >= *sessions {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	fmt.Printf("[emily-bot] all sessions complete\n")
+}
+
+func runSession(host string, port int, verbose, report bool, replayDir, gpt2URL string, duration time.Duration) {
+	addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%d", host, port))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "resolve addr: %v\n", err)
-		os.Exit(1)
+		return
 	}
 	conn, err := net.DialUDP("udp", nil, addr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "dial udp: %v\n", err)
-		os.Exit(1)
+		return
 	}
 	defer conn.Close()
 
@@ -120,22 +140,24 @@ func main() {
 	state := &botState{
 		peers:         make(map[uint8]*peer),
 		myY:           spawnY,
-		report:        !*noReport,
+		myHealth:      100,
+		report:        report,
 		sessionStart:  now,
 		lastObserved:  now,
 		observeMinGap: 15 * time.Second,
-		gpt2URL:       *gpt2URL,
+		gpt2URL:       gpt2URL,
 		gpt2Client:    &http.Client{Timeout: 200 * time.Millisecond},
+		done:          make(chan struct{}),
 	}
-	if *gpt2URL != "" {
-		fmt.Printf("[emily-bot] GPT-2 policy active → %s\n", *gpt2URL)
+	if gpt2URL != "" {
+		fmt.Printf("[emily-bot] GPT-2 policy active → %s\n", gpt2URL)
 	}
 
-	if *replayDir != "" {
-		if err := os.MkdirAll(*replayDir, 0755); err != nil {
+	if replayDir != "" {
+		if err := os.MkdirAll(replayDir, 0755); err != nil {
 			fmt.Fprintf(os.Stderr, "[emily-bot] replay dir: %v\n", err)
 		} else {
-			fname := filepath.Join(*replayDir, now.UTC().Format("20060102-150405Z")+".ndjson")
+			fname := filepath.Join(replayDir, now.UTC().Format("20060102-150405Z")+".ndjson")
 			f, err := os.Create(fname)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "[emily-bot] replay open: %v\n", err)
@@ -147,17 +169,28 @@ func main() {
 		}
 	}
 
-	fmt.Printf("[emily-bot] connecting to %s as EMILY_PRIME\n", addr)
+	fmt.Printf("[emily-bot] connecting to %s as EMILY_PRIME (session-duration=%s)\n", addr, duration)
 	sendConnect(conn)
-	state.observe("emily-bot: session start — connecting to SHANKPIT server", "info")
 
-	go receiveLoop(conn, state, *verbose)
+	go receiveLoop(conn, state, verbose)
 
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
-	for range ticker.C {
-		cmd := state.think()
-		sendUserCmd(conn, cmd)
+	deadline := time.After(duration)
+	for {
+		select {
+		case <-state.done:
+			fmt.Printf("[emily-bot] session ended (server disconnect) — elapsed=%s kills=%d\n",
+				time.Since(now).Round(time.Second), state.kills)
+			return
+		case <-deadline:
+			fmt.Printf("[emily-bot] session ended (duration=%s) — elapsed=%s kills=%d\n",
+				duration, time.Since(now).Round(time.Second), state.kills)
+			return
+		case <-ticker.C:
+			cmd := state.think()
+			sendUserCmd(conn, cmd)
+		}
 	}
 }
 
@@ -212,8 +245,24 @@ func (s *botState) think() common.UserCmd {
 		nearestDist = 0 // no target — weaponForRange returns Magnum as default
 	}
 
+	// Health estimation: decay when an enemy is close, regenerate when clear.
+	if nearest != nil && nearestDist < closeRange {
+		s.myHealth -= 0.5
+		if s.myHealth < 0 {
+			s.myHealth = 0
+		}
+	} else if nearest == nil && s.myHealth < 100 {
+		s.myHealth += 0.2
+		if s.myHealth > 100 {
+			s.myHealth = 100
+		}
+	}
+
+	// Retreat below 30 HP — flee from nearest enemy, don't shoot.
+	retreating := s.myHealth < 30
+
 	if nearest != nil {
-		// Aim yaw.
+		// Aim yaw (always — we need to face the enemy even when retreating).
 		dx := nearest.x - s.myX
 		dz := nearest.z - s.myZ
 		desiredYaw := float32(math.Atan2(float64(dx), float64(-dz)) * 180.0 / math.Pi)
@@ -232,28 +281,42 @@ func (s *botState) think() common.UserCmd {
 		desiredPitch := float32(math.Atan2(float64(dy), float64(nearestDist)) * 180.0 / math.Pi)
 		s.myPitch += (desiredPitch - s.myPitch) * pitchRate
 
-		// Move: close in when far, back off when very close.
-		switch {
-		case nearestDist > farRange:
-			fwd = 1.0
-		case nearestDist < closeRange:
-			fwd = -0.5
-		}
-
-		// Strafe every ~2 seconds to avoid being an easy target.
-		tick := int(now.UnixMilli() / 2000)
-		if tick%2 == 0 {
-			str = 0.7
+		if retreating {
+			// Low HP: flee backwards, strafe to avoid fire.
+			fwd = -1.0
+			tick := int(now.UnixMilli() / 1000)
+			if tick%2 == 0 {
+				str = 1.0
+			} else {
+				str = -1.0
+			}
+			if s.seq%100 == 0 {
+				fmt.Printf("[emily-bot] retreating: hp=%.0f nearest=%.1f\n", s.myHealth, nearestDist)
+			}
 		} else {
-			str = -0.7
-		}
+			// Normal combat: close in when far, back off when very close.
+			switch {
+			case nearestDist > farRange:
+				fwd = 1.0
+			case nearestDist < closeRange:
+				fwd = -0.5
+			}
 
-		// Shoot when roughly on target.
-		if float32(math.Abs(float64(diff))) < aimTolerance {
-			buttons |= common.BtnAttack
+			// Strafe every ~2 seconds to avoid being an easy target.
+			tick := int(now.UnixMilli() / 2000)
+			if tick%2 == 0 {
+				str = 0.7
+			} else {
+				str = -0.7
+			}
+
+			// Shoot when roughly on target.
+			if float32(math.Abs(float64(diff))) < aimTolerance {
+				buttons |= common.BtnAttack
+			}
 		}
 	} else {
-		// No peers visible: patrol by spinning.
+		// No peers visible: patrol by spinning; recover health.
 		s.myYaw += patrolYawRate
 		fwd = 0.3
 	}
@@ -409,7 +472,7 @@ func (s *botState) logReplay(stateStr, actionStr string) {
 // serializeState builds a compact state string from current bot position + known peers.
 // This is a lightweight Go version of scripts/game_state.py serialize_snapshot.
 func (s *botState) serializeState(tick uint64) string {
-	selfStr := fmt.Sprintf("self pos:%.1f,%.1f yaw:%.0f", s.myX, s.myZ, s.myYaw)
+	selfStr := fmt.Sprintf("self pos:%.1f,%.1f yaw:%.0f hp:%.0f", s.myX, s.myZ, s.myYaw, s.myHealth)
 	enemies := ""
 	count := 0
 	for _, p := range s.peers {
@@ -452,6 +515,13 @@ func (s *botState) observe(summary, severity string) {
 }
 
 func receiveLoop(conn *net.UDPConn, state *botState, verbose bool) {
+	defer func() {
+		select {
+		case <-state.done:
+		default:
+			close(state.done)
+		}
+	}()
 	buf := make([]byte, 4096)
 	for {
 		n, err := conn.Read(buf)
