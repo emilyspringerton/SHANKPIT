@@ -28,13 +28,15 @@ type AdminServer struct {
 }
 
 type playerInfo struct {
-	ID      uint8   `json:"id"`
-	Addr    string  `json:"addr"`
-	SceneID int     `json:"scene_id"`
-	X       float32 `json:"x"`
-	Y       float32 `json:"y"`
-	Z       float32 `json:"z"`
-	Yaw     float32 `json:"yaw"`
+	ID          uint8   `json:"id"`
+	Addr        string  `json:"addr"`
+	SceneID     int     `json:"scene_id"`
+	X           float32 `json:"x"`
+	Y           float32 `json:"y"`
+	Z           float32 `json:"z"`
+	Yaw         float32 `json:"yaw"`
+	PlayerID    string  `json:"player_id,omitempty"`
+	DisplayName string  `json:"display_name,omitempty"`
 }
 
 type statusResponse struct {
@@ -89,13 +91,15 @@ func (a *AdminServer) snapshot() ([]playerInfo, map[int]int) {
 	scenes := make(map[int]int)
 	for _, c := range *a.clients {
 		players = append(players, playerInfo{
-			ID:      c.id,
-			Addr:    c.remote.String(),
-			SceneID: c.sceneID,
-			X:       float32(c.pos.X),
-			Y:       float32(c.pos.Y),
-			Z:       float32(c.pos.Z),
-			Yaw:     c.yaw,
+			ID:          c.id,
+			Addr:        c.remote.String(),
+			SceneID:     c.sceneID,
+			X:           float32(c.pos.X),
+			Y:           float32(c.pos.Y),
+			Z:           float32(c.pos.Z),
+			Yaw:         c.yaw,
+			PlayerID:    c.playerID,
+			DisplayName: c.displayName,
 		})
 		scenes[c.sceneID]++
 	}

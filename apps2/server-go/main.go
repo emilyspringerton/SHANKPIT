@@ -121,6 +121,9 @@ type clientInfo struct {
 	pos                 system.Vec3
 	yaw                 float32
 	remote              *net.UDPAddr
+	// IDUNA auth — empty when player connected without a JWT.
+	playerID    string
+	displayName string
 }
 
 // matchmaker queues players for specific game modes. Players immediately join a
@@ -169,7 +172,14 @@ func main() {
 	dragonflyURL := flag.String("dragonfly-url", "", "GoblinFoxDragon world API URL (e.g. http://localhost:7070); enables DragonflyBackend")
 	adminPort    := flag.Int("admin-port", 6970, "HTTP admin API port (0 = disabled)")
 	adminToken   := flag.String("admin-token", "", "Bearer token for write endpoints (empty = no auth)")
+	idunaURL     := flag.String("iduna-url", "", "IDUNA base URL for JWT validation (e.g. http://localhost:8080); optional")
 	flag.Parse()
+
+	var jwksCache *common.JWKSCache
+	if *idunaURL != "" {
+		jwksCache = common.NewJWKSCache(*idunaURL)
+		fmt.Printf("Auth: JWT validation enabled via IDUNA at %s\n", *idunaURL)
+	}
 
 	addr, err := net.ResolveUDPAddr("udp", ":6969")
 	if err != nil {
@@ -229,14 +239,51 @@ func main() {
 			if n > netHeaderSize {
 				requestedMode = buf[netHeaderSize]
 			}
+
+			// Parse optional 256-byte JWT field (bytes 13..268).
+			// Wire: [12]=mode, [13..268]=null-padded JWT string.
+			const jwtFieldOffset = netHeaderSize + 1
+			const jwtFieldLen = 256
+			playerID := ""
+			displayName := ""
+			if jwksCache != nil && n >= jwtFieldOffset+1 {
+				end := jwtFieldOffset + jwtFieldLen
+				if end > n {
+					end = n
+				}
+				jwtBytes := buf[jwtFieldOffset:end]
+				// Trim null padding.
+				for i, b := range jwtBytes {
+					if b == 0 {
+						jwtBytes = jwtBytes[:i]
+						break
+					}
+				}
+				if len(jwtBytes) > 0 {
+					token := string(jwtBytes)
+					if claims, err := common.ValidateJWT(jwksCache, token); err == nil {
+						playerID = claims.Sub
+						displayName = common.DisplayNameFromClaims(claims)
+					} else {
+						fmt.Printf("[AUTH] client=%s JWT invalid: %v\n", remote.String(), err)
+					}
+				}
+			}
+
 			mu.Lock()
 			info, ok := clients[remote.String()]
 			if !ok {
+				guestName := fmt.Sprintf("guest-%d", nextClientID)
+				if displayName == "" {
+					displayName = guestName
+				}
 				info = clientInfo{
 					id:            nextClientID,
 					remote:        remote,
 					sceneID:       dmWarmupScene,
 					requestedMode: requestedMode,
+					playerID:      playerID,
+					displayName:   displayName,
 				}
 				if nextClientID < 255 {
 					nextClientID++
@@ -247,8 +294,8 @@ func main() {
 			// Always place the connecting player in the DM warm-up session immediately.
 			sendWelcome(conn, remote, info.id, dmWarmupScene, common.GameModeDeathmatch)
 			sendVoxelPacket(conn, remote, info, backend)
-			fmt.Printf("[LOBBY] client=%d addr=%s requested_mode=%d → warm-up dm scene=%d\n",
-				info.id, remote.String(), requestedMode, dmWarmupScene)
+			fmt.Printf("[LOBBY] client=%d name=%q addr=%s requested_mode=%d → warm-up dm scene=%d\n",
+				info.id, info.displayName, remote.String(), requestedMode, dmWarmupScene)
 
 			if requestedMode == common.GameModeCTF {
 				mm.enqueue(remote.String())
