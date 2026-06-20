@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-06-20
+- feat: S43-01 PacketConnect JWT field — IDUNA ES256 auth, displayName, playerID in admin API (Apple #1885)
 
 - feat: S42-03 emily-bot -sessions N self-play loop; S42-04 health-aware retreat at hp<30 (Apple #1870)
 
