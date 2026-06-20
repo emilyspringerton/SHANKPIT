@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-06-20
+
+- feat: S42-03 emily-bot -sessions N self-play loop; S42-04 health-aware retreat at hp<30 (Apple #1870)
+
+
 ## 2026-06-18
 - feat(server): S42-A admin HTTP API :6970 — /healthz + /admin/status + /admin/players + /admin/kick; --admin-port/token flags; 5 tests (Apple #1434)
 - docs: SHANKPIT_AI_ARCHITECTURE.md — complete AI architecture doc covering C evolution bots + emily-bot heuristic/GPT-2 + Dragonfly backend (Apple #1430)
