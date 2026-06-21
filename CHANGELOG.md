@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-06-21
+
+- feat: emily-bot packs IDUNA JWT into PacketConnect (SHANKPIT_AUTH_TOKEN env / ~/.shankpit/auth.json) (Apple #1895)
+
+
 ## 2026-06-20
 - feat: S43-01 PacketConnect JWT field — IDUNA ES256 auth, displayName, playerID in admin API (Apple #1885)
 
