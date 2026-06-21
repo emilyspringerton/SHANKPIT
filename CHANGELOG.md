@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-06-21
+- feat: S45-01 idle timeout + kill tracking + IDUNA stat reporting on disconnect (Apple #2310)
 
 - feat: emily-bot packs IDUNA JWT into PacketConnect (SHANKPIT_AUTH_TOKEN env / ~/.shankpit/auth.json) (Apple #1895)
 
