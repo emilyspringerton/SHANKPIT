@@ -612,13 +612,42 @@ func receiveLoop(conn *net.UDPConn, state *botState, verbose bool) {
 	}
 }
 
-// sendConnect sends a PacketConnect with DM game mode.
-// Wire format: [0]=type [1:12]=zeros [12]=game_mode  (13 bytes)
+// sendConnect sends a PacketConnect with DM game mode and optional IDUNA JWT.
+// Wire format: [0]=type [1:12]=zeros [12]=game_mode [13..268]=JWT (null-padded).
+// JWT is loaded from SHANKPIT_AUTH_TOKEN env or ~/.shankpit/auth.json {"token":"..."}.
 func sendConnect(conn *net.UDPConn) {
-	buf := make([]byte, 13)
+	const jwtFieldLen = 256
+	buf := make([]byte, 13+jwtFieldLen)
 	buf[0] = common.PacketConnect
 	buf[12] = common.GameModeDeathmatch
+
+	if jwt := loadShankpitJWT(); jwt != "" {
+		copy(buf[13:], []byte(jwt))
+		fmt.Printf("[emily-bot] auth: JWT loaded (%d bytes)\n", len(jwt))
+	}
 	_, _ = conn.Write(buf)
+}
+
+// loadShankpitJWT returns the IDUNA JWT for SHANKPIT auth, or "" if not set.
+func loadShankpitJWT() string {
+	if tok := os.Getenv("SHANKPIT_AUTH_TOKEN"); tok != "" {
+		return tok
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".shankpit", "auth.json"))
+	if err != nil {
+		return ""
+	}
+	var authFile struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(data, &authFile); err != nil {
+		return ""
+	}
+	return authFile.Token
 }
 
 // sendUserCmd encodes a UserCmd into the server's expected wire format.
