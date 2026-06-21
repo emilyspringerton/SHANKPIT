@@ -121,6 +121,8 @@ type clientInfo struct {
 	pos                 system.Vec3
 	yaw                 float32
 	remote              *net.UDPAddr
+	lastPacket          time.Time // used for idle timeout
+	kills               int       // server-tracked kills this session
 	// IDUNA auth — empty when player connected without a JWT.
 	playerID    string
 	displayName string
@@ -172,8 +174,14 @@ func main() {
 	dragonflyURL := flag.String("dragonfly-url", "", "GoblinFoxDragon world API URL (e.g. http://localhost:7070); enables DragonflyBackend")
 	adminPort    := flag.Int("admin-port", 6970, "HTTP admin API port (0 = disabled)")
 	adminToken   := flag.String("admin-token", "", "Bearer token for write endpoints (empty = no auth)")
-	idunaURL     := flag.String("iduna-url", "", "IDUNA base URL for JWT validation (e.g. http://localhost:8080); optional")
+	idunaURL     := flag.String("iduna-url", "", "IDUNA base URL for JWT validation + stat reporting (e.g. http://localhost:8080); optional")
+	serverToken  := flag.String("server-token", "", "IDUNA agent JWT for stat-report calls (SHANKPIT_SERVER_TOKEN env fallback)")
+	idleTimeout  := flag.Duration("idle-timeout", 60*time.Second, "remove client after this long with no packets")
 	flag.Parse()
+
+	if *serverToken == "" {
+		*serverToken = getEnvFallback("SHANKPIT_SERVER_TOKEN", "")
+	}
 
 	var jwksCache *common.JWKSCache
 	if *idunaURL != "" {
@@ -213,6 +221,7 @@ func main() {
 	}
 
 	go broadcastSnapshots(conn, &mu, clients)
+	go pruneIdleClients(&mu, clients, *idleTimeout, *idunaURL, *serverToken)
 
 	for {
 		// 250 ms is the read *poll timeout* — not the tick rate.
@@ -284,6 +293,7 @@ func main() {
 					requestedMode: requestedMode,
 					playerID:      playerID,
 					displayName:   displayName,
+					lastPacket:    time.Now(),
 				}
 				if nextClientID < 255 {
 					nextClientID++
@@ -339,11 +349,15 @@ func main() {
 			cmd := parseUserCmd(buf, netHeaderSize+1)
 			clientStore.Upsert(remote.String(), cmd)
 			info.yaw = cmd.Yaw
+			info.lastPacket = time.Now()
 			if cmd.Buttons&common.BtnAttack != 0 {
 				gw := &gameWorld{clients: clients, mu: &mu, shooterID: info.id, sceneID: info.sceneID}
 				shooter := &shankPlayer{pos: info.pos, eyeHeight: 1.62, rw: gw}
 				hit, pos, hitEntity := player.HandleShankFire(shooter, float64(cmd.Yaw), float64(cmd.Pitch), int(cmd.WeaponIdx))
 				if hit {
+					if hitEntity {
+						info.kills++
+					}
 					sendImpact(conn, remote, pos, hitEntity, 0)
 				}
 			}
