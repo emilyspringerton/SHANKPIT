@@ -95,6 +95,11 @@ type botState struct {
 	gpt2URL    string        // empty = use heuristic
 	gpt2Client *http.Client
 
+	// Archetype policy (THE_FIELD archetype-engine)
+	archetypeURL    string
+	archetypeClient *http.Client
+	allowCollapse   bool // enable Collapse-corridor spirits (Andras chaos mode)
+
 	// Session management
 	done chan struct{} // closed by receiveLoop on disconnect
 }
@@ -105,16 +110,18 @@ func main() {
 	verbose := flag.Bool("v", false, "verbose packet logging")
 	noReport := flag.Bool("no-report", false, "disable Emily Prime kill/event reporting")
 	replayDir := flag.String("replay-dir", "", "directory to write replay NDJSON (empty = no replay log)")
-	gpt2URL := flag.String("gpt2-url", "", "GPT-2 inference server URL e.g. http://localhost:8088 (empty = heuristic)")
-	sessions := flag.Int("sessions", 0, "number of self-play sessions (0 = infinite)")
-	sessionDur := flag.Duration("session-duration", 60*time.Second, "max duration per session")
+	gpt2URL        := flag.String("gpt2-url", "", "GPT-2 inference server URL e.g. http://localhost:8088 (empty = heuristic)")
+	archetypeURL   := flag.String("archetype-engine", os.Getenv("ARCHETYPE_ENGINE_URL"), "THE_FIELD archetype engine URL (empty = disabled)")
+	allowCollapse  := flag.Bool("allow-collapse", false, "enable Collapse-corridor spirits (Andras chaos mode)")
+	sessions       := flag.Int("sessions", 0, "number of self-play sessions (0 = infinite)")
+	sessionDur     := flag.Duration("session-duration", 60*time.Second, "max duration per session")
 	flag.Parse()
 
 	for i := 1; *sessions == 0 || i <= *sessions; i++ {
 		if *sessions > 0 {
 			fmt.Printf("[emily-bot] session %d/%d\n", i, *sessions)
 		}
-		runSession(*host, *port, *verbose, !*noReport, *replayDir, *gpt2URL, *sessionDur)
+		runSession(*host, *port, *verbose, !*noReport, *replayDir, *gpt2URL, *archetypeURL, *allowCollapse, *sessionDur)
 		if *sessions > 0 && i >= *sessions {
 			break
 		}
@@ -123,7 +130,7 @@ func main() {
 	fmt.Printf("[emily-bot] all sessions complete\n")
 }
 
-func runSession(host string, port int, verbose, report bool, replayDir, gpt2URL string, duration time.Duration) {
+func runSession(host string, port int, verbose, report bool, replayDir, gpt2URL, archetypeURL string, allowCollapse bool, duration time.Duration) {
 	addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%d", host, port))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "resolve addr: %v\n", err)
@@ -145,12 +152,18 @@ func runSession(host string, port int, verbose, report bool, replayDir, gpt2URL 
 		sessionStart:  now,
 		lastObserved:  now,
 		observeMinGap: 15 * time.Second,
-		gpt2URL:       gpt2URL,
-		gpt2Client:    &http.Client{Timeout: 200 * time.Millisecond},
-		done:          make(chan struct{}),
+		gpt2URL:         gpt2URL,
+		gpt2Client:      &http.Client{Timeout: 200 * time.Millisecond},
+		archetypeURL:    archetypeURL,
+		archetypeClient: &http.Client{Timeout: 250 * time.Millisecond},
+		allowCollapse:   allowCollapse,
+		done:            make(chan struct{}),
 	}
 	if gpt2URL != "" {
 		fmt.Printf("[emily-bot] GPT-2 policy active → %s\n", gpt2URL)
+	}
+	if archetypeURL != "" {
+		fmt.Printf("[emily-bot] Archetype policy active → %s (allow_collapse=%v)\n", archetypeURL, allowCollapse)
 	}
 
 	if replayDir != "" {
@@ -207,6 +220,18 @@ func (s *botState) think() common.UserCmd {
 	if s.gpt2URL != "" && s.seq%5 == 0 {
 		stateStr := s.serializeState(uint64(s.seq))
 		if cmd, err := s.gpt2Policy(stateStr, s.seq, now); err == nil {
+			s.drFwd = cmd.Fwd
+			s.drStr = cmd.Str
+			return cmd
+		}
+	}
+
+	// Archetype policy path (2 Hz = every 10 ticks). Runs when no GPT-2, or as fallback.
+	// Uses THE_FIELD dual-persona: Leraje#14 (precision strikes) + Marchosias#35 (martial clarity).
+	// Chaos mode (allow_collapse=true): Andras#63 (productive discord).
+	if s.archetypeURL != "" && s.seq%10 == 0 {
+		stateStr := s.serializeState(uint64(s.seq))
+		if cmd, err := s.archetypePolicy(stateStr, s.seq, now); err == nil {
 			s.drFwd = cmd.Fwd
 			s.drStr = cmd.Str
 			return cmd
@@ -375,6 +400,57 @@ func (s *botState) gpt2Policy(stateStr string, seq uint32, now time.Time) (commo
 
 	// Decode action tokens to movement fields.
 	fwd, str, yawDelta, shoot, wpn := parseActionTokens(result.Text)
+	s.myYaw += yawDelta
+
+	return common.UserCmd{
+		Sequence:  seq,
+		Timestamp: uint32(now.UnixMilli()),
+		Msec:      uint16(tickInterval.Milliseconds()),
+		Fwd:       fwd,
+		Str:       str,
+		Yaw:       s.myYaw,
+		Pitch:     s.myPitch,
+		Buttons:   shoot,
+		WeaponIdx: int32(wpn),
+	}, nil
+}
+
+// archetypePolicy calls THE_FIELD archetype engine with a combat intent string.
+// Intent: Leraje#14 (precision strikes) + Marchosias#35 (martial clarity) for normal mode.
+// Chaos mode (allow_collapse=true): also invokes Andras#63 (productive discord).
+// The synthesized output is parsed as action tokens (same format as GPT-2 policy).
+func (s *botState) archetypePolicy(stateStr string, seq uint32, now time.Time) (common.UserCmd, error) {
+	intent := "precision combat strike martial clarity targeting"
+	if s.allowCollapse {
+		intent += " chaos disrupt break"
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"intent":         intent,
+		"context":        stateStr,
+		"allow_collapse": s.allowCollapse,
+	})
+	resp, err := s.archetypeClient.Post(
+		strings.TrimRight(s.archetypeURL, "/")+"/invoke",
+		"application/json",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return common.UserCmd{}, err
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Output string `json:"output"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return common.UserCmd{}, err
+	}
+	if result.Output == "" {
+		return common.UserCmd{}, fmt.Errorf("archetype: empty output")
+	}
+
+	fwd, str, yawDelta, shoot, wpn := parseActionTokens(result.Output)
 	s.myYaw += yawDelta
 
 	return common.UserCmd{
