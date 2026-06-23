@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-06-23
+
+- S103-02: emily-bot archetypePolicy() — THE_FIELD /invoke at 2Hz; Leraje+Marchosias intent; Andras chaos mode; -archetype-engine flag; fallback to heuristic
+
+
 ## 2026-06-21
 - feat: S45-01 idle timeout + kill tracking + IDUNA stat reporting on disconnect (Apple #2310)
 
