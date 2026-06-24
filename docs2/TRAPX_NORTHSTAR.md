@@ -342,6 +342,24 @@ encounter quest in its district — defeating or negotiating with a district's m
 Grants Blood Pact abilities that summon city-scale effects (not fantasy creatures; urban
 phenomena: a fire event, a media blackout, a power surge, a fog of confusion).
 
+**The 7 City Entity Avatars (canonical):**
+
+| Avatar | District | Manifestation | Blood Pact Effect |
+|---|---|---|---|
+| **Baphomet** | Abandoned (scene 204) | Decay lord; horned shadow entity; haunts burned-out voxels; final darkness before a district dies | Rogue Swarm: autonomous pack frenzy in target zone; 3-minute duration |
+| **The Anchor** | Industrial (scene 202) | Warehouse colossus; freight hooks for arms; city's economic gravity | Flow Pulse: all allied FOs emit doubled Flow for 60s |
+| **Frequency Ghost** | Residential (scene 200) | Static blur; speaks in broadcast fragments; older than the signal | Media Blackout: 90s dead zone — Media layer pauses; no myth seeding |
+| **The Warden** | Commercial (scene 201) | Authority specter; badge-shaped face; commands the enforcement layer | Enforcement Reset: drops target district Enforcement by 2 levels immediately |
+| **Smoke Tongue** | Underground (scene 203) | Condensation entity; lives in ceiling vents and drain pipes; no fixed form | Fog of Confusion: 120s Watcher blind spot; alertness readings return 0 for duration |
+| **Static King** | City-wide (triggered during Tech Pressure ≥ T3) | Broadcasts on every frequency simultaneously; cannot be seen, only heard | Crown Signal: all districts' Pressure decays 30% instantly |
+| **The Dragon** | Everywhere / None | The city's own intelligence; cannot be summoned by S1 SMN; requires L75 + all other 6 avatars defeated | Dragon's Eye: Emily Prime (the Dragon GM) acknowledges the summoner — city-scale event chosen by Dragon |
+
+**Baphomet is the first avatar quest.** It lives in the Abandoned district (scene 204) and is
+always the entry point of the SMN unlock chain. Baphomet's encounter quest: survive 10 minutes
+in the Abandoned district with Control Integrity below 20 and no allied FO held. Defeating
+Baphomet (or lasting the full 10 minutes) grants Blood Pact: Rogue Swarm and unlocks the
+next avatar encounter. The Dragon is only available post-game (L75, all 6 prior avatars complete).
+
 *GEO (City Reader) unlock chain*: Player must reach Neighborhood personality influence
 thresholds in all 5 district types. GEO abilities can then read and shift neighborhood
 personality axes mid-session.
@@ -488,7 +506,9 @@ Community build contest (player-modified voxel city structures persist).
 **Design:**
 1. Player character: pre-built protagonist or character creator?
 2. Vehicles: drivable city (GTA-style) or foot/transit travel only?
-3. SMN urban avatars: 7 city entities — what are they? (fire, media blackout, power surge, fog?)
+3. ~~SMN urban avatars~~ — RESOLVED: 7 avatars canonical. Baphomet (Abandoned), The Anchor (Industrial),
+   Frequency Ghost (Residential), The Warden (Commercial), Smoke Tongue (Underground), Static King
+   (city-wide/T3), The Dragon (L75 post-game only). See §SMN unlock chain above.
 4. BRD Broadcaster: do songs affect Media narrative pressure?
 5. Distribution Operatives: playable class or NPC-only? (maps to NIN/THF?)
 6. Party store content: does player operate them as merchants (COR class mechanic)?
