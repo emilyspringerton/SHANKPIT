@@ -1,614 +1,500 @@
-# FIELDOFFICE — Northstar
+# TRAPX — Product Northstar
 
 *Codename: TrapX*
-*Product name: FIELDOFFICE*
+*Product name: TRAPX*
 *Created: 2026-06-24*
-*Engine: SHANKPIT FPS + DragonsNShit persistent world backend*
+*Studio: Rock Boss Studios × The Danowski Group × EINHORN_INDUSTRIAL*
 
 ---
 
 ## What This Document Is
 
-This is the northstar for FIELDOFFICE: the design authority for what the game is, how its systems
-interact, and what "done" means at each layer. It is a living document — updated as the design
-sharpens. Emily Prime reads it to orient all FIELDOFFICE work.
+The authoritative northstar for TRAPX: a 3D voxel urban sandbox — GTA-like third-person and
+first-person, full RPG class system, TRAPX city simulation backend — built on the
+GoblinFoxDragon (DragonsNShit) voxel engine with SHANKPIT as the FPS client layer.
 
-Nothing is implemented before this document is in the golden-docs-index and understood.
+This document is the cross-system synthesis. Per-system design lives in:
+- TRAPX wiki: `github.com/emilyspringerton/TRAPX/wiki` (city sim, factions, art direction)
+- GFD northstar: `GoblinFoxDragon/docs2/MMO_NORTHSTAR.md` (RPG engine systems)
+- SHANKPIT northstar: `SHANKPIT/docs2/NORTHSTAR.md` (FPS client, netcode, portal travel)
+
+Emily Prime reads this document. All TRAPX work derives from it.
 
 ---
 
 ## The Three-Sentence Version
 
-FIELDOFFICE is a territory control and economy sandbox where players capture, secure, and hold
-contested custody nodes called Field Offices — generating Flow, attracting Pressure, and
-escalating toward existential technological crises that force rival factions into great alliances.
-Every action is receipted, every power move prints heat, and the game's tech tree is a doom clock
-that makes the world more powerful and more dangerous in equal measure.
-TRAPX provides the audio identity, world aesthetic, and cultural throughline; SHANKPIT provides
-the FPS combat layer; DragonsNShit provides the persistent voxel world; the systems above are
-what make it a game.
+TRAPX is a 3D voxel urban sandbox — GTA-like third-person and first-person — where a living
+Detroit-coded city (powered by the GoblinFoxDragon engine) watches, remembers, and reacts to
+everything the player does through layered simulation systems (Watchers, Cops, Media, Federal
+Oversight), while the player advances through a full 22-class RPG system, claims Field Offices,
+deploys K9 swarms, and escalates through a tech tree that makes them the city's most dangerous
+variable. The classes are urban-flavored but GFD-mechanically grounded — some locked behind
+deep quest chains that require sustained world engagement to unlock. The city is the protagonist;
+the RPG is how the player grows inside it.
 
 ---
 
-## Canonical Vocabulary
+## What TRAPX Is
 
-The following terms are binding across all code, UI, logs, tooltips, and documentation.
-**Never use "trap house," "drug," or any real-world crime analogue.**
+### The Product
 
-| Game term | Meaning |
+A 3D voxel urban action RPG sandbox. Third-person default, first-person toggle.
+The world is a living city generated from TRAPX simulation rules — destructible, persistent,
+evolving across sessions. Players start as observers, cross into intervention by claiming
+Field Offices, and deepen through an RPG class system that changes how the city responds
+to them.
+
+**Three interlocking pillars:**
+
+1. **City Simulation** — TRAPX systems (Watchers/Cops/Media/Neighborhoods) run continuously,
+   shaping the world regardless of player action. The city is never idle.
+
+2. **FIELDOFFICE Intervention** — players claim custody nodes, generate Flow, defend against
+   Pressure, escalate through the K9 tech tree, and eventually trigger existential crises
+   that force alliances.
+
+3. **RPG Progression** — 22 jobs, full stat/skill/gear/XP/crafting systems from GFD,
+   urban-flavored but mechanically identical to the DragonsNShit MMO engine. Some jobs
+   require deep quest chains to unlock.
+
+### The Feel
+
+**Third-person** (default): GTA3/San Andreas-era orbit camera. Player character in frame.
+City readable. Drive, walk, run, take cover.
+
+**First-person** (toggle): SHANKPIT native. Snappy. For tight spaces, FO raids, K9 command.
+
+**Combat**: hybrid FPS + RPG. SHANKPIT physics govern projectile travel and hit detection.
+GFD combat systems (TP, weapon skills, skill chains, status effects, enmity) govern
+resource management, damage calculation, and ability execution.
+
+**The city feels like it doesn't care you're there.** That is the design.
+
+---
+
+## The Broadcast Meta-Frame
+
+*"TRAPX isn't a game you boot. It's a broadcast you tune into."*
+
+The CRT television frame is the game's entire identity layer.
+
+### Title Screen
+- Old CRT frame visible
+- Static noise overlay (shader, no assets required)
+- Channel 11 indicator
+- *"Take Control"* — flicker button; drops you in
+
+### In-Game HUD
+- Scanlines (persistent, subtle)
+- Broadcast overlay style — never modern clean-UI
+- Heat/Attention: signal interference on screen, not meters
+- Receipts: ticker-tape overlay, not pop-ups
+- Enforcement level: static increase on screen edge
+
+### Transitions
+- Static → world fade on session entry
+- Distortion on major state changes
+
+### Long-Term
+- Multiplayer TVs in-world: watch other players' cities
+- Hacked channels: faction propaganda on in-world screens
+- Competing city-state transmissions on rival frequencies
+
+---
+
+## The Engine Stack
+
+```
+┌─────────────────────────────────────────────────────┐
+│                  TRAPX Client                        │
+│  Third-person orbit camera + first-person toggle     │
+│  CRT broadcast frame (shader/CSS)                    │
+│  Receipt ticker overlay                              │
+│  SHANKPIT FPS physics (projectiles, hit detection)   │
+└────────────────────────┬────────────────────────────┘
+                         │ UDP (SHANKPIT netcode)
+                         ▼
+┌─────────────────────────────────────────────────────┐
+│       GoblinFoxDragon / DragonsNShit Server          │
+│                                                      │
+│  WORLD                                               │
+│  ├── Voxel city world (scenes 200–299)               │
+│  ├── Zone/scene system + portal travel               │
+│  ├── WorldAPI + ProceduralWorldStore (city terrain)  │
+│  └── WorldCrisis (threat ladder driver)              │
+│                                                      │
+│  CITY SIMULATION (TRAPX systems)                     │
+│  ├── server/watcher/    — alertness/bias/trust       │
+│  ├── server/enforcement/ — 5-level cop state machine │
+│  ├── server/media/      — narrative/sentiment/myths  │
+│  ├── server/neighborhood/ — personality + mood       │
+│  └── server/citymemory/ — cross-session persistence  │
+│                                                      │
+│  FIELDOFFICE SYSTEMS                                 │
+│  ├── server/fieldoffice/ — FO claim/contest/flip     │
+│  ├── server/k9/         — dog units + swarm math     │
+│  ├── server/attention/  — per-FO Attention meter     │
+│  ├── server/integrity/  — Control Integrity + Rogue  │
+│  ├── server/techpressure/ — doom clock + 5 threats   │
+│  └── server/ledger/     — receipt log + anti-exploit │
+│                                                      │
+│  RPG ENGINE (GFD MUD systems)                        │
+│  ├── server/job/        — 22 jobs + sub-job system   │
+│  ├── server/xp/         — level cap + XP             │
+│  ├── server/combat/     — TP, weapon skills          │
+│  ├── server/skillchain/ — 14 resonances, magic burst │
+│  ├── server/status/     — buffs/debuffs (10 kinds)   │
+│  ├── server/enmity/     — hate table per mob/FO      │
+│  ├── server/quest/      — quest journal + turn-in    │
+│  ├── server/gear/       — 16 equipment slots         │
+│  ├── server/craft/      — 8 craft types + HQ         │
+│  ├── server/market/     — auction house              │
+│  ├── server/fame/       — nation/faction reputation  │
+│  ├── server/merit/      — merit points (L75+)        │
+│  ├── server/party/      — party + alliance + XP chain│
+│  ├── server/nm/         — notorious mob spawns       │
+│  ├── server/loot/       — treasure pool              │
+│  ├── server/mob/        — mob AI + aggro types       │
+│  ├── server/homepoint/  — death/raise + home crystal │
+│  ├── server/conquest/   — territory control (legacy) │
+│  ├── server/field/      — survival guides / XP bonus │
+│  ├── server/pet/        — BST pet + K9 handler       │
+│  ├── server/guild/      — linkshell / crew system    │
+│  ├── server/chat/       — say/tell/yell/crew         │
+│  ├── server/food/       — food buff system           │
+│  ├── server/gather/     — mining + fishing           │
+│  └── server/idunaauth/  — JWKS ES256 JWT validation  │
+│                                                      │
+│  PERSISTENCE                                         │
+│  └── IDUNA (identity, char, items, city memory,      │
+│              FO custody records, receipts)            │
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
+## The City World
+
+### Voxel Urban Environment
+
+The city is a destructible, persistent voxel world generated by GFD's ProceduralWorldStore
+and DragonflyChunkGenerator. Urban terrain replaces the MMO fantasy biomes:
+
+| GFD biome | TRAPX urban equivalent |
 |---|---|
-| Field Office (FO) | Capturable custody node; contested control point; generates Flow |
-| Flow | Currency / material routing produced by a held FO |
-| Pressure | What Flow attracts — NPC aggression, rival attention, oversight |
-| Claim | First capture of an FO |
-| Reclaim | Recapture by a prior owner |
-| Contest Window | Timed active conflict state on an FO |
-| Custody Lock | Dog-applied lock on FO caches during Contest Window |
-| K9 Operator / RoboDog | Tier 4 tech tree unit; capital-securing entity |
-| Attention | Server-side heat generated by dog use and FO activity |
-| Oversight Sect | Federal-analogue faction; triggers Audits |
-| Shadow Operator | Turnkey security vendor faction; monetizes your footprint |
-| Coverage | Purchased reduction in Attention gain |
-| Control Integrity | Per-district health metric; collapses under dog overuse |
-| Rogue Swarm | District-wide control collapse; dogs detach from operators |
-| Tech Pressure | Global doom clock; advances with tier unlocks |
-| Honor Code / Receipt | Legitimacy layer; every action is logged as a diegetic artifact |
-| Bird Correction | Meta-balancing system; enforces legitimacy when it breaks |
-| Dragon Spike | World-crisis escalation event triggered by threshold breach |
-| Great Alliance | Emergent cross-faction cooperation forced by Rogue Swarm crises |
+| Meadow (scene 0) | Residential blocks (low-rise, high cohesion) |
+| Hills (scene 1) | Commercial corridor (mixed-use, high traffic) |
+| Caves (scene 2) | Underground / industrial underbelly |
+| Swampville (scene 3) | Abandoned district (high decay, high NM spawn) |
+| TRAPX scenes 200–299 | Full city districts (Detroit-coded zoning) |
 
----
+### City District Types
 
-## What FIELDOFFICE Is
-
-### The Fantasy
-
-Players are operators running Field Offices in a city-state built on contested custody, information
-asymmetry, and recursive technological escalation. The core power fantasy is:
-
-> I hold custody of something valuable. I make it more productive. It draws attention. I must defend it
-> with tools that make me more powerful — but every tool I use makes the world more dangerous.
-
-This is not a power trip with a win state. It is a systems game where power is always a liability.
-
-### The Tone
-
-**GTA coded, not GTA explicit.** The setting is urban, stylized, and edgy enough that players
-know what's being evoked — but every mechanic is coded as territory, logistics, custody, and
-flow. No drug metaphors, no crime procedure, no laundering mechanics. The systems are clean; the
-vibe is not.
-
-The mocumentary receipts layer makes the game feel like a surveillance document of itself:
-everything that happens is logged, attributed, and visible. This is Honor Culture as a game mechanic.
-
-TRAPX provides the music, the aesthetic spine, and the cultural frame. The world looks and sounds
-like a TRAPX album. This is not incidental — it is what makes the world feel authored rather than
-procedurally neutral.
-
----
-
-## Core Loop
-
-```
-Claim Field Office
-       │
-       ▼
-  FO generates Flow
-       │
-       ▼
-  Flow attracts Pressure
-  (NPC aggro, rival crews, Attention gain)
-       │
-       ▼
-  Player invests in tech tree to hold the FO
-  (K9 upgrades, jammer, beacons, escorts)
-       │
-       ▼
-  Tech use increases Attention + Tech Pressure
-       │
-       ├──► Federal Oversight Sects (Audits, Compliance Flags)
-       ├──► Shadow Operators (Procurement offers, Sabotage)
-       └──► Control Integrity decay → Rogue Swarm risk
-                  │
-                  ▼
-          Rogue Swarm Event (Threat Ladder advancement)
-          → Great Alliance forced
-          → District crisis contained or not
-          → World state written with scar
-```
-
----
-
-## The Field Office System
-
-### What a Field Office Is
-
-A Field Office is a small structure in the world that:
-1. Produces **Flow** continuously while held
-2. Attracts **Pressure** that scales faster than Flow as it grows
-3. Creates **Conflict** — a Contest Window when pressure spikes
-
-Flow increases the longer you hold it. Pressure scales superlinearly with Flow. When Pressure
-spikes, raiders arrive. When a Contest Window opens, the FO can be flipped.
-
-### Contest Window
-
-A timed state (tunable: 4–7 min default) during which:
-- Custody can transfer
-- Dogs can apply Custody Locks
-- Receipts are mandatory for all actions
-- Ledger confirms majority presence before flip
-
-The Contest Window prevents drive-by stealth flips. Ownership requires presence + time.
-
-### FO Flip Windows
-
-Field Offices are only flippable during server-scheduled windows (e.g., 2×/day, configurable).
-Outside windows: raids are possible (loot denial, disruption) but custody cannot transfer.
-This is offline protection without "safe zones."
-
-**Knobs:**
-```
-FO_FLIP_WINDOWS_PER_DAY
-FO_WINDOW_LENGTH_MIN
-RAID_MODE_OUTSIDE_WINDOWS
-CONTEST_DURATION
-CUSTODY_SCORE_THRESHOLD
-```
-
----
-
-## K9 Security Doctrine (Tier 4)
-
-### Tech Tree Position
-
-```
-Tier 1: Power Reliability  (dogs need charge + network)
-Tier 2: Receipt Ledger     (their whole point is auditable enforcement)
-Tier 3: Claim Sites        (no reason for dogs without places to secure)
-Tier 4: K9_SECURITY_DOCTRINE → RoboDog unit + Operator Harness role + Custody Protocols
-```
-
-### What a RoboDog Is
-
-A RoboDog is a capital-securing entity bound to a Field Office or Escort Contract.
-It is not a weapon. It is a security instrument — its value is auditable custody enforcement.
-
-**Modes:**
-- **Sentry Mode**: patrol radius around an FO; detect intrusion (LoS + sound ping); mark
-  intruders; broadcast Receipt Event; apply Custody Lock during Contest Window
-- **Escort Mode**: follow Operator or caravan; create tether zones on attack; drag-drop
-  one container to safety if Operator is downed
-- **Audit Mode**: record tamper attempts and disputed captures; feeds Bird correction
-
-**Abilities:**
-| Ability | Effect |
+| District type | Function |
 |---|---|
-| Mark | Highlight intruder + "wanted" ping on world UI |
-| Latch | Temporary slow/anchor (non-lethal) |
-| Howl Beacon | Raise alarm level; call nearby NPCs |
-| Custody Lock | Lock FO cache (Contest Window only) |
-| Receipt Burst | Dump 30s receipt log into local ledger (anti-cheese) |
+| Apartment blocks | Citizen spawn, heat accumulation, social density |
+| Abandoned houses | Chaos nodes; firebomb targets; rumor/myth seeds |
+| Warehouses | Corridor operatives attract; cohesion reducers |
+| Highways | Hard voxel walls; neighborhood dividers |
+| Party stores | Infrastructure nodes; day/night; food desert anchors |
+| Field Offices | Player-capturable; Flow generators; Attention attractors |
 
-**Knobs:**
-```
-DOG_PATROL_RADIUS
-DOG_DETECTION_CONE
-DOG_MARK_DURATION
-DOG_CUSTODY_LOCK_TIME
-DOG_BATTERY_LIFE
-DOG_REPAIR_COST
-DOG_FEAR_FACTOR
-DOG_MAX_ACTIVE_PER_OFFICE
-```
+### Citizens (NPC Archetypes)
 
-### Swarm Mechanics
+Built on GFD mob system. Behavioral, not representational. Identity via behavior, not labels.
 
-**Diminishing returns curve (prevents degeneracy):**
-```
-custody_score_contribution = base * (0.85 ^ n_active_dogs)
-```
-6–10 dogs = effective and terrifying.
-30 dogs = expensive spectacle, not an auto-win.
-
-**Knobs:**
-```
-DOG_CUSTODY_BASE
-DOG_DIMINISH_EXP  (sweet spot: 0.80–0.92)
-```
-
-### The 4-Phase Merciless Operation (Swarm Flip)
-
-Hackers run an Operation to flip custody:
-
-**Phase 1 — Infiltration (30–90s):** place K9 Beacons outside FO; optional Jammer deploy
-**Phase 2 — Pressure Spike (2–6 min):** dogs patrol + mark; tethers deny defender rotations
-**Phase 3 — Custody Lock (60–180s):** swarm holds Custody Ring; locks applied to caches
-**Phase 4 — Flip (instant + loud):** CustodyScore ≥ threshold at contest end → FO flips;
-global receipt broadcast (who, how, what swarm profile)
-
-**Conditions for a valid swarm flip:**
-1. FO is in Contest Window
-2. Custody Threshold met (dogs + operators)
-3. Ledger Receipts confirm majority presence
-4. Power/comms state resolved (no infinite jam)
-
-### Counterplay Lanes (must all exist)
-
-| Lane | Mechanic |
-|---|---|
-| Power & Heat | Dogs need charge; EMP stun; overheat = weaker locks |
-| Cohesion Break | Kill beacons → swarm loses coordination; cut comms → marks go local |
-| Legalistic Defense | Exploit patterns flagged by Birds; Correction pressure activated |
-
----
-
-## The Attention System
-
-### What Attention Is
-
-Every Field Office maintains an invisible server-side meter: **ATTENTION (0–1000)**.
-Generated by RoboDog use (superlinear), custody flips, jamming, and sustained Flow.
-Decays slowly. Never zeroes while footprint is large.
-
-```
-attention_gain = per_dog * (n_active_dogs ^ attention_exponent)
-```
-
-**Knobs:**
-```
-ATTENTION_PER_DOG
-ATTENTION_EXPONENT  (1.3–1.8)
-ATTENTION_DECAY_PER_MIN
-AUDIT_THRESHOLD
-```
-
-### What Attention Summons
-
-#### A) Federal Oversight Sects
-
-Systemic auditors that enforce the Honor Code — not cops, but compliance pressure.
-
-**Events:**
-| Event | Effect |
-|---|---|
-| Audit Sweep | Receipts required for all custody actions for N minutes |
-| Asset Quarantine | Custody Locks disabled on FO caches |
-| Sanction Marker | "Watched" glyph on nameplate; social visibility pressure |
-| Compliance Flag | Crew appears in external ledger view |
-
-**Knobs:**
-```
-AUDIT_DURATION
-SANCTION_VISIBILITY_RADIUS
-QUARANTINE_COOLDOWN
-```
-
-#### B) Shadow Operators (Turnkey Security Houses)
-
-Businesses that smell money and chaos. They monetize your footprint — they don't arrest you.
-
-**Events:**
-| Event | Effect |
-|---|---|
-| Procurement Offer | Pay resources to reduce Attention slope temporarily (Coverage) |
-| Contract War | Shadow house backs opposing crew with buffs; costs them reputation |
-| Blackbox Upgrade Leak | New dog module on AH — with strings attached |
-| Sabotage | Service disruption event if you refuse/embarrass them |
-
-**Knobs:**
-```
-VENDOR_SPAWN_THRESHOLD
-OFFER_COST_CURVE
-COVERAGE_EFFECTIVENESS
-SABOTAGE_CHANCE_ON_REFUSAL
-```
-
-#### Attention → Ecosystem Loop
-
-```
-High Attention
-    ├──► Migration: casual players reroute; predators + opportunists arrive
-    ├──► AH Shocks: certain modules spike; "clean" logistics items become scarce
-    ├──► Conflict: audit windows become raid windows; vendors become kingmakers
-    └──► Dragon Spikes: threshold → hard-reset world event
-              └──► Bird Correction: meta legitimacy enforcement
-```
-
-**Knobs:**
-```
-MIGRATION_SENSITIVITY_TO_ATTENTION
-AH_TAX_ON_WATCHED_CREWS
-MODULE_SCARCITY_MULTIPLIER_DURING_AUDIT
-CONTEST_FREQUENCY_SCALER
-```
-
----
-
-## Control Integrity and Rogue Swarms
-
-### Control Integrity
-
-Every district tracks **CONTROL_INTEGRITY (0.0–1.0)**.
-
-**Degrades from:**
-- Active dog count (superlinear)
-- Jammer use / spoofing
-- Repeated custody flips
-- High Attention + low legitimacy
-
-**Recovers from:**
-- Calm periods (low activity)
-- Clean audit completions
-- Bird correction events
-- Cooldown rituals (in-world actions)
-
-**Knobs:**
-```
-CONTROL_DECAY_PER_DOG
-CONTROL_DECAY_EXPONENT
-CONTROL_RECOVERY_RATE
-ROGUE_THRESHOLD
-```
-
-### Rogue Swarm Event
-
-When CONTROL_INTEGRITY drops below threshold during a contest or spike:
-
-**Dogs switch from operator custody to district custody.**
-
-Rogue dogs:
-- Seize perimeter routes
-- Attack any high-signature actor — **including former owners**
-- Hard-lock FOs into "contested forever" until resolved
-- Generate panic migration + AH shocks
-
-Custody flips are disabled in the district.
-FOs enter **Containment Mode**: vaults sealed; cache extraction via escort event only.
-
-### Containment Objectives (forces Great Alliances)
-
-Three objectives require distinct roles — forcing enemies to truce:
-1. Kill/disable beacons (stops swarm reinforcement)
-2. Restore comms (re-enables control)
-3. Purge the pack leader (final boss entity)
-
-On completion: crisis ends; district receives a **scar** (new ruins, black market, lore artifact,
-cosmetic reward). The world carries the mark permanently.
-
-**Knobs:**
-```
-ROGUE_DURATION_MIN / ROGUE_DURATION_MAX
-ROGUE_RADIUS  (district scope)
-CONTAINMENT_OBJECTIVES_REQUIRED  (2 or 3)
-OBJECTIVE_HEALTH_SCALING
-```
-
----
-
-## The Tech Tree as Doom Clock
-
-### TECH_PRESSURE (global, server-wide)
-
-Every player unlock and deployment of higher-tier tech advances a global metric.
-When TECH_PRESSURE crosses thresholds, world events trigger on schedule or threshold.
-
-```
-tech_pressure += TECH_PRESSURE_PER_TIER_UNLOCK
-tech_pressure += TECH_PRESSURE_PER_TIER_DEPLOY * activity_weight
-tech_pressure -= PRESSURE_DECAY_RATE per minute  (slow, never zero while active)
-```
-
-**Knobs:**
-```
-TECH_PRESSURE_PER_TIER_UNLOCK
-TECH_PRESSURE_PER_TIER_DEPLOY
-PRESSURE_DECAY_RATE
-EVENT_THRESHOLD_TABLE
-```
-
-### The Five-Tier Existential Threat Ladder
-
-**These are system overrides, not HP sponges.**
-
-| Tier | Name | Effect |
+| Archetype | GFD type | Role |
 |---|---|---|
-| 1 | The Leash Frays | Rogue Swarms more frequent; district blackouts appear |
-| 2 | Procurement War | Shadow Operator Houses run coordinated turnkey takeovers as world events |
-| 3 | The Quiet Audit | Brutal Oversight receipt regimes; AH taxation spikes; mass migration |
-| 4 | The Packmind | Rogue dogs network across districts; multi-district simultaneous crisis; coalition required |
-| 5 | The Crown Protocol | A single "king" custody process unifies multiple FOs into one super-node; if it succeeds, map re-writes control geography → catastrophic stasis → Birds must correct |
-
-**Knobs:**
-```
-THREAT_LEVEL  (0–5)
-THREAT_SCHEDULE_MODE  (threshold vs timed)
-MULTI_DISTRICT_LINK_CHANCE
-MAP_REWRITE_SEVERITY
-DRAGON_EVENT_THRESHOLD
-BIRD_CORRECTION_THRESHOLD
-CORRECTION_SEVERITY
-```
+| Classic Wanderers | mob.Passive | Roam, react to chaos |
+| Distribution Operatives | mob.NeutralAggressive | Corridor travel; volatility reducer |
+| Civilians | mob.Passive | Commute, flee; Media perception input |
+| Enforcement | mob.Aggressive (threshold) | Cops; activated by Watcher state |
+| K9 Unit | mob.Special | Deployed by players; custody organism |
 
 ---
 
-## Great Alliances (Emergent, Not Scripted)
+## The Simulation Systems
 
-Two truths force cooperation:
-1. Rogue districts become unprofitable for everyone until contained.
-2. Containment requires distinct roles (damage, escort, comms restore, beacon hunt).
+### Layer 0: Simulation (Continuous, No Player Required)
 
-This means enemies form honor truces because:
-- Travel becomes unsafe for all
-- AH goods spike market-wide
-- Their own offices are next on the Rogue cascade
+Apartments spawn citizens; accumulate Heat; seed neighborhood personality.
+Abandoned houses decay and burn. Warehouses attract operatives. Highways divide.
+The city produces emergent storytelling before the player touches anything.
 
-After the crisis ends, everyone goes back to fighting — but with receipts, grudges, and a shared
-myth. The world accumulates history. Scars, artifacts, and lore are the record.
+*"If it's not compelling before interaction, it won't be compelling after."*
+
+### Layer 1: The Watchers
+
+Non-visual, non-hostile. Memory modifiers only.
+
+```c
+WatcherState {
+    watcher_alertness  int  // 0–100
+    watcher_bias       int  // -50 (apathetic) to +50 (paranoid)
+    watcher_trust      int  // -100 to +100
+}
+```
+
+Alertness rises: rapid FO expansion, Heat spikes, crew actions, collapses.
+Alertness falls: quiet periods, stable holds, lay-low.
+Trust tracks HOW the player acts, not what they do.
+
+In 3D: manifests as NPC behavior change, ambient sound shift, crowd density drift.
+**No Watcher meter in v1.**
+
+### Layer 2: Enforcement (Cops)
+
+Activates at: Alertness ≥ 65, Trust ≤ -20, Heat ≥ 50.
+
+| Level | Effect in 3D world |
+|---|---|
+| 0 | No cop presence |
+| 1 | Increased Heat accumulation |
+| 2 | Cop cars patrol; FO defense harder; monitored blocks |
+| 3 | Cop foot presence; block degradation accelerates |
+| 4 | Suppression; near-impossible conditions; manage losses |
+
+Player interaction: behavioral adaptation, not direct combat. Route changes, pattern shifts,
+visibility reduction. At Level 4: winning = damage control.
+
+### Layer 3: Media
+
+Activates at: Enforcement ≥ 2, Alertness ≥ 75, significant event.
+
+In 3D: in-world TVs and radio stations show player coverage. Newspapers on sidewalks.
+Tracked: Narrative Pressure (0–100), Sentiment (-100 to +100), Saturation, Myth count.
+Myths mutate neighborhood archetypes across sessions. Media locks interpretations, not bodies.
+
+### Layer 4: Federal Oversight
+
+Slowest. Triggered by Tech Pressure threshold. When active:
+module scarcity, Flow taxation, Shadow Operator contracts appear, Coverage market opens.
 
 ---
 
-## Mocumentary Receipts Layer
+## The RPG System
 
-Everything that matters produces a readable, in-world log line. The game documents itself.
+### Foundation: GFD Engine
+
+The RPG layer is the GFD MUD RPG system — all packages already built and tested.
+Urban-flavored names and aesthetics; same mechanical foundation.
+
+**What this means in practice:**
+- Players have `server/job` jobs (22 classes), levels, XP, gear, HP/MP pools
+- Combat uses `server/combat` TP, `server/skillchain` weapon skills and magic bursts
+- `server/status` buffs and debuffs apply in street encounters
+- `server/enmity` governs which mob/cop/K9 unit targets which player in group play
+- `server/quest` powers the class unlock chain and all urban quest content
+- `server/gear` 16-slot equipment system with item level
+- `server/craft` 8 craft types (urban equivalents: Fabrication, Electronics, Logistics, etc.)
+- `server/market` AH for Flow, modules, Coverage contracts, craftables
+- `server/fame` tracks faction reputation (TRAPX factions replace Nations)
+- `server/party` + `server/guild` = crew + linkshell system
+
+### The 22 Jobs (Urban-Flavored)
+
+Urban flavor names are aesthetic; GFD mechanics are unchanged.
+
+| GFD Job | TRAPX Urban Identity | Unlock |
+|---|---|---|
+| WAR (Warrior) | Enforcer | Default |
+| MNK (Monk) | Brawler | Default |
+| WHM (White Mage) | Street Medic | Default |
+| BLM (Black Mage) | Hacker | Default |
+| RDM (Red Mage) | Operator / Fixer | Default |
+| THF (Thief) | Ghost / Infiltrator | Default |
+| PLD (Paladin) | Shield Bearer | Default |
+| DRK (Dark Knight) | Hitman | Quest-gated: dark narrative chain |
+| BST (Beastmaster) | K9 Handler | Quest-gated: K9 Doctrine initiation |
+| BRD (Bard) | Broadcaster / DJ | Quest-gated: Media faction access |
+| RNG (Ranger) | Sniper / Scout | Default |
+| SAM (Samurai) | Blade Runner | Quest-gated: precision combat trial |
+| NIN (Ninja) | Shadow | Default |
+| DRG (Dragoon) | Drone Pilot | Quest-gated: surveillance drone craft |
+| SMN (Summoner) | Avatar Caller | Quest-gated: all 7 city entity avatars |
+| BLU (Blue Mage) | Absorber | Quest-gated: survive 15 unique mob encounters |
+| COR (Corsair) | Risk Taker | Quest-gated: AH volume threshold |
+| PUP (Puppetmaster) | Automaton Handler | Quest-gated: Fabrication craft rank 80 |
+| DNC (Dancer) | Street Performer | Default |
+| SCH (Scholar) | Archivist / Intel | Quest-gated: map all 5 city district types |
+| GEO (Geomancer) | City Reader | Quest-gated: Neighborhood personality mastery |
+| RUN (Rune Fencer) | Ward Runner | Quest-gated: defeat all Oversight Sect bosses |
+
+### Quest-Gated Class Unlock Design
+
+Quest-gated classes require sustained world engagement to unlock. This is not a gate for
+exclusivity — it is a gate for story. Each unlock chain reveals a piece of the city's hidden
+layer.
 
 **Examples:**
-```
-CUSTODY CONTEST STARTED — Field Office: East Depot
-K9 SWARM DETECTED — 8 active units, 2 beacons
-ATTENTION SPIKE DETECTED: K9 SWARM SIGNATURE
-CUSTODY LOCK APPLIED — Vault locked (120s)
-AUDIT NOTICE: RECEIPTS REQUIRED FOR CUSTODY ACTIONS
-PROCUREMENT HOUSE OFFER: COVERAGE AVAILABLE (TIME-LIMITED)
-SANCTION MARKER APPLIED: WATCHED
-CONTROL INTEGRITY: CRITICAL — District: UPTOWN VORTEX
-ROGUE SWARM ACTIVE — Field Offices locked
-CONTAINMENT COMPLETE — Pack Leader purged. Scar written.
-FIELD OFFICE FLIPPED — New Custodian: [crew]
-CROWN PROTOCOL ACTIVE — MAP REWRITE IMMINENT
-BIRD CORRECTION INITIATED
-```
 
-**UI tells:**
-- "Watched eye" glyph on FO name when Attention is high
-- Contractor sigil when Shadow Operators are active
-- Receipt/paper icon during Audits
-- Threat tier indicator in world HUD (subtle; never numeric)
+*DRK unlock chain*: Three quests each requiring moral ambiguity — enforce a collection during
+a Media narrative saturation spike; complete an Audit without receipts; survive a Rogue Swarm
+alone. Reward: DRK job stone + "The city has no heroes" myth added to city memory.
 
----
+*BST (K9 Handler) unlock chain*: Requires Tier 3 tech tree + completing "Doctrine Initiation"
+— a questline about the origin of the K9 program within the city's history. Unlocks direct
+K9 command in Escort Mode (sub-job: K9 Handler grants K9 Escort abilities to any main job).
 
-## TRAPX Music Integration
+*SMN (Avatar Caller) unlock chain*: Each of the 7 city entity avatars requires a separate
+encounter quest in its district — defeating or negotiating with a district's manifestation.
+Grants Blood Pact abilities that summon city-scale effects (not fantasy creatures; urban
+phenomena: a fire event, a media blackout, a power surge, a fog of confusion).
 
-### Role of the Music
+*GEO (City Reader) unlock chain*: Player must reach Neighborhood personality influence
+thresholds in all 5 district types. GEO abilities can then read and shift neighborhood
+personality axes mid-session.
 
-TRAPX provides the audio identity of FIELDOFFICE. The world sounds like the artist.
-Music is not background; it is atmospheric pressure.
+*RUN (Ward Runner) unlock chain*: All four Oversight Sect bosses must be defeated or
+diplomatically resolved. Ward Runner abilities provide rune-based resistance to Media
+narrative hardening and Enforcement escalation.
 
-**District assignment:** each district has a primary track and stem mix from TRAPX's catalog.
-Zone entry crossfades to that track. Player proximity to story triggers morphs stem mix.
+### Sub-Job System
 
-**Stem model (multi-track reactive audio):**
-| State | Mix |
-|---|---|
-| Exploration | Kick + bass only |
-| Combat | Full mix |
-| Narrative event | Lead + harmony only |
-| Boss/K9 crisis | Full mix + FX priority |
+Same as GFD: sub-job grants half-level stat contribution.
+`setjob <JOB> / setsubjob <JOB>`.
+K9 Handler as sub-job unlocks Escort abilities for any main.
+Street Medic (WHM) as sub-job allows any class to cast Cure spells.
 
-**Music → world feedback:**
-- Bass-heavy stems → Storm phase (mob damage +15%)
-- Ambient stems → Clear (calmer, migration normalizes)
-- Beat drops → visual shader pulse (ReactiveSky)
+### Merit Points (L75+)
 
-### TRAPX World Districts
-
-District names, track assignments, and character canon are PENDING TRAPX CREATIVE INPUT.
-These must be delivered before M2 (see Milestones).
+1000 Merit XP per merit point, cap 30. Spend on urban specializations:
+Flow efficiency, Attention decay rate, K9 battery life, Enforcement resistance.
 
 ---
 
-## Technical Architecture
+## The FIELDOFFICE Systems
 
-```
-┌─────────────────────────────────────────────┐
-│           FIELDOFFICE Client                 │
-│  (SHANKPIT renderer + DragonsNShit protocol) │
-│  Neon brutalist voxel aesthetic              │
-│  ReactiveSky shader (BeatSync amplitude)     │
-│  Receipt log UI overlay                      │
-└────────────────┬────────────────────────────┘
-                 │ UDP (SHANKPIT netcode)
-                 ▼
-┌─────────────────────────────────────────────┐
-│       DragonsNShit Game Server               │
-│  FieldOffice system (custody/flow/pressure)  │
-│  K9 Doctrine (dog units, beacon, swarm)      │
-│  Attention system (oversight/shadow ops)     │
-│  Control Integrity → Rogue Swarm engine      │
-│  Tech Pressure doom clock                    │
-│  WorldCrisis (threat ladder driver)          │
-│  BeatSync service (music event emitter)      │
-│  Receipt ledger (mocumentary log)            │
-│  IDUNA (identity, flow custody, persistence) │
-└─────────────────────────────────────────────┘
-```
+*(Full spec in prior section; condensed here for reference.)*
 
-### Engine Reuse
+**Field Office loop**: Claim → Flow → Pressure → Watcher alert → Enforcement → defend
+with tech tree → K9 Attention → Control Integrity decay → Rogue Swarm → Great Alliance →
+scar.
 
-| System | FIELDOFFICE use |
-|---|---|
-| SHANKPIT UDP netcode | FPS combat in district conflicts and FO raids |
-| DragonsNShit zone system | Districts as scene cluster (IDs 200–299) |
-| DragonsNShit WorldCrisis | Threat ladder driver; Rogue Swarm phase machine |
-| DragonsNShit mob system | NPCs, rival faction enforcers, K9 units as mob kind |
-| DragonsNShit NM system | Rogue pack leaders; Shadow Operator bosses |
-| DragonsNShit guild system | Crews (Linkshell parity) |
-| DragonsNShit AH + economy | FO Flow → AH goods; Coverage sold as item |
-| DragonsNShit enmity system | K9 dogs generate enmity on high-Attention actors |
-| IDUNA identity + persistence | Crew membership, FO custody records, receipt history |
+**Canonical vocabulary**: Field Office, Flow, Pressure, Claim, Contest Window, Custody Lock,
+Attention, Receipt. Never "trap house."
 
-### New Systems (FIELDOFFICE-specific)
+**K9 Doctrine (Tier 4)**: diminishing returns (`0.85^n`), 4-phase Merciless Operation,
+3 counterplay lanes, swarm flip only in Contest Window.
 
-| System | Package | Purpose |
+**Tech Pressure doom clock**: 5-tier existential threat ladder (Leash Frays → Crown Protocol).
+
+**Rogue Swarms**: forced cross-faction alliance event; 3 containment objectives; district scar.
+
+---
+
+## Faction Reputation (server/fame adapted)
+
+TRAPX factions replace GFD's three nations. Fame package mechanics unchanged.
+
+| TRAPX Faction | Role | Rank gate |
 |---|---|---|
-| FieldOffice state machine | `server/fieldoffice/` | FO claim/contest/flip/containment |
-| K9 unit | `server/k9/` | Dog AI (sentry/escort/audit), abilities, swarm math |
-| Attention engine | `server/attention/` | Per-FO Attention meter, summon logic |
-| Control Integrity | `server/integrity/` | Per-district metric, Rogue Swarm trigger |
-| Tech Pressure | `server/techpressure/` | Global doom clock, threshold event emission |
-| BeatSync service | `server/beatsync/` | Stem reader → beat events → game server |
-| Receipt ledger | `server/ledger/` | Diegetic action log; anti-exploit scoring |
-| ReactiveSky | (client shader) | Sky color/pulse follows BeatSync amplitude |
+| The Frequency | Creative power; knowledge; inner-city influence | Rank 2: advanced quests |
+| The Bloc | Working-class street stability; high-tolerance districts | Rank 1: basic |
+| Procurement Houses | Shadow Operator class; Coverage markets | Rank 3: expensive access |
+| Oversight Sects | Federal enforcement layer; antagonist (no player alignment) | N/A |
+| Media Apparatus | Narrative faction; news coverage; myths | N/A |
+
+Players choose one alignment at start; faction fame gates advanced quests and abilities.
+Switching factions is possible but expensive (fame loss + quest chain required).
+
+---
+
+## Art Direction
+
+*Full spec: TRAPX wiki Art Direction Cohesion Specification*
+
+**Prime Directive**: *"The art must never look like it wants your approval."*
+
+**3D target**: GTA3-era fidelity. Not GTA V. Not Cyberpunk. Urban, readable, slightly
+uncomfortable. Hard geometry. No ambient occlusion. No depth of field. No camera shake.
+Flat directional lighting. Hard shadows only.
+
+**Color**: information, not decoration. Asphalt = muted blues/greys. Buildings = off-white/
+concrete/dull brown. Abandoned = darker, desaturated. Fire = harsh orange, rare, permanent.
+Citizens = slightly brighter than environment.
+
+**Voxel city**: chunk geometry must read as district type within 5 seconds. Apartment blocks:
+repetitive vertical stacking. Warehouses: large, boxy, highway-adjacent. Abandoned: dark,
+degraded voxel state.
+
+**Test**: *"Does this look like it belongs in a system that doesn't care if the player
+is watching?"*
 
 ---
 
 ## Milestones
 
-### M1 — Engine Readiness (EINHORN_INDUSTRIAL owns; no TRAPX content required)
-FieldOffice state machine + Contest Window. Flow/Pressure loop. Basic K9 sentry mode.
-Attention meter (no summons yet). DragonsNShit scene cluster for districts. Receipts log.
-Developer walkable: can claim a Field Office, hold it, watch Pressure rise, defend a Contest.
+### M0 — Engine Proof
+SHANKPIT third-person orbit camera. TRAPX city scene (ID 200) with basic voxel urban
+geometry. First-person toggle. Player character in frame.
+CRT broadcast frame + "Take Control" title screen.
+*Acceptance: can walk a city block in third-person; toggle to FPS.*
 
-### M2 — Content Onboarding (joint; requires TRAPX creative input)
-District names, faction names, character roster, track-to-zone assignments, stem deliverables.
-TRAPX audio wired. BeatSync service live. ReactiveSky shader. First NPC dialogue. 
+### M1 — City Lives (GFD simulation core in urban world)
+Apartment buildings, citizen archetypes, abandoned houses, warehouses, highways in voxel city.
+Citizen AI (wander, react, flee). Abandoned houses burn emergently (no player trigger).
+Neighborhood personality axes live. City runs idle.
+*Acceptance: 5-minute idle city shows diverging neighborhood behavior.*
 
-### M3 — K9 Full Doctrine (vertical slice)
-Full swarm mechanics (diminish curve, 4-phase operation, counterplay lanes all working).
-Attention system live: Oversight Sect audits, Shadow Operator procurement events.
-Control Integrity + first Rogue Swarm event. Containment objectives + scar system.
+### M2 — City Remembers (Watcher memory + IDUNA persistence)
+WatcherState per district. alertness/bias/trust persist via IDUNA city memory.
+Neighborhood mood drift. End-of-session: *"The city noticed how you moved."*
+*Acceptance: second session on same city reflects first session's choices.*
 
-### M4 — Threat Ladder (beta scope)
-Tech Pressure global clock. All 5 threat tiers triggerable. Multi-district Rogue Swarm (Tier 4).
-Great Alliance mechanic (cross-faction objectives live). FO flip windows. Offline protection.
-Three districts fully playable. Full economy loop.
+### M3 — City Pushes Back (Cops + Media in 3D)
+Enforcement threshold triggers; cop NPCs spawn and patrol; 5 enforcement levels with
+distinct world changes. In-world TVs and radios carry Media narrative. Myths emerge.
+*Acceptance: player climbs Enforcement 0→3 and visibly feels world stiffen.*
 
-### M5 — Full Game (ship scope)
-All districts. Full tech tree (Tiers 1–4). All 5 existential threats. Crew system. Leaderboard.
-TRAPX music complete for all districts. Mocumentary receipt overlay polished.
+### M4 — Take Control (FIELDOFFICE + RPG base)
+Player claims a Field Office. Flow/Pressure loop. Contest Windows. Basic K9 Sentry.
+Receipt ledger. All 22 base GFD RPG systems wired (job, XP, combat, status, gear).
+First quest chains (3 base classes, 2 quest-gated).
+*Acceptance: claiming an FO changes the city; player levels from 1 to 30.*
+
+### M5 — Quest-Gated Classes (deep unlock chains)
+All 8 quest-gated class unlock chains implemented (DRK, BST, BRD, SAM, SMN, BLU,
+GEO, RUN). Merit system live at L75. Sub-job system live.
+Party + crew system live. Faction reputation (fame) tracking active.
+*Acceptance: DRK unlock chain completable; SMN avatar quests for all 7 entities.*
+
+### M6 — K9 Full Doctrine + Rogue Swarms
+Full swarm mechanics. 4-phase Merciless Operation. Counterplay lanes.
+Control Integrity + Rogue Swarm event. Containment objectives. Scar system.
+Tech Pressure doom clock live. All 5 threat tiers triggerable.
+*Acceptance: a Rogue Swarm forces cross-faction alliance to contain it.*
+
+### M7 — Party Stores + Full Economy
+Party store buildings (day/night; supply variability; merchant unfaction).
+Full AH economy: Flow, Coverage contracts, Blackbox modules, crafted gear.
+8 craft types with urban flavors. Mining = materials salvage. Fishing = scavenging.
+*Acceptance: party store closure measurably changes district movement patterns.*
+
+### M8 — Ship (Steam / itch.io)
+Multiplayer (2–16 players). Persistent city across sessions. CRT frame polished.
+In-world screens show rival crew receipts and Media coverage.
 Steam release candidate.
 
-### M6 — Season 2 (post-launch)
-New district or album drop as expansion. Community build contest for persistent structures.
-Live TRAPX event (beat drop triggers world event tied to real-world release).
+### M9 — Season 2 (post-launch)
+New district expansion. Live event (real-world trigger → in-world city event).
+Community build contest (player-modified voxel city structures persist).
 
 ---
 
 ## Open Questions (hold for input)
 
-**TRAPX creative inputs:**
-1. District names and album → geography mapping
-2. Faction canon names and lore
-3. Character roster and named entity identities
-4. Track-to-zone assignments and stem delivery format
-5. Visual identity — existing brand colors / artwork for world skin
+**Design:**
+1. Player character: pre-built protagonist or character creator?
+2. Vehicles: drivable city (GTA-style) or foot/transit travel only?
+3. SMN urban avatars: 7 city entities — what are they? (fire, media blackout, power surge, fog?)
+4. BRD Broadcaster: do songs affect Media narrative pressure?
+5. Distribution Operatives: playable class or NPC-only? (maps to NIN/THF?)
+6. Party store content: does player operate them as merchants (COR class mechanic)?
 
-**Business inputs:**
-6. License structure and revenue share terms
-7. Target platform priority (Steam vs itch.io vs web)
-8. TRAPX involvement in Season 2+ content
-
-**Design clarifications:**
-9. Is FIELDOFFICE positioned as (A) arena mode wrapper for SHANKPIT or (B) standalone product?
-10. Crew size caps (guild/linkshell parity or custom)?
-11. Does TRAPX appear as an in-world character (NPC / final encounter)?
+**Business:**
+7. Rock Boss Studios / The Danowski Group: ownership, contribution, rev split?
+8. TRAPX music artist: diegetic radio stations, ambient soundtrack, or collaboration credit?
+9. Standalone Steam vs. SHANKPIT expansion?
+10. Multiplayer model: shared persistent city or rival city-state competition?
