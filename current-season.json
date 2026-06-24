@@ -1,0 +1,11 @@
+{
+  "id": "S1",
+  "name": "TRAPX Closed Alpha",
+  "start_at": "2026-07-01T00:00:00Z",
+  "end_at": "2026-10-01T00:00:00Z",
+  "map_pool": [
+    "trapx_downtown",
+    "trapx_industrial",
+    "trapx_underground"
+  ]
+}

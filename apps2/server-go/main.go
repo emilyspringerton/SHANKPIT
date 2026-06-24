@@ -11,6 +11,7 @@ import (
 
 	"dragonsnshit/packages2/common"
 	"dragonsnshit/server/player"
+	"dragonsnshit/server/season"
 	"dragonsnshit/server/store"
 	"dragonsnshit/server/system"
 )
@@ -177,7 +178,22 @@ func main() {
 	idunaURL     := flag.String("iduna-url", "", "IDUNA base URL for JWT validation + stat reporting (e.g. http://localhost:8080); optional")
 	serverToken  := flag.String("server-token", "", "IDUNA agent JWT for stat-report calls (SHANKPIT_SERVER_TOKEN env fallback)")
 	idleTimeout  := flag.Duration("idle-timeout", 60*time.Second, "remove client after this long with no packets")
+	seasonConfig := flag.String("season-config", "", "path to current-season.json; uses built-in Season1 when empty")
 	flag.Parse()
+
+	// Load season config — fall back to the hardcoded Season1 definition.
+	currentSeason := season.Season1
+	if *seasonConfig != "" {
+		if s, err := season.Load(*seasonConfig); err != nil {
+			fmt.Printf("[SEASON] failed to load %q: %v — using built-in Season1\n", *seasonConfig, err)
+		} else {
+			currentSeason = s
+			fmt.Printf("[SEASON] loaded %q: %s\n", *seasonConfig, currentSeason.LobbyBanner())
+		}
+	} else {
+		fmt.Printf("[SEASON] using built-in: %s\n", currentSeason.LobbyBanner())
+	}
+	_ = currentSeason // used in lobby banner below
 
 	if *serverToken == "" {
 		*serverToken = getEnvFallback("SHANKPIT_SERVER_TOKEN", "")
@@ -304,8 +320,9 @@ func main() {
 			// Always place the connecting player in the DM warm-up session immediately.
 			sendWelcome(conn, remote, info.id, dmWarmupScene, common.GameModeDeathmatch)
 			sendVoxelPacket(conn, remote, info, backend)
-			fmt.Printf("[LOBBY] client=%d name=%q addr=%s requested_mode=%d → warm-up dm scene=%d\n",
-				info.id, info.displayName, remote.String(), requestedMode, dmWarmupScene)
+			fmt.Printf("[LOBBY] client=%d name=%q addr=%s requested_mode=%d → warm-up dm scene=%d | %s\n",
+				info.id, info.displayName, remote.String(), requestedMode, dmWarmupScene,
+				currentSeason.LobbyBanner())
 
 			if requestedMode == common.GameModeCTF {
 				mm.enqueue(remote.String())
