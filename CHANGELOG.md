@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-06-24
+- TRAPX northstar: TYLER universe layer (8 scenes 200-207, faction→archetype mapping, Emily OS=Dragon, multi-timeline branches, unified receipts), VS0 spec (Detroit 2-scene loop), flip phone interface, S120-02 BeatSync logged — Apple #3358
 - TRAPX northstar: 7 SMN city entity avatars canonical — Baphomet (Abandoned), The Anchor (Industrial), Frequency Ghost (Residential), The Warden (Commercial), Smoke Tongue (Underground), Static King (city-wide/T3), The Dragon (L75 post-game); Baphomet is first avatar quest
 
 - TRAPX northstar written — 3D voxel urban sandbox with GFD RPG engine, FIELDOFFICE mechanics, 22-class RPG system (8 quest-gated), CRT broadcast meta-frame, city simulation (Watchers/Cops/Media), Dragon GM spike (Apple #3335)
