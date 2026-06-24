@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-06-24
+
+- TRAPX northstar written — 3D voxel urban sandbox with GFD RPG engine, FIELDOFFICE mechanics, 22-class RPG system (8 quest-gated), CRT broadcast meta-frame, city simulation (Watchers/Cops/Media), Dragon GM spike (Apple #3335)
+
+
 ## 2026-06-23
 
 - S103-02: emily-bot archetypePolicy() — THE_FIELD /invoke at 2Hz; Leraje+Marchosias intent; Andras chaos mode; -archetype-engine flag; fallback to heuristic
