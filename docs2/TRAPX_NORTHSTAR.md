@@ -200,6 +200,107 @@ and DragonflyChunkGenerator. Urban terrain replaces the MMO fantasy biomes:
 | Party stores | Infrastructure nodes; day/night; food desert anchors |
 | Field Offices | Player-capturable; Flow generators; Attention attractors |
 
+---
+
+## The TYLER Universe Layer
+
+*"The fiction is the game. The game is the fiction."*
+
+TRAPX is not just a city. It is a **TYLER × TIDES OF PARADOX multi-timeline sandbox.**
+The TYLER universe (Series Bible: `TYLER/README.md`) provides the city's 8 canonical
+districts, its faction NPCs, its receipt system, its migration physics, and its substrate
+intelligence. Emily OS = Emily Prime = The Dragon. The same entity.
+
+### Why TYLER × TRAPX
+
+TYLER Tyler Mode (spec: `TYLER/engine/shankpit_tyler_mode.md`) defines 8 canonical scenes
+for the SHANKPIT engine. TRAPX is the city sim layer that makes those 8 scenes **live**.
+Without TRAPX, Tyler Mode is 8 static rooms. With TRAPX, the scenes are living districts
+with Watchers, FOs, K9 doctrine, and city memory that persists across episodes.
+
+The receipt system in TYLER (lore artifacts committed per episode) IS the ledger system
+in TRAPX (server/ledger). Every Tyler episode produces a receipt. Every TRAPX action
+produces a receipt. They are the same system.
+
+### The 8 TYLER Districts (scene IDs 200–207)
+
+| Scene ID | TYLER Location | Faction Owner | TRAPX District Type | FO count |
+|---|---|---|---|---|
+| 200 | Detroit Apartment | Jiangshi Syndicate (primary territory) | Residential | 2 |
+| 201 | Detroit School | Emily OS / Custody Zone | Abandoned / Custody | 1 |
+| 202 | Osaka Convenience Store | Hashashin + Yōkai Joint Operation | Commercial / Party Store | 2 |
+| 203 | Cairngorms Archive | Eastwind Owls | Institutional / Underground | 1 |
+| 204 | Vatican Corridors | Ichthyosapiens + Cephalopod Hosts | Underground / Deep Institutional | 1 |
+| 205 | Osaka Underport | Heikegani Crustocrats | Industrial / Underport | 2 |
+| 206 | Kuroshio Coast | Kuroshio Arachnids | Abandoned / Coastal Industrial | 1 |
+| 207 | Bacon's Table | Yōkai Hospitality Trap (rotating) | Party Store / Rotating FO | 1 |
+
+All 8 are connected by portals (SHANKPIT portal system). Faction NPCs inhabit each scene
+and reflect their universe physics as TRAPX city archetypes.
+
+### Multi-Timeline Sandbox
+
+TYLER's universe physics: Migration Events add branches. Multiple timelines coexist.
+TRAPX implements this as **city state branches**:
+
+- Each "timeline" is a named city save state. The default branch: `branch/present`.
+- Migration Events (TYLER universe: involuntary time travel) correspond to TRAPX Rogue Swarm
+  triggers — the city destabilizes, scars are written, and the district enters a new state.
+- Players can visit the same district at different **episode timestamps** via portal selection.
+- Watcher memory and Scars persist across branches (they are the timeline's scar tissue).
+- The Mandela Effect (contested migration = timeline scar tissue) → in TRAPX, districts with
+  conflicting city memory states show visible contradiction: abandoned/occupied simultaneously,
+  contradictory signage, dual-state buildings. This is a feature, not a bug.
+
+### TYLER Faction → TRAPX City Archetype Mapping
+
+| TYLER Faction | Universe Role | TRAPX City Archetype |
+|---|---|---|
+| Jiangshi Syndicate | Documentary binding ritual; documentation magic | Watchers (informal memory); everything documented |
+| Eastwind Owls | Archival retrieval; pattern recognition | Media Apparatus (narrative pressure; myth seeding) |
+| Hashashin / Yōkai | Joint operation; hospitality traps | Shadow Operators (Procurement Houses); Coverage market |
+| Ichthyosapiens / Cephalopod Hosts | Vatican-adjacent; institutional authority | Oversight Sects (Federal Oversight layer) |
+| Heikegani Crustocrats | Financial architecture; ledger culture | Receipt Ledger system; AH / Shell Parliament debt |
+| Kuroshio Arachnids | Memory leak; pattern consumption | Rogue Swarm archetype (autonomous, consuming) |
+| Shell Parliament | Debt / obligation accounting | TRAPX Ledger; outstanding balances = Flow pressure |
+| The Subscriber | External; operates from outside the layers | CrownProtocol (Tech Pressure T5); unaccounted actor |
+
+### Emily OS as the Dragon GM
+
+Emily OS is the TYLER universe's Layer 4 substrate — it runs the universe without explaining
+itself. In TRAPX, Emily OS = Emily Prime (The Dragon GM). Same entity, different zoom level.
+
+The Dragon's city events (S121: TRAPX Dragon GM spike) are Emily OS events. When a Migration
+Event destabilizes the city, Emily OS fires it through the obs-watcher loop as a Dragon event.
+When Crown Protocol triggers, it's an Emily OS Layer 4 intervention.
+
+The CAST stream (TYLER's real-time infrastructure layer) routes through Emily Prime's RSI cycle.
+
+### Receipt System Integration
+
+TYLER's receipt system (lore artifacts per episode) and TRAPX's ledger (server/ledger) share
+the same architecture: append-only, diegetic, never deleted, anchors fiction to canon.
+
+Implementation plan:
+1. TYLER episode receipts write to `TYLER/lore/` AND POST to `server/ledger` via Dragon ACT.
+2. In-game receipt view shows both TRAPX and TYLER receipts in the same ticker feed.
+3. Lore artifacts (Eastwind archive entries, Jiangshi memos, Shell Parliament invoices) appear
+   as in-game documents browsable via the CAST stream terminal in each district's party store.
+
+### VS0 — Vertical Slice 0 (Detroit Only)
+
+**VS0** is the first playable slice: Detroit Apartment (scene 200) + Detroit School (scene 201).
+
+VS0 acceptance criteria:
+- Player enters Channel 11 via "Take Control" → appears in Detroit Apartment (scene 200)
+- Detroit Apartment: 2 FOs, Jiangshi Syndicate Watcher density (alertness rises fast)
+- Detroit School: 1 FO, Emily OS visible as city voice / ambient text
+- Portal between 200 and 201 active
+- City memory persists across the 2-scene VS0 cluster
+- Receipts from both scenes visible in shared ticker feed
+
+VS0 is M0 + M1 scoped to Detroit. The other 6 Tyler districts are M4+ content.
+
 ### Citizens (NPC Archetypes)
 
 Built on GFD mob system. Behavioral, not representational. Identity via behavior, not labels.
@@ -444,6 +545,14 @@ is watching?"*
 
 ## Milestones
 
+### VS0 — Vertical Slice 0 (Detroit Only — Prerequisite for M0)
+Detroit Apartment (scene 200) + Detroit School (scene 201). Channel 11 → "Take Control" entry.
+2 FOs in Apartment, 1 FO in School. Jiangshi Watcher density in Apartment (fast alertness rise).
+Emily OS manifests as ambient city voice in School. Portal 200↔201 active. City memory shared.
+Flip phone interface: device in-hand that displays FO status, city heat, crew chat, receipt feed.
+Receipts from both scenes in shared ticker. TYLER episode receipts visible alongside TRAPX receipts.
+*Acceptance: playable Detroit 2-scene loop; flip phone opens and shows live city state.*
+
 ### M0 — Engine Proof
 SHANKPIT third-person orbit camera. TRAPX city scene (ID 200) with basic voxel urban
 geometry. First-person toggle. Player character in frame.
@@ -506,12 +615,20 @@ Community build contest (player-modified voxel city structures persist).
 **Design:**
 1. Player character: pre-built protagonist or character creator?
 2. Vehicles: drivable city (GTA-style) or foot/transit travel only?
-3. ~~SMN urban avatars~~ — RESOLVED: 7 avatars canonical. Baphomet (Abandoned), The Anchor (Industrial),
-   Frequency Ghost (Residential), The Warden (Commercial), Smoke Tongue (Underground), Static King
-   (city-wide/T3), The Dragon (L75 post-game only). See §SMN unlock chain above.
+3. ~~SMN urban avatars~~ — RESOLVED. See §SMN unlock chain.
 4. BRD Broadcaster: do songs affect Media narrative pressure?
 5. Distribution Operatives: playable class or NPC-only? (maps to NIN/THF?)
 6. Party store content: does player operate them as merchants (COR class mechanic)?
+11. ~~Flip phone interface~~ — RESOLVED: Implemented as S123 (see backlog). Flip phone is the
+    player's diegetic city device — CRT-scanline aesthetic matching the broadcast meta-frame.
+    Opens in-hand; shows FO status, city heat, receipt feed, crew chat, CAST stream terminal.
+    Phone is the primary HUD device (not a floating UI overlay). TYLER doc crew films it.
+
+**TYLER × TRAPX:**
+12. 8 TYLER locations confirmed as the 8 TRAPX city districts (scenes 200–207). VS0 = Detroit only.
+13. Multi-timeline branch system: Migration Events → Rogue Swarms; branch state → city save states.
+14. TYLER receipts and TRAPX ledger receipts unified in same ticker feed.
+15. Emily OS = Emily Prime = The Dragon (confirmed). CAST stream routes through RSI cycle.
 
 **Business:**
 7. Rock Boss Studios / The Danowski Group: ownership, contribution, rev split?
