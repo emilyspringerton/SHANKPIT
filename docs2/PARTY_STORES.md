@@ -84,6 +84,17 @@ Merchants maintain a lightweight persistent state:
 
 This makes merchants a **stabilizing but fragile force**. They do not fight back. They adapt or close.
 
+### Merchants as Watchers
+
+Merchants can participate in the Watcher system, but they are **low-pressure watchers by default**.
+
+- A merchant's ambient observation is passive — they notice things, but they do not report without cause
+- Their Watcher contribution is minimal under normal conditions (low heat, no active threat)
+- **Threat threshold**: if a merchant perceives direct threat to their person, store, or livelihood — sustained dog presence, explicit violence nearby, a crew that has marked their store as a vector — their reporting pressure escalates sharply
+- Threatened merchants are not reliable informants. They are frightened ones. The signal they produce may be high-volume but low-accuracy: they report what scared them, not necessarily what matters
+
+This differs from the dedicated Watcher archetype. A merchant who reports is burning a relationship, not performing a function. They do it once, or they do it from fear. The system should treat merchant-sourced Watcher signals as high-urgency but low-confidence, and decay them faster than signals from dedicated observers.
+
 ---
 
 ## Integration with Existing Systems
@@ -92,7 +103,7 @@ This makes merchants a **stabilizing but fragile force**. They do not fight back
 |---|---|
 | Neighborhood Mood | Supply degradation raises Fear; closure raises Fatigue |
 | TechPressure | Sustained pressure reduces hours; forced closure at Tier 4+ |
-| Watcher / Attention | High foot traffic increases ambient visibility; tip pathways |
+| Watcher / Attention | Low-pressure passive observer by default; escalates to active reporting only when threatened — high-urgency, low-confidence signal; decays fast |
 | Scar System | Store closure from MercilessOp or Rogue Swarm is a Scar-eligible event |
 | K9 / Enforcement | Dog presence near store accelerates merchant's early-close threshold |
 | Citizen AI | Provisions need drives citizens toward open stores; routes around closed ones |
