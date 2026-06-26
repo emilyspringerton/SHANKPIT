@@ -41,6 +41,7 @@
 #include "../../../packages/render/proc_tex.h"
 #include "../../../packages/render/retro_sky.h"
 #include "../../../packages/render/retro_lighting.h"
+#include "../../../packages/audio/audio.h"
 
 #ifndef NET_VERBOSE_LOG
 #define NET_VERBOSE_LOG 0
@@ -2780,6 +2781,8 @@ typedef struct PlayerAnimPose {
 } PlayerAnimPose;
 
 static float g_player_run_phase[MAX_CLIENTS];
+static float g_player_run_phase_prev[MAX_CLIENTS];
+static int   g_player_step_count[MAX_CLIENTS];
 static unsigned int g_player_anim_last_ms[MAX_CLIENTS];
 
 static PlayerAnimPose compute_player_anim_pose(const PlayerState *p) {
@@ -2803,8 +2806,23 @@ static PlayerAnimPose compute_player_anim_pose(const PlayerState *p) {
 
     if (p->state != STATE_DEAD && p->on_ground && pose.locomotion > 0.03f) {
         float cycle_hz = lerpf(0.9f, 3.2f, pose.locomotion);
+        float prev_phase = g_player_run_phase[anim_idx];
         g_player_run_phase[anim_idx] += dt * (cycle_hz * 6.2831853f);
-        if (g_player_run_phase[anim_idx] > 6.2831853f) g_player_run_phase[anim_idx] -= 6.2831853f;
+        float curr_phase = g_player_run_phase[anim_idx];
+        if (curr_phase > 6.2831853f) {
+            curr_phase -= 6.2831853f;
+            g_player_run_phase[anim_idx] = curr_phase;
+        }
+        /* Trigger melodic footstep on each half-cycle crossing (left foot ≈ 0, right ≈ π) */
+        int step_fired = 0;
+        if ((prev_phase < 3.14159f && curr_phase >= 3.14159f)) step_fired = 1;
+        if (prev_phase > curr_phase) step_fired = 1; /* wrapped through 2π→0 */
+        if (step_fired && my_client_id >= 0 && my_client_id < MAX_CLIENTS) {
+            PlayerState *lp = &local_state.players[my_client_id];
+            float lyaw_rad = cam_yaw * 0.0174533f;
+            audio_play_footstep(p->x, p->y, p->z, lp->x, lp->y, lp->z, lyaw_rad,
+                                g_player_step_count[anim_idx]++);
+        }
     }
 
     float phase = g_player_run_phase[anim_idx];
@@ -6551,7 +6569,18 @@ void net_process_snapshot(char *buffer, int len) {
         }
         p->ammo[p->current_weapon] = np->ammo;
 
-        if (now_shooting && !was_shooting) p->recoil_anim = 1.0f;
+        if (now_shooting && !was_shooting) {
+            p->recoil_anim = 1.0f;
+            /* Spatial weapon fire sound — source = shooter, listener = local player */
+            if (my_client_id >= 0 && my_client_id < MAX_CLIENTS) {
+                PlayerState *lp = &local_state.players[my_client_id];
+                float lyaw_rad = cam_yaw * 0.0174533f;
+                audio_play_weapon(p->current_weapon,
+                                  np->x, np->y, np->z,
+                                  lp->x, lp->y, lp->z,
+                                  lyaw_rad);
+            }
+        }
 
         if (id == my_client_id) {
             local_seen = 1;
@@ -6941,6 +6970,7 @@ int main(int argc, char* argv[]) {
     }
 
     SDL_Init(SDL_INIT_VIDEO);
+    audio_init();
     SDL_Window *win = SDL_CreateWindow("SHANKPIT", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
     g_win = win;
     SDL_GL_CreateContext(win);
@@ -7513,6 +7543,7 @@ int main(int argc, char* argv[]) {
     proc_tex_destroy(&g_vehicle_noise_tex);
     proc_tex_destroy(&g_vehicle_glitch_tex);
     retro_sky_shutdown(&g_retro_sky);
+    audio_shutdown();
     SDL_Quit();
     return 0;
 }
