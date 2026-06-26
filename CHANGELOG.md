@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-06-26
+
+- add spatial audio engine (packages/audio/): MIDI drum+bass weapon sounds (808 kick/magnum, hi-hat/AR, sub-bass/sniper, noise+kick/shotgun, metallic/knife+katana) + pentatonic melody footsteps; all PCM synthesized at init, no external files; spatial pan+distance attenuation from listener yaw/position
+
+
 ## 2026-06-24
 - feat: S125-11 season 1 config — server/season package, Season1 TRAPX Closed Alpha, LobbyBanner on join, current-season.json, 20 tests (Apple #3523)
 - TRAPX northstar: TYLER universe layer (8 scenes 200-207, faction→archetype mapping, Emily OS=Dragon, multi-timeline branches, unified receipts), VS0 spec (Detroit 2-scene loop), flip phone interface, S120-02 BeatSync logged — Apple #3358
