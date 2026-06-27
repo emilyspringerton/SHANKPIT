@@ -13,6 +13,7 @@
 #define MAX_PROJECTILES 1024
 #define MAX_HELICOPTERS 8
 #define MAX_BUGGIES 16
+#define MAX_HORSES  8
 #define LAG_HISTORY 64
 
 #define SCENE_GARAGE_OSAKA 0
@@ -104,6 +105,7 @@ typedef struct {
 #define VEH_BUGGY 1
 #define VEH_BIKE  2
 #define VEH_HELICOPTER 3
+#define VEH_HORSE 4   /* Icelandic tölt mount — Toledo 1040 CE */
 
 typedef struct {
     int id;
@@ -300,6 +302,24 @@ typedef struct {
     unsigned int snap_recv_ms;
 } BuggyState;
 
+/* Icelandic horse — Toledo mount. Tölt gait: 4-beat amble, smooth at speed.
+ * No gallop bounce; good on rough terrain. Cannot fire weapons while mounted.
+ * Named for the TYLER archive: Tyler rode this breed in Toledo, 1040–1051 CE.
+ * Speed cap: 8 m/s (tölt); acceleration: smooth (no gear shift). */
+typedef struct {
+    int  active;
+    int  id;
+    int  scene_id;
+    float x, y, z;
+    float vx, vy, vz;
+    float yaw;
+    float speed;          /* current scalar speed along yaw direction */
+    float tolt_phase;     /* 0..1, cycles once per stride — drives hoof audio */
+    int  occupant_player_id;
+    int  grounded;
+    int  health;
+} HorseState;
+
 typedef enum {
     FLAG_AT_HOME = 0,
     FLAG_CARRIED = 1,
@@ -439,6 +459,7 @@ typedef struct {
     Projectile projectiles[MAX_PROJECTILES];
     HelicopterState helicopters[MAX_HELICOPTERS];
     BuggyState buggies[MAX_BUGGIES];
+    HorseState horses[MAX_HORSES];
     LagRecord history[MAX_CLIENTS][LAG_HISTORY];
     int server_tick;
     int game_mode;

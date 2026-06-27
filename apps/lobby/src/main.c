@@ -7471,6 +7471,22 @@ int main(int argc, char* argv[]) {
                             p0->vehicle_cooldown = 30;
                         }
                     }
+                    /* Horse mount/dismount (USE key) */
+                    if (p0->in_vehicle && p0->vehicle_type == VEH_HORSE && !p0->vehicle_cooldown) {
+                        for (int hi = 0; hi < MAX_HORSES; hi++) {
+                            HorseState *h = &local_state.horses[hi];
+                            if (!h->active || h->occupant_player_id != 0) continue;
+                            horse_try_exit(p0, h);
+                            p0->vehicle_cooldown = 30;
+                            break;
+                        }
+                    } else if (!p0->in_vehicle && !p0->vehicle_cooldown) {
+                        HorseState *near_h = horse_find_nearby(p0->scene_id, p0->x, p0->y, p0->z, 5.0f);
+                        if (near_h && near_h->occupant_player_id < 0) {
+                            horse_try_enter(p0, near_h);
+                            p0->vehicle_cooldown = 30;
+                        }
+                    }
                 }
                 if(local_state.players[0].vehicle_cooldown > 0) local_state.players[0].vehicle_cooldown--;
                 unsigned int now_ms = SDL_GetTicks();

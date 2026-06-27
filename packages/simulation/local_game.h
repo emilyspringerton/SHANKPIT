@@ -206,6 +206,11 @@ static inline BuggyState *buggy_find_nearby(int scene_id, float x, float y, floa
 static inline int buggy_try_enter(PlayerState *p, BuggyState *b);
 static inline int buggy_try_exit(PlayerState *p, BuggyState *b);
 static inline void buggy_tick_all(void);
+static inline void horse_spawn_defaults(HorseState *h, int id, int scene_id, float x, float z, float yaw);
+static inline HorseState *horse_find_nearby(int scene_id, float x, float y, float z, float radius);
+static inline int horse_try_enter(PlayerState *p, HorseState *h);
+static inline int horse_try_exit(PlayerState *p, HorseState *h);
+static inline void horse_tick_all(void);
 static void ctf_init_match_state(int scene_id);
 void local_init_match(int num_players, int mode);
 
@@ -415,6 +420,148 @@ static inline void buggy_tick_all(void) {
             occ->x = b->x; occ->y = b->y; occ->z = b->z;
             occ->vx = occ->vy = occ->vz = 0.0f;
             occ->on_ground = b->grounded;
+        }
+    }
+}
+
+/* ── Icelandic horse (Toledo mount) ─────────────────────────────────────────
+ * Tölt: 4-beat amble. Smooth, no gallop bounce. Max speed 8 m/s on terrain.
+ * Cannot fire weapons while mounted. Hoof audio keyed to tolt_phase.
+ * Historically: Tyler rode this breed in Toledo 1040–1051 CE (TYLER archive
+ * entry, Valentina Alcântara / Dawud al-Muthanna manuscript, c. 1045 CE).
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+#define HORSE_MAX_SPEED   8.0f      /* m/s — tölt top speed */
+#define HORSE_ACCEL       4.5f      /* m/s² */
+#define HORSE_DECEL       6.0f      /* m/s² (natural friction) */
+#define HORSE_TURN_DEG_S  90.0f     /* yaw rate deg/s at speed */
+#define HORSE_STRIDE_HZ   2.8f      /* strides per second at full tölt */
+#define HORSE_EYE_OFFSET  1.55f     /* rider eye height above ground */
+
+static inline void horse_spawn_defaults(HorseState *h, int id, int scene_id,
+                                        float x, float z, float yaw) {
+    memset(h, 0, sizeof(*h));
+    h->active = 1;
+    h->id = id;
+    h->scene_id = scene_id;
+    h->x = x; h->z = z;
+    h->yaw = yaw;
+    h->occupant_player_id = -1;
+    float gy = terrain_sample_height(&g_scene_terrain, x, z);
+    if (gy < 0.0f) gy = 0.0f;
+    h->y = gy + 1.15f; /* horse back height */
+    h->grounded = 1;
+    h->health = 200;
+}
+
+static inline HorseState *horse_find_nearby(int scene_id, float x, float y,
+                                             float z, float radius) {
+    float rr = radius * radius;
+    for (int i = 0; i < MAX_HORSES; i++) {
+        HorseState *h = &local_state.horses[i];
+        if (!h->active || h->scene_id != scene_id) continue;
+        float dx = h->x - x, dy = h->y - y, dz = h->z - z;
+        if ((dx*dx + dy*dy + dz*dz) <= rr) return h;
+    }
+    return NULL;
+}
+
+static inline int horse_try_enter(PlayerState *p, HorseState *h) {
+    if (!p || !h || !h->active || h->occupant_player_id >= 0) return 0;
+    h->occupant_player_id = p->id;
+    p->in_vehicle = 1;
+    p->vehicle_type = VEH_HORSE;
+    p->x = h->x; p->y = h->y + HORSE_EYE_OFFSET; p->z = h->z;
+    p->vx = p->vy = p->vz = 0.0f;
+    p->on_ground = h->grounded;
+    printf("[HORSE] mount player=%d horse=%d\n", p->id, h->id);
+    return 1;
+}
+
+static inline int horse_try_exit(PlayerState *p, HorseState *h) {
+    if (!p || !h || h->occupant_player_id != p->id) return 0;
+    float r = -h->yaw * 0.0174532925f;
+    float right_x = cosf(r), right_z = sinf(r);
+    p->x = h->x + right_x * 2.5f;
+    p->z = h->z + right_z * 2.5f;
+    p->y = terrain_sample_height(&g_scene_terrain, p->x, p->z);
+    if (p->y < 0.0f) p->y = 0.0f;
+    p->in_vehicle = 0;
+    p->vehicle_type = VEH_NONE;
+    p->on_ground = 1;
+    h->occupant_player_id = -1;
+    printf("[HORSE] dismount player=%d horse=%d speed=%.2f\n", p->id, h->id, h->speed);
+    return 1;
+}
+
+static inline void horse_tick_all(void) {
+    const float dt = SHANKPIT_NET_FIXED_DT;
+    for (int i = 0; i < MAX_HORSES; i++) {
+        HorseState *h = &local_state.horses[i];
+        if (!h->active) continue;
+
+        float throttle = 0.0f;
+        float yaw_target = h->yaw;
+        if (h->occupant_player_id >= 0 && h->occupant_player_id < MAX_CLIENTS) {
+            PlayerState *occ = &local_state.players[h->occupant_player_id];
+            h->scene_id = occ->scene_id;
+            throttle = occ->in_fwd;
+            yaw_target = occ->yaw;
+        } else {
+            h->occupant_player_id = -1;
+        }
+
+        /* Smooth yaw toward rider look direction — horse turns by leaning */
+        float yaw_err = yaw_target - h->yaw;
+        while (yaw_err >  180.0f) yaw_err -= 360.0f;
+        while (yaw_err < -180.0f) yaw_err += 360.0f;
+        float speed_frac = h->speed / HORSE_MAX_SPEED;
+        float turn_rate = HORSE_TURN_DEG_S * speed_frac;
+        float yaw_delta = yaw_err * turn_rate * dt * 0.05f;
+        if (fabsf(yaw_delta) > fabsf(yaw_err)) yaw_delta = yaw_err;
+        h->yaw += yaw_delta;
+
+        /* Tölt acceleration: smooth ramp, no discrete gait transition */
+        if (throttle > 0.05f) {
+            h->speed += HORSE_ACCEL * throttle * dt;
+            if (h->speed > HORSE_MAX_SPEED) h->speed = HORSE_MAX_SPEED;
+        } else if (throttle < -0.05f) {
+            h->speed += throttle * HORSE_ACCEL * dt; /* rein back */
+            if (h->speed < -2.0f) h->speed = -2.0f;
+        } else {
+            float decel = HORSE_DECEL * dt;
+            if (h->speed > 0.0f) { h->speed -= decel; if (h->speed < 0.0f) h->speed = 0.0f; }
+            else if (h->speed < 0.0f) { h->speed += decel; if (h->speed > 0.0f) h->speed = 0.0f; }
+        }
+
+        /* Move along yaw */
+        float rad = h->yaw * 0.0174532925f;
+        h->vx = sinf(rad) * h->speed;
+        h->vz = cosf(rad) * h->speed;
+        h->x += h->vx * dt;
+        h->z += h->vz * dt;
+
+        /* Terrain follow — no bounce; tölt is smooth */
+        float gy = terrain_sample_height(&g_scene_terrain, h->x, h->z);
+        if (gy < 0.0f) gy = 0.0f;
+        float target_y = gy + 1.15f;
+        h->y += (target_y - h->y) * 8.0f * dt; /* smooth terrain track */
+        h->grounded = (h->y <= target_y + 0.05f);
+
+        /* Advance tölt phase — drives hoof audio via player model */
+        h->tolt_phase += HORSE_STRIDE_HZ * (h->speed / HORSE_MAX_SPEED) * dt;
+        if (h->tolt_phase >= 1.0f) h->tolt_phase -= 1.0f;
+
+        /* Sync rider position */
+        if (h->occupant_player_id >= 0 && h->occupant_player_id < MAX_CLIENTS) {
+            PlayerState *occ = &local_state.players[h->occupant_player_id];
+            occ->x = h->x;
+            occ->y = h->y + HORSE_EYE_OFFSET;
+            occ->z = h->z;
+            occ->vx = occ->vy = occ->vz = 0.0f;
+            occ->on_ground = h->grounded;
+            /* Weapons disabled while mounted — tölt mount is not a war horse */
+            occ->is_shooting = 0;
         }
     }
 }
@@ -1426,7 +1573,8 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
         fwd = 0.0f; str = 0.0f; shoot = 0; jump = 0; crouch = 0; reload = 0; ability = 0; bike = 0;
     }
     if (p0->state != STATE_DEAD && !(p0->in_vehicle && p0->vehicle_type == VEH_HELICOPTER) &&
-        !(p0->in_vehicle && p0->vehicle_type == VEH_BUGGY)) {
+        !(p0->in_vehicle && p0->vehicle_type == VEH_BUGGY) &&
+        !(p0->in_vehicle && p0->vehicle_type == VEH_HORSE)) {
         {
             MoveIntent move_intent = {
                 .forward = fwd,
@@ -1502,6 +1650,15 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
                 p->in_vehicle = 0;
                 p->vehicle_type = VEH_NONE;
             }
+            if (p->in_vehicle && p->vehicle_type == VEH_HORSE) {
+                for (int hi = 0; hi < MAX_HORSES; hi++) {
+                    if (local_state.horses[hi].active && local_state.horses[hi].occupant_player_id == i) {
+                        local_state.horses[hi].occupant_player_id = -1;
+                    }
+                }
+                p->in_vehicle = 0;
+                p->vehicle_type = VEH_NONE;
+            }
             if (p->respawn_time != 0 && cmd_time >= p->respawn_time) {
                 phys_respawn(p, cmd_time);
                 p->respawn_time = 0;
@@ -1521,7 +1678,7 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
 #endif
             }
         }
-        if (p->in_vehicle && (p->vehicle_type == VEH_HELICOPTER || p->vehicle_type == VEH_BUGGY)) {
+        if (p->in_vehicle && (p->vehicle_type == VEH_HELICOPTER || p->vehicle_type == VEH_BUGGY || p->vehicle_type == VEH_HORSE)) {
             p->use_was_down = p->in_use;
             continue;
         }
@@ -1573,6 +1730,7 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
         p->use_was_down = p->in_use;
     }
     buggy_tick_all();
+    horse_tick_all();
     update_projectiles(cmd_time);
     if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
         (local_state.story_phase == STORY_PHASE_PLAYING || local_state.story_phase == STORY_PHASE_SWARM)) {
