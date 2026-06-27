@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-06-27
+
+- Add Icelandic horse vehicle — VEH_HORSE=4, tölt gait (4-beat smooth amble, 8 m/s), Toledo 1040 CE mount; Apple #4383
+
+
 ## 2026-06-26
 
 - add spatial audio engine (packages/audio/): MIDI drum+bass weapon sounds (808 kick/magnum, hi-hat/AR, sub-bass/sniper, noise+kick/shotgun, metallic/knife+katana) + pentatonic melody footsteps; all PCM synthesized at init, no external files; spatial pan+distance attenuation from listener yaw/position
