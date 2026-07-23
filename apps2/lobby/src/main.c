@@ -526,6 +526,33 @@ void draw_hud(PlayerState *p) {
     char vel_buf[32]; sprintf(vel_buf, "VEL: %.2f", raw_speed);
     glColor3f(1.0f, 1.0f, 0.0f); draw_string(vel_buf, 1100, 50, 8);
 
+    if (p->scene_id == SCENE_RACE_TRACK) {
+        char lap_buf[32]; sprintf(lap_buf, "LAP %d/3", p->race_lap + 1);
+        glColor3f(1.0f, 1.0f, 1.0f); draw_string(lap_buf, 50, 150, 12);
+        char cp_buf[32]; sprintf(cp_buf, "CHECKPOINT %d/8", p->race_checkpoint_idx);
+        draw_string(cp_buf, 50, 130, 10);
+
+        // Item-slot indicator: reuse the existing hit-ring circle primitive,
+        // colored by held item — 0=none/gray, 1=boost/green, 2=shield/blue,
+        // 3=trap/orange (mirrors RACE_ITEM_* in packages/common/protocol.h).
+        switch (p->race_item_slot) {
+            case 1: glColor3f(0.2f, 1.0f, 0.2f); break; /* RACE_ITEM_BOOST */
+            case 2: glColor3f(0.2f, 0.4f, 1.0f); break; /* RACE_ITEM_SHIELD */
+            case 3: glColor3f(1.0f, 0.6f, 0.1f); break; /* RACE_ITEM_TRAP */
+            default: glColor3f(0.4f, 0.4f, 0.4f); break;
+        }
+        glLineWidth(2.0f);
+        draw_circle(1150, 150, 16.0f, 16);
+
+        // Ultimate-charge bar — same two-glRectf pattern as health/shield above.
+        glColor3f(0.15f, 0.05f, 0.2f); glRectf(50, 170, 250, 190);
+        glColor3f(0.7f, 0.2f, 0.9f);
+        glRectf(50, 170, 50 + (p->race_ultimate_charge * 2), 190);
+        if (p->race_ultimate_charge >= 100) {
+            glColor3f(1.0f, 1.0f, 1.0f); draw_string("ULTIMATE READY (F)", 50, 195, 8);
+        }
+    }
+
     glEnable(GL_DEPTH_TEST); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW); glPopMatrix();
 }
 
@@ -566,7 +593,7 @@ void net_init() {
     #endif
 }
 
-UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoot, int jump, int crouch, int reload, int use, int wpn_idx) {
+UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoot, int jump, int crouch, int reload, int use, int wpn_idx, int item_use, int ultimate_use) {
     UserCmd cmd;
     memset(&cmd, 0, sizeof(UserCmd));
     cmd.sequence = ++client_cmd_sequence; cmd.timestamp = SDL_GetTicks();
@@ -576,6 +603,8 @@ UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoo
     if(crouch) cmd.buttons |= BTN_CROUCH;
     if(reload) cmd.buttons |= BTN_RELOAD;
     if(use) cmd.buttons |= BTN_USE;
+    if(item_use) cmd.buttons |= BTN_ABILITY_1;     /* Bedrock Racers — consume held item */
+    if(ultimate_use) cmd.buttons |= BTN_ULTIMATE;  /* Bedrock Racers — spend ultimate charge */
     cmd.weapon_idx = wpn_idx; return cmd;
 }
 
@@ -591,20 +620,30 @@ void net_send_cmd(UserCmd cmd) {
     sendto(sock, packet_data, cursor, 0, (struct sockaddr*)&server_addr, sizeof(server_addr));
 }
 
-void net_connect() {
+/* mode is appended as a single byte after NetHeader — this is the
+ * requestedMode the Go server reads (`if n > netHeaderSize`). Previously
+ * missing entirely, which meant no mode byte ever reached the server over a
+ * real network connection (see BEDROCK_RACERS_SPEC.md's Known Gaps: this
+ * silently made CTF-over-network never enqueue, since the byte defaulted to
+ * GameModeDeathmatch server-side). 4 = GameModeRacing (packages2/common/
+ * protocol.go) — deliberately not added to this file's own MODE_* enum,
+ * which already uses 4 for the unrelated, never-networked MODE_ODDBALL. */
+void net_connect_mode(unsigned char mode) {
     struct hostent *he = gethostbyname(SERVER_HOST);
     if (he) {
         server_addr.sin_family = AF_INET;
         server_addr.sin_port = htons(SERVER_PORT);
         memcpy(&server_addr.sin_addr, he->h_addr_list[0], he->h_length);
         char buffer[128];
+        memset(buffer, 0, sizeof(buffer));
         NetHeader *h = (NetHeader*)buffer;
         h->type = PACKET_CONNECT;
-        sendto(sock, buffer, sizeof(NetHeader), 0, (struct sockaddr*)&server_addr, sizeof(server_addr));
+        buffer[sizeof(NetHeader)] = (char)mode;
+        sendto(sock, buffer, sizeof(NetHeader) + 1, 0, (struct sockaddr*)&server_addr, sizeof(server_addr));
         if (use_go_server) {
             my_client_id = 0;
-            printf("Connected to Go server at %s (client id 0).\n", SERVER_HOST);
-            UserCmd hello = client_create_cmd(0, 0, 0, 0, 0, 0, 0, 0, 0, wpn_req);
+            printf("Connected to Go server at %s (client id 0, mode=%d).\n", SERVER_HOST, mode);
+            UserCmd hello = client_create_cmd(0, 0, 0, 0, 0, 0, 0, 0, 0, wpn_req, 0, 0);
             net_send_cmd(hello);
         } else {
             printf("Connected to %s...\n", SERVER_HOST);
@@ -612,6 +651,10 @@ void net_connect() {
     } else {
         printf("Failed to resolve %s\n", SERVER_HOST);
     }
+}
+
+void net_connect() {
+    net_connect_mode(MODE_DEATHMATCH);
 }
 
 void net_process_snapshot(char *buffer, int len) {
@@ -686,6 +729,31 @@ void net_process_voxel(char *buffer, int len) {
     voxel_packet_valid = 1;
 }
 
+/* Wire layout: [NetHeader][count(1)] then count * 8-byte entities:
+ * client_id(1) lap(1) checkpoint_idx(1) item_slot(1) ultimate_charge(1)
+ * speed(4, LE float). Parsed by hand rather than cast to RacingTelemetry —
+ * that struct would pick up compiler padding the packed wire format doesn't
+ * have (see the comment on RacingTelemetry in packages/common/protocol.h). */
+void net_process_racing_state(char *buffer, int len) {
+    int cursor = sizeof(NetHeader);
+    if (cursor >= len) return;
+    unsigned char count = *(unsigned char*)(buffer + cursor); cursor++;
+    const int entity_size = 8;
+    for (int i = 0; i < count; i++) {
+        if (cursor + entity_size > len) break;
+        unsigned char *e = (unsigned char*)(buffer + cursor);
+        int id = e[0];
+        if (id >= 0 && id < MAX_CLIENTS) {
+            PlayerState *p = &local_state.players[id];
+            p->race_lap = e[1];
+            p->race_checkpoint_idx = e[2];
+            p->race_item_slot = e[3];
+            p->race_ultimate_charge = e[4];
+        }
+        cursor += entity_size;
+    }
+}
+
 void net_process_impact(char *buffer, int len) {
     if (len < (int)sizeof(NetImpactPacket)) return;
     NetImpactPacket *impact = (NetImpactPacket*)buffer;
@@ -724,6 +792,9 @@ void net_tick() {
         }
         if (head->type == PACKET_IMPACT) {
             net_process_impact(buffer, len);
+        }
+        if (head->type == PACKET_RACING_STATE) {
+            net_process_racing_state(buffer, len);
         }
         len = recvfrom(sock, buffer, 4096, 0, (struct sockaddr*)&sender, &slen);
     }
@@ -782,6 +853,16 @@ int main(int argc, char* argv[]) {
                         glMatrixMode(GL_MODELVIEW); glEnable(GL_DEPTH_TEST);
                     }
 
+                    if (e.key.keysym.sym == SDLK_r) {
+                        app_state = STATE_GAME_NET;
+                        strncpy(SERVER_HOST, "127.0.0.1", 63);
+                        use_go_server = 1;
+                        net_connect_mode(4); /* GameModeRacing — Bedrock Racers */
+                        SDL_SetRelativeMouseMode(SDL_TRUE);
+                        glMatrixMode(GL_PROJECTION); glLoadIdentity(); gluPerspective(75.0, 1280.0/720.0, 0.1, Z_FAR);
+                        glMatrixMode(GL_MODELVIEW); glEnable(GL_DEPTH_TEST);
+                    }
+
                     if (app_state == STATE_GAME_LOCAL) {
                         SDL_SetRelativeMouseMode(SDL_TRUE);
                         glMatrixMode(GL_PROJECTION); glLoadIdentity(); gluPerspective(75.0, 1280.0/720.0, 0.1, Z_FAR);
@@ -834,6 +915,7 @@ int main(int argc, char* argv[]) {
              draw_string("C: LAN CTF", 400, 250, 10); // Added Visual
              draw_string("J: JOIN S.FARTHQ.COM", 400, 200, 10);
              draw_string("G: JOIN LOCAL GO SERVER", 400, 150, 10);
+             draw_string("R: RACE (BEDROCK RACERS)", 400, 100, 10);
 
              glMatrixMode(GL_MODELVIEW); glPopMatrix();
              glMatrixMode(GL_PROJECTION); glPopMatrix();
@@ -849,6 +931,8 @@ int main(int argc, char* argv[]) {
             int shoot = (SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_LEFT));
             int reload = k[SDL_SCANCODE_R];
             int use = k[SDL_SCANCODE_E];
+            int item_use = k[SDL_SCANCODE_Q];        /* Bedrock Racers — use held item */
+            int ultimate_use = k[SDL_SCANCODE_F];     /* Bedrock Racers — use ultimate */
             if(k[SDL_SCANCODE_1]) wpn_req=0; if(k[SDL_SCANCODE_2]) wpn_req=1;
             if(k[SDL_SCANCODE_3]) wpn_req=2; if(k[SDL_SCANCODE_4]) wpn_req=3; if(k[SDL_SCANCODE_5]) wpn_req=4;
 
@@ -861,7 +945,7 @@ int main(int argc, char* argv[]) {
                 float cmd_yaw = cam_yaw;
                 float cmd_pitch = cam_pitch;
                 local_update(fwd, str, cmd_yaw, cmd_pitch, shoot, wpn_req, jump, crouch, reload, NULL, 0);
-                UserCmd cmd = client_create_cmd(fwd, str, cmd_yaw, cmd_pitch, shoot, jump, crouch, reload, use, wpn_req);
+                UserCmd cmd = client_create_cmd(fwd, str, cmd_yaw, cmd_pitch, shoot, jump, crouch, reload, use, wpn_req, item_use, ultimate_use);
                 net_send_cmd(cmd);
                 if (net_spawn_protect_cmds > 0) net_spawn_protect_cmds--;
             } else {

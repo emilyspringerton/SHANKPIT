@@ -24,6 +24,7 @@
 #define SCENE_OIL_TANKER 5
 #define SCENE_POO_POO_ISLAND 6
 #define SCENE_STORY_CAVE 7
+#define SCENE_RACE_TRACK 8   /* Bedrock Racers — StaticBackend, no Dragonfly dependency */
 
 #define PACKET_CONNECT 0
 #define PACKET_USERCMD 1
@@ -33,6 +34,8 @@
 #define PACKET_IMPACT        5
 #define PACKET_SCENE_CHANGE  6
 #define PACKET_DISCONNECT    7
+/* 8, 9 reserved by BEDWARS_SPEC.md (PacketBedEvent, PacketResourcePickup) — not yet implemented */
+#define PACKET_RACING_STATE  10
 
 #define VOXEL_CHUNK_SIZE            16
 #define VOXEL_MAX_BLOCKS_PER_CHUNK  1024
@@ -100,12 +103,35 @@ typedef struct {
 #define BTN_USE    16
 #define BTN_ABILITY_1 32
 #define BTN_VEHICLE_2 64
+#define BTN_ULTIMATE 128   /* Bedrock Racers — spend ultimate charge (racing scene only) */
 
 #define VEH_NONE  0
 #define VEH_BUGGY 1
 #define VEH_BIKE  2
 #define VEH_HELICOPTER 3
 #define VEH_HORSE 4   /* Icelandic tölt mount — Toledo 1040 CE */
+
+/* Bedrock Racers item slots — held one at a time, consumed via BTN_ABILITY_1 */
+#define RACE_ITEM_NONE  0
+#define RACE_ITEM_BOOST 1
+#define RACE_ITEM_SHIELD 2
+#define RACE_ITEM_TRAP  3
+
+/* Documents the PACKET_RACING_STATE per-racer wire layout (8 bytes, packed,
+ * no padding): client_id(1) lap(1) checkpoint_idx(1) item_slot(1)
+ * ultimate_charge(1) speed(4, LE float). This struct would NOT match that
+ * layout if cast directly onto the buffer — the compiler pads after the 5th
+ * char to align `speed`, growing it to 12 bytes. Parse the wire format by
+ * hand (see net_process_racing_state() in apps2/lobby/src/main.c), not via
+ * a cast to this type. */
+typedef struct {
+    unsigned char client_id;
+    unsigned char lap;
+    unsigned char checkpoint_idx;
+    unsigned char item_slot;
+    unsigned char ultimate_charge; /* 0-100 */
+    float speed;
+} RacingTelemetry;
 
 typedef struct {
     int id;
@@ -246,6 +272,12 @@ typedef struct {
     float ctf_last_reward;
     unsigned int ctf_last_stuck_ms;
     float ctf_last_objective_progress;
+    /* Bedrock Racers — only meaningful while scene_id == SCENE_RACE_TRACK,
+     * populated from PACKET_RACING_STATE (net_process_racing_state()). */
+    int race_lap;
+    int race_checkpoint_idx;
+    int race_item_slot;
+    int race_ultimate_charge;
 } PlayerState;
 
 typedef struct {

@@ -127,13 +127,16 @@ type clientInfo struct {
 	// IDUNA auth — empty when player connected without a JWT.
 	playerID    string
 	displayName string
+	// Bedrock Racers — only meaningful while sceneID == common.SceneRaceTrack.
+	racing system.RacerProgress
 }
 
 // matchmaker queues players for specific game modes. Players immediately join a
 // DM warm-up session; once enough players share a mode, they are moved together.
 type matchmaker struct {
-	mu       sync.Mutex
-	ctfQueue []string // client remote-addr keys
+	mu          sync.Mutex
+	ctfQueue    []string // client remote-addr keys
+	racingQueue []string
 }
 
 func (m *matchmaker) enqueue(key string) {
@@ -237,6 +240,7 @@ func main() {
 	}
 
 	go broadcastSnapshots(conn, &mu, clients)
+	go broadcastRacingState(conn, &mu, clients)
 	go pruneIdleClients(&mu, clients, *idleTimeout, *idunaURL, *serverToken)
 
 	for {
@@ -341,6 +345,27 @@ func main() {
 					mu.Unlock()
 				}
 			}
+
+			if requestedMode == common.GameModeRacing {
+				mm.enqueueRacing(remote.String())
+				fmt.Printf("[MATCHMAKER] Racing queue size=%d threshold=%d\n", len(mm.racingQueue)+1, racingMinPlayers)
+				if matched := mm.pollForRacingMatch(); matched != nil {
+					fmt.Printf("[MATCHMAKER] Racing match starting — moving %d players to scene=%d\n", len(matched), common.SceneRaceTrack)
+					spawn, startYaw := racingStartPosition()
+					mu.Lock()
+					for _, key := range matched {
+						if ci, ok2 := clients[key]; ok2 {
+							ci.sceneID = common.SceneRaceTrack
+							ci.racing = system.RacerProgress{ClientID: ci.id, Vehicle: system.VehicleState{Position: spawn, Yaw: startYaw}}
+							ci.pos = spawn
+							ci.yaw = float32(startYaw)
+							clients[key] = ci
+							sendSceneChange(conn, ci.remote, common.SceneRaceTrack, spawn, common.GameModeRacing)
+						}
+					}
+					mu.Unlock()
+				}
+			}
 		case common.PacketUserCmd:
 			if n < netHeaderSize+1+userCmdSize {
 				continue
@@ -365,8 +390,18 @@ func main() {
 			}
 			cmd := parseUserCmd(buf, netHeaderSize+1)
 			clientStore.Upsert(remote.String(), cmd)
-			info.yaw = cmd.Yaw
 			info.lastPacket = time.Now()
+
+			if info.sceneID == common.SceneRaceTrack {
+				dt := float64(cmd.Msec) / 1000.0
+				info = applyRacingTick(info, cmd, racingCfg, dt)
+				mu.Lock()
+				clients[remote.String()] = info
+				mu.Unlock()
+				continue
+			}
+
+			info.yaw = cmd.Yaw
 			if cmd.Buttons&common.BtnAttack != 0 {
 				gw := &gameWorld{clients: clients, mu: &mu, shooterID: info.id, sceneID: info.sceneID}
 				shooter := &shankPlayer{pos: info.pos, eyeHeight: 1.62, rw: gw}

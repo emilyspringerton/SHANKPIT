@@ -15,6 +15,8 @@ const (
 	PacketVoxelData   = 4
 	PacketImpact      = 5
 	PacketSceneChange = 6
+	// 7 = PacketDisconnect (v1 only). 8, 9 reserved by BEDWARS_SPEC.md (not yet implemented).
+	PacketRacingState = 10
 )
 
 const (
@@ -28,6 +30,18 @@ const (
 	GameModeTDM        uint8 = 1
 	GameModeSurvival   uint8 = 2
 	GameModeCTF        uint8 = 3
+	GameModeRacing     uint8 = 4
+)
+
+const (
+	SceneRaceTrack = 8
+)
+
+const (
+	RaceItemNone   uint8 = 0
+	RaceItemBoost  uint8 = 1
+	RaceItemShield uint8 = 2
+	RaceItemTrap   uint8 = 3
 )
 
 const (
@@ -39,11 +53,13 @@ const (
 )
 
 const (
-	BtnJump   = 1
-	BtnAttack = 2
-	BtnCrouch = 4
-	BtnReload = 8
-	BtnUse    = 16
+	BtnJump     = 1
+	BtnAttack   = 2
+	BtnCrouch   = 4
+	BtnReload   = 8
+	BtnUse      = 16
+	BtnAbility1 = 32  // Bedrock Racers — consume held item
+	BtnUltimate = 128 // Bedrock Racers — spend ultimate charge (racing scene only)
 )
 
 type NetHeader struct {
@@ -64,6 +80,15 @@ type UserCmd struct {
 	Pitch     float32
 	Buttons   uint32
 	WeaponIdx int32
+}
+
+type RacingTelemetry struct {
+	ClientID       uint8
+	Lap            uint8
+	CheckpointIdx  uint8
+	ItemSlot       uint8
+	UltimateCharge uint8 // 0-100
+	Speed          float32
 }
 
 type VoxelBlock struct {

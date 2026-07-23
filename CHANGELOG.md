@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-07-23
+
+- Bedrock Racers vertical slice (Milestone 8): wires previously-dormant `server/system/vehicle_dynamics.go`/`vehicle_physics.go` (F1-tier grip/downforce/drift/lockup chassis) into a live game mode for the first time, via new `server/system/racing_mode.go` (checkpoint/lap detection, item pickup, ultimate charge — structured like `stadium_mode.go`). One F1 vehicle, one 8-checkpoint/3-lap track (`SCENE_RACE_TRACK`), 3 items (Boost/Shield/Trap) + 1 ultimate (Overdrive). New `PACKET_RACING_STATE` wire packet kept separate from the already-mismatched `PacketSnapshot` path. Client: `R` keybind + HUD lap/checkpoint/item/ultimate display in `apps2/lobby`. Fixed `net_connect()` to actually send the requested-mode byte (previously silently missing), which incidentally fixes CTF-over-network matchmaking as a side effect. Full spec: `docs2/specs/BEDROCK_RACERS_SPEC.md`.
+
 ## 2026-06-27
 
 - Add Icelandic horse vehicle — VEH_HORSE=4, tölt gait (4-beat smooth amble, 8 m/s), Toledo 1040 CE mount; Apple #4383

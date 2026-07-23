@@ -19,6 +19,10 @@
 #define PACKET_VOXEL_DATA 4
 #define PACKET_IMPACT 5
 #define PACKET_SCENE_CHANGE 6
+/* 8, 9 reserved by BEDWARS_SPEC.md (not yet implemented) */
+#define PACKET_RACING_STATE 10
+
+#define SCENE_RACE_TRACK 8
 
 #define STATE_ALIVE 0
 #define STATE_DEAD 1
@@ -59,6 +63,13 @@ typedef struct {
 #define BTN_CROUCH 4
 #define BTN_RELOAD 8
 #define BTN_USE 16
+#define BTN_ABILITY_1 32
+#define BTN_ULTIMATE 128
+
+#define RACE_ITEM_NONE 0
+#define RACE_ITEM_BOOST 1
+#define RACE_ITEM_SHIELD 2
+#define RACE_ITEM_TRAP 3
 
 typedef struct {
     int id;
@@ -191,6 +202,17 @@ typedef struct {
     struct sockaddr_in clients[MAX_CLIENTS];
     int client_active[MAX_CLIENTS];
 } ServerState;
+
+/* Wire layout is packed (8 bytes, no padding) — see the matching comment in
+ * packages/common/protocol.h. This C struct is documentation only. */
+typedef struct {
+    unsigned char client_id;
+    unsigned char lap;
+    unsigned char checkpoint_idx;
+    unsigned char item_slot;
+    unsigned char ultimate_charge; /* 0-100 */
+    float speed;
+} RacingTelemetry;
 
 typedef struct {
     unsigned char x;

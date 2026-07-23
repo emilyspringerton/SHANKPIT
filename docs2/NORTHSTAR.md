@@ -184,6 +184,24 @@ Full spec: `docs2/specs/BEDWARS_SPEC.md`
 
 **Prerequisite chain:** Milestone 5 (EA FPS) ✓ → Milestone 4 (DragonflyBackend wired) → Milestone 7
 
+### Milestone 8: Bedrock Racers (item-layered F1 racing mode)
+
+Full spec: `docs2/specs/BEDROCK_RACERS_SPEC.md`
+
+- Reuses dormant `server/system/vehicle_dynamics.go`/`vehicle_physics.go` — F1-tier grip curve,
+  downforce, slip-angle, ABS lockup risk chassis, wired into a live game mode for the first time
+- New `server/system/racing_mode.go`, structured like `stadium_mode.go` (Config/State/pure
+  Detect\*/functional reducers)
+- One F1 vehicle, one hand-authored track (`SCENE_RACE_TRACK`, scene ID 8), 8 checkpoints, 3 laps
+- LoL-style item layer on top of the chassis (not a handling simplification): Boost / Shield /
+  Trap pickups + one Overdrive ultimate
+- New `PACKET_RACING_STATE` (type 10) wire packet, kept separate from the already-mismatched
+  `PacketSnapshot` path
+- Client: keybind-legend entry + HUD lap/checkpoint/item/ultimate display, no new menu framework
+- **No Dragonfly dependency** — runs on `StaticBackend` like Stadium/Garage, unlike BedWars
+
+**Prerequisite chain:** none — independent of Milestone 4/7.
+
 ---
 
 ## What "Done" Looks Like
@@ -239,6 +257,8 @@ should understand they hold half the picture.
 
 ## Related Specs
 
+- `docs2/specs/BEDROCK_RACERS_SPEC.md` — Bedrock Racers game mode full spec (Milestone 8)
+- `docs2/specs/WEAKNIGHT_VS0_ACCEPTANCE_CRITERIA.md` — F1-realism + emergent-systems vision Bedrock Racers narrows from
 - `docs2/specs/BEDWARS_SPEC.md` — BedWars game mode full spec (Milestone 7)
 - `docs2/specs/SHANKPIT_DRAGONSNSHIT_SYSTEMS_SPEC.md` — full systems map for the FPS→persistent world bridge
 - `docs2/specs/THE_BRIDGE_SPEC.md` — wire protocol for Shankpit ↔ Bedrock voxel data

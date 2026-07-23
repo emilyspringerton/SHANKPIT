@@ -12,6 +12,7 @@ const (
 	SceneOilTanker    = 5
 	ScenePooPooisland = 6
 	SceneStoryCave    = 7
+	SceneRaceTrack    = 8 // Bedrock Racers — StaticBackend, no Dragonfly dependency
 )
 
 // Portal IDs (mirrors physics.h PORTAL_ID_* constants).

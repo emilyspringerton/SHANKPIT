@@ -134,6 +134,50 @@ static const Box map_geo_stadium[] = {
     {-980.00, 108.00, -920.00, 52.00, 72.00, 52.00}
 };
 
+// Bedrock Racers track (SCENE_RACE_TRACK) — a simple rectangular "donut" ring:
+// drivable surface between the inner and outer wall squares. Checkpoints sit
+// on the octagonal racing line at radius 150 (see checkpoint_triggers[]
+// below), comfortably inside the ring between the inner (~70) and outer
+// (~200) boundaries. No data-driven map format exists in this repo — this
+// follows map_geo_stadium's exact hand-authored static-array style.
+static const Box map_geo_racetrack[] = {
+    /* Ground */
+    {0.00, -2.00, 0.00, 420.00, 4.00, 420.00},
+
+    /* Outer boundary wall */
+    {0.00, 4.00, 200.00, 400.00, 12.00, 4.00},
+    {0.00, 4.00, -200.00, 400.00, 12.00, 4.00},
+    {200.00, 4.00, 0.00, 4.00, 12.00, 400.00},
+    {-200.00, 4.00, 0.00, 4.00, 12.00, 400.00},
+
+    /* Inner boundary wall (blocks the infield) */
+    {0.00, 4.00, 70.00, 140.00, 12.00, 4.00},
+    {0.00, 4.00, -70.00, 140.00, 12.00, 4.00},
+    {70.00, 4.00, 0.00, 4.00, 12.00, 140.00},
+    {-70.00, 4.00, 0.00, 4.00, 12.00, 140.00},
+
+    /* Curbs near the diagonal checkpoints, for visual/collision flavor */
+    {106.00, 0.50, 106.00, 12.00, 1.00, 12.00},
+    {-106.00, 0.50, 106.00, 12.00, 1.00, 12.00},
+    {-106.00, 0.50, -106.00, 12.00, 1.00, 12.00},
+    {106.00, 0.50, -106.00, 12.00, 1.00, 12.00}
+};
+
+/* Checkpoint trigger volumes — order must match RacingModeConfig.Checkpoints
+ * in apps2/server-go/racing.go (hand-kept in sync, same cross-language
+ * convention used throughout this codebase). Reuses the existing Box shape
+ * rather than inventing a new trigger-volume primitive. */
+static const Box checkpoint_triggers[] = {
+    {150.00, 10.00, 0.00, 40.00, 20.00, 40.00},
+    {106.00, 10.00, 106.00, 40.00, 20.00, 40.00},
+    {0.00, 10.00, 150.00, 40.00, 20.00, 40.00},
+    {-106.00, 10.00, 106.00, 40.00, 20.00, 40.00},
+    {-150.00, 10.00, 0.00, 40.00, 20.00, 40.00},
+    {-106.00, 10.00, -106.00, 40.00, 20.00, 40.00},
+    {0.00, 10.00, -150.00, 40.00, 20.00, 40.00},
+    {106.00, 10.00, -106.00, 40.00, 20.00, 40.00}
+};
+
 static const Box map_geo_garage[] = {
     {0.00, -2.00, 0.00, 160.00, 4.00, 160.00},
     {0.00, -8.00, 0.00, 170.00, 2.00, 170.00},
@@ -1167,6 +1211,10 @@ static inline void phys_set_scene(int scene_id) {
         map_geo = map_geo_stadium;
         map_count = (int)(sizeof(map_geo_stadium) / sizeof(Box));
         g_scene_terrain.active = (g_scene_terrain.heights != NULL);
+    } else if (scene_id == SCENE_RACE_TRACK) {
+        map_geo = map_geo_racetrack;
+        map_count = (int)(sizeof(map_geo_racetrack) / sizeof(Box));
+        g_scene_terrain.active = 0;
     } else {
         map_geo = map_geo_stadium;
         map_count = (int)(sizeof(map_geo_stadium) / sizeof(Box));
