@@ -503,6 +503,78 @@ Attention, Receipt. Never "trap house."
 
 ---
 
+## Custody Lock — the jail simulator (2026-07-24, concept capture only)
+
+Founder direction, real-time: "social component of trapx serving your time" → "real jail
+simulator" → "serve your time in a 10 man or the annex or in the 1 mans" → "trapx north star."
+Logged to `EMILY/BACKLOG.md` S170-39 before this section was written. **Custody Lock** is already
+in this doc's own canonical vocabulary list above, undefined beyond the name — this section is a
+first pass at giving it real content, not a confirmed spec. If a fuller Custody Lock definition
+already exists elsewhere (the wiki, an earlier draft), reconcile against it before building
+anything; this is a concept capture, same tier as "Open Questions" below, not an implementation.
+
+**The core idea**: getting caught (Enforcement escalation, a lost Contest Window, a failed
+Watcher evade) shouldn't just cost time offscreen — it should drop the player into a real,
+socially-textured space other players are also sitting in, with the housing assignment itself
+being a meaningful choice/consequence, not a flat penalty timer:
+
+- **The 10-man** — a shared dorm-style unit. Maximum social exposure: alliances, beef, and the
+  Field Office faction politics (The Frequency, The Bloc, Procurement Houses) plausibly follow
+  players in here rather than pausing at the door. Highest social-emergence potential, lowest
+  individual control over who you're stuck with.
+- **The Annex** — a named, distinct area (not yet defined further) implied to sit between the
+  10-man's full exposure and the 1-man's total isolation. Worth treating as its own tier rather
+  than folding into one of the other two, since the founder named it separately.
+  Open question: what makes the Annex the Annex.
+  - **Naming collision, resolved deliberately, not avoided**: a corpus-wide search (`grep -rni
+    annex TYLER/`) found "Eastwind Site Annex A" already in use
+    (`episodes/s11e03_five_timelines.md`) — part of the Eastwind archive's Valentina-sites
+    network. Founder direction on being shown the collision: "yes overlap the references" — the
+    TrapX jail's Annex is meant to connect to Eastwind Site Annex A, not avoid it. Read as: the
+    custody Annex and the archive site are the same location (or the same naming lineage)
+    surfacing in two different layers of the universe (Layer 1 custody-drama infrastructure vs.
+    the Eastwind archive's own layer), the kind of cross-layer reference this universe already
+    does on purpose elsewhere. Exact mechanism of the overlap (literally the same physical site?
+    a shared naming convention across Eastwind-cataloged locations generally?) is still open —
+    the *intent* to connect them is now confirmed, the specifics aren't. Founder follow-up: "no
+    significance assigned" — the overlap is deliberate but not (yet) load-bearing lore; a shared
+    name/echo across layers, not a plot mechanism requiring in-universe explanation. Leave it as
+    an intentional echo, not a hook that later writing is obligated to resolve or justify.
+- **The 1-man** — solitary. Minimal-to-no social exposure by design; the opposite end of the
+  same axis the 10-man sits on. Likely the highest-Enforcement or highest-Attention outcome,
+  narratively (isolation as the "worse" custody result), though that's an inference from the
+  ordering given, not stated outright.
+
+**Why this fits Custody Lock specifically, not a new system bolted alongside it**: the Field
+Office loop already ends in an enforcement/custody consequence for the losing side of a Contest
+Window — this gives that consequence an actual place and social texture instead of leaving it as
+an abstract lock-out state. It's the difference between "you're benched" and "you're now sitting
+across from three other players' Enforcement-losers deciding what happens next."
+
+**Open, not decided**: how long a sentence actually lasts and what determines housing-tier
+assignment (crime severity? Enforcement level at capture? player choice, at a cost?); what
+players can actually do while in custody (pure social/chat space, or a real sub-loop with its own
+objectives — contraband, alliances, a break-out mechanic); whether time served interacts with
+faction reputation or Attention decay; whether the Annex is a step-up (better than 1-man, earned)
+or step-down (worse than 10-man, punitive) tier. None of this is implementation-ready yet — it's
+a concept worth planning into a future sprint, not a system to start building from this note alone.
+
+**Trustees, added later in the same real-time thread.** Founder, quoted exactly: "trustees as a
+trapx faction and then a new tyler faction." Read as two additions, not one: **Trustees** as a
+new TrapX faction (a natural fit for the Custody Lock system above — the classic jail-hierarchy
+role of an inmate granted privileges/responsibility in exchange for cooperation, which would slot
+into the Faction Reputation table below alongside The Frequency/The Bloc/Procurement Houses/
+Oversight Sects/Media Apparatus), and separately, a new TYLER-side faction — TYLER's own faction
+roster (`TYLER/README.md`'s Faction Dossiers: Jiangshi Syndicate, Ichthyosapiens, Shell
+Parliament, Eastwind Owls, Kuroshio Arachnids, and others) gets a new entry too. Whether the new
+TYLER faction *is* Trustees crossing layers (the same cross-layer-echo pattern just established
+with the Annex/Eastwind overlap above) or a second, distinct faction is not specified in the
+direction as given — flagged as genuinely unresolved rather than assumed either way. No faction
+dossier content invented here for either one; this is the instruction captured, not the faction
+written.
+
+---
+
 ## Faction Reputation (server/fame adapted)
 
 TRAPX factions replace GFD's three nations. Fame package mechanics unchanged.
