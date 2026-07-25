@@ -172,6 +172,17 @@ typedef enum {
     SKIN_ALPINE,
     SKIN_EMIREE,
     SKIN_REXX,
+    /* S170-110: the "it's a duck" cast (REDGARDEN's own origin transcript,
+       TYLER/just_a_duck.md) plus Tyler himself, as cosmetic skins in the
+       original/parent SHANKPIT engine -- explicitly not shankpit-460, which
+       has already diverged and doesn't carry cosmetic ambitions forward. */
+    SKIN_DUCK,
+    SKIN_UNICORN,
+    SKIN_GHOST,
+    SKIN_FROG,
+    SKIN_TREE,
+    SKIN_PIZZA,
+    SKIN_TYLER,
     SKIN_COUNT
 } PlayerSkin;
 
@@ -191,7 +202,14 @@ static const char *SKIN_LABELS[SKIN_COUNT] = {
     "GEISHA",
     "ALPINE",
     "EMIREE",
-    "REXX"
+    "REXX",
+    "DUCK",
+    "UNICORN",
+    "GHOST",
+    "FROG",
+    "TREE",
+    "PIZZA",
+    "TYLER"
 };
 static const char *SKIN_CONFIG_PATH = "shankpit_skin.cfg";
 static void ensure_skin_selection_visible(void);
@@ -1164,7 +1182,24 @@ static int clamp_skin_id(int skin_id) {
 static const CharacterDefinition* character_definition_for_skin(int skin_id) {
     static const CharacterDefinition HUM = {"bat", SKIN_BAT, {1.0f,1.0f,1.0f}, {0.75f,1.85f,0.75f}, {0.0f,0.92f,0.0f}, {0.0f,1.45f,-3.2f}, {0.64f,1.03f,0.57f}, {0.0f,1.96f,0.0f}, {0.0f,0.0f,0.0f}, {0.0f,0.0f,0.0f}, 1.0f, 0.0f, 0, 1};
     static const CharacterDefinition REXX = {"rexx", SKIN_REXX, {1.12f,1.12f,1.12f}, {1.05f,1.70f,1.80f}, {0.0f,0.85f,-0.12f}, {0.0f,1.38f,-3.8f}, {0.64f,1.10f,0.72f}, {0.0f,1.42f,1.24f}, {0.0f,-0.12f,-0.08f}, {0.0f,-0.18f,0.0f}, 0.88f, 0.02f, 1, 0};
+    /* S170-110 additions -- proportions loosely follow REXX's quadruped template,
+       scaled per creature; Tyler and Ghost are close enough to humanoid to reuse
+       HUM's own skeleton (Ghost floats but keeps a roughly bipedal silhouette). */
+    static const CharacterDefinition DUCK    = {"duck",    SKIN_DUCK,    {0.78f,0.78f,0.78f}, {0.85f,1.15f,1.35f}, {0.0f,0.58f,-0.05f}, {0.0f,1.05f,-2.6f}, {0.46f,0.78f,0.52f}, {0.0f,1.02f,0.86f}, {0.0f,-0.08f,-0.05f}, {0.0f,-0.10f,0.0f}, 0.70f, 0.02f, 1, 0};
+    static const CharacterDefinition UNICORN = {"unicorn", SKIN_UNICORN, {1.30f,1.30f,1.30f}, {1.10f,1.90f,2.00f}, {0.0f,0.95f,-0.12f}, {0.0f,1.55f,-4.2f}, {0.70f,1.20f,0.80f}, {0.0f,1.58f,1.40f}, {0.0f,-0.14f,-0.08f}, {0.0f,-0.20f,0.0f}, 0.95f, 0.02f, 1, 0};
+    static const CharacterDefinition GHOST   = {"ghost",   SKIN_GHOST,   {1.02f,1.10f,1.02f}, {0.72f,1.80f,0.72f}, {0.0f,0.90f,0.0f}, {0.0f,1.45f,-3.2f}, {0.60f,1.00f,0.55f}, {0.0f,1.90f,0.0f}, {0.0f,0.0f,0.0f}, {0.0f,0.0f,0.0f}, 0.98f, 0.05f, 0, 1};
+    static const CharacterDefinition FROG    = {"frog",    SKIN_FROG,    {0.95f,0.80f,0.95f}, {1.00f,1.05f,1.25f}, {0.0f,0.52f,0.0f}, {0.0f,0.95f,-2.6f}, {0.50f,0.70f,0.55f}, {0.0f,0.90f,0.78f}, {0.0f,-0.06f,0.0f}, {0.0f,-0.08f,0.0f}, 0.80f, 0.02f, 0, 0};
+    static const CharacterDefinition TREE    = {"tree",    SKIN_TREE,    {1.05f,1.05f,1.05f}, {0.80f,2.40f,0.80f}, {0.0f,1.20f,0.0f}, {0.0f,1.80f,-3.6f}, {0.55f,1.60f,0.55f}, {0.0f,2.30f,0.0f}, {0.0f,0.0f,0.0f}, {0.0f,-0.05f,0.0f}, 1.05f, 0.0f, 0, 0};
+    static const CharacterDefinition PIZZA   = {"pizza",   SKIN_PIZZA,   {1.15f,1.15f,1.15f}, {1.60f,0.55f,1.60f}, {0.0f,0.28f,0.0f}, {0.0f,0.75f,-2.4f}, {0.90f,0.42f,0.70f}, {0.0f,0.55f,0.70f}, {0.0f,0.0f,0.0f}, {0.0f,-0.02f,0.0f}, 0.90f, 0.0f, 0, 0};
+    static const CharacterDefinition TYLER   = {"tyler",   SKIN_TYLER,   {1.0f,1.0f,1.0f}, {0.75f,1.85f,0.75f}, {0.0f,0.92f,0.0f}, {0.0f,1.45f,-3.2f}, {0.64f,1.03f,0.57f}, {0.0f,1.96f,0.0f}, {0.0f,0.0f,0.0f}, {0.0f,0.0f,0.0f}, 1.0f, 0.0f, 0, 1};
     if (skin_id == SKIN_REXX) return &REXX;
+    if (skin_id == SKIN_DUCK) return &DUCK;
+    if (skin_id == SKIN_UNICORN) return &UNICORN;
+    if (skin_id == SKIN_GHOST) return &GHOST;
+    if (skin_id == SKIN_FROG) return &FROG;
+    if (skin_id == SKIN_TREE) return &TREE;
+    if (skin_id == SKIN_PIZZA) return &PIZZA;
+    if (skin_id == SKIN_TYLER) return &TYLER;
     return &HUM;
 }
 
@@ -3827,6 +3862,234 @@ static void draw_player_skin_rexx(PlayerState *p, float draw_pitch, float draw_r
     glPushMatrix(); glTranslatef(0.64f, 1.10f, 0.72f); glRotatef(draw_pitch,1,0,0); glRotatef(-draw_recoil*10.0f,1,0,0); glScalef(0.72f,0.72f,0.72f); draw_gun_model(p->current_weapon); glPopMatrix();
 }
 
+/* S170-110: the "it's a duck" cast (TYLER/just_a_duck.md -- Jack's Factory, the source
+ * transcript for REDGARDEN's own original roster) plus Tyler himself, as cosmetic skins in
+ * the parent SHANKPIT engine. Same low-poly box-construction style as draw_player_skin_rexx
+ * above -- simple, recognizable silhouettes, not detailed models. */
+static void draw_player_skin_duck(PlayerState *p, float draw_pitch, float draw_recoil) {
+    float t = SDL_GetTicks() * 0.001f;
+    float waddle = sinf(t * 3.4f) * 6.0f;
+    float bob = sinf(t * 3.4f) * 0.05f;
+
+    glPushMatrix();
+    glTranslatef(0.0f, 0.58f + bob, 0.0f);
+    glRotatef(waddle * 0.5f, 0, 1, 0);
+    glColor3f(0.95f, 0.82f, 0.15f); draw_box(0.85f, 0.75f, 1.15f); draw_box_outline(0.85f, 0.75f, 1.15f);
+    /* wings */
+    for (int i = 0; i < 2; i++) {
+        float side = i ? 1.0f : -1.0f;
+        glPushMatrix(); glTranslatef(side * 0.46f, 0.06f, -0.05f); glColor3f(0.86f, 0.72f, 0.10f);
+        draw_box(0.14f, 0.42f, 0.60f); draw_box_outline(0.14f, 0.42f, 0.60f); glPopMatrix();
+    }
+    glPopMatrix();
+
+    /* head + bill */
+    glPushMatrix();
+    glTranslatef(0.0f, 1.02f + bob * 0.5f, 0.86f);
+    glRotatef(draw_pitch * 0.4f, 1, 0, 0);
+    glColor3f(0.96f, 0.85f, 0.20f); draw_box(0.56f, 0.52f, 0.56f); draw_box_outline(0.56f, 0.52f, 0.56f);
+    glColor3f(0.95f, 0.55f, 0.10f); glPushMatrix(); glTranslatef(0.0f, -0.06f, 0.42f); draw_box(0.42f, 0.16f, 0.36f); draw_box_outline(0.42f, 0.16f, 0.36f); glPopMatrix();
+    glColor3f(0.05f, 0.05f, 0.05f);
+    glPushMatrix(); glTranslatef(-0.16f, 0.06f, 0.24f); draw_box(0.08f, 0.08f, 0.04f); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.16f, 0.06f, 0.24f); draw_box(0.08f, 0.08f, 0.04f); glPopMatrix();
+    glPopMatrix();
+
+    /* webbed feet */
+    for (int i = 0; i < 2; i++) {
+        float side = i ? 1.0f : -1.0f;
+        glPushMatrix(); glTranslatef(side * 0.24f, 0.06f + fabsf(bob), 0.1f); glColor3f(0.95f, 0.55f, 0.10f);
+        draw_box(0.26f, 0.14f, 0.42f); draw_box_outline(0.26f, 0.14f, 0.42f); glPopMatrix();
+    }
+
+    glPushMatrix(); glTranslatef(0.46f, 0.78f, 0.52f); glRotatef(draw_pitch,1,0,0); glRotatef(-draw_recoil*10.0f,1,0,0); glScalef(0.62f,0.62f,0.62f); draw_gun_model(p->current_weapon); glPopMatrix();
+}
+
+static void draw_player_skin_unicorn(PlayerState *p, float draw_pitch, float draw_recoil) {
+    float t = SDL_GetTicks() * 0.001f;
+    float sway = sinf(t * 2.0f) * 4.0f;
+    float stomp = sinf(t * 5.2f) * 0.08f;
+
+    glPushMatrix();
+    glTranslatef(0.0f, 0.95f + stomp, -0.10f);
+    glRotatef(sway * 0.4f, 0, 1, 0);
+    glColor3f(0.96f, 0.95f, 0.92f); draw_box(1.15f, 1.35f, 2.10f); draw_box_outline(1.15f, 1.35f, 2.10f);
+    glPopMatrix();
+
+    /* head + horn */
+    glPushMatrix();
+    glTranslatef(0.0f, 1.58f + stomp * 0.5f, 1.40f);
+    glRotatef(draw_pitch * 0.4f + sway * 0.2f, 1, 0, 0);
+    glColor3f(0.97f, 0.96f, 0.93f); draw_box(0.66f, 0.62f, 0.88f); draw_box_outline(0.66f, 0.62f, 0.88f);
+    /* tapered horn -- stacked shrinking boxes */
+    glColor3f(0.95f, 0.80f, 0.35f);
+    for (int i = 0; i < 4; i++) {
+        float sc = 1.0f - i * 0.22f;
+        glPushMatrix(); glTranslatef(0.0f, 0.42f + i * 0.16f, 0.30f); glRotatef(-24.0f, 1, 0, 0);
+        draw_box(0.14f * sc, 0.18f, 0.14f * sc); glPopMatrix();
+    }
+    /* mane */
+    glColor3f(0.85f, 0.35f, 0.75f); glPushMatrix(); glTranslatef(0.0f, 0.10f, -0.30f); draw_box(0.20f, 0.50f, 0.70f); glPopMatrix();
+    glPopMatrix();
+
+    for (int i = 0; i < 4; i++) {
+        float side = (i % 2) ? 1.0f : -1.0f;
+        float front = (i < 2) ? 0.62f : -0.62f;
+        glPushMatrix();
+        glTranslatef(side * 0.40f, -0.10f + fabsf(stomp), front);
+        glColor3f(0.90f, 0.89f, 0.86f); draw_box(0.36f, 1.30f, 0.40f); draw_box_outline(0.36f, 1.30f, 0.40f);
+        glPopMatrix();
+    }
+
+    glPushMatrix(); glTranslatef(0.70f, 1.20f, 0.80f); glRotatef(draw_pitch,1,0,0); glRotatef(-draw_recoil*10.0f,1,0,0); glScalef(0.78f,0.78f,0.78f); draw_gun_model(p->current_weapon); glPopMatrix();
+}
+
+static void draw_player_skin_ghost(PlayerState *p, float draw_pitch, float draw_recoil) {
+    float t = SDL_GetTicks() * 0.001f;
+    float bob = sinf(t * 1.6f) * 0.10f;
+    float sway = sinf(t * 1.1f) * 5.0f;
+
+    glPushMatrix();
+    glTranslatef(0.0f, 0.90f + bob, 0.0f);
+    glRotatef(sway * 0.3f, 0, 1, 0);
+    /* body tapers narrower toward the bottom -- no legs, just a floating sheet */
+    glColor3f(0.90f, 0.94f, 0.98f);
+    glPushMatrix(); glTranslatef(0.0f, 0.35f, 0.0f); draw_box(0.68f, 0.90f, 0.55f); draw_box_outline(0.68f, 0.90f, 0.55f); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.0f, -0.35f, 0.0f); draw_box(0.50f, 0.70f, 0.42f); draw_box_outline(0.50f, 0.70f, 0.42f); glPopMatrix();
+    glPopMatrix();
+
+    /* head */
+    glPushMatrix();
+    glTranslatef(0.0f, 1.90f + bob * 0.6f, 0.0f);
+    glRotatef(draw_pitch * 0.4f, 1, 0, 0);
+    glColor3f(0.92f, 0.96f, 1.0f); draw_box(0.62f, 0.58f, 0.60f); draw_box_outline(0.62f, 0.58f, 0.60f);
+    glColor3f(0.05f, 0.05f, 0.08f);
+    glPushMatrix(); glTranslatef(-0.16f, 0.02f, 0.28f); draw_box(0.10f, 0.14f, 0.04f); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.16f, 0.02f, 0.28f); draw_box(0.10f, 0.14f, 0.04f); glPopMatrix();
+    glPopMatrix();
+
+    glPushMatrix(); glTranslatef(0.60f, 1.00f, 0.55f); glRotatef(draw_pitch,1,0,0); glRotatef(-draw_recoil*10.0f,1,0,0); glScalef(0.66f,0.66f,0.66f); draw_gun_model(p->current_weapon); glPopMatrix();
+}
+
+static void draw_player_skin_frog(PlayerState *p, float draw_pitch, float draw_recoil) {
+    float t = SDL_GetTicks() * 0.001f;
+    float hop = fabsf(sinf(t * 3.6f)) * 0.10f;
+
+    glPushMatrix();
+    glTranslatef(0.0f, 0.42f + hop, 0.0f);
+    glColor3f(0.28f, 0.62f, 0.24f); draw_box(1.05f, 0.60f, 1.30f); draw_box_outline(1.05f, 0.60f, 1.30f);
+    glColor3f(0.75f, 0.90f, 0.55f); glPushMatrix(); glTranslatef(0.0f, -0.20f, 0.30f); draw_box(0.75f, 0.30f, 0.80f); glPopMatrix();
+    glPopMatrix();
+
+    /* bulging eyes on top */
+    for (int i = 0; i < 2; i++) {
+        float side = i ? 1.0f : -1.0f;
+        glPushMatrix(); glTranslatef(side * 0.30f, 0.86f + hop, 0.55f); glRotatef(draw_pitch * 0.2f, 1, 0, 0);
+        glColor3f(0.30f, 0.65f, 0.26f); draw_box(0.30f, 0.30f, 0.30f); draw_box_outline(0.30f, 0.30f, 0.30f);
+        glColor3f(0.05f, 0.05f, 0.05f); glPushMatrix(); glTranslatef(0.0f, 0.02f, 0.16f); draw_box(0.12f, 0.12f, 0.04f); glPopMatrix();
+        glPopMatrix();
+    }
+
+    /* long legs */
+    for (int i = 0; i < 2; i++) {
+        float side = i ? 1.0f : -1.0f;
+        glPushMatrix();
+        glTranslatef(side * 0.55f, 0.10f + hop * 0.5f, -0.40f);
+        glColor3f(0.24f, 0.55f, 0.20f); draw_box(0.26f, 0.70f, 0.30f); draw_box_outline(0.26f, 0.70f, 0.30f);
+        glTranslatef(0.0f, -0.42f, -0.16f);
+        draw_box(0.24f, 0.60f, 0.26f); draw_box_outline(0.24f, 0.60f, 0.26f);
+        glPopMatrix();
+    }
+
+    glPushMatrix(); glTranslatef(0.50f, 0.70f, 0.55f); glRotatef(draw_pitch,1,0,0); glRotatef(-draw_recoil*10.0f,1,0,0); glScalef(0.60f,0.60f,0.60f); draw_gun_model(p->current_weapon); glPopMatrix();
+}
+
+static void draw_player_skin_tree(PlayerState *p, float draw_pitch, float draw_recoil) {
+    float t = SDL_GetTicks() * 0.001f;
+    float creak = sinf(t * 0.8f) * 2.0f; /* trees barely move -- a slow creak, not a walk cycle */
+
+    glPushMatrix();
+    glTranslatef(0.0f, 1.20f, 0.0f);
+    glRotatef(creak, 0, 1, 0);
+    glColor3f(0.36f, 0.22f, 0.12f); draw_box(0.62f, 2.40f, 0.62f); draw_box_outline(0.62f, 2.40f, 0.62f);
+    glPopMatrix();
+
+    /* leafy canopy -- a few offset boxes rather than one big blob */
+    glColor3f(0.22f, 0.48f, 0.20f);
+    glPushMatrix(); glTranslatef(0.0f, 2.30f, 0.0f); glRotatef(creak * 1.4f, 0, 1, 0); draw_box(1.35f, 0.95f, 1.35f); draw_box_outline(1.35f, 0.95f, 1.35f); glPopMatrix();
+    glColor3f(0.26f, 0.54f, 0.22f);
+    glPushMatrix(); glTranslatef(0.35f, 2.75f, 0.10f); glRotatef(creak * 1.6f, 0, 1, 0); draw_box(0.85f, 0.65f, 0.85f); draw_box_outline(0.85f, 0.65f, 0.85f); glPopMatrix();
+    glPushMatrix(); glTranslatef(-0.30f, 2.65f, -0.20f); glRotatef(-creak * 1.6f, 0, 1, 0); draw_box(0.75f, 0.60f, 0.75f); draw_box_outline(0.75f, 0.60f, 0.75f); glPopMatrix();
+
+    /* face -- the tree talks */
+    glColor3f(0.05f, 0.05f, 0.05f);
+    glPushMatrix(); glTranslatef(-0.14f, 1.35f, 0.32f); draw_box(0.10f, 0.10f, 0.04f); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.14f, 1.35f, 0.32f); draw_box(0.10f, 0.10f, 0.04f); glPopMatrix();
+
+    glPushMatrix(); glTranslatef(0.55f, 1.60f, 0.55f); glRotatef(draw_pitch,1,0,0); glRotatef(-draw_recoil*10.0f,1,0,0); glScalef(0.66f,0.66f,0.66f); draw_gun_model(p->current_weapon); glPopMatrix();
+}
+
+static void draw_player_skin_pizza(PlayerState *p, float draw_pitch, float draw_recoil) {
+    float t = SDL_GetTicks() * 0.001f;
+    float wobble = sinf(t * 4.2f) * 0.04f;
+
+    /* crust base */
+    glPushMatrix();
+    glTranslatef(0.0f, 0.28f + wobble, 0.0f);
+    glColor3f(0.72f, 0.52f, 0.24f); draw_box(1.55f, 0.30f, 1.55f); draw_box_outline(1.55f, 0.30f, 1.55f);
+    /* sauce layer */
+    glColor3f(0.75f, 0.18f, 0.14f); glPushMatrix(); glTranslatef(0.0f, 0.16f, 0.0f); draw_box(1.30f, 0.10f, 1.30f); glPopMatrix();
+    /* cheese layer */
+    glColor3f(0.96f, 0.82f, 0.35f); glPushMatrix(); glTranslatef(0.0f, 0.24f, 0.0f); draw_box(1.30f, 0.10f, 1.30f); glPopMatrix();
+    glPopMatrix();
+
+    /* pepperoni dots */
+    glColor3f(0.62f, 0.14f, 0.10f);
+    float pep[3][2] = {{-0.35f,-0.30f},{0.30f,0.10f},{-0.05f,0.45f}};
+    for (int i = 0; i < 3; i++) {
+        glPushMatrix(); glTranslatef(pep[i][0], 0.34f + wobble, pep[i][1]); draw_box(0.20f, 0.06f, 0.20f); glPopMatrix();
+    }
+
+    /* face -- on fire, uninvestigated (docs/HEROES_VS0.md) */
+    glColor3f(0.05f, 0.05f, 0.05f);
+    glPushMatrix(); glTranslatef(-0.14f, 0.36f + wobble, 0.20f); draw_box(0.08f, 0.08f, 0.04f); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.14f, 0.36f + wobble, 0.20f); draw_box(0.08f, 0.08f, 0.04f); glPopMatrix();
+    glColor3f(0.95f, 0.45f, 0.10f);
+    glPushMatrix(); glTranslatef(0.0f, 0.50f + wobble, -0.30f); draw_box(0.20f, 0.30f, 0.10f); glPopMatrix();
+
+    glPushMatrix(); glTranslatef(0.90f, 0.42f, 0.70f); glRotatef(draw_pitch,1,0,0); glRotatef(-draw_recoil*10.0f,1,0,0); glScalef(0.55f,0.55f,0.55f); draw_gun_model(p->current_weapon); glPopMatrix();
+}
+
+static void draw_player_skin_tyler(PlayerState *p, float draw_pitch, float draw_recoil) {
+    float t = SDL_GetTicks() * 0.001f;
+    float sway = sinf(t * 2.2f) * 3.0f;
+    float stomp = sinf(t * 5.8f) * 0.06f;
+
+    /* plain documentarian outfit -- grey/beige, deliberately unremarkable */
+    glPushMatrix();
+    glTranslatef(0.0f, 0.92f + stomp, 0.0f);
+    glRotatef(sway * 0.3f, 0, 1, 0);
+    glColor3f(0.42f, 0.42f, 0.46f); draw_box(0.68f, 0.95f, 0.42f); draw_box_outline(0.68f, 0.95f, 0.42f);
+    glColor3f(0.58f, 0.54f, 0.46f); glPushMatrix(); glTranslatef(0.0f, -0.55f, 0.0f); draw_box(0.58f, 0.85f, 0.40f); draw_box_outline(0.58f, 0.85f, 0.40f); glPopMatrix();
+    glPopMatrix();
+
+    /* head -- plain, no distinguishing mark (Tyler never completes a self-defining sentence) */
+    glPushMatrix();
+    glTranslatef(0.0f, 1.72f + stomp * 0.5f, 0.0f);
+    glRotatef(draw_pitch * 0.4f, 1, 0, 0);
+    glColor3f(0.80f, 0.68f, 0.58f); draw_box(0.42f, 0.48f, 0.42f); draw_box_outline(0.42f, 0.48f, 0.42f);
+    glPopMatrix();
+
+    for (int i = 0; i < 2; i++) {
+        float side = i ? 1.0f : -1.0f;
+        glPushMatrix();
+        glTranslatef(side * 0.22f, 0.05f + fabsf(stomp), 0.0f);
+        glColor3f(0.30f, 0.30f, 0.34f); draw_box(0.24f, 0.90f, 0.28f); draw_box_outline(0.24f, 0.90f, 0.28f);
+        glPopMatrix();
+    }
+
+    glPushMatrix(); glTranslatef(0.64f, 1.03f, 0.57f); glRotatef(draw_pitch,1,0,0); glRotatef(-draw_recoil*10.0f,1,0,0); glScalef(0.72f,0.72f,0.72f); draw_gun_model(p->current_weapon); glPopMatrix();
+}
+
 static void draw_player_skin_emiree(PlayerState *p, float draw_pitch, float draw_recoil) {
     /* Emiree is the first PS2/FFXI-inspired premium low-poly skin pass: material-zoned, silhouette-first, with subtle authored glow accents. */
     PlayerAnimPose pose = compute_player_anim_pose(p);
@@ -4173,6 +4436,27 @@ void draw_player_3rd(PlayerState *p) {
                 break;
             case SKIN_REXX:
                 draw_player_skin_rexx(p, draw_pitch, draw_recoil);
+                break;
+            case SKIN_DUCK:
+                draw_player_skin_duck(p, draw_pitch, draw_recoil);
+                break;
+            case SKIN_UNICORN:
+                draw_player_skin_unicorn(p, draw_pitch, draw_recoil);
+                break;
+            case SKIN_GHOST:
+                draw_player_skin_ghost(p, draw_pitch, draw_recoil);
+                break;
+            case SKIN_FROG:
+                draw_player_skin_frog(p, draw_pitch, draw_recoil);
+                break;
+            case SKIN_TREE:
+                draw_player_skin_tree(p, draw_pitch, draw_recoil);
+                break;
+            case SKIN_PIZZA:
+                draw_player_skin_pizza(p, draw_pitch, draw_recoil);
+                break;
+            case SKIN_TYLER:
+                draw_player_skin_tyler(p, draw_pitch, draw_recoil);
                 break;
             case SKIN_BAT:
             default:
@@ -4884,6 +5168,12 @@ static void draw_chat_pane(unsigned int now_ms) {
 }
 
 void draw_hud(PlayerState *p) {
+    /* Pre-existing broken build, found live (S170-110): the MODE_STORY branch below calls
+       draw_tyler_cutscene()/cutscene_tick() with a `now_ms` that was never declared anywhere in
+       this function or its signature -- draw_hud() has exactly one caller (main()'s render
+       loop) and no header declaration, so a local SDL_GetTicks() here is the same pattern every
+       other timing-aware function in this file already uses, not a new convention. */
+    unsigned int now_ms = SDL_GetTicks();
     glDisable(GL_DEPTH_TEST);
     glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
     glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();

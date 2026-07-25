@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-07-25
+
+- feat(lobby): 7 new cosmetic player skins -- the "it's a duck" cast (Duck, Unicorn, Ghost, Frog,
+  Tree, Pizza) plus Tyler (S170-110). Founder: "add all the its a duck skins and tyler as skins to
+  og shankpit engine" -- explicitly the parent `SHANKPIT` engine, not the stripped-down esports
+  fork `shankpit-460`, which has already diverged and doesn't carry cosmetic ambitions forward.
+  All six non-Tyler skins draw from `TYLER/just_a_duck.md` (Jack's Factory), the same source
+  transcript REDGARDEN's own original hero roster came from. New `CharacterDefinition` entries +
+  dedicated `draw_player_skin_*()` functions in the same low-poly box-construction style as the
+  existing Rexx skin (proportions/colliders/sockets sized per creature, not copy-pasted). Also
+  fixed a pre-existing, unrelated broken build found live while verifying: `draw_hud()`'s
+  MODE_STORY branch called `draw_tyler_cutscene()`/`cutscene_tick()` with a `now_ms` that was
+  never declared anywhere in the function or its signature -- the file didn't compile at all
+  before this pass, confirmed via `git stash` (same error, unrelated to this commit). Fixed with a
+  local `SDL_GetTicks()` call, the same pattern every other timing-aware function in this file
+  already uses. Verified: `make lobby` clean, `apps/tests/test_player_model.c` 6/6 passing.
+
 ## 2026-07-23
 
 - Bedrock Racers vertical slice (Milestone 8): wires previously-dormant `server/system/vehicle_dynamics.go`/`vehicle_physics.go` (F1-tier grip/downforce/drift/lockup chassis) into a live game mode for the first time, via new `server/system/racing_mode.go` (checkpoint/lap detection, item pickup, ultimate charge — structured like `stadium_mode.go`). One F1 vehicle, one 8-checkpoint/3-lap track (`SCENE_RACE_TRACK`), 3 items (Boost/Shield/Trap) + 1 ultimate (Overdrive). New `PACKET_RACING_STATE` wire packet kept separate from the already-mismatched `PacketSnapshot` path. Client: `R` keybind + HUD lap/checkpoint/item/ultimate display in `apps2/lobby`. Fixed `net_connect()` to actually send the requested-mode byte (previously silently missing), which incidentally fixes CTF-over-network matchmaking as a side effect. Full spec: `docs2/specs/BEDROCK_RACERS_SPEC.md`.
