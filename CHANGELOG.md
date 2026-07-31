@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-07-31
+
+- feat(weapons): missile launcher (WPN_MISSILE=6) -- SHANKPIT's first travelling-projectile
+  base weapon; every prior weapon (Knife/Magnum/AR/Shotgun/Sniper/Katana) is a hitscan raycast.
+  S170-78 (EMILY/BACKLOG.md), founder real-time: "missile launcher into shankpit and sprint it
+  too i guess" -- a fictional in-game weapon in the same category as SHANKPIT's existing weapon
+  set, nothing further afield. Reuses the existing tested `Projectile`/`spawn_projectile`/
+  `update_projectiles` pipeline the sniper's storm-charge ultimate already exercises (bounce/
+  reflect off map geometry, radius hit-detect, out-of-bounds despawn) rather than inventing new
+  physics. Real stats: 130 dmg / 95 rof (slowest in the game) / 3-round clip / no spread
+  (`WPN_STATS[WPN_MISSILE]`, `protocol.h`). Adds real AOE splash damage on detonation
+  (`explode_splash()`, `local_game.h`) -- 100% damage at the epicenter, linear falloff to 40% at
+  `MISSILE_SPLASH_RADIUS` (6.0 units) -- gated by a new `Projectile.splash_radius` field that
+  defaults to 0 for every existing projectile spawn (storm-charge shot explicitly passes 0.0f),
+  so existing point-damage behavior is untouched. `MAX_WEAPONS` 6->7; ammo/reload/cooldown all
+  fall out of the existing generic non-knife/non-katana weapon-array logic for free.
+  `apps/tests/test_netcode.c`: new `test_missile_launcher_contract`, 6/6 passing (31/32 overall,
+  1 pre-existing unrelated failure -- PACKET_DISCONNECT type mismatch, confirmed present before
+  this change too). `make server` and `make lobby` both clean, zero new warnings.
+  Scoped as Sprint 1 (server-authoritative firing + splash + tests) only -- client-side viewmodel
+  render, HUD icon, weapon-select keybind (7), pickup spawns, audio SFX, and bot AI weapon choice
+  are real, visible follow-up gaps (same shape as every other weapon's client integration in
+  `apps/lobby/src/main.c`/`packages/audio/audio.c`/`packages/simulation/story_ai.c`) left for a
+  later sprint since they're not something I can verify without running the SDL2 client visually.
+
 ## 2026-07-25
 
 - feat(lobby): 7 new cosmetic player skins -- the "it's a duck" cast (Duck, Unicorn, Ghost, Frog,

@@ -2704,7 +2704,7 @@ void phys_respawn(PlayerState *p, unsigned int now) {
     }
 }
 
-static inline void spawn_projectile(Projectile *projectiles, PlayerState *p, int damage, int bounces, float speed_mult) {
+static inline void spawn_projectile(Projectile *projectiles, PlayerState *p, int damage, int bounces, float speed_mult, float splash_radius) {
     for(int i=0; i<MAX_PROJECTILES; i++) {
         if (!projectiles[i].active) {
             Projectile *proj = &projectiles[i];
@@ -2713,6 +2713,7 @@ static inline void spawn_projectile(Projectile *projectiles, PlayerState *p, int
             proj->damage = damage;
             proj->bounces_left = bounces;
             proj->scene_id = (unsigned char)p->scene_id;
+            proj->splash_radius = splash_radius;
 
             float r = -p->yaw * 0.0174533f; float rp = p->pitch * 0.0174533f;
             float speed = 4.0f * speed_mult;
@@ -2768,7 +2769,7 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
     if (shoot && p->attack_cooldown == 0 && p->reload_timer == 0) {
         if (p->storm_charges > 0 && w == WPN_SNIPER) {
             int storm_damage = (int)(WPN_STATS[w].dmg * 0.7f);
-            spawn_projectile(projectiles, p, storm_damage, 1, 1.5f);
+            spawn_projectile(projectiles, p, storm_damage, 1, 1.5f, 0.0f);
             p->storm_charges--;
             p->attack_cooldown = 8;
             p->recoil_anim = 0.5f;
@@ -2789,7 +2790,11 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
                 phys_try_melee_strike(p, targets, WPN_STATS[w].dmg, 10, 1, now_ms, respawn_delay_ms);
                 return;
             }
-            
+            if (w == WPN_MISSILE) {
+                spawn_projectile(projectiles, p, WPN_STATS[w].dmg, 0, 1.0f, MISSILE_SPLASH_RADIUS);
+                return;
+            }
+
             float r = -p->yaw * 0.0174533f; float rp = p->pitch * 0.0174533f;
             float dx = sinf(r) * cosf(rp); float dy = sinf(rp); float dz = -cosf(r) * cosf(rp);
             if (WPN_STATS[w].spr > 0) {

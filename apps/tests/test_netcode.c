@@ -123,10 +123,19 @@ void test_scene_fields() {
 
 void test_katana_contract() {
     printf("--- Testing Katana Contract ---\n");
-    ASSERT_EQ(MAX_WEAPONS, 6, "MAX_WEAPONS includes katana");
     ASSERT_EQ(WPN_KATANA, 5, "Katana weapon enum appended");
     ASSERT_EQ(WPN_STATS[WPN_KATANA].ammo_max, 0, "Katana uses no ammo");
     ASSERT_TRUE(sizeof(((PlayerState*)0)->dash_hit_targets) / sizeof(int) == 8, "Dash hit registry stored in PlayerState");
+}
+
+void test_missile_launcher_contract() {
+    printf("--- Testing Missile Launcher Contract ---\n");
+    ASSERT_EQ(MAX_WEAPONS, 7, "MAX_WEAPONS includes missile launcher");
+    ASSERT_EQ(WPN_MISSILE, 6, "Missile launcher weapon enum appended after katana");
+    ASSERT_TRUE(WPN_STATS[WPN_MISSILE].ammo_max > 0, "Missile launcher carries real ammo (unlike knife/katana)");
+    ASSERT_TRUE(WPN_STATS[WPN_MISSILE].dmg > WPN_STATS[WPN_SNIPER].dmg, "Missile launcher hits harder than a sniper body shot");
+    ASSERT_TRUE(MISSILE_SPLASH_RADIUS > 0.0f, "Missile launcher has a real splash radius");
+    ASSERT_TRUE(sizeof(((Projectile*)0)->splash_radius) > 0, "Projectile carries a splash_radius field");
 }
 
 int main() {
@@ -137,8 +146,9 @@ int main() {
     test_button_bits();
     test_scene_fields();
     test_katana_contract();
+    test_missile_launcher_contract();
     test_rotation_wire_roundtrip();
-    
+
     printf("\n--------------------------------------\n");
     printf("SUMMARY: %d/%d Tests Passed.\n", tests_passed, tests_run);
     return (tests_passed == tests_run) ? 0 : 1;

@@ -9,7 +9,7 @@
 #endif
 
 #define MAX_CLIENTS 70
-#define MAX_WEAPONS 6
+#define MAX_WEAPONS 7
 #define MAX_PROJECTILES 1024
 #define MAX_HELICOPTERS 8
 #define MAX_BUGGIES 16
@@ -67,10 +67,20 @@ typedef struct {
 #define WPN_SHOTGUN 3
 #define WPN_SNIPER 4
 #define WPN_KATANA 5
+#define WPN_MISSILE 6
 
-#define RELOAD_TIME_FULL 60      
-#define RELOAD_TIME_TACTICAL 42  
-#define SHIELD_REGEN_DELAY 180 
+#define RELOAD_TIME_FULL 60
+#define RELOAD_TIME_TACTICAL 42
+#define SHIELD_REGEN_DELAY 180
+
+/* Missile launcher (WPN_MISSILE) is SHANKPIT's first travelling-projectile
+ * base weapon -- every other weapon is a hitscan raycast (see
+ * update_weapons() in physics.h). It reuses the same Projectile/
+ * spawn_projectile/update_projectiles pipeline the sniper's storm-charge
+ * ultimate already exercises, plus a real splash-damage detonation
+ * (explode_splash() in local_game.h) gated by Projectile.splash_radius so
+ * the storm-charge shot (splash_radius left at 0) is untouched. */
+#define MISSILE_SPLASH_RADIUS 6.0f
 
 typedef struct {
     int active;
@@ -139,12 +149,13 @@ typedef struct {
 } WeaponStats;
 
 static const WeaponStats WPN_STATS[MAX_WEAPONS] = {
-    {WPN_KNIFE,   200, 20, 1, 0.0f,  0},   
-    {WPN_MAGNUM,  45, 25, 1, 0.0f,  8},   
-    {WPN_AR,      20, 6,  1, 0.04f, 30},  
-    {WPN_SHOTGUN, 128, 17, 8, 0.15f, 8},   
-    {WPN_SNIPER,  101, 52, 1, 0.0f,  5},   
-    {WPN_KATANA,   40, 28, 1, 0.0f,  0}    
+    {WPN_KNIFE,   200, 20, 1, 0.0f,  0},
+    {WPN_MAGNUM,  45, 25, 1, 0.0f,  8},
+    {WPN_AR,      20, 6,  1, 0.04f, 30},
+    {WPN_SHOTGUN, 128, 17, 8, 0.15f, 8},
+    {WPN_SNIPER,  101, 52, 1, 0.0f,  5},
+    {WPN_KATANA,   40, 28, 1, 0.0f,  0},
+    {WPN_MISSILE, 130, 95, 1, 0.0f,  3}
 };
 
 typedef struct {
@@ -152,6 +163,7 @@ typedef struct {
     int bounces_left;
     int damage;
     unsigned char scene_id;
+    float splash_radius; /* 0 = point damage (existing behavior); >0 = AOE detonation, see explode_splash() */
 } Projectile;
 
 typedef struct {

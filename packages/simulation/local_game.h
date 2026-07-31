@@ -1456,6 +1456,30 @@ static void apply_projectile_damage(PlayerState *owner, PlayerState *target, int
     }
 }
 
+/* AOE detonation for splash-radius projectiles (currently only WPN_MISSILE).
+ * Point-damage weapons (hitscan storm-charge sniper shot) never set
+ * splash_radius, so they never reach this path -- see update_projectiles(). */
+static void explode_splash(float ex, float ey, float ez, unsigned char scene_id, int owner_id, int damage, float splash_radius, unsigned int now_ms) {
+    PlayerState *owner = NULL;
+    if (owner_id >= 0 && owner_id < MAX_CLIENTS && local_state.players[owner_id].active) {
+        owner = &local_state.players[owner_id];
+    }
+    for (int t = 0; t < MAX_CLIENTS; t++) {
+        PlayerState *target = &local_state.players[t];
+        if (!target->active || target->state == STATE_DEAD) continue;
+        if (target->scene_id != scene_id) continue;
+        float dx = target->x - ex;
+        float dy = (target->y + EYE_HEIGHT) - ey;
+        float dz = target->z - ez;
+        float dist = sqrtf(dx * dx + dy * dy + dz * dz);
+        if (dist > splash_radius) continue;
+        /* linear falloff: 100% damage at the epicenter, 40% at the rim */
+        int splash_damage = (int)((float)damage * (1.0f - (dist / splash_radius) * 0.6f));
+        if (splash_damage <= 0) continue;
+        apply_projectile_damage(owner, target, splash_damage, now_ms, dx, dz);
+    }
+}
+
 static void update_projectiles(unsigned int now_ms) {
     for (int i=0; i<MAX_PROJECTILES; i++) {
         Projectile *p = &local_state.projectiles[i];
@@ -1474,13 +1498,17 @@ static void update_projectiles(unsigned int now_ms) {
                 p->x = hit_x; p->y = hit_y; p->z = hit_z;
                 p->bounces_left--;
             } else {
+                p->x = hit_x; p->y = hit_y; p->z = hit_z;
+                if (p->splash_radius > 0.0f) {
+                    explode_splash(p->x, p->y, p->z, p->scene_id, p->owner_id, p->damage, p->splash_radius, now_ms);
+                }
                 p->active = 0;
             }
         } else {
             p->x = next_x; p->y = next_y; p->z = next_z;
         }
 
-        if (p->active) {
+        if (p->active && p->splash_radius <= 0.0f) {
             for (int t = 0; t < MAX_CLIENTS; t++) {
                 PlayerState *target = &local_state.players[t];
                 if (!target->active || target->state == STATE_DEAD) continue;
@@ -1497,6 +1525,22 @@ static void update_projectiles(unsigned int now_ms) {
                         owner = &local_state.players[p->owner_id];
                     }
                     apply_projectile_damage(owner, target, p->damage, now_ms, p->vx, p->vz);
+                    p->active = 0;
+                    break;
+                }
+            }
+        } else if (p->active) {
+            /* splash weapons detonate on proximity, not just direct contact */
+            for (int t = 0; t < MAX_CLIENTS; t++) {
+                PlayerState *target = &local_state.players[t];
+                if (!target->active || target->state == STATE_DEAD) continue;
+                if (t == p->owner_id) continue;
+                if (target->scene_id != p->scene_id) continue;
+                float dx = target->x - p->x;
+                float dy = (target->y + EYE_HEIGHT) - p->y;
+                float dz = target->z - p->z;
+                if (dx * dx + dy * dy + dz * dz < 4.0f) {
+                    explode_splash(p->x, p->y, p->z, p->scene_id, p->owner_id, p->damage, p->splash_radius, now_ms);
                     p->active = 0;
                     break;
                 }
