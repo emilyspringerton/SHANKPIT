@@ -5380,8 +5380,18 @@ void draw_hud(PlayerState *p) {
     glRectf(x0, y_shield0, x0 + (p->shield * (x1 - x0) / 100.0f), y_shield1);
     
     if (p->in_vehicle) {
+        /* Real bug found live (2026-08-04, founder: "hellicopter... it dont quite work"): each
+           glyph is a 7-row bitmap cell sized by the draw_string `size` param (turtle_text.h's own
+           turtle_draw_glyph, `cell = pen->scale`, drawn over 7 rows) -- so a size-12 line is a
+           real ~84px tall, but the status line below it was only offset by 14px, guaranteeing the
+           two always overlap into unreadable garbage (confirmed live via screenshot: "HELI
+           ONLINE" and "HP:.. ALT:.." rendered on top of each other). Vehicle flight itself was
+           never broken -- this HUD overlap was the whole "close but doesn't work" feeling. Gap is
+           now derived from the real glyph height (7 * scale) instead of a magic-number offset
+           that happened to fit a different scale once and silently stopped fitting. */
+        float heli_online_scale = vs0_art_direction_enabled ? 8.0f : 12.0f;
         glColor3f(0.0f, 1.0f, 0.0f);
-        draw_string(p->vehicle_type == VEH_HELICOPTER ? "HELI ONLINE" : "BUGGY ONLINE", 50, 112, vs0_art_direction_enabled ? 8 : 12);
+        draw_string(p->vehicle_type == VEH_HELICOPTER ? "HELI ONLINE" : "BUGGY ONLINE", 50, 112, heli_online_scale);
         char style_buf[96];
         if (p->vehicle_type == VEH_HELICOPTER) {
             snprintf(style_buf, sizeof(style_buf), "HP:%d ALT:%.1f", p->health, p->y);
@@ -5392,7 +5402,7 @@ void draw_hud(PlayerState *p) {
                      vehicle_worklights_enabled ? "ON" : "OFF");
         }
         glColor3f(0.95f, 0.55f, 0.1f);
-        draw_string(style_buf, 50, 98, vs0_art_direction_enabled ? 4 : 6);
+        draw_string(style_buf, 50, 112 - (7.0f * heli_online_scale) - 6.0f, vs0_art_direction_enabled ? 4 : 6);
     }
     /* Removed bottom-of-screen debug toggle readouts from player HUD.
        Debug toggles and key handling remain active for internal use. */
