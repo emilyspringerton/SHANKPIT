@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-04
+
+- fix(ci): add missing `cutscene.c`/`audio.c` to the Windows client build. Founder: "shankpit og
+  engine is failing build on github" -> "pls fix". Every real CI run since build #721
+  (2026-06-11) had failed at "Build Windows Client" with undefined references to
+  `cutscene_*`/`audio_*` symbols. Root cause: the cutscene system (`52e321e`) and spatial audio
+  engine (`767bbe7`) added real new source files `apps/lobby/src/main.c` now calls into, but the
+  CI workflow's hardcoded mingw build command was never updated to compile them -- a stale file
+  list, not a code bug. Confirmed locally by reproducing the exact same build command natively
+  (gcc, no mingw toolchain available in this environment) -- got the identical undefined-reference
+  errors, and adding both files fixed it cleanly. Same fix in both `release.yml` and `tests.yml`
+  (duplicated build command). Linux Server build untouched -- confirmed it never references these
+  symbols.
+
 ## 2026-07-31
 
 - feat(weapons): missile launcher (WPN_MISSILE=6) -- SHANKPIT's first travelling-projectile
