@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-08-04 (2)
+
+- fix(vehicles): stop helicopter HUD text from overlapping into garbage. Founder: "get the
+  hellicopter working in og engine shankpit currently it dont quite work" -> "its close i think
+  but it dont work". Live-tested under Xvfb (local mode, real enter->fly->hover sequence): flight
+  physics were never broken -- clean liftoff, real thrust, rock-solid hover, all confirmed via
+  live position/velocity logging. The real bug was purely visual: "HELI ONLINE" (a real ~84px-tall
+  string at scale 12) overlapped the HP/ALT status line 14px below it into unreadable garbage
+  (confirmed via screenshot) -- that's what actually felt broken. Gap is now derived from the real
+  glyph height instead of a magic-number offset.
+
 ## 2026-08-04
 
 - fix(ci): add missing `cutscene.c`/`audio.c` to the Windows client build. Founder: "shankpit og
