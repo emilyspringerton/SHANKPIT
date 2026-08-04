@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-08-04 (3)
+- feat(input): real Xbox controller support -- dual-stick move/look, pressure-sensitive fire off real trigger travel, A/B/X/Y/RB mapped to jump/crouch/reload/use/ability. Keyboard/mouse remain the real fallback. gcc clean, smoke-tested live under Xvfb.
+
 ## 2026-08-04 (2)
 
 - fix(vehicles): stop helicopter HUD text from overlapping into garbage. Founder: "get the
