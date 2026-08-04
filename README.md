@@ -1,5 +1,13 @@
 # SHANKPIT Game Architecture Document
 
+## Current Status (2026-08-04)
+
+CI is green again (`ShankPit Factory` #784+) after a real fix: the cutscene system and spatial
+audio engine (both real, shipped features) had never been added to the Windows client's hardcoded
+mingw build command, so every CI run since build #721 failed with undefined references. Also
+fixed: helicopter HUD text was overlapping into unreadable garbage — the real flight physics
+(enter/fly/hover) were never actually broken, just unreadable. See `CHANGELOG.md`.
+
 ## What SHANKPIT is right now
 
 At a high level, SHANKPIT currently includes:
