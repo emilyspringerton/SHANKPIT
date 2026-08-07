@@ -42,6 +42,7 @@
 #include "../../../packages/render/retro_sky.h"
 #include "../../../packages/render/retro_lighting.h"
 #include "../../../packages/audio/audio.h"
+#include "../../../packages/render/gl_shader.h"
 
 #ifndef NET_VERBOSE_LOG
 #define NET_VERBOSE_LOG 0
@@ -7262,6 +7263,91 @@ static void buggy_advance_remote_positions(unsigned int now_ms) {
     }
 }
 
+/* ── S144-02 Stage A: shader/VBO pipeline proof ──────────────────────────────
+ * SHANKPIT's first shader-based draw call, additive to the existing
+ * fixed-function rendering (nothing above this point is touched). Goal:
+ * prove the new packages/render/gl_shader.c plumbing actually draws
+ * correct, visible pixels through a real GLSL program + VAO/VBO, verified
+ * via a real Xvfb screenshot, before Stage B ports GOLDENBAND's skinned rig
+ * onto this foundation. Deliberately bypasses the legacy camera matrix
+ * stack entirely (identity MVP, vertices given directly in clip space) so
+ * this proof has zero dependency on -- and zero risk of disturbing -- any
+ * existing camera/object transform code. A small bright-magenta square in
+ * the screen's top-left corner, unmistakable in a screenshot and never
+ * confusable with any existing world geometry. */
+
+static GLuint g_stageA_program = 0;
+static DynamicVBO g_stageA_vbo;
+static int g_stageA_ready = 0;
+
+static const char *g_stageA_vs_src =
+    "#version 120\n"
+    "attribute vec3 a_pos;\n"
+    "attribute vec3 a_normal;\n"
+    "uniform mat4 u_mvp;\n"
+    "void main() {\n"
+    "    gl_Position = u_mvp * vec4(a_pos, 1.0);\n"
+    "}\n";
+
+static const char *g_stageA_fs_src =
+    "#version 120\n"
+    "uniform vec4 u_color;\n"
+    "void main() {\n"
+    "    gl_FragColor = u_color;\n"
+    "}\n";
+
+static void stageA_shader_init(void) {
+    if (!gl_shader_load_extensions()) {
+        SDL_Log("S144-02 Stage A: GL extension loading failed -- shader path disabled, fixed-function rendering unaffected");
+        return;
+    }
+    GLuint vs = gl_compile_shader(GL_VERTEX_SHADER, g_stageA_vs_src);
+    GLuint fs = gl_compile_shader(GL_FRAGMENT_SHADER, g_stageA_fs_src);
+    g_stageA_program = gl_link_program(vs, fs);
+    if (!g_stageA_program) {
+        SDL_Log("S144-02 Stage A: shader link failed -- shader path disabled");
+        return;
+    }
+    if (!gl_dynamic_vbo_init(&g_stageA_vbo, 6)) {
+        SDL_Log("S144-02 Stage A: dynamic VBO init failed -- shader path disabled");
+        return;
+    }
+    g_stageA_ready = 1;
+    SDL_Log("S144-02 Stage A: shader/VBO pipeline ready");
+}
+
+/* Draws one small magenta square (2 triangles, 6 verts, pos+normal each)
+ * directly in clip space via the new shader+VBO path. Identity MVP -- no
+ * camera dependency by design (see module comment above). */
+static void stageA_shader_draw_proof(void) {
+    if (!g_stageA_ready) return;
+
+    static const float identity_mvp[16] = {
+        1,0,0,0,  0,1,0,0,  0,0,1,0,  0,0,0,1
+    };
+    /* Top-left corner of clip space: x in [-1.0,-0.7], y in [0.7,1.0]. */
+    static const float verts[6 * GL_SHADER_VBO_FLOATS_PER_VERT] = {
+        -1.0f,  0.7f, 0.0f,   0,0,1,
+        -0.7f,  0.7f, 0.0f,   0,0,1,
+        -0.7f,  1.0f, 0.0f,   0,0,1,
+        -1.0f,  0.7f, 0.0f,   0,0,1,
+        -0.7f,  1.0f, 0.0f,   0,0,1,
+        -1.0f,  1.0f, 0.0f,   0,0,1,
+    };
+    static const float magenta[4] = {1.0f, 0.0f, 1.0f, 1.0f};
+
+    GLboolean depth_was_enabled = glIsEnabled(GL_DEPTH_TEST);
+    glDisable(GL_DEPTH_TEST); /* always-on-top corner marker, matches an HUD element's intent */
+
+    gl_use_program(g_stageA_program);
+    gl_uniform_matrix4fv(gl_get_uniform_location(g_stageA_program, "u_mvp"), identity_mvp);
+    gl_uniform4fv(gl_get_uniform_location(g_stageA_program, "u_color"), magenta);
+    gl_dynamic_vbo_draw(&g_stageA_vbo, verts, 6, GL_TRIANGLES);
+    gl_use_program(0);
+
+    if (depth_was_enabled) glEnable(GL_DEPTH_TEST);
+}
+
 int main(int argc, char* argv[]) {
     for(int i=1; i<argc; i++) {
         if(strcmp(argv[i], "--host") == 0 && i+1<argc) {
@@ -7282,6 +7368,7 @@ int main(int argc, char* argv[]) {
         if (SDL_IsGameController(gi)) { g_shank_pad = SDL_GameControllerOpen(gi); if (g_shank_pad) break; }
     }
     SDL_GL_CreateContext(win);
+    stageA_shader_init();
     proctex_init();
     proc_tex_create(&g_vehicle_noise_tex, 64, 64);
     proctex_make_noise_rgba(&g_vehicle_noise_tex, 64, 64, g_vehicle_style.seed);
@@ -7889,6 +7976,7 @@ int main(int argc, char* argv[]) {
             blended.y = render_prev_players[render_pid].y + (render_p->y - render_prev_players[render_pid].y) * (float)alpha;
             blended.z = render_prev_players[render_pid].z + (render_p->z - render_prev_players[render_pid].z) * (float)alpha;
             draw_scene(&blended);
+            stageA_shader_draw_proof();
             SDL_GL_SwapWindow(win);
         }
     }
