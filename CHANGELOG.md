@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-08-09
+- docs(northstar): promote 'Tyler Teaches Typing' from a blog-post bit to a real northstar (docs2/NORTHSTAR_TYLER_TEACHES_TYPING.md). Grounded in real code: packages/simulation/cutscene.c's CutsceneState/cutscene_tick is purely timer-driven, no keystroke-matching loop exists yet -- that's VS0's real gap to build. Concrete implementation plan mapped onto CutsceneSlide/draw_tyler_cutscene reuse. Flagged, not decided: whether VS0 replaces the real LOBBY_STORY_CAVE ('CAVE-001') menu entry or adds an adjacent one -- founder decision needed before implementation. Not implemented this pass. (sess-20260809-1420-e9d3d7f8)
 
 - fix(ci): 修復 Windows client 交叉編譯連結失敗 — S144-02 新增的 packages/render/gl_shader.c 從未加進 tests.yml/release.yml 硬編碼的原始碼清單，導致 apps/lobby/src/main.c 呼叫的 gl_shader_* 符號在連結階段找不到定義（Makefile 的 LOBBY_SRC 有更新，但 CI 走的是獨立的 gcc 呼叫，兩邊沒同步） (sess-20260809-1420-e9d3d7f8)
 
