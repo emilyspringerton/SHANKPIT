@@ -37,6 +37,7 @@
 #include "../../../packages/common/shared_movement.h"
 #include "../../../packages/common/net_sim.h"
 #include "../../../packages/simulation/cutscene.h"
+#include "../../../packages/simulation/typing_lesson.h"
 #include "../../../packages/simulation/local_game.h"
 #include "../../../packages/render/proc_tex.h"
 #include "../../../packages/render/retro_sky.h"

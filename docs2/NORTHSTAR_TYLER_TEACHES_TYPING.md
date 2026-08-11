@@ -146,9 +146,29 @@ before VS0 implementation starts.
   founder before implementation starts, not assumed.
 - The build is clean. The build is always clean first. Then everything else.
 
-## Not Yet Started
+## Status (2026-08-11)
 
-VS0 implementation itself — this pass is the northstar promotion only, per the founder's own
-phrasing ("find the northstar... and promote it"). Real next step: confirm the menu-placement
-question above, then implement `typing_lesson.h`/`.c` + the `draw_tyler_cutscene` color-by-
-correctness change + the source-text slide table pulled from real episode dialogue.
+**Menu-placement question resolved**: founder confirmed **replace `LOBBY_STORY_CAVE`** —
+matches the original literal phrasing. CAVE-001 stays in the code but becomes unreachable from
+the main menu once the wiring below lands.
+
+**Logic layer DONE**: `packages/simulation/typing_lesson.h`/`.c` — `TypingLessonState`,
+`typing_lesson_start`/`typing_lesson_on_text`/`typing_lesson_advance`, real WPM/accuracy
+calculation, miss-flash (wrong key holds position, doesn't skip — the house choice this doc
+originally flagged), and the VS0 slide table (13 real lines, verbatim from
+`TYLER/episodes/s01e01_pilot.md`/`s01e02_school.md`, matching the acceptance criteria exactly).
+Wired into the `Makefile`'s `LOBBY_SRC` so it compiles into `shank_lobby` — `make lobby` is
+clean. Not yet called from anywhere (dead code linked in, on purpose, until the menu wiring
+below lands) — building and testing the logic layer in isolation first, rather than landing a
+big-bang change that's hard to bisect if something's wrong.
+
+**Not yet done — the real next step**: the actual menu/render wiring in `apps/lobby/src/main.c`
+— relabel/repoint the `LOBBY_STORY_CAVE` menu entry, wire `SDL_TEXTINPUT` events to
+`typing_lesson_on_text` and SPACE/ENTER to `typing_lesson_advance` (mirroring how
+`cutscene_advance` is already wired into the same event path), and the `draw_tyler_cutscene`
+color-by-correctness rendering change. Deliberately not attempted in the same pass as the logic
+layer above — `apps/lobby/src/main.c` is a large (~8700 line), live-tested, unfamiliar-to-this-
+session client with no display available here to verify interactively, and the existing
+STORY/STORY_CAVE `app_state`/event-dispatch control flow needs to be read and understood
+carefully before touching it, not guessed at under time pressure. Real, scoped follow-up work,
+not abandoned.
