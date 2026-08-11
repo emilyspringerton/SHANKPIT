@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-11
+
+- Tyler Teaches Typing VS0：邏輯層完成 + menu 決策確認（取代 CAVE-001）；UI 接線是下一步 (sess-20260810-0505-a53abca2)
+
+
 ## 2026-08-09
 - docs(northstar): promote 'Tyler Teaches Typing' from a blog-post bit to a real northstar (docs2/NORTHSTAR_TYLER_TEACHES_TYPING.md). Grounded in real code: packages/simulation/cutscene.c's CutsceneState/cutscene_tick is purely timer-driven, no keystroke-matching loop exists yet -- that's VS0's real gap to build. Concrete implementation plan mapped onto CutsceneSlide/draw_tyler_cutscene reuse. Flagged, not decided: whether VS0 replaces the real LOBBY_STORY_CAVE ('CAVE-001') menu entry or adds an adjacent one -- founder decision needed before implementation. Not implemented this pass. (sess-20260809-1420-e9d3d7f8)
 
