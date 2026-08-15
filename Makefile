@@ -6,13 +6,13 @@ BIN_DIR  := bin
 
 # ---- Flags ----
 CFLAGS   := -O2 -Wall -D_REENTRANT
-INCLUDES := -Ipackages/common -Ipackages/simulation -Ipackages/render -Ipackages/world
+INCLUDES := -Ipackages/common -Ipackages/simulation -Ipackages/render -Ipackages/world -Ipackages/goldenband
 
 LIBS_GL  := -lSDL2 -lGL -lGLU -lm
 LIBS_M   := -lm
 
 # ---- Sources ----
-LOBBY_SRC    := apps/lobby/src/main.c packages/simulation/story_ai.c packages/simulation/cutscene.c packages/simulation/typing_lesson.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/world/terrain.c packages/audio/audio.c
+LOBBY_SRC    := apps/lobby/src/main.c packages/simulation/story_ai.c packages/simulation/cutscene.c packages/simulation/typing_lesson.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/world/terrain.c packages/audio/audio.c packages/goldenband/gband.c packages/goldenband/gskel.c packages/goldenband/gmesh.c packages/goldenband/gband_mesh_rig.c
 SERVER_SRC   := apps/server/src/main.c packages/simulation/story_ai.c packages/world/terrain.c
 SERVERCTL_SRC:= apps/server/serverctl.c
 

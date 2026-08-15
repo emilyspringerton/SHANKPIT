@@ -44,6 +44,99 @@
 #include "../../../packages/render/retro_lighting.h"
 #include "../../../packages/audio/audio.h"
 #include "../../../packages/render/gl_shader.h"
+#include "../../../packages/goldenband/gband_mesh_rig.h"
+
+/* ── S144-02 Stage B: GOLDENBAND skinned mesh for Tyler ──────────────────────
+ * Ports REDGARDEN/GFD's S144-07 gband_mesh_rig onto the shader/VBO
+ * foundation Stage A proved (packages/render/gl_shader.c). Supersedes
+ * Stage A's magenta-square proof -- that code's only job was showing the
+ * new shader pipeline draws real pixels; a real skinned character now does
+ * that job better, so the proof code is replaced rather than kept
+ * alongside it. Falls back to the pre-existing procedural box body
+ * (draw_player_skin_tyler's own fallback branch) whenever the shader or
+ * asset fails to load -- never draws nothing. Declared up here (rather
+ * than near main(), where Stage A's version lived) because
+ * draw_player_skin_tyler and draw_scene, both defined earlier in this file
+ * than main(), need to reference it. */
+
+static GLuint g_gband_program = 0;
+static DynamicVBO g_gband_vbo;
+static int g_gband_shader_ready = 0;
+static int g_gband_mesh_ready = 0;
+
+/* Per-frame camera-only view*projection, captured once in draw_scene right
+ * after the legacy fixed-function camera (gluPerspective/gluLookAt) is set
+ * up for the frame -- gband_mesh_rig_draw bakes each hero's own world
+ * transform into its skin matrices already (see its own "model matrix...
+ * is identity" comment), so this must be pure camera, not include any
+ * per-player glTranslatef done later in the same frame. */
+static Mat4 g_gband_frame_vp;
+static Uint32 g_gband_last_ms = 0;
+static float g_gband_frame_dt_ms = 16.0f;
+
+static const char *g_gband_vs_src =
+    "#version 120\n"
+    "attribute vec3 a_pos;\n"
+    "attribute vec3 a_normal;\n"
+    "uniform mat4 u_mvp;\n"
+    "varying vec3 v_normal;\n"
+    "void main() {\n"
+    "    v_normal = a_normal;\n"
+    "    gl_Position = u_mvp * vec4(a_pos, 1.0);\n"
+    "}\n";
+
+static const char *g_gband_fs_src =
+    "#version 120\n"
+    "uniform vec4 u_color;\n"
+    "varying vec3 v_normal;\n"
+    "void main() {\n"
+    "    vec3 light_dir = normalize(vec3(0.4, 0.8, 0.3));\n"
+    "    float ndotl = max(dot(normalize(v_normal), light_dir), 0.0);\n"
+    "    float lit = 0.35 + 0.65 * ndotl;\n" /* ambient floor + diffuse, matches other skins' flat-shaded look */
+    "    gl_FragColor = vec4(u_color.rgb * lit, u_color.a);\n"
+    "}\n";
+
+static void gband_shader_and_mesh_init(void) {
+    if (!gl_shader_load_extensions()) {
+        SDL_Log("S144-02 Stage B: GL extension loading failed -- gband mesh disabled, Tyler uses box body");
+        return;
+    }
+    GLuint vs = gl_compile_shader(GL_VERTEX_SHADER, g_gband_vs_src);
+    GLuint fs = gl_compile_shader(GL_FRAGMENT_SHADER, g_gband_fs_src);
+    g_gband_program = gl_link_program(vs, fs);
+    if (!g_gband_program) {
+        SDL_Log("S144-02 Stage B: shader link failed -- gband mesh disabled, Tyler uses box body");
+        return;
+    }
+    /* tyler_body.gmesh is 974 tris / 2922 flattened verts; 4096 leaves
+       headroom for a future asset swap without silently dropping draws. */
+    if (!gl_dynamic_vbo_init(&g_gband_vbo, 4096)) {
+        SDL_Log("S144-02 Stage B: dynamic VBO init failed -- gband mesh disabled, Tyler uses box body");
+        return;
+    }
+    g_gband_shader_ready = 1;
+
+    g_gband_mesh_ready = gband_mesh_rig_init("assets/goldenband", "tyler_body");
+    if (!g_gband_mesh_ready) {
+        SDL_Log("S144-02 Stage B: tyler_body asset load failed -- Tyler uses box body");
+        return;
+    }
+    SDL_Log("S144-02 Stage B: GOLDENBAND skinned mesh ready");
+}
+
+static void gband_draw_skinned(const float *verts6, int vert_count, const Mat4 *mvp, const Mat4 *model) {
+    (void)model; /* always identity per gband_mesh_rig_draw's own contract -- world transform is pre-baked into verts6 */
+    /* Plain documentarian grey, same tone as the box body's own torso color
+       (0.42/0.42/0.46) -- single-material first pass, matches this item's
+       "one character, one idle, one walk" scope; per-part palette is
+       future work, same as the box body never had one either. */
+    static const float base_color[4] = {0.42f, 0.42f, 0.46f, 1.0f};
+    gl_use_program(g_gband_program);
+    gl_uniform_matrix4fv(gl_get_uniform_location(g_gband_program, "u_mvp"), mvp->m);
+    gl_uniform4fv(gl_get_uniform_location(g_gband_program, "u_color"), base_color);
+    gl_dynamic_vbo_draw(&g_gband_vbo, verts6, vert_count, GL_TRIANGLES);
+    gl_use_program(0);
+}
 
 #ifndef NET_VERBOSE_LOG
 #define NET_VERBOSE_LOG 0
@@ -4062,31 +4155,55 @@ static void draw_player_skin_pizza(PlayerState *p, float draw_pitch, float draw_
 }
 
 static void draw_player_skin_tyler(PlayerState *p, float draw_pitch, float draw_recoil) {
-    float t = SDL_GetTicks() * 0.001f;
-    float sway = sinf(t * 2.2f) * 3.0f;
-    float stomp = sinf(t * 5.8f) * 0.06f;
+    if (g_gband_mesh_ready) {
+        /* S144-02 Stage B: real skinned mesh, drawn in absolute world space
+           (bypasses the caller's legacy glPushMatrix/glTranslatef(p->x,...)
+           stack entirely -- gband_mesh_rig_draw bakes p's own position/
+           facing into the skin matrices itself, using g_gband_frame_vp,
+           the pure-camera matrix captured once in draw_scene before any
+           per-player transform was applied). Facing: the box body applies
+           glRotatef(180-draw_yaw) because it's authored facing +Z but the
+           sim's yaw=0 means forward is -Z (see draw_player_3rd's own
+           comment) -- tyler_body's BVH-imported bind pose turned out to
+           already face -Z unrotated (facing_rad=0), a 180-degree different
+           reference than the box's own +Z-authored bind pose. Verified live
+           via Xvfb screenshot at yaw=0/draw_yaw=0: the naive "same formula
+           as the box" guess rendered the mesh's face toward the camera,
+           but the box (known-correct) shows its BACK to the camera at that
+           same yaw -- exactly the 180-degree mismatch this -draw_yaw
+           (no +180 term) formula corrects. Re-verified after the fix:
+           mesh now shows its back at yaw=0, matching the box. */
+        float draw_yaw = norm_yaw_deg(p->yaw);
+        float facing_rad = -draw_yaw * 0.0174533f;
+        gband_mesh_rig_draw(p->id, p->x, p->y, p->z, facing_rad, g_gband_frame_dt_ms,
+                             &g_gband_frame_vp, gband_draw_skinned);
+    } else {
+        float t = SDL_GetTicks() * 0.001f;
+        float sway = sinf(t * 2.2f) * 3.0f;
+        float stomp = sinf(t * 5.8f) * 0.06f;
 
-    /* plain documentarian outfit -- grey/beige, deliberately unremarkable */
-    glPushMatrix();
-    glTranslatef(0.0f, 0.92f + stomp, 0.0f);
-    glRotatef(sway * 0.3f, 0, 1, 0);
-    glColor3f(0.42f, 0.42f, 0.46f); draw_box(0.68f, 0.95f, 0.42f); draw_box_outline(0.68f, 0.95f, 0.42f);
-    glColor3f(0.58f, 0.54f, 0.46f); glPushMatrix(); glTranslatef(0.0f, -0.55f, 0.0f); draw_box(0.58f, 0.85f, 0.40f); draw_box_outline(0.58f, 0.85f, 0.40f); glPopMatrix();
-    glPopMatrix();
-
-    /* head -- plain, no distinguishing mark (Tyler never completes a self-defining sentence) */
-    glPushMatrix();
-    glTranslatef(0.0f, 1.72f + stomp * 0.5f, 0.0f);
-    glRotatef(draw_pitch * 0.4f, 1, 0, 0);
-    glColor3f(0.80f, 0.68f, 0.58f); draw_box(0.42f, 0.48f, 0.42f); draw_box_outline(0.42f, 0.48f, 0.42f);
-    glPopMatrix();
-
-    for (int i = 0; i < 2; i++) {
-        float side = i ? 1.0f : -1.0f;
+        /* plain documentarian outfit -- grey/beige, deliberately unremarkable */
         glPushMatrix();
-        glTranslatef(side * 0.22f, 0.05f + fabsf(stomp), 0.0f);
-        glColor3f(0.30f, 0.30f, 0.34f); draw_box(0.24f, 0.90f, 0.28f); draw_box_outline(0.24f, 0.90f, 0.28f);
+        glTranslatef(0.0f, 0.92f + stomp, 0.0f);
+        glRotatef(sway * 0.3f, 0, 1, 0);
+        glColor3f(0.42f, 0.42f, 0.46f); draw_box(0.68f, 0.95f, 0.42f); draw_box_outline(0.68f, 0.95f, 0.42f);
+        glColor3f(0.58f, 0.54f, 0.46f); glPushMatrix(); glTranslatef(0.0f, -0.55f, 0.0f); draw_box(0.58f, 0.85f, 0.40f); draw_box_outline(0.58f, 0.85f, 0.40f); glPopMatrix();
         glPopMatrix();
+
+        /* head -- plain, no distinguishing mark (Tyler never completes a self-defining sentence) */
+        glPushMatrix();
+        glTranslatef(0.0f, 1.72f + stomp * 0.5f, 0.0f);
+        glRotatef(draw_pitch * 0.4f, 1, 0, 0);
+        glColor3f(0.80f, 0.68f, 0.58f); draw_box(0.42f, 0.48f, 0.42f); draw_box_outline(0.42f, 0.48f, 0.42f);
+        glPopMatrix();
+
+        for (int i = 0; i < 2; i++) {
+            float side = i ? 1.0f : -1.0f;
+            glPushMatrix();
+            glTranslatef(side * 0.22f, 0.05f + fabsf(stomp), 0.0f);
+            glColor3f(0.30f, 0.30f, 0.34f); draw_box(0.24f, 0.90f, 0.28f); draw_box_outline(0.24f, 0.90f, 0.28f);
+            glPopMatrix();
+        }
     }
 
     glPushMatrix(); glTranslatef(0.64f, 1.03f, 0.57f); glRotatef(draw_pitch,1,0,0); glRotatef(-draw_recoil*10.0f,1,0,0); glScalef(0.72f,0.72f,0.72f); draw_gun_model(p->current_weapon); glPopMatrix();
@@ -6071,6 +6188,23 @@ void draw_scene(PlayerState *render_p) {
         glTranslatef(-((render_p->x + reconcile_x) - cx), -((render_p->y + reconcile_y) + cam_y), -((render_p->z + reconcile_z) - cz));
     }
 
+    /* S144-02 Stage B: capture the pure-camera VP right here, before any
+       per-player glTranslatef below (draw_player_3rd) touches the
+       MODELVIEW stack -- gband_mesh_rig_draw bakes each hero's own world
+       transform in separately, so this must stay camera-only or a hero's
+       position would be applied twice. */
+    if (g_gband_mesh_ready) {
+        Mat4 gband_proj, gband_modelview;
+        glGetFloatv(GL_PROJECTION_MATRIX, gband_proj.m);
+        glGetFloatv(GL_MODELVIEW_MATRIX, gband_modelview.m);
+        g_gband_frame_vp = mat4_multiply(&gband_proj, &gband_modelview);
+
+        Uint32 gband_now_ticks = SDL_GetTicks();
+        g_gband_frame_dt_ms = (g_gband_last_ms == 0) ? 16.0f : (float)(gband_now_ticks - g_gband_last_ms);
+        if (g_gband_frame_dt_ms > 250.0f) g_gband_frame_dt_ms = 250.0f; /* clamp stalls/first-frame spike */
+        g_gband_last_ms = gband_now_ticks;
+    }
+
     {
         float sky_cam_x = (render_p->x + reconcile_x) - cx;
         float sky_cam_y = (render_p->y + reconcile_y) + cam_y;
@@ -7264,91 +7398,6 @@ static void buggy_advance_remote_positions(unsigned int now_ms) {
     }
 }
 
-/* ── S144-02 Stage A: shader/VBO pipeline proof ──────────────────────────────
- * SHANKPIT's first shader-based draw call, additive to the existing
- * fixed-function rendering (nothing above this point is touched). Goal:
- * prove the new packages/render/gl_shader.c plumbing actually draws
- * correct, visible pixels through a real GLSL program + VAO/VBO, verified
- * via a real Xvfb screenshot, before Stage B ports GOLDENBAND's skinned rig
- * onto this foundation. Deliberately bypasses the legacy camera matrix
- * stack entirely (identity MVP, vertices given directly in clip space) so
- * this proof has zero dependency on -- and zero risk of disturbing -- any
- * existing camera/object transform code. A small bright-magenta square in
- * the screen's top-left corner, unmistakable in a screenshot and never
- * confusable with any existing world geometry. */
-
-static GLuint g_stageA_program = 0;
-static DynamicVBO g_stageA_vbo;
-static int g_stageA_ready = 0;
-
-static const char *g_stageA_vs_src =
-    "#version 120\n"
-    "attribute vec3 a_pos;\n"
-    "attribute vec3 a_normal;\n"
-    "uniform mat4 u_mvp;\n"
-    "void main() {\n"
-    "    gl_Position = u_mvp * vec4(a_pos, 1.0);\n"
-    "}\n";
-
-static const char *g_stageA_fs_src =
-    "#version 120\n"
-    "uniform vec4 u_color;\n"
-    "void main() {\n"
-    "    gl_FragColor = u_color;\n"
-    "}\n";
-
-static void stageA_shader_init(void) {
-    if (!gl_shader_load_extensions()) {
-        SDL_Log("S144-02 Stage A: GL extension loading failed -- shader path disabled, fixed-function rendering unaffected");
-        return;
-    }
-    GLuint vs = gl_compile_shader(GL_VERTEX_SHADER, g_stageA_vs_src);
-    GLuint fs = gl_compile_shader(GL_FRAGMENT_SHADER, g_stageA_fs_src);
-    g_stageA_program = gl_link_program(vs, fs);
-    if (!g_stageA_program) {
-        SDL_Log("S144-02 Stage A: shader link failed -- shader path disabled");
-        return;
-    }
-    if (!gl_dynamic_vbo_init(&g_stageA_vbo, 6)) {
-        SDL_Log("S144-02 Stage A: dynamic VBO init failed -- shader path disabled");
-        return;
-    }
-    g_stageA_ready = 1;
-    SDL_Log("S144-02 Stage A: shader/VBO pipeline ready");
-}
-
-/* Draws one small magenta square (2 triangles, 6 verts, pos+normal each)
- * directly in clip space via the new shader+VBO path. Identity MVP -- no
- * camera dependency by design (see module comment above). */
-static void stageA_shader_draw_proof(void) {
-    if (!g_stageA_ready) return;
-
-    static const float identity_mvp[16] = {
-        1,0,0,0,  0,1,0,0,  0,0,1,0,  0,0,0,1
-    };
-    /* Top-left corner of clip space: x in [-1.0,-0.7], y in [0.7,1.0]. */
-    static const float verts[6 * GL_SHADER_VBO_FLOATS_PER_VERT] = {
-        -1.0f,  0.7f, 0.0f,   0,0,1,
-        -0.7f,  0.7f, 0.0f,   0,0,1,
-        -0.7f,  1.0f, 0.0f,   0,0,1,
-        -1.0f,  0.7f, 0.0f,   0,0,1,
-        -0.7f,  1.0f, 0.0f,   0,0,1,
-        -1.0f,  1.0f, 0.0f,   0,0,1,
-    };
-    static const float magenta[4] = {1.0f, 0.0f, 1.0f, 1.0f};
-
-    GLboolean depth_was_enabled = glIsEnabled(GL_DEPTH_TEST);
-    glDisable(GL_DEPTH_TEST); /* always-on-top corner marker, matches an HUD element's intent */
-
-    gl_use_program(g_stageA_program);
-    gl_uniform_matrix4fv(gl_get_uniform_location(g_stageA_program, "u_mvp"), identity_mvp);
-    gl_uniform4fv(gl_get_uniform_location(g_stageA_program, "u_color"), magenta);
-    gl_dynamic_vbo_draw(&g_stageA_vbo, verts, 6, GL_TRIANGLES);
-    gl_use_program(0);
-
-    if (depth_was_enabled) glEnable(GL_DEPTH_TEST);
-}
-
 int main(int argc, char* argv[]) {
     for(int i=1; i<argc; i++) {
         if(strcmp(argv[i], "--host") == 0 && i+1<argc) {
@@ -7369,7 +7418,7 @@ int main(int argc, char* argv[]) {
         if (SDL_IsGameController(gi)) { g_shank_pad = SDL_GameControllerOpen(gi); if (g_shank_pad) break; }
     }
     SDL_GL_CreateContext(win);
-    stageA_shader_init();
+    gband_shader_and_mesh_init();
     proctex_init();
     proc_tex_create(&g_vehicle_noise_tex, 64, 64);
     proctex_make_noise_rgba(&g_vehicle_noise_tex, 64, 64, g_vehicle_style.seed);
@@ -7977,7 +8026,6 @@ int main(int argc, char* argv[]) {
             blended.y = render_prev_players[render_pid].y + (render_p->y - render_prev_players[render_pid].y) * (float)alpha;
             blended.z = render_prev_players[render_pid].z + (render_p->z - render_prev_players[render_pid].z) * (float)alpha;
             draw_scene(&blended);
-            stageA_shader_draw_proof();
             SDL_GL_SwapWindow(win);
         }
     }
