@@ -66,6 +66,8 @@ static const char *ai_role_name(AIRole role) {
         case AI_ROLE_GORE_BRUTE: return "GORE_BRUTE";
         case AI_ROLE_STORY_ALLY: return "ALLY";
         case AI_ROLE_GUARD: return "GUARD";
+        case AI_ROLE_STORM_CALLER: return "STORM_CALLER";
+        case AI_ROLE_BOMBARDIER: return "BOMBARDIER";
         default: return "UNKNOWN";
     }
 }
@@ -165,6 +167,42 @@ static void ai_assign_role_defaults(AIController *ai, PlayerState *p) {
             ai->attack_range = 52.0f;
             ai->preferred_range = 36.0f;
             ai->move_speed_scale = 0.65f;
+            break;
+        case AI_ROLE_STORM_CALLER:
+            /* Long-range sniper threat -- keeps far back, real storm-charge
+             * burst ability (100% the existing WPN_SNIPER mechanic, see
+             * ai_combat_storm_caller). Lowest courage/aggression of the
+             * roster on purpose: a storm caller that closes distance loses
+             * its entire identity, so it should actively avoid doing that. */
+            p->current_weapon = WPN_SNIPER;
+            ai->vision_range = 320.0f;
+            ai->vision_fov_deg = 90.0f;
+            ai->hearing_range = 70.0f;
+            ai->attack_range = 260.0f;
+            ai->preferred_range = 200.0f;
+            ai->courage = 0.35f;
+            ai->aggression = 0.45f;
+            ai->aim_error_deg = 2.0f;
+            ai->move_speed_scale = 0.55f;
+            break;
+        case AI_ROLE_BOMBARDIER:
+            /* Heavy AOE spammer -- WPN_MISSILE as the BASE weapon (not an
+             * ability), so every shot is already a real splash-damage hit
+             * via the same spawn_projectile/explode_splash pipeline Frag
+             * Toss/Ground Slam reuse. Slow and low-FOV on purpose (a heavy
+             * unit that also tracks/moves like a Rift Hound would be
+             * unfair, not "challenging" in an interesting way) -- the real
+             * threat is area denial, not precision or speed. */
+            p->current_weapon = WPN_MISSILE;
+            ai->vision_range = 200.0f;
+            ai->vision_fov_deg = 80.0f;
+            ai->hearing_range = 80.0f;
+            ai->attack_range = 140.0f;
+            ai->preferred_range = 100.0f;
+            ai->courage = 0.9f;
+            ai->aggression = 0.5f;
+            ai->aim_error_deg = 9.0f;
+            ai->move_speed_scale = 0.42f;
             break;
         default:
             break;
@@ -366,6 +404,14 @@ static void ai_combat_hound(ServerState *s, AIController *ai, PlayerState *p, co
     if (p->on_ground && ((now_ms / 900U + (unsigned int)ai->player_id) % 3U == 0U) && per->dist < 24.0f) {
         p->in_jump = 1;
     }
+    /* S181-05 real ability: gap-closer dash (WPN_KATANA's own existing
+     * dash mechanic, physics.h katana_try_start_dash -- triggered here,
+     * not invented here). Only worth firing while there's real distance
+     * to close; dashing at point-blank range wastes the cooldown for no
+     * gain, dashing from very far overshoots past a reasonable engage. */
+    if (p->ability_cooldown == 0 && per->dist > 30.0f && per->dist < 70.0f) {
+        p->in_ability = 1;
+    }
     ai->last_known_x = hero->x;
     ai->last_known_z = hero->z;
 }
@@ -383,6 +429,14 @@ static void ai_combat_trooper(ServerState *s, AIController *ai, PlayerState *p, 
         p->in_shoot = (burst_gate < 3U) ? 1 : 0;
         ai->next_attack_ms = now_ms + 110U;
     }
+    /* S181-05 real ability: Frag Toss (physics.h's new WPN_AR ability
+     * branch -- real splash-damage projectile, not a stub). Fired while
+     * the player is in real engagement range, same window normal shots
+     * already use, so it reads as "a periodic special mixed into a
+     * kiting gunfight," not a separate disconnected behavior. */
+    if (p->ability_cooldown == 0 && per->dist <= ai->attack_range) {
+        p->in_ability = 1;
+    }
     (void)s;
 }
 
@@ -394,6 +448,61 @@ static void ai_combat_brute(ServerState *s, AIController *ai, PlayerState *p, co
     if (per->dist <= ai->attack_range && now_ms >= ai->next_attack_ms) {
         p->in_shoot = 1;
         ai->next_attack_ms = now_ms + 520U;
+    }
+    /* S181-05 real ability: Ground Slam (physics.h's new WPN_SHOTGUN
+     * ability branch -- real splash+stun, not a stub). Only once the
+     * Brute has actually closed to melee range -- "gets in your face,
+     * then slams" is the whole tank identity; firing it at range would
+     * just waste the cooldown on nothing since the splash radius (6.0)
+     * is tuned for close quarters. */
+    if (p->ability_cooldown == 0 && per->dist < 18.0f) {
+        p->in_ability = 1;
+    }
+    (void)s;
+}
+
+static void ai_combat_storm_caller(ServerState *s, AIController *ai, PlayerState *p, const AIPerception *per, unsigned int now_ms) {
+    float target_yaw = ai_angle_to(per->to_player_x, per->to_player_z);
+    ai_turn_towards(p, target_yaw, 5.0f);
+    /* Actively maintains distance -- backs away if the player closes
+     * inside preferred_range, unlike Trooper which just stops advancing.
+     * A storm caller that lets itself get out-ranged into melee has lost
+     * its entire reason to exist as a distinct threat. */
+    if (per->dist > ai->preferred_range + 20.0f) p->in_fwd = 0.5f * ai->move_speed_scale;
+    else if (per->dist < ai->preferred_range - 15.0f) p->in_fwd = -0.6f * ai->move_speed_scale;
+    else p->in_fwd = 0.0f;
+    p->in_strafe = ((now_ms / 900U + (unsigned int)ai->player_id) % 2U) ? 0.3f : -0.3f;
+
+    if (per->dist <= ai->attack_range && now_ms >= ai->next_attack_ms) {
+        p->in_shoot = 1;
+        ai->next_attack_ms = now_ms + 260U;
+    }
+    /* Real ability: the 5-round storm-charge burst (physics.h's existing
+     * WPN_SNIPER branch, unmodified -- this role is the first AI to
+     * actually use it as a deliberate tactical choice instead of it being
+     * silently unreachable). Only pops it once real engagement range is
+     * confirmed -- popping it while the player is still out of vision
+     * would burn the cooldown on nothing. */
+    if (p->ability_cooldown == 0 && per->dist <= ai->attack_range) {
+        p->in_ability = 1;
+    }
+    (void)s;
+}
+
+static void ai_combat_bombardier(ServerState *s, AIController *ai, PlayerState *p, const AIPerception *per, unsigned int now_ms) {
+    float target_yaw = ai_angle_to(per->to_player_x, per->to_player_z);
+    ai_turn_towards(p, target_yaw, 4.0f);
+    if (per->dist > ai->preferred_range + 15.0f) p->in_fwd = 0.5f * ai->move_speed_scale;
+    else if (per->dist < ai->preferred_range - 20.0f) p->in_fwd = -0.35f * ai->move_speed_scale;
+    else p->in_fwd = 0.0f;
+    /* No dedicated in_ability trigger -- WPN_MISSILE is this role's BASE
+     * weapon, so every normal shot is already a real splash-damage hit
+     * via the same spawn_projectile/explode_splash pipeline Frag Toss and
+     * Ground Slam borrow for their own abilities. The threat here is
+     * sustained area denial from a slow-moving heavy, not a special move. */
+    if (per->dist <= ai->attack_range && now_ms >= ai->next_attack_ms) {
+        p->in_shoot = 1;
+        ai->next_attack_ms = now_ms + 950U;
     }
     (void)s;
 }
@@ -416,6 +525,8 @@ static void ai_run_combat(ServerState *s, AIController *ai, const AIPerception *
     if (ai->role == AI_ROLE_RIFT_HOUND) ai_combat_hound(s, ai, p, per, now_ms);
     else if (ai->role == AI_ROLE_GORE_BRUTE) ai_combat_brute(s, ai, p, per, now_ms);
     else if (ai->role == AI_ROLE_STORY_ALLY) ai_combat_ally(s, ai, p, per, now_ms);
+    else if (ai->role == AI_ROLE_STORM_CALLER) ai_combat_storm_caller(s, ai, p, per, now_ms);
+    else if (ai->role == AI_ROLE_BOMBARDIER) ai_combat_bombardier(s, ai, p, per, now_ms);
     else ai_combat_trooper(s, ai, p, per, now_ms);
 }
 
@@ -525,7 +636,7 @@ void story_ai_tick(ServerState *s, unsigned int now_ms) {
 }
 
 void story_ai_seed_voxworld_encounter(ServerState *s) {
-    int id_a, id_b, id_h, id_g;
+    int id_a, id_b, id_h, id_g, id_sc, id_bm;
     float cx = 0.0f;
     float cz = -260.0f;
     if (!s || s->scene_id != SCENE_VOXWORLD) return;
@@ -534,6 +645,12 @@ void story_ai_seed_voxworld_encounter(ServerState *s) {
     id_b = story_ai_spawn_enemy(s, AI_ROLE_SHAMBLER_TROOPER, cx + 38.0f, 8.0f, cz + 16.0f);
     id_h = story_ai_spawn_enemy(s, AI_ROLE_RIFT_HOUND, cx + 4.0f, 8.0f, cz - 54.0f);
     id_g = story_ai_spawn_enemy(s, AI_ROLE_GORE_BRUTE, cx - 4.0f, 8.0f, cz + 46.0f);
+    /* S181-05: "many enemies with different threats" -- Storm Caller
+     * spawns furthest back (long-range role needs real distance to be
+     * itself), Bombardier spawns at a flank (heavy area-denial role,
+     * doesn't need to lead the engagement). */
+    id_sc = story_ai_spawn_enemy(s, AI_ROLE_STORM_CALLER, cx + 60.0f, 8.0f, cz - 90.0f);
+    id_bm = story_ai_spawn_enemy(s, AI_ROLE_BOMBARDIER, cx - 60.0f, 8.0f, cz - 10.0f);
 
     if (id_a > 0) {
         AIController *ai = NULL;
@@ -573,7 +690,29 @@ void story_ai_seed_voxworld_encounter(ServerState *s) {
         }
     }
 
+    if (id_sc > 0) {
+        AIController *ai = NULL;
+        for (int i = 0; i < STORY_AI_MAX; i++) if (g_story_ai[i].active && g_story_ai[i].player_id == id_sc) { ai = &g_story_ai[i]; break; }
+        if (ai) {
+            /* Short patrol, deliberately small radius -- a storm caller
+             * holding one general area (not chasing across the whole map)
+             * matches its own "keeps distance, doesn't close" combat
+             * behavior above. */
+            ai_set_patrol(ai, 0, cx + 60.0f, 0.0f, cz - 90.0f, 800U, 0);
+            ai_set_patrol(ai, 1, cx + 46.0f, 0.0f, cz - 104.0f, 800U, 0);
+        }
+    }
+    if (id_bm > 0) {
+        AIController *ai = NULL;
+        for (int i = 0; i < STORY_AI_MAX; i++) if (g_story_ai[i].active && g_story_ai[i].player_id == id_bm) { ai = &g_story_ai[i]; break; }
+        if (ai) {
+            ai_set_patrol(ai, 0, cx - 60.0f, 0.0f, cz - 10.0f, 900U, 0);
+            ai_set_patrol(ai, 1, cx - 44.0f, 0.0f, cz + 6.0f, 900U, 0);
+        }
+    }
+
 #if STORY_AI_DEBUG
-    printf("[STORY_AI] encounter spawned ids: trooper=%d trooper=%d hound=%d brute=%d\n", id_a, id_b, id_h, id_g);
+    printf("[STORY_AI] encounter spawned ids: trooper=%d trooper=%d hound=%d brute=%d storm_caller=%d bombardier=%d\n",
+           id_a, id_b, id_h, id_g, id_sc, id_bm);
 #endif
 }

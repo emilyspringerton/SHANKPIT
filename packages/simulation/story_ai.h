@@ -27,7 +27,16 @@ typedef enum {
     AI_ROLE_SHAMBLER_TROOPER,
     AI_ROLE_GORE_BRUTE,
     AI_ROLE_STORY_ALLY,
-    AI_ROLE_GUARD
+    AI_ROLE_GUARD,
+    /* S181-05, founder real-time: "advance the entities fought in story
+     * mode... use redgarden squad ai and realistic abilities and
+     * powerups... many enemies with different threats." Two new roles
+     * for real roster variety beyond the original 3, each a genuinely
+     * distinct threat archetype (long-range burst vs. heavy AOE spammer)
+     * built on real, already-proven SHANKPIT weapon mechanics -- not
+     * invented systems. */
+    AI_ROLE_STORM_CALLER,  /* WPN_SNIPER -- long-range storm-charge burst threat */
+    AI_ROLE_BOMBARDIER     /* WPN_MISSILE -- heavy, slow, real splash-AOE spammer */
 } AIRole;
 
 typedef struct {

@@ -2751,8 +2751,38 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
 
     int w = p->current_weapon;
     if (ability_press) {
-        if (w == WPN_KATANA) katana_try_start_dash(p);
-        else if (p->ability_cooldown == 0 && p->storm_charges == 0) {
+        if (w == WPN_KATANA) {
+            katana_try_start_dash(p);
+        } else if (w == WPN_SNIPER) {
+            if (p->ability_cooldown == 0 && p->storm_charges == 0) {
+                p->storm_charges = 5;
+                p->ability_cooldown = 480;
+            }
+        } else if (w == WPN_AR && p->ability_cooldown == 0) {
+            /* Frag Toss (S181-05): real splash-damage projectile, same
+             * spawn_projectile/explode_splash pipeline the missile
+             * launcher already uses -- explode_splash fires automatically
+             * for any projectile with splash_radius > 0 (update_projectiles
+             * calls it on impact/expiry), which in turn calls
+             * apply_projectile_damage per hit, which already applies a
+             * brief stun as a universal side effect of any projectile hit
+             * -- no new damage/stun code needed, just real tuning. Lobbed
+             * slower than a straight shot (0.7x speed) to read as a
+             * thrown grenade, not a bullet. First real use: story_ai.c's
+             * Shambler Trooper. */
+            spawn_projectile(projectiles, p, 60, 0, 0.7f, 4.5f);
+            p->ability_cooldown = 260;
+        } else if (w == WPN_SHOTGUN && p->ability_cooldown == 0) {
+            /* Ground Slam (S181-05): same real pipeline as Frag Toss above,
+             * tuned for a close-range high-damage/bigger-splash burst
+             * instead of a lobbed grenade -- matches a tank archetype's
+             * melee-range AOE, not a ranged special. First real use:
+             * story_ai.c's Gore Brute. */
+            spawn_projectile(projectiles, p, 90, 0, 1.2f, 6.0f);
+            p->ability_cooldown = 340;
+        } else if (p->ability_cooldown == 0 && p->storm_charges == 0) {
+            /* Fallback for any weapon without a dedicated ability above
+             * (knife, magnum, missile) -- unchanged pre-existing behavior. */
             p->storm_charges = 5;
             p->ability_cooldown = 480;
         }
