@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-19
+
+- Gave story-mode enemies real abilities (katana dash, AR Frag Toss, shotgun Ground Slam) and added 2 new threat roles (Storm Caller, Bombardier) built on existing combat mechanics (sess-20260813-2154-dda37e8b)
+
+
 ## 2026-08-15
 
 - S144-02 Stage B：GOLDENBAND真人骨骼蒙皮網格取代Tyler方塊body。移植REDGARDEN/GFD的S144-07 gband_mesh_rig，接上Stage A(2026-08-07)已驗證的shader/VBO pipeline。透過Xvfb截圖實測抓出並修正兩個真bug：hero_y原本硬編碼0(SHANKPIT有真跳躍/垂直性，補上真實Y)；facing_rad公式套box body的(180-draw_yaw)是錯的，mesh的bind pose朝向差180度，實測yaw=0/90/180(背面/側面/正面五官)才修對。Stage A的magenta方塊proof移除。commit f31cfcd，Apple #13718。 (sess-20260813-2154-dda37e8b)
