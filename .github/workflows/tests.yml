@@ -60,7 +60,13 @@ jobs:
             wget
 
           rm -rf sdl2_mingw SDL2-2.30.10 SDL2-devel-2.30.10-mingw.tar.gz || true
-          wget -q --retry-connrefused --tries=3 \
+          # --retry-connrefused alone only retries actual connection-refused
+          # errors, not timeouts or transient 5xx responses -- widened to a
+          # real general-purpose retry (--tries + --timeout so a hung
+          # connection doesn't just sit until the job's own overall
+          # timeout), same class of gap as BRAWLPIT's own wget step already
+          # has (--retry-connrefused --tries=3, same narrow scope).
+          wget -q --tries=3 --timeout=30 --retry-connrefused \
             https://github.com/libsdl-org/SDL/releases/download/release-2.30.10/SDL2-devel-2.30.10-mingw.tar.gz
           tar xzf SDL2-devel-2.30.10-mingw.tar.gz
           mv SDL2-2.30.10/x86_64-w64-mingw32 ./sdl2_mingw
