@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-20
+
+- Fixed Windows client CI build: packages/goldenband/*.c (gband.c/gband_mesh_rig.c/gmesh.c/gskel.c) were never added to the mingw build command after S144-02 Stage B introduced real calls to gband_mesh_rig_init/draw -- undefined reference at link time. Verified against the real mingw-w64 cross-compiler. (sess-20260820-0649-a3f19d93)
+
+
 ## 2026-08-19
 
 - Gave story-mode enemies real abilities (katana dash, AR Frag Toss, shotgun Ground Slam) and added 2 new threat roles (Storm Caller, Bombardier) built on existing combat mechanics (sess-20260813-2154-dda37e8b)
