@@ -77,6 +77,29 @@ static int scene_random_tdmb_map(void) {
     return tdmb_maps[rand() % (int)(sizeof(tdmb_maps) / sizeof(tdmb_maps[0]))];
 }
 
+/* scene_random_ctfb_map (2026-08-25, founder real-time: "that mode should pick voxworld or the
+ * oil tanker not just the oil tanker" -- CTF-with-bots was hardcoded to SCENE_OIL_TANKER only,
+ * never randomized like scene_random_tdmb_map() above already does for TDM-with-bots). Scoped to
+ * exactly these two maps, not the full TDMB 5-map rotation: get_ctf_flag_home/
+ * get_ctf_pedestal_anchor (packages/common/physics.h) only have real, purpose-built CTF flag/
+ * pedestal placement for VOXWORLD and OIL_TANKER -- every other scene falls back to a generic
+ * team-base marker never designed or tested as a CTF flag home. Same static-seeded rand()
+ * pattern as scene_random_tdmb_map, deliberately not sharing its `seeded` flag so this can't be
+ * skipped by TDMB having already seeded (or vice versa) -- srand() is idempotent to call twice,
+ * cheap insurance against reordering either function's first call. */
+static int scene_random_ctfb_map(void) {
+    static int seeded = 0;
+    static const int ctfb_maps[] = {
+        SCENE_OIL_TANKER,
+        SCENE_VOXWORLD
+    };
+    if (!seeded) {
+        srand((unsigned int)time(NULL));
+        seeded = 1;
+    }
+    return ctfb_maps[rand() % (int)(sizeof(ctfb_maps) / sizeof(ctfb_maps[0]))];
+}
+
 static const char *scene_name_debug(int scene_id) {
     switch (scene_id) {
         case SCENE_DUST_COMPOUND: return "DUST_COMPOUND";
@@ -1835,7 +1858,8 @@ void local_init_match(int num_players, int mode) {
         else printf("[TDMB] random map selected: %s\n", scene_name_debug(local_state.scene_id));
     } else if (mode == MODE_CTFB) {
         num_players = 1 + TDMB_BLUE_BOTS + TDMB_RED_BOTS;
-        local_state.scene_id = SCENE_OIL_TANKER;
+        local_state.scene_id = scene_random_ctfb_map();
+        printf("[CTFB] random map selected: %s\n", scene_name_debug(local_state.scene_id));
     } else if (mode == MODE_STORY) {
         num_players = 1;
         local_state.scene_id = SCENE_VOXWORLD;
