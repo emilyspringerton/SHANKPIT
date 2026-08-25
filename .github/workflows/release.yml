@@ -9,7 +9,15 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: shankpit-${{ github.ref }}
+  # Real, pre-existing bug found live (2026-08-25): this and tests.yml shared the literal same
+  # group key, so every push raced the two workflows against each other -- whichever registered
+  # first with GitHub's concurrency lock survived, the other was cancelled outright, meaning this
+  # release.yml (the ONLY workflow that carries the release job) had never actually gotten to run
+  # to completion for a real stretch of pushes today, independent of the mingw-download flake
+  # also seen. Scoped per-workflow-file so both run every push, same intent tests.yml's own
+  # concurrency block already had (only ever meant to dedupe reruns of the SAME workflow on the
+  # SAME ref, not race a sibling workflow).
+  group: shankpit-release-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

@@ -9,7 +9,10 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: shankpit-${{ github.ref }}
+  # Scoped per-workflow-file (2026-08-25) -- was the literal same group key as release.yml's own,
+  # so every push raced the two workflows against each other and whichever lost got cancelled
+  # outright, see release.yml's own concurrency block for the full story.
+  group: shankpit-tests-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
