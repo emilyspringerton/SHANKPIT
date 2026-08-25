@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-08-25
+- added auto-release CI job (PITVIPER pattern); fixed a real concurrency-group collision between tests.yml and release.yml that was silently cancelling release.yml on most pushes (sess-20260825-1938-f6bd411e)
 
 - CTF-with-bots (MODE_CTFB) now randomly picks Voxworld or Oil Tanker instead of always Oil Tanker (sess-20260825-1938-f6bd411e)
 
