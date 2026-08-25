@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-25
+
+- CTF-with-bots (MODE_CTFB) now randomly picks Voxworld or Oil Tanker instead of always Oil Tanker (sess-20260825-1938-f6bd411e)
+
+
 ## 2026-08-20
 
 - Fixed Windows client CI build: packages/goldenband/*.c (gband.c/gband_mesh_rig.c/gmesh.c/gskel.c) were never added to the mingw build command after S144-02 Stage B introduced real calls to gband_mesh_rig_init/draw -- undefined reference at link time. Verified against the real mingw-w64 cross-compiler. (sess-20260820-0649-a3f19d93)
