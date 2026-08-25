@@ -2700,6 +2700,14 @@ void phys_respawn(PlayerState *p, unsigned int now) {
     if (p->is_bot) {
         PlayerState *winner = get_best_bot();
         if (winner && winner != p) evolve_bot(p, winner);
+        /* S189-09: fold the just-completed life's reward into this bot's own
+         * slow-moving fitness EMA *before* resetting accumulated_reward -- this
+         * is what get_best_bot() actually compares now, so selection reflects
+         * each bot's own track record across lives, not a noisy snapshot of
+         * whoever's mid-life accumulation happens to be highest right now.
+         * 0.2 weight on the newest life: smooths out single-life luck while
+         * still adapting within a handful of lives, not locked in forever. */
+        p->fitness_ema = 0.8f * p->fitness_ema + 0.2f * p->accumulated_reward;
         p->accumulated_reward = 0.0f; /* reset after selection so next life competes on its own merit */
     }
 }

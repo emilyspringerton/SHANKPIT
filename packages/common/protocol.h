@@ -255,7 +255,15 @@ typedef struct {
     int bike_gear;
     int vehicle_cooldown;
     unsigned int portal_cooldown_until_ms;
-    float accumulated_reward; 
+    float accumulated_reward;
+    /* S189-09: slow-moving exponential moving average of accumulated_reward across
+     * completed lives, folded in by phys_respawn() right before accumulated_reward
+     * itself resets to 0. get_best_bot() compares this instead of the raw, in-
+     * progress accumulated_reward -- fixes a real bug where bots got compared at
+     * different, arbitrary points in their own life-cycle (one that just respawned
+     * sits at 0, one mid-fight might have a lucky burst), producing noisy,
+     * "twitchy and weird" / "flawless sometimes" evolution-selection quality. */
+    float fitness_ema;
     BotGenome brain;
     unsigned int last_hit_time;
     unsigned int respawn_time;

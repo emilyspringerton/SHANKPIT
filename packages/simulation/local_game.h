@@ -255,13 +255,18 @@ void evolve_bot(PlayerState *loser, PlayerState *winner) {
     if (loser->brain.w_retreat > 3.0f) loser->brain.w_retreat = 3.0f;
 }
 
+/* S189-09: compares fitness_ema (a slow-moving average across each bot's own
+ * completed lives), not accumulated_reward (a live, in-progress single-life
+ * counter that resets on respawn) -- the latter meant bots got compared at
+ * arbitrary, different points in their own life-cycle, producing noisy
+ * selection. See protocol.h's own fitness_ema comment and phys_respawn(). */
 PlayerState* get_best_bot() {
     PlayerState *best = NULL;
     float max_score = -99999.0f;
     for(int i=1; i<MAX_CLIENTS; i++) {
         if (!local_state.players[i].active) continue;
-        if (local_state.players[i].accumulated_reward > max_score) {
-            max_score = local_state.players[i].accumulated_reward;
+        if (local_state.players[i].fitness_ema > max_score) {
+            max_score = local_state.players[i].fitness_ema;
             best = &local_state.players[i];
         }
     }
