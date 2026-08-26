@@ -1,12 +1,17 @@
 # SHANKPIT Game Architecture Document
 
-## Current Status (2026-08-04)
+## Current Status (2026-08-26)
 
-CI is green again (`ShankPit Factory` #784+) after a real fix: the cutscene system and spatial
+CI is green (`ShankPit Factory` #784+) after a real fix: the cutscene system and spatial
 audio engine (both real, shipped features) had never been added to the Windows client's hardcoded
 mingw build command, so every CI run since build #721 failed with undefined references. Also
 fixed: helicopter HUD text was overlapping into unreadable garbage — the real flight physics
-(enter/fly/hover) were never actually broken, just unreadable. See `CHANGELOG.md`.
+(enter/fly/hover) were never actually broken, just unreadable.
+
+**New since**: CTF-with-bots (MODE_CTFB) now randomly picks Voxworld or Oil Tanker instead of
+always Oil Tanker; story-mode enemies got real abilities (2 new threat roles, RedGarden-style
+squad AI and abilities — graphics stay stubs for now, abilities do not); GOLDENBAND skinned-mesh
+support landed (S144-02 Stage B). See `CHANGELOG.md`.
 
 ## What SHANKPIT is right now
 
