@@ -5062,6 +5062,87 @@ void draw_circle(float x, float y, float r, int segments) {
     glEnd();
 }
 
+static void hud_draw_oval_filled(float cx, float cy, float rx, float ry, int segments) {
+    if (segments < 6) segments = 6;
+    glBegin(GL_TRIANGLE_FAN);
+    glVertex2f(cx, cy);
+    for (int i = 0; i <= segments; i++) {
+        float t = (2.0f * 3.1415926f * (float)i) / (float)segments;
+        glVertex2f(cx + cosf(t) * rx, cy + sinf(t) * ry);
+    }
+    glEnd();
+}
+
+static void hud_draw_oval_outline(float cx, float cy, float rx, float ry, int segments) {
+    if (segments < 6) segments = 6;
+    glBegin(GL_LINE_LOOP);
+    for (int i = 0; i < segments; i++) {
+        float t = (2.0f * 3.1415926f * (float)i) / (float)segments;
+        glVertex2f(cx + cosf(t) * rx, cy + sinf(t) * ry);
+    }
+    glEnd();
+}
+
+static void draw_storm_charge_icon(float cx, float cy, float scale, float alpha) {
+    const int was_blend = glIsEnabled(GL_BLEND);
+    if (!was_blend) glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    const float glow_r = 17.0f * scale;
+    const float glow_ry = 13.0f * scale;
+    glColor4f(0.30f, 0.92f, 1.0f, 0.16f * alpha);
+    hud_draw_oval_filled(cx, cy + 1.0f * scale, glow_r, glow_ry, 18);
+    glColor4f(0.24f, 0.76f, 1.0f, 0.10f * alpha);
+    hud_draw_oval_filled(cx, cy + 1.0f * scale, glow_r * 1.22f, glow_ry * 1.22f, 20);
+
+    glColor4f(0.02f, 0.10f, 0.35f, 0.96f * alpha);
+    hud_draw_oval_filled(cx, cy - 5.0f * scale, 9.8f * scale, 6.4f * scale, 16);
+    hud_draw_oval_filled(cx - 0.7f * scale, cy + 1.6f * scale, 7.0f * scale, 5.2f * scale, 16);
+    hud_draw_oval_filled(cx + 0.4f * scale, cy + 7.6f * scale, 4.6f * scale, 3.9f * scale, 14);
+
+    glColor4f(0.10f, 0.35f, 1.0f, 0.42f * alpha);
+    hud_draw_oval_filled(cx - 2.2f * scale, cy - 1.0f * scale, 3.2f * scale, 2.1f * scale, 14);
+    hud_draw_oval_filled(cx + 1.4f * scale, cy + 5.0f * scale, 2.0f * scale, 1.4f * scale, 12);
+
+    glColor4f(0.30f, 0.85f, 1.0f, 0.95f * alpha);
+    glLineWidth(1.8f);
+    hud_draw_oval_outline(cx, cy - 5.0f * scale, 9.8f * scale, 6.4f * scale, 18);
+    hud_draw_oval_outline(cx - 0.7f * scale, cy + 1.6f * scale, 7.0f * scale, 5.2f * scale, 18);
+    hud_draw_oval_outline(cx + 0.4f * scale, cy + 7.6f * scale, 4.6f * scale, 3.9f * scale, 16);
+
+    glBegin(GL_LINE_STRIP);
+    glVertex2f(cx + 1.8f * scale, cy + 10.2f * scale);
+    glVertex2f(cx + 4.8f * scale, cy + 13.8f * scale);
+    glVertex2f(cx + 3.2f * scale, cy + 15.8f * scale);
+    glVertex2f(cx + 5.6f * scale, cy + 17.9f * scale);
+    glEnd();
+
+    glColor4f(0.80f, 0.96f, 1.0f, 0.88f * alpha);
+    glLineWidth(1.2f);
+    glBegin(GL_LINES);
+    glVertex2f(cx - 2.4f * scale, cy + 10.8f * scale);
+    glVertex2f(cx + 1.2f * scale, cy + 12.0f * scale);
+    glEnd();
+    glLineWidth(1.0f);
+
+    if (!was_blend) glDisable(GL_BLEND);
+}
+
+static void draw_storm_charge_icons(int storm_charges) {
+    if (storm_charges <= 0) return;
+    const int max_visible = 8;
+    int count = storm_charges;
+    if (count > max_visible) count = max_visible;
+
+    const float start_x = 132.0f + 16.0f;
+    const float center_y = 154.0f + 13.0f;
+    const float spacing = 40.0f;
+
+    for (int i = 0; i < count; i++) {
+        draw_storm_charge_icon(start_x + spacing * (float)i, center_y, 1.0f, 1.0f);
+    }
+}
+
 static void draw_ammo_bars(const PlayerState *p) {
     if (!p) return;
     if (p->current_weapon == WPN_KNIFE || p->current_weapon == WPN_KATANA) return;
@@ -5542,10 +5623,7 @@ void draw_hud(PlayerState *p) {
         glColor3f(0.0f, 0.85f, 1.0f);
         draw_string(katana_buf, 132, 154, vs0_art_direction_enabled ? 5 : 6);
     } else if (p->storm_charges > 0) {
-        char storm_buf[32];
-        sprintf(storm_buf, "STORM ARROWS: %d", p->storm_charges);
-        glColor3f(1.0f, 0.2f, 0.2f);
-        draw_string(storm_buf, 132, 154, vs0_art_direction_enabled ? 5 : 6);
+        draw_storm_charge_icons(p->storm_charges);
     } else if (p->ability_cooldown == 0) {
         glColor3f(0.0f, 0.8f, 1.0f);
         draw_string("STORM ARROWS READY", 132, 154, vs0_art_direction_enabled ? 3 : 4);
