@@ -322,6 +322,12 @@ static float clamp01f(float v) {
     return v;
 }
 
+static float clampf(float v, float lo, float hi) {
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
 static float lerpf(float a, float b, float t) {
     return a + (b - a) * t;
 }
@@ -2972,14 +2978,34 @@ static PlayerAnimPose compute_player_anim_pose(const PlayerState *p) {
     pose.left_foot_pitch = fmaxf(0.0f, -leg_l) * (4.0f + locomotion_scale * 12.0f);
     pose.right_foot_pitch = fmaxf(0.0f, -leg_r) * (4.0f + locomotion_scale * 12.0f);
 
-    /* Right arm is mostly weapon-stable; left arm provides subtle support/counterbalance. */
-    pose.right_upper_arm_pitch = 28.0f + leg_l * (1.0f + locomotion_scale * 2.0f) - (1.0f - pose.grounded_locomotion) * 3.5f;
-    pose.right_upper_arm_yaw = 18.0f;
-    pose.right_elbow = 34.0f + locomotion_scale * 7.0f;
+    /* Baseline upper-body combat hold pose (stable) + subtle locomotion sway. */
+    const float right_upper_pitch_base = 27.0f;
+    const float right_upper_yaw_base = 12.0f;
+    const float right_elbow_base = 58.0f;
+    const float left_upper_pitch_base = 17.0f;
+    const float left_upper_yaw_base = -16.0f;
+    const float left_elbow_base = 71.0f;
 
-    pose.left_upper_arm_pitch = -4.0f + leg_r * (3.0f + locomotion_scale * 10.0f) + idle_arm * 2.0f;
-    pose.left_upper_arm_yaw = -8.0f + locomotion_scale * 3.0f;
-    pose.left_elbow = 14.0f + locomotion_scale * 11.0f;
+    const float arm_loco_pitch = leg_l * (2.0f + locomotion_scale * 3.0f);
+    const float arm_loco_pitch_counter = leg_r * (1.2f + locomotion_scale * 2.0f);
+    const float arm_loco_yaw = leg_l * (0.8f + locomotion_scale * 1.6f);
+    const float arm_idle_micro = idle_arm * 1.3f;
+
+    pose.right_upper_arm_pitch = right_upper_pitch_base + arm_loco_pitch - (1.0f - pose.grounded_locomotion) * 2.0f;
+    pose.right_upper_arm_yaw = right_upper_yaw_base + arm_loco_yaw * 0.75f;
+    pose.right_elbow = right_elbow_base + locomotion_scale * 2.0f + arm_idle_micro * 0.8f;
+
+    pose.left_upper_arm_pitch = left_upper_pitch_base + arm_loco_pitch_counter + arm_idle_micro;
+    pose.left_upper_arm_yaw = left_upper_yaw_base + arm_loco_yaw * 0.45f;
+    pose.left_elbow = left_elbow_base + locomotion_scale * 3.0f + arm_idle_micro * 0.9f;
+
+    /* Arm pose sanity clamps to avoid raised/flapping/extreme poses. */
+    pose.right_upper_arm_pitch = clampf(pose.right_upper_arm_pitch, 14.0f, 38.0f);
+    pose.right_upper_arm_yaw = clampf(pose.right_upper_arm_yaw, 3.0f, 24.0f);
+    pose.right_elbow = clampf(pose.right_elbow, 42.0f, 74.0f);
+    pose.left_upper_arm_pitch = clampf(pose.left_upper_arm_pitch, 8.0f, 34.0f);
+    pose.left_upper_arm_yaw = clampf(pose.left_upper_arm_yaw, -30.0f, -5.0f);
+    pose.left_elbow = clampf(pose.left_elbow, 55.0f, 88.0f);
 
     pose.torso_bob = fabsf(leg_l) * (0.01f + 0.045f * locomotion_scale) + idle_sway * 0.012f;
     pose.torso_yaw = leg_l * (0.8f + locomotion_scale * 2.3f);
@@ -3095,16 +3121,22 @@ static void draw_player_arm(int right_side, const PlayerAnimPose *pose, float dr
 
     glTranslatef(0.0f, -RONIN_ARM_UPPER_H, 0.0f);
     glRotatef(elbow_pitch, 1, 0, 0);
+    if (!right_side) {
+        /* Support arm stays tucked under/near weapon instead of flaring out. */
+        glRotatef(-8.0f, 0, 1, 0);
+        glRotatef(6.0f, 0, 0, 1);
+    }
     draw_player_limb_segment(RONIN_ARM_LOWER_W, RONIN_ARM_LOWER_H, RONIN_ARM_LOWER_D);
 
     glTranslatef(0.0f, -RONIN_ARM_LOWER_H, 0.10f);
+    if (!right_side) glTranslatef(0.08f, 0.01f, 0.14f);
     draw_player_limb_segment(RONIN_HAND_W, RONIN_HAND_H, RONIN_HAND_D);
 
     if (right_side) {
         glPushMatrix();
-        glTranslatef(0.07f, -0.03f, 0.42f);
-        glRotatef(7.0f, 0, 1, 0);
-        glRotatef(-6.0f, 0, 0, 1);
+        glTranslatef(-0.02f, -0.02f, 0.52f);
+        glRotatef(10.0f, 0, 1, 0);
+        glRotatef(-5.0f, 0, 0, 1);
         glRotatef(draw_pitch, 1, 0, 0);
         glRotatef(-draw_recoil * 10.0f, 1, 0, 0);
         glTranslatef(0.0f, 0.0f, -draw_recoil * 0.08f);
