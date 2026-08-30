@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-30
+
+- New packages/simulation/cutscene_effect_mod.c: real PARENA-compiled decision logic for TYLER's cutscene Trigger Model/Effects (PARENA/stdlib/tyler/cutscene_mod.prn). 23 real assertions in cutscene_effect_mod_test.c, all pass. Not yet wired into a live host. (sess-20260825-1938-f6bd411e)
+
+
 ## 2026-08-25
 - added auto-release CI job (PITVIPER pattern); fixed a real concurrency-group collision between tests.yml and release.yml that was silently cancelling release.yml on most pushes (sess-20260825-1938-f6bd411e)
 
