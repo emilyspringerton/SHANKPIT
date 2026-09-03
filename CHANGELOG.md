@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-03
+
+- docs: real, scoping-only NORTHSTAR pass for Osaka Garage as a multiverse hub reaching into PAPERCRAFT (kanban cruise-queue card 1233421, 'shankpit og osaka garage as the construct multiverse portal can download and launch new scenes in papercraft'). New docs2/NORTHSTAR.md section, no code. Naming note checked first: 'Construct' already means something specific and different in this exact doc (a documentation-completeness snapshot, same convention MISHRI/PARENA's own CI 'Generate Construct Bundle' step uses) -- the card's own narrative name for Osaka Garage as a hub needs its own distinct in-game label, not the bare word 'Construct', to avoid confusion with the existing Milestone 4 reference. Real, checked-not-assumed current state: SceneGarageOsaka (server/system/portal.go) already IS a real 5-portal hub, and PAPERCRAFT already leans on the same shared worldapi scene-ID convention SHANKPIT itself established. Real, honest blockers named: PAPERCRAFT has no client/server host process to launch into at all yet (its own CLAUDE.md says so directly) -- the single largest blocker, upstream of anything SHANKPIT-side; 'download and launch' implies a genuinely new cross-process/cross-engine hand-off problem, not the same-process scene_id swap SHANKPIT's own portal travel already does; SHANKPIT's own Layer 2 portal-travel prerequisites (authoritative server-side validation, cross-scene attack prevention) aren't fully landed either, so a cross-ENGINE portal would be built before its own cross-SCENE prerequisite is proven. Real 3-phase plan (in-lore naming/signage now, blocked-on-PAPERCRAFT's-own-host-code phase, then the real cross-engine hand-off choice between spawning a separate process vs. a lighter OS-level launch link). go test ./server/system/... still green (doc-only change). (sess-20260902-2008-ed50169e)
+
+
 ## 2026-08-30
 
 - New packages/simulation/cutscene_effect_mod.c: real PARENA-compiled decision logic for TYLER's cutscene Trigger Model/Effects (PARENA/stdlib/tyler/cutscene_mod.prn). 23 real assertions in cutscene_effect_mod_test.c, all pass. Not yet wired into a live host. (sess-20260825-1938-f6bd411e)
