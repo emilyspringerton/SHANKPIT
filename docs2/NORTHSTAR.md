@@ -225,6 +225,76 @@ can reconstruct the full system from docs alone. Every spec in `docs2/specs/` is
 
 ---
 
+## Osaka Garage as a multiverse hub, reaching into PAPERCRAFT (scoping only)
+
+Real, current, real-world size assessment for kanban cruise-queue card 1233421: "shankpit og
+osaka garage as ''the construct' multiverse portal can download and launch new scenes in
+papercraft." No code built here — this is scoping, following the same "size it honestly before
+committing to a pass" discipline this session's own `V16_NORTHSTAR.md` (PARENA) already applied
+to an equally large ask.
+
+**Naming note, checked before writing anything else**: "Construct" already means something
+specific and different in this exact document — see "What 'Done' Looks Like" above ("The
+Construct includes all active subsystems... a new agent dropped into the repo can reconstruct
+the full system from docs alone") and the CI "Generate Construct Bundle" convention this
+monorepo's own MISHRI/PARENA repos already use — a documentation-completeness snapshot, not a
+Matrix-style loading-room. The kanban card's own quoted "'the construct'" is a new, unrelated,
+narrative name for Osaka Garage as a hub scene — real, and worth keeping (it's a good, on-theme
+name for exactly what a portal-hub room is), but it should get its own distinct in-game/lore
+label (e.g. "the Construct Room" or similar UI copy) rather than reusing the bare word "Construct"
+in code/docs here, to avoid exactly the kind of confusion a reader skimming this file's own
+Milestone 4 ("Construct expansion") reference would otherwise hit.
+
+**What's real and already there**: `SceneGarageOsaka` (`server/system/portal.go`) is already a
+real hub — 5 real portals out to Stadium/Voxworld/Dust Compound/Oil Tanker/PooPooisland, the
+exact "multiverse portal" shape this card asks for, just not yet framed as one narratively and
+not yet reaching outside this repo's own scene ID space. `PAPERCRAFT`'s own real, live terrain
+already leans on the SAME shared scene-ID convention (`GoblinFoxDragon/server/worldapi`'s
+`ProceduralWorldStore` serves scene IDs 200-207 for "TRAPX city districts," confirmed live —
+`GET /chunks?scene=200&cx=0&cz=0` — in `PAPERCRAFT/NORTHSTAR.md`) — so the two engines are not
+strangers to each other's scene numbering today, a real, useful starting point.
+
+**What's genuinely missing, named honestly, not glossed over**:
+1. **PAPERCRAFT has no client/server host process to launch into at all yet.** Its own
+   `CLAUDE.md` states this plainly: "NORTHSTAR + one real verified PARENA mod only — no
+   server/client host code yet." "Download and launch new scenes in papercraft" needs a real
+   PAPERCRAFT binary to exist and be launchable before anything about HOW to launch it matters —
+   this is the single largest real blocker, upstream of anything SHANKPIT-side.
+2. **"Download and launch" implies cross-process/cross-engine handoff** — a genuinely different
+   problem from SHANKPIT's own existing portal travel (which swaps `scene_id` inside one already-
+   running server/client pair, per Layer 2 above). Launching PAPERCRAFT from inside SHANKPIT
+   means either (a) SHANKPIT's client spawns a separate PAPERCRAFT process (a real, new "hand off
+   to a sibling game" flow, needing session/identity continuity — which player, which IDUNA JWT,
+   which spawn point in PAPERCRAFT — none of which exists), or (b) a lighter, more honest v0:
+   Osaka Garage's new portal simply opens an OS-level launcher/link (e.g. a real desktop shortcut
+   or a `papercraft://` URI-style hand-off) rather than a true in-engine scene stream — a much
+   smaller, real, buildable v0 that still delivers the literal "portal takes you to Papercraft"
+   feel without inventing cross-engine live-streaming.
+3. **SHANKPIT's own Layer 2 prerequisites for portal travel aren't fully landed yet** (see that
+   section above — authoritative server-side portal validation, per-player scene isolation,
+   cross-scene attack prevention are still named as missing). A cross-ENGINE portal is a strict
+   superset of a cross-SCENE one; building the harder version before the easier one is proven
+   fully is real, out-of-order risk.
+4. **"Download"** — read literally, this implies PAPERCRAFT scene content isn't bundled with the
+   SHANKPIT client and needs fetching first. `worldapi`'s existing chunk-serving API (already used
+   by both PAPERCRAFT and, per Layer 3, the intended Dragonfly bridge) is the real, existing
+   precedent for this — a real "download" here most plausibly means "point PAPERCRAFT's own
+   (not-yet-built) client at the right `worldapi` scene ID," not a bespoke new content-delivery
+   system. Named as leaning on existing infrastructure specifically so this doesn't get
+   over-scoped into inventing a second CDN.
+
+**Real, phased plan, none of it started**:
+- Phase A (real, buildable now, no PAPERCRAFT dependency): give Osaka Garage its own real
+  in-lore name/signage ("the Construct Room" or similar) and a 6th portal stub that's honestly a
+  "coming soon" / disabled-until-Phase-C placeholder — low-risk, ships the narrative framing
+  immediately without any cross-engine plumbing.
+- Phase B (blocked on PAPERCRAFT itself): PAPERCRAFT needs its own real, minimal client/server
+  host process before phase C is even meaningful — this is PAPERCRAFT's own separate, larger,
+  already-named gap, not new work invented here.
+- Phase C (the real cross-engine hand-off): once Phase B exists, decide between the "spawn a
+  separate process" vs. "OS-level launch link" v0 named above, then wire Osaka Garage's 6th
+  portal to it for real.
+
 ## GoblinFoxDragon Repo Relationship
 
 **GoblinFoxDragon** (`github.com/emilyspringerton/GoblinFoxDragon`) and **SHANKPIT**
