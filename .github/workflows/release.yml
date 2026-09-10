@@ -79,7 +79,18 @@ jobs:
           set -euo pipefail
           test -f apps/lobby/src/main.c
 
+          # Real, live-found CI bug (2026-09-10, "shankpit main repo should be cutting auto
+          # releases" -- confirmed via the real job log, fetched directly from the GitHub API:
+          # every single run of this workflow had failed or been cancelled since 2026-08-11, and
+          # the repo's last real GitHub Release was cut 2026-04-26, over 4 months stale): commit
+          # f31cfcd ("GOLDENBAND real bone-skinned mesh replaces Tyler cube body") wired
+          # apps/lobby/src/main.c to call gband_mesh_rig_init/gband_mesh_rig_draw, but this
+          # build command was never updated to compile+link packages/goldenband's own real
+          # sources -- `undefined reference to gband_mesh_rig_draw/init` at the link step.
+          # Reproduced and confirmed the exact failure/fix locally (a real x86_64-w64-mingw32-gcc
+          # build against a freshly-downloaded SDL2 mingw devel package) before trusting it here.
           x86_64-w64-mingw32-gcc apps/lobby/src/main.c packages/simulation/story_ai.c packages/simulation/cutscene.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/world/terrain.c packages/audio/audio.c \
+            packages/goldenband/gband_mesh_rig.c packages/goldenband/gband.c packages/goldenband/gskel.c packages/goldenband/gmesh.c \
             -o ShankPit.exe \
             -O2 -static-libgcc \
             -I./sdl2_mingw/include \
@@ -89,6 +100,7 @@ jobs:
             -Ipackages/render \
             -Ipackages/world \
             -Ipackages/audio \
+            -Ipackages/goldenband \
             -L./sdl2_mingw/lib \
             -lmingw32 -lSDL2main -lSDL2 \
             -lopengl32 -lglu32 -lws2_32 -lwinmm -lgdi32 -lm
