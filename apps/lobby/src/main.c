@@ -249,6 +249,14 @@ static VoxelChunkCache g_voxel_chunks[VOXEL_CHUNK_CACHE_SIZE];
 static unsigned int terrain_debug_last_log_ms = 0;
 static ProcTexture g_vehicle_noise_tex = {0};
 static ProcTexture g_vehicle_glitch_tex = {0};
+/* Real world-surface textures (2026-09-12, founder real-time: "lets start adding textures to
+ * shankpit have the compile like generate the textures at compile for now" -- draw_terrain and
+ * draw_map's box faces were pure flat-shaded vertex color before this, no texture at all).
+ * Generated once at startup, same convention as g_vehicle_noise_tex/g_vehicle_glitch_tex above --
+ * real photo-sourced/hand-authored textures are real, separate future work (see the same commit's
+ * own NORTHSTAR note), procedural is the deliberate placeholder for now. */
+static ProcTexture g_ground_tex = {0};
+static ProcTexture g_wall_brick_tex = {0};
 static RetroSky g_retro_sky = {0};
 
 typedef enum {
@@ -1752,24 +1760,54 @@ void draw_map(const RetroLightingState *lighting) {
         retro_apply_fog_rgb(&left_r, &left_g, &left_b, lighting, dist);
         retro_apply_fog_rgb(&right_r, &right_g, &right_b, lighting, dist);
 
-        glPushMatrix(); 
-        glTranslatef(b.x, b.y, b.z); 
+        glPushMatrix();
+        glTranslatef(b.x, b.y, b.z);
         glScalef(b.w, b.h, b.d);
+
+        /* Real wall texture (2026-09-12): same GL_MODULATE-over-lighting approach as
+         * draw_terrain's own ground texture just above -- the per-face glColor3f calls below
+         * still apply as a tint on top, unchanged. UVs use each face's own two real local axes
+         * times that axis's actual box dimension (b.w/b.h/b.d), so tile density stays consistent
+         * in world units no matter how big or small an individual box is. */
+        glEnable(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, g_wall_brick_tex.tex_id);
+        const float wall_uv_density = 0.6f;
+        const float uw = b.w * wall_uv_density, uh = b.h * wall_uv_density, ud = b.d * wall_uv_density;
 
         glBegin(GL_QUADS);
         glColor3f(top_r, top_g, top_b);
-        glVertex3f(-0.5,0.5,0.5); glVertex3f(0.5,0.5,0.5); glVertex3f(0.5,0.5,-0.5); glVertex3f(-0.5,0.5,-0.5);
+        glTexCoord2f(-0.5f*uw,  0.5f*ud); glVertex3f(-0.5,0.5,0.5);
+        glTexCoord2f( 0.5f*uw,  0.5f*ud); glVertex3f(0.5,0.5,0.5);
+        glTexCoord2f( 0.5f*uw, -0.5f*ud); glVertex3f(0.5,0.5,-0.5);
+        glTexCoord2f(-0.5f*uw, -0.5f*ud); glVertex3f(-0.5,0.5,-0.5);
         glColor3f(bot_r, bot_g, bot_b);
-        glVertex3f(-0.5,-0.5,0.5); glVertex3f(0.5,-0.5,0.5); glVertex3f(0.5,-0.5,-0.5); glVertex3f(-0.5,-0.5,-0.5);
+        glTexCoord2f(-0.5f*uw,  0.5f*ud); glVertex3f(-0.5,-0.5,0.5);
+        glTexCoord2f( 0.5f*uw,  0.5f*ud); glVertex3f(0.5,-0.5,0.5);
+        glTexCoord2f( 0.5f*uw, -0.5f*ud); glVertex3f(0.5,-0.5,-0.5);
+        glTexCoord2f(-0.5f*uw, -0.5f*ud); glVertex3f(-0.5,-0.5,-0.5);
         glColor3f(front_r, front_g, front_b);
-        glVertex3f(-0.5,-0.5,0.5); glVertex3f(0.5,-0.5,0.5); glVertex3f(0.5,0.5,0.5); glVertex3f(-0.5,0.5,0.5);
+        glTexCoord2f(-0.5f*uw, -0.5f*uh); glVertex3f(-0.5,-0.5,0.5);
+        glTexCoord2f( 0.5f*uw, -0.5f*uh); glVertex3f(0.5,-0.5,0.5);
+        glTexCoord2f( 0.5f*uw,  0.5f*uh); glVertex3f(0.5,0.5,0.5);
+        glTexCoord2f(-0.5f*uw,  0.5f*uh); glVertex3f(-0.5,0.5,0.5);
         glColor3f(rear_r, rear_g, rear_b);
-        glVertex3f(-0.5,-0.5,-0.5); glVertex3f(0.5,-0.5,-0.5); glVertex3f(0.5,0.5,-0.5); glVertex3f(-0.5,0.5,-0.5);
+        glTexCoord2f(-0.5f*uw, -0.5f*uh); glVertex3f(-0.5,-0.5,-0.5);
+        glTexCoord2f( 0.5f*uw, -0.5f*uh); glVertex3f(0.5,-0.5,-0.5);
+        glTexCoord2f( 0.5f*uw,  0.5f*uh); glVertex3f(0.5,0.5,-0.5);
+        glTexCoord2f(-0.5f*uw,  0.5f*uh); glVertex3f(-0.5,0.5,-0.5);
         glColor3f(left_r, left_g, left_b);
-        glVertex3f(-0.5,-0.5,-0.5); glVertex3f(-0.5,-0.5,0.5); glVertex3f(-0.5,0.5,0.5); glVertex3f(-0.5,0.5,-0.5);
+        glTexCoord2f(-0.5f*ud, -0.5f*uh); glVertex3f(-0.5,-0.5,-0.5);
+        glTexCoord2f( 0.5f*ud, -0.5f*uh); glVertex3f(-0.5,-0.5,0.5);
+        glTexCoord2f( 0.5f*ud,  0.5f*uh); glVertex3f(-0.5,0.5,0.5);
+        glTexCoord2f(-0.5f*ud,  0.5f*uh); glVertex3f(-0.5,0.5,-0.5);
         glColor3f(right_r, right_g, right_b);
-        glVertex3f(0.5,-0.5,0.5); glVertex3f(0.5,-0.5,-0.5); glVertex3f(0.5,0.5,-0.5); glVertex3f(0.5,0.5,0.5);
+        glTexCoord2f( 0.5f*ud, -0.5f*uh); glVertex3f(0.5,-0.5,0.5);
+        glTexCoord2f(-0.5f*ud, -0.5f*uh); glVertex3f(0.5,-0.5,-0.5);
+        glTexCoord2f(-0.5f*ud,  0.5f*uh); glVertex3f(0.5,0.5,-0.5);
+        glTexCoord2f( 0.5f*ud,  0.5f*uh); glVertex3f(0.5,0.5,0.5);
         glEnd();
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glDisable(GL_TEXTURE_2D);
 
         glLineWidth(1.2f);
         glColor3f(rear_r * 0.76f, rear_g * 0.80f, rear_b * 0.84f);
@@ -1942,7 +1980,16 @@ void draw_terrain(const RetroLightingState *lighting) {
     }
     float inv_h_range = (max_h > min_h + 0.001f) ? (1.0f / (max_h - min_h)) : 0.0f;
 
+    /* Real ground texture (2026-09-12): the terrain mesh used to be pure flat-shaded
+     * per-vertex color (real 1982-graphics territory) -- this binds a tiled procedural texture
+     * underneath the existing lighting/fog glColor3f calls below, which still apply as a
+     * GL_MODULATE tint on top of it, so lighting/fog/road-blend behavior is unchanged. World
+     * coordinates (not grid indices) drive the UVs so the tile density stays consistent
+     * regardless of t->cell_size. */
+    const float ground_uv_scale = 0.18f;
     glDisable(GL_LIGHTING);
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, g_ground_tex.tex_id);
     for (int gz = 0; gz < t->height - 1; gz++) {
         glBegin(GL_TRIANGLE_STRIP);
         for (int gx = 0; gx < t->width; gx++) {
@@ -1988,6 +2035,7 @@ void draw_terrain(const RetroLightingState *lighting) {
                 retro_apply_fog_rgb(&r0, &g0, &b0, lighting, sqrtf(dx0 * dx0 + dz0 * dz0));
                 glColor3f(r0, g0, b0);
             }
+            glTexCoord2f(x * ground_uv_scale, z0 * ground_uv_scale);
             glVertex3f(x, h0, z0);
 
             if (!vs0_art_direction_enabled) {
@@ -2022,10 +2070,13 @@ void draw_terrain(const RetroLightingState *lighting) {
                 retro_apply_fog_rgb(&r1, &g1, &b1, lighting, sqrtf(dx1 * dx1 + dz1 * dz1));
                 glColor3f(r1, g1, b1);
             }
+            glTexCoord2f(x * ground_uv_scale, z1 * ground_uv_scale);
             glVertex3f(x, h1, z1);
         }
         glEnd();
     }
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glDisable(GL_TEXTURE_2D);
 
     if (terrain_wireframe_debug) {
         glLineWidth(1.0f);
@@ -7426,6 +7477,12 @@ int main(int argc, char* argv[]) {
     proc_tex_create(&g_vehicle_glitch_tex, 64, 64);
     proctex_make_glitch_marks_rgba(&g_vehicle_glitch_tex, 64, 64, g_vehicle_style.seed ^ 0xA53u);
     proctex_upload_to_gl(&g_vehicle_glitch_tex);
+    proc_tex_create(&g_ground_tex, 128, 128);
+    proctex_make_ground_rgba(&g_ground_tex, 128, 128, 0x5117u);
+    proctex_upload_to_gl(&g_ground_tex);
+    proc_tex_create(&g_wall_brick_tex, 128, 128);
+    proctex_make_wall_brick_rgba(&g_wall_brick_tex, 128, 128, 0x8823u);
+    proctex_upload_to_gl(&g_wall_brick_tex);
     retro_sky_init(&g_retro_sky);
     net_init();
     

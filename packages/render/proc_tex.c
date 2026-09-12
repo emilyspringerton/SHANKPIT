@@ -147,6 +147,117 @@ void proctex_make_glitch_marks_rgba(ProcTexture *t, int w, int h, uint32_t seed)
     }
 }
 
+/* ---- Seamlessly-tileable noise (for real GL_REPEAT world-surface textures) ----
+ *
+ * value_noise_2d/fbm_2d above cut off at the texture's edges -- fine for a one-shot cosmetic
+ * overlay, wrong for anything tiled across world geometry (a visible seam every repeat). These
+ * wrap the integer lattice at `period` before hashing, so a texture generated with period equal
+ * to its own cell count repeats with no seam. Doubling the period alongside frequency for each fbm
+ * octave keeps every octave's own lattice wrapping at exactly the texture's edge, not just the
+ * base one. */
+static float hash_2d_wrapped(int x, int y, int period, int seed) {
+    int wx = ((x % period) + period) % period;
+    int wy = ((y % period) + period) % period;
+    return hash_2d(wx, wy, seed);
+}
+
+static float value_noise_2d_tiled(float x, float y, int period, int seed) {
+    int xi = (int)floorf(x);
+    int yi = (int)floorf(y);
+    float tx = smoothstep01(fracf(x));
+    float ty = smoothstep01(fracf(y));
+
+    float n00 = hash_2d_wrapped(xi, yi, period, seed);
+    float n10 = hash_2d_wrapped(xi + 1, yi, period, seed);
+    float n01 = hash_2d_wrapped(xi, yi + 1, period, seed);
+    float n11 = hash_2d_wrapped(xi + 1, yi + 1, period, seed);
+
+    float nx0 = lerpf(n00, n10, tx);
+    float nx1 = lerpf(n01, n11, tx);
+    return lerpf(nx0, nx1, ty);
+}
+
+static float fbm_2d_tiled(float x, float y, int base_period, int seed) {
+    float sum = 0.0f;
+    float amp = 0.5f;
+    float freq = 1.0f;
+    int period = base_period;
+    for (int i = 0; i < 3; ++i) {
+        sum += amp * value_noise_2d_tiled(x * freq, y * freq, period, seed + i * 67);
+        freq *= 2.0f;
+        period *= 2;
+        amp *= 0.5f;
+    }
+    return sum;
+}
+
+/* proctex_make_ground_rgba: a chunky, banded stone/dirt tile for real floor/terrain geometry.
+ * `cells` noise cells span the tile so GL_REPEAT gives visible-but-seamless variation rather than
+ * one giant blurry gradient; banding (not a smooth gradient) is deliberate -- it's what reads as
+ * a real texture at a distance instead of a soft shading gradient, matching the blocky, chunky
+ * look of period-appropriate (Quake/Half-Life-era) tile textures rather than a modern smooth one. */
+void proctex_make_ground_rgba(ProcTexture *t, int w, int h, uint32_t seed) {
+    if (!t || !t->pixels || t->width != w || t->height != h) return;
+    const int cells = 6;
+    const int bands = 5;
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            size_t idx = ((size_t)y * (size_t)w + (size_t)x) * 4u;
+            float u = ((float)x / (float)w) * (float)cells;
+            float v = ((float)y / (float)h) * (float)cells;
+            float n = fbm_2d_tiled(u, v, cells, (int)seed);
+            float banded = floorf(n * (float)bands) / (float)bands;
+            float shade = 0.55f + 0.45f * banded;
+            if (shade > 1.0f) shade = 1.0f;
+            /* Earthy stone/dirt tint -- distinct from the brick tint below on purpose, so a
+             * floor and a wall never read as the exact same material by accident. */
+            t->pixels[idx + 0] = (unsigned char)(shade * 168.0f);
+            t->pixels[idx + 1] = (unsigned char)(shade * 150.0f);
+            t->pixels[idx + 2] = (unsigned char)(shade * 122.0f);
+            t->pixels[idx + 3] = 255;
+        }
+    }
+}
+
+/* proctex_make_wall_brick_rgba: a real running-bond brick pattern (standard half-brick offset on
+ * alternating rows) for wall/box geometry, so walls read as a distinct built material from the
+ * ground rather than sharing one generic "noisy tile" for everything. */
+void proctex_make_wall_brick_rgba(ProcTexture *t, int w, int h, uint32_t seed) {
+    if (!t || !t->pixels || t->width != w || t->height != h) return;
+    const int cols = 8;
+    const int rows = 4;
+    const float mortar = 0.08f;
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            size_t idx = ((size_t)y * (size_t)w + (size_t)x) * 4u;
+            float u = (float)x / (float)w;
+            float v = (float)y / (float)h;
+
+            int row = (int)(v * (float)rows);
+            float row_offset = (row % 2 == 0) ? 0.0f : (0.5f / (float)cols);
+            float col_f = fracf(u * (float)cols + row_offset);
+            float row_f = fracf(v * (float)rows);
+            int is_mortar = (col_f < mortar) || (row_f < mortar);
+
+            float brick_id_x = floorf(u * (float)cols + row_offset);
+            float shade_n = hash_2d((int)brick_id_x, row, (int)seed);
+            float brick_shade = 0.55f + 0.30f * shade_n;
+
+            if (is_mortar) {
+                unsigned char c = (unsigned char)(150.0f + 25.0f * shade_n);
+                t->pixels[idx + 0] = c;
+                t->pixels[idx + 1] = c;
+                t->pixels[idx + 2] = c;
+            } else {
+                t->pixels[idx + 0] = (unsigned char)(brick_shade * 156.0f);
+                t->pixels[idx + 1] = (unsigned char)(brick_shade * 90.0f);
+                t->pixels[idx + 2] = (unsigned char)(brick_shade * 72.0f);
+            }
+            t->pixels[idx + 3] = 255;
+        }
+    }
+}
+
 void proc_tex_fill_emily_vibe(ProcTexture *t, float seed, float t_sec) {
     if (!t || !t->pixels) return;
 

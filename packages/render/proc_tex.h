@@ -21,4 +21,13 @@ void proctex_make_noise_rgba(ProcTexture *t, int w, int h, uint32_t seed);
 void proctex_make_glitch_marks_rgba(ProcTexture *t, int w, int h, uint32_t seed);
 void proctex_upload_to_gl(ProcTexture *t);
 
+/* Real, seamlessly-tileable world-surface textures (founder real-time, 2026-09-12: "lets start
+ * adding textures to shankpit have the compile like generate the textures at compile for now" --
+ * the 1982-graphics flat-vertex-color look draw_terrain/draw_map had until this pass). Unlike
+ * proctex_make_noise_rgba/proctex_make_glitch_marks_rgba above (one-shot cosmetic overlays), these
+ * two are meant to be GL_REPEAT-tiled across real world geometry, so their own noise lattice wraps
+ * at the texture's edges instead of just cutting off. */
+void proctex_make_ground_rgba(ProcTexture *t, int w, int h, uint32_t seed);
+void proctex_make_wall_brick_rgba(ProcTexture *t, int w, int h, uint32_t seed);
+
 #endif
