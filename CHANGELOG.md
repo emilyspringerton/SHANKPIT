@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-12
+
+- feat(render): real procedural textures for terrain/walls -- draw_terrain/draw_map were pure flat-shaded vertex color, no texture at all. Added seamlessly-tileable ground (banded fbm noise) and wall (running-bond brick) procedural generators to proc_tex.c, bound under the existing per-vertex lighting/fog. Founder: 'lets start adding textures to shankpit... bring us from like 1982 graphics to 1999 graphics.' Live-verified via Xvfb screenshot. (sess-20260905-0720-ec33e7c5)
+
+
 ## 2026-09-10
 
 - fix(ci): real, month-long auto-release CI break fixed. Founder real-time: "shankpit main repo should be cutting auto releases." Confirmed via the real GitHub Actions API (using a stored token, gh CLI unavailable in this sandbox) that every single release.yml run had failed or been cancelled since 2026-08-11, and this repo's last real GitHub Release was cut 2026-04-26 -- over 4 months stale despite frequent commits since. Root cause: commit f31cfcd ("GOLDENBAND real bone-skinned mesh replaces Tyler cube body") wired apps/lobby/src/main.c to call gband_mesh_rig_init/gband_mesh_rig_draw, but release.yml's own "Build Windows Client" gcc command was never updated to compile+link packages/goldenband's own real sources (gband.c/gband_mesh_rig.c/gmesh.c/gskel.c) -- a real, undefined-reference link failure. tests.yml itself already carried the correct fix (landed 2026-08-20, commit e807597a) but release.yml was never kept in sync with it -- a real drift between two workflow files that build the identical target. Fixed release.yml to match tests.yml's own already-correct command. Reproduced and confirmed both the exact failure and the fix locally with a real x86_64-w64-mingw32-gcc build against a freshly-downloaded SDL2 mingw devel package before trusting it in CI. (sess-20260905-0720-ec33e7c5)
