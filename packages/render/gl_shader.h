@@ -35,9 +35,10 @@ GLuint gl_compile_shader(GLenum type, const char *src);
  *
  * Fixed attribute contract (bound here, before linking, since GLSL 120 has
  * no layout(location=N) qualifier): the vertex shader's position attribute
- * must be named "a_pos" (bound to location 0) and its normal attribute
- * "a_normal" (location 1) -- matching DynamicVBO's own fixed pos+normal
- * layout below, so the two always agree without a runtime location query. */
+ * must be named "a_pos" (bound to location 0); optional normal and UV
+ * attributes use "a_normal" (location 1) and "a_uv" (location 2).  This
+ * matches the fixed DynamicVBO and TexturedMesh layouts below without a
+ * runtime location query. */
 GLuint gl_link_program(GLuint vertex_shader, GLuint fragment_shader);
 
 /* Thin wrappers over the loaded function pointers so callers never touch
@@ -47,6 +48,7 @@ void gl_use_program(GLuint program);
 GLint gl_get_uniform_location(GLuint program, const char *name);
 void gl_uniform_matrix4fv(GLint location, const float *m16);
 void gl_uniform4fv(GLint location, const float *v4);
+void gl_uniform1i(GLint location, GLint value);
 
 /* A single reusable GPU buffer for CPU-generated geometry that changes
  * every frame (skinned mesh output, etc). Vertex layout is fixed: location
@@ -76,5 +78,19 @@ void gl_dynamic_vbo_destroy(DynamicVBO *vbo);
  * than overrunning the buffer -- the exact bug class GFD hit for real with
  * Tyler's 2922-vert mesh against a 512-vert buffer, caught here on purpose. */
 void gl_dynamic_vbo_draw(DynamicVBO *vbo, const float *verts, GLsizei vert_count, GLenum mode);
+
+/* Immutable position+UV mesh for textured world geometry.  It keeps terrain data
+ * resident on the GPU instead of re-submitting it through immediate mode every
+ * frame.  Vertex layout: position.xyz, uv.xy. */
+typedef struct TexturedMesh {
+    GLuint vao;
+    GLuint vbo;
+    GLsizei vert_count;
+} TexturedMesh;
+
+int gl_textured_mesh_init(TexturedMesh *mesh);
+int gl_textured_mesh_upload(TexturedMesh *mesh, const float *verts, GLsizei vert_count);
+void gl_textured_mesh_draw(const TexturedMesh *mesh, GLenum mode);
+void gl_textured_mesh_destroy(TexturedMesh *mesh);
 
 #endif

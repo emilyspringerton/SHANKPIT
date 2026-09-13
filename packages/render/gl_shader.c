@@ -1,6 +1,7 @@
 #include "gl_shader.h"
 #include <SDL2/SDL.h>
 #include <stddef.h>
+#include <string.h>
 
 /* Function pointers, loaded once by gl_shader_load_extensions(). Declared
  * static here (this translation unit only) -- callers only ever go through
@@ -32,6 +33,7 @@ static PFNGLBINDATTRIBLOCATIONPROC p_glBindAttribLocation;
 static PFNGLGETUNIFORMLOCATIONPROC p_glGetUniformLocation;
 static PFNGLUNIFORMMATRIX4FVPROC   p_glUniformMatrix4fv;
 static PFNGLUNIFORM4FVPROC         p_glUniform4fv;
+static PFNGLUNIFORM1IPROC          p_glUniform1i;
 
 static int g_extensions_loaded = 0;
 
@@ -69,6 +71,7 @@ int gl_shader_load_extensions(void) {
     LOAD(p_glGetUniformLocation, "glGetUniformLocation");
     LOAD(p_glUniformMatrix4fv, "glUniformMatrix4fv");
     LOAD(p_glUniform4fv, "glUniform4fv");
+    LOAD(p_glUniform1i, "glUniform1i");
     g_extensions_loaded = ok;
     return ok;
 }
@@ -108,6 +111,7 @@ GLuint gl_link_program(GLuint vertex_shader, GLuint fragment_shader) {
      * layout(location=N) qualifier to do this from shader source). */
     p_glBindAttribLocation(prog, 0, "a_pos");
     p_glBindAttribLocation(prog, 1, "a_normal");
+    p_glBindAttribLocation(prog, 2, "a_uv");
     p_glLinkProgram(prog);
 
     GLint status = 0;
@@ -146,6 +150,11 @@ void gl_uniform_matrix4fv(GLint location, const float *m16) {
 void gl_uniform4fv(GLint location, const float *v4) {
     if (!g_extensions_loaded || location < 0) return;
     p_glUniform4fv(location, 1, v4);
+}
+
+void gl_uniform1i(GLint location, GLint value) {
+    if (!g_extensions_loaded || location < 0) return;
+    p_glUniform1i(location, value);
 }
 
 int gl_dynamic_vbo_init(DynamicVBO *vbo, GLsizei capacity_verts) {
@@ -214,4 +223,46 @@ void gl_dynamic_vbo_draw(DynamicVBO *vbo, const float *verts, GLsizei vert_count
 
     p_glBindVertexArray(0);
     p_glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+int gl_textured_mesh_init(TexturedMesh *mesh) {
+    if (!g_extensions_loaded || !mesh) return 0;
+    memset(mesh, 0, sizeof(*mesh));
+    p_glGenVertexArrays(1, &mesh->vao);
+    p_glGenBuffers(1, &mesh->vbo);
+    if (!mesh->vao || !mesh->vbo) { gl_textured_mesh_destroy(mesh); return 0; }
+    p_glBindVertexArray(mesh->vao);
+    p_glBindBuffer(GL_ARRAY_BUFFER, mesh->vbo);
+    p_glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), (void *)0);
+    p_glEnableVertexAttribArray(0);
+    p_glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), (void *)(3 * sizeof(GLfloat)));
+    p_glEnableVertexAttribArray(2);
+    p_glBindVertexArray(0);
+    p_glBindBuffer(GL_ARRAY_BUFFER, 0);
+    return glGetError() == GL_NO_ERROR;
+}
+
+int gl_textured_mesh_upload(TexturedMesh *mesh, const float *verts, GLsizei vert_count) {
+    if (!g_extensions_loaded || !mesh || !mesh->vbo || !verts || vert_count <= 0) return 0;
+    p_glBindBuffer(GL_ARRAY_BUFFER, mesh->vbo);
+    p_glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)vert_count * 5 * sizeof(GLfloat), verts, GL_STATIC_DRAW);
+    p_glBindBuffer(GL_ARRAY_BUFFER, 0);
+    mesh->vert_count = vert_count;
+    return glGetError() == GL_NO_ERROR;
+}
+
+void gl_textured_mesh_draw(const TexturedMesh *mesh, GLenum mode) {
+    if (!g_extensions_loaded || !mesh || !mesh->vao || mesh->vert_count <= 0) return;
+    p_glBindVertexArray(mesh->vao);
+    glDrawArrays(mode, 0, mesh->vert_count);
+    p_glBindVertexArray(0);
+}
+
+void gl_textured_mesh_destroy(TexturedMesh *mesh) {
+    if (!mesh) return;
+    if (g_extensions_loaded) {
+        if (mesh->vbo) p_glDeleteBuffers(1, &mesh->vbo);
+        if (mesh->vao) p_glDeleteVertexArrays(1, &mesh->vao);
+    }
+    memset(mesh, 0, sizeof(*mesh));
 }
