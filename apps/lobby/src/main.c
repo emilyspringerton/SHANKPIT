@@ -64,6 +64,100 @@ static DynamicVBO g_gband_vbo;
 static int g_gband_shader_ready = 0;
 static int g_gband_mesh_ready = 0;
 
+/* Static terrain is the textured hot path: keep the full position/UV mesh in a
+ * GPU VBO and let a compact shader sample the ground texture.  This replaces
+ * thousands of immediate-mode texture submissions every frame. */
+static GLuint g_terrain_program = 0;
+static TexturedMesh g_terrain_mesh;
+static const TerrainHeightfield *g_terrain_mesh_source = NULL;
+static uint32_t g_terrain_mesh_hash = 0;
+static int g_terrain_shader_ready = 0;
+
+static const char *g_terrain_vs_src =
+    "#version 120\n"
+    "attribute vec3 a_pos;\n"
+    "attribute vec2 a_uv;\n"
+    "uniform mat4 u_mvp;\n"
+    "varying vec2 v_uv;\n"
+    "void main() { v_uv = a_uv; gl_Position = u_mvp * vec4(a_pos, 1.0); }\n";
+static const char *g_terrain_fs_src =
+    "#version 120\n"
+    "uniform sampler2D u_ground_tex;\n"
+    "varying vec2 v_uv;\n"
+    "void main() { gl_FragColor = texture2D(u_ground_tex, v_uv); }\n";
+
+static void terrain_shader_init(void) {
+    GLuint vs = gl_compile_shader(GL_VERTEX_SHADER, g_terrain_vs_src);
+    GLuint fs = gl_compile_shader(GL_FRAGMENT_SHADER, g_terrain_fs_src);
+    if (!vs || !fs) return;
+    g_terrain_program = gl_link_program(vs, fs);
+    if (!g_terrain_program || !gl_textured_mesh_init(&g_terrain_mesh)) {
+        g_terrain_program = 0;
+        return;
+    }
+    g_terrain_shader_ready = 1;
+}
+
+static uint32_t terrain_mesh_hash(const TerrainHeightfield *t) {
+    uint32_t hash = 2166136261u;
+    int count = t->width * t->height;
+    for (int i = 0; i < count; ++i) {
+        uint32_t bits = 0;
+        memcpy(&bits, &t->heights[i], sizeof(bits));
+        hash = (hash ^ bits) * 16777619u;
+    }
+    return hash;
+}
+
+static int terrain_mesh_update(const TerrainHeightfield *t) {
+    uint32_t hash = terrain_mesh_hash(t);
+    if (g_terrain_mesh_source == t && g_terrain_mesh_hash == hash && g_terrain_mesh.vert_count > 0) return 1;
+    int strips = t->height - 1;
+    int count = strips * (t->width * 2 + 2) - 2; /* degenerate vertices join strips */
+    float *verts = (float *)malloc((size_t)count * 5 * sizeof(*verts));
+    if (!verts) return 0;
+    int out = 0;
+    const float uv_scale = 0.18f;
+    for (int gz = 0; gz < strips; ++gz) {
+        if (gz > 0) {
+            int gx = 0; float x = t->origin_x + gx * t->cell_size; float z = t->origin_z + gz * t->cell_size;
+            verts[out++] = x; verts[out++] = terrain_get_height(t, gx, gz); verts[out++] = z; verts[out++] = x * uv_scale; verts[out++] = z * uv_scale;
+        }
+        for (int gx = 0; gx < t->width; ++gx) {
+            float x = t->origin_x + gx * t->cell_size;
+            float z0 = t->origin_z + gz * t->cell_size, z1 = z0 + t->cell_size;
+            verts[out++] = x; verts[out++] = terrain_get_height(t, gx, gz); verts[out++] = z0; verts[out++] = x * uv_scale; verts[out++] = z0 * uv_scale;
+            verts[out++] = x; verts[out++] = terrain_get_height(t, gx, gz + 1); verts[out++] = z1; verts[out++] = x * uv_scale; verts[out++] = z1 * uv_scale;
+        }
+        if (gz + 1 < strips) {
+            int gx = t->width - 1; float x = t->origin_x + gx * t->cell_size; float z = t->origin_z + (gz + 1) * t->cell_size;
+            verts[out++] = x; verts[out++] = terrain_get_height(t, gx, gz + 1); verts[out++] = z; verts[out++] = x * uv_scale; verts[out++] = z * uv_scale;
+        }
+    }
+    int ok = gl_textured_mesh_upload(&g_terrain_mesh, verts, out / 5);
+    free(verts);
+    if (ok) { g_terrain_mesh_source = t; g_terrain_mesh_hash = hash; }
+    return ok;
+}
+
+static int draw_terrain_shader(const TerrainHeightfield *t) {
+    if (!g_terrain_shader_ready || !terrain_mesh_update(t)) return 0;
+    float projection[16], modelview[16], mvp[16];
+    glGetFloatv(GL_PROJECTION_MATRIX, projection);
+    glGetFloatv(GL_MODELVIEW_MATRIX, modelview);
+    Mat4 p = { {0} }, mv = { {0} };
+    memcpy(p.m, projection, sizeof(projection)); memcpy(mv.m, modelview, sizeof(modelview));
+    Mat4 combined = mat4_multiply(&p, &mv); memcpy(mvp, combined.m, sizeof(mvp));
+    gl_use_program(g_terrain_program);
+    gl_uniform_matrix4fv(gl_get_uniform_location(g_terrain_program, "u_mvp"), mvp);
+    gl_uniform1i(gl_get_uniform_location(g_terrain_program, "u_ground_tex"), 0);
+    glBindTexture(GL_TEXTURE_2D, g_ground_tex.tex_id);
+    gl_textured_mesh_draw(&g_terrain_mesh, GL_TRIANGLE_STRIP);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    gl_use_program(0);
+    return 1;
+}
+
 /* Per-frame camera-only view*projection, captured once in draw_scene right
  * after the legacy fixed-function camera (gluPerspective/gluLookAt) is set
  * up for the frame -- gband_mesh_rig_draw bakes each hero's own world
@@ -1967,6 +2061,7 @@ static void draw_voxel_chunks(const RetroLightingState *lighting) {
 void draw_terrain(const RetroLightingState *lighting) {
     TerrainHeightfield *t = scene_active_terrain();
     if (!t || !t->active || !t->heights || t->width < 2 || t->height < 2) return;
+    if (!terrain_wireframe_debug && !terrain_normals_debug && draw_terrain_shader(t)) return;
     int ref_id = (my_client_id >= 0 && my_client_id < MAX_CLIENTS) ? my_client_id : 0;
     const PlayerState *rp = &local_state.players[ref_id];
     float min_h = terrain_get_height(t, 0, 0);
@@ -7470,6 +7565,7 @@ int main(int argc, char* argv[]) {
     }
     SDL_GL_CreateContext(win);
     gband_shader_and_mesh_init();
+    terrain_shader_init();
     proctex_init();
     proc_tex_create(&g_vehicle_noise_tex, 64, 64);
     proctex_make_noise_rgba(&g_vehicle_noise_tex, 64, 64, g_vehicle_style.seed);
@@ -8089,6 +8185,7 @@ int main(int argc, char* argv[]) {
     proc_tex_destroy(&g_vehicle_noise_tex);
     proc_tex_destroy(&g_vehicle_glitch_tex);
     retro_sky_shutdown(&g_retro_sky);
+    gl_textured_mesh_destroy(&g_terrain_mesh);
     audio_shutdown();
     SDL_Quit();
     return 0;
