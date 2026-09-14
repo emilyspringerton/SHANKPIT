@@ -1250,6 +1250,36 @@ static void story_swarm_tick(PlayerState *hero, unsigned int now_ms) {
 }
 
 // --- BOT AI ---
+// commander_posture_multiplier -- S459-35, founder real-time: "WE NEED THE FULL FRACTAL COMMANDER
+// STUFF FOR SHANKPIT" / "THERE WONT ALWAYS BE TEAMS BUT WE WILL BE TRAINING TEAMS SOLDIER
+// COMMANDER FRACTAL HEIRARCHY." Checked directly before building anything: the REAL, currently-
+// built "fractal commander" anywhere in this monorepo is NOT a multi-level RL hierarchy (commander
+// -> commander-soldiers -> soldiers) -- REDGARDEN's own NORTHSTAR.md §26.3 states plainly "the
+// full hierarchical-RL version above stays unbuilt -- it needs a restructured, learned training
+// loop." What IS real and live there is `commander_posture_multiplier()`: one flat, rule-based
+// (not learned) team-wide posture scalar derived from the live resource race, applied to
+// individual bot patience/aggression. BRAWLPIT's own `commander_posture()` (packages/common/
+// commander.h) ports the SAME real pattern for a no-team 1v1 context. This is that same real
+// pattern's third port, for SHANKPIT's own real teams (MODE_TDMO, TDMB_BLUE_TEAM/TDMB_RED_TEAM) --
+// the honest v0: a team meaningfully ahead on score plays PATIENT (protects the lead, matches
+// REDGARDEN's own real MOBA-precedent framing); a team meaningfully behind plays AGGRESSIVE
+// (can't afford to wait passively while falling further behind). The full learned multi-level
+// hierarchy stays real, named, future work -- not attempted here, matching REDGARDEN's own
+// honest status for the exact same idea.
+#define COMMANDER_POSTURE_NEUTRAL    0
+#define COMMANDER_POSTURE_AGGRESSIVE 1
+#define COMMANDER_POSTURE_PATIENT    2
+#define COMMANDER_SCORE_LEAD_THRESHOLD 3 /* real, tunable -- kills/captures of daylight before a team's own posture shifts */
+
+static int commander_posture_multiplier(int team_id) {
+    if (!team_id_is_valid(team_id)) return COMMANDER_POSTURE_NEUTRAL;
+    int enemy = (team_id == TDMB_BLUE_TEAM) ? TDMB_RED_TEAM : TDMB_BLUE_TEAM;
+    int lead = local_state.team_scores[team_id] - local_state.team_scores[enemy];
+    if (lead >= COMMANDER_SCORE_LEAD_THRESHOLD) return COMMANDER_POSTURE_PATIENT;
+    if (lead <= -COMMANDER_SCORE_LEAD_THRESHOLD) return COMMANDER_POSTURE_AGGRESSIVE;
+    return COMMANDER_POSTURE_NEUTRAL;
+}
+
 void bot_think(int bot_idx, PlayerState *players, float dt, float *out_fwd, float *out_yaw, int *out_buttons) {
     PlayerState *me = &players[bot_idx];
     if (me->state == STATE_DEAD || local_state.match_over) { *out_buttons = 0; return; }
@@ -1328,9 +1358,23 @@ void bot_think(int bot_idx, PlayerState *players, float dt, float *out_fwd, floa
 
         /* Health-aware positioning: retreat aggressively when hp < 30% */
         float health_frac = (float)me->health / 100.0f;
-        if (health_frac < 0.3f) {
+        /* commander_posture_multiplier (S459-35): a team meaningfully ahead plays more patient
+           (retreats at a higher health threshold, holds off engaging until closer), a team
+           meaningfully behind plays more aggressive (retreats later, engages from further out) --
+           same real, tunable shape REDGARDEN's own commander_posture_multiplier() applies to its
+           own ARENA_BOT_DAMAGED_TOWER_PATIENCE_BONUS. team_mode gates it the same way the rest of
+           this function's own team-vs-FFA branching already does -- MODE_QUEUE (no teams) always
+           reads COMMANDER_POSTURE_NEUTRAL since team_id_is_valid is false outside a team mode. */
+        int posture = team_mode ? commander_posture_multiplier(me->team_id) : COMMANDER_POSTURE_NEUTRAL;
+        float retreat_threshold = (posture == COMMANDER_POSTURE_PATIENT) ? 0.45f
+                                 : (posture == COMMANDER_POSTURE_AGGRESSIVE) ? 0.18f
+                                 : 0.3f;
+        float engage_range = (posture == COMMANDER_POSTURE_AGGRESSIVE) ? 22.0f
+                            : (posture == COMMANDER_POSTURE_PATIENT) ? 10.0f
+                            : 15.0f;
+        if (health_frac < retreat_threshold) {
             *out_fwd = -me->brain.w_aggro * me->brain.w_retreat;
-        } else if (min_dist > 15.0f) {
+        } else if (min_dist > engage_range) {
             *out_fwd = me->brain.w_aggro;
         } else if (min_dist < 5.0f) {
             *out_fwd = -me->brain.w_aggro;
