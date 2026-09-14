@@ -387,6 +387,70 @@ static int flashlight_sources_gather(int scene_id, FlashlightSource *out) {
     return count;
 }
 
+/* fixture_light_face_boost -- REAL point-light contribution from every IPS/HPS light fixture in
+ * the current custom level onto EVERY OTHER box's own faces (founder real-time, 2026-09-14: "both
+ * of the light materials needs to actually cast light - like do you see how the flashlight
+ * actually lights the wall up outside of the main beam...but not the IPS light"). Confirmed, real
+ * gap: SHADER_IPS_LIGHT/SHADER_HPS_LIGHT only ever forced their OWN box to full brightness --
+ * nothing made nearby walls brighter the way flashlight_face_boost already does for the
+ * flashlight. Same real per-face N.L + distance-falloff shape as flashlight_face_boost, but
+ * omnidirectional (a light fixture radiates every direction, not a cone) and carrying its own
+ * REAL COLOR per source (cool white-blue for IPS, warm amber for HPS -- HPS's own color is
+ * pre-multiplied by hps_flicker at gather time, so nearby walls visibly flicker along with the
+ * fixture itself, not just the fixture's own surface). */
+typedef struct { float x, y, z, r, g, b; } FixtureLight;
+#define FIXTURE_LIGHTS_MAX CUSTOM_LEVEL_MAX_MATERIALS
+#define FIXTURE_LIGHT_RANGE 45.0f
+
+static void fixture_light_face_contribution(const FixtureLight *sources, int source_count,
+                                             float bx, float by, float bz, float nx, float ny, float nz,
+                                             float *out_r, float *out_g, float *out_b) {
+    float r = 0.0f, g = 0.0f, b = 0.0f;
+    for (int i = 0; i < source_count; i++) {
+        const FixtureLight *s = &sources[i];
+        float dx = bx - s->x, dy = by - s->y, dz = bz - s->z;
+        float dist = sqrtf(dx * dx + dy * dy + dz * dz);
+        if (dist < 0.001f || dist > FIXTURE_LIGHT_RANGE) continue;
+        float lx = dx / dist, ly = dy / dist, lz = dz / dist; /* source -> surface direction */
+        float ndotl = -(nx * lx + ny * ly + nz * lz);
+        if (ndotl < 0.0f) continue;
+        float dist_frac = dist / FIXTURE_LIGHT_RANGE;
+        if (dist_frac < 0.0f) dist_frac = 0.0f; else if (dist_frac > 1.0f) dist_frac = 1.0f;
+        float dist_t = 1.0f - dist_frac;
+        dist_t = dist_t * dist_t;
+        float k = ndotl * dist_t * 1.4f;
+        r += s->r * k; g += s->g * k; b += s->b * k;
+    }
+    *out_r = r; *out_g = g; *out_b = b;
+}
+
+/* Gathers every IPS/HPS-shaded box in the current custom level into a small array ONCE per
+ * draw_map call -- same "compute once per call" discipline flashlight_sources_gather/material_mvp
+ * already establish. hps_flicker is passed in (draw_map's own per-frame value, computed once
+ * already) so HPS fixtures light the walls around them with the SAME pulsing brightness their own
+ * surface shows, not a separately-computed or static one. */
+static int fixture_lights_gather(int scene_id, FixtureLight *out, float hps_flicker) {
+    int count = 0;
+    if (scene_id != SCENE_CUSTOM_LEVEL) return 0;
+    for (int i = 1; i < map_count && i < CUSTOM_LEVEL_MAX_BOXES + 1 && count < FIXTURE_LIGHTS_MAX; i++) {
+        int mi = g_custom_level_material_idx[i];
+        if (mi < 0 || mi >= g_custom_level_material_count) continue;
+        const char *shader = g_custom_level_material_shader[mi];
+        int is_ips = (strcmp(shader, SHADER_IPS_LIGHT) == 0);
+        int is_hps = (strcmp(shader, SHADER_HPS_LIGHT) == 0);
+        if (!is_ips && !is_hps) continue;
+        Box b = map_geo[i];
+        FixtureLight *s = &out[count++];
+        s->x = b.x; s->y = b.y; s->z = b.z;
+        if (is_ips) {
+            s->r = 0.85f; s->g = 0.92f; s->b = 1.0f;
+        } else {
+            s->r = 1.0f * hps_flicker; s->g = 0.55f * hps_flicker; s->b = 0.10f * hps_flicker;
+        }
+    }
+    return count;
+}
+
 #ifndef NET_VERBOSE_LOG
 #define NET_VERBOSE_LOG 0
 #endif
@@ -2317,6 +2381,9 @@ void draw_map(const RetroLightingState *lighting) {
         if (hps_flicker < 0.12f) hps_flicker = 0.12f; else if (hps_flicker > 1.0f) hps_flicker = 1.0f;
     }
 
+    FixtureLight fixture_lights[FIXTURE_LIGHTS_MAX];
+    int fixture_light_count = fixture_lights_gather(phys_scene_id, fixture_lights, hps_flicker);
+
     for(int i=1; i<map_count; i++) {
         Box b = map_geo[i];
         /* SHADER_IPS_LIGHT/SHADER_HPS_LIGHT (founder real-time, 2026-09-14): a light fixture
@@ -2420,6 +2487,30 @@ void draw_map(const RetroLightingState *lighting) {
             back_lit_r += back_boost; back_lit_g += back_boost; back_lit_b += back_boost;
             left_lit_r += left_boost; left_lit_g += left_boost; left_lit_b += left_boost;
             right_lit_r += right_boost; right_lit_g += right_boost; right_lit_b += right_boost;
+        }
+
+        /* SHADER_IPS_LIGHT/SHADER_HPS_LIGHT casting real light onto NEARBY walls (founder real-
+           time, 2026-09-14: "both of the light materials needs to actually cast light...do you
+           see how the flashlight actually lights the wall up outside of the main beam...but not
+           the IPS light"). Real gap, now closed: these fixtures used to only brighten their OWN
+           box; this is the same real per-face N.L + falloff treatment the flashlight already
+           gets, just omnidirectional and carrying each fixture's own real color. Harmless no-op
+           on a light fixture's own box (is_ips_light/is_hps_light's own override below replaces
+           these lit values wholesale anyway, same order flashlight's boost already follows). */
+        if (fixture_light_count > 0) {
+            float tr, tg, tb, br, bg, bb, fr, fg, fb, kr, kg, kb, lr, lg, lb, rr, rg, rb;
+            fixture_light_face_contribution(fixture_lights, fixture_light_count, b.x, b.y, b.z,  0.0f,  1.0f,  0.0f, &tr, &tg, &tb);
+            fixture_light_face_contribution(fixture_lights, fixture_light_count, b.x, b.y, b.z,  0.0f, -1.0f,  0.0f, &br, &bg, &bb);
+            fixture_light_face_contribution(fixture_lights, fixture_light_count, b.x, b.y, b.z,  0.0f,  0.0f,  1.0f, &fr, &fg, &fb);
+            fixture_light_face_contribution(fixture_lights, fixture_light_count, b.x, b.y, b.z,  0.0f,  0.0f, -1.0f, &kr, &kg, &kb);
+            fixture_light_face_contribution(fixture_lights, fixture_light_count, b.x, b.y, b.z, -1.0f,  0.0f,  0.0f, &lr, &lg, &lb);
+            fixture_light_face_contribution(fixture_lights, fixture_light_count, b.x, b.y, b.z,  1.0f,  0.0f,  0.0f, &rr, &rg, &rb);
+            top_lit_r += tr; top_lit_g += tg; top_lit_b += tb;
+            bot_lit_r += br; bot_lit_g += bg; bot_lit_b += bb;
+            front_lit_r += fr; front_lit_g += fg; front_lit_b += fb;
+            back_lit_r += kr; back_lit_g += kg; back_lit_b += kb;
+            left_lit_r += lr; left_lit_g += lg; left_lit_b += lb;
+            right_lit_r += rr; right_lit_g += rg; right_lit_b += rb;
         }
 
         top_r *= top_lit_r; top_g *= top_lit_g; top_b *= top_lit_b;
