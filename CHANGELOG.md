@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-14
+- feat(queue): real networked bot queue (S459-34) -- MODE_QUEUE replaces the local-only TDMB menu tile, filled by real packet-level bot processes (emily-bot, adapted) matching BRAWLPIT's own standing bot-pool precedent, not in-process puppets. Live-verified 3-bot connect on isolated port. Release v0.26.0 cut clean (sess-20260905-0720-ec33e7c5)
 - fix(ci): both release.yml and tests.yml's Windows-build steps were missing the S459-33 PNG decoder sources (two independently hand-maintained copies of the same build command) -- CI was failing/no releases cutting since the sprays commit; real release v0.24.0 now cut clean (sess-20260905-0720-ec33e7c5)
 - fix(sprays): decal quads now keep the spray's real aspect ratio instead of squashing every spray into a fixed square (sess-20260905-0720-ec33e7c5)
 - feat(sprays): real PNG-decoded spray decal textures -- decals now show the spray's actual uploaded artwork instead of a flat hash-color placeholder, via a real PARENA-compiled PNG decoder (sess-20260905-0720-ec33e7c5)
