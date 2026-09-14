@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-14
+- S459-48: real packet-level PPO training pipeline working end-to-end (scripts/rl_env_packet.py, rl_train_packet.py, 26 tests) -- found and fixed 3 real, live-production bugs along the way: QUEUE connect never spawned the player, phys_respawn's scene whitelist missing SCENE_CUSTOM_LEVEL (was kicking players out of NEWPIT on every death), and no void/out-of-bounds death existed anywhere in the codebase. Added --fast-forward server flag. First real training run completed, checkpoint verified loadable. (sess-20260905-0720-ec33e7c5)
 - S459-47: fixed real self is_shooting/is_crouching (no server round-trip needed), decoded the real dual sniper-storm/katana-dash ability-cooldown mechanic (one shared cooldown gates both, storm charges persist independently), added reload_timer/ability_cooldown to the wire protocol, added real AABB raycast wall/floor-distance features -- ObservationSize 72 -> 84 (sess-20260905-0720-ec33e7c5)
 - S459-43/44/45/46: QUEUE round timer, fixed a real PacketSnapshot decode bug in emily-bot (was reading garbage peer state), built 72-feature bot observation vector + 4-tier reward system (physics.h's existing reward_feedback signal as the outcome tier), team rewards architected but FFA-only for now (sess-20260905-0720-ec33e7c5)
 - S459-41: QUEUE default level now driven by is_default_queue admin flag (NEWPIT live), fixed ea-windows Makefile target (x86_64 mingw, was i686) (sess-20260905-0720-ec33e7c5)
