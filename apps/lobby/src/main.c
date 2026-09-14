@@ -158,6 +158,9 @@ static int g_flashlight_shader_ready = 0;
 #define FLASHLIGHT_RANGE 55.0f
 #define FLASHLIGHT_HALF_ANGLE_DEG 20.0f
 #define FLASHLIGHT_SEGMENTS 24
+#define FLASHLIGHT_APEX_OFFSET 1.0f /* the cone's apex starts this far in front of the eye, not
+    AT it -- a vertex exactly at the camera is a real clip-space singularity (w=0), see
+    draw_flashlight_beam's own doc comment on the apex vertex below for the full story */
 
 static const char *g_flashlight_vs_src =
     "#version 120\n"
@@ -235,11 +238,21 @@ static void draw_flashlight_beam(const PlayerState *p) {
     rx /= rlen; ry /= rlen; rz /= rlen;
     float ux = ry * fz - rz * fy, uy = rz * fx - rx * fz, uz = rx * fy - ry * fx;
 
+    /* REAL, FOUND, LIVE BUG (2026-09-14, founder: "you can see a barley circle of light where
+       the flashlight is supposed to be / jost llike 8 pixels"): the apex sat EXACTLY at the
+       camera's own eye position -- a mathematically degenerate vertex in clip space (w=0, right
+       at the near-plane focal point). Every triangle in the fan shares that one vertex, so the
+       whole cone got clipped down to a tiny sliver near screen center instead of the wide beam
+       it's supposed to be. Fixed the same way every real flashlight/spotlight effect avoids this
+       exact singularity: start the apex a small, real distance in FRONT of the eye, not AT it. */
+    float apex_x = eye_x + fx * FLASHLIGHT_APEX_OFFSET;
+    float apex_y = eye_y + fy * FLASHLIGHT_APEX_OFFSET;
+    float apex_z = eye_z + fz * FLASHLIGHT_APEX_OFFSET;
     float cone_radius = FLASHLIGHT_RANGE * tanf(FLASHLIGHT_HALF_ANGLE_DEG * 0.0174533f);
     float verts[GL_SHADER_VBO_FLOATS_PER_VERT * (FLASHLIGHT_SEGMENTS + 2)];
     int vi = 0;
     /* apex */
-    verts[vi++] = eye_x; verts[vi++] = eye_y; verts[vi++] = eye_z;
+    verts[vi++] = apex_x; verts[vi++] = apex_y; verts[vi++] = apex_z;
     verts[vi++] = 0.0f; verts[vi++] = 0.0f; verts[vi++] = 0.0f;
     for (int i = 0; i <= FLASHLIGHT_SEGMENTS; i++) {
         float ang = ((float)i / (float)FLASHLIGHT_SEGMENTS) * 6.28318531f;
