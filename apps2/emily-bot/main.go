@@ -61,12 +61,33 @@ const (
 	rangeLong   = float32(50.0)
 )
 
+// peer -- S459-44, real, found-live protocol fix. Extended from a position-only struct
+// (id/sceneID/x/y/z/yaw) to mirror every real field the server actually puts on the wire per
+// entity (packages/common/protocol.h's NetPlayer, 64 bytes on this build -- see snapshot.go's
+// own doc comment for the real decode-offset bug this replaces). The extra fields are what makes
+// a real, hand-engineered observation vector possible at all: health/shield/weapon/state/team_id
+// were never being read before, so no feature could ever have been built on them.
 type peer struct {
-	id      uint8
-	sceneID uint8
-	x, y, z float32
-	yaw     float32
-	seen    time.Time
+	id            uint8
+	sceneID       uint8
+	isBot         bool
+	teamID        int8
+	x, y, z       float32
+	yaw           float32
+	pitch         float32
+	currentWeapon uint8
+	state         uint8
+	health        uint8
+	shield        uint8
+	isShooting    bool
+	crouching     bool
+	rewardFeedback float32 // real server-computed reward earned since the last snapshot (S459-45); see snapshot.go
+	hitFeedback   uint8
+	ammo          uint8
+	inVehicle     uint8
+	kills         uint16
+	deaths        uint16
+	seen          time.Time
 }
 
 type botState struct {
@@ -77,7 +98,15 @@ type botState struct {
 	myZ     float32
 	myYaw   float32
 	myPitch float32
-	myHealth float32 // estimated health 0-100; decrements near enemies, resets on respawn
+	myHealth float32 // real decoded health when available (S459-44); heuristic fallback otherwise
+	myShield        uint8
+	myCurrentWeapon uint8
+	myAmmo          uint8
+	myState         uint8
+	myTeamID        int8
+	myDeaths        uint16
+	myRewardFeedback float32 // real server-computed reward earned since the last snapshot (S459-45)
+	myHitFeedback    uint8
 	sceneID uint8
 	peers   map[uint8]*peer
 	seq     uint32
@@ -658,38 +687,47 @@ func receiveLoop(conn *net.UDPConn, state *botState, verbose bool) {
 			state.observe(fmt.Sprintf("emily-bot: connected — clientID=%d sceneID=%d", buf[1], state.sceneID), "info")
 
 		case common.PacketSnapshot:
-			if n < 2 {
+			entities, ok := decodePacketSnapshot(buf, n)
+			if !ok {
 				continue
 			}
-			count := int(buf[1])
-			const entitySize = 18
 			state.mu.Lock()
 			now := time.Now()
-			off := 2
-			for i := 0; i < count && off+entitySize <= n; i++ {
-				id := buf[off]
-				sceneID := buf[off+1]
-				x := math.Float32frombits(binary.LittleEndian.Uint32(buf[off+2:]))
-				y := math.Float32frombits(binary.LittleEndian.Uint32(buf[off+6:]))
-				z := math.Float32frombits(binary.LittleEndian.Uint32(buf[off+10:]))
-				yaw := math.Float32frombits(binary.LittleEndian.Uint32(buf[off+14:]))
-				if id == state.myID {
+			peerCount := 0
+			for _, e := range entities {
+				if e.id == state.myID {
 					// Server-authoritative position update — reset dead-reckoning anchor.
-					state.myX, state.myY, state.myZ = x, y, z
-					if sceneID == state.sceneID {
-						state.myYaw = yaw
+					state.myX, state.myY, state.myZ = e.x, e.y, e.z
+					if e.sceneID == state.sceneID {
+						state.myYaw = e.yaw
 					}
+					state.myShield = e.shield
+					state.myCurrentWeapon = e.currentWeapon
+					state.myAmmo = e.ammo
+					state.myState = e.state
+					state.myTeamID = e.teamID
+					state.myDeaths = e.deaths
+					state.myHealth = float32(e.health) // real, server-authoritative health now available (was heuristic-only before S459-44)
+					state.myRewardFeedback = e.rewardFeedback
+					state.myHitFeedback = e.hitFeedback
 				} else {
-					state.peers[id] = &peer{
-						id: id, sceneID: sceneID,
-						x: x, y: y, z: z, yaw: yaw,
+					state.peers[e.id] = &peer{
+						id: e.id, sceneID: e.sceneID,
+						isBot: e.isBot, teamID: e.teamID,
+						x: e.x, y: e.y, z: e.z, yaw: e.yaw, pitch: e.pitch,
+						currentWeapon: e.currentWeapon, state: e.state,
+						health: e.health, shield: e.shield,
+						isShooting: e.isShooting, crouching: e.crouching,
+						rewardFeedback: e.rewardFeedback, hitFeedback: e.hitFeedback,
+						ammo: e.ammo, inVehicle: e.inVehicle,
+						kills: e.kills, deaths: e.deaths,
 						seen: now,
 					}
+					peerCount++
 				}
-				off += entitySize
 			}
-			if verbose && count > 0 {
-				fmt.Printf("[emily-bot] snapshot: %d peers\n", count)
+			if verbose && peerCount > 0 {
+				fmt.Printf("[emily-bot] snapshot: %d peers\n", peerCount)
 			}
 			state.mu.Unlock()
 
