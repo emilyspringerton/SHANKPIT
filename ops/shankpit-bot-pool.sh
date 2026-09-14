@@ -51,7 +51,15 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 for i in $(seq 1 "$BOT_COUNT"); do
-    "$BOT_BIN" -host "$HOST" -port "$PORT" -mode "$SHANKPIT_MODE_QUEUE" -no-report &
+    # Real, found-live fix: emily-bot's own -session-duration defaults to 60s (a real, sensible
+    # default for a bounded RL self-play SESSION, the tool's original real purpose) -- left
+    # unset here, every bot in this pool was disconnecting and reconnecting (new UDP source
+    # port, new server slot) every 60 seconds, a real, confirmed-live cause of "there are not
+    # bots in this match" (founder real-time, 2026-09-14) whenever a human's own connect landed
+    # inside one of those churn windows. Matches shankpit-460's own real, already-working
+    # precedent (`ops/systemd/shankpit460-emily-bot.service`'s own `-duration 87600h`) for a
+    # standing daemon bot, not a bounded test session.
+    "$BOT_BIN" -host "$HOST" -port "$PORT" -mode "$SHANKPIT_MODE_QUEUE" -no-report -session-duration 87600h &
     pids+=("$!")
     echo "shankpit-bot-pool: bot $i pid=$! "
 done
