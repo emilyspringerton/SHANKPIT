@@ -2756,6 +2756,23 @@ void resolve_collision(PlayerState *p) {
     float ph = p->in_vehicle ? 3.0f : (p->crouching ? (PLAYER_HEIGHT / 2.0f) : PLAYER_HEIGHT);
     p->on_ground = 0;
     g_last_ground_source_terrain = 0;
+    // Real, found-live bug (founder real-time: "i made a level with an embeded level and for
+    // some reason when i jump it teleports me outside the walls"): the per-box loop below used
+    // to recompute `prev_y = p->y - p->vy` fresh for EACH overlapping box, to tell "was I above
+    // this box's top last frame" (landing) apart from "did I walk into its side" (push-out).
+    // That approximation is only valid using the ORIGINAL per-tick vy -- but the landing branch
+    // itself zeroes p->vy (`p->vy = 0`) the moment the FIRST overlapping box resolves as a
+    // landing. With two or more boxes overlapping the player in the same tick (real, common with
+    // tightly-nested/"embedded" level geometry -- an inner room's walls sitting close to an
+    // outer room's), every box checked AFTER the first one recomputed prev_y from the
+    // ALREADY-ZEROED vy, i.e. prev_y = p->y - 0 = p->y (the CURRENT, already-corrected position,
+    // not the true previous one) -- a meaningless comparison that could misclassify a real
+    // side-on collision as "was already above the box," skipping the horizontal push-out branch
+    // entirely and letting the player's position stand wherever the FIRST box's resolution left
+    // it, even if that's past/outside a wall the second box should have blocked. Captured once,
+    // here, before the loop can touch vy, so every box in the loop uses the real, same
+    // frame-start value.
+    float frame_prev_y = p->y - p->vy;
 
     float ground_floor = 0.0f;
     int terrain_ok = 0;
@@ -2798,8 +2815,7 @@ void resolve_collision(PlayerState *p) {
         if (p->x + pw > b.x - b.w/2 && p->x - pw < b.x + b.w/2 &&
             p->z + pw > b.z - b.d/2 && p->z - pw < b.z + b.d/2) {
             if (p->y < b.y + b.h/2 && p->y + ph > b.y - b.h/2) {
-                float prev_y = p->y - p->vy;
-                if (prev_y >= b.y + b.h/2) {
+                if (frame_prev_y >= b.y + b.h/2) {
                     p->y = b.y + b.h/2; p->vy = 0; p->on_ground = 1;
                     g_last_ground_source_terrain = 0;
                 } else {
