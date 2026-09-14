@@ -237,17 +237,32 @@ static float g_custom_level_g[CUSTOM_LEVEL_MAX_BOXES];
 static float g_custom_level_b[CUSTOM_LEVEL_MAX_BOXES];
 static int g_custom_level_count = 0;
 
-// phys_set_custom_level copies a loaded level's own boxes into the buffers above -- call this
-// BEFORE phys_set_scene(SCENE_CUSTOM_LEVEL) so the geometry is already there the moment that
-// scene is actually selected (matches every other scene's own "init then select" real call
-// order, e.g. init_dust_compound_geo() before phys_set_scene(SCENE_DUST_COMPOUND) picks it up).
-// Deliberately takes plain float arrays, not a CustomLevelData* -- keeps this file free of any
-// dependency on packages/world/level_boxes.h's own JSON-parsing concerns; the caller (apps/
-// server, apps/lobby) does the trivial field copy from a loaded CustomLevelData.
+// S459-08, founder real-time: "i want there to be a plane by default that the player collides
+// with - the checkerboard in the level editor - that should constitute the plane for that
+// level... configurable in terms of size... turn on able and off able per level." A real,
+// per-level, persisted property (IDUNA/internal/shankpit.Level.GroundPlaneEnabled/Squares) --
+// unlike every other scene's own unconditional "no terrain -> flat floor at y=0 everywhere"
+// fallback in resolve_collision below, a custom level's own flat floor only exists where the
+// author actually enabled it, and only inside its own real, bounded footprint.
+// CUSTOM_LEVEL_GRID_CELL_SIZE matches IDUNA/internal/shankpit.GridCellSize (Go) and apps/lobby's
+// own real, already-existing `#define GRID_SIZE 50.0f` exactly (founder: "the squares are always
+// the same size" / "shankpit has it built in that the grid lights up when you touch it") -- kept
+// in sync by hand across this Go/C/TS boundary.
+#define CUSTOM_LEVEL_GRID_CELL_SIZE 50.0f
+static int g_custom_level_ground_plane_enabled = 1;
+static int g_custom_level_ground_plane_squares = 2;
+
+// phys_set_custom_level copies a loaded level's own boxes + ground plane config into the buffers
+// above -- call this BEFORE phys_set_scene(SCENE_CUSTOM_LEVEL) so the geometry is already there
+// the moment that scene is actually selected (matches every other scene's own "init then select"
+// real call order, e.g. init_dust_compound_geo() before phys_set_scene(SCENE_DUST_COMPOUND)
+// picks it up). Deliberately takes plain float arrays, not a CustomLevelData* -- keeps this file
+// free of any dependency on packages/world/level_boxes.h's own JSON-parsing concerns; the caller
+// (apps/server, apps/lobby) does the trivial field copy from a loaded CustomLevelData.
 static inline void phys_set_custom_level(const float *x, const float *y, const float *z,
                                           const float *w, const float *h, const float *d,
                                           const float *r, const float *g, const float *b,
-                                          int count) {
+                                          int count, int ground_plane_enabled, int ground_plane_squares) {
     int n = count > CUSTOM_LEVEL_MAX_BOXES ? CUSTOM_LEVEL_MAX_BOXES : count;
     for (int i = 0; i < n; i++) {
         g_custom_level_geo[i].x = x[i];
@@ -261,6 +276,8 @@ static inline void phys_set_custom_level(const float *x, const float *y, const f
         g_custom_level_b[i] = b[i];
     }
     g_custom_level_count = n;
+    g_custom_level_ground_plane_enabled = ground_plane_enabled;
+    g_custom_level_ground_plane_squares = ground_plane_squares > 0 ? ground_plane_squares : 1;
 }
 
 #define GARAGE_KILL_Y -30.0f
@@ -2680,12 +2697,25 @@ void resolve_collision(PlayerState *p) {
         ground_floor = terrain_sample_height(&g_scene_terrain, p->x, p->z);
         if (ground_floor < 0.0f) ground_floor = 0.0f;
     }
-    if (p->y < 0.0f || (terrain_ok && p->y < ground_floor)) {
+    // S459-08: SCENE_CUSTOM_LEVEL's own real, configurable ground plane -- see
+    // g_custom_level_ground_plane_enabled's own doc comment above. Every other scene keeps this
+    // at 1 unconditionally (no change to their own existing "no terrain -> flat floor at y=0
+    // everywhere" behavior).
+    int custom_level_floor_ok = 1;
+    if (phys_scene_id == SCENE_CUSTOM_LEVEL) {
+        if (!g_custom_level_ground_plane_enabled) {
+            custom_level_floor_ok = 0;
+        } else {
+            float half = (g_custom_level_ground_plane_squares * CUSTOM_LEVEL_GRID_CELL_SIZE) / 2.0f;
+            if (p->x < -half || p->x > half || p->z < -half || p->z > half) custom_level_floor_ok = 0;
+        }
+    }
+    if (custom_level_floor_ok && (p->y < 0.0f || (terrain_ok && p->y < ground_floor))) {
         p->y = terrain_ok ? ground_floor : 0.0f;
         p->vy = 0.0f;
         p->on_ground = 1;
         g_last_ground_source_terrain = terrain_ok ? 1 : 0;
-    } else if (terrain_ok && p->vy <= 0.0f) {
+    } else if (custom_level_floor_ok && terrain_ok && p->vy <= 0.0f) {
         /* Step-down snap: keep the player glued to downslopes without requiring
            them to fall back through the surface after each horizontal step. */
         float above = p->y - ground_floor;

@@ -942,7 +942,7 @@ int main(int argc, char *argv[]) {
                     w[bi] = lvl.boxes[bi].w; h[bi] = lvl.boxes[bi].h; d[bi] = lvl.boxes[bi].d;
                     r[bi] = lvl.boxes[bi].r; g[bi] = lvl.boxes[bi].g; b[bi] = lvl.boxes[bi].b;
                 }
-                phys_set_custom_level(x, y, z, w, h, d, r, g, b, lvl.count);
+                phys_set_custom_level(x, y, z, w, h, d, r, g, b, lvl.count, lvl.ground_plane_enabled, lvl.ground_plane_squares);
                 g_server_match_scene = SCENE_CUSTOM_LEVEL;
                 scene_load(g_server_match_scene);
                 NET_SERVER_LOG("CUSTOM_LEVEL_LOADED name=%s boxes=%d path=%s", lvl.name, lvl.count, argv[i + 1]);

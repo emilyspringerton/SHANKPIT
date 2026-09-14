@@ -48,6 +48,12 @@ typedef struct {
                                     back into any native bound today (same "authoring metadata,
                                     not native state" role BRAWLPIT's own width/height play for
                                     its 2D canvas) */
+    /* S459-08: the level's own real, configurable ground plane (founder: "i want there to be a
+       plane by default that the player collides with... configurable in terms of size... turn on
+       able and off able per level") -- see physics.h's own g_custom_level_ground_plane_enabled
+       doc comment for the real collision contract these feed into via phys_set_custom_level. */
+    int ground_plane_enabled;
+    int ground_plane_squares;
     LevelBox boxes[LEVEL_BOXES_MAX];
     int count;
 } CustomLevelData;
@@ -97,6 +103,15 @@ static inline int level_boxes_parse_string(const char *p, char *out, size_t outs
     return *p == '"';
 }
 
+// level_boxes_parse_bool parses a real, unquoted JSON boolean literal (`true`/`false`, no other
+// spellings -- this is what every real JSON serializer, including Go's own encoding/json, always
+// emits for a bool field) starting at p. Returns 1 on success, 0 if p doesn't start with either.
+static inline int level_boxes_parse_bool(const char *p, int *out) {
+    if (strncmp(p, "true", 4) == 0) { *out = 1; return 1; }
+    if (strncmp(p, "false", 5) == 0) { *out = 0; return 1; }
+    return 0;
+}
+
 // level_boxes_parse_json parses buf (a null-terminated JSON document, the exact shape IDUNA's
 // GET /api/v1/shankpit-levels/:id/export returns) into *out. Returns 1 on success, 0 on any real
 // failure (missing "walls" array, a malformed wall object, more walls than LEVEL_BOXES_MAX) --
@@ -119,6 +134,19 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
     if (height_val) level_boxes_parse_number(height_val, &out->height);
     const char *depth_val = level_boxes_find_key(buf, end, "depth");
     if (depth_val) level_boxes_parse_number(depth_val, &out->depth);
+
+    // Ground plane fields (S459-08) -- real, sane defaults (enabled, 2 squares) for a
+    // hand-written or pre-S459-08 file that omits them, matching this file's own established
+    // "0/absent is a real, honest sentinel, not an error" convention.
+    out->ground_plane_enabled = 1;
+    out->ground_plane_squares = 2;
+    const char *gpe_val = level_boxes_find_key(buf, end, "ground_plane_enabled");
+    if (gpe_val) level_boxes_parse_bool(gpe_val, &out->ground_plane_enabled);
+    const char *gps_val = level_boxes_find_key(buf, end, "ground_plane_squares");
+    if (gps_val) {
+        float squares_f = 0;
+        if (level_boxes_parse_number(gps_val, &squares_f) && squares_f > 0) out->ground_plane_squares = (int)squares_f;
+    }
 
     const char *arr = level_boxes_find_key(buf, end, "walls");
     if (!arr) return 0;
