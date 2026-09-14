@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-14
+- fix: custom-level boxes silently lost box index 0 (every shared map_geo consumer skips index 0, a convention only valid for hand-authored scenes whose box 0 is a floor slab) -- custom levels now offset boxes to start at index 1 with a dummy at 0 (sess-20260905-0720-ec33e7c5)
 
 - feat(render): bound the static Matrix-floor grid to a custom level's own footprint (S459-09, deferred from S459-08) -- `draw_grid()` no longer draws an unconditional infinite grid for `SCENE_CUSTOM_LEVEL`; reuses the exact same ground-plane values S459-08's own collision logic already live-verified. Every other scene unchanged. Apple #19504. Commit `3c12aa8`.
 - feat(menu): real in-game level selection interface, HEADED BOT removed from menu -- `LOBBY_LEVEL_SELECT` is now the first menu tile ("LEVELS"), `LOBBY_HEADED_BOT` removed entirely. New `level_boxes_fetch_url`/`fetch_registry_list`/`fetch_export` (mirrors `BRAWLPIT/level_registry.h`'s own real technique) hit IDUNA's real public `/api/v1/shankpit-levels` endpoints; new `level_select_*` overlay (mirrors `skin_menu_*`'s own interaction shape) lists real levels, confirming one loads it via `phys_set_custom_level` and starts a real local match. Live-verified against the real running registry with a standalone harness, and the actual client built/linked/run under Xvfb with real screenshots confirming the menu and overlay render correctly. Apple #19502. Commit `87e5252`.
