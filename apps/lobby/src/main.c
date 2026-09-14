@@ -2291,9 +2291,17 @@ void draw_map(const RetroLightingState *lighting) {
     for(int i=1; i<map_count; i++) {
         Box b = map_geo[i];
         float style = 0.5f + 0.5f * sinf((b.x + b.z) * 0.003f);
-        float base_r = lerpf(0.28f, 0.36f, style);
-        float base_g = lerpf(0.33f, 0.40f, style);
-        float base_b = lerpf(0.40f, 0.49f, style);
+        /* REAL FIX (founder real-time, 2026-09-14: "our walls are very dark during the day"):
+           this per-box tint used to range 0.28-0.49 -- reasonable back when it WAS the wall's
+           whole visible color (no real texture existed yet), but since the 2026-09-12 real wall
+           texture pass it's a GL_MODULATE multiplier on TOP of an already-detailed texture, not
+           the wall's color by itself. Compounded with per-face lighting (also a multiplier), two
+           darkening factors were stacking on every wall regardless of time of day. Brightened to a
+           real, light TINT range instead -- still varies per box (the same real hue-cycling style
+           this always had), just no longer acting as a second heavy darkening pass. */
+        float base_r = lerpf(0.62f, 0.78f, style);
+        float base_g = lerpf(0.68f, 0.82f, style);
+        float base_b = lerpf(0.75f, 0.90f, style);
         float top_r = base_r * 1.12f, top_g = base_g * 1.12f, top_b = base_b * 1.12f;
         float side_r = base_r * 0.82f, side_g = base_g * 0.84f, side_b = base_b * 0.90f;
         float back_r = base_r * 0.73f, back_g = base_g * 0.77f, back_b = base_b * 0.84f;

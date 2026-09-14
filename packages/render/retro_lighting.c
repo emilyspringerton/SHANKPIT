@@ -147,6 +147,29 @@ void retro_lighting_eval_surface_rgb(const RetroLightingState *state,
         ag = state->ambient_g * state->ambient_intensity * floor;
         ab = state->ambient_b * state->ambient_intensity * floor;
 
+        /* REAL FIX (founder real-time, 2026-09-14: "our walls are very dark during the day...we
+           have weird universal lighting that doesn't work because its not real light"): the sun/
+           moon used to ONLY contribute via a direct N.L term below, so any face not directly
+           facing the sun got zero sun light at all -- multiplied through the box's own base tint
+           and its bound texture, that compounds to near-black on any non-sun-facing wall even in
+           bright daylight. Real skies don't work that way: sunlight scatters through the
+           atmosphere, so even a shaded, north-facing wall gets real, substantial fill light on a
+           clear day (this is why outdoor shadows in real photos are never pure black). This
+           SUN_SKY_FILL/MOON_SKY_FILL term models exactly that real, physical effect -- direction-
+           independent, scaled by the sun/moon's own real intensity (so it's genuinely tied to a
+           real light source, not a flat "universal" fudge), on top of the direct term below which
+           still gives real per-face directional shading (a sun-facing wall is still visibly
+           brighter than a shaded one -- this doesn't flatten that, it just stops shaded faces from
+           going all the way to black). */
+        #define SUN_SKY_FILL 0.55f
+        #define MOON_SKY_FILL 0.45f
+        ar += state->sun_r * state->sun_intensity * SUN_SKY_FILL;
+        ag += state->sun_g * state->sun_intensity * SUN_SKY_FILL;
+        ab += state->sun_b * state->sun_intensity * SUN_SKY_FILL;
+        ar += state->moon_r * state->moon_intensity * MOON_SKY_FILL;
+        ag += state->moon_g * state->moon_intensity * MOON_SKY_FILL;
+        ab += state->moon_b * state->moon_intensity * MOON_SKY_FILL;
+
         ar += state->sun_r * state->sun_intensity * sun_ndotl;
         ag += state->sun_g * state->sun_intensity * sun_ndotl;
         ab += state->sun_b * state->sun_intensity * sun_ndotl;
