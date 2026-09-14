@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-14
+- fix(net): CRITICAL -- other players were never rendered anywhere online (PlayerState.id never set in the networked snapshot path, breaking the self-exclusion draw filter for every other player too). Found via a real 2-client Xvfb test. Affects every networked mode, not just QUEUE (sess-20260905-0720-ec33e7c5)
 - fix(physics): jump teleported player outside walls in nested/embedded levels -- resolve_collision recomputed prev_y from an already-zeroed vy for boxes checked after the first overlapping box in a tick, misclassifying side collisions as landings (sess-20260905-0720-ec33e7c5)
 - fix(queue): client never loaded level 44's geometry over the network, causing an infinite fall -- client now independently fetches the same real level from the registry when entering SCENE_CUSTOM_LEVEL in QUEUE mode (sess-20260905-0720-ec33e7c5)
 - fix(net): weapon reverts to knife on every reconciliation replay (real cmd.weapon_idx-set-after-history-store ordering bug); feat(queue): QUEUE defaults to the real level '44' from the live registry, falls back to oil tanker if unavailable (sess-20260905-0720-ec33e7c5)
