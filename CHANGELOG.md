@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-14
+- feat: weapon 7 (flashlight) -- real GLSL-shaded cone beam + local world-brightening boost, key 7 to equip, off when you switch away (sess-20260905-0720-ec33e7c5)
 - fix: custom-level boxes silently lost box index 0 (every shared map_geo consumer skips index 0, a convention only valid for hand-authored scenes whose box 0 is a floor slab) -- custom levels now offset boxes to start at index 1 with a dummy at 0 (sess-20260905-0720-ec33e7c5)
 
 - feat(render): bound the static Matrix-floor grid to a custom level's own footprint (S459-09, deferred from S459-08) -- `draw_grid()` no longer draws an unconditional infinite grid for `SCENE_CUSTOM_LEVEL`; reuses the exact same ground-plane values S459-08's own collision logic already live-verified. Every other scene unchanged. Apple #19504. Commit `3c12aa8`.
