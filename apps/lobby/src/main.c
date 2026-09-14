@@ -559,11 +559,18 @@ int g_spray_tex_cache_count = 0;
 
 // spray_tex_for_id -- returns the real, decoded GL texture id for a spray (lazily decoding and
 // caching it on first use), or 0 if it's never going to have one (offline registry, unsupported
-// PNG shape) -- callers fall back to the existing hash-color placeholder on 0.
-static GLuint spray_tex_for_id(int spray_id) {
+// PNG shape) -- callers fall back to the existing hash-color placeholder on 0. `out_aspect`
+// (optional, may be NULL), when a texture IS returned, is set to the spray's own real
+// width/height ratio -- founder real-time, 2026-09-14: "the decal is being smooshed into a square
+// its not a square sprays should maintain original aspect ratios" (draw_spray_decals previously
+// always drew a fixed sz-by-sz square quad, ignoring the source PNG's own real dimensions
+// entirely, e.g. he_sees_you's real 256x421 got squashed to 1:1).
+static GLuint spray_tex_for_id(int spray_id, float *out_aspect) {
     for (int i = 0; i < g_spray_tex_cache_count; i++) {
         if (g_spray_tex_cache[i].spray_id == spray_id) {
-            return g_spray_tex_cache[i].state == 1 ? g_spray_tex_cache[i].tex.tex_id : 0;
+            if (g_spray_tex_cache[i].state != 1) return 0;
+            if (out_aspect) *out_aspect = (float)g_spray_tex_cache[i].tex.width / (float)g_spray_tex_cache[i].tex.height;
+            return g_spray_tex_cache[i].tex.tex_id;
         }
     }
     if (g_spray_tex_cache_count >= SPRAY_TEX_CACHE_MAX) return 0; /* real, bounded cache -- oldest entries just stay uncached */
@@ -571,6 +578,7 @@ static GLuint spray_tex_for_id(int spray_id) {
     e->spray_id = spray_id;
     if (spray_registry_decode_image(spray_id, &e->tex)) {
         e->state = 1;
+        if (out_aspect) *out_aspect = (float)e->tex.width / (float)e->tex.height;
         return e->tex.tex_id;
     }
     e->state = 2;
@@ -1898,7 +1906,8 @@ static void draw_spray_decals(int scene_id) {
     for (int i = 0; i < g_spray_decal_count; i++) {
         SprayDecal *d = &g_spray_decals[i];
         if (d->scene_id != scene_id) continue;
-        GLuint tex = spray_tex_for_id(d->spray_id);
+        float aspect = 1.0f; /* real width/height ratio, filled in by spray_tex_for_id when a texture is ready */
+        GLuint tex = spray_tex_for_id(d->spray_id, &aspect);
         float upx = 0.0f, upy = 1.0f, upz = 0.0f;
         if (fabsf(d->ny) > 0.98f) { upx = 0.0f; upy = 0.0f; upz = 1.0f; }
         float rx = d->ny * upz - d->nz * upy, ry = d->nz * upx - d->nx * upz, rz = d->nx * upy - d->ny * upx;
@@ -1906,17 +1915,25 @@ static void draw_spray_decals(int scene_id) {
         if (rl < 0.0001f) continue;
         rx /= rl; ry /= rl; rz /= rl;
         float ux = ry * d->nz - rz * d->ny, uy = rz * d->nx - rx * d->nz, uz = rx * d->ny - ry * d->nx;
-        const float sz = 1.1f; /* real, small, world-unit decal half-size */
+        const float sz = 1.1f; /* real, small, world-unit decal half-size -- the LONGER of the two real dimensions */
+        /* Founder real-time, 2026-09-14: "the decal is being smooshed into a square its not a
+           square sprays should maintain original aspect ratios" -- half_w/half_h below scale the
+           shorter axis down from `sz` by the real spray's own width/height ratio instead of
+           always drawing a fixed sz-by-sz square (he_sees_you's real 256x421 was getting squashed
+           to 1:1 before this). A failed decode (tex == 0, aspect stays 1.0) keeps the old square
+           fallback -- there's no real source dimension to preserve in that case. */
+        float half_w = sz * (aspect < 1.0f ? aspect : 1.0f);
+        float half_h = sz * (aspect > 1.0f ? 1.0f / aspect : 1.0f);
         float ox = d->x + d->nx * 0.05f, oy = d->y + d->ny * 0.05f, oz = d->z + d->nz * 0.05f; /* nudged off the surface to avoid z-fighting */
         if (tex != 0) {
             glEnable(GL_TEXTURE_2D);
             glBindTexture(GL_TEXTURE_2D, tex);
             glColor3f(1.0f, 1.0f, 1.0f);
             glBegin(GL_QUADS);
-            glTexCoord2f(0.0f, 1.0f); glVertex3f(ox - rx * sz - ux * sz, oy - ry * sz - uy * sz, oz - rz * sz - uz * sz);
-            glTexCoord2f(1.0f, 1.0f); glVertex3f(ox + rx * sz - ux * sz, oy + ry * sz - uy * sz, oz + rz * sz - uz * sz);
-            glTexCoord2f(1.0f, 0.0f); glVertex3f(ox + rx * sz + ux * sz, oy + ry * sz + uy * sz, oz + rz * sz + uz * sz);
-            glTexCoord2f(0.0f, 0.0f); glVertex3f(ox - rx * sz + ux * sz, oy - ry * sz + uy * sz, oz - rz * sz + uz * sz);
+            glTexCoord2f(0.0f, 1.0f); glVertex3f(ox - rx * half_w - ux * half_h, oy - ry * half_w - uy * half_h, oz - rz * half_w - uz * half_h);
+            glTexCoord2f(1.0f, 1.0f); glVertex3f(ox + rx * half_w - ux * half_h, oy + ry * half_w - uy * half_h, oz + rz * half_w - uz * half_h);
+            glTexCoord2f(1.0f, 0.0f); glVertex3f(ox + rx * half_w + ux * half_h, oy + ry * half_w + uy * half_h, oz + rz * half_w + uz * half_h);
+            glTexCoord2f(0.0f, 0.0f); glVertex3f(ox - rx * half_w + ux * half_h, oy - ry * half_w + uy * half_h, oz - rz * half_w + uz * half_h);
             glEnd();
             glBindTexture(GL_TEXTURE_2D, 0);
             glDisable(GL_TEXTURE_2D);
