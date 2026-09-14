@@ -6970,10 +6970,46 @@ void draw_projectiles() {
     glEnd();
 }
 
+// client_load_queue_level -- S459-39, real, found-live fix. Founder real-time: "it seems like it
+// almost worked but it didnt load the level i just fell into the abyss of the sky." Root cause:
+// S459-38's own QUEUE_LEVEL_LOADED logic only runs SERVER-side (apps/server/src/main.c's
+// queue_activate_match) -- it calls phys_set_custom_level with the real level "44" geometry in
+// the SERVER's own physics state, but never transmits that geometry to the client over the wire
+// at all (PacketWelcome only carries a scene_id byte, SCENE_CUSTOM_LEVEL, never the real level's
+// own numeric registry id or its box/material data). The CLIENT'S own physics.h custom-level
+// buffers stayed genuinely empty -- SCENE_CUSTOM_LEVEL selected a real scene with zero geometry
+// in it, so the player fell straight through with nothing to land on. Real, existing client-side
+// precedent for fetching a custom level already existed (level_select_confirm, LOBBY_LEVEL_SELECT)
+// but only for STATE_GAME_LOCAL, never wired into the networked STATE_GAME_NET path at all.
+// Same "both sides independently load identical geometry" contract this file's own --level doc
+// comment already establishes for the CLI-flag case (client and server never transmit level
+// geometry over the wire itself) -- applied here via the same real name lookup
+// (QUEUE_DEFAULT_LEVEL_NAME) the server itself uses, so both sides derive the identical level
+// independently instead of one trusting bytes sent by the other.
+#define QUEUE_DEFAULT_LEVEL_NAME "44"
+static int g_queue_level_loaded = 0; // only latches once the real fetch+apply SUCCEEDS -- a transient failure retries on the next scene-entry instead of leaving the client permanently geometry-less for the rest of the session
+static void client_load_queue_level(void) {
+    if (g_queue_level_loaded) return;
+    LevelRegistryEntry entries[LEVEL_REGISTRY_MAX_ENTRIES];
+    int count = level_boxes_fetch_registry_list(entries, LEVEL_REGISTRY_MAX_ENTRIES);
+    int found_id = -1;
+    for (int i = 0; i < count; i++) {
+        if (strcmp(entries[i].name, QUEUE_DEFAULT_LEVEL_NAME) == 0) { found_id = entries[i].id; break; }
+    }
+    if (found_id < 0) return; // real, honest no-op -- matches the server's own oil-tanker fallback (a built-in scene needs no client fetch at all)
+    CustomLevelData lvl;
+    if (!level_boxes_fetch_export(found_id, &lvl)) return;
+    level_boxes_apply_to_physics(&lvl);
+    g_queue_level_loaded = 1;
+}
+
 static void client_apply_scene_id(int scene_id, unsigned int now_ms) {
     if (scene_id < 0) return;
     if (local_state.scene_id != scene_id) {
         local_state.scene_id = scene_id;
+        if (scene_id == SCENE_CUSTOM_LEVEL && net_requested_mode == MODE_QUEUE) {
+            client_load_queue_level();
+        }
         phys_set_scene(scene_id);
         travel_overlay_until_ms = now_ms + 500;
         for (int i = 0; i < MAX_PROJECTILES; i++) {
@@ -7789,6 +7825,7 @@ void net_connect() {
     if (sock < 0) net_init();
     if (sock < 0) return;
     local_state.game_mode = net_requested_mode;
+    g_queue_level_loaded = 0; // real reset per S459-39: a fresh connect attempt deserves a fresh level-fetch attempt, not a stale failure/success latched from a previous session
     NET_CLIENT_LOG("CONNECT_BEGIN host=%s port=%d mode=%d", SERVER_HOST, SERVER_PORT, net_requested_mode);
     /* Try numeric IP first (no DNS stall); fall back to gethostbyname only for hostnames.
        Cache the result so repeated JOIN attempts don't re-resolve. */
