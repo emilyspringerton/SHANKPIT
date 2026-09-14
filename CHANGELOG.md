@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-14
+- feat(ai): real fractal commander posture (S459-35, rule-based team-wide patience/aggression tuning for MODE_TDMO, matching REDGARDEN's own honest-status precedent) + THE LEAGUE checkpoint registry ported verbatim; fix(bots): emily-bot auto-reconnects after a server restart instead of silently sitting unwelcomed forever (real bug found live during this same deploy) (sess-20260905-0720-ec33e7c5)
 - fix(queue): standing bot pool was silently churning every 60s (missing -session-duration) -- real found-live cause of 'no bots in this match'; fixed and redeployed live with verbose logging enabled for the next diagnostic pass (sess-20260905-0720-ec33e7c5)
 - ops(deploy): live cutover -- the actively-developed SHANKPIT server + 3-bot QUEUE pool now serve the standard :6969 port, replacing the stale shankpit-460 fork's deployment (frozen since 2026-08-26, missing TDMO/sprays/lighting/QUEUE work) (sess-20260905-0720-ec33e7c5)
 - feat(queue): real networked bot queue (S459-34) -- MODE_QUEUE replaces the local-only TDMB menu tile, filled by real packet-level bot processes (emily-bot, adapted) matching BRAWLPIT's own standing bot-pool precedent, not in-process puppets. Live-verified 3-bot connect on isolated port. Release v0.26.0 cut clean (sess-20260905-0720-ec33e7c5)
