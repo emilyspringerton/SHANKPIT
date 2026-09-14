@@ -354,4 +354,101 @@ static inline void draw_material_hps_box(float x, float y, float z, float w, flo
     glDepthMask(GL_TRUE);
 }
 
+// draw_light_glow_billboard -- founder real-time, 2026-09-14: "ok cool but it looks like a
+// square can you do some gausian blur or something? vinyetting/ i dunno" -- the per-box wall
+// lighting fixture_light_face_contribution adds (apps/lobby/src/main.c) is real per-box FLAT
+// shading, so its own halo is necessarily blocky/square at box granularity; a true framebuffer
+// gaussian blur/bloom post-process is real, separate, much larger work (an offscreen render
+// target + a real multi-pass blur shader, nothing like this codebase's existing single-pass
+// forward-rendering pipeline). This is the real, standard, MUCH cheaper alternative every classic
+// forward-renderer uses for the same complaint: a soft, camera-facing, round glow BILLBOARD
+// (additively blended, alpha falls off radially from center) at each light fixture's own
+// position -- the same real "additive overlay on top of the existing pipeline, not a rewrite of
+// it" technique this whole file already uses throughout. Reads as a soft round glow regardless of
+// the underlying per-box wall halo's own blockiness, since the billboard is what actually draws
+// the dominant, up-close "this is a light" visual cue (same real relationship the flashlight's own
+// cone mesh + separate wall-lighting term already have).
+static GLuint g_light_glow_program = 0;
+static DynamicVBO g_light_glow_vbo;
+static int g_light_glow_ready = 0;
+
+static const char *g_light_glow_vs_src =
+    "#version 120\n"
+    "attribute vec3 a_pos;\n"
+    "attribute vec3 a_normal;\n" /* .xy = local billboard UV in [-1,1], centered */
+    "uniform mat4 u_mvp;\n"
+    "varying vec2 v_uv;\n"
+    "void main() {\n"
+    "    v_uv = a_normal.xy;\n"
+    "    gl_Position = u_mvp * vec4(a_pos, 1.0);\n"
+    "}\n";
+
+static const char *g_light_glow_fs_src =
+    "#version 120\n"
+    "uniform vec3 u_color;\n"
+    "uniform float u_intensity;\n"
+    "varying vec2 v_uv;\n"
+    "void main() {\n"
+    "    float r = length(v_uv);\n"
+    "    float alpha = 1.0 - smoothstep(0.0, 1.0, r);\n"
+    "    alpha = alpha * alpha;\n" /* extra softening -- a round, gently-fading glow, not a hard-edged disc */
+    "    gl_FragColor = vec4(u_color * u_intensity, alpha);\n"
+    "}\n";
+
+static inline void light_glow_shader_init(void) {
+    if (!gl_shader_load_extensions()) {
+        SDL_Log("material_shaders: GL extension loading failed -- light glow billboard disabled");
+        return;
+    }
+    GLuint vs = gl_compile_shader(GL_VERTEX_SHADER, g_light_glow_vs_src);
+    GLuint fs = gl_compile_shader(GL_FRAGMENT_SHADER, g_light_glow_fs_src);
+    g_light_glow_program = gl_link_program(vs, fs);
+    if (!g_light_glow_program) {
+        SDL_Log("material_shaders: light glow shader link failed -- disabled");
+        return;
+    }
+    if (!gl_dynamic_vbo_init(&g_light_glow_vbo, 6)) {
+        SDL_Log("material_shaders: light glow VBO init failed -- disabled");
+        return;
+    }
+    g_light_glow_ready = 1;
+    SDL_Log("material_shaders: light glow billboard ready");
+}
+
+// cam_right/cam_up: the LOCAL VIEWER's own camera right/up vectors (derived from cam_yaw/
+// cam_pitch the same way draw_flashlight_beam derives its own right/up, just facing the real
+// current camera instead of a player's aim) -- a billboard always faces whoever is rendering,
+// unlike a world-anchored mesh, so the caller passes these in rather than this function deriving
+// its own facing from the light source (which has no "facing" of its own to derive from at all).
+static inline void draw_light_glow_billboard(float cx, float cy, float cz, float radius,
+                                              const float *color, float intensity,
+                                              const float *mvp16,
+                                              const float *cam_right, const float *cam_up) {
+    if (!g_light_glow_ready) return;
+    if (intensity <= 0.001f) return;
+
+    float verts[GL_SHADER_VBO_FLOATS_PER_VERT * 6];
+    int vi = 0;
+#define GV(u, v) \
+    verts[vi++] = cx + cam_right[0] * (u) * radius + cam_up[0] * (v) * radius; \
+    verts[vi++] = cy + cam_right[1] * (u) * radius + cam_up[1] * (v) * radius; \
+    verts[vi++] = cz + cam_right[2] * (u) * radius + cam_up[2] * (v) * radius; \
+    verts[vi++] = (u); verts[vi++] = (v); verts[vi++] = 0.0f;
+    GV(-1.0f, -1.0f) GV(1.0f, -1.0f) GV(1.0f, 1.0f)
+    GV(-1.0f, -1.0f) GV(1.0f, 1.0f) GV(-1.0f, 1.0f)
+#undef GV
+
+    glDepthMask(GL_FALSE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    gl_use_program(g_light_glow_program);
+    gl_uniform_matrix4fv(gl_get_uniform_location(g_light_glow_program, "u_mvp"), mvp16);
+    gl_uniform3fv(gl_get_uniform_location(g_light_glow_program, "u_color"), color);
+    gl_uniform1f(gl_get_uniform_location(g_light_glow_program, "u_intensity"), intensity);
+    gl_dynamic_vbo_draw(&g_light_glow_vbo, verts, 6, GL_TRIANGLES);
+    gl_use_program(0);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_TRUE);
+}
+
 #endif

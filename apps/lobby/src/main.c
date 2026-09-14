@@ -2623,6 +2623,39 @@ void draw_map(const RetroLightingState *lighting) {
             }
         }
     }
+
+    /* Soft, round, camera-facing glow billboards at each light fixture (founder real-time,
+       2026-09-14: "it looks like a square can you do some gausian blur or something?
+       vinyetting" -- see draw_light_glow_billboard's own doc comment for why this, not a real
+       framebuffer blur). Own camera-only MVP capture (not material_mvp -- that one's only valid
+       when material_pass_active, gated on the UNRELATED g_material_shader_ready flag) and own
+       camera right/up vectors derived from the live cam_yaw/cam_pitch, the same real "camera-
+       facing" math draw_flashlight_beam already uses for its own forward vector, just built from
+       the ACTUAL rendering camera instead of a player's aim -- a billboard has no aim of its own
+       to derive from. */
+    if (fixture_light_count > 0) {
+        Mat4 glow_proj, glow_modelview;
+        glGetFloatv(GL_PROJECTION_MATRIX, glow_proj.m);
+        glGetFloatv(GL_MODELVIEW_MATRIX, glow_modelview.m);
+        Mat4 glow_mvp = mat4_multiply(&glow_proj, &glow_modelview);
+
+        float gryaw = -cam_yaw * 0.0174533f, grpitch = cam_pitch * 0.0174533f;
+        float gfx = sinf(gryaw) * cosf(grpitch), gfy = sinf(grpitch), gfz = -cosf(gryaw) * cosf(grpitch);
+        float gupx = 0.0f, gupy = 1.0f, gupz = 0.0f;
+        if (fabsf(gfy) > 0.98f) { gupx = 0.0f; gupy = 0.0f; gupz = 1.0f; }
+        float grx = gfy * gupz - gfz * gupy, gry = gfz * gupx - gfx * gupz, grz = gfx * gupy - gfy * gupx;
+        float grlen = sqrtf(grx * grx + gry * gry + grz * grz);
+        if (grlen > 0.0001f) {
+            grx /= grlen; gry /= grlen; grz /= grlen;
+            float gux = gry * gfz - grz * gfy, guy = grz * gfx - grx * gfz, guz = grx * gfy - gry * gfx;
+            float cam_right[3] = { grx, gry, grz };
+            float cam_up[3] = { gux, guy, guz };
+            for (int fi = 0; fi < fixture_light_count; fi++) {
+                const FixtureLight *fl = &fixture_lights[fi];
+                draw_light_glow_billboard(fl->x, fl->y, fl->z, 6.0f, &fl->r, 0.9f, glow_mvp.m, cam_right, cam_up);
+            }
+        }
+    }
 }
 
 
@@ -8541,6 +8574,7 @@ int main(int argc, char* argv[]) {
     material_shader_init();
     ips_light_shader_init();
     hps_light_shader_init();
+    light_glow_shader_init();
     proctex_init();
     proc_tex_create(&g_vehicle_noise_tex, 64, 64);
     proctex_make_noise_rgba(&g_vehicle_noise_tex, 64, 64, g_vehicle_style.seed);
