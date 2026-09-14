@@ -13,6 +13,18 @@ the actual RL training loop (`THE_LEAGUE`'s own registry, `scripts/rl_league.py`
 register yet), and the Colab notebook (explicitly gated by the founder on everything else being
 ready first). See `EMILY/BACKLOG.md` SECTION 459 for the item-by-item status.
 
+**S459-47 update** (founder feedback on the first pass): "fix the shortcomings no is crouch or is
+firing - also no raycast fix all that not sure about the round trip timer thing also there are 2
+different ultimates there is sniper ultimate and there is the weapon 6 dash... make sure the
+features understand that there are 2 different cooldowns... also a state for if storm arrows is
+active and how many ammos left in it also gun reload state and current equiped gun." All fixed —
+see §7 below for the real, checked-first mechanics (`ability_cooldown` is a SHARED timer gating
+sniper-storm-activation, katana-dash, AR-ability, and shotgun-ability all at once; `storm_charges`
+is a separate, persistent resource that survives independently of that shared cooldown) and §8 for
+the real raycast implementation. The round-timer wire-field gap named in §1 stays open — the
+founder flagged genuine uncertainty about it ("not sure about the round trip timer thing"), not a
+fix request, so it's left as still-honest, unresolved scope.
+
 ## 1. A real, found-live protocol bug had to be fixed first (S459-44)
 
 Before any feature could be trusted, `apps2/emily-bot/main.go`'s own `PacketSnapshot` decode
@@ -32,26 +44,29 @@ the decoder recovers the real values. Also newly decoded, never read before: `he
 `current_weapon`, `state`, `team_id`, `is_bot`, `ammo`, `kills`, `deaths`, `is_shooting`,
 `crouching`, `in_vehicle`, and `reward_feedback`/`hit_feedback` (see §3).
 
-## 2. The observation vector (`apps2/emily-bot/observation.go`) — 72 features
+## 2. The observation vector (`apps2/emily-bot/observation.go`) — 84 features
 
-`ObservationSize = 72`, inside the requested 50-100 range with no artificial padding — every
-feature is real and named. Three blocks:
+`ObservationSize = 84` (grew from an initial 72 in S459-47, closing three real gaps the founder
+flagged directly — see §7/§8), inside the requested 50-100 range with no artificial padding —
+every feature is real and named. Four blocks:
 
-**Self (23 features)** — health/shield fraction, yaw as sin/cos (not raw degrees — avoids the
+**Self (26 features)** — health/shield fraction, yaw as sin/cos (not raw degrees — avoids the
 360°→0° wraparound discontinuity a raw-degree feature would hand a policy network), pitch,
-current-weapon onehot (8), ammo fraction, is_shooting/crouching/in_vehicle/alive flags,
-kills/deaths normalized against the real round frag limit (`SERVER_QUEUE_FRAG_LIMIT=20`, §4),
-hit_feedback (server-flagged "you were just hit" this tick), storm-charge fraction (sniper
-ultimate, real cap of 5), and a tanh-squashed real-time reward signal (§3).
+current-weapon onehot (8), ammo fraction, real is_shooting/crouching (S459-47 — the bot's own
+outbound button state, not a server round-trip; see §7), in_vehicle/alive flags, kills/deaths
+normalized against the real round frag limit (`SERVER_QUEUE_FRAG_LIMIT=20`, §4), hit_feedback
+(server-flagged "you were just hit" this tick), a tanh-squashed real-time reward signal (§3), and
+four real dual-cooldown features (§7): storm-charge fraction, reload fraction, ability-cooldown
+fraction, and an ability-ready binary flag.
 
-**Nearest-opponent block (4 slots × 10 features = 40)** — nearest-first by real 3D distance, each
+**Nearest-opponent block (4 slots × 11 features = 44)** — nearest-first by real 3D distance, each
 slot self-relative (bearing expressed as sin/cos of the angle *relative to the bot's own yaw*, not
 world-absolute — the standard convention so learned weights generalize across map position/
 orientation instead of memorizing absolute coordinates): presence flag, distance, bearing,
 elevation, health fraction, a precomputed per-weapon lethality score (derived from
 `protocol.h`'s real `WPN_STATS` table: damage/rate-of-fire, normalized against the missile
-launcher's own real max), is_shooting, is_bot, alive. Zero-filled past however many opponents are
-actually visible.
+launcher's own real max), is_shooting, is_bot, alive, and is_reloading (S459-47 — a real, direct
+vulnerability signal). Zero-filled past however many opponents are actually visible.
 
 **Aggregate/contextual (9 features)** — visible-enemy count, nearest-enemy distance (redundant
 with slot 0 but always populated even if the opponent block itself changes shape later), average
@@ -60,16 +75,16 @@ low-health enemies (a real, direct opportunity signal), self kill/death ratio, a
 (self kills vs. the best-performing visible opponent, tanh-squashed), and two **team-architected**
 placeholders (§5) that read as a real, always-zero value in FFA.
 
-**Named, honest gaps — not faked:**
-- **No geometry/raycast features.** `emily-bot` never loads level geometry (only the C
-  client/server do, via `packages/world/level_boxes.h`) — "distance to nearest wall" or
-  line-of-sight features need a real, separate fetch (mirroring `apps/lobby`'s own
-  `client_load_queue_level`, S459-41), not attempted here.
+**Geometry block (5 features, S459-47, §8)** — real AABB raycast distances to the nearest wall
+straight ahead / left / right / behind, plus straight down (floor/ledge awareness). Closes the
+"no raycast" gap named in the original pass.
+
+**Still a real, honest, open gap:**
 - **No round-timer feature.** The server's own `SERVER_QUEUE_ROUND_MS` clock (§4) isn't
   transmitted anywhere a client can read it — `NetHeader.timestamp` is a raw server clock, not
-  "time since round start." A real fix needs a new wire field.
-- **`SelfIsShooting`/`SelfCrouching` are hardcoded 0.** `emily-bot` doesn't currently track its
-  own outbound shoot/crouch state in `botState` — real, fixable, just not done in this pass.
+  "time since round start." A real fix needs a new wire field. The founder flagged genuine
+  uncertainty about this one ("not sure about the round trip timer thing") rather than asking for
+  a fix, so it stays open by design, not by oversight.
 
 ## 3. The reward system (`apps2/emily-bot/reward.go`)
 
@@ -126,7 +141,71 @@ the exact same wire field the observation vector's `Opponents[i].` block reads (
 decoded since S459-44) — just always -1 in FFA — so a team variant needs no observation-shape
 change, only real, non-zero values starting to appear in fields that already exist.
 
-## 6. What's still missing before training can actually start
+## 7. The two real ultimate/ability cooldowns (S459-47)
+
+Founder real-time, precise and worth quoting in full: "there are 2 different ultimates there is
+sniper ultimate and there is the weapon 6 dash which is very powerful and can allow insane
+movement so make sure the features understand that there are 2 different cooldowns and you can
+activate sniper cooldown and let the cooldown reset and then dash on weapon 6 and if you never
+shot the sniper projectiles from storm they are still activated - also a state for if storm arrows
+is active and how many ammos left in it also gun reload state and current equiped gun."
+
+Checked directly against `packages/common/physics.h` before building anything (not guessed):
+`update_weapons()` and `katana_try_start_dash()` share **one single field**,
+`PlayerState.ability_cooldown`, across FOUR different abilities — AR's ability (260 ticks),
+shotgun's ability (340 ticks), katana's dash (`KATANA_DASH_COOLDOWN`=420), and sniper's storm
+activation (480 ticks). Activating any one of them sets this one shared timer; every other
+ability is gated on it reading 0, regardless of which weapon is currently equipped. This is
+genuinely different from `PlayerState.storm_charges` (capped at 5): activating storm sets BOTH
+`storm_charges=5` AND `ability_cooldown=480` in the same instant, but `storm_charges` then
+persists on its own — a player who never actually fires a sniper shot keeps those 5 banked
+charges available indefinitely, including well after `ability_cooldown` has already ticked back
+to 0 and been spent again on a katana dash. The founder's own described sequence — activate
+storm, let the shared cooldown expire, dash on weapon 6, still have unfired storm rounds banked —
+is exactly this mechanic, confirmed in the real source, not assumed from the ask.
+
+Neither `reload_timer` nor `ability_cooldown` was ever transmitted to any client before this
+commit — a real, previously-unnoticed protocol gap. Added both to `NetPlayer`
+(`packages/common/protocol.h`; struct grew from 64 to 68 bytes, re-verified via the same
+compiled `sizeof`/`offsetof` probe technique this doc's §1 already established, never
+hand-guessed) and populated in `server_broadcast()` (`apps/server/src/main.c`), clamped into
+`unsigned short` (both real source fields are `int`, but every real value — max 480 — fits with
+enormous headroom). The C client (`apps/lobby`) needed zero code change: its own snapshot decode
+copies `sizeof(NetPlayer)` directly, so it picked up the new fields automatically on rebuild.
+`apps2/emily-bot/snapshot.go` needed its hand-rolled offsets recomputed (`snapshot_test.go`'s own
+`TestDecodePacketSnapshot_RealWireLayout` catches a future drift the same way).
+
+Four new self-features result: `SelfStormChargesFrac` (now real — was fabricated to 0 in the
+first pass), `SelfReloadFrac`, `SelfAbilityCooldownFrac`, and `SelfAbilityReady` (a direct binary
+gate, not just the continuous fraction — a policy shouldn't have to learn "close to 0 means
+ready" from a noisy value alone). A fifth, `Opponents[i].IsReloading`, gives the same real
+vulnerability signal about visible opponents. `SelfIsShooting`/`SelfCrouching` were also fixed in
+the same pass — they don't need a server round-trip at all, since the bot already knows its own
+current button state the instant it decides `buttons` each tick (`main.go`'s tick function now
+sets `botState.myIsShooting`/`.myCrouching` directly, read by `buildObservation`). Verified with
+real unit tests (`TestSelfDualCooldownFeatures` reproduces the founder's own exact scenario:
+storm charges stay at 5/5 through a full cooldown window, `SelfAbilityReady` correctly tracks the
+shared timer independently).
+
+## 8. Real raycast / level-geometry features (S459-47)
+
+New `apps2/emily-bot/geometry.go`: fetches the real, currently-flagged QUEUE default level's box
+list (mirroring `apps/lobby`'s own `client_load_queue_level`, S459-39/41 — same
+registry-lookup-by-`is_default_queue` contract, independently fetched client-side since the wire
+protocol only ever carries a `scene_id` byte, never geometry) via Go's real `encoding/json`
+against IDUNA's actual export endpoint, cached once per process (`sync.Once` — a queue level
+doesn't change mid-session in practice; a bot-pool process restart, already a standing
+convention, is the real retry path on failure). A real AABB slab-method raycast
+(`levelGeometry.raycast`) against that box list, verified with a direct unit test
+(`TestRaycast_SimpleWall`) independent of any network fetch.
+
+Five new geometry features: wall distance straight ahead / left / right / behind (relative to the
+bot's own current yaw, same forward-vector convention the opponent-bearing math already
+establishes), plus straight down (floor/ledge awareness). A bot with no geometry loaded yet reads
+these as a real, honest 0 — not a fabricated "clear space" cap value that could mislead a policy
+into thinking it's safe to advance.
+
+## 9. What's still missing before training can actually start
 
 - **The RL training loop itself.** `scripts/rl_league.py` (S459-35) is real checkpoint-
   registry/PFSP/ELO plumbing ported from BRAWLPIT, but nothing generates checkpoints for it to
@@ -134,6 +213,6 @@ change, only real, non-zero values starting to appear in fields that already exi
   `BRAWLPIT/scripts/rl_env_packet.py` does for BRAWLPIT. This is the real, honest, single biggest
   remaining gap.
 - **A round-timer wire field**, so a client-side observation can actually include match-clock
-  urgency (BRAWLPIT's own `time_pressure_multiplier` precedent).
-- **Level-geometry features** in the bot's own observation.
+  urgency (BRAWLPIT's own `time_pressure_multiplier` precedent) — real, still open, the founder
+  flagged uncertainty rather than asking for a fix (§2).
 - **The Colab training notebook** — explicitly gated by the founder on the above being ready.

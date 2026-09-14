@@ -73,6 +73,84 @@ func TestComputeReward_KillCreditAndDeathPenalty(t *testing.T) {
 	}
 }
 
+// TestSelfDualCooldownFeatures -- S459-47, founder real-time feedback: "make sure the features
+// understand that there are 2 different cooldowns and you can activate sniper cooldown and let
+// the cooldown reset and then dash on weapon 6 and if you never shot the sniper projectiles from
+// storm they are still activated." Verifies storm charges (a persistent, spendable resource) and
+// ability cooldown (the shared gate on activating any ability, sniper storm included) are decoded
+// and surfaced as two real, independent features -- not conflated into one.
+func TestSelfDualCooldownFeatures(t *testing.T) {
+	s := &botState{
+		myID: 1, myHealth: 100, sceneID: 9,
+		myStormCharges: 5, myAbilityCooldown: 0, myReloadTimer: 0,
+		peers: map[uint8]*peer{},
+	}
+	obs := buildObservation(s)
+	if obs.SelfStormChargesFrac != 1.0 {
+		t.Fatalf("expected full storm charges (5/5), got %v", obs.SelfStormChargesFrac)
+	}
+	if obs.SelfAbilityReady != 1.0 {
+		t.Fatalf("expected ability ready (cooldown=0), got %v", obs.SelfAbilityReady)
+	}
+
+	// Real scenario from the founder's own report: sniper storm was just activated (grants 5
+	// charges AND starts the shared cooldown), but none of the 5 shots have been fired yet --
+	// storm charges must stay at 5 (unspent) even while the shared cooldown is still counting
+	// down, and SelfAbilityReady must correctly read false until it actually reaches 0.
+	s2 := &botState{
+		myID: 1, myHealth: 100, sceneID: 9,
+		myStormCharges: 5, myAbilityCooldown: 480, myReloadTimer: 0,
+		peers: map[uint8]*peer{},
+	}
+	obs2 := buildObservation(s2)
+	if obs2.SelfStormChargesFrac != 1.0 {
+		t.Fatalf("expected storm charges to remain banked at 5/5 even mid-cooldown, got %v", obs2.SelfStormChargesFrac)
+	}
+	if obs2.SelfAbilityReady != 0.0 {
+		t.Fatalf("expected ability NOT ready while cooldown is still counting down, got %v", obs2.SelfAbilityReady)
+	}
+	if obs2.SelfAbilityCooldownFrac != 1.0 {
+		t.Fatalf("expected ability cooldown fraction at max (480/480), got %v", obs2.SelfAbilityCooldownFrac)
+	}
+}
+
+func TestSelfOutboundShootCrouch(t *testing.T) {
+	s := &botState{myID: 1, myHealth: 100, sceneID: 9, myIsShooting: true, myCrouching: false, peers: map[uint8]*peer{}}
+	obs := buildObservation(s)
+	if obs.SelfIsShooting != 1.0 || obs.SelfCrouching != 0.0 {
+		t.Fatalf("expected real outbound shoot=1/crouch=0, got shoot=%v crouch=%v", obs.SelfIsShooting, obs.SelfCrouching)
+	}
+}
+
+func TestOpponentIsReloading(t *testing.T) {
+	s := &botState{
+		myID: 1, myHealth: 100, sceneID: 9,
+		peers: map[uint8]*peer{
+			2: {id: 2, sceneID: 9, x: 5, health: 80, state: 0, reloadTimer: 30},
+		},
+	}
+	obs := buildObservation(s)
+	if obs.Opponents[0].IsReloading != 1.0 {
+		t.Fatalf("expected nearest opponent to read as reloading (reloadTimer=30), got %v", obs.Opponents[0].IsReloading)
+	}
+}
+
+func TestRaycast_SimpleWall(t *testing.T) {
+	geo := &levelGeometry{walls: []wall{
+		{X: 0, Y: 0, Z: -10, SX: 4, SY: 4, SZ: 1}, // a wall centered 10 units ahead (along -Z)
+	}}
+	// Ray from origin straight along -Z should hit the wall's near face at z=-9.5.
+	d := geo.raycast(0, 0, 0, 0, 0, -1, 40)
+	if d < 9.0 || d > 10.0 {
+		t.Fatalf("expected raycast to hit the wall around distance 9.5, got %v", d)
+	}
+	// A ray pointed the opposite direction should miss and read as the cap.
+	dMiss := geo.raycast(0, 0, 0, 0, 0, 1, 40)
+	if dMiss != 40 {
+		t.Fatalf("expected a ray pointed away from the only wall to read as the cap (40), got %v", dMiss)
+	}
+}
+
 func TestComputeReward_LowHealthShaping(t *testing.T) {
 	prev := PlayerRewardSnapshot{Health: 25, NearestEnemyDist: 5}
 	engaged := PlayerRewardSnapshot{Health: 25, NearestEnemyDist: 4} // closing distance while low HP

@@ -32,7 +32,10 @@
 //     scope here.
 package main
 
-import "math"
+import (
+	"math"
+	"sync"
+)
 
 // Feature vector layout. Grouped in three blocks: self (23), up to nearestOpponentSlots nearest
 // opponents (10 features each), and aggregate/contextual (9) -- see buildObservation's own doc
@@ -41,16 +44,32 @@ import "math"
 // named features -- inside the requested 50-100 range with no padding.
 const (
 	nearestOpponentSlots = 4
-	selfFeatureCount     = 23
-	perOpponentFeatures  = 10
+	selfFeatureCount     = 26
+	perOpponentFeatures  = 11
 	aggregateFeatureCount = 9
-	ObservationSize      = selfFeatureCount + nearestOpponentSlots*perOpponentFeatures + aggregateFeatureCount
+	geometryFeatureCount = 5
+	ObservationSize      = selfFeatureCount + nearestOpponentSlots*perOpponentFeatures + aggregateFeatureCount + geometryFeatureCount
 
 	// queueFragLimit mirrors apps/server/src/main.c's own SERVER_QUEUE_FRAG_LIMIT (S459-43) --
 	// a real, hand-copied constant (Go and C are separate binaries here, no shared header) kept
 	// in sync by convention the same way this package's other server-mirrored constants already
 	// are (packages2/common/protocol.go's GameModeQueue=108 mirroring protocol.h's MODE_QUEUE).
 	queueFragLimit = 20
+
+	// reloadTimerCap / abilityCooldownCap -- S459-47, real normalization ceilings mirroring
+	// packages/common/protocol.h's own real constants: RELOAD_TIME_FULL=60 (the larger of the
+	// two real reload durations) and 480 (the largest real per-ability cooldown, sniper storm
+	// activation -- see physics.h's update_weapons: AR=260, shotgun=340, katana dash=420,
+	// sniper storm=480).
+	reloadTimerCap     = 60.0
+	abilityCooldownCap = 480.0
+
+	// wallRayCap / floorRayCap -- real, hand-picked caps for the raycast block (geometry.go),
+	// matched to SHANKPIT's own real room-scale level geometry (NEWPIT, S459-41's own default
+	// queue level, spans well under 40 units per side) rather than the much larger 100-unit cap
+	// used for opponent distance (map-scale, not room-scale).
+	wallRayCap  = 40.0
+	floorRayCap = 20.0
 )
 
 // weaponMaxAmmo / weaponLethality mirror packages/common/protocol.h's real WPN_STATS table
@@ -89,7 +108,7 @@ func clamp01(v float32) float32 {
 // it to a plain []float32 in the fixed, documented order every consumer (a future training loop,
 // a policy network, a logging/replay pipeline) can rely on.
 type Observation struct {
-	// --- Self block (23) ---
+	// --- Self block (26) ---
 	SelfHealthFrac   float32 // health / 100
 	SelfShieldFrac   float32 // shield / 100
 	SelfYawSin       float32 // sin(yaw) -- world-frame facing, real for orienting movement decisions
@@ -97,17 +116,37 @@ type Observation struct {
 	SelfPitchNorm    float32 // pitch / 90, real look-up/down angle
 	SelfWeaponOnehot [8]float32
 	SelfAmmoFrac     float32 // ammo / this weapon's real max (0 for melee weapons -- ammo is meaningless there)
-	SelfIsShooting   float32
-	SelfCrouching    float32
+	SelfIsShooting   float32 // real, own outbound button state this tick (S459-47) -- was hardcoded 0
+	SelfCrouching    float32 // real, own outbound button state this tick (S459-47) -- was hardcoded 0
 	SelfInVehicle    float32
 	SelfAlive        float32
 	SelfKillsNorm    float32 // kills / SERVER_QUEUE_FRAG_LIMIT (apps/server/src/main.c, S459-43) -- how close to a round win
 	SelfDeathsNorm   float32 // deaths / a real, generous cap (10) -- just a bounded scale, not a hard limit
 	SelfHitFeedback  float32 // 1.0 the tick the server flags "you were just hit" (protocol.h hit_feedback)
-	SelfStormChargesFrac float32 // storm_charges / 5 (sniper ultimate max, packages/common/physics.h)
+	// SelfStormChargesFrac -- real (S459-47, was fabricated to 0 before this commit): storm_charges
+	// / 5 (sniper ultimate max, packages/common/physics.h). See snapshot.go's own decodedPlayer.
+	// stormCharges doc comment: this is a real, persistent, INDEPENDENT resource from
+	// SelfAbilityCooldownFrac below -- storm can sit at nonzero charges (unspent "ultimate ammo")
+	// for a long time after the shared cooldown that gated activating it has already reset.
+	SelfStormChargesFrac float32
 	SelfRewardFeedbackNorm float32 // this tick's real server-computed reward (snapshot.go), tanh-squashed -- a strong, direct "how well is this instant going" signal
+	// SelfReloadFrac -- real (S459-47): reload_timer / RELOAD_TIME_FULL (the larger of the two
+	// real reload constants, so a tactical reload never reads as "more than fully reloading").
+	// 0 = ready to fire right now.
+	SelfReloadFrac float32
+	// SelfAbilityCooldownFrac -- real (S459-47): ability_cooldown / 480 (the largest real
+	// per-ability cooldown, sniper storm activation). THE key dual-cooldown feature the founder
+	// asked for: this ONE shared timer gates sniper-storm-activation, katana-dash, AR-ability,
+	// AND shotgun-ability -- a policy needs this to know "can I dash/activate right now," which
+	// is a DIFFERENT question from SelfStormChargesFrac ("do I have banked sniper ammo to spend
+	// once I switch back to it").
+	SelfAbilityCooldownFrac float32
+	// SelfAbilityReady -- real (S459-47): 1.0 iff ability_cooldown == 0 right now. A direct,
+	// unambiguous binary action-gate signal, not just the continuous fraction above -- a policy
+	// shouldn't have to learn "close to 0" means ready from a noisy continuous value alone.
+	SelfAbilityReady float32
 
-	// --- Opponent block (nearestOpponentSlots * 10 = 40), nearest-first, zero-filled+Present=0
+	// --- Opponent block (nearestOpponentSlots * 11 = 44), nearest-first, zero-filled+Present=0
 	// past however many opponents are actually visible in this bot's own scene. ---
 	Opponents [nearestOpponentSlots]OpponentFeatures
 
@@ -121,6 +160,18 @@ type Observation struct {
 	SelfRankEstimate        float32 // (self kills - max visible opponent kills) normalized to [-1,1] via tanh -- "am I winning the round"
 	TeamAllyCountNorm       float32 // architected for team training (S459-46) -- always 0.0 in FFA (MODE_QUEUE has no teams, team_id is always -1)
 	TeamScoreDiffNorm       float32 // architected for team training -- always 0.0 in FFA
+
+	// --- Geometry block (5), real raycast distances (S459-47, closes the "no raycast" gap named
+	// in this file's original module doc comment) -- see geometry.go's own real AABB slab-method
+	// raycast against the QUEUE level's own fetched-once box list. Zero-filled (reads as
+	// "distance 0", NOT "cap distance" -- see buildObservation's own real zero-fill rationale
+	// below) when geometry hasn't loaded yet (a real, honest degrade, not a fabricated "clear
+	// space" value that could mislead a policy into thinking it's safe to advance). ---
+	WallForwardNorm  float32 // distance to the nearest wall straight ahead (self yaw), normalized against a 40-unit cap
+	WallLeftNorm     float32 // self yaw - 90
+	WallRightNorm    float32 // self yaw + 90
+	WallBackNorm     float32 // self yaw + 180
+	FloorBelowNorm   float32 // straight down, normalized against a 20-unit cap -- real cliff/ledge awareness
 }
 
 // OpponentFeatures is one nearest-opponent slot's real, self-relative feature block.
@@ -135,10 +186,52 @@ type OpponentFeatures struct {
 	IsShooting      float32 // real, direct "is this opponent currently attacking" signal
 	IsBot           float32 // distinguishes a real human opponent from another training bot -- may matter for adaptive strategy later
 	Alive           float32
+	// IsReloading -- real (S459-47): this opponent's own reload_timer > 0. A direct, real
+	// vulnerability signal -- an opponent mid-reload can't fire, the same real tactical window a
+	// human player looks for.
+	IsReloading float32
 }
 
 func tanhSquash(v float32) float32 {
 	return float32(math.Tanh(float64(v)))
+}
+
+// geometryCache -- S459-47. A real, process-wide, fetch-once cache (mirrors
+// client_load_queue_level's own one-shot-per-session convention, geometry.go's own doc comment)
+// guarded by sync.Once so concurrent buildObservation calls (there's only ever one bot per
+// process today, but this stays correct if that ever changes) never trigger a duplicate fetch.
+// A failed fetch is cached as (nil, done) too -- deliberately never retried mid-process, matching
+// fetchQueueLevelGeometry's own "a bot with no geometry just skips raycast features" contract; a
+// process restart (emily-bot's own standing bot-pool convention already restarts sessions
+// regularly) is the real, existing retry path.
+var (
+	geometryOnce  sync.Once
+	geometryCache *levelGeometry
+)
+
+func getCachedGeometry() *levelGeometry {
+	geometryOnce.Do(func() {
+		if g, ok := fetchQueueLevelGeometry(); ok {
+			geometryCache = g
+		}
+	})
+	return geometryCache
+}
+
+// rayNorm casts one real raycast from the bot's own current position, in a direction
+// yawOffsetDeg degrees from its own current yaw (0 = straight ahead, matching the same
+// forward-vector convention buildObservation's own opponent-bearing math already establishes:
+// dx=sin(yaw), dz=-cos(yaw)), and returns the normalized [0,1] distance. Returns 0 (not cap) when
+// geometry hasn't loaded -- see the Observation struct's own geometry-block doc comment for why
+// that's the honest default rather than a fabricated "clear space" cap value.
+func rayNorm(geo *levelGeometry, s *botState, yawOffsetDeg float32, cap float32) float32 {
+	if geo == nil {
+		return 0
+	}
+	yawRad := float64(s.myYaw+yawOffsetDeg) * math.Pi / 180.0
+	dx := float32(math.Sin(yawRad))
+	dz := float32(-math.Cos(yawRad))
+	return clamp01(geo.raycast(s.myX, s.myY, s.myZ, dx, 0, dz, cap) / cap)
 }
 
 // buildObservation constructs the real, full feature vector for one bot's current tick from its
@@ -151,14 +244,18 @@ func buildObservation(s *botState) Observation {
 		SelfYawSin:     float32(math.Sin(float64(s.myYaw) * math.Pi / 180.0)),
 		SelfYawCos:     float32(math.Cos(float64(s.myYaw) * math.Pi / 180.0)),
 		SelfPitchNorm:  clampSigned(s.myPitch / 90.0),
-		SelfIsShooting: 0, // emily-bot doesn't currently self-report is_shooting in its own outbound state; real gap, see this file's own module doc comment for the geometry/timer gaps named the same way
-		SelfCrouching:  0, // same real gap as SelfIsShooting -- not tracked in botState today
+		SelfIsShooting: boolToF32(s.myIsShooting), // real, own outbound state (S459-47)
+		SelfCrouching:  boolToF32(s.myCrouching),  // real, own outbound state (S459-47)
 		SelfInVehicle:  0,
 		SelfAlive:      boolToF32(s.myState == 0), // STATE_ALIVE == 0, protocol.h
 		SelfKillsNorm:  clamp01(float32(s.kills) / float32(queueFragLimit)),
 		SelfDeathsNorm: clamp01(float32(s.myDeaths) / 10.0),
 		SelfHitFeedback: boolToF32(s.myHitFeedback != 0),
 		SelfRewardFeedbackNorm: tanhSquash(s.myRewardFeedback / 50.0),
+		SelfStormChargesFrac: clamp01(float32(s.myStormCharges) / 5.0), // real (S459-47)
+		SelfReloadFrac: clamp01(float32(s.myReloadTimer) / reloadTimerCap),
+		SelfAbilityCooldownFrac: clamp01(float32(s.myAbilityCooldown) / abilityCooldownCap),
+		SelfAbilityReady: boolToF32(s.myAbilityCooldown == 0),
 	}
 	if int(s.myCurrentWeapon) < len(obs.SelfWeaponOnehot) {
 		obs.SelfWeaponOnehot[s.myCurrentWeapon] = 1.0
@@ -166,7 +263,15 @@ func buildObservation(s *botState) Observation {
 		if maxAmmo > 0 {
 			obs.SelfAmmoFrac = clamp01(float32(s.myAmmo) / maxAmmo)
 		}
-		obs.SelfStormChargesFrac = clamp01(float32(0) / 5.0) // storm_charges isn't tracked in self state today (only decoded for peers) -- real, honest 0 rather than a fabricated value; see snapshot.go's own self-branch assignment for what IS captured
+	}
+
+	geo := getCachedGeometry()
+	obs.WallForwardNorm = rayNorm(geo, s, 0, wallRayCap)
+	obs.WallLeftNorm = rayNorm(geo, s, -90, wallRayCap)
+	obs.WallRightNorm = rayNorm(geo, s, 90, wallRayCap)
+	obs.WallBackNorm = rayNorm(geo, s, 180, wallRayCap)
+	if geo != nil {
+		obs.FloorBelowNorm = clamp01(geo.raycast(s.myX, s.myY, s.myZ, 0, -1, 0, floorRayCap) / floorRayCap)
 	}
 
 	type scored struct {
@@ -208,6 +313,7 @@ func buildObservation(s *botState) Observation {
 			IsShooting:      boolToF32(p.isShooting),
 			IsBot:           boolToF32(p.isBot),
 			Alive:           boolToF32(p.state == 0),
+			IsReloading:     boolToF32(p.reloadTimer > 0),
 		}
 	}
 
@@ -275,18 +381,22 @@ func (o Observation) Values() []float32 {
 	out = append(out,
 		o.SelfAmmoFrac, o.SelfIsShooting, o.SelfCrouching, o.SelfInVehicle, o.SelfAlive,
 		o.SelfKillsNorm, o.SelfDeathsNorm, o.SelfHitFeedback, o.SelfStormChargesFrac,
-		o.SelfRewardFeedbackNorm,
+		o.SelfRewardFeedbackNorm, o.SelfReloadFrac, o.SelfAbilityCooldownFrac, o.SelfAbilityReady,
 	)
 	for _, opp := range o.Opponents {
 		out = append(out,
 			opp.Present, opp.DistanceNorm, opp.BearingSin, opp.BearingCos, opp.ElevationNorm,
 			opp.HealthFrac, opp.WeaponLethality, opp.IsShooting, opp.IsBot, opp.Alive,
+			opp.IsReloading,
 		)
 	}
 	out = append(out,
 		o.VisibleEnemyCountNorm, o.NearestEnemyDistanceNorm, o.AvgEnemyHealthFrac,
 		o.EnemiesShootingCountNorm, o.EnemiesLowHealthCountNorm, o.SelfKillDeathRatio,
 		o.SelfRankEstimate, o.TeamAllyCountNorm, o.TeamScoreDiffNorm,
+	)
+	out = append(out,
+		o.WallForwardNorm, o.WallLeftNorm, o.WallRightNorm, o.WallBackNorm, o.FloorBelowNorm,
 	)
 	return out
 }

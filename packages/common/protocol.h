@@ -202,6 +202,22 @@ typedef struct {
     unsigned short death_duration_ms;
     float death_dir_x;
     float death_dir_z;
+    // reload_timer / ability_cooldown -- S459-47, founder real-time (SHANKPIT bot-league
+    // observation feedback): "also gun reload state" + "make sure the features understand that
+    // there are 2 different cooldowns" (WPN_SNIPER's storm-charge activation and WPN_KATANA's
+    // dash both gate on the SAME server-side PlayerState.ability_cooldown timer -- see
+    // packages/common/physics.h's katana_try_start_dash/update_weapons: activating sniper storm
+    // sets ability_cooldown=480 AND grants storm_charges=5; the katana dash can't fire again
+    // until that same shared cooldown reaches 0, even though storm_charges (unspent sniper
+    // "ultimate ammo") persists independently and stays available whenever the player switches
+    // back to the sniper -- these are two real, distinct, independently-tracked resources, not
+    // one). Neither field existed on the wire before this commit -- a real, honest gap named in
+    // docs/BOT_TRAINING_NORTHSTAR.md's first draft, closed here. Raw server ticks remaining (0 =
+    // ready), not pre-normalized, so a consumer can scale against whichever real constant is
+    // relevant (RELOAD_TIME_FULL/RELOAD_TIME_TACTICAL for reload_timer; the real, weapon-specific
+    // ability cooldown constants in physics.h -- 260/340/420/480 -- for ability_cooldown).
+    unsigned short reload_timer;
+    unsigned short ability_cooldown;
 } NetPlayer;
 
 typedef struct {

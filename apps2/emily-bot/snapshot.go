@@ -27,7 +27,11 @@ import (
 
 const (
 	netHeaderSize = 12 // type(1) client_id(1) sequence(2) timestamp(4) entity_count(1) scene_id(1) pad(2)
-	netPlayerSize = 64 // real, compiled sizeof(NetPlayer) on this build -- see this file's own doc comment
+	// netPlayerSize -- S459-47: grew from 64 to 68 bytes when reload_timer/ability_cooldown were
+	// added to the wire (packages/common/protocol.h). Re-verified via the same real, compiled
+	// offsetof()/sizeof() probe technique this file's own module doc comment already establishes
+	// -- never hand-guessed.
+	netPlayerSize = 68
 
 	// NetPlayer field byte offsets, matching packages/common/protocol.h's real field order and
 	// this platform's real struct alignment (verified via a compiled offsetof() probe, not
@@ -60,6 +64,8 @@ const (
 	offDeathDurationMs = 52
 	offDeathDirX     = 56
 	offDeathDirZ     = 60
+	offReloadTimer     = 64 // S459-47, real ticks remaining reloading (0 = not reloading)
+	offAbilityCooldown = 66 // S459-47, real ticks remaining on the SHARED ability-cooldown timer (sniper storm activation AND katana dash both gate on this one field -- see this file's own doc comment on decodedPlayer.AbilityCooldown)
 )
 
 func f32(buf []byte, off int) float32 {
@@ -105,6 +111,26 @@ type decodedPlayer struct {
 	inVehicle     uint8
 	kills         uint16
 	deaths        uint16
+	// stormCharges -- S459-45/47, real "sniper ultimate ammo" resource (packages/common/
+	// physics.h caps at 5). Independent of abilityCooldown: activating storm sets BOTH
+	// stormCharges=5 AND abilityCooldown=480 in one shot, but stormCharges then persists,
+	// unspent, until the player actually fires sniper shots (each shot decrements it by 1) --
+	// storm stays "active" (real, banked ammo) long after the shared cooldown that gated
+	// activating it has already reset and been spent again on something else (e.g. a katana
+	// dash, KATANA_DASH_COOLDOWN=420). See reloadTimer/abilityCooldown below for the other real,
+	// distinct resource.
+	stormCharges uint8
+	// reloadTimer -- S459-47, real ticks remaining on THIS weapon's own reload (0 = ready to
+	// fire, not currently reloading). Independent of abilityCooldown.
+	reloadTimer uint16
+	// abilityCooldown -- S459-47, real ticks remaining on the SHARED ability-cooldown timer.
+	// packages/common/physics.h's update_weapons gates ALL of: AR's ability (260 ticks),
+	// shotgun's ability (340 ticks), katana's dash (KATANA_DASH_COOLDOWN=420), and sniper's storm
+	// activation (480 ticks) on this ONE field -- activating any one of them blocks every other
+	// one until it reaches 0. This is genuinely different from stormCharges (see above): a player
+	// who activated storm can't ALSO immediately dash, but once abilityCooldown reaches 0 they
+	// CAN dash while still holding unspent storm charges from earlier.
+	abilityCooldown uint16
 }
 
 // decodePacketSnapshot parses a real PacketSnapshot buffer per the layout documented above.
@@ -144,6 +170,9 @@ func decodePacketSnapshot(buf []byte, n int) ([]decodedPlayer, bool) {
 			inVehicle:     buf[off+offInVehicle],
 			kills:         u16(buf, off+offKills),
 			deaths:        u16(buf, off+offDeaths),
+			stormCharges:  buf[off+offStormCharges],
+			reloadTimer:   u16(buf, off+offReloadTimer),
+			abilityCooldown: u16(buf, off+offAbilityCooldown),
 		}
 		out = append(out, e)
 		off += netPlayerSize

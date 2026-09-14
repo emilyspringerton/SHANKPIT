@@ -87,6 +87,9 @@ type peer struct {
 	inVehicle     uint8
 	kills         uint16
 	deaths        uint16
+	stormCharges    uint8  // S459-47; see snapshot.go's own decodedPlayer.stormCharges doc comment for the real dual-cooldown design
+	reloadTimer     uint16 // S459-47
+	abilityCooldown uint16 // S459-47
 	seen          time.Time
 }
 
@@ -107,6 +110,18 @@ type botState struct {
 	myDeaths        uint16
 	myRewardFeedback float32 // real server-computed reward earned since the last snapshot (S459-45)
 	myHitFeedback    uint8
+	myStormCharges    uint8  // S459-47, real (was fabricated to 0 before this commit)
+	myReloadTimer     uint16 // S459-47
+	myAbilityCooldown uint16 // S459-47
+
+	// myIsShooting / myCrouching -- S459-47. Real, found-live gap: these mirror the bot's own
+	// OUTBOUND decision (what it just told the server it's doing via PacketUserCmd), not a
+	// server round-trip -- there's no reason to wait for a snapshot to know your own current
+	// button state when you're the one pressing it. Set at the same point sendUserCmd's own
+	// caller decides `buttons` each tick; read by buildObservation.
+	myIsShooting bool
+	myCrouching  bool
+
 	sceneID uint8
 	peers   map[uint8]*peer
 	seq     uint32
@@ -409,6 +424,13 @@ func (s *botState) think() common.UserCmd {
 	s.drFwd = fwd
 	s.drStr = str
 
+	// S459-47: this bot's own outbound shoot/crouch state -- what it's telling the server this
+	// tick, known directly rather than waiting for a server round-trip. crouching stays false
+	// since this heuristic AI never sends BtnCrouch anywhere (a real, honest reflection of
+	// current behavior, not a stub).
+	s.myIsShooting = buttons&common.BtnAttack != 0
+	s.myCrouching = buttons&common.BtnCrouch != 0
+
 	weaponName := []string{"knife", "magnum", "ar", "shotgun", "sniper", "katana"}
 	wname := "magnum"
 	wi := weaponForRange(nearestDist)
@@ -710,6 +732,9 @@ func receiveLoop(conn *net.UDPConn, state *botState, verbose bool) {
 					state.myHealth = float32(e.health) // real, server-authoritative health now available (was heuristic-only before S459-44)
 					state.myRewardFeedback = e.rewardFeedback
 					state.myHitFeedback = e.hitFeedback
+					state.myStormCharges = e.stormCharges
+					state.myReloadTimer = e.reloadTimer
+					state.myAbilityCooldown = e.abilityCooldown
 				} else {
 					state.peers[e.id] = &peer{
 						id: e.id, sceneID: e.sceneID,
@@ -721,6 +746,7 @@ func receiveLoop(conn *net.UDPConn, state *botState, verbose bool) {
 						rewardFeedback: e.rewardFeedback, hitFeedback: e.hitFeedback,
 						ammo: e.ammo, inVehicle: e.inVehicle,
 						kills: e.kills, deaths: e.deaths,
+						stormCharges: e.stormCharges, reloadTimer: e.reloadTimer, abilityCooldown: e.abilityCooldown,
 						seen: now,
 					}
 					peerCount++
