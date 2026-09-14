@@ -214,9 +214,11 @@ static void flashlight_shader_init(void) {
  * along the view direction) and draws it additively via the shader above. World-space verts
  * with an identity model matrix -- same "bake the transform into the verts, mvp is camera-
  * only" contract gband_draw_skinned already established, so it reuses that exact camera-VP-
- * capture pattern rather than inventing a second one. Local-viewer-only by design (see this
- * function's own call site): a real, honest v0 scope limit -- another player's own flashlight
- * doesn't light the world for YOU yet, only your own does for you. */
+ * capture pattern rather than inventing a second one. Called once for the local viewer's own
+ * beam (from render_p, the reconciled/predicted local player) AND once per active remote
+ * player still holding WPN_FLASHLIGHT (from their own raw PlayerState) -- founder real-time,
+ * 2026-09-14: "it should be shining real light on the screen for multiplayer." Any player can
+ * now see any other active flashlight's beam cone, not just their own. */
 static void draw_flashlight_beam(const PlayerState *p) {
     if (!g_flashlight_shader_ready) return;
     if (p->current_weapon != WPN_FLASHLIGHT) return;
@@ -266,7 +268,16 @@ static void draw_flashlight_beam(const PlayerState *p) {
     }
     int vert_count = FLASHLIGHT_SEGMENTS + 2;
 
-    static const float beam_color[4] = {1.0f, 0.95f, 0.78f, 0.85f};
+    /* REAL FIX (founder real-time, 2026-09-14: "the light should be diffusing around the edges of
+       the walls...not showing a circle on the screen"): viewed down its own axis a cone volume
+       ALWAYS silhouettes as a circle/ellipse in screen space -- that's inherent geometry, no alpha
+       tune changes it. What made this read as "just a flat circle" was this translucent volume's
+       own high alpha (0.85) visually dominating over the actual lit wall surface underneath it
+       (flashlight_face_boost below, the real per-face N.L term that now brightens whatever the
+       beam is actually hitting). Cut hard here so the cone reads as a faint atmospheric/dust hint
+       -- the same restrained role it plays in every real flashlight-in-fog effect -- and the LIT
+       WALL becomes the dominant, visible "real light" cue instead of a bright sprite covering it. */
+    static const float beam_color[4] = {1.0f, 0.95f, 0.78f, 0.16f};
     glDepthMask(GL_FALSE);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE); /* additive -- reads as light, not a translucent decal */
@@ -280,29 +291,63 @@ static void draw_flashlight_beam(const PlayerState *p) {
     glDepthMask(GL_TRUE);
 }
 
-/* flashlight_box_boost -- how much extra brightness box (bx,by,bz) gets from the LOCAL viewer's
- * own flashlight, in [0, ~1]: 0 outside the cone/range/flashlight-off, up to ~1 dead-center at
- * close range. Called from draw_map's own per-box lighting pass (S459/physics.h's real, existing
- * per-face retro_eval_brush_lighting_rgb pipeline is untouched -- this is a small additive term
- * on top of it, not a rewrite). Real, deliberate v0 scope limit named in draw_flashlight_beam's
- * own doc comment above: local viewer only. */
-static float flashlight_box_boost(const PlayerState *p, float bx, float by, float bz) {
-    if (p->current_weapon != WPN_FLASHLIGHT) return 0.0f;
-    float eye_x = p->x, eye_y = p->y + (p->crouching ? 2.5f : EYE_HEIGHT), eye_z = p->z;
-    float dx = bx - eye_x, dy = by - eye_y, dz = bz - eye_z;
-    float dist = sqrtf(dx * dx + dy * dy + dz * dz);
-    if (dist < 0.001f || dist > FLASHLIGHT_RANGE) return 0.0f;
-    float ryaw = -p->yaw * 0.0174533f, rpitch = p->pitch * 0.0174533f;
-    float fx = sinf(ryaw) * cosf(rpitch), fy = sinf(rpitch), fz = -cosf(ryaw) * cosf(rpitch);
-    float cos_ang = (dx * fx + dy * fy + dz * fz) / dist;
+/* flashlight_face_boost -- REAL per-face directional light contribution from EVERY active player's
+ * flashlight in the current scene (not just the local viewer's own -- founder real-time,
+ * 2026-09-14: "it should be shining real light on the screen for multiplayer"), evaluated against
+ * that face's own real world-space normal instead of a flat box-wide add. This is the actual fix
+ * for "the light should be diffusing around the edges of the walls, not showing a circle on the
+ * screen": a face pointed toward the beam lights up, a face pointed away (the far side of a box,
+ * or a wall the beam only grazes) stays dark, exactly the way retro_eval_brush_lighting_rgb
+ * already treats the sun/moon below -- the flashlight is now a real N.L point-spotlight term on
+ * top of that same pipeline, not a rewrite of it. Takes a small pre-gathered list of active
+ * flashlight sources (see flashlight_sources_gather) instead of scanning MAX_CLIENTS itself, so
+ * the real per-box/per-face cost stays "num active flashlights" (usually 0-8), not 70. */
+typedef struct { float ex, ey, ez, fx, fy, fz; } FlashlightSource;
+#define FLASHLIGHT_SOURCES_MAX MAX_CLIENTS
+static float flashlight_face_boost(const FlashlightSource *sources, int source_count,
+                                    float bx, float by, float bz, float nx, float ny, float nz) {
+    float total = 0.0f;
     float cos_half_angle = cosf(FLASHLIGHT_HALF_ANGLE_DEG * 0.0174533f);
-    if (cos_ang < cos_half_angle) return 0.0f;
-    float angle_t = (cos_ang - cos_half_angle) / (1.0f - cos_half_angle); /* 0 at rim, 1 on-axis */
-    if (angle_t < 0.0f) angle_t = 0.0f; else if (angle_t > 1.0f) angle_t = 1.0f;
-    float dist_frac = dist / FLASHLIGHT_RANGE;
-    if (dist_frac < 0.0f) dist_frac = 0.0f; else if (dist_frac > 1.0f) dist_frac = 1.0f;
-    float dist_t = 1.0f - dist_frac;
-    return angle_t * dist_t * 1.1f;
+    for (int i = 0; i < source_count; i++) {
+        const FlashlightSource *s = &sources[i];
+        float dx = bx - s->ex, dy = by - s->ey, dz = bz - s->ez;
+        float dist = sqrtf(dx * dx + dy * dy + dz * dz);
+        if (dist < 0.001f || dist > FLASHLIGHT_RANGE) continue;
+        float lx = dx / dist, ly = dy / dist, lz = dz / dist; /* source -> surface direction */
+        float cos_ang = lx * s->fx + ly * s->fy + lz * s->fz;
+        if (cos_ang < cos_half_angle) continue;
+        float angle_t = (cos_ang - cos_half_angle) / (1.0f - cos_half_angle); /* 0 at rim, 1 on-axis */
+        if (angle_t < 0.0f) angle_t = 0.0f; else if (angle_t > 1.0f) angle_t = 1.0f;
+        float dist_frac = dist / FLASHLIGHT_RANGE;
+        if (dist_frac < 0.0f) dist_frac = 0.0f; else if (dist_frac > 1.0f) dist_frac = 1.0f;
+        /* softened inverse-square-ish falloff (squared instead of the old flat linear ramp) so
+           it doesn't blow out at point-blank range and fades smoothly with distance */
+        float dist_t = 1.0f - dist_frac;
+        dist_t = dist_t * dist_t;
+        /* N.L against the light's own incoming direction (surface-to-source is -l, so this face's
+           outward normal dotted with -l) -- a face turned away from the beam correctly gets ~0 */
+        float ndotl = -(nx * lx + ny * ly + nz * lz);
+        if (ndotl < 0.0f) continue;
+        total += angle_t * dist_t * ndotl * 1.6f;
+    }
+    return total;
+}
+
+/* Gathers every active, same-scene player currently holding WPN_FLASHLIGHT into a small array
+ * ONCE per draw_map call -- same "compute once per call, not once per box" discipline the
+ * material_mvp/material_light_dir setup above already established. */
+static int flashlight_sources_gather(int scene_id, FlashlightSource *out) {
+    int count = 0;
+    for (int i = 0; i < MAX_CLIENTS && count < FLASHLIGHT_SOURCES_MAX; i++) {
+        const PlayerState *p = &local_state.players[i];
+        if (!p->active || p->scene_id != scene_id) continue;
+        if (p->current_weapon != WPN_FLASHLIGHT) continue;
+        FlashlightSource *s = &out[count++];
+        s->ex = p->x; s->ey = p->y + (p->crouching ? 2.5f : EYE_HEIGHT); s->ez = p->z;
+        float ryaw = -p->yaw * 0.0174533f, rpitch = p->pitch * 0.0174533f;
+        s->fx = sinf(ryaw) * cosf(rpitch); s->fy = sinf(rpitch); s->fz = -cosf(ryaw) * cosf(rpitch);
+    }
+    return count;
 }
 
 #ifndef NET_VERBOSE_LOG
@@ -2185,6 +2230,9 @@ void draw_map(const RetroLightingState *lighting) {
         material_cam_pos[0] = rp->x; material_cam_pos[1] = rp->y + EYE_HEIGHT; material_cam_pos[2] = rp->z;
     }
 
+    FlashlightSource flashlight_sources[FLASHLIGHT_SOURCES_MAX];
+    int flashlight_source_count = flashlight_sources_gather(phys_scene_id, flashlight_sources);
+
     for(int i=1; i<map_count; i++) {
         Box b = map_geo[i];
         float style = 0.5f + 0.5f * sinf((b.x + b.z) * 0.003f);
@@ -2218,22 +2266,24 @@ void draw_map(const RetroLightingState *lighting) {
         float dz = b.z - rp->z;
         float dist = sqrtf(dx * dx + dz * dz);
 
-        /* Weapon 7 (flashlight, S459/EMILY-BACKLOG): a real additive brightness term on top of
-           the existing per-face lighting above, not a replacement for it -- see
-           flashlight_box_boost's own doc comment. Applied uniformly to every face rather than
-           angle-of-incidence-correctly per face (a real, deliberate v0 simplification: a true
-           per-face spotlight term would need each face's own normal here, which top/bot/front/
-           back/left/right already have implicitly via retro_eval_brush_lighting_rgb's calls
-           above -- reusing dist for a single flat boost is the "smallest real thing" that still
-           visibly answers "it gets dark, need a flashlight to see"). */
-        float fl_boost = flashlight_box_boost(rp, b.x, b.y, b.z);
-        if (fl_boost > 0.0f) {
-            top_lit_r += fl_boost; top_lit_g += fl_boost; top_lit_b += fl_boost;
-            bot_lit_r += fl_boost; bot_lit_g += fl_boost; bot_lit_b += fl_boost;
-            front_lit_r += fl_boost; front_lit_g += fl_boost; front_lit_b += fl_boost;
-            back_lit_r += fl_boost; back_lit_g += fl_boost; back_lit_b += fl_boost;
-            left_lit_r += fl_boost; left_lit_g += fl_boost; left_lit_b += fl_boost;
-            right_lit_r += fl_boost; right_lit_g += fl_boost; right_lit_b += fl_boost;
+        /* Weapon 7 (flashlight, S459/EMILY-BACKLOG): a real, per-face, multiplayer-aware N.L
+           spotlight term on top of the existing sun/moon lighting above, not a replacement for
+           it -- see flashlight_face_boost's own doc comment for the real fix this is (per-face
+           normal instead of a flat box-wide add; every active player's flashlight, not just the
+           local viewer's). */
+        if (flashlight_source_count > 0) {
+            float top_boost   = flashlight_face_boost(flashlight_sources, flashlight_source_count, b.x, b.y, b.z,  0.0f,  1.0f,  0.0f);
+            float bot_boost   = flashlight_face_boost(flashlight_sources, flashlight_source_count, b.x, b.y, b.z,  0.0f, -1.0f,  0.0f);
+            float front_boost = flashlight_face_boost(flashlight_sources, flashlight_source_count, b.x, b.y, b.z,  0.0f,  0.0f,  1.0f);
+            float back_boost  = flashlight_face_boost(flashlight_sources, flashlight_source_count, b.x, b.y, b.z,  0.0f,  0.0f, -1.0f);
+            float left_boost  = flashlight_face_boost(flashlight_sources, flashlight_source_count, b.x, b.y, b.z, -1.0f,  0.0f,  0.0f);
+            float right_boost = flashlight_face_boost(flashlight_sources, flashlight_source_count, b.x, b.y, b.z,  1.0f,  0.0f,  0.0f);
+            top_lit_r += top_boost; top_lit_g += top_boost; top_lit_b += top_boost;
+            bot_lit_r += bot_boost; bot_lit_g += bot_boost; bot_lit_b += bot_boost;
+            front_lit_r += front_boost; front_lit_g += front_boost; front_lit_b += front_boost;
+            back_lit_r += back_boost; back_lit_g += back_boost; back_lit_b += back_boost;
+            left_lit_r += left_boost; left_lit_g += left_boost; left_lit_b += left_boost;
+            right_lit_r += right_boost; right_lit_g += right_boost; right_lit_b += right_boost;
         }
 
         top_r *= top_lit_r; top_g *= top_lit_g; top_b *= top_lit_b;
@@ -6834,6 +6884,7 @@ void draw_scene(PlayerState *render_p) {
         if (!p->active || p->scene_id != render_p->scene_id) continue;
         if (p->id == render_p->id) continue;
         draw_player_3rd(p);
+        draw_flashlight_beam(p); /* other players' own beam cones are now visible too, not just yours */
     }
     overlay_begin_frame(&g_overlay);
     overlay_collect_items(render_p, now_ms);
