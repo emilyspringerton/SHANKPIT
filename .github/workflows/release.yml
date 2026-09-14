@@ -89,7 +89,20 @@ jobs:
           # sources -- `undefined reference to gband_mesh_rig_draw/init` at the link step.
           # Reproduced and confirmed the exact failure/fix locally (a real x86_64-w64-mingw32-gcc
           # build against a freshly-downloaded SDL2 mingw devel package) before trusting it here.
-          x86_64-w64-mingw32-gcc apps/lobby/src/main.c packages/simulation/story_ai.c packages/simulation/cutscene.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/world/terrain.c packages/audio/audio.c \
+          #
+          # Real, SECOND live-found instance of the exact same class of drift (2026-09-14, founder
+          # real-time: "the build is down ... it cant cut a release"): S459-33 wired main.c to call
+          # png_decode (spray_registry.h -> packages/world/png_decode_gen.c, a real PARENA-compiled
+          # PNG decoder, plus its own minimal vendored Arena/Vec/Bytes runtime,
+          # packages/world/parena_runtime.c) -- the Makefile's own LOBBY_SRC and packages/world/
+          # BUILD.bazel were both updated for this at the time, but this hand-listed CI command was
+          # not, so it failed the identical way: `undefined reference to arena_init/arena_alloc/
+          # png_decode/arena_free_all`. Confirmed live via the real GitHub Actions API job log
+          # before writing this fix (job 104109838314), same as the gband_mesh_rig precedent above.
+          # A real, standing lesson from now TWO real incidents: this CI step's own source list is
+          # never automatically kept in sync with the Makefile's LOBBY_SRC -- any future new
+          # packages/*.c file added to LOBBY_SRC needs this list updated by hand too.
+          x86_64-w64-mingw32-gcc apps/lobby/src/main.c packages/simulation/story_ai.c packages/simulation/cutscene.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/world/terrain.c packages/world/parena_runtime.c packages/world/png_decode_gen.c packages/audio/audio.c \
             packages/goldenband/gband_mesh_rig.c packages/goldenband/gband.c packages/goldenband/gskel.c packages/goldenband/gmesh.c \
             -o ShankPit.exe \
             -O2 -static-libgcc \
