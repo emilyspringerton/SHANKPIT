@@ -563,6 +563,10 @@ static ProcTexture g_wall_metal_tex = {0};
 // ips_panel_rgba), not the brick fallback every other unrecognized name gets below -- a light
 // fixture needs to visually read as a glowing panel, not brick with a tint on top.
 static ProcTexture g_wall_ips_panel_tex = {0};
+// g_wall_hps_bulb_tex -- SHADER_HPS_LIGHT's own real texture (founder real-time, 2026-09-14:
+// "can you do it again for a high pressure sodium light"). Same "own dedicated generator, not
+// the brick fallback" reasoning g_wall_ips_panel_tex above already established.
+static ProcTexture g_wall_hps_bulb_tex = {0};
 static RetroSky g_retro_sky = {0};
 
 // material_texture_for_name maps a custom level's own real material name (from
@@ -576,6 +580,7 @@ static GLuint material_texture_for_name(const char *name) {
         if (strcmp(name, "wood") == 0) return g_wall_wood_tex.tex_id;
         if (strcmp(name, "metal") == 0) return g_wall_metal_tex.tex_id;
         if (strcmp(name, "ips_light") == 0) return g_wall_ips_panel_tex.tex_id;
+        if (strcmp(name, "hps_light") == 0) return g_wall_hps_bulb_tex.tex_id;
     }
     return g_wall_brick_tex.tex_id;
 }
@@ -2297,20 +2302,37 @@ void draw_map(const RetroLightingState *lighting) {
     FlashlightSource flashlight_sources[FLASHLIGHT_SOURCES_MAX];
     int flashlight_source_count = flashlight_sources_gather(phys_scene_id, flashlight_sources);
 
+    /* SHADER_HPS_LIGHT's own real, animated flicker (founder real-time, 2026-09-14: "a flicker
+       like in this video" -- the linked video couldn't actually be fetched/watched from here, so
+       this models the well-documented real behavior instead: a dying/cycling HPS bulb strikes,
+       brightens, dims, nearly extinguishes, and restrikes over a few real seconds). Three sine
+       waves at different, non-harmonic frequencies/phases summed together -- avoids the too-
+       regular, obviously-fake look a single sine pulse would have, while staying cheap and fully
+       deterministic (no RNG state to manage). Computed ONCE per draw_map call, not per box, same
+       "compute once per frame" discipline flashlight_sources/material_mvp above already use. */
+    float hps_flicker;
+    {
+        float t = (float)SDL_GetTicks() * 0.001f;
+        hps_flicker = 0.72f + 0.16f * sinf(t * 2.1f) + 0.07f * sinf(t * 7.3f + 1.1f) + 0.05f * sinf(t * 15.7f + 0.6f);
+        if (hps_flicker < 0.12f) hps_flicker = 0.12f; else if (hps_flicker > 1.0f) hps_flicker = 1.0f;
+    }
+
     for(int i=1; i<map_count; i++) {
         Box b = map_geo[i];
-        /* SHADER_IPS_LIGHT (founder real-time, 2026-09-14: "can we design a material for an IPS
-           light its going to need a special shader build it in"): a light fixture material
-           shouldn't be darkened by day/night lighting or ground AO the way an ordinary wall
-           correctly is -- it's meant to look self-lit. Checked once per box, used below to
-           override this box's own base tint AND per-face lit multipliers to full bright before
-           the real emissive GLSL glow pass (draw_material_emissive_box) adds its own soft
-           highlight on top, at the same call site draw_material_specular_box already uses. */
+        /* SHADER_IPS_LIGHT/SHADER_HPS_LIGHT (founder real-time, 2026-09-14): a light fixture
+           material shouldn't be darkened by day/night lighting or ground AO the way an ordinary
+           wall correctly is -- it's meant to look self-lit. Checked once per box, used below to
+           override this box's own base tint AND per-face lit multipliers to full bright (HPS:
+           scaled by hps_flicker too) before the real emissive GLSL glow pass
+           (draw_material_emissive_box/draw_material_hps_box) adds its own soft highlight on top,
+           at the same call site draw_material_specular_box already uses. */
         int is_ips_light = 0;
+        int is_hps_light = 0;
         if (phys_scene_id == SCENE_CUSTOM_LEVEL && i < CUSTOM_LEVEL_MAX_BOXES + 1) {
             int box_mat_idx = g_custom_level_material_idx[i];
             if (box_mat_idx >= 0 && box_mat_idx < g_custom_level_material_count) {
                 is_ips_light = (strcmp(g_custom_level_material_shader[box_mat_idx], SHADER_IPS_LIGHT) == 0);
+                is_hps_light = (strcmp(g_custom_level_material_shader[box_mat_idx], SHADER_HPS_LIGHT) == 0);
             }
         }
         float style = 0.5f + 0.5f * sinf((b.x + b.z) * 0.003f);
@@ -2335,6 +2357,15 @@ void draw_map(const RetroLightingState *lighting) {
             base_g = top_g = side_g = back_g = 0.92f;
             base_b = top_b = side_b = back_b = 1.0f;
         }
+        if (is_hps_light) {
+            /* warm sodium amber, scaled by the SAME per-frame hps_flicker the additive glow pass
+               below uses -- the base texture tint pulses right along with the glow, so the whole
+               fixture reads as one flickering light, not a static wall with a flickering overlay
+               on top of it. */
+            base_r = top_r = side_r = back_r = 1.0f * hps_flicker;
+            base_g = top_g = side_g = back_g = 0.55f * hps_flicker;
+            base_b = top_b = side_b = back_b = 0.10f * hps_flicker;
+        }
 
         float ground_ao = smoothstepf(12.0f, -14.0f, b.y - b.h * 0.5f);
         float top_lit_r = 1.0f, top_lit_g = 1.0f, top_lit_b = 1.0f;
@@ -2355,9 +2386,10 @@ void draw_map(const RetroLightingState *lighting) {
         left_lit_r *= 0.97f - ground_ao * 0.10f; left_lit_g *= 0.97f - ground_ao * 0.10f; left_lit_b *= 0.97f - ground_ao * 0.10f;
         right_lit_r *= 0.99f - ground_ao * 0.08f; right_lit_g *= 0.99f - ground_ao * 0.08f; right_lit_b *= 0.99f - ground_ao * 0.08f;
 
-        if (is_ips_light) {
+        if (is_ips_light || is_hps_light) {
             /* skip day/night + ground-AO darkening entirely -- a light fixture reads as self-lit,
-               not modulated by the time of day the way a wall correctly is */
+               not modulated by the time of day the way a wall correctly is (HPS's own flicker is
+               already baked into base_r/g/b above, not re-applied here) */
             top_lit_r = top_lit_g = top_lit_b = 1.0f;
             bot_lit_r = bot_lit_g = bot_lit_b = 1.0f;
             front_lit_r = front_lit_g = front_lit_b = 1.0f;
@@ -2490,6 +2522,8 @@ void draw_map(const RetroLightingState *lighting) {
             if (mi >= 0 && mi < g_custom_level_material_count) {
                 if (is_ips_light) {
                     draw_material_emissive_box(b.x, b.y, b.z, b.w, b.h, b.d, material_mvp.m, material_cam_pos);
+                } else if (is_hps_light) {
+                    draw_material_hps_box(b.x, b.y, b.z, b.w, b.h, b.d, material_mvp.m, material_cam_pos, hps_flicker);
                 } else {
                     draw_material_specular_box(b.x, b.y, b.z, b.w, b.h, b.d,
                                                 g_custom_level_material_specular[mi], g_custom_level_material_shininess[mi],
@@ -8415,6 +8449,7 @@ int main(int argc, char* argv[]) {
     flashlight_shader_init();
     material_shader_init();
     ips_light_shader_init();
+    hps_light_shader_init();
     proctex_init();
     proc_tex_create(&g_vehicle_noise_tex, 64, 64);
     proctex_make_noise_rgba(&g_vehicle_noise_tex, 64, 64, g_vehicle_style.seed);
@@ -8440,6 +8475,9 @@ int main(int argc, char* argv[]) {
     proc_tex_create(&g_wall_ips_panel_tex, 128, 128);
     proctex_make_ips_panel_rgba(&g_wall_ips_panel_tex, 128, 128, 0x1550u);
     proctex_upload_to_gl(&g_wall_ips_panel_tex);
+    proc_tex_create(&g_wall_hps_bulb_tex, 128, 128);
+    proctex_make_hps_bulb_rgba(&g_wall_hps_bulb_tex, 128, 128, 0x0951u);
+    proctex_upload_to_gl(&g_wall_hps_bulb_tex);
     retro_sky_init(&g_retro_sky);
     net_init();
     

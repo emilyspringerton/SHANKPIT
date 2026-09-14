@@ -349,6 +349,37 @@ void proctex_make_ips_panel_rgba(ProcTexture *t, int w, int h, uint32_t seed) {
     }
 }
 
+/* proctex_make_hps_bulb_rgba -- founder real-time, 2026-09-14: "can you do it again for a high
+ * pressure sodium light." A real, distinct texture for the new SHADER_HPS_LIGHT material: a warm
+ * amber/orange radial hotspot (real HPS lamps read as a bright point/dome, unlike IPS panel's own
+ * flat, even backlit-cell grid) fading toward the edges, plus a little grain for a glass-like
+ * texture. The actual FLICKER is a runtime, per-frame CPU term (draw_map's own hps_flicker,
+ * material_shaders.h's own draw_material_hps_box) multiplied on top of this texture at render
+ * time -- this texture is the lamp's own static "hot center, dimmer edge" shape, not the flicker
+ * itself. */
+void proctex_make_hps_bulb_rgba(ProcTexture *t, int w, int h, uint32_t seed) {
+    if (!t || !t->pixels || t->width != w || t->height != h) return;
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            size_t idx = ((size_t)y * (size_t)w + (size_t)x) * 4u;
+            float u = (float)x / (float)w - 0.5f;
+            float v = (float)y / (float)h - 0.5f;
+            float r2 = u * u + v * v;
+            float hotspot = 1.0f - r2 * 3.2f;
+            if (hotspot < 0.0f) hotspot = 0.0f;
+            if (hotspot > 1.0f) hotspot = 1.0f;
+            float grain = hash_2d(x, y, (int)seed) * 0.10f;
+            float shade = 0.5f + 0.5f * hotspot + grain;
+            if (shade > 1.0f) shade = 1.0f;
+            if (shade < 0.0f) shade = 0.0f;
+            t->pixels[idx + 0] = (unsigned char)(shade * 255.0f);       /* sodium amber: strong red */
+            t->pixels[idx + 1] = (unsigned char)(shade * 140.0f);       /* moderate green -> orange */
+            t->pixels[idx + 2] = (unsigned char)(shade * 30.0f);        /* minimal blue -- real HPS spectrum has almost none */
+            t->pixels[idx + 3] = 255;
+        }
+    }
+}
+
 void proc_tex_fill_emily_vibe(ProcTexture *t, float seed, float t_sec) {
     if (!t || !t->pixels) return;
 

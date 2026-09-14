@@ -252,4 +252,106 @@ static inline void draw_material_emissive_box(float x, float y, float z, float w
     glDepthMask(GL_TRUE);
 }
 
+// SHADER_HPS_LIGHT (founder real-time, 2026-09-14: "can you do it again for a high pressure
+// sodium light with a flicker like in this video" -- the referenced YouTube link couldn't
+// actually be fetched/watched from here, so this is built from well-documented real HPS
+// behavior instead: a dying/cycling HPS bulb repeatedly strikes, brightens, dims, nearly
+// extinguishes, and restrikes over a few real seconds -- a slow, semi-chaotic pulse, not a fast
+// strobe). Same real unlit-emissive treatment SHADER_IPS_LIGHT established, plus TWO real,
+// genuinely new things: a warm amber/orange sodium-vapor color (real HPS lamps emit an almost-
+// monochromatic yellow-orange, the sodium D line at ~589nm) and an animated flicker -- draw_map's
+// own per-frame hps_flicker (a sum of a few sine waves at different, non-harmonic frequencies,
+// the same real "avoid a too-regular/fake pulse" idea any real flicker effect needs) is CPU-
+// computed ONCE per frame (not per box, not per fragment) and passed in here as u_intensity,
+// exactly the same "compute once, pass as a uniform" discipline flashlight_face_boost/
+// material_light_dir already established elsewhere in this codebase -- also multiplied into the
+// box's own BASE texture tint in draw_map, so the whole fixture (texture AND glow) pulses
+// together, not just the additive overlay while the base stays static.
+#define SHADER_HPS_LIGHT "hps_light"
+
+static GLuint g_hps_light_shader_program = 0;
+static DynamicVBO g_hps_light_shader_vbo;
+static int g_hps_light_shader_ready = 0;
+
+static const char *g_hps_light_fs_src =
+    "#version 120\n"
+    "uniform vec3 u_cam_pos;\n"
+    "uniform vec3 u_glow_color;\n"
+    "uniform float u_intensity;\n"
+    "varying vec3 v_normal;\n"
+    "varying vec3 v_world_pos;\n"
+    "void main() {\n"
+    "    vec3 n = normalize(v_normal);\n"
+    "    vec3 v = normalize(u_cam_pos - v_world_pos);\n"
+    "    float facing = max(dot(n, v), 0.0);\n"
+    "    float glow = mix(0.5, 1.0, facing);\n"
+    "    gl_FragColor = vec4(u_glow_color * u_intensity * glow, 1.0);\n"
+    "}\n";
+
+static inline void hps_light_shader_init(void) {
+    if (!gl_shader_load_extensions()) {
+        SDL_Log("material_shaders: GL extension loading failed -- hps_light pass disabled");
+        return;
+    }
+    GLuint vs = gl_compile_shader(GL_VERTEX_SHADER, g_material_shader_vs_src);
+    GLuint fs = gl_compile_shader(GL_FRAGMENT_SHADER, g_hps_light_fs_src);
+    g_hps_light_shader_program = gl_link_program(vs, fs);
+    if (!g_hps_light_shader_program) {
+        SDL_Log("material_shaders: hps_light shader link failed -- pass disabled");
+        return;
+    }
+    if (!gl_dynamic_vbo_init(&g_hps_light_shader_vbo, 48)) {
+        SDL_Log("material_shaders: hps_light VBO init failed -- pass disabled");
+        return;
+    }
+    g_hps_light_shader_ready = 1;
+    SDL_Log("material_shaders: SHADER_HPS_LIGHT (flickering sodium lamp) ready");
+}
+
+// draw_material_hps_box -- same real 36-vert box shape draw_material_emissive_box already
+// builds, kept as its own literal copy for the same "one self-contained function per named
+// shader" reason. flicker is the caller's own per-frame hps_flicker value in [0,1] -- this
+// function doesn't compute time/randomness itself, matching this codebase's own established
+// "CPU computes once per frame, GLSL just receives the number" discipline.
+static inline void draw_material_hps_box(float x, float y, float z, float w, float h, float d,
+                                          const float *mvp16, const float *cam_pos, float flicker) {
+    if (!g_hps_light_shader_ready) return;
+
+    float hw = w * 0.5f, hh = h * 0.5f, hd = d * 0.5f;
+    float verts[36 * 6];
+    int vi = 0;
+#define V(px, py, pz, nx, ny, nz) \
+    verts[vi++] = x + (px); verts[vi++] = y + (py); verts[vi++] = z + (pz); \
+    verts[vi++] = (nx); verts[vi++] = (ny); verts[vi++] = (nz);
+    V(-hw, hh, hd, 0, 1, 0) V(hw, hh, hd, 0, 1, 0) V(hw, hh, -hd, 0, 1, 0)
+    V(-hw, hh, hd, 0, 1, 0) V(hw, hh, -hd, 0, 1, 0) V(-hw, hh, -hd, 0, 1, 0)
+    V(-hw, -hh, -hd, 0, -1, 0) V(hw, -hh, -hd, 0, -1, 0) V(hw, -hh, hd, 0, -1, 0)
+    V(-hw, -hh, -hd, 0, -1, 0) V(hw, -hh, hd, 0, -1, 0) V(-hw, -hh, hd, 0, -1, 0)
+    V(-hw, -hh, hd, 0, 0, 1) V(hw, -hh, hd, 0, 0, 1) V(hw, hh, hd, 0, 0, 1)
+    V(-hw, -hh, hd, 0, 0, 1) V(hw, hh, hd, 0, 0, 1) V(-hw, hh, hd, 0, 0, 1)
+    V(hw, -hh, -hd, 0, 0, -1) V(-hw, -hh, -hd, 0, 0, -1) V(-hw, hh, -hd, 0, 0, -1)
+    V(hw, -hh, -hd, 0, 0, -1) V(-hw, hh, -hd, 0, 0, -1) V(hw, hh, -hd, 0, 0, -1)
+    V(-hw, -hh, -hd, -1, 0, 0) V(-hw, -hh, hd, -1, 0, 0) V(-hw, hh, hd, -1, 0, 0)
+    V(-hw, -hh, -hd, -1, 0, 0) V(-hw, hh, hd, -1, 0, 0) V(-hw, hh, -hd, -1, 0, 0)
+    V(hw, -hh, hd, 1, 0, 0) V(hw, -hh, -hd, 1, 0, 0) V(hw, hh, -hd, 1, 0, 0)
+    V(hw, -hh, hd, 1, 0, 0) V(hw, hh, -hd, 1, 0, 0) V(hw, hh, hd, 1, 0, 0)
+#undef V
+
+    static const float glow_color[3] = {1.0f, 0.55f, 0.10f}; /* warm sodium amber -- almost no blue, real HPS spectrum */
+    const float intensity = 0.6f * flicker;
+
+    glDepthMask(GL_FALSE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    gl_use_program(g_hps_light_shader_program);
+    gl_uniform_matrix4fv(gl_get_uniform_location(g_hps_light_shader_program, "u_mvp"), mvp16);
+    gl_uniform3fv(gl_get_uniform_location(g_hps_light_shader_program, "u_cam_pos"), cam_pos);
+    gl_uniform3fv(gl_get_uniform_location(g_hps_light_shader_program, "u_glow_color"), glow_color);
+    gl_uniform1f(gl_get_uniform_location(g_hps_light_shader_program, "u_intensity"), intensity);
+    gl_dynamic_vbo_draw(&g_hps_light_shader_vbo, verts, 36, GL_TRIANGLES);
+    gl_use_program(0);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_TRUE);
+}
+
 #endif

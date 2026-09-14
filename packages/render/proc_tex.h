@@ -41,5 +41,6 @@ void proctex_make_concrete_rgba(ProcTexture *t, int w, int h, uint32_t seed);
 void proctex_make_wood_rgba(ProcTexture *t, int w, int h, uint32_t seed);
 void proctex_make_metal_rgba(ProcTexture *t, int w, int h, uint32_t seed);
 void proctex_make_ips_panel_rgba(ProcTexture *t, int w, int h, uint32_t seed);
+void proctex_make_hps_bulb_rgba(ProcTexture *t, int w, int h, uint32_t seed);
 
 #endif
