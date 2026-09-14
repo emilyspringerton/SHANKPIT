@@ -324,6 +324,38 @@ static void tdmo_activate_match(unsigned int now_ms) {
     tdmo_ensure_population(now_ms);
 }
 
+// server_apply_custom_level -- the real box/material extraction + phys_set_custom_level* apply
+// sequence, factored out of main()'s own real --level CLI handling (below) so S459-38's own real
+// QUEUE-level-loading logic (queue_activate_match, right below) can share it instead of
+// duplicating ~25 lines of the same real box/material array-of-struct unpacking.
+static void server_apply_custom_level(const CustomLevelData *lvl) {
+    float x[LEVEL_BOXES_MAX], y[LEVEL_BOXES_MAX], z[LEVEL_BOXES_MAX];
+    float w[LEVEL_BOXES_MAX], h[LEVEL_BOXES_MAX], d[LEVEL_BOXES_MAX];
+    float r[LEVEL_BOXES_MAX], g[LEVEL_BOXES_MAX], b[LEVEL_BOXES_MAX];
+    int material_idx[LEVEL_BOXES_MAX];
+    for (int bi = 0; bi < lvl->count; bi++) {
+        x[bi] = lvl->boxes[bi].x; y[bi] = lvl->boxes[bi].y; z[bi] = lvl->boxes[bi].z;
+        w[bi] = lvl->boxes[bi].w; h[bi] = lvl->boxes[bi].h; d[bi] = lvl->boxes[bi].d;
+        r[bi] = lvl->boxes[bi].r; g[bi] = lvl->boxes[bi].g; b[bi] = lvl->boxes[bi].b;
+        material_idx[bi] = lvl->boxes[bi].material_idx;
+    }
+    char mat_names[LEVEL_BOXES_MAX_MATERIALS][CUSTOM_LEVEL_MATERIAL_NAME_LEN];
+    char mat_shaders[LEVEL_BOXES_MAX_MATERIALS][CUSTOM_LEVEL_MATERIAL_NAME_LEN];
+    float mat_specular[LEVEL_BOXES_MAX_MATERIALS], mat_shininess[LEVEL_BOXES_MAX_MATERIALS];
+    for (int mi = 0; mi < lvl->material_count; mi++) {
+        strncpy(mat_names[mi], lvl->materials[mi].name, CUSTOM_LEVEL_MATERIAL_NAME_LEN - 1);
+        mat_names[mi][CUSTOM_LEVEL_MATERIAL_NAME_LEN - 1] = '\0';
+        strncpy(mat_shaders[mi], lvl->materials[mi].shader_name, CUSTOM_LEVEL_MATERIAL_NAME_LEN - 1);
+        mat_shaders[mi][CUSTOM_LEVEL_MATERIAL_NAME_LEN - 1] = '\0';
+        mat_specular[mi] = lvl->materials[mi].specular;
+        mat_shininess[mi] = lvl->materials[mi].shininess;
+    }
+    phys_set_custom_level_materials(mat_names, mat_shaders, mat_specular, mat_shininess, lvl->material_count);
+    phys_set_custom_level(x, y, z, w, h, d, r, g, b, material_idx, lvl->count, lvl->ground_plane_enabled, lvl->ground_plane_squares);
+    g_server_match_scene = SCENE_CUSTOM_LEVEL;
+    scene_load(g_server_match_scene);
+}
+
 // queue_activate_match -- S459-34, the real MODE_QUEUE match activation. Deliberately much
 // smaller than tdmo_activate_match: no teams, no score-limit bookkeeping, no in-process bot
 // population call -- MODE_QUEUE's own population is filled entirely by real, external, packet-
@@ -331,14 +363,42 @@ static void tdmo_activate_match(unsigned int now_ms) {
 // never an in-process PlayerState puppet, so there is no server-side "ensure population" step to
 // call here at all. Reuses the generic non-TDMO connect path every other free-for-all mode
 // (MODE_DEATHMATCH/MODE_CTF) already goes through for per-player setup.
+//
+// S459-38, founder real-time: "DEFAULT QUEUE TO USE THE LEVEL CALLE 44 (NEW FUNCTIONALITY
+// QUEUEING INTO LEVELS WITH BOTS)" / "default it to the oil tanker if no online levels
+// available." Real, live registry lookup (checked directly, not assumed): the level named "44"
+// is real, id=6, GET https://okemily.com/api/v1/shankpit-levels confirmed it live at the time
+// this was written. Matched by NAME (not a hardcoded id) since that's how the founder actually
+// refers to it and an id is a real, separate implementation detail that could legitimately
+// change if the level ever gets deleted/recreated -- a name lookup stays correct either way, at
+// the real cost of an extra registry-list round-trip before the export fetch. Falls back to
+// SCENE_OIL_TANKER (bypassing the normal g_dm_rotation choice entirely, matching the founder's
+// own explicit instruction) on ANY real failure along the way -- registry unreachable, no level
+// named "44" in it, or the export fetch/parse itself failing -- never a half-loaded level.
+#define QUEUE_DEFAULT_LEVEL_NAME "44"
 static void queue_activate_match(unsigned int now_ms) {
     local_init_match(1, MODE_QUEUE);
-    g_server_match_scene = g_dm_rotation[g_dm_rotation_idx];
-    scene_load(g_server_match_scene);
     local_state.game_mode = MODE_QUEUE;
     local_state.match_over = 0;
     local_state.players[0].active = 0;
     g_round_start_ms = now_ms;
+
+    LevelRegistryEntry entries[LEVEL_REGISTRY_MAX_ENTRIES];
+    int count = level_boxes_fetch_registry_list(entries, LEVEL_REGISTRY_MAX_ENTRIES);
+    int found_id = -1;
+    for (int i = 0; i < count; i++) {
+        if (strcmp(entries[i].name, QUEUE_DEFAULT_LEVEL_NAME) == 0) { found_id = entries[i].id; break; }
+    }
+    CustomLevelData lvl;
+    if (found_id >= 0 && level_boxes_fetch_export(found_id, &lvl)) {
+        server_apply_custom_level(&lvl);
+        NET_SERVER_LOG("QUEUE_LEVEL_LOADED name=%s id=%d boxes=%d", lvl.name, found_id, lvl.count);
+        return;
+    }
+    NET_SERVER_LOG("QUEUE_LEVEL_FALLBACK reason=%s -- using SCENE_OIL_TANKER",
+                   found_id < 0 ? "level_44_not_found" : "export_fetch_failed");
+    g_server_match_scene = SCENE_OIL_TANKER;
+    scene_load(g_server_match_scene);
 }
 
 static int find_slot_by_addr(const struct sockaddr_in *addr) {
@@ -983,31 +1043,7 @@ int main(int argc, char *argv[]) {
         if (strcmp(argv[i], "--level") == 0 && i + 1 < argc) {
             CustomLevelData lvl;
             if (level_boxes_load_from_file(argv[i + 1], &lvl)) {
-                float x[LEVEL_BOXES_MAX], y[LEVEL_BOXES_MAX], z[LEVEL_BOXES_MAX];
-                float w[LEVEL_BOXES_MAX], h[LEVEL_BOXES_MAX], d[LEVEL_BOXES_MAX];
-                float r[LEVEL_BOXES_MAX], g[LEVEL_BOXES_MAX], b[LEVEL_BOXES_MAX];
-                int material_idx[LEVEL_BOXES_MAX];
-                for (int bi = 0; bi < lvl.count; bi++) {
-                    x[bi] = lvl.boxes[bi].x; y[bi] = lvl.boxes[bi].y; z[bi] = lvl.boxes[bi].z;
-                    w[bi] = lvl.boxes[bi].w; h[bi] = lvl.boxes[bi].h; d[bi] = lvl.boxes[bi].d;
-                    r[bi] = lvl.boxes[bi].r; g[bi] = lvl.boxes[bi].g; b[bi] = lvl.boxes[bi].b;
-                    material_idx[bi] = lvl.boxes[bi].material_idx;
-                }
-                char mat_names[LEVEL_BOXES_MAX_MATERIALS][CUSTOM_LEVEL_MATERIAL_NAME_LEN];
-                char mat_shaders[LEVEL_BOXES_MAX_MATERIALS][CUSTOM_LEVEL_MATERIAL_NAME_LEN];
-                float mat_specular[LEVEL_BOXES_MAX_MATERIALS], mat_shininess[LEVEL_BOXES_MAX_MATERIALS];
-                for (int mi = 0; mi < lvl.material_count; mi++) {
-                    strncpy(mat_names[mi], lvl.materials[mi].name, CUSTOM_LEVEL_MATERIAL_NAME_LEN - 1);
-                    mat_names[mi][CUSTOM_LEVEL_MATERIAL_NAME_LEN - 1] = '\0';
-                    strncpy(mat_shaders[mi], lvl.materials[mi].shader_name, CUSTOM_LEVEL_MATERIAL_NAME_LEN - 1);
-                    mat_shaders[mi][CUSTOM_LEVEL_MATERIAL_NAME_LEN - 1] = '\0';
-                    mat_specular[mi] = lvl.materials[mi].specular;
-                    mat_shininess[mi] = lvl.materials[mi].shininess;
-                }
-                phys_set_custom_level_materials(mat_names, mat_shaders, mat_specular, mat_shininess, lvl.material_count);
-                phys_set_custom_level(x, y, z, w, h, d, r, g, b, material_idx, lvl.count, lvl.ground_plane_enabled, lvl.ground_plane_squares);
-                g_server_match_scene = SCENE_CUSTOM_LEVEL;
-                scene_load(g_server_match_scene);
+                server_apply_custom_level(&lvl);
                 NET_SERVER_LOG("CUSTOM_LEVEL_LOADED name=%s boxes=%d path=%s", lvl.name, lvl.count, argv[i + 1]);
             } else {
                 NET_SERVER_LOG("CUSTOM_LEVEL_LOAD_FAILED path=%s -- falling back to scene=%d", argv[i + 1], g_server_match_scene);
