@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-14
+
+- feat(level): real native loader for NOCK-authored levels -- new `packages/world/level_boxes.h` (a real, dependency-free JSON scanner mirroring BRAWLPIT/level_format.h's own technique) + `SCENE_CUSTOM_LEVEL`/`phys_set_custom_level` (physics.h) + a `--level <path>` flag on both `apps/server` and `apps/lobby`. REAL, FOUND, LIVE CORRECTION: the level editor was built against `packages/map/map.h`'s own `Wall` struct, used only by a real, separate, currently-broken, not-in-CI prototype (`services/game-server`) -- the actual playable client already had its own compatible static-geometry primitive (`physics.h`'s own `Box{x,y,z,w,h,d}`, `map_geo`/`map_count`), so the loader targets that instead. Live-verified end to end against a real running server instance. `apps/lobby`'s own existing generic `draw_map()` renders any scene's boxes already, so a custom level renders with zero new rendering code. Apple #19497. Commit `19f8b6c`.
+
 ## 2026-09-12
 
 - feat(render): real procedural textures for terrain/walls -- draw_terrain/draw_map were pure flat-shaded vertex color, no texture at all. Added seamlessly-tileable ground (banded fbm noise) and wall (running-bond brick) procedural generators to proc_tex.c, bound under the existing per-vertex lighting/fog. Founder: 'lets start adding textures to shankpit... bring us from like 1982 graphics to 1999 graphics.' Live-verified via Xvfb screenshot. (sess-20260905-0720-ec33e7c5)
