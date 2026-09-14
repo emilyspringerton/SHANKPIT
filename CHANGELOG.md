@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-14
+- S459-47: fixed real self is_shooting/is_crouching (no server round-trip needed), decoded the real dual sniper-storm/katana-dash ability-cooldown mechanic (one shared cooldown gates both, storm charges persist independently), added reload_timer/ability_cooldown to the wire protocol, added real AABB raycast wall/floor-distance features -- ObservationSize 72 -> 84 (sess-20260905-0720-ec33e7c5)
 - S459-43/44/45/46: QUEUE round timer, fixed a real PacketSnapshot decode bug in emily-bot (was reading garbage peer state), built 72-feature bot observation vector + 4-tier reward system (physics.h's existing reward_feedback signal as the outcome tier), team rewards architected but FFA-only for now (sess-20260905-0720-ec33e7c5)
 - S459-41: QUEUE default level now driven by is_default_queue admin flag (NEWPIT live), fixed ea-windows Makefile target (x86_64 mingw, was i686) (sess-20260905-0720-ec33e7c5)
 - fix(net): CRITICAL -- other players were never rendered anywhere online (PlayerState.id never set in the networked snapshot path, breaking the self-exclusion draw filter for every other player too). Found via a real 2-client Xvfb test. Affects every networked mode, not just QUEUE (sess-20260905-0720-ec33e7c5)
