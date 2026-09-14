@@ -40,6 +40,7 @@
 #include "../../../packages/simulation/typing_lesson.h"
 #include "../../../packages/simulation/local_game.h"
 #include "../../../packages/world/level_boxes.h"
+#include "../../../packages/world/spray_registry.h"
 #include "../../../packages/render/proc_tex.h"
 #include "../../../packages/render/retro_sky.h"
 #include "../../../packages/render/retro_lighting.h"
@@ -364,6 +365,39 @@ int level_select_count = 0;
 LevelRegistryEntry level_select_entries[LEVEL_SELECT_MAX_ENTRIES];
 int level_select_error = 0; // 1 if the last registry fetch failed (network/empty) -- real, honest
                              // feedback shown in the panel rather than a silently empty list
+
+// Spray select (S459-23, founder real-time: "ensure there is a spray interface in the client
+// HAVE IT REPLACE TDMO in the shankpit menu") -- same real level_select_*/skin_menu_* state shape,
+// listing sprays fetched live from IDUNA's own real registry. Picking one here just sets the
+// real, active g_selected_spray_id/name and closes back to the lobby menu -- it does not start a
+// match (a spray is a per-player choice, not a level to load).
+#define SPRAY_SELECT_MAX_ENTRIES 64
+int spray_select_open = 0;
+int spray_select_selection = 0;
+int spray_select_scroll = 0;
+int spray_select_count = 0;
+SprayRegistryEntry spray_select_entries[SPRAY_SELECT_MAX_ENTRIES];
+int spray_select_error = 0;
+
+int g_selected_spray_id = -1;
+char g_selected_spray_name[SPRAY_REGISTRY_NAME_LEN] = "";
+
+// Spray decals (S459-23, founder real-time: "T SPRAYS YOUR DECAL ON THE WALL" -- earlier session
+// -- "remap that key to spray"). A real, bounded ring buffer of placed decals, each a flat-
+// colored quad oriented to the real hit surface normal -- see draw_spray_decals' own doc comment
+// for why the color is a deterministic hash of the spray id rather than its real uploaded artwork
+// (no PNG decoder exists natively yet, same real gap S459-16 already named for material texture
+// overrides).
+#define SPRAY_DECAL_MAX 64
+typedef struct {
+    float x, y, z;
+    float nx, ny, nz;
+    int scene_id;
+    int spray_id;
+} SprayDecal;
+SprayDecal g_spray_decals[SPRAY_DECAL_MAX];
+int g_spray_decal_count = 0;
+int g_spray_decal_next = 0;
 
 static int g_paused = 0;
 static int g_pause_sel = 0;
@@ -1448,10 +1482,14 @@ static void overlay_render(OverlaySystem *overlay, const PlayerState *viewer) {
 // in the shankpit menu interface... headed isnt needed.. put level select as the first tile."
 // LOBBY_HEADED_BOT removed outright (not just relabeled) -- see MODE_HEADED_BOT's own remaining
 // real uses elsewhere (local_game.h) which are untouched; this only removes the MENU entry point.
+// LOBBY_SPRAYS replaces LOBBY_TDMO in the same menu slot -- founder real-time: "ensure there is a
+// spray interface in the client HAVE IT REPLACE TDMO in the shankpit menu." MODE_TDMO itself (the
+// game mode) is untouched -- this only removes ITS OWN menu entry point, same real "remove the
+// tile, not the underlying feature" precedent LOBBY_HEADED_BOT's own removal already set.
 typedef enum {
     LOBBY_LEVEL_SELECT = 0,
     LOBBY_JOIN,
-    LOBBY_TDMO,
+    LOBBY_SPRAYS,
     LOBBY_STORY,
     LOBBY_STORY_CAVE,
     LOBBY_SOLO,
@@ -1466,7 +1504,7 @@ char lobby_labels_mutable[LOBBY_COUNT][64];
 static const char *LOBBY_LABELS[LOBBY_COUNT] = {
     "LEVELS",
     "FIND CTF",
-    "TDMO",
+    "SPRAYS",
     "STORY",
     "CAVE-001",
     "SOLO",
@@ -1557,6 +1595,103 @@ static void level_select_confirm(void) {
     gluPerspective(75.0, (float)VIRTUAL_W/(float)VIRTUAL_H, 0.1, Z_FAR);
     glMatrixMode(GL_MODELVIEW);
     glEnable(GL_DEPTH_TEST);
+}
+
+// spray_select_menu_open -- real, live fetch of the IDUNA sprays registry (S459-23). Selects
+// whichever entry the registry itself flags is_default on open (if the player hasn't already
+// picked one this session), matching NOCK's own "set the default" admin interface.
+static void spray_select_menu_open(void) {
+    spray_select_count = spray_registry_fetch_list(spray_select_entries, SPRAY_SELECT_MAX_ENTRIES);
+    spray_select_error = (spray_select_count == 0);
+    spray_select_selection = 0;
+    if (g_selected_spray_id >= 0) {
+        for (int i = 0; i < spray_select_count; i++) {
+            if (spray_select_entries[i].id == g_selected_spray_id) { spray_select_selection = i; break; }
+        }
+    } else {
+        for (int i = 0; i < spray_select_count; i++) {
+            if (spray_select_entries[i].is_default) { spray_select_selection = i; break; }
+        }
+    }
+    spray_select_scroll = 0;
+    spray_select_open = 1;
+}
+
+// spray_select_confirm sets the real, active client-side spray and closes back to the lobby menu
+// -- deliberately does NOT start a match (a spray is a per-player choice, not a level to load;
+// contrast level_select_confirm above).
+static void spray_select_confirm(void) {
+    if (spray_select_selection < 0 || spray_select_selection >= spray_select_count) return;
+    g_selected_spray_id = spray_select_entries[spray_select_selection].id;
+    snprintf(g_selected_spray_name, sizeof(g_selected_spray_name), "%s", spray_select_entries[spray_select_selection].name);
+    spray_select_open = 0;
+}
+
+// spray_place_decal -- the real "T sprays your decal on the wall" action (S459-23, founder
+// real-time: "remap that key to spray"). Raycasts forward from the local player's eye against the
+// current scene's own real map_geo (trace_map, the exact same hitscan physics.h's own weapon-fire
+// code already uses) and, on a hit, records a real decal at the hit point/normal in a bounded ring
+// buffer. A no-op (not an error) when nothing is hit, or when the player hasn't picked a spray
+// yet -- see draw_spray_decals for the real, honest reason the decal itself is a flat-tinted
+// placeholder, not the spray's real uploaded artwork.
+#define SPRAY_PLACE_RANGE 40.0f
+static void spray_place_decal(void) {
+    if (g_selected_spray_id < 0) return;
+    int ref_id = (my_client_id >= 0 && my_client_id < MAX_CLIENTS) ? my_client_id : 0;
+    PlayerState *p = &local_state.players[ref_id];
+    float eye_x = p->x, eye_y = p->y + (p->crouching ? 2.5f : EYE_HEIGHT), eye_z = p->z;
+    float ryaw = -p->yaw * 0.0174533f, rpitch = p->pitch * 0.0174533f;
+    float fx = sinf(ryaw) * cosf(rpitch), fy = sinf(rpitch), fz = -cosf(ryaw) * cosf(rpitch);
+    float tx = eye_x + fx * SPRAY_PLACE_RANGE, ty = eye_y + fy * SPRAY_PLACE_RANGE, tz = eye_z + fz * SPRAY_PLACE_RANGE;
+    float hx, hy, hz, nx, ny, nz;
+    if (!trace_map(eye_x, eye_y, eye_z, tx, ty, tz, &hx, &hy, &hz, &nx, &ny, &nz)) return;
+    int idx = g_spray_decal_next % SPRAY_DECAL_MAX;
+    g_spray_decals[idx].x = hx; g_spray_decals[idx].y = hy; g_spray_decals[idx].z = hz;
+    g_spray_decals[idx].nx = nx; g_spray_decals[idx].ny = ny; g_spray_decals[idx].nz = nz;
+    g_spray_decals[idx].scene_id = p->scene_id;
+    g_spray_decals[idx].spray_id = g_selected_spray_id;
+    g_spray_decal_next++;
+    if (g_spray_decal_count < SPRAY_DECAL_MAX) g_spray_decal_count++;
+}
+
+// draw_spray_decals renders every active decal in the given scene as a small, flat-colored quad
+// oriented to its own real hit normal. REAL, HONEST, NOT YET BUILT: the color is a deterministic
+// hash of the spray's own id, NOT its real uploaded artwork -- SHANKPIT's native client has no PNG
+// decoder (proc_tex.c only ever generates RGBA procedurally), the same real gap S459-16 already
+// named for material texture overrides. A real decal placement mechanism, honestly placeholder
+// pixels until that lands.
+static void spray_decal_color_for_id(int id, float *r, float *g, float *b) {
+    unsigned int h = (unsigned int)id * 2654435761u;
+    *r = 0.35f + 0.5f * ((h & 0xFF) / 255.0f);
+    *g = 0.35f + 0.5f * (((h >> 8) & 0xFF) / 255.0f);
+    *b = 0.35f + 0.5f * (((h >> 16) & 0xFF) / 255.0f);
+}
+
+static void draw_spray_decals(int scene_id) {
+    if (g_spray_decal_count == 0) return;
+    glDisable(GL_TEXTURE_2D);
+    for (int i = 0; i < g_spray_decal_count; i++) {
+        SprayDecal *d = &g_spray_decals[i];
+        if (d->scene_id != scene_id) continue;
+        float r, g, b;
+        spray_decal_color_for_id(d->spray_id, &r, &g, &b);
+        float upx = 0.0f, upy = 1.0f, upz = 0.0f;
+        if (fabsf(d->ny) > 0.98f) { upx = 0.0f; upy = 0.0f; upz = 1.0f; }
+        float rx = d->ny * upz - d->nz * upy, ry = d->nz * upx - d->nx * upz, rz = d->nx * upy - d->ny * upx;
+        float rl = sqrtf(rx * rx + ry * ry + rz * rz);
+        if (rl < 0.0001f) continue;
+        rx /= rl; ry /= rl; rz /= rl;
+        float ux = ry * d->nz - rz * d->ny, uy = rz * d->nx - rx * d->nz, uz = rx * d->ny - ry * d->nx;
+        const float sz = 1.1f; /* real, small, world-unit decal half-size */
+        float ox = d->x + d->nx * 0.05f, oy = d->y + d->ny * 0.05f, oz = d->z + d->nz * 0.05f; /* nudged off the surface to avoid z-fighting */
+        glColor3f(r, g, b);
+        glBegin(GL_QUADS);
+        glVertex3f(ox - rx * sz - ux * sz, oy - ry * sz - uy * sz, oz - rz * sz - uz * sz);
+        glVertex3f(ox + rx * sz - ux * sz, oy + ry * sz - uy * sz, oz + rz * sz - uz * sz);
+        glVertex3f(ox + rx * sz + ux * sz, oy + ry * sz + uy * sz, oz + rz * sz + uz * sz);
+        glVertex3f(ox - rx * sz + ux * sz, oy - ry * sz + uy * sz, oz - rz * sz + uz * sz);
+        glEnd();
+    }
 }
 
 static int clamp_skin_id(int skin_id) {
@@ -1828,6 +1963,10 @@ static void lobby_start_action(int action) {
         level_select_menu_open();
         return;
     }
+    if (action == LOBBY_SPRAYS) {
+        spray_select_menu_open();
+        return;
+    }
     if (ui_use_server) {
         const char *entry_id = lobby_menu_entry_id(action);
         if (entry_id) {
@@ -1841,11 +1980,6 @@ static void lobby_start_action(int action) {
         app_state = STATE_GAME_NET;
         reset_client_render_state_for_net();
         net_requested_mode = MODE_CTF;
-        net_connect();
-    } else if (action == LOBBY_TDMO) {
-        app_state = STATE_GAME_NET;
-        reset_client_render_state_for_net();
-        net_requested_mode = MODE_TDMO;
         net_connect();
     } else {
         app_state = STATE_GAME_LOCAL;
@@ -6651,6 +6785,7 @@ void draw_scene(PlayerState *render_p) {
     draw_voxworld_bushes();
     draw_map(&world_lighting);
     draw_flashlight_beam(render_p);
+    draw_spray_decals(render_p->scene_id);
     draw_voxel_chunks(&world_lighting);
     draw_team_map_markers(local_state.scene_id, local_state.game_mode);
     draw_garage_vehicle_pads();
@@ -7071,6 +7206,129 @@ static void draw_level_select_overlay(void) {
 
     glColor3f(0.62f, 0.86f, 0.97f);
     draw_string("ENTER TO PLAY / ESC TO BACK", panel_x + 22.0f, panel_y - panel_h + 16.0f, 3);
+}
+
+// Spray select overlay (S459-23) -- mirrors draw_level_select_overlay's own exact shape/layout,
+// listing sprays instead of levels; ENTER sets the active spray and returns to the menu rather
+// than starting a match.
+#define SPRAY_SELECT_VISIBLE_ROWS 4
+
+static int spray_select_scroll_max(void) {
+    int max_scroll = spray_select_count - SPRAY_SELECT_VISIBLE_ROWS;
+    return (max_scroll > 0) ? max_scroll : 0;
+}
+
+static void ensure_spray_select_visible(void) {
+    int max_scroll = spray_select_scroll_max();
+    if (spray_select_selection < spray_select_scroll) {
+        spray_select_scroll = spray_select_selection;
+    } else if (spray_select_selection >= spray_select_scroll + SPRAY_SELECT_VISIBLE_ROWS) {
+        spray_select_scroll = spray_select_selection - SPRAY_SELECT_VISIBLE_ROWS + 1;
+    }
+    if (spray_select_scroll < 0) spray_select_scroll = 0;
+    if (spray_select_scroll > max_scroll) spray_select_scroll = max_scroll;
+}
+
+static int spray_select_hit_test_rows(float mx, float my, float base_x, float base_y, float w, float h, float gap) {
+    for (int row = 0; row < SPRAY_SELECT_VISIBLE_ROWS; row++) {
+        int i = spray_select_scroll + row;
+        if (i >= spray_select_count) break;
+        float y = base_y - gap * row;
+        if (mx >= base_x && mx <= base_x + w && my >= y && my <= y + h) return i;
+    }
+    return -1;
+}
+
+static void draw_spray_select_overlay(void) {
+    float panel_x = 770.0f;
+    float panel_y = 545.0f;
+    float panel_w = 330.0f;
+    float panel_h = 275.0f;
+    float item_h = 50.0f;
+    float item_gap = 60.0f;
+    float item_x = panel_x + 20.0f;
+    float item_w = panel_w - 40.0f;
+    float item_top = panel_y - 90.0f;
+
+    glColor4f(0.05f, 0.08f, 0.12f, 0.92f);
+    glBegin(GL_QUADS);
+    glVertex2f(panel_x, panel_y);
+    glVertex2f(panel_x + panel_w, panel_y);
+    glVertex2f(panel_x + panel_w, panel_y - panel_h);
+    glVertex2f(panel_x, panel_y - panel_h);
+    glEnd();
+
+    glColor3f(0.92f, 0.62f, 0.86f);
+    glLineWidth(2.0f);
+    glBegin(GL_LINE_LOOP);
+    glVertex2f(panel_x, panel_y);
+    glVertex2f(panel_x + panel_w, panel_y);
+    glVertex2f(panel_x + panel_w, panel_y - panel_h);
+    glVertex2f(panel_x, panel_y - panel_h);
+    glEnd();
+
+    glColor3f(1.0f, 0.90f, 0.96f);
+    draw_string("SELECT SPRAY", panel_x + 30.0f, panel_y - 30.0f, 5);
+
+    if (spray_select_error) {
+        glColor3f(0.9f, 0.4f, 0.4f);
+        draw_string("NO SPRAYS FOUND", item_x, item_top, 4);
+        draw_string("(EXPORT ONE FROM NOCK'S PROJECTS TAB)", item_x, item_top - 24.0f, 3);
+        glColor3f(0.97f, 0.75f, 0.90f);
+        draw_string("ESC TO BACK", panel_x + 22.0f, panel_y - panel_h + 16.0f, 3);
+        return;
+    }
+
+    ensure_spray_select_visible();
+    int max_scroll = spray_select_scroll_max();
+    if (spray_select_scroll > max_scroll) spray_select_scroll = max_scroll;
+    if (spray_select_scroll < 0) spray_select_scroll = 0;
+
+    for (int row = 0; row < SPRAY_SELECT_VISIBLE_ROWS; row++) {
+        int i = spray_select_scroll + row;
+        if (i >= spray_select_count) break;
+        float y = item_top - item_gap * row;
+        int is_cursor = (spray_select_selection == i);
+        glColor3f(0.22f, 0.16f, 0.22f);
+        glRectf(item_x, y, item_x + item_w, y + item_h);
+        if (is_cursor) {
+            glColor3f(0.95f, 0.95f, 0.95f);
+            glBegin(GL_LINE_LOOP);
+            glVertex2f(item_x, y);
+            glVertex2f(item_x + item_w, y);
+            glVertex2f(item_x + item_w, y + item_h);
+            glVertex2f(item_x, y + item_h);
+            glEnd();
+        }
+        glColor3f(0.95f, 0.90f, 0.92f);
+        draw_string(spray_select_entries[i].name, item_x + 12.0f, y + 29.0f, 5);
+        if (spray_select_entries[i].id == g_selected_spray_id) {
+            glColor3f(0.92f, 0.62f, 0.86f);
+            draw_string("ACTIVE", item_x + item_w - 70.0f, y + 29.0f, 3);
+        } else if (spray_select_entries[i].is_default) {
+            glColor3f(0.62f, 0.86f, 0.97f);
+            draw_string("DEFAULT", item_x + item_w - 80.0f, y + 29.0f, 3);
+        }
+    }
+
+    if (spray_select_count > SPRAY_SELECT_VISIBLE_ROWS) {
+        float track_x = panel_x + panel_w - 12.0f;
+        float track_y0 = item_top;
+        float track_y1 = item_top - item_gap * (SPRAY_SELECT_VISIBLE_ROWS - 1) + item_h;
+        float track_h = track_y0 - track_y1;
+        float knob_h = track_h * ((float)SPRAY_SELECT_VISIBLE_ROWS / (float)spray_select_count);
+        if (knob_h < 18.0f) knob_h = 18.0f;
+        float t = (max_scroll > 0) ? ((float)spray_select_scroll / (float)max_scroll) : 0.0f;
+        float knob_y = track_y0 - t * (track_h - knob_h);
+
+        glColor3f(0.16f, 0.10f, 0.16f);
+        glRectf(track_x, track_y0, track_x + 6.0f, track_y1);
+        glColor3f(0.92f, 0.62f, 0.86f);
+        glRectf(track_x, knob_y, track_x + 6.0f, knob_y - knob_h);
+    }
+
+    glColor3f(0.97f, 0.75f, 0.90f);
+    draw_string("ENTER TO SELECT / ESC TO BACK", panel_x + 22.0f, panel_y - panel_h + 16.0f, 3);
 }
 
 void net_init() {
@@ -8130,6 +8388,22 @@ int main(int argc, char* argv[]) {
                         } else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) {
                             level_select_confirm();
                         }
+                    } else if (spray_select_open) {
+                        if (e.key.keysym.sym == SDLK_UP) {
+                            if (spray_select_selection > 0) {
+                                spray_select_selection--;
+                                ensure_spray_select_visible();
+                            }
+                        } else if (e.key.keysym.sym == SDLK_DOWN) {
+                            if (spray_select_selection < spray_select_count - 1) {
+                                spray_select_selection++;
+                                ensure_spray_select_visible();
+                            }
+                        } else if (e.key.keysym.sym == SDLK_ESCAPE || e.key.keysym.sym == SDLK_BACKSPACE) {
+                            spray_select_open = 0;
+                        } else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) {
+                            spray_select_confirm();
+                        }
                     } else {
                         if (e.key.keysym.sym == SDLK_UP) {
                             int count = lobby_menu_count();
@@ -8168,6 +8442,12 @@ int main(int argc, char* argv[]) {
                     if (level_select_scroll < 0) level_select_scroll = 0;
                     if (level_select_scroll > max_scroll) level_select_scroll = max_scroll;
                 }
+                if (e.type == SDL_MOUSEWHEEL && spray_select_open) {
+                    spray_select_scroll -= e.wheel.y;
+                    int max_scroll = spray_select_scroll_max();
+                    if (spray_select_scroll < 0) spray_select_scroll = 0;
+                    if (spray_select_scroll > max_scroll) spray_select_scroll = max_scroll;
+                }
                 if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                     int _rmx, _rmy;
                     remap_mouse(e.button.x, e.button.y, &_rmx, &_rmy);
@@ -8197,6 +8477,18 @@ int main(int argc, char* argv[]) {
                             } else {
                                 level_select_selection = hit;
                                 ensure_level_select_visible();
+                            }
+                        }
+                        continue;
+                    }
+                    if (spray_select_open) {
+                        int hit = spray_select_hit_test_rows(mx, my, 790.0f, 455.0f, 290.0f, 50.0f, 60.0f);
+                        if (hit >= 0 && hit < spray_select_count) {
+                            if (spray_select_selection == hit) {
+                                spray_select_confirm();
+                            } else {
+                                spray_select_selection = hit;
+                                ensure_spray_select_visible();
                             }
                         }
                         continue;
@@ -8308,11 +8600,12 @@ int main(int argc, char* argv[]) {
                         continue;
                     }
                     if (e.key.keysym.sym == SDLK_t) {
-                        g_chat_open = 1;
-                        g_chat.input[0] = '\0';
-                        g_chat.input_len = 0;
-                        SDL_StartTextInput();
-                        SDL_SetRelativeMouseMode(SDL_FALSE);
+                        // Real, found-live bug (2026-09-14, founder: "when i hit T it started
+                        // typing into chat - thats not even a functioning feature just remap
+                        // that key to spray please"). T used to open the chat pane
+                        // (g_chat_open) -- that binding is gone; T now performs the real "T
+                        // sprays your decal on the wall" action instead (S459-23).
+                        spray_place_decal();
                         continue;
                     }
                     if ((local_state.game_mode == MODE_TDMB || local_state.game_mode == MODE_TDMO || local_state.game_mode == MODE_CTFB) && local_state.match_over && e.key.keysym.sym == SDLK_r) {
@@ -8385,6 +8678,9 @@ int main(int argc, char* argv[]) {
              }
              if (level_select_open) {
                  draw_level_select_overlay();
+             }
+             if (spray_select_open) {
+                 draw_spray_select_overlay();
              }
 
              glColor3f(0.4f, 0.6f, 0.7f);
