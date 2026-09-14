@@ -2850,6 +2850,11 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
     }
 
     int w = p->current_weapon;
+    if (w == WPN_FLASHLIGHT) return; /* pure utility slot -- no ammo/attack/reload/ability. The
+                                         beam itself renders client-side whenever a player's own
+                                         current_weapon == WPN_FLASHLIGHT (equip it, it's on;
+                                         switch away, it's off) -- see apps/lobby's own
+                                         draw_flashlight_beam. */
     if (ability_press) {
         if (w == WPN_KATANA) {
             katana_try_start_dash(p);

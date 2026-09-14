@@ -139,6 +139,157 @@ static void gband_draw_skinned(const float *verts6, int vert_count, const Mat4 *
     gl_use_program(0);
 }
 
+/* --- WEAPON 7: FLASHLIGHT (S459/EMILY-BACKLOG, founder real-time: "can we add a weapon 7 ...
+ * a flashlight - use a cone with a shader - at night in shankpit it gets dark") ---
+ *
+ * A real GLSL-shaded cone (not a fixed-function glBegin hack), same real shader/dynamic-VBO
+ * foundation gband_draw_skinned above already proved. DynamicVBO's layout is fixed at
+ * pos.xyz + "normal".xyz (GL_SHADER_VBO_FLOATS_PER_VERT=6) -- there's no per-vertex surface
+ * normal to carry here (a light cone isn't a lit surface), so that second float3 slot is
+ * reused to carry (radial_t, axial_t, unused): radial_t is 0 at the cone's own center axis and
+ * 1 at its rim, axial_t is 0 at the eye (apex) and 1 at the beam's far end -- GL's own
+ * barycentric interpolation across each apex->rim->rim triangle gives every fragment a real,
+ * continuous falloff value for free, no texture or per-fragment trig needed. */
+static GLuint g_flashlight_program = 0;
+static DynamicVBO g_flashlight_vbo;
+static int g_flashlight_shader_ready = 0;
+
+#define FLASHLIGHT_RANGE 55.0f
+#define FLASHLIGHT_HALF_ANGLE_DEG 20.0f
+#define FLASHLIGHT_SEGMENTS 24
+
+static const char *g_flashlight_vs_src =
+    "#version 120\n"
+    "attribute vec3 a_pos;\n"
+    "attribute vec3 a_normal;\n" /* .x = radial_t, .y = axial_t */
+    "uniform mat4 u_mvp;\n"
+    "varying float v_radial_t;\n"
+    "varying float v_axial_t;\n"
+    "void main() {\n"
+    "    v_radial_t = a_normal.x;\n"
+    "    v_axial_t = a_normal.y;\n"
+    "    gl_Position = u_mvp * vec4(a_pos, 1.0);\n"
+    "}\n";
+
+static const char *g_flashlight_fs_src =
+    "#version 120\n"
+    "uniform vec4 u_color;\n"
+    "varying float v_radial_t;\n"
+    "varying float v_axial_t;\n"
+    "void main() {\n"
+    "    float edge_fade = 1.0 - smoothstep(0.45, 1.0, v_radial_t);\n"
+    "    float far_fade = 1.0 - smoothstep(0.55, 1.0, v_axial_t);\n"
+    "    float alpha = edge_fade * (0.10 + 0.55 * far_fade) * u_color.a;\n"
+    "    gl_FragColor = vec4(u_color.rgb, alpha);\n"
+    "}\n";
+
+static void flashlight_shader_init(void) {
+    if (!gl_shader_load_extensions()) {
+        SDL_Log("weapon-7 flashlight: GL extension loading failed -- beam disabled");
+        return;
+    }
+    GLuint vs = gl_compile_shader(GL_VERTEX_SHADER, g_flashlight_vs_src);
+    GLuint fs = gl_compile_shader(GL_FRAGMENT_SHADER, g_flashlight_fs_src);
+    g_flashlight_program = gl_link_program(vs, fs);
+    if (!g_flashlight_program) {
+        SDL_Log("weapon-7 flashlight: shader link failed -- beam disabled");
+        return;
+    }
+    /* apex(1) + rim(segments+1, closing the loop) -- comfortably under a 64-vert buffer even at
+       a much higher segment count than FLASHLIGHT_SEGMENTS actually uses. */
+    if (!gl_dynamic_vbo_init(&g_flashlight_vbo, 64)) {
+        SDL_Log("weapon-7 flashlight: dynamic VBO init failed -- beam disabled");
+        return;
+    }
+    g_flashlight_shader_ready = 1;
+    SDL_Log("weapon-7 flashlight: shader beam ready");
+}
+
+/* Builds a real triangle-fan cone in world space (apex at eye, base ring at FLASHLIGHT_RANGE
+ * along the view direction) and draws it additively via the shader above. World-space verts
+ * with an identity model matrix -- same "bake the transform into the verts, mvp is camera-
+ * only" contract gband_draw_skinned already established, so it reuses that exact camera-VP-
+ * capture pattern rather than inventing a second one. Local-viewer-only by design (see this
+ * function's own call site): a real, honest v0 scope limit -- another player's own flashlight
+ * doesn't light the world for YOU yet, only your own does for you. */
+static void draw_flashlight_beam(const PlayerState *p) {
+    if (!g_flashlight_shader_ready) return;
+    if (p->current_weapon != WPN_FLASHLIGHT) return;
+
+    Mat4 proj, modelview;
+    glGetFloatv(GL_PROJECTION_MATRIX, proj.m);
+    glGetFloatv(GL_MODELVIEW_MATRIX, modelview.m);
+    Mat4 vp = mat4_multiply(&proj, &modelview);
+
+    float eye_x = p->x, eye_y = p->y + (p->crouching ? 2.5f : EYE_HEIGHT), eye_z = p->z;
+    float ryaw = -p->yaw * 0.0174533f, rpitch = p->pitch * 0.0174533f;
+    float fx = sinf(ryaw) * cosf(rpitch), fy = sinf(rpitch), fz = -cosf(ryaw) * cosf(rpitch);
+    /* Any up-reference not parallel to the forward vector works -- (0,1,0) fails only when
+       looking near-straight up/down, so swap to (0,0,1) in that narrow case. */
+    float upx = 0.0f, upy = 1.0f, upz = 0.0f;
+    if (fabsf(fy) > 0.98f) { upx = 0.0f; upy = 0.0f; upz = 1.0f; }
+    float rx = fy * upz - fz * upy, ry = fz * upx - fx * upz, rz = fx * upy - fy * upx;
+    float rlen = sqrtf(rx * rx + ry * ry + rz * rz);
+    if (rlen < 0.0001f) return;
+    rx /= rlen; ry /= rlen; rz /= rlen;
+    float ux = ry * fz - rz * fy, uy = rz * fx - rx * fz, uz = rx * fy - ry * fx;
+
+    float cone_radius = FLASHLIGHT_RANGE * tanf(FLASHLIGHT_HALF_ANGLE_DEG * 0.0174533f);
+    float verts[GL_SHADER_VBO_FLOATS_PER_VERT * (FLASHLIGHT_SEGMENTS + 2)];
+    int vi = 0;
+    /* apex */
+    verts[vi++] = eye_x; verts[vi++] = eye_y; verts[vi++] = eye_z;
+    verts[vi++] = 0.0f; verts[vi++] = 0.0f; verts[vi++] = 0.0f;
+    for (int i = 0; i <= FLASHLIGHT_SEGMENTS; i++) {
+        float ang = ((float)i / (float)FLASHLIGHT_SEGMENTS) * 6.28318531f;
+        float ca = cosf(ang) * cone_radius, sa = sinf(ang) * cone_radius;
+        float px = eye_x + fx * FLASHLIGHT_RANGE + rx * ca + ux * sa;
+        float py = eye_y + fy * FLASHLIGHT_RANGE + ry * ca + uy * sa;
+        float pz = eye_z + fz * FLASHLIGHT_RANGE + rz * ca + uz * sa;
+        verts[vi++] = px; verts[vi++] = py; verts[vi++] = pz;
+        verts[vi++] = 1.0f; verts[vi++] = 1.0f; verts[vi++] = 0.0f;
+    }
+    int vert_count = FLASHLIGHT_SEGMENTS + 2;
+
+    static const float beam_color[4] = {1.0f, 0.95f, 0.78f, 0.85f};
+    glDepthMask(GL_FALSE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE); /* additive -- reads as light, not a translucent decal */
+    glDisable(GL_CULL_FACE);
+    gl_use_program(g_flashlight_program);
+    gl_uniform_matrix4fv(gl_get_uniform_location(g_flashlight_program, "u_mvp"), vp.m);
+    gl_uniform4fv(gl_get_uniform_location(g_flashlight_program, "u_color"), beam_color);
+    gl_dynamic_vbo_draw(&g_flashlight_vbo, verts, vert_count, GL_TRIANGLE_FAN);
+    gl_use_program(0);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); /* restore this codebase's own default blend mode */
+    glDepthMask(GL_TRUE);
+}
+
+/* flashlight_box_boost -- how much extra brightness box (bx,by,bz) gets from the LOCAL viewer's
+ * own flashlight, in [0, ~1]: 0 outside the cone/range/flashlight-off, up to ~1 dead-center at
+ * close range. Called from draw_map's own per-box lighting pass (S459/physics.h's real, existing
+ * per-face retro_eval_brush_lighting_rgb pipeline is untouched -- this is a small additive term
+ * on top of it, not a rewrite). Real, deliberate v0 scope limit named in draw_flashlight_beam's
+ * own doc comment above: local viewer only. */
+static float flashlight_box_boost(const PlayerState *p, float bx, float by, float bz) {
+    if (p->current_weapon != WPN_FLASHLIGHT) return 0.0f;
+    float eye_x = p->x, eye_y = p->y + (p->crouching ? 2.5f : EYE_HEIGHT), eye_z = p->z;
+    float dx = bx - eye_x, dy = by - eye_y, dz = bz - eye_z;
+    float dist = sqrtf(dx * dx + dy * dy + dz * dz);
+    if (dist < 0.001f || dist > FLASHLIGHT_RANGE) return 0.0f;
+    float ryaw = -p->yaw * 0.0174533f, rpitch = p->pitch * 0.0174533f;
+    float fx = sinf(ryaw) * cosf(rpitch), fy = sinf(rpitch), fz = -cosf(ryaw) * cosf(rpitch);
+    float cos_ang = (dx * fx + dy * fy + dz * fz) / dist;
+    float cos_half_angle = cosf(FLASHLIGHT_HALF_ANGLE_DEG * 0.0174533f);
+    if (cos_ang < cos_half_angle) return 0.0f;
+    float angle_t = (cos_ang - cos_half_angle) / (1.0f - cos_half_angle); /* 0 at rim, 1 on-axis */
+    if (angle_t < 0.0f) angle_t = 0.0f; else if (angle_t > 1.0f) angle_t = 1.0f;
+    float dist_frac = dist / FLASHLIGHT_RANGE;
+    if (dist_frac < 0.0f) dist_frac = 0.0f; else if (dist_frac > 1.0f) dist_frac = 1.0f;
+    float dist_t = 1.0f - dist_frac;
+    return angle_t * dist_t * 1.1f;
+}
+
 #ifndef NET_VERBOSE_LOG
 #define NET_VERBOSE_LOG 0
 #endif
@@ -1835,6 +1986,24 @@ void draw_map(const RetroLightingState *lighting) {
         float dz = b.z - rp->z;
         float dist = sqrtf(dx * dx + dz * dz);
 
+        /* Weapon 7 (flashlight, S459/EMILY-BACKLOG): a real additive brightness term on top of
+           the existing per-face lighting above, not a replacement for it -- see
+           flashlight_box_boost's own doc comment. Applied uniformly to every face rather than
+           angle-of-incidence-correctly per face (a real, deliberate v0 simplification: a true
+           per-face spotlight term would need each face's own normal here, which top/bot/front/
+           back/left/right already have implicitly via retro_eval_brush_lighting_rgb's calls
+           above -- reusing dist for a single flat boost is the "smallest real thing" that still
+           visibly answers "it gets dark, need a flashlight to see"). */
+        float fl_boost = flashlight_box_boost(rp, b.x, b.y, b.z);
+        if (fl_boost > 0.0f) {
+            top_lit_r += fl_boost; top_lit_g += fl_boost; top_lit_b += fl_boost;
+            bot_lit_r += fl_boost; bot_lit_g += fl_boost; bot_lit_b += fl_boost;
+            front_lit_r += fl_boost; front_lit_g += fl_boost; front_lit_b += fl_boost;
+            back_lit_r += fl_boost; back_lit_g += fl_boost; back_lit_b += fl_boost;
+            left_lit_r += fl_boost; left_lit_g += fl_boost; left_lit_b += fl_boost;
+            right_lit_r += fl_boost; right_lit_g += fl_boost; right_lit_b += fl_boost;
+        }
+
         top_r *= top_lit_r; top_g *= top_lit_g; top_b *= top_lit_b;
         float bot_r = back_r * 0.85f * bot_lit_r, bot_g = back_g * 0.85f * bot_lit_g, bot_b = back_b * 0.85f * bot_lit_b;
         float front_r = base_r * front_lit_r, front_g = base_g * front_lit_g, front_b = base_b * front_lit_b;
@@ -2673,6 +2842,19 @@ void draw_gun_model(int weapon_id) {
         glBegin(GL_LINES);
         glVertex3f(0.0f, 0.02f, -0.15f); glVertex3f(0.0f, 0.02f, 1.7f);
         glEnd();
+        glPopMatrix();
+        return;
+    }
+    if (weapon_id == WPN_FLASHLIGHT) {
+        /* A real, distinct shape (not a gun) -- a dark cylindrical body (approximated as a
+           slim box, matching this file's own established low-poly convention) with a bright
+           emissive lens on the business end. */
+        glPushMatrix();
+        glScalef(weapon_scale, weapon_scale, weapon_scale);
+        glColor3f(0.10f, 0.10f, 0.11f);
+        glPushMatrix(); glTranslatef(0.0f, 0.0f, 0.0f); glScalef(0.09f, 0.09f, 0.85f); draw_box(1.0f, 1.0f, 1.0f); glPopMatrix();
+        glColor3f(1.0f, 0.92f, 0.65f);
+        glPushMatrix(); glTranslatef(0.0f, 0.0f, 0.46f); glScalef(0.11f, 0.11f, 0.04f); draw_box(1.0f, 1.0f, 1.0f); glPopMatrix();
         glPopMatrix();
         return;
     }
@@ -6368,6 +6550,7 @@ void draw_scene(PlayerState *render_p) {
     draw_voxworld_grass_overlay(&world_lighting, render_p);
     draw_voxworld_bushes();
     draw_map(&world_lighting);
+    draw_flashlight_beam(render_p);
     draw_voxel_chunks(&world_lighting);
     draw_team_map_markers(local_state.scene_id, local_state.game_mode);
     draw_garage_vehicle_pads();
@@ -7705,6 +7888,7 @@ int main(int argc, char* argv[]) {
     }
     SDL_GL_CreateContext(win);
     gband_shader_and_mesh_init();
+    flashlight_shader_init();
     proctex_init();
     proc_tex_create(&g_vehicle_noise_tex, 64, 64);
     proctex_make_noise_rgba(&g_vehicle_noise_tex, 64, 64, g_vehicle_style.seed);
@@ -8156,6 +8340,7 @@ int main(int argc, char* argv[]) {
             if (!g_paused) {
                 if(k[SDL_SCANCODE_1]) wpn_req=0; if(k[SDL_SCANCODE_2]) wpn_req=1;
                 if(k[SDL_SCANCODE_3]) wpn_req=2; if(k[SDL_SCANCODE_4]) wpn_req=3; if(k[SDL_SCANCODE_5]) wpn_req=4; if(k[SDL_SCANCODE_6]) wpn_req=5;
+                if(k[SDL_SCANCODE_7]) wpn_req=WPN_FLASHLIGHT;
             }
 
             int fov_pid = (app_state == STATE_GAME_NET && net_local_pid > 0 && local_state.players[net_local_pid].active)

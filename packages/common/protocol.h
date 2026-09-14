@@ -9,7 +9,7 @@
 #endif
 
 #define MAX_CLIENTS 70
-#define MAX_WEAPONS 7
+#define MAX_WEAPONS 8
 #define MAX_PROJECTILES 1024
 #define MAX_HELICOPTERS 8
 #define MAX_BUGGIES 16
@@ -71,6 +71,13 @@ typedef struct {
 #define WPN_SNIPER 4
 #define WPN_KATANA 5
 #define WPN_MISSILE 6
+#define WPN_FLASHLIGHT 7 /* founder real-time: "can we add a weapon 7 ... a flashlight - use a
+                             cone with a shader - at night in shankpit it gets dark." A pure
+                             utility slot, not a combat weapon (0 damage, no ammo) -- see
+                             update_weapons()'s own early-return for WPN_FLASHLIGHT in physics.h.
+                             The beam itself (a real GLSL-shaded cone) and the local world-
+                             brightening it does are both client-side-only, see apps/lobby's own
+                             draw_flashlight_beam/flashlight_box_boost. */
 
 #define RELOAD_TIME_FULL 60
 #define RELOAD_TIME_TACTICAL 42
@@ -158,7 +165,8 @@ static const WeaponStats WPN_STATS[MAX_WEAPONS] = {
     {WPN_SHOTGUN, 128, 17, 8, 0.15f, 8},
     {WPN_SNIPER,  101, 52, 1, 0.0f,  5},
     {WPN_KATANA,   40, 28, 1, 0.0f,  0},
-    {WPN_MISSILE, 130, 95, 1, 0.0f,  3}
+    {WPN_MISSILE, 130, 95, 1, 0.0f,  3},
+    {WPN_FLASHLIGHT, 0, 1, 0, 0.0f,  0}
 };
 
 typedef struct {
