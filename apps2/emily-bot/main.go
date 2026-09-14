@@ -36,6 +36,13 @@ const (
 	peerTTL      = 2 * time.Second
 	spawnY       = float32(5.0)
 
+	// staleConnectionTimeout -- S459-35: real, found-live bug fix. Longer than any normal gap
+	// between server packets (SERVER_SNAPSHOT_INTERVAL_TICKS=2 means snapshots arrive well under
+	// a second apart in ordinary operation), short enough that a real server restart is recovered
+	// from automatically within a few seconds instead of leaving a long-running bot silently
+	// stuck forever (its own real previous behavior, confirmed live).
+	staleConnectionTimeout = 5 * time.Second
+
 	// Heuristic tuning
 	closeRange    = float32(8.0)
 	farRange      = float32(20.0)
@@ -90,6 +97,17 @@ type botState struct {
 	replayFile *os.File
 	replayTick uint64
 	lastSnap   []byte // most recent raw PacketSnapshot for state encoding
+
+	// lastRecvAt -- S459-35, real, found-live bug: a long-running bot (session-duration set to
+	// years, S459-34's own standing bot-pool convention) that's welcomed once and then loses its
+	// server-side slot -- e.g. the server process restarts -- had no way back in. sendConnect only
+	// ever fired once, at session start; the tick loop just kept sending PacketUserCmd into a
+	// slot the (now-different) server process never welcomed, forever, with no client-visible
+	// error (confirmed live: `welcomed=0` stuck in the server's own diagnostic dump for minutes
+	// after a real restart, while the bot's own log showed nothing wrong). Tracked here (updated
+	// on every real packet received from the server) so the tick loop can detect a stale
+	// connection and resend PacketConnect itself instead of needing an external process restart.
+	lastRecvAt time.Time
 
 	// GPT-2 policy
 	gpt2URL    string        // empty = use heuristic
@@ -153,6 +171,7 @@ func runSession(host string, port int, verbose, report bool, replayDir, gpt2URL,
 		report:        report,
 		sessionStart:  now,
 		lastObserved:  now,
+		lastRecvAt:    now,
 		observeMinGap: 15 * time.Second,
 		gpt2URL:         gpt2URL,
 		gpt2Client:      &http.Client{Timeout: 200 * time.Millisecond},
@@ -203,6 +222,16 @@ func runSession(host string, port int, verbose, report bool, replayDir, gpt2URL,
 				duration, time.Since(now).Round(time.Second), state.kills)
 			return
 		case <-ticker.C:
+			state.mu.Lock()
+			stale := time.Since(state.lastRecvAt) > staleConnectionTimeout
+			if stale {
+				state.lastRecvAt = time.Now() // reset the window so this doesn't refire every tick while still stale
+			}
+			state.mu.Unlock()
+			if stale {
+				fmt.Printf("[emily-bot] no packet from server in %s -- reconnecting\n", staleConnectionTimeout)
+				sendConnect(conn)
+			}
 			cmd := state.think()
 			sendUserCmd(conn, cmd)
 		}
@@ -609,6 +638,10 @@ func receiveLoop(conn *net.UDPConn, state *botState, verbose bool) {
 		if n < 1 {
 			continue
 		}
+
+		state.mu.Lock()
+		state.lastRecvAt = time.Now()
+		state.mu.Unlock()
 
 		switch buf[0] {
 		case common.PacketWelcome:
