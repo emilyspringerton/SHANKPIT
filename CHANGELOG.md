@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-14
+- fix(queue): client never loaded level 44's geometry over the network, causing an infinite fall -- client now independently fetches the same real level from the registry when entering SCENE_CUSTOM_LEVEL in QUEUE mode (sess-20260905-0720-ec33e7c5)
 - fix(net): weapon reverts to knife on every reconciliation replay (real cmd.weapon_idx-set-after-history-store ordering bug); feat(queue): QUEUE defaults to the real level '44' from the live registry, falls back to oil tanker if unavailable (sess-20260905-0720-ec33e7c5)
 - fix(net): new shankpit.okemily.com DNS record (never cached, no staleness fight) replaces the stale s.farthq.com default -- matches BRAWLPIT's own identical, already-solved precedent (sess-20260905-0720-ec33e7c5)
 - feat(ai): real fractal commander posture (S459-35, rule-based team-wide patience/aggression tuning for MODE_TDMO, matching REDGARDEN's own honest-status precedent) + THE LEAGUE checkpoint registry ported verbatim; fix(bots): emily-bot auto-reconnects after a server restart instead of silently sitting unwelcomed forever (real bug found live during this same deploy) (sess-20260905-0720-ec33e7c5)
