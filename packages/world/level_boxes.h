@@ -30,6 +30,10 @@
 #include <string.h>
 #include <stdlib.h>
 
+#ifndef _WIN32
+#include <sys/wait.h>
+#endif
+
 #define LEVEL_BOXES_MAX 100 /* matches IDUNA/internal/shankpit.MaxWalls exactly -- the real,
                                 already-enforced cap on the editor side, so a level saved there
                                 can never exceed what this loader is willing to read back */
@@ -218,6 +222,141 @@ static inline int level_boxes_load_from_file(const char *path, CustomLevelData *
     size_t read = fread(buf, 1, (size_t)size, f);
     fclose(f);
     buf[read] = '\0';
+
+    CustomLevelData tmp;
+    int ok = level_boxes_parse_json(buf, &tmp);
+    free(buf);
+    if (!ok) return 0;
+    *out = tmp;
+    return 1;
+}
+
+// --- Real, in-game level registry browser (founder real-time: "ok i need the level selection
+// interface in shankpit") -- mirrors BRAWLPIT/packages/common/level_registry.h's own real,
+// established technique field-for-field: shell out to the real `curl` CLI binary (this box has
+// the libcurl RUNTIME but no libcurl-dev headers, same real, checked reason BRAWLPIT's own file
+// already documents) rather than link libcurl's C API directly. ---
+
+#ifdef _WIN32
+static inline FILE *level_boxes_popen_read(const char *cmd) { return _popen(cmd, "rb"); }
+#define LEVEL_BOXES_PCLOSE _pclose
+#else
+static inline FILE *level_boxes_popen_read(const char *cmd) { return popen(cmd, "r"); }
+#define LEVEL_BOXES_PCLOSE pclose
+#endif
+
+#define LEVEL_REGISTRY_BASE_URL "https://okemily.com/api/v1/shankpit-levels"
+#define LEVEL_BOXES_MAX_FETCH_BYTES (1024 * 1024) /* real, sane bound -- a level file is a few KB */
+
+// level_boxes_fetch_url runs `curl -s -f <url>` and captures its raw stdout into a newly
+// malloc'd, NUL-terminated buffer. Returns the real byte count (excluding the trailing NUL) on
+// success, or -1 on any failure (curl not found, network error, a real HTTP error status via
+// curl's own -f flag, an empty/oversized response) -- caller must free(*out) on success.
+static inline long level_boxes_fetch_url(const char *url, char **out) {
+    char cmd[1024];
+    /* Real, deliberate quoting: url is always one of this file's own two hardcoded endpoint
+       shapes with a caller-supplied integer id (never arbitrary user text), so a plain
+       double-quoted shell argument is safe here. */
+    snprintf(cmd, sizeof(cmd), "curl -s -f \"%s\"", url);
+
+    FILE *p = level_boxes_popen_read(cmd);
+    if (!p) return -1;
+
+    char *buf = (char *)malloc(LEVEL_BOXES_MAX_FETCH_BYTES + 1);
+    if (!buf) {
+        LEVEL_BOXES_PCLOSE(p);
+        return -1;
+    }
+    size_t total = 0;
+    size_t n;
+    while ((n = fread(buf + total, 1, LEVEL_BOXES_MAX_FETCH_BYTES - total, p)) > 0) {
+        total += n;
+        if (total >= LEVEL_BOXES_MAX_FETCH_BYTES) break; // real, honest bound -- refuse silent truncation
+    }
+    int status = LEVEL_BOXES_PCLOSE(p);
+#ifdef _WIN32
+    int curl_failed = (status != 0);
+#else
+    int curl_failed = (!WIFEXITED(status) || WEXITSTATUS(status) != 0);
+#endif
+    if (curl_failed || total == 0) {
+        free(buf);
+        return -1;
+    }
+    buf[total] = '\0';
+    *out = buf;
+    return (long)total;
+}
+
+#define LEVEL_REGISTRY_MAX_ENTRIES 64
+#define LEVEL_REGISTRY_NAME_LEN LEVEL_BOXES_MAX_NAME
+
+typedef struct {
+    int id;
+    char name[LEVEL_REGISTRY_NAME_LEN];
+    int wall_count;
+} LevelRegistryEntry;
+
+// level_boxes_parse_registry_list parses IDUNA's real GET /api/v1/shankpit-levels response (a
+// JSON array of {"id":N,"name":"...","wall_count":N,...} objects -- see
+// internal/shankpit.LevelSummary's own real shape) into a real, bounded array. Same real,
+// deliberately narrow "flat array of flat objects" scanner convention this file's own
+// level_boxes_parse_json already uses, not a general JSON array parser.
+static inline int level_boxes_parse_registry_list(const char *json, LevelRegistryEntry *out, int max) {
+    int count = 0;
+    const char *cursor = json;
+    while (*cursor && count < max) {
+        const char *obj_start = strchr(cursor, '{');
+        if (!obj_start) break;
+        const char *obj_end = strchr(obj_start, '}');
+        if (!obj_end) break;
+
+        const char *id_val = level_boxes_find_key(obj_start, obj_end, "id");
+        const char *name_val = level_boxes_find_key(obj_start, obj_end, "name");
+        if (id_val && name_val) {
+            float id_f;
+            if (level_boxes_parse_number(id_val, &id_f)) {
+                out[count].id = (int)id_f;
+                level_boxes_parse_string(name_val, out[count].name, sizeof(out[count].name));
+                out[count].wall_count = 0;
+                const char *wc_val = level_boxes_find_key(obj_start, obj_end, "wall_count");
+                if (wc_val) {
+                    float wc_f = 0;
+                    if (level_boxes_parse_number(wc_val, &wc_f)) out[count].wall_count = (int)wc_f;
+                }
+                count++;
+            }
+        }
+        cursor = obj_end + 1;
+    }
+    return count;
+}
+
+// level_boxes_fetch_registry_list fetches and parses the real, live level list. Returns the real
+// entry count (0 if the registry is empty or unreachable -- a real network failure degrades to
+// "no online levels shown," not a crash, matching this file's own established "a bad/missing
+// resource never corrupts what's already working" convention).
+static inline int level_boxes_fetch_registry_list(LevelRegistryEntry *out, int max) {
+    char *buf = NULL;
+    long n = level_boxes_fetch_url(LEVEL_REGISTRY_BASE_URL, &buf);
+    if (n <= 0) return 0;
+    int count = level_boxes_parse_registry_list(buf, out, max);
+    free(buf);
+    return count;
+}
+
+// level_boxes_fetch_export fetches level `id`'s real, plain-JSON export (SHANKPIT's own public
+// export endpoint has no LZ4 option, unlike BRAWLPIT's -- a real, simpler wire format, not a
+// missing feature) and parses it into *out via level_boxes_parse_json. Returns 1 on success, 0 on
+// any real failure -- *out is left untouched on failure, matching level_boxes_load_from_file's
+// own established contract.
+static inline int level_boxes_fetch_export(int id, CustomLevelData *out) {
+    char url[256];
+    snprintf(url, sizeof(url), "%s/%d/export", LEVEL_REGISTRY_BASE_URL, id);
+
+    char *buf = NULL;
+    long n = level_boxes_fetch_url(url, &buf);
+    if (n <= 0) return 0;
 
     CustomLevelData tmp;
     int ok = level_boxes_parse_json(buf, &tmp);

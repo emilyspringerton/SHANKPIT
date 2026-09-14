@@ -187,6 +187,19 @@ int skin_menu_selection = 0;
 int skin_menu_open = 0;
 int skin_menu_scroll = 0;
 
+// Level select (founder real-time: "ok i need the level selection interface in shankpit") --
+// mirrors skin_menu_*'s own real state/interaction shape (open flag, cursor selection, scroll),
+// listing NOCK-authored levels fetched live from the real IDUNA registry instead of a compiled-in
+// array. See packages/world/level_boxes.h's own level_boxes_fetch_registry_list.
+#define LEVEL_SELECT_MAX_ENTRIES 64
+int level_select_open = 0;
+int level_select_selection = 0;
+int level_select_scroll = 0;
+int level_select_count = 0;
+LevelRegistryEntry level_select_entries[LEVEL_SELECT_MAX_ENTRIES];
+int level_select_error = 0; // 1 if the last registry fetch failed (network/empty) -- real, honest
+                             // feedback shown in the panel rather than a silently empty list
+
 static int g_paused = 0;
 static int g_pause_sel = 0;
 #define PAUSE_RESUME 0
@@ -1245,8 +1258,14 @@ static void overlay_render(OverlaySystem *overlay, const PlayerState *viewer) {
     overlay_draw_screen_labels(overlay);
 }
 
+// LOBBY_LEVEL_SELECT is deliberately first -- founder real-time: "delete the headed option from
+// the menu in shankpit move all of the options down and make the level selector the first option
+// in the shankpit menu interface... headed isnt needed.. put level select as the first tile."
+// LOBBY_HEADED_BOT removed outright (not just relabeled) -- see MODE_HEADED_BOT's own remaining
+// real uses elsewhere (local_game.h) which are untouched; this only removes the MENU entry point.
 typedef enum {
-    LOBBY_JOIN = 0,
+    LOBBY_LEVEL_SELECT = 0,
+    LOBBY_JOIN,
     LOBBY_TDMO,
     LOBBY_STORY,
     LOBBY_STORY_CAVE,
@@ -1254,13 +1273,13 @@ typedef enum {
     LOBBY_BATTLE,
     LOBBY_TDMB,
     LOBBY_CTFB,
-    LOBBY_HEADED_BOT,
     LOBBY_COUNT
 } LobbyAction;
 
 char lobby_labels_mutable[LOBBY_COUNT][64];
 
 static const char *LOBBY_LABELS[LOBBY_COUNT] = {
+    "LEVELS",
     "FIND CTF",
     "TDMO",
     "STORY",
@@ -1268,14 +1287,63 @@ static const char *LOBBY_LABELS[LOBBY_COUNT] = {
     "SOLO",
     "TRAIN",
     "TDMB",
-    "CTFB",
-    "HEADED BOT"
+    "CTFB"
 };
 
 static void lobby_init_labels() {
     for (int i = 0; i < LOBBY_COUNT; i++) {
         snprintf(lobby_labels_mutable[i], sizeof(lobby_labels_mutable[i]), "%s", LOBBY_LABELS[i]);
     }
+}
+
+// level_select_menu_open -- real, live fetch of the IDUNA registry's own current level list
+// (blocking, via curl -- the same real, accepted cost every other registry-browsing precedent in
+// this monorepo already pays on open, e.g. BRAWLPIT's own AI-opponent browser). A real network
+// failure degrades to an honest "no levels found" panel (level_select_error), never a crash.
+static void level_select_menu_open(void) {
+    level_select_count = level_boxes_fetch_registry_list(level_select_entries, LEVEL_SELECT_MAX_ENTRIES);
+    level_select_error = (level_select_count == 0);
+    level_select_selection = 0;
+    level_select_scroll = 0;
+    level_select_open = 1;
+}
+
+// level_select_confirm -- fetches the chosen level's real export, loads it into physics.h's own
+// custom-level buffers, and starts a real local match on it. Mirrors lobby_start_action's own
+// "enter game" tail exactly (death_cam_blend/mouse mode/projection matrix) since this is a real,
+// separate entry point into gameplay, not a sub-case of that function's own switch.
+static void level_select_confirm(void) {
+    if (level_select_selection < 0 || level_select_selection >= level_select_count) return;
+    int id = level_select_entries[level_select_selection].id;
+
+    CustomLevelData lvl;
+    if (!level_boxes_fetch_export(id, &lvl)) {
+        level_select_error = 1;
+        return;
+    }
+
+    float x[LEVEL_BOXES_MAX], y[LEVEL_BOXES_MAX], z[LEVEL_BOXES_MAX];
+    float w[LEVEL_BOXES_MAX], h[LEVEL_BOXES_MAX], d[LEVEL_BOXES_MAX];
+    float r[LEVEL_BOXES_MAX], g[LEVEL_BOXES_MAX], b[LEVEL_BOXES_MAX];
+    for (int bi = 0; bi < lvl.count; bi++) {
+        x[bi] = lvl.boxes[bi].x; y[bi] = lvl.boxes[bi].y; z[bi] = lvl.boxes[bi].z;
+        w[bi] = lvl.boxes[bi].w; h[bi] = lvl.boxes[bi].h; d[bi] = lvl.boxes[bi].d;
+        r[bi] = lvl.boxes[bi].r; g[bi] = lvl.boxes[bi].g; b[bi] = lvl.boxes[bi].b;
+    }
+    phys_set_custom_level(x, y, z, w, h, d, r, g, b, lvl.count, lvl.ground_plane_enabled, lvl.ground_plane_squares);
+
+    level_select_open = 0;
+    app_state = STATE_GAME_LOCAL;
+    local_init_match(1, MODE_DEATHMATCH);
+    scene_load(SCENE_CUSTOM_LEVEL);
+
+    death_cam_blend = 0.0f;
+    SDL_SetRelativeMouseMode(SDL_TRUE);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    gluPerspective(75.0, (float)VIRTUAL_W/(float)VIRTUAL_H, 0.1, Z_FAR);
+    glMatrixMode(GL_MODELVIEW);
+    glEnable(GL_DEPTH_TEST);
 }
 
 static int clamp_skin_id(int skin_id) {
@@ -1543,6 +1611,10 @@ static void lobby_start_action(int action) {
         ensure_skin_selection_visible();
         return;
     }
+    if (action == LOBBY_LEVEL_SELECT) {
+        level_select_menu_open();
+        return;
+    }
     if (ui_use_server) {
         const char *entry_id = lobby_menu_entry_id(action);
         if (entry_id) {
@@ -1594,9 +1666,6 @@ static void lobby_start_action(int action) {
                 break;
             case LOBBY_CTFB:
                 local_init_match(12, MODE_CTFB);
-                break;
-            case LOBBY_HEADED_BOT:
-                local_init_match(12, MODE_HEADED_BOT);
                 break;
             default:
                 break;
@@ -6582,6 +6651,127 @@ static void draw_skin_chooser_overlay() {
     draw_string("MOUSEWHEEL / UP-DOWN TO SCROLL", panel_x + 22.0f, panel_y - panel_h + 16.0f, 3);
 }
 
+// --- Level select overlay (founder real-time: "ok i need the level selection interface in
+// shankpit") -- mirrors draw_skin_chooser_overlay's own real layout/scroll/cursor shape exactly,
+// same panel position, listing real, live-fetched levels instead of a compiled-in skin array. No
+// BACK sentinel row (unlike skins) -- Escape alone backs out, matching a simpler "browse a live
+// list, confirm or cancel" interaction since there's no separate "already active" state to show. ---
+#define LEVEL_SELECT_VISIBLE_ROWS 4
+
+static int level_select_scroll_max(void) {
+    int max_scroll = level_select_count - LEVEL_SELECT_VISIBLE_ROWS;
+    return (max_scroll > 0) ? max_scroll : 0;
+}
+
+static void ensure_level_select_visible(void) {
+    int max_scroll = level_select_scroll_max();
+    if (level_select_selection < level_select_scroll) {
+        level_select_scroll = level_select_selection;
+    } else if (level_select_selection >= level_select_scroll + LEVEL_SELECT_VISIBLE_ROWS) {
+        level_select_scroll = level_select_selection - LEVEL_SELECT_VISIBLE_ROWS + 1;
+    }
+    if (level_select_scroll < 0) level_select_scroll = 0;
+    if (level_select_scroll > max_scroll) level_select_scroll = max_scroll;
+}
+
+static int level_select_hit_test_rows(float mx, float my, float base_x, float base_y, float w, float h, float gap) {
+    for (int row = 0; row < LEVEL_SELECT_VISIBLE_ROWS; row++) {
+        int i = level_select_scroll + row;
+        if (i >= level_select_count) break;
+        float y = base_y - gap * row;
+        if (mx >= base_x && mx <= base_x + w && my >= y && my <= y + h) return i;
+    }
+    return -1;
+}
+
+static void draw_level_select_overlay(void) {
+    float panel_x = 770.0f;
+    float panel_y = 545.0f;
+    float panel_w = 330.0f;
+    float panel_h = 275.0f;
+    float item_h = 50.0f;
+    float item_gap = 60.0f;
+    float item_x = panel_x + 20.0f;
+    float item_w = panel_w - 40.0f;
+    float item_top = panel_y - 90.0f;
+
+    glColor4f(0.05f, 0.08f, 0.12f, 0.92f);
+    glBegin(GL_QUADS);
+    glVertex2f(panel_x, panel_y);
+    glVertex2f(panel_x + panel_w, panel_y);
+    glVertex2f(panel_x + panel_w, panel_y - panel_h);
+    glVertex2f(panel_x, panel_y - panel_h);
+    glEnd();
+
+    glColor3f(0.42f, 0.78f, 0.92f);
+    glLineWidth(2.0f);
+    glBegin(GL_LINE_LOOP);
+    glVertex2f(panel_x, panel_y);
+    glVertex2f(panel_x + panel_w, panel_y);
+    glVertex2f(panel_x + panel_w, panel_y - panel_h);
+    glVertex2f(panel_x, panel_y - panel_h);
+    glEnd();
+
+    glColor3f(0.85f, 0.95f, 1.0f);
+    draw_string("SELECT LEVEL", panel_x + 30.0f, panel_y - 30.0f, 5);
+
+    if (level_select_error) {
+        glColor3f(0.9f, 0.4f, 0.4f);
+        draw_string("NO LEVELS FOUND", item_x, item_top, 4);
+        draw_string("(REGISTRY UNREACHABLE OR EMPTY)", item_x, item_top - 24.0f, 3);
+        glColor3f(0.62f, 0.86f, 0.97f);
+        draw_string("ESC TO BACK", panel_x + 22.0f, panel_y - panel_h + 16.0f, 3);
+        return;
+    }
+
+    ensure_level_select_visible();
+    int max_scroll = level_select_scroll_max();
+    if (level_select_scroll > max_scroll) level_select_scroll = max_scroll;
+    if (level_select_scroll < 0) level_select_scroll = 0;
+
+    for (int row = 0; row < LEVEL_SELECT_VISIBLE_ROWS; row++) {
+        int i = level_select_scroll + row;
+        if (i >= level_select_count) break;
+        float y = item_top - item_gap * row;
+        int is_cursor = (level_select_selection == i);
+        glColor3f(0.16f, 0.22f, 0.28f);
+        glRectf(item_x, y, item_x + item_w, y + item_h);
+        if (is_cursor) {
+            glColor3f(0.95f, 0.95f, 0.95f);
+            glBegin(GL_LINE_LOOP);
+            glVertex2f(item_x, y);
+            glVertex2f(item_x + item_w, y);
+            glVertex2f(item_x + item_w, y + item_h);
+            glVertex2f(item_x, y + item_h);
+            glEnd();
+        }
+        glColor3f(0.90f, 0.92f, 0.95f);
+        draw_string(level_select_entries[i].name, item_x + 12.0f, y + 29.0f, 5);
+        char wc[32];
+        snprintf(wc, sizeof(wc), "%d BOX", level_select_entries[i].wall_count);
+        draw_string(wc, item_x + item_w - 90.0f, y + 29.0f, 3);
+    }
+
+    if (level_select_count > LEVEL_SELECT_VISIBLE_ROWS) {
+        float track_x = panel_x + panel_w - 12.0f;
+        float track_y0 = item_top;
+        float track_y1 = item_top - item_gap * (LEVEL_SELECT_VISIBLE_ROWS - 1) + item_h;
+        float track_h = track_y0 - track_y1;
+        float knob_h = track_h * ((float)LEVEL_SELECT_VISIBLE_ROWS / (float)level_select_count);
+        if (knob_h < 18.0f) knob_h = 18.0f;
+        float t = (max_scroll > 0) ? ((float)level_select_scroll / (float)max_scroll) : 0.0f;
+        float knob_y = track_y0 - t * (track_h - knob_h);
+
+        glColor3f(0.10f, 0.16f, 0.22f);
+        glRectf(track_x, track_y0, track_x + 6.0f, track_y1);
+        glColor3f(0.42f, 0.78f, 0.92f);
+        glRectf(track_x, knob_y, track_x + 6.0f, knob_y - knob_h);
+    }
+
+    glColor3f(0.62f, 0.86f, 0.97f);
+    draw_string("ENTER TO PLAY / ESC TO BACK", panel_x + 22.0f, panel_y - panel_h + 16.0f, 3);
+}
+
 void net_init() {
     #ifdef _WIN32
     WSADATA wsa; WSAStartup(MAKEWORD(2,2), &wsa);
@@ -7620,6 +7810,22 @@ int main(int argc, char* argv[]) {
                                 skin_menu_open = 0;
                             }
                         }
+                    } else if (level_select_open) {
+                        if (e.key.keysym.sym == SDLK_UP) {
+                            if (level_select_selection > 0) {
+                                level_select_selection--;
+                                ensure_level_select_visible();
+                            }
+                        } else if (e.key.keysym.sym == SDLK_DOWN) {
+                            if (level_select_selection < level_select_count - 1) {
+                                level_select_selection++;
+                                ensure_level_select_visible();
+                            }
+                        } else if (e.key.keysym.sym == SDLK_ESCAPE || e.key.keysym.sym == SDLK_BACKSPACE) {
+                            level_select_open = 0;
+                        } else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) {
+                            level_select_confirm();
+                        }
                     } else {
                         if (e.key.keysym.sym == SDLK_UP) {
                             int count = lobby_menu_count();
@@ -7652,6 +7858,12 @@ int main(int argc, char* argv[]) {
                     if (skin_menu_scroll < 0) skin_menu_scroll = 0;
                     if (skin_menu_scroll > max_scroll) skin_menu_scroll = max_scroll;
                 }
+                if (e.type == SDL_MOUSEWHEEL && level_select_open) {
+                    level_select_scroll -= e.wheel.y;
+                    int max_scroll = level_select_scroll_max();
+                    if (level_select_scroll < 0) level_select_scroll = 0;
+                    if (level_select_scroll > max_scroll) level_select_scroll = max_scroll;
+                }
                 if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                     int _rmx, _rmy;
                     remap_mouse(e.button.x, e.button.y, &_rmx, &_rmy);
@@ -7670,6 +7882,18 @@ int main(int argc, char* argv[]) {
                             ensure_skin_selection_visible();
                             g_selected_skin = clamp_skin_id(hit);
                             save_skin_selection();
+                        }
+                        continue;
+                    }
+                    if (level_select_open) {
+                        int hit = level_select_hit_test_rows(mx, my, 790.0f, 455.0f, 290.0f, 50.0f, 60.0f);
+                        if (hit >= 0 && hit < level_select_count) {
+                            if (level_select_selection == hit) {
+                                level_select_confirm();
+                            } else {
+                                level_select_selection = hit;
+                                ensure_level_select_visible();
+                            }
                         }
                         continue;
                     }
@@ -7854,6 +8078,9 @@ int main(int argc, char* argv[]) {
              draw_lobby_buttons(menu_count, &LOBBY_LAYOUT);
              if (skin_menu_open) {
                  draw_skin_chooser_overlay();
+             }
+             if (level_select_open) {
+                 draw_level_select_overlay();
              }
 
              glColor3f(0.4f, 0.6f, 0.7f);
