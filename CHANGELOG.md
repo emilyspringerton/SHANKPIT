@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-14
+- Migrate build system from Makefile to Bazel: MODULE.bazel + per-package BUILD.bazel files, faithful port of the real Makefile source lists including a deliberate simulation package split (server vs lobby asymmetry). Verified via real bazelisk build + Xvfb live-check (commit 3dee65f) (sess-20260905-0720-ec33e7c5)
 - Fix T spray key silent no-op: spray_place_decal now lazily auto-selects the registry's default spray if the player never opened LOBBY_SPRAYS (commit b30361d) (sess-20260905-0720-ec33e7c5)
 - feat: native sprays selection menu (replaces TDMO in the main menu) + real T-key spray-decal placement (raycast via trace_map, honest flat-color placeholder pending a real PNG decoder) (sess-20260905-0720-ec33e7c5)
 - fix: flashlight beam apex sat exactly at the camera eye (clip-space w=0, a real near-plane clipping singularity) collapsing the whole cone to ~8 pixels -- apex now starts 1 unit in front of the eye (sess-20260905-0720-ec33e7c5)
