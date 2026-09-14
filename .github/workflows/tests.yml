@@ -80,7 +80,17 @@ jobs:
           set -euo pipefail
           test -f apps/lobby/src/main.c
 
-          x86_64-w64-mingw32-gcc apps/lobby/src/main.c packages/simulation/story_ai.c packages/simulation/cutscene.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/world/terrain.c packages/audio/audio.c packages/goldenband/gband.c packages/goldenband/gband_mesh_rig.c packages/goldenband/gmesh.c packages/goldenband/gskel.c \
+          # Real, THIRD live-found instance of the exact source-list-drift class documented in
+          # release.yml's own "Build Windows Client" step (gband_mesh_rig.c, 2026-09-10; S459-33's
+          # own packages/world/parena_runtime.c + png_decode_gen.c, 2026-09-14) -- this workflow
+          # carries its OWN separate, hand-duplicated copy of the same build command, missed
+          # entirely when release.yml was fixed (confirmed live: CI kept failing with the identical
+          # `undefined reference to arena_init/arena_alloc/png_decode/arena_free_all` even after
+          # that fix, because tests.yml is a second, independent trigger on the same push and this
+          # copy was never touched). Two real, hand-maintained copies of one build command is the
+          # actual root cause of this whole recurring class of bug -- named here, not fixed by
+          # unifying them in this pass (a real, separate refactor, not attempted under this fix).
+          x86_64-w64-mingw32-gcc apps/lobby/src/main.c packages/simulation/story_ai.c packages/simulation/cutscene.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/world/terrain.c packages/world/parena_runtime.c packages/world/png_decode_gen.c packages/audio/audio.c packages/goldenband/gband.c packages/goldenband/gband_mesh_rig.c packages/goldenband/gmesh.c packages/goldenband/gskel.c \
             -o ShankPit.exe \
             -O2 -static-libgcc \
             -I./sdl2_mingw/include \
