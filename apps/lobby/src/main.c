@@ -8220,6 +8220,16 @@ void net_process_snapshot(char *buffer, int len) {
         seen[id] = 1;
 
         PlayerState *p = &local_state.players[id];
+        // Real, found-live bug (founder real-time: "in queue i cant see any bots"): p->id was
+        // NEVER set here, anywhere in this file -- every entity's PlayerState.id field silently
+        // stayed at its zero-initialized default forever. draw_scene's own "don't draw myself"
+        // filter (`if (p->id == render_p->id) continue;`) compares this FIELD, not the array
+        // index -- with every entity's own p->id stuck at 0, and render_p->id therefore ALSO 0
+        // (my own PlayerState struct never got tagged either), every single other player matched
+        // the self-exclusion check and got silently skipped. Confirmed live via a real 2-client
+        // Xvfb test against the live server: 3 real bots, all active, all in the same scene, at
+        // real positions a few world-units from the local player -- zero of them rendered.
+        p->id = id;
         p->active = 1;
         p->scene_id = np->scene_id;
 
