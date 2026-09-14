@@ -1699,8 +1699,26 @@ static void spray_place_decal(void) {
     }
     int ref_id = (my_client_id >= 0 && my_client_id < MAX_CLIENTS) ? my_client_id : 0;
     PlayerState *p = &local_state.players[ref_id];
-    float eye_x = p->x, eye_y = p->y + (p->crouching ? 2.5f : EYE_HEIGHT), eye_z = p->z;
-    float ryaw = -p->yaw * 0.0174533f, rpitch = p->pitch * 0.0174533f;
+    /* Also folds in the same client-side reconciliation correction draw_scene's own camera
+       translate applies (reconcile_corr_x/y/z, STATE_GAME_NET only) -- small compared to the
+       stale-angle bug below, but the raycast origin should match the actual rendered eye point. */
+    float recon_x = 0.0f, recon_y = 0.0f, recon_z = 0.0f;
+    if (app_state == STATE_GAME_NET && my_client_id > 0 && my_client_id < MAX_CLIENTS && ref_id == my_client_id) {
+        recon_x = reconcile_corr_x; recon_y = reconcile_corr_y; recon_z = reconcile_corr_z;
+    }
+    float eye_x = p->x + recon_x, eye_y = p->y + recon_y + (p->crouching ? 2.5f : EYE_HEIGHT), eye_z = p->z + recon_z;
+    /* REAL, FOUND, LIVE BUG (founder real-time, 2026-09-14: "the placeholder...goes in a totally
+       random spot im expecting it to go closer to my crosshairs"): p->yaw/p->pitch are the
+       NETWORKED player-state angles, only synced from the live look direction at specific tick
+       points (see the cam_yaw/cam_pitch assignment into p->yaw/p->pitch elsewhere in this file) --
+       they lag behind whatever the mouse has done since the last sync. The actual camera (and
+       crosshair) is driven every single mouse-motion event by the global cam_yaw/cam_pitch (see
+       the SDL_MOUSEMOTION handler and draw_scene's own glRotatef(-cam_yaw)/glRotatef(-draw_cam_
+       pitch) call), so raycasting from p->yaw/pitch aims wherever the LAST synced angle was, not
+       where the crosshair currently is -- reading as "a totally random spot" under any mouse
+       movement between syncs. Fixed by raycasting from the same live cam_yaw/cam_pitch the render
+       camera and crosshair actually use. */
+    float ryaw = -cam_yaw * 0.0174533f, rpitch = cam_pitch * 0.0174533f;
     float fx = sinf(ryaw) * cosf(rpitch), fy = sinf(rpitch), fz = -cosf(ryaw) * cosf(rpitch);
     float tx = eye_x + fx * SPRAY_PLACE_RANGE, ty = eye_y + fy * SPRAY_PLACE_RANGE, tz = eye_z + fz * SPRAY_PLACE_RANGE;
     float hx, hy, hz, nx, ny, nz;
