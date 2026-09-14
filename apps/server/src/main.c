@@ -115,6 +115,13 @@ static NetServerDiag g_net_diag;
 #define SERVER_DM_ROUND_MS (6 * 60 * 1000)
 #define TDMO_TEAM_SIZE 6
 #define TDMO_SCORE_LIMIT 25
+// S459-43, founder real-time (same message as S459-41's "change default queue map to NEWPIT"
+// ask): "we need to add a timer to the game mode." QUEUE has no map rotation of its own (one
+// admin-flagged level, S459-41) so it gets its own round length/frag cap rather than reusing
+// SERVER_DM_ROUND_MS/SERVER_DM_FRAG_LIMIT -- shorter than a DM round since QUEUE is the FFA
+// bot-league lane, meant for quick, frequent matches rather than long DM sessions.
+#define SERVER_QUEUE_FRAG_LIMIT 20
+#define SERVER_QUEUE_ROUND_MS (4 * 60 * 1000)
 
 static const int g_dm_rotation[] = { SCENE_STADIUM, SCENE_VOXWORLD, SCENE_OIL_TANKER, SCENE_POO_POO_ISLAND };
 static int g_dm_rotation_idx = 0;
@@ -209,6 +216,25 @@ static void server_advance_dm_rotation(unsigned int now_ms) {
         printf("[HELI] authoritative voxworld spawn count=%d\n", server_scene_heli_count(SCENE_VOXWORLD));
     }
     printf("[ROUND] next_map=%d rotation_idx=%d\n", g_server_match_scene, g_dm_rotation_idx);
+}
+
+// server_advance_queue_round -- S459-43. Same quiet-reset shape as server_advance_dm_rotation
+// (no explicit "match over" pause/scoreboard state -- matches this codebase's own existing DM
+// precedent of just resetting stats and continuing), deliberately NOT reloading the level: QUEUE
+// always plays the one admin-flagged default level (S459-41), so re-running queue_activate_match
+// here would just be a wasted registry round-trip against the same level every round.
+static void server_advance_queue_round(unsigned int now_ms) {
+    g_round_start_ms = now_ms;
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        PlayerState *p = &local_state.players[i];
+        if (!p->active) continue;
+        p->kills = 0;
+        p->deaths = 0;
+        p->state = STATE_ALIVE;
+        p->health = 100;
+        p->shield = 100;
+    }
+    printf("[ROUND] queue_round_reset\n");
 }
 
 static int addr_equal(const struct sockaddr_in *a, const struct sockaddr_in *b) {
@@ -1244,6 +1270,18 @@ int main(int argc, char *argv[]) {
             }
             if ((now - g_round_start_ms) >= SERVER_DM_ROUND_MS || top_frags >= SERVER_DM_FRAG_LIMIT) {
                 server_advance_dm_rotation(now);
+            }
+        }
+
+        if (local_state.game_mode == MODE_QUEUE) {
+            int top_frags = 0;
+            for (int i = 1; i < MAX_CLIENTS; i++) {
+                PlayerState *p = &local_state.players[i];
+                if (!p->active || p->scene_id != g_server_match_scene) continue;
+                if (p->kills > top_frags) top_frags = p->kills;
+            }
+            if ((now - g_round_start_ms) >= SERVER_QUEUE_ROUND_MS || top_frags >= SERVER_QUEUE_FRAG_LIMIT) {
+                server_advance_queue_round(now);
             }
         }
 
