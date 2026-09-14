@@ -127,6 +127,7 @@ static const int g_dm_rotation[] = { SCENE_STADIUM, SCENE_VOXWORLD, SCENE_OIL_TA
 static int g_dm_rotation_idx = 0;
 static int g_server_match_scene = SCENE_GARAGE_OSAKA;
 static unsigned int g_round_start_ms = 0;
+static int g_fast_forward = 0; // S459-48 -- see --fast-forward's own doc comment in main() for the real rationale
 static int g_tdmo_tie_breaker = 0;
 
 #define RECORDER_SHAKE_POS 0.08f
@@ -820,6 +821,23 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
             // 3-bot test connect produced scene_id=0 for the first bot and scene_id=1 for the
             // next two.
             p->scene_id = g_server_match_scene;
+            // S459-48, real, found-live CRITICAL bug: this branch set scene_id but never
+            // actually SPAWNED the player -- unlike MODE_TDMO's own branch immediately above
+            // (state=ALIVE, health/shield=100, weapon+ammo, phys_respawn), a QUEUE connect left
+            // every other PlayerState field at whatever zero-initialized or stale-from-a-previous-
+            // occupant value the slot already held: health=0, state=0 (STATE_ALIVE's own numeric
+            // value, so the "am I alive" check never even caught it), no weapon/ammo set, no real
+            // spawn position chosen. Found via a real, live Python client
+            // (scripts/rl_env_packet.py) that connected successfully (welcomed) but then sat at
+            // health=0 falling through empty space forever, never once reaching a valid alive
+            // snapshot. The standing bot pool never surfaced this because its own bots, per
+            // S459-35's own auto-reconnect fix, mostly stay connected across server restarts
+            // rather than making a large volume of fresh CONNECTs -- this bug needed a genuinely
+            // fresh connect to trigger, which the Python smoke test finally did. phys_respawn
+            // itself already sets state/health/shield/weapon/ammo/spawn-position (it's the same
+            // real function every in-match death->respawn cycle already calls, see this file's
+            // own tick-loop call site) -- just needed to actually be called here.
+            phys_respawn(p, get_server_time());
         }
         p->in_fwd = 0.0f;
         p->in_strafe = 0.0f;
@@ -1037,6 +1055,15 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
             server_port = atoi(argv[i + 1]);
             i++;
+        } else if (strcmp(argv[i], "--fast-forward") == 0) {
+            // S459-48, real training-pipeline prerequisite. Mirrors ECOWAR's own real
+            // apps/arena_server/src/main.c --fast-forward exactly (itself mirrored into
+            // BRAWLPIT's own bin/brawlpit_server, per BRAWLPIT/docs/RL_TRAINING_NORTHSTAR.md §2):
+            // skips the real-time usleep(16000) tick pacing below so a training env can run
+            // thousands of ticks per wall-clock second instead of the real 60Hz cap a live human
+            // match needs. Never affects a normal (non-flagged) server -- the live production
+            // shankpit-server.service unit does not pass this flag.
+            g_fast_forward = 1;
         }
     }
 
@@ -1141,6 +1168,21 @@ int main(int argc, char *argv[]) {
                     p->y += 0.1f;
                     p->vy += JUMP_FORCE;
                 }
+            }
+
+            // S459-48, real, found-live bug: SHANKPIT had no void/out-of-bounds death anywhere
+            // in the codebase -- a player who falls off any level's real geometry (confirmed live
+            // via a real Python RL training client that wandered off NEWPIT's bounds during
+            // scripts/rl_train_packet.py's own first real training run: y drifted to roughly
+            // -1.6e8 and simply stayed STATE_ALIVE at full health forever, never respawning,
+            // producing an unbounded, uninformative free-fall episode) just falls forever with no
+            // recovery except a manual reconnect. VOID_KILL_Y is a real, generous threshold --
+            // every built-in scene's own real floor/geometry sits well above -400 (the deepest,
+            // SCENE_STORY_CAVE's own spawn, is only -1180 on Z, not Y), so this only ever fires
+            // for a genuine fall-through, never a real, intentional low point in any level.
+            #define VOID_KILL_Y -400.0f
+            if (i > 0 && p->active && p->state == STATE_ALIVE && p->y < VOID_KILL_Y) {
+                phys_enter_death_state(NULL, p, now, mode_respawn_delay_ms(local_state.game_mode), p->x, p->z);
             }
 
             if (i > 0 && p->active && p->state == STATE_DEAD) {
@@ -1333,11 +1375,13 @@ int main(int argc, char *argv[]) {
 
         local_state.server_tick++;
 
-        #ifdef _WIN32
-        Sleep(16);
-        #else
-        usleep(16000);
-        #endif
+        if (!g_fast_forward) {
+            #ifdef _WIN32
+            Sleep(16);
+            #else
+            usleep(16000);
+            #endif
+        }
 
         tick++;
     }

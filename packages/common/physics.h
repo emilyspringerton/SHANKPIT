@@ -2841,9 +2841,19 @@ void phys_respawn(PlayerState *p, unsigned int now) {
     p->dash_vx = p->dash_vy = p->dash_vz = 0.0f;
     p->dash_hit_count = 0;
     p->use_was_down = 0;
+    // S459-48, real, found-live production bug: SCENE_CUSTOM_LEVEL (QUEUE's own real level,
+    // S459-41) was missing from this whitelist -- every QUEUE death->respawn cycle was silently
+    // resetting scene_id back to SCENE_GARAGE_OSAKA, kicking the player OUT of NEWPIT (or
+    // whichever level is admin-flagged default) on every single respawn. Found while diagnosing
+    // why a real Python RL client (scripts/rl_env_packet.py) never received a valid post-spawn
+    // snapshot -- checked this whitelist directly rather than assuming, since QUEUE connect's own
+    // separate bug (see server_handle_packet's MODE_QUEUE branch, also fixed this same commit)
+    // meant the FIRST spawn never even reached this function, but every ongoing respawn-after-
+    // death for the standing bot pool already had been hitting this exact bug live.
     if (p->scene_id != SCENE_GARAGE_OSAKA && p->scene_id != SCENE_STADIUM &&
         p->scene_id != SCENE_VOXWORLD && p->scene_id != SCENE_DUST_COMPOUND &&
-        p->scene_id != SCENE_OIL_TANKER && p->scene_id != SCENE_POO_POO_ISLAND) {
+        p->scene_id != SCENE_OIL_TANKER && p->scene_id != SCENE_POO_POO_ISLAND &&
+        p->scene_id != SCENE_CUSTOM_LEVEL) {
         p->scene_id = SCENE_GARAGE_OSAKA;
     }
     scene_spawn_for_player(p, &p->x, &p->y, &p->z);

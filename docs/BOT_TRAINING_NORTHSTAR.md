@@ -205,14 +205,78 @@ establishes), plus straight down (floor/ledge awareness). A bot with no geometry
 these as a real, honest 0 — not a fabricated "clear space" cap value that could mislead a policy
 into thinking it's safe to advance.
 
-## 9. What's still missing before training can actually start
+## 9. The real, working training pipeline (S459-48)
 
-- **The RL training loop itself.** `scripts/rl_league.py` (S459-35) is real checkpoint-
-  registry/PFSP/ELO plumbing ported from BRAWLPIT, but nothing generates checkpoints for it to
-  register yet — no packet-level training harness exists for SHANKPIT the way
-  `BRAWLPIT/scripts/rl_env_packet.py` does for BRAWLPIT. This is the real, honest, single biggest
-  remaining gap.
-- **A round-timer wire field**, so a client-side observation can actually include match-clock
-  urgency (BRAWLPIT's own `time_pressure_multiplier` precedent) — real, still open, the founder
-  flagged uncertainty rather than asking for a fix (§2).
-- **The Colab training notebook** — explicitly gated by the founder on the above being ready.
+Founder real-time: "continue adding stuff to make our bot training pipeline real and work." This
+closes §9's own former #1 gap ("no packet-level training harness exists for SHANKPIT the way
+BRAWLPIT's does"). `gymnasium` and `stable_baselines3` are both real, importable, installed in
+this sandbox right now — checked directly, a real change from an earlier session's own claim that
+they weren't available.
+
+**`scripts/rl_env_packet.py`** — a real, packet-level `gymnasium.Env`, architecturally identical
+to `BRAWLPIT/scripts/rl_env_packet.py`: the observation IS the literal bytes `server_broadcast()`
+sends over UDP, the action IS the literal bytes a real `UserCmd` packet carries. `ctypes.Structure`
+definitions for `NetHeader`/`UserCmd`/`NetPlayer` with self-verifying `sizeof` asserts (12/36/68
+bytes) AND a full per-field offset assertion against the real, compiled C struct layout (not just
+overall size) — `TestStructSizes.test_net_player_field_offsets_match_the_real_compiled_c_struct`.
+`build_observation`/`compute_reward` are direct, faithful Python ports of
+`apps2/emily-bot/observation.go`/`reward.go` (same 84-feature vector, same 4-tier reward, verified
+byte-identical field ordering by direct introspection during development, not assumed). 26 real,
+network-free unit tests (`scripts/test_rl_env_packet.py`).
+
+**Real, deliberate architecture difference from BRAWLPIT**: no `PacketResetMatch` exists (or is
+needed) — QUEUE respawns continuously with no single-match terminal state, so one EPISODE = one
+LIFE (`terminated=True` on the real `STATE_ALIVE`→`STATE_DEAD` transition), and `reset()` just
+waits for the server's own automatic respawn rather than reconnecting or resetting anything.
+
+**`--fast-forward`** added to `apps/server/src/main.c` (mirrors ECOWAR/BRAWLPIT's own identical
+flag), gating the tick loop's `usleep(16000)` — live-verified at ~500K ticks/sec vs. the real 60Hz
+cap. Real, honest tradeoff found and documented: `rl_train_packet.py` defaults it OFF for actual
+training, since a single-threaded Python learner's own step rate can't keep pace with 500K
+ticks/sec, making the real number of server ticks between one reward observation pair uncontrolled
+— fine for event-based reward (a kill/death stays correct regardless of tick count) but noisy for
+the small per-tick shaping terms. Available for future work once a batched/vectorized env exists.
+
+**Three real, previously-unknown, live-production-impacting bugs found and fixed while building
+this** — each one found by actually running the pipeline against a real server, not by code
+review alone:
+
+1. **QUEUE connect never spawned the player.** `server_handle_packet`'s `MODE_QUEUE` branch set
+   `scene_id` but never called `phys_respawn` (unlike `MODE_TDMO`'s own branch immediately above
+   it) — health/state/weapon/spawn-position were left at whatever zero-initialized or
+   stale-from-a-previous-occupant value the slot already held. A real Python client connected
+   successfully (welcomed) but then sat at health=0 forever. Fixed: `phys_respawn(p, ...)` added
+   to the QUEUE connect branch.
+2. **`phys_respawn`'s own scene whitelist was missing `SCENE_CUSTOM_LEVEL`.** Real, LIVE
+   production impact, not just a training-env issue: every QUEUE death→respawn cycle was silently
+   resetting `scene_id` back to `SCENE_GARAGE_OSAKA`, kicking the player OUT of NEWPIT (or
+   whichever level is admin-flagged default) on every single respawn. The standing bot pool has
+   been hitting this on every real death the whole time S459-41 has been live. Fixed: added
+   `SCENE_CUSTOM_LEVEL` to the whitelist.
+3. **No void/out-of-bounds death existed anywhere in the codebase.** Found live: the first real
+   training run's own client wandered off NEWPIT's real geometry and free-fell forever at full
+   health (`y` drifted to roughly -1.6×10⁸), `STATE_ALIVE` the entire time, never respawning —
+   stalling that training run for over ten real minutes before being diagnosed and killed. This
+   is a real, general SHANKPIT gap, not QUEUE- or training-specific: any player in any mode who
+   falls off a level's geometry has always fallen forever with no recovery except a manual
+   reconnect. Fixed with a real, generous `VOID_KILL_Y = -400.0f` threshold in the server's main
+   tick loop (every built-in scene's own real geometry sits well above that; `SCENE_STORY_CAVE`'s
+   own deepest real spawn point is only -1180 on *Z*, not *Y*) — calls the same
+   `phys_enter_death_state` every real combat death already uses, with no attacker (no kill
+   credit, just a death).
+
+**`scripts/rl_train_packet.py`** — a real PPO training script (`stable_baselines3`), launching an
+isolated `shank_server` + real `emily-bot` opponents, training a single policy via real self-play.
+**A real training run actually completed**: 4096 timesteps, 8 real PPO update iterations (sane,
+non-NaN `approx_kl`/`entropy_loss`/`value_loss` throughout), checkpoint saved to
+`var/rl_checkpoints/ppo_shankpit_queue_smoke.zip`, verified to load back via `PPO.load(...)` and
+produce a real predicted action from a synthetic observation. This is a real, working, end-to-end
+proof: connect → real observations → real policy update → real checkpoint → checkpoint loads and
+predicts.
+
+**Real, honest, still not done**: `scripts/rl_league.py`'s own `register_generation_snapshot()`
+needs 3 real, DISTINCT checkpoints (MAIN/MAIN_EXPLOITER/LEAGUE_EXPLOITER) to mean anything —
+duplicating today's one smoke-test checkpoint into all 3 roles would be fabricated, not real,
+archetype diversity, so registration is deliberately deferred until real, distinct training runs
+exist to register. A round-timer wire field (§2) and the Colab notebook (explicitly gated by the
+founder on the above) both remain open.
