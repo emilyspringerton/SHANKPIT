@@ -8653,7 +8653,7 @@ int main(int argc, char* argv[]) {
     proctex_upload_to_gl(&g_wall_hps_bulb_tex);
     retro_sky_init(&g_retro_sky);
     net_init();
-    
+
     local_init_match(1, 0);
     load_skin_selection();
     load_display_config();
