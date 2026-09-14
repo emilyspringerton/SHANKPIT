@@ -7860,9 +7860,20 @@ UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoo
     if(use) cmd.buttons |= BTN_USE;
     if(ability) cmd.buttons |= BTN_ABILITY_1;
     if(bike) cmd.buttons |= BTN_VEHICLE_2;
+    /* Real, found-live reconciliation bug (founder real-time: "reconciliation jitter including
+       gun jitter gun to knife when a gun is equip"): cmd.weapon_idx was set AFTER this cmd got
+       stored into client_cmd_hist (the reconciliation replay buffer, client_reconcile_local_player
+       below) -- every historical command replayed on reconciliation therefore carried weapon_idx=0
+       (WPN_KNIFE, memset's own zero default), regardless of the real equipped weapon.
+       shankpit_apply_usercmd_inputs (net_sim.h) unconditionally applies cmd->weapon_idx during
+       that replay, so every reconciliation event snapped the LOCALLY-PREDICTED weapon to knife an
+       instant before the next real server snapshot corrected it back to the true weapon -- a real,
+       visible flicker on every reconciliation, not an occasional edge case. Setting weapon_idx
+       before the history store (not after) fixes the stored copy same as the returned one. */
+    cmd.weapon_idx = wpn_idx;
     client_cmd_hist[cmd.sequence % CLIENT_RECON_HISTORY] = cmd;
     net_latest_seq_sent = cmd.sequence;
-    cmd.weapon_idx = wpn_idx; return cmd;
+    return cmd;
 }
 
 static void client_apply_cmd_movement(PlayerState *p, const UserCmd *cmd, unsigned int now_ms) {
