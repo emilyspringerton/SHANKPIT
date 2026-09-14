@@ -1726,12 +1726,30 @@ void update_and_draw_trails() {
 }
 
 void draw_grid() {
-    glLineWidth(1.0f); glBegin(GL_LINES); 
+    // S459-09, deferred from S459-08 ("DEFER THAT PUT IT IN THE BACKLOG"): a NOCK-authored
+    // custom level's own real, configurable ground plane (S459-08) shouldn't show this same
+    // unconditional, infinite (+/-4000) Matrix floor -- it should show exactly the real, bounded
+    // footprint the player actually collides with (or nothing at all when the plane is
+    // disabled), matching the NOCK editor's own preview grid square-for-square. Every OTHER
+    // scene's own real, existing infinite grid is completely unchanged.
+    if (phys_scene_id == SCENE_CUSTOM_LEVEL) {
+        if (!g_custom_level_ground_plane_enabled) return; // no floor at all -- no grid to show either
+        float half = (g_custom_level_ground_plane_squares * CUSTOM_LEVEL_GRID_CELL_SIZE) / 2.0f;
+        glLineWidth(1.0f); glBegin(GL_LINES);
+        glColor3f(0.0f, 1.0f, 1.0f);
+        for (float i = -half; i <= half; i += CUSTOM_LEVEL_GRID_CELL_SIZE) {
+            glVertex3f(i, 0.1f, -half); glVertex3f(i, 0.1f, half);
+            glVertex3f(-half, 0.1f, i); glVertex3f(half, 0.1f, i);
+        }
+        glEnd();
+        return;
+    }
+    glLineWidth(1.0f); glBegin(GL_LINES);
     // THE MATRIX FLOOR (Cyan)
-    glColor3f(0.0f, 1.0f, 1.0f); 
-    for(int i=-4000; i<=4000; i+=50) { 
+    glColor3f(0.0f, 1.0f, 1.0f);
+    for(int i=-4000; i<=4000; i+=50) {
         glVertex3f(i, 0.1f, -4000); glVertex3f(i, 0.1f, 4000);
-        glVertex3f(-4000, 0.1f, i); glVertex3f(4000, 0.1f, i); 
+        glVertex3f(-4000, 0.1f, i); glVertex3f(4000, 0.1f, i);
     }
     glEnd();
 }
