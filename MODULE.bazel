@@ -1,0 +1,26 @@
+"""SHANKPIT — the UDP FPS client/server (apps/lobby, apps/server) under Bazel.
+
+Founder real-time: "UPGRADE SHANKPIT TO BAZEL." Mirrors the exact real, already-working precedent
+ECOWAR/REDGARDEN's own MODULE.bazel/BUILD.bazel setup already established in this monorepo (same
+lineage -- SHANKPIT, REDGARDEN, and ECOWAR all descend from `skateboard`'s own apps/shank-fps, per
+this monorepo's own root CLAUDE.md) -- not a new pattern invented here. Replaces the root
+Makefile's own lobby/server/serverctl targets as the primary build entry point for those three
+real binaries.
+
+Real, honest, explicitly out of scope for this pass (named, not silently dropped -- see the
+Makefile's own remaining targets): the Go backend (`go-server`, a separate `go build` invocation,
+not a C compile), the Windows EA cross-compile (`ea`/`ea-windows`, i686-w64-mingw32-gcc), and
+`emily-bot`. All three stay real, working, Makefile-only build paths; migrating them is real,
+separate, deferred follow-up.
+
+No external dependencies beyond rules_cc -- this repo's own C code has no third-party library
+deps of its own (SDL2/OpenGL/ncurses are system libraries, linked via linkopts, not fetched by
+Bazel).
+"""
+
+module(
+    name = "shankpit",
+    version = "0.0.0",
+)
+
+bazel_dep(name = "rules_cc", version = "0.2.17")

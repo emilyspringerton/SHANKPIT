@@ -1,0 +1,24 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Bundled into one cc_library, same "always compiled/linked together, never separately, in every
+# real build path this repo has" reasoning ECOWAR/REDGARDEN's own packages/goldenband already
+# established -- the real Makefile's own LOBBY_SRC always lists these 4 files together as one
+# unit.
+cc_library(
+    name = "goldenband",
+    srcs = [
+        "gband.c",
+        "gband_mesh_rig.c",
+        "gmesh.c",
+        "gskel.c",
+    ],
+    hdrs = [
+        "gband.h",
+        "gband_mesh_rig.h",
+        "gmesh.h",
+        "gskel.h",
+        "sha256.h",
+    ],
+    deps = ["//packages/common:common_headers"],
+    visibility = ["//visibility:public"],
+)

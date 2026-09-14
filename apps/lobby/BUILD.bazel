@@ -1,0 +1,29 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+# Faithful port of the real Makefile's own LOBBY_SRC + LIBS_GL. story_ai.c/cutscene.c/
+# typing_lesson.c come in transitively via //packages/simulation:simulation (which itself depends
+# on :story_ai) -- matching LOBBY_SRC listing all three. retro_material.c is real render/ source
+# not otherwise depended on elsewhere, included via //packages/render:render.
+cc_binary(
+    name = "shank_lobby",
+    srcs = [
+        "src/main.c",
+        "src/player_model.h",
+    ],
+    deps = [
+        "//packages/audio",
+        "//packages/common:common_headers",
+        "//packages/goldenband",
+        "//packages/render",
+        "//packages/simulation",
+        "//packages/ui",
+        "//packages/world",
+    ],
+    linkopts = [
+        "-lSDL2",
+        "-lGL",
+        "-lGLU",
+        "-lm",
+    ],
+    visibility = ["//visibility:public"],
+)

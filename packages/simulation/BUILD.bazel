@@ -1,0 +1,45 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Real, deliberate two-target split -- NOT a single bundle. The Makefile's own real SERVER_SRC
+# lists ONLY story_ai.c, while LOBBY_SRC lists story_ai.c + cutscene.c + typing_lesson.c. Bundling
+# this whole directory into one cc_library (the packages/goldenband/packages/render precedent)
+# would pull cutscene.c/typing_lesson.c into the server binary, which the real Makefile never
+# does -- an unfaithful migration. cutscene_effect_mod.c/cutscene_effect_mod_test.c are genuinely
+# unreferenced anywhere in the real Makefile, CI workflows, or scripts (grepped for), so they are
+# deliberately excluded here too, matching current real build coverage rather than inventing new.
+cc_library(
+    name = "story_ai",
+    srcs = ["story_ai.c"],
+    hdrs = [
+        "bot_ai.h",
+        "brain_weights.h",
+        "game_physics.h",
+        "local_game.h",
+        "neural_net.h",
+        "parena_runtime.h",
+        "story_ai.h",
+    ],
+    deps = ["//packages/common:common_headers"],
+    visibility = ["//visibility:public"],
+)
+
+# Bundled cutscene.c + typing_lesson.c, same real "always compiled together in this one real build
+# path" reasoning as packages/goldenband/packages/render -- the Makefile's own LOBBY_SRC always
+# lists both alongside story_ai.c. Depends on :story_ai so apps/lobby pulls it in transitively
+# rather than listing both simulation targets itself.
+cc_library(
+    name = "simulation",
+    srcs = [
+        "cutscene.c",
+        "typing_lesson.c",
+    ],
+    hdrs = [
+        "cutscene.h",
+        "typing_lesson.h",
+    ],
+    deps = [
+        ":story_ai",
+        "//packages/common:common_headers",
+    ],
+    visibility = ["//visibility:public"],
+)

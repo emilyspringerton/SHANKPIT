@@ -1,0 +1,35 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+# Faithful port of the real Makefile's own SERVER_SRC + LIBS_M. Deliberately does NOT compile
+# src/server_mode.c -- confirmed dead/unused (not in SERVER_SRC, not #include'd by any real .c
+# file, not referenced in any CI workflow or script); matching the Makefile's real current
+# behavior rather than inventing new build coverage. server_mode.h/server_state.h are still real
+# headers main.c includes.
+cc_binary(
+    name = "shank_server",
+    srcs = [
+        "src/main.c",
+        "src/server_mode.h",
+        "src/server_state.h",
+    ],
+    deps = [
+        "//packages/common:common_headers",
+        "//packages/simulation:story_ai",
+        "//packages/world",
+    ],
+    linkopts = ["-lm"],
+    visibility = ["//visibility:public"],
+)
+
+# serverctl -- real Makefile target, but genuinely cannot build in THIS sandbox either way: only
+# libncurses6 (the shared lib) is installed here, not the ncurses.h dev header
+# (libncurses-dev/ncurses.h missing) -- confirmed by running the real
+# `make bin/serverctl` first, which fails identically with the same
+# "ncurses.h: No such file or directory". Not a Bazel-migration regression; kept as a faithful,
+# real target that will link once a machine with ncurses dev headers builds it.
+cc_binary(
+    name = "serverctl",
+    srcs = ["serverctl.c"],
+    linkopts = ["-lncurses"],
+    visibility = ["//visibility:public"],
+)

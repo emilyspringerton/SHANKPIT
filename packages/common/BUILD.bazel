@@ -1,0 +1,19 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# common_headers -- every file in packages/common is header-only (no real .c file exists in this
+# directory), so this is a pure hdrs-only cc_library: the real Bazel-native way to make a set of
+# headers a declared input other cc_library/cc_binary targets can #include (matching every real
+# apps/*'s own relative-path #include, e.g. "../../../packages/common/physics.h").
+cc_library(
+    name = "common_headers",
+    hdrs = [
+        "block_map.h",
+        "config_loader.h",
+        "mat4.h",
+        "net_sim.h",
+        "physics.h",
+        "protocol.h",
+        "shared_movement.h",
+    ],
+    visibility = ["//visibility:public"],
+)

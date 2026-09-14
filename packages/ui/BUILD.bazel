@@ -1,0 +1,16 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# hdrs-only, deliberately including ui_bridge.c: apps/lobby/src/main.c #includes ui_bridge.c
+# directly as TEXT (a unity-build-style include, not a separate translation unit) -- confirmed
+# against the real Makefile's own LOBBY_SRC, which never lists ui_bridge.c as a compiled source.
+# Bazel doesn't care about the .c extension in hdrs; it only needs to be a declared input file
+# available to whatever includes it.
+cc_library(
+    name = "ui",
+    hdrs = [
+        "turtle_text.h",
+        "ui_bridge.c",
+        "ui_bridge.h",
+    ],
+    visibility = ["//visibility:public"],
+)

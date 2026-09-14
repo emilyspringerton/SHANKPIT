@@ -9,6 +9,9 @@ release_client/
 *.a
 *.so
 *.zip
+
+# Bazel output symlinks/dirs (build outputs, not source)
+bazel-*
 __pycache__/
 *.pyc
 

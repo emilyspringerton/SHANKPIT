@@ -1,0 +1,27 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Bundled into one cc_library -- same real "a bag of files one real build path always compiles as
+# one unit" reasoning packages/goldenband's own BUILD.bazel gives; the Makefile's own LOBBY_SRC
+# always lists these 5 .c files together. material_shaders.h is header-only (no matching .c) --
+# S459-16's own real, named native shader registry, included here since it's this package's own
+# header, not compiled separately.
+cc_library(
+    name = "render",
+    srcs = [
+        "gl_shader.c",
+        "proc_tex.c",
+        "retro_lighting.c",
+        "retro_material.c",
+        "retro_sky.c",
+    ],
+    hdrs = [
+        "gl_shader.h",
+        "material_shaders.h",
+        "proc_tex.h",
+        "retro_lighting.h",
+        "retro_material.h",
+        "retro_sky.h",
+    ],
+    deps = ["//packages/common:common_headers"],
+    visibility = ["//visibility:public"],
+)

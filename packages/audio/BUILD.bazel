@@ -1,0 +1,9 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(
+    name = "audio",
+    srcs = ["audio.c"],
+    hdrs = ["audio.h"],
+    deps = ["//packages/common:common_headers"],
+    visibility = ["//visibility:public"],
+)

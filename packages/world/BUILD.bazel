@@ -1,0 +1,19 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# terrain.c is the one real compiled source here; level_boxes.h/spray_registry.h are header-only
+# (real curl-via-popen registry fetchers, S459-07/S459-19) -- included as hdrs since they're this
+# package's own headers, not compiled separately. Used by BOTH apps/lobby and apps/server (the
+# real Makefile's own LOBBY_SRC and SERVER_SRC both list packages/world/terrain.c), so this one
+# target is a correct, symmetric dependency for both binaries -- unlike packages/simulation below,
+# which needs splitting since lobby/server use different, asymmetric subsets of its own files.
+cc_library(
+    name = "world",
+    srcs = ["terrain.c"],
+    hdrs = [
+        "level_boxes.h",
+        "spray_registry.h",
+        "terrain.h",
+    ],
+    deps = ["//packages/common:common_headers"],
+    visibility = ["//visibility:public"],
+)
