@@ -157,11 +157,25 @@ static DynamicVBO g_flashlight_vbo;
 static int g_flashlight_shader_ready = 0;
 
 #define FLASHLIGHT_RANGE 55.0f
-#define FLASHLIGHT_HALF_ANGLE_DEG 20.0f
+/* Widened from 20 -> 27 degrees (founder real-time, 2026-09-14: "id like a bigger area
+   illuminated to a certain extent") -- this is the one real parameter that controls the
+   illuminated footprint, feeding BOTH the visible beam mesh (draw_flashlight_beam) and the
+   actual per-face wall-brightening cone test (flashlight_face_boost), so widening it genuinely
+   lights up more wall/floor surface, not just a bigger-looking sprite. */
+#define FLASHLIGHT_HALF_ANGLE_DEG 27.0f
 #define FLASHLIGHT_SEGMENTS 24
-#define FLASHLIGHT_APEX_OFFSET 1.0f /* the cone's apex starts this far in front of the eye, not
-    AT it -- a vertex exactly at the camera is a real clip-space singularity (w=0), see
-    draw_flashlight_beam's own doc comment on the apex vertex below for the full story */
+/* The cone's apex starts this far in front of the eye -- a vertex exactly AT the eye is a real
+   clip-space singularity (w=0, see draw_flashlight_beam's own doc comment below). Pulled IN
+   toward the eye from the original 1.0 (founder real-time, 2026-09-14: "can you pull the
+   flashlight cone like farther back into my head") -- "farther back into my head" reads as
+   wanting the beam's visible point-of-origin closer to the actual eye instead of floating a full
+   unit out in front of the face. Tried the opposite (a NEGATIVE offset, apex genuinely behind the
+   eye) first and reverted it: it doesn't even help the real "bigger area illuminated" goal --
+   the ring's radius only depends on FLASHLIGHT_HALF_ANGLE_DEG and beam_len below, not apex
+   position at all -- and it introduced a real, live-verified regression (the apex sitting behind
+   the camera made the whole cone vanish at close range instead of just shrinking). The actual
+   "bigger area" fix is FLASHLIGHT_HALF_ANGLE_DEG below. */
+#define FLASHLIGHT_APEX_OFFSET 0.15f
 
 static const char *g_flashlight_vs_src =
     "#version 120\n"
@@ -251,7 +265,30 @@ static void draw_flashlight_beam(const PlayerState *p) {
     float apex_x = eye_x + fx * FLASHLIGHT_APEX_OFFSET;
     float apex_y = eye_y + fy * FLASHLIGHT_APEX_OFFSET;
     float apex_z = eye_z + fz * FLASHLIGHT_APEX_OFFSET;
-    float cone_radius = FLASHLIGHT_RANGE * tanf(FLASHLIGHT_HALF_ANGLE_DEG * 0.0174533f);
+
+    /* REAL FIX (founder real-time, 2026-09-14: "when i go up close the light like clips into the
+       wall...it shouldnt disappear because it clips into the wall"): the cone's far ring used to
+       sit at a FIXED FLASHLIGHT_RANGE along forward no matter what, so up close to a wall most or
+       all of that ring -- and the triangles connecting to it -- ended up BEHIND the wall's own
+       surface. Depth testing (still enabled here; only depth WRITING is off, so the beam still
+       gets correctly occluded by real geometry) then failed for nearly the whole cone, making it
+       flicker out instead of shrinking gracefully. Fixed by raycasting forward (the same trace_map
+       hitscan spray_place_decal/weapon-fire already use) and clamping the cone's own real length
+       to whatever it actually hits, stopping just short of the surface -- the beam now shrinks in
+       length as you approach a wall (not just radius) and always terminates AT the surface, never
+       behind it, so nothing gets clipped away. */
+    float beam_len = FLASHLIGHT_RANGE;
+    {
+        float hx, hy, hz, hnx, hny, hnz;
+        float tx = eye_x + fx * FLASHLIGHT_RANGE, ty = eye_y + fy * FLASHLIGHT_RANGE, tz = eye_z + fz * FLASHLIGHT_RANGE;
+        if (trace_map(eye_x, eye_y, eye_z, tx, ty, tz, &hx, &hy, &hz, &hnx, &hny, &hnz)) {
+            float hdx = hx - eye_x, hdy = hy - eye_y, hdz = hz - eye_z;
+            float hit_dist = sqrtf(hdx * hdx + hdy * hdy + hdz * hdz) - 0.5f; /* small clearance so the ring never z-fights the surface it's terminating at */
+            if (hit_dist < 1.5f) hit_dist = 1.5f; /* real minimum so the cone never inverts when your nose is against the wall */
+            if (hit_dist < beam_len) beam_len = hit_dist;
+        }
+    }
+    float cone_radius = beam_len * tanf(FLASHLIGHT_HALF_ANGLE_DEG * 0.0174533f);
     float verts[GL_SHADER_VBO_FLOATS_PER_VERT * (FLASHLIGHT_SEGMENTS + 2)];
     int vi = 0;
     /* apex */
@@ -260,9 +297,9 @@ static void draw_flashlight_beam(const PlayerState *p) {
     for (int i = 0; i <= FLASHLIGHT_SEGMENTS; i++) {
         float ang = ((float)i / (float)FLASHLIGHT_SEGMENTS) * 6.28318531f;
         float ca = cosf(ang) * cone_radius, sa = sinf(ang) * cone_radius;
-        float px = eye_x + fx * FLASHLIGHT_RANGE + rx * ca + ux * sa;
-        float py = eye_y + fy * FLASHLIGHT_RANGE + ry * ca + uy * sa;
-        float pz = eye_z + fz * FLASHLIGHT_RANGE + rz * ca + uz * sa;
+        float px = eye_x + fx * beam_len + rx * ca + ux * sa;
+        float py = eye_y + fy * beam_len + ry * ca + uy * sa;
+        float pz = eye_z + fz * beam_len + rz * ca + uz * sa;
         verts[vi++] = px; verts[vi++] = py; verts[vi++] = pz;
         verts[vi++] = 1.0f; verts[vi++] = 1.0f; verts[vi++] = 0.0f;
     }
