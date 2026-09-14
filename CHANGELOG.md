@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-14
+- ops(deploy): live cutover -- the actively-developed SHANKPIT server + 3-bot QUEUE pool now serve the standard :6969 port, replacing the stale shankpit-460 fork's deployment (frozen since 2026-08-26, missing TDMO/sprays/lighting/QUEUE work) (sess-20260905-0720-ec33e7c5)
 - feat(queue): real networked bot queue (S459-34) -- MODE_QUEUE replaces the local-only TDMB menu tile, filled by real packet-level bot processes (emily-bot, adapted) matching BRAWLPIT's own standing bot-pool precedent, not in-process puppets. Live-verified 3-bot connect on isolated port. Release v0.26.0 cut clean (sess-20260905-0720-ec33e7c5)
 - fix(ci): both release.yml and tests.yml's Windows-build steps were missing the S459-33 PNG decoder sources (two independently hand-maintained copies of the same build command) -- CI was failing/no releases cutting since the sprays commit; real release v0.24.0 now cut clean (sess-20260905-0720-ec33e7c5)
 - fix(sprays): decal quads now keep the spray's real aspect ratio instead of squashing every spray into a fixed square (sess-20260905-0720-ec33e7c5)
