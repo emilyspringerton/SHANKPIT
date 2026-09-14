@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-14
+- Added SHADER_IPS_LIGHT: a real, unlit emissive material shader (packages/render/material_shaders.h) with its own distinct IPS-panel texture (proctex_make_ips_panel_rgba), closing a found-live gap where shader_name was parsed from level JSON but never threaded through to the renderer. NOCK's Materials panel gets a shader picker and the delete button is removed to prevent accidentally orphaning a hooked-up material. Commit 0a5bf71 (sess-20260905-0720-ec33e7c5)
 - Fixed spray decal aim (used stale networked yaw instead of live camera direction), flashlight beam disappearing at close range (now clamps to real wall-raycast distance) + widened footprint, and near-black daytime walls (added real sun/moon sky-fill light + brightened box tint that was double-darkening against real wall textures) -- commits 764a24a, ddf4bc3, 13825e2 (sess-20260905-0720-ec33e7c5)
 - Real per-face flashlight lighting: flashlight_face_boost replaces the old flat box-wide add with a genuine N.L term per face, flashlight_sources_gather extends it to every active player's flashlight (real multiplayer), beam cone alpha cut 0.85->0.16 so the lit wall itself is the dominant visual, not the cone sprite (commit 09fbf3a) (sess-20260905-0720-ec33e7c5)
 - Migrate build system from Makefile to Bazel: MODULE.bazel + per-package BUILD.bazel files, faithful port of the real Makefile source lists including a deliberate simulation package split (server vs lobby asymmetry). Verified via real bazelisk build + Xvfb live-check (commit 3dee65f) (sess-20260905-0720-ec33e7c5)
