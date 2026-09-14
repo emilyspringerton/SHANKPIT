@@ -231,10 +231,25 @@ static int map_count = 0;
 #define CUSTOM_LEVEL_MAX_BOXES 100 /* matches packages/world/level_boxes.h's own LEVEL_BOXES_MAX
                                        and IDUNA/internal/shankpit.MaxWalls exactly -- the same
                                        real cap enforced at the editor's own save time */
-static Box g_custom_level_geo[CUSTOM_LEVEL_MAX_BOXES];
-static float g_custom_level_r[CUSTOM_LEVEL_MAX_BOXES];
-static float g_custom_level_g[CUSTOM_LEVEL_MAX_BOXES];
-static float g_custom_level_b[CUSTOM_LEVEL_MAX_BOXES];
+// REAL, FOUND, LIVE BUG (2026-09-14, founder: "we have some kind of off by 1 error for the boxes
+// if i have 2 i only get 1 if i have 3 i only get 1"): every shared map_geo/map_count consumer in
+// this file (draw_map, trace_map_boxes, phys_sample_ground_height, and more) deliberately starts
+// its loop at index 1, not 0 -- a real, established convention for the hand-authored scenes above,
+// where map_geo[0] is always a large floor/under-slab box rendered/traced separately elsewhere so
+// re-drawing/re-tracing it here would be redundant. A NOCK-authored custom level has no such
+// "index 0 is a floor slab" box -- every box is real, author-placed geometry -- so that shared
+// convention silently ate the FIRST box of every custom level (1 box -> 0 visible/collidable, 2 ->
+// 1, 3 -> 2, etc; the founder's own "3 boxes -> only 1" report was a snapshot mid-investigation,
+// the actual boundary is "loses exactly your first box every time" regardless of count). Fixed
+// here, not in every shared loop (those loops and their skip-index-0 contract are real, load-
+// bearing for every OTHER scene and must not change): custom-level boxes are copied starting at
+// buffer index 1, leaving index 0 a real, deliberate, always-zeroed dummy box that the shared
+// skip-index-0 loops were already going to skip anyway -- so this file's own +1-sized buffers
+// need one extra slot of headroom over the real LEVEL_BOXES_MAX box count.
+static Box g_custom_level_geo[CUSTOM_LEVEL_MAX_BOXES + 1];
+static float g_custom_level_r[CUSTOM_LEVEL_MAX_BOXES + 1];
+static float g_custom_level_g[CUSTOM_LEVEL_MAX_BOXES + 1];
+static float g_custom_level_b[CUSTOM_LEVEL_MAX_BOXES + 1];
 static int g_custom_level_count = 0;
 
 // S459-08, founder real-time: "i want there to be a plane by default that the player collides
@@ -264,18 +279,23 @@ static inline void phys_set_custom_level(const float *x, const float *y, const f
                                           const float *r, const float *g, const float *b,
                                           int count, int ground_plane_enabled, int ground_plane_squares) {
     int n = count > CUSTOM_LEVEL_MAX_BOXES ? CUSTOM_LEVEL_MAX_BOXES : count;
+    // index 0 is a deliberate, always-zeroed dummy -- see the doc comment on g_custom_level_geo's
+    // own declaration above. Real boxes start at index 1, matching every shared map_geo consumer's
+    // own established skip-index-0 convention instead of fighting it per-callsite.
+    memset(&g_custom_level_geo[0], 0, sizeof(g_custom_level_geo[0]));
+    g_custom_level_r[0] = g_custom_level_g[0] = g_custom_level_b[0] = 0.0f;
     for (int i = 0; i < n; i++) {
-        g_custom_level_geo[i].x = x[i];
-        g_custom_level_geo[i].y = y[i];
-        g_custom_level_geo[i].z = z[i];
-        g_custom_level_geo[i].w = w[i];
-        g_custom_level_geo[i].h = h[i];
-        g_custom_level_geo[i].d = d[i];
-        g_custom_level_r[i] = r[i];
-        g_custom_level_g[i] = g[i];
-        g_custom_level_b[i] = b[i];
+        g_custom_level_geo[i + 1].x = x[i];
+        g_custom_level_geo[i + 1].y = y[i];
+        g_custom_level_geo[i + 1].z = z[i];
+        g_custom_level_geo[i + 1].w = w[i];
+        g_custom_level_geo[i + 1].h = h[i];
+        g_custom_level_geo[i + 1].d = d[i];
+        g_custom_level_r[i + 1] = r[i];
+        g_custom_level_g[i + 1] = g[i];
+        g_custom_level_b[i + 1] = b[i];
     }
-    g_custom_level_count = n;
+    g_custom_level_count = n + 1;
     g_custom_level_ground_plane_enabled = ground_plane_enabled;
     g_custom_level_ground_plane_squares = ground_plane_squares > 0 ? ground_plane_squares : 1;
 }
