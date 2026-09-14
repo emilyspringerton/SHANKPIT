@@ -102,7 +102,9 @@ The client currently includes:
 
 The lobby client defaults to:
 
-- host: `s.farthq.com`
+- host: `shankpit.okemily.com` (S459-36 -- the old `s.farthq.com` default silently pointed at a
+  stale, different box; replaced with a fresh, never-cached hostname matching BRAWLPIT's own
+  `<game>.okemily.com` convention rather than fighting DNS caching on the old record)
 - port: `6969`. :contentReference[oaicite:17]{index=17}
 
 This is still an actively evolving stack. The project favors clear packet semantics, aggressive diagnostics, and playable iteration over excessive abstraction.
@@ -565,7 +567,8 @@ Animations:
 **Protocol**: UDP (unreliable, connectionless)
 
 **Server Address**:
-- Primary: `s.farthq.com:5314`
+- Primary: `shankpit.okemily.com:6969` (S459-36; the port here was also stale -- 6969 is the real,
+  current port everywhere else in this doc and in code)
 - Fallback: `127.0.0.1:6969`
 
 **Socket Configuration**:

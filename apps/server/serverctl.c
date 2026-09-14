@@ -51,8 +51,8 @@ void kill_game() {
 void draw_ui(int selected) {
     clear();
 
-    mvprintw(1, 2, "FARTHQ SERVER CONTROL");
-    mvprintw(2, 2, "s.farthq.com (authoritative)");
+    mvprintw(1, 2, "SHANKPIT SERVER CONTROL");
+    mvprintw(2, 2, "shankpit.okemily.com (authoritative, S459-36)");
 
     mvprintw(4, 2, "Active Game:");
     if (game.running) {

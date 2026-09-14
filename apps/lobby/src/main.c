@@ -486,7 +486,20 @@ static int fixture_lights_gather(int scene_id, FixtureLight *out, float hps_flic
 #define STATE_GAME_LOCAL 2
 #define STATE_LISTEN_SERVER 99
 
-char SERVER_HOST[64] = "s.farthq.com";
+/* S459-36, founder real-time: "please use a new DNS like dont try to make the old records work
+ * that puts us in a confusing state use new records and point them at the services on THIS
+ * SERVER... that infrastructure never really worked feel free to set it up here nice so it
+ * matches our other services with matchmaking and servers like redgarden and ecowar etc." The old
+ * default (s.farthq.com) had been silently pointed at a completely different, stale box this
+ * whole session (S459-36's own real root-cause writeup, EMILY/BACKLOG.md) -- rather than fight
+ * DNS caching on that record (the founder's own real, correct instinct: old cached answers linger
+ * client-side regardless of how fast the record itself updates), this is a genuinely NEW
+ * hostname, never previously cached by anyone. Matches BRAWLPIT's own identical, already-solved
+ * precedent exactly (see that repo's apps/lobby/src/main.c, "BPMM-NEVER-WORKED" comment) --
+ * <game>.okemily.com -> 198.58.107.85 (this box's own real, live public IP, confirmed via
+ * `ss -ulnp` showing shank_server bound on 0.0.0.0:6969, not loopback-only). `--host` still
+ * overrides this for local dev/testing. */
+char SERVER_HOST[64] = "shankpit.okemily.com";
 int SERVER_PORT = 6969;
 static struct in_addr g_resolved_server_addr;
 static int g_server_addr_cached = 0;
