@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-14
+- feat: native sprays selection menu (replaces TDMO in the main menu) + real T-key spray-decal placement (raycast via trace_map, honest flat-color placeholder pending a real PNG decoder) (sess-20260905-0720-ec33e7c5)
 - fix: flashlight beam apex sat exactly at the camera eye (clip-space w=0, a real near-plane clipping singularity) collapsing the whole cone to ~8 pixels -- apex now starts 1 unit in front of the eye (sess-20260905-0720-ec33e7c5)
 - feat: block materials + real Blinn-Phong specular shader pass (SCENE_CUSTOM_LEVEL); fixes a real, found-live bug where a custom level picked from the menu silently reverted to garage the next frame (sess-20260905-0720-ec33e7c5)
 - feat: weapon 7 (flashlight) -- real GLSL-shaded cone beam + local world-brightening boost, key 7 to equip, off when you switch away (sess-20260905-0720-ec33e7c5)
