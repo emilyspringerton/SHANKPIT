@@ -265,6 +265,14 @@ static int g_custom_level_count = 0;
 #define CUSTOM_LEVEL_MATERIAL_NAME_LEN 32
 static int g_custom_level_material_idx[CUSTOM_LEVEL_MAX_BOXES + 1];
 static char g_custom_level_material_name[CUSTOM_LEVEL_MAX_MATERIALS][CUSTOM_LEVEL_MATERIAL_NAME_LEN];
+// g_custom_level_material_shader -- founder real-time, 2026-09-14: "can we design a material for
+// an IPS light its going to need a special shader build it in." level_boxes.h already parsed each
+// material's own real shader_name off the level JSON (LevelBoxMaterial's own field), but until now
+// nothing carried it past the loader -- phys_set_custom_level_materials only ever copied
+// name/specular/shininess, silently dropping shader_name on the floor before it ever reached the
+// renderer. This closes that real gap: draw_map's own material pass now reads this to pick
+// SHADER_STANDARD vs SHADER_IPS_LIGHT per box (packages/render/material_shaders.h).
+static char g_custom_level_material_shader[CUSTOM_LEVEL_MAX_MATERIALS][CUSTOM_LEVEL_MATERIAL_NAME_LEN];
 static float g_custom_level_material_specular[CUSTOM_LEVEL_MAX_MATERIALS];
 static float g_custom_level_material_shininess[CUSTOM_LEVEL_MAX_MATERIALS];
 static int g_custom_level_material_count = 0;
@@ -327,10 +335,12 @@ static inline void phys_set_custom_level(const float *x, const float *y, const f
 // ASCII identifiers (brick/concrete/wood/metal/...), matched against apps/lobby's own static
 // ProcTexture globals by name at render time -- see draw_map's own material-texture lookup.
 static inline void phys_set_custom_level_materials(const char names[][CUSTOM_LEVEL_MATERIAL_NAME_LEN],
+                                                     const char shaders[][CUSTOM_LEVEL_MATERIAL_NAME_LEN],
                                                      const float *specular, const float *shininess, int count) {
     int n = count > CUSTOM_LEVEL_MAX_MATERIALS ? CUSTOM_LEVEL_MAX_MATERIALS : count;
     for (int i = 0; i < n; i++) {
         snprintf(g_custom_level_material_name[i], CUSTOM_LEVEL_MATERIAL_NAME_LEN, "%s", names[i]);
+        snprintf(g_custom_level_material_shader[i], CUSTOM_LEVEL_MATERIAL_NAME_LEN, "%s", (shaders && shaders[i][0]) ? shaders[i] : "standard");
         g_custom_level_material_specular[i] = specular[i];
         g_custom_level_material_shininess[i] = shininess[i];
     }

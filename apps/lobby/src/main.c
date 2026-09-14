@@ -558,6 +558,11 @@ static ProcTexture g_wall_brick_tex = {0};
 static ProcTexture g_wall_concrete_tex = {0};
 static ProcTexture g_wall_wood_tex = {0};
 static ProcTexture g_wall_metal_tex = {0};
+// g_wall_ips_panel_tex -- SHADER_IPS_LIGHT's own real texture (founder real-time, 2026-09-14:
+// "can we design a material for an IPS light"). Deliberately its OWN generator (proctex_make_
+// ips_panel_rgba), not the brick fallback every other unrecognized name gets below -- a light
+// fixture needs to visually read as a glowing panel, not brick with a tint on top.
+static ProcTexture g_wall_ips_panel_tex = {0};
 static RetroSky g_retro_sky = {0};
 
 // material_texture_for_name maps a custom level's own real material name (from
@@ -570,6 +575,7 @@ static GLuint material_texture_for_name(const char *name) {
         if (strcmp(name, "concrete") == 0) return g_wall_concrete_tex.tex_id;
         if (strcmp(name, "wood") == 0) return g_wall_wood_tex.tex_id;
         if (strcmp(name, "metal") == 0) return g_wall_metal_tex.tex_id;
+        if (strcmp(name, "ips_light") == 0) return g_wall_ips_panel_tex.tex_id;
     }
     return g_wall_brick_tex.tex_id;
 }
@@ -1630,14 +1636,17 @@ static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
         material_idx[bi] = lvl->boxes[bi].material_idx;
     }
     char mat_names[LEVEL_BOXES_MAX_MATERIALS][CUSTOM_LEVEL_MATERIAL_NAME_LEN];
+    char mat_shaders[LEVEL_BOXES_MAX_MATERIALS][CUSTOM_LEVEL_MATERIAL_NAME_LEN];
     float mat_specular[LEVEL_BOXES_MAX_MATERIALS], mat_shininess[LEVEL_BOXES_MAX_MATERIALS];
     for (int mi = 0; mi < lvl->material_count; mi++) {
         strncpy(mat_names[mi], lvl->materials[mi].name, CUSTOM_LEVEL_MATERIAL_NAME_LEN - 1);
         mat_names[mi][CUSTOM_LEVEL_MATERIAL_NAME_LEN - 1] = '\0';
+        strncpy(mat_shaders[mi], lvl->materials[mi].shader_name, CUSTOM_LEVEL_MATERIAL_NAME_LEN - 1);
+        mat_shaders[mi][CUSTOM_LEVEL_MATERIAL_NAME_LEN - 1] = '\0';
         mat_specular[mi] = lvl->materials[mi].specular;
         mat_shininess[mi] = lvl->materials[mi].shininess;
     }
-    phys_set_custom_level_materials(mat_names, mat_specular, mat_shininess, lvl->material_count);
+    phys_set_custom_level_materials(mat_names, mat_shaders, mat_specular, mat_shininess, lvl->material_count);
     phys_set_custom_level(x, y, z, w, h, d, r, g, b, material_idx, lvl->count, lvl->ground_plane_enabled, lvl->ground_plane_squares);
 }
 
@@ -2290,6 +2299,20 @@ void draw_map(const RetroLightingState *lighting) {
 
     for(int i=1; i<map_count; i++) {
         Box b = map_geo[i];
+        /* SHADER_IPS_LIGHT (founder real-time, 2026-09-14: "can we design a material for an IPS
+           light its going to need a special shader build it in"): a light fixture material
+           shouldn't be darkened by day/night lighting or ground AO the way an ordinary wall
+           correctly is -- it's meant to look self-lit. Checked once per box, used below to
+           override this box's own base tint AND per-face lit multipliers to full bright before
+           the real emissive GLSL glow pass (draw_material_emissive_box) adds its own soft
+           highlight on top, at the same call site draw_material_specular_box already uses. */
+        int is_ips_light = 0;
+        if (phys_scene_id == SCENE_CUSTOM_LEVEL && i < CUSTOM_LEVEL_MAX_BOXES + 1) {
+            int box_mat_idx = g_custom_level_material_idx[i];
+            if (box_mat_idx >= 0 && box_mat_idx < g_custom_level_material_count) {
+                is_ips_light = (strcmp(g_custom_level_material_shader[box_mat_idx], SHADER_IPS_LIGHT) == 0);
+            }
+        }
         float style = 0.5f + 0.5f * sinf((b.x + b.z) * 0.003f);
         /* REAL FIX (founder real-time, 2026-09-14: "our walls are very dark during the day"):
            this per-box tint used to range 0.28-0.49 -- reasonable back when it WAS the wall's
@@ -2305,6 +2328,13 @@ void draw_map(const RetroLightingState *lighting) {
         float top_r = base_r * 1.12f, top_g = base_g * 1.12f, top_b = base_b * 1.12f;
         float side_r = base_r * 0.82f, side_g = base_g * 0.84f, side_b = base_b * 0.90f;
         float back_r = base_r * 0.73f, back_g = base_g * 0.77f, back_b = base_b * 0.84f;
+        if (is_ips_light) {
+            /* real, bright, cool-white-blue panel tone -- replaces the per-box hue-cycling tint
+               entirely, same tone draw_material_emissive_box's own glow_color uses */
+            base_r = top_r = side_r = back_r = 0.85f;
+            base_g = top_g = side_g = back_g = 0.92f;
+            base_b = top_b = side_b = back_b = 1.0f;
+        }
 
         float ground_ao = smoothstepf(12.0f, -14.0f, b.y - b.h * 0.5f);
         float top_lit_r = 1.0f, top_lit_g = 1.0f, top_lit_b = 1.0f;
@@ -2324,6 +2354,17 @@ void draw_map(const RetroLightingState *lighting) {
         back_lit_r *= 0.96f - ground_ao * 0.10f; back_lit_g *= 0.96f - ground_ao * 0.10f; back_lit_b *= 0.96f - ground_ao * 0.10f;
         left_lit_r *= 0.97f - ground_ao * 0.10f; left_lit_g *= 0.97f - ground_ao * 0.10f; left_lit_b *= 0.97f - ground_ao * 0.10f;
         right_lit_r *= 0.99f - ground_ao * 0.08f; right_lit_g *= 0.99f - ground_ao * 0.08f; right_lit_b *= 0.99f - ground_ao * 0.08f;
+
+        if (is_ips_light) {
+            /* skip day/night + ground-AO darkening entirely -- a light fixture reads as self-lit,
+               not modulated by the time of day the way a wall correctly is */
+            top_lit_r = top_lit_g = top_lit_b = 1.0f;
+            bot_lit_r = bot_lit_g = bot_lit_b = 1.0f;
+            front_lit_r = front_lit_g = front_lit_b = 1.0f;
+            back_lit_r = back_lit_g = back_lit_b = 1.0f;
+            left_lit_r = left_lit_g = left_lit_b = 1.0f;
+            right_lit_r = right_lit_g = right_lit_b = 1.0f;
+        }
 
         float dx = b.x - rp->x;
         float dz = b.z - rp->z;
@@ -2447,9 +2488,13 @@ void draw_map(const RetroLightingState *lighting) {
         if (material_pass_active && i < CUSTOM_LEVEL_MAX_BOXES + 1) {
             int mi = g_custom_level_material_idx[i];
             if (mi >= 0 && mi < g_custom_level_material_count) {
-                draw_material_specular_box(b.x, b.y, b.z, b.w, b.h, b.d,
-                                            g_custom_level_material_specular[mi], g_custom_level_material_shininess[mi],
-                                            material_mvp.m, material_light_dir, material_cam_pos);
+                if (is_ips_light) {
+                    draw_material_emissive_box(b.x, b.y, b.z, b.w, b.h, b.d, material_mvp.m, material_cam_pos);
+                } else {
+                    draw_material_specular_box(b.x, b.y, b.z, b.w, b.h, b.d,
+                                                g_custom_level_material_specular[mi], g_custom_level_material_shininess[mi],
+                                                material_mvp.m, material_light_dir, material_cam_pos);
+                }
             }
         }
     }
@@ -8369,6 +8414,7 @@ int main(int argc, char* argv[]) {
     gband_shader_and_mesh_init();
     flashlight_shader_init();
     material_shader_init();
+    ips_light_shader_init();
     proctex_init();
     proc_tex_create(&g_vehicle_noise_tex, 64, 64);
     proctex_make_noise_rgba(&g_vehicle_noise_tex, 64, 64, g_vehicle_style.seed);
@@ -8391,6 +8437,9 @@ int main(int argc, char* argv[]) {
     proc_tex_create(&g_wall_metal_tex, 128, 128);
     proctex_make_metal_rgba(&g_wall_metal_tex, 128, 128, 0x5511u);
     proctex_upload_to_gl(&g_wall_metal_tex);
+    proc_tex_create(&g_wall_ips_panel_tex, 128, 128);
+    proctex_make_ips_panel_rgba(&g_wall_ips_panel_tex, 128, 128, 0x1550u);
+    proctex_upload_to_gl(&g_wall_ips_panel_tex);
     retro_sky_init(&g_retro_sky);
     net_init();
     

@@ -320,6 +320,35 @@ void proctex_make_metal_rgba(ProcTexture *t, int w, int h, uint32_t seed) {
     }
 }
 
+/* proctex_make_ips_panel_rgba -- founder real-time, 2026-09-14: "can we design a material for an
+ * IPS light its going to need a special shader build it in." A real, distinct texture for the new
+ * SHADER_IPS_LIGHT material (packages/render/material_shaders.h) -- deliberately NOT reusing the
+ * brick fallback material_texture_for_name would otherwise give an unrecognized name, since a
+ * light fixture needs to visually read as a glowing panel, not brick with a tint. A fine pixel-
+ * cell grid (real IPS/LCD panel reference: individual backlit cells behind a thin dark grid,
+ * unlike brick's mortar joints or wood's plank seams) on a bright, cool white-blue base -- the
+ * same real glow_color tone draw_material_emissive_box's own additive pass uses, so the texture
+ * and the emissive overlay read as one consistent light source, not two different colors fighting.
+ */
+void proctex_make_ips_panel_rgba(ProcTexture *t, int w, int h, uint32_t seed) {
+    if (!t || !t->pixels || t->width != w || t->height != h) return;
+    const int cell = 6; /* pixel-cell size -- fine enough to read as a panel grid, not a checkerboard */
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            size_t idx = ((size_t)y * (size_t)w + (size_t)x) * 4u;
+            int gx = x % cell, gy = y % cell;
+            int on_grid_line = (gx == 0 || gy == 0);
+            float cell_shimmer = 0.92f + 0.08f * hash_2d(x / cell, y / cell, (int)seed);
+            float base = on_grid_line ? 0.55f : 1.0f;
+            float shade = base * cell_shimmer;
+            t->pixels[idx + 0] = (unsigned char)(shade * 217.0f); /* 0.85 * 255 */
+            t->pixels[idx + 1] = (unsigned char)(shade * 235.0f); /* 0.92 * 255 */
+            t->pixels[idx + 2] = (unsigned char)(shade * 255.0f > 255.0f ? 255.0f : shade * 255.0f);
+            t->pixels[idx + 3] = 255;
+        }
+    }
+}
+
 void proc_tex_fill_emily_vibe(ProcTexture *t, float seed, float t_sec) {
     if (!t || !t->pixels) return;
 

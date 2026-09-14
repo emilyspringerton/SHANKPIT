@@ -153,4 +153,103 @@ static inline void draw_material_specular_box(float x, float y, float z, float w
     glDepthMask(GL_TRUE);
 }
 
+// SHADER_IPS_LIGHT (founder real-time, 2026-09-14: "can we design a material for an IPS light its
+// going to need a special shader build it in") -- a real, unlit EMISSIVE pass, genuinely
+// different from SHADER_STANDARD's additive-highlight-on-top-of-lit-color treatment: a light
+// fixture shouldn't itself go dark on its unlit side the way an ordinary wall correctly does.
+// draw_map's own material pass (apps/lobby/src/main.c) forces this box's base per-face lit_r/g/b
+// to full bright BEFORE texturing for ips_light boxes (skipping the normal day/night darkening
+// entirely), and this pass then adds a real, soft, view-independent glow on top -- a cool white-
+// blue tone matching a real IPS display panel's own backlight color, with a gentle center-hotspot
+// falloff (fresnel-ish, brighter face-on than at grazing angles, same real "v of view dir vs
+// normal" idea the specular pass above already uses for its own highlight) so a flat panel reads
+// as glowing, not just flat-painted.
+#define SHADER_IPS_LIGHT "ips_light"
+
+static GLuint g_ips_light_shader_program = 0;
+static DynamicVBO g_ips_light_shader_vbo;
+static int g_ips_light_shader_ready = 0;
+
+static const char *g_ips_light_fs_src =
+    "#version 120\n"
+    "uniform vec3 u_cam_pos;\n"
+    "uniform vec3 u_glow_color;\n"
+    "uniform float u_intensity;\n"
+    "varying vec3 v_normal;\n"
+    "varying vec3 v_world_pos;\n"
+    "void main() {\n"
+    "    vec3 n = normalize(v_normal);\n"
+    "    vec3 v = normalize(u_cam_pos - v_world_pos);\n"
+    "    float facing = max(dot(n, v), 0.0);\n"
+    "    float glow = mix(0.55, 1.0, facing);\n"
+    "    gl_FragColor = vec4(u_glow_color * u_intensity * glow, 1.0);\n"
+    "}\n";
+
+static inline void ips_light_shader_init(void) {
+    if (!gl_shader_load_extensions()) {
+        SDL_Log("material_shaders: GL extension loading failed -- ips_light pass disabled");
+        return;
+    }
+    GLuint vs = gl_compile_shader(GL_VERTEX_SHADER, g_material_shader_vs_src);
+    GLuint fs = gl_compile_shader(GL_FRAGMENT_SHADER, g_ips_light_fs_src);
+    g_ips_light_shader_program = gl_link_program(vs, fs);
+    if (!g_ips_light_shader_program) {
+        SDL_Log("material_shaders: ips_light shader link failed -- pass disabled");
+        return;
+    }
+    if (!gl_dynamic_vbo_init(&g_ips_light_shader_vbo, 48)) {
+        SDL_Log("material_shaders: ips_light VBO init failed -- pass disabled");
+        return;
+    }
+    g_ips_light_shader_ready = 1;
+    SDL_Log("material_shaders: SHADER_IPS_LIGHT (emissive panel) ready");
+}
+
+// draw_material_emissive_box -- same real 36-vert box-with-outward-normals shape
+// draw_material_specular_box already builds (kept as a literal, separate copy rather than a
+// shared helper -- the two functions' own uniform sets genuinely differ, and this whole file's
+// own established pattern is one self-contained function per named shader, not a shared/branching
+// one). mvp is camera-only, same "bake the transform into the verts" contract as every other real
+// box-drawing call site in this codebase.
+static inline void draw_material_emissive_box(float x, float y, float z, float w, float h, float d,
+                                                const float *mvp16, const float *cam_pos) {
+    if (!g_ips_light_shader_ready) return;
+
+    float hw = w * 0.5f, hh = h * 0.5f, hd = d * 0.5f;
+    float verts[36 * 6];
+    int vi = 0;
+#define V(px, py, pz, nx, ny, nz) \
+    verts[vi++] = x + (px); verts[vi++] = y + (py); verts[vi++] = z + (pz); \
+    verts[vi++] = (nx); verts[vi++] = (ny); verts[vi++] = (nz);
+    V(-hw, hh, hd, 0, 1, 0) V(hw, hh, hd, 0, 1, 0) V(hw, hh, -hd, 0, 1, 0)
+    V(-hw, hh, hd, 0, 1, 0) V(hw, hh, -hd, 0, 1, 0) V(-hw, hh, -hd, 0, 1, 0)
+    V(-hw, -hh, -hd, 0, -1, 0) V(hw, -hh, -hd, 0, -1, 0) V(hw, -hh, hd, 0, -1, 0)
+    V(-hw, -hh, -hd, 0, -1, 0) V(hw, -hh, hd, 0, -1, 0) V(-hw, -hh, hd, 0, -1, 0)
+    V(-hw, -hh, hd, 0, 0, 1) V(hw, -hh, hd, 0, 0, 1) V(hw, hh, hd, 0, 0, 1)
+    V(-hw, -hh, hd, 0, 0, 1) V(hw, hh, hd, 0, 0, 1) V(-hw, hh, hd, 0, 0, 1)
+    V(hw, -hh, -hd, 0, 0, -1) V(-hw, -hh, -hd, 0, 0, -1) V(-hw, hh, -hd, 0, 0, -1)
+    V(hw, -hh, -hd, 0, 0, -1) V(-hw, hh, -hd, 0, 0, -1) V(hw, hh, -hd, 0, 0, -1)
+    V(-hw, -hh, -hd, -1, 0, 0) V(-hw, -hh, hd, -1, 0, 0) V(-hw, hh, hd, -1, 0, 0)
+    V(-hw, -hh, -hd, -1, 0, 0) V(-hw, hh, hd, -1, 0, 0) V(-hw, hh, -hd, -1, 0, 0)
+    V(hw, -hh, hd, 1, 0, 0) V(hw, -hh, -hd, 1, 0, 0) V(hw, hh, -hd, 1, 0, 0)
+    V(hw, -hh, hd, 1, 0, 0) V(hw, hh, -hd, 1, 0, 0) V(hw, hh, hd, 1, 0, 0)
+#undef V
+
+    static const float glow_color[3] = {0.75f, 0.88f, 1.0f}; /* cool white-blue, real IPS-panel backlight tone */
+    const float intensity = 0.55f; /* additive -- kept moderate since the base pass is already forced full-bright */
+
+    glDepthMask(GL_FALSE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    gl_use_program(g_ips_light_shader_program);
+    gl_uniform_matrix4fv(gl_get_uniform_location(g_ips_light_shader_program, "u_mvp"), mvp16);
+    gl_uniform3fv(gl_get_uniform_location(g_ips_light_shader_program, "u_cam_pos"), cam_pos);
+    gl_uniform3fv(gl_get_uniform_location(g_ips_light_shader_program, "u_glow_color"), glow_color);
+    gl_uniform1f(gl_get_uniform_location(g_ips_light_shader_program, "u_intensity"), intensity);
+    gl_dynamic_vbo_draw(&g_ips_light_shader_vbo, verts, 36, GL_TRIANGLES);
+    gl_use_program(0);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_TRUE);
+}
+
 #endif

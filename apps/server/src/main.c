@@ -945,14 +945,17 @@ int main(int argc, char *argv[]) {
                     material_idx[bi] = lvl.boxes[bi].material_idx;
                 }
                 char mat_names[LEVEL_BOXES_MAX_MATERIALS][CUSTOM_LEVEL_MATERIAL_NAME_LEN];
+                char mat_shaders[LEVEL_BOXES_MAX_MATERIALS][CUSTOM_LEVEL_MATERIAL_NAME_LEN];
                 float mat_specular[LEVEL_BOXES_MAX_MATERIALS], mat_shininess[LEVEL_BOXES_MAX_MATERIALS];
                 for (int mi = 0; mi < lvl.material_count; mi++) {
                     strncpy(mat_names[mi], lvl.materials[mi].name, CUSTOM_LEVEL_MATERIAL_NAME_LEN - 1);
                     mat_names[mi][CUSTOM_LEVEL_MATERIAL_NAME_LEN - 1] = '\0';
+                    strncpy(mat_shaders[mi], lvl.materials[mi].shader_name, CUSTOM_LEVEL_MATERIAL_NAME_LEN - 1);
+                    mat_shaders[mi][CUSTOM_LEVEL_MATERIAL_NAME_LEN - 1] = '\0';
                     mat_specular[mi] = lvl.materials[mi].specular;
                     mat_shininess[mi] = lvl.materials[mi].shininess;
                 }
-                phys_set_custom_level_materials(mat_names, mat_specular, mat_shininess, lvl.material_count);
+                phys_set_custom_level_materials(mat_names, mat_shaders, mat_specular, mat_shininess, lvl.material_count);
                 phys_set_custom_level(x, y, z, w, h, d, r, g, b, material_idx, lvl.count, lvl.ground_plane_enabled, lvl.ground_plane_squares);
                 g_server_match_scene = SCENE_CUSTOM_LEVEL;
                 scene_load(g_server_match_scene);
