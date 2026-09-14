@@ -1636,7 +1636,22 @@ static void spray_select_confirm(void) {
 // placeholder, not the spray's real uploaded artwork.
 #define SPRAY_PLACE_RANGE 40.0f
 static void spray_place_decal(void) {
-    if (g_selected_spray_id < 0) return;
+    // Lazy default-select: a player who never opened the LOBBY_SPRAYS menu had g_selected_spray_id
+    // stuck at -1 forever, so T was a silent no-op with zero feedback (founder real-time, 2026-09-14:
+    // "T doesn't actually do anything"). Fall back to the registry's own is_default entry here,
+    // matching NOCK's whole reason for having a default in the first place -- "set the default" so
+    // spraying works out of the box without a menu visit.
+    if (g_selected_spray_id < 0) {
+        int count = spray_registry_fetch_list(spray_select_entries, SPRAY_SELECT_MAX_ENTRIES);
+        for (int i = 0; i < count; i++) {
+            if (spray_select_entries[i].is_default) {
+                g_selected_spray_id = spray_select_entries[i].id;
+                snprintf(g_selected_spray_name, sizeof(g_selected_spray_name), "%s", spray_select_entries[i].name);
+                break;
+            }
+        }
+        if (g_selected_spray_id < 0) return;
+    }
     int ref_id = (my_client_id >= 0 && my_client_id < MAX_CLIENTS) ? my_client_id : 0;
     PlayerState *p = &local_state.players[ref_id];
     float eye_x = p->x, eye_y = p->y + (p->crouching ? 2.5f : EYE_HEIGHT), eye_z = p->z;
