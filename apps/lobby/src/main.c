@@ -529,11 +529,10 @@ int g_selected_spray_id = -1;
 char g_selected_spray_name[SPRAY_REGISTRY_NAME_LEN] = "";
 
 // Spray decals (S459-23, founder real-time: "T SPRAYS YOUR DECAL ON THE WALL" -- earlier session
-// -- "remap that key to spray"). A real, bounded ring buffer of placed decals, each a flat-
-// colored quad oriented to the real hit surface normal -- see draw_spray_decals' own doc comment
-// for why the color is a deterministic hash of the spray id rather than its real uploaded artwork
-// (no PNG decoder exists natively yet, same real gap S459-16 already named for material texture
-// overrides).
+// -- "remap that key to spray"). A real, bounded ring buffer of placed decals, each a real quad
+// oriented to the hit surface normal, textured with the spray's own real uploaded artwork
+// (S459-33) when it decodes -- see draw_spray_decals' own doc comment for the real, honest
+// fallback (a flat hash-derived color) for a spray whose PNG can't be fetched/decoded.
 #define SPRAY_DECAL_MAX 64
 typedef struct {
     float x, y, z;
@@ -543,6 +542,40 @@ typedef struct {
 } SprayDecal;
 SprayDecal g_spray_decals[SPRAY_DECAL_MAX];
 int g_spray_decal_count = 0;
+
+// Spray texture cache (S459-33) -- lazy-decoded once per distinct spray id actually placed this
+// session (not eagerly for the whole registry), kept alive for the process lifetime same as every
+// other proc-gen GL texture in this file. `state` distinguishes "never tried" (0) from "tried and
+// failed" (2, e.g. offline/unsupported PNG shape) from "real texture ready" (1) so a failed decode
+// isn't silently retried every single frame.
+#define SPRAY_TEX_CACHE_MAX 32
+typedef struct {
+    int spray_id;
+    ProcTexture tex;
+    int state; /* 0=unset 1=ready 2=failed */
+} SprayTexCacheEntry;
+SprayTexCacheEntry g_spray_tex_cache[SPRAY_TEX_CACHE_MAX];
+int g_spray_tex_cache_count = 0;
+
+// spray_tex_for_id -- returns the real, decoded GL texture id for a spray (lazily decoding and
+// caching it on first use), or 0 if it's never going to have one (offline registry, unsupported
+// PNG shape) -- callers fall back to the existing hash-color placeholder on 0.
+static GLuint spray_tex_for_id(int spray_id) {
+    for (int i = 0; i < g_spray_tex_cache_count; i++) {
+        if (g_spray_tex_cache[i].spray_id == spray_id) {
+            return g_spray_tex_cache[i].state == 1 ? g_spray_tex_cache[i].tex.tex_id : 0;
+        }
+    }
+    if (g_spray_tex_cache_count >= SPRAY_TEX_CACHE_MAX) return 0; /* real, bounded cache -- oldest entries just stay uncached */
+    SprayTexCacheEntry *e = &g_spray_tex_cache[g_spray_tex_cache_count++];
+    e->spray_id = spray_id;
+    if (spray_registry_decode_image(spray_id, &e->tex)) {
+        e->state = 1;
+        return e->tex.tex_id;
+    }
+    e->state = 2;
+    return 0;
+}
 int g_spray_decal_next = 0;
 
 static int g_paused = 0;
@@ -1847,12 +1880,12 @@ static void spray_place_decal(void) {
     if (g_spray_decal_count < SPRAY_DECAL_MAX) g_spray_decal_count++;
 }
 
-// draw_spray_decals renders every active decal in the given scene as a small, flat-colored quad
-// oriented to its own real hit normal. REAL, HONEST, NOT YET BUILT: the color is a deterministic
-// hash of the spray's own id, NOT its real uploaded artwork -- SHANKPIT's native client has no PNG
-// decoder (proc_tex.c only ever generates RGBA procedurally), the same real gap S459-16 already
-// named for material texture overrides. A real decal placement mechanism, honestly placeholder
-// pixels until that lands.
+// draw_spray_decals renders every active decal in the given scene as a small quad oriented to its
+// own real hit normal, textured with the spray's own real uploaded artwork when
+// spray_tex_for_id (S459-33) has one ready. Real, honest fallback: a flat, deterministic
+// hash-of-id color for any spray whose real PNG can't be fetched (offline registry) or falls
+// outside png_decode's own honest v0 scope (paletted/16-bit/interlaced) -- never garbage pixels,
+// never a hard failure.
 static void spray_decal_color_for_id(int id, float *r, float *g, float *b) {
     unsigned int h = (unsigned int)id * 2654435761u;
     *r = 0.35f + 0.5f * ((h & 0xFF) / 255.0f);
@@ -1862,12 +1895,10 @@ static void spray_decal_color_for_id(int id, float *r, float *g, float *b) {
 
 static void draw_spray_decals(int scene_id) {
     if (g_spray_decal_count == 0) return;
-    glDisable(GL_TEXTURE_2D);
     for (int i = 0; i < g_spray_decal_count; i++) {
         SprayDecal *d = &g_spray_decals[i];
         if (d->scene_id != scene_id) continue;
-        float r, g, b;
-        spray_decal_color_for_id(d->spray_id, &r, &g, &b);
+        GLuint tex = spray_tex_for_id(d->spray_id);
         float upx = 0.0f, upy = 1.0f, upz = 0.0f;
         if (fabsf(d->ny) > 0.98f) { upx = 0.0f; upy = 0.0f; upz = 1.0f; }
         float rx = d->ny * upz - d->nz * upy, ry = d->nz * upx - d->nx * upz, rz = d->nx * upy - d->ny * upx;
@@ -1877,13 +1908,30 @@ static void draw_spray_decals(int scene_id) {
         float ux = ry * d->nz - rz * d->ny, uy = rz * d->nx - rx * d->nz, uz = rx * d->ny - ry * d->nx;
         const float sz = 1.1f; /* real, small, world-unit decal half-size */
         float ox = d->x + d->nx * 0.05f, oy = d->y + d->ny * 0.05f, oz = d->z + d->nz * 0.05f; /* nudged off the surface to avoid z-fighting */
-        glColor3f(r, g, b);
-        glBegin(GL_QUADS);
-        glVertex3f(ox - rx * sz - ux * sz, oy - ry * sz - uy * sz, oz - rz * sz - uz * sz);
-        glVertex3f(ox + rx * sz - ux * sz, oy + ry * sz - uy * sz, oz + rz * sz - uz * sz);
-        glVertex3f(ox + rx * sz + ux * sz, oy + ry * sz + uy * sz, oz + rz * sz + uz * sz);
-        glVertex3f(ox - rx * sz + ux * sz, oy - ry * sz + uy * sz, oz - rz * sz + uz * sz);
-        glEnd();
+        if (tex != 0) {
+            glEnable(GL_TEXTURE_2D);
+            glBindTexture(GL_TEXTURE_2D, tex);
+            glColor3f(1.0f, 1.0f, 1.0f);
+            glBegin(GL_QUADS);
+            glTexCoord2f(0.0f, 1.0f); glVertex3f(ox - rx * sz - ux * sz, oy - ry * sz - uy * sz, oz - rz * sz - uz * sz);
+            glTexCoord2f(1.0f, 1.0f); glVertex3f(ox + rx * sz - ux * sz, oy + ry * sz - uy * sz, oz + rz * sz - uz * sz);
+            glTexCoord2f(1.0f, 0.0f); glVertex3f(ox + rx * sz + ux * sz, oy + ry * sz + uy * sz, oz + rz * sz + uz * sz);
+            glTexCoord2f(0.0f, 0.0f); glVertex3f(ox - rx * sz + ux * sz, oy - ry * sz + uy * sz, oz - rz * sz + uz * sz);
+            glEnd();
+            glBindTexture(GL_TEXTURE_2D, 0);
+            glDisable(GL_TEXTURE_2D);
+        } else {
+            float r, g, b;
+            spray_decal_color_for_id(d->spray_id, &r, &g, &b);
+            glDisable(GL_TEXTURE_2D);
+            glColor3f(r, g, b);
+            glBegin(GL_QUADS);
+            glVertex3f(ox - rx * sz - ux * sz, oy - ry * sz - uy * sz, oz - rz * sz - uz * sz);
+            glVertex3f(ox + rx * sz - ux * sz, oy + ry * sz - uy * sz, oz + rz * sz - uz * sz);
+            glVertex3f(ox + rx * sz + ux * sz, oy + ry * sz + uy * sz, oz + rz * sz + uz * sz);
+            glVertex3f(ox - rx * sz + ux * sz, oy - ry * sz + uy * sz, oz - rz * sz + uz * sz);
+            glEnd();
+        }
     }
 }
 

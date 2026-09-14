@@ -8,12 +8,32 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 # which needs splitting since lobby/server use different, asymmetric subsets of its own files.
 cc_library(
     name = "world",
-    srcs = ["terrain.c"],
+    srcs = [
+        "terrain.c",
+        # S459-33 -- the real PARENA-compiled PNG decoder (built from PARENA/stdlib/image/png.prn
+        # + compress/inflate.prn via `parena build`, checked in, not re-generated at build time --
+        # same real "generated .c, do not edit by hand" convention packages/simulation/
+        # cutscene_effect_mod.c already established) plus its own minimal, hand-vendored
+        # Arena/Vec/Bytes runtime (parena_runtime.c/.h -- a real, narrower subset of PARENA/
+        # runtime/parena_runtime.h, which unconditionally pulls in SDL2 + POSIX networking/tty/
+        # hardware headers this package has no business needing).
+        "parena_runtime.c",
+        "png_decode_gen.c",
+    ],
     hdrs = [
         "level_boxes.h",
         "spray_registry.h",
         "terrain.h",
+        "parena_runtime.h",
+        "png_decode.h",
     ],
-    deps = ["//packages/common:common_headers"],
+    # spray_registry.h's own real S459-33 texture decode/upload needs packages/render's
+    # ProcTexture (proc_tex.h) -- only ever referenced by apps/lobby's own draw code, never by
+    # apps/server (headless, never includes spray_registry.h), so this new dependency doesn't
+    # pull GL into the server binary in practice.
+    deps = [
+        "//packages/common:common_headers",
+        "//packages/render",
+    ],
     visibility = ["//visibility:public"],
 )
