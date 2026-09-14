@@ -1,0 +1,32 @@
+# SHANKPIT game server — user-level systemd unit (no sudo required)
+#
+# S459-34, founder real-time: "we want that for SHANKPIT so we can start making that experience
+# better... we need that bot pool with like 3 bots so i can join up and get into a game." Replaces
+# the older shankpit460-server.service (a separate, stale fork's own deployment, frozen since
+# 2026-08-26 -- 902 lines vs. this repo's own actively-developed 1271-line apps/server/src/main.c,
+# missing MODE_TDMO population improvements, sprays, lighting work, and this same commit's own
+# MODE_QUEUE) as the real, live SHANKPIT instance on the standard port.
+#
+# Deploy:
+#   mkdir -p ~/.config/systemd/user
+#   cp ops/systemd/shankpit-server.service ~/.config/systemd/user/
+#   make server   (from the repo root -- builds bin/shank_server)
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now shankpit-server.service
+
+[Unit]
+Description=SHANKPIT game server (UDP :6969)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/fatbaby/SHANKPIT
+ExecStart=/home/fatbaby/SHANKPIT/bin/shank_server --deathmatch
+Restart=on-failure
+RestartSec=10s
+StandardOutput=append:/home/fatbaby/SHANKPIT/var/logs/server.log
+StandardError=append:/home/fatbaby/SHANKPIT/var/logs/server.log
+MemoryMax=256M
+
+[Install]
+WantedBy=default.target

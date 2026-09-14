@@ -33,5 +33,9 @@ a.out
 # Go module cache (appears when GOPATH is set to repo root).
 pkg/
 
+# Real, live systemd unit log output (ops/systemd/shankpit-server.service's own
+# StandardOutput/StandardError append targets, S459-34) -- runtime data, not source.
+var/logs/
+
 # Claude Code session directory.
 .claude/
