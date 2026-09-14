@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-14
+- S459-43/44/45/46: QUEUE round timer, fixed a real PacketSnapshot decode bug in emily-bot (was reading garbage peer state), built 72-feature bot observation vector + 4-tier reward system (physics.h's existing reward_feedback signal as the outcome tier), team rewards architected but FFA-only for now (sess-20260905-0720-ec33e7c5)
 - S459-41: QUEUE default level now driven by is_default_queue admin flag (NEWPIT live), fixed ea-windows Makefile target (x86_64 mingw, was i686) (sess-20260905-0720-ec33e7c5)
 - fix(net): CRITICAL -- other players were never rendered anywhere online (PlayerState.id never set in the networked snapshot path, breaking the self-exclusion draw filter for every other player too). Found via a real 2-client Xvfb test. Affects every networked mode, not just QUEUE (sess-20260905-0720-ec33e7c5)
 - fix(physics): jump teleported player outside walls in nested/embedded levels -- resolve_collision recomputed prev_y from an already-zeroed vy for boxes checked after the first overlapping box in a tick, misclassifying side collisions as landings (sess-20260905-0720-ec33e7c5)
