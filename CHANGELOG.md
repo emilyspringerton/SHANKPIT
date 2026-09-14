@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-14
+- feat(sprays): real PNG-decoded spray decal textures -- decals now show the spray's actual uploaded artwork instead of a flat hash-color placeholder, via a real PARENA-compiled PNG decoder (sess-20260905-0720-ec33e7c5)
 - Added a soft, round, camera-facing glow billboard (draw_light_glow_billboard) at each IPS/HPS light fixture -- fixes the blocky/square look of the per-box wall-lighting halo with a real radial-falloff additive sprite. Commit 602d2e0 (sess-20260905-0720-ec33e7c5)
 - IPS/HPS light materials now cast real light onto nearby walls (fixture_light_face_boost/fixture_lights_gather), the same per-face N.L falloff treatment the flashlight already has -- previously they only brightened their own box. Commit 28bd7fa (sess-20260905-0720-ec33e7c5)
 - Added SHADER_HPS_LIGHT: a real, animated flickering sodium-vapor emissive material (sum of non-harmonic sine waves, computed once per frame) with its own warm-amber bulb texture (proctex_make_hps_bulb_rgba), following the SHADER_IPS_LIGHT pattern. Commit 4b64b47 (sess-20260905-0720-ec33e7c5)
