@@ -39,6 +39,7 @@
 #include "../../../packages/simulation/cutscene.h"
 #include "../../../packages/simulation/typing_lesson.h"
 #include "../../../packages/simulation/local_game.h"
+#include "../../../packages/world/level_boxes.h"
 #include "../../../packages/render/proc_tex.h"
 #include "../../../packages/render/retro_sky.h"
 #include "../../../packages/render/retro_lighting.h"
@@ -7453,6 +7454,32 @@ int main(int argc, char* argv[]) {
     for(int i=1; i<argc; i++) {
         if(strcmp(argv[i], "--host") == 0 && i+1<argc) {
             strncpy(SERVER_HOST, argv[++i], 63);
+        } else if(strcmp(argv[i], "--level") == 0 && i+1<argc) {
+            // A level authored in NOCK's SHANKPIT level editor (EMILY/BACKLOG.md SECTION 459).
+            // Real, existing convention this matches exactly: every other scene's own map_geo is
+            // an IDENTICAL, independently-compiled-in copy on both server and client, never
+            // transmitted over the wire -- box geometry isn't part of the network protocol at
+            // all, only the scene_id selecting which locally-known geometry to point map_geo at
+            // (see phys_set_scene's own real, per-scene branches). A custom level follows the
+            // same real contract: this client must be launched with the SAME --level path the
+            // server was, so both sides independently load identical geometry; the server's own
+            // real, authoritative scene_id=SCENE_CUSTOM_LEVEL broadcast is what actually selects
+            // it here (see the phys_set_scene(scene_id) call sites already driven by the server's
+            // own snapshot, e.g. around load_skin_selection() below) -- this flag only loads the
+            // geometry itself, it does not force the scene on its own.
+            CustomLevelData lvl;
+            if (level_boxes_load_from_file(argv[i+1], &lvl)) {
+                float x[LEVEL_BOXES_MAX], y[LEVEL_BOXES_MAX], z[LEVEL_BOXES_MAX];
+                float w[LEVEL_BOXES_MAX], h[LEVEL_BOXES_MAX], d[LEVEL_BOXES_MAX];
+                float r[LEVEL_BOXES_MAX], g[LEVEL_BOXES_MAX], b[LEVEL_BOXES_MAX];
+                for (int bi = 0; bi < lvl.count; bi++) {
+                    x[bi] = lvl.boxes[bi].x; y[bi] = lvl.boxes[bi].y; z[bi] = lvl.boxes[bi].z;
+                    w[bi] = lvl.boxes[bi].w; h[bi] = lvl.boxes[bi].h; d[bi] = lvl.boxes[bi].d;
+                    r[bi] = lvl.boxes[bi].r; g[bi] = lvl.boxes[bi].g; b[bi] = lvl.boxes[bi].b;
+                }
+                phys_set_custom_level(x, y, z, w, h, d, r, g, b, lvl.count);
+            }
+            i++;
         }
     }
 

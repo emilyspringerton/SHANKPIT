@@ -220,6 +220,49 @@ static int map_geo_story_cave_init = 0;
 static const Box *map_geo = map_geo_stadium;
 static int map_count = 0;
 
+// SCENE_CUSTOM_LEVEL -- a level authored in NOCK's SHANKPIT level editor (EMILY/BACKLOG.md
+// SECTION 459, founder real-time: "get the level loading to work"). Same real, established
+// per-scene map_geo/map_count pattern every other scene above already uses -- deliberately a
+// plain, separate, MUTABLE buffer (not one more `static const Box[]` compiled-in array) since
+// this one's real contents come from a runtime-loaded file, not source code. Colors are real,
+// separate parallel arrays (indexed the same as map_geo) since Box itself has no color field and
+// every other scene's own geometry doesn't need one (hand-tuned per-scene rendering already
+// exists elsewhere) -- only a NOCK-authored level carries real, per-box author-chosen color.
+#define CUSTOM_LEVEL_MAX_BOXES 100 /* matches packages/world/level_boxes.h's own LEVEL_BOXES_MAX
+                                       and IDUNA/internal/shankpit.MaxWalls exactly -- the same
+                                       real cap enforced at the editor's own save time */
+static Box g_custom_level_geo[CUSTOM_LEVEL_MAX_BOXES];
+static float g_custom_level_r[CUSTOM_LEVEL_MAX_BOXES];
+static float g_custom_level_g[CUSTOM_LEVEL_MAX_BOXES];
+static float g_custom_level_b[CUSTOM_LEVEL_MAX_BOXES];
+static int g_custom_level_count = 0;
+
+// phys_set_custom_level copies a loaded level's own boxes into the buffers above -- call this
+// BEFORE phys_set_scene(SCENE_CUSTOM_LEVEL) so the geometry is already there the moment that
+// scene is actually selected (matches every other scene's own "init then select" real call
+// order, e.g. init_dust_compound_geo() before phys_set_scene(SCENE_DUST_COMPOUND) picks it up).
+// Deliberately takes plain float arrays, not a CustomLevelData* -- keeps this file free of any
+// dependency on packages/world/level_boxes.h's own JSON-parsing concerns; the caller (apps/
+// server, apps/lobby) does the trivial field copy from a loaded CustomLevelData.
+static inline void phys_set_custom_level(const float *x, const float *y, const float *z,
+                                          const float *w, const float *h, const float *d,
+                                          const float *r, const float *g, const float *b,
+                                          int count) {
+    int n = count > CUSTOM_LEVEL_MAX_BOXES ? CUSTOM_LEVEL_MAX_BOXES : count;
+    for (int i = 0; i < n; i++) {
+        g_custom_level_geo[i].x = x[i];
+        g_custom_level_geo[i].y = y[i];
+        g_custom_level_geo[i].z = z[i];
+        g_custom_level_geo[i].w = w[i];
+        g_custom_level_geo[i].h = h[i];
+        g_custom_level_geo[i].d = d[i];
+        g_custom_level_r[i] = r[i];
+        g_custom_level_g[i] = g[i];
+        g_custom_level_b[i] = b[i];
+    }
+    g_custom_level_count = n;
+}
+
 #define GARAGE_KILL_Y -30.0f
 #define GARAGE_BOUNDS_X 70.0f
 #define GARAGE_BOUNDS_Z 70.0f
@@ -1215,6 +1258,13 @@ static inline void phys_set_scene(int scene_id) {
         map_geo = map_geo_racetrack;
         map_count = (int)(sizeof(map_geo_racetrack) / sizeof(Box));
         g_scene_terrain.active = 0;
+    } else if (scene_id == SCENE_CUSTOM_LEVEL) {
+        map_geo = g_custom_level_geo;
+        map_count = g_custom_level_count;
+        g_scene_terrain.active = 0; // NOCK's own editor has no terrain/height concept yet (v0
+                                      // was explicitly geometry-only) -- a custom level always
+                                      // starts on flat ground (y=0), matching resolve_collision's
+                                      // own real "no terrain -> ground_floor=0.0f" fallback.
     } else {
         map_geo = map_geo_stadium;
         map_count = (int)(sizeof(map_geo_stadium) / sizeof(Box));

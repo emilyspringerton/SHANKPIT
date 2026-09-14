@@ -25,6 +25,9 @@
 #define SCENE_POO_POO_ISLAND 6
 #define SCENE_STORY_CAVE 7
 #define SCENE_RACE_TRACK 8   /* Bedrock Racers — StaticBackend, no Dragonfly dependency */
+#define SCENE_CUSTOM_LEVEL 9 /* a level authored in NOCK's SHANKPIT level editor (EMILY/
+                                 BACKLOG.md SECTION 459) and loaded via phys_set_custom_level --
+                                 see packages/world/level_boxes.h's own doc comment */
 
 #define PACKET_CONNECT 0
 #define PACKET_USERCMD 1

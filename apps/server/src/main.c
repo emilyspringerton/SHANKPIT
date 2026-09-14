@@ -22,6 +22,7 @@
 #include "../../../packages/common/shared_movement.h"
 #include "../../../packages/common/net_sim.h"
 #include "../../../packages/simulation/local_game.h"
+#include "../../../packages/world/level_boxes.h"
 
 /* cutscene handshake globals — defined in lobby/main.c for the client;
    server sim uses local_game.h but never renders cutscenes, so stub to 0. */
@@ -923,6 +924,35 @@ int main(int argc, char *argv[]) {
     } else {
         g_server_match_scene = SCENE_GARAGE_OSAKA;
     }
+
+    // --level <path> -- a level authored in NOCK's SHANKPIT level editor (EMILY/BACKLOG.md
+    // SECTION 459, founder real-time: "get the level loading to work"). Deliberately the LAST
+    // word on scene selection (after mode/rotation above), matching every other real, deliberate
+    // override pattern in this file -- loading real, honest fallback on any failure (missing/
+    // malformed file), never silently falls back to a garbled half-loaded level.
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--level") == 0 && i + 1 < argc) {
+            CustomLevelData lvl;
+            if (level_boxes_load_from_file(argv[i + 1], &lvl)) {
+                float x[LEVEL_BOXES_MAX], y[LEVEL_BOXES_MAX], z[LEVEL_BOXES_MAX];
+                float w[LEVEL_BOXES_MAX], h[LEVEL_BOXES_MAX], d[LEVEL_BOXES_MAX];
+                float r[LEVEL_BOXES_MAX], g[LEVEL_BOXES_MAX], b[LEVEL_BOXES_MAX];
+                for (int bi = 0; bi < lvl.count; bi++) {
+                    x[bi] = lvl.boxes[bi].x; y[bi] = lvl.boxes[bi].y; z[bi] = lvl.boxes[bi].z;
+                    w[bi] = lvl.boxes[bi].w; h[bi] = lvl.boxes[bi].h; d[bi] = lvl.boxes[bi].d;
+                    r[bi] = lvl.boxes[bi].r; g[bi] = lvl.boxes[bi].g; b[bi] = lvl.boxes[bi].b;
+                }
+                phys_set_custom_level(x, y, z, w, h, d, r, g, b, lvl.count);
+                g_server_match_scene = SCENE_CUSTOM_LEVEL;
+                scene_load(g_server_match_scene);
+                NET_SERVER_LOG("CUSTOM_LEVEL_LOADED name=%s boxes=%d path=%s", lvl.name, lvl.count, argv[i + 1]);
+            } else {
+                NET_SERVER_LOG("CUSTOM_LEVEL_LOAD_FAILED path=%s -- falling back to scene=%d", argv[i + 1], g_server_match_scene);
+            }
+            i++;
+        }
+    }
+
     local_state.players[0].active = 0;
     local_state.players[0].health = 0;
     local_state.players[0].state = STATE_DEAD;
