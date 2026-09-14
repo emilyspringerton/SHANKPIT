@@ -258,6 +258,68 @@ void proctex_make_wall_brick_rgba(ProcTexture *t, int w, int h, uint32_t seed) {
     }
 }
 
+/* proctex_make_concrete_rgba: mottled, low-contrast gray noise (no repeating pattern at all,
+ * unlike brick's mortar grid) -- concrete reads as a flat, matte, poured surface. */
+void proctex_make_concrete_rgba(ProcTexture *t, int w, int h, uint32_t seed) {
+    if (!t || !t->pixels || t->width != w || t->height != h) return;
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            size_t idx = ((size_t)y * (size_t)w + (size_t)x) * 4u;
+            float n = hash_2d(x / 3, y / 3, (int)seed) * 0.5f + hash_2d(x, y, (int)seed + 71) * 0.5f;
+            unsigned char c = (unsigned char)(120.0f + 40.0f * n);
+            t->pixels[idx + 0] = c;
+            t->pixels[idx + 1] = c;
+            t->pixels[idx + 2] = (unsigned char)(c * 1.02f > 255.0f ? 255 : c * 1.02f);
+            t->pixels[idx + 3] = 255;
+        }
+    }
+}
+
+/* proctex_make_wood_rgba: horizontal plank rows with a darker seam between planks, plus a fine
+ * horizontal grain-noise streak within each plank -- reads as a distinct built material from both
+ * brick (vertical mortar joints) and concrete (no pattern at all). */
+void proctex_make_wood_rgba(ProcTexture *t, int w, int h, uint32_t seed) {
+    if (!t || !t->pixels || t->width != w || t->height != h) return;
+    const int planks = 5;
+    const float seam = 0.06f;
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            size_t idx = ((size_t)y * (size_t)w + (size_t)x) * 4u;
+            float v = (float)y / (float)h;
+            int plank = (int)(v * (float)planks);
+            float row_f = fracf(v * (float)planks);
+            int is_seam = row_f < seam;
+            float plank_shade = 0.6f + 0.25f * hash_2d(plank, 0, (int)seed);
+            float grain = hash_2d(x / 2, plank, (int)seed + 13) * 0.15f;
+            float shade = plank_shade + grain;
+            if (is_seam) shade *= 0.45f;
+            t->pixels[idx + 0] = (unsigned char)(shade * 168.0f);
+            t->pixels[idx + 1] = (unsigned char)(shade * 118.0f);
+            t->pixels[idx + 2] = (unsigned char)(shade * 74.0f);
+            t->pixels[idx + 3] = 255;
+        }
+    }
+}
+
+/* proctex_make_metal_rgba: cool-gray brushed horizontal streaks -- a real base coat for the
+ * "shiny/metal" material; the actual mirror-bright highlight is the specular shader pass, not
+ * this texture (a flat metal texture under real specular lighting is the correct real-game look,
+ * not a texture trying to fake shininess on its own). */
+void proctex_make_metal_rgba(ProcTexture *t, int w, int h, uint32_t seed) {
+    if (!t || !t->pixels || t->width != w || t->height != h) return;
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            size_t idx = ((size_t)y * (size_t)w + (size_t)x) * 4u;
+            float streak = hash_2d(x / 6, y, (int)seed) * 0.5f + hash_2d(x, y / 2, (int)seed + 5) * 0.5f;
+            unsigned char c = (unsigned char)(150.0f + 55.0f * streak);
+            t->pixels[idx + 0] = (unsigned char)(c * 0.92f);
+            t->pixels[idx + 1] = (unsigned char)(c * 0.95f);
+            t->pixels[idx + 2] = c;
+            t->pixels[idx + 3] = 255;
+        }
+    }
+}
+
 void proc_tex_fill_emily_vibe(ProcTexture *t, float seed, float t_sec) {
     if (!t || !t->pixels) return;
 

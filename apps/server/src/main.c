@@ -937,12 +937,23 @@ int main(int argc, char *argv[]) {
                 float x[LEVEL_BOXES_MAX], y[LEVEL_BOXES_MAX], z[LEVEL_BOXES_MAX];
                 float w[LEVEL_BOXES_MAX], h[LEVEL_BOXES_MAX], d[LEVEL_BOXES_MAX];
                 float r[LEVEL_BOXES_MAX], g[LEVEL_BOXES_MAX], b[LEVEL_BOXES_MAX];
+                int material_idx[LEVEL_BOXES_MAX];
                 for (int bi = 0; bi < lvl.count; bi++) {
                     x[bi] = lvl.boxes[bi].x; y[bi] = lvl.boxes[bi].y; z[bi] = lvl.boxes[bi].z;
                     w[bi] = lvl.boxes[bi].w; h[bi] = lvl.boxes[bi].h; d[bi] = lvl.boxes[bi].d;
                     r[bi] = lvl.boxes[bi].r; g[bi] = lvl.boxes[bi].g; b[bi] = lvl.boxes[bi].b;
+                    material_idx[bi] = lvl.boxes[bi].material_idx;
                 }
-                phys_set_custom_level(x, y, z, w, h, d, r, g, b, lvl.count, lvl.ground_plane_enabled, lvl.ground_plane_squares);
+                char mat_names[LEVEL_BOXES_MAX_MATERIALS][CUSTOM_LEVEL_MATERIAL_NAME_LEN];
+                float mat_specular[LEVEL_BOXES_MAX_MATERIALS], mat_shininess[LEVEL_BOXES_MAX_MATERIALS];
+                for (int mi = 0; mi < lvl.material_count; mi++) {
+                    strncpy(mat_names[mi], lvl.materials[mi].name, CUSTOM_LEVEL_MATERIAL_NAME_LEN - 1);
+                    mat_names[mi][CUSTOM_LEVEL_MATERIAL_NAME_LEN - 1] = '\0';
+                    mat_specular[mi] = lvl.materials[mi].specular;
+                    mat_shininess[mi] = lvl.materials[mi].shininess;
+                }
+                phys_set_custom_level_materials(mat_names, mat_specular, mat_shininess, lvl.material_count);
+                phys_set_custom_level(x, y, z, w, h, d, r, g, b, material_idx, lvl.count, lvl.ground_plane_enabled, lvl.ground_plane_squares);
                 g_server_match_scene = SCENE_CUSTOM_LEVEL;
                 scene_load(g_server_match_scene);
                 NET_SERVER_LOG("CUSTOM_LEVEL_LOADED name=%s boxes=%d path=%s", lvl.name, lvl.count, argv[i + 1]);

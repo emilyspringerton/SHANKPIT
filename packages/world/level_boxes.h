@@ -39,11 +39,31 @@
                                 can never exceed what this loader is willing to read back */
 #define LEVEL_BOXES_MAX_NAME 64
 
+/* S459-16, founder real-time: "i think it makes sense to abstract into material first so it
+   cleanly translates into papercraft ... we will need the ability to add new materials and set
+   their textures" / "registries for everything". LEVEL_BOXES_MAX_MATERIALS is a real, small,
+   sane cap -- IDUNA's own export embeds every real, currently-defined material (a handful:
+   brick/concrete/wood/metal plus whatever's been added), not hundreds. */
+#define LEVEL_BOXES_MAX_MATERIALS 16
+#define LEVEL_BOXES_DEFAULT_MATERIAL "brick" /* mirrors IDUNA/internal/shankpit.DefaultMaterialName exactly */
+
+typedef struct {
+    char name[LEVEL_BOXES_MAX_NAME];
+    char shader_name[LEVEL_BOXES_MAX_NAME]; /* a real, named reference into
+        packages/render/material_shaders.h's own SHADER_* registry -- NOT GLSL source (see that
+        header's own doc comment for the real "NOCK stores the name, native owns the code" split) */
+    float specular;
+    float shininess;
+} LevelBoxMaterial;
+
 typedef struct {
     float x, y, z;    /* center, world units -- matches physics.h's own real Box convention */
     float w, h, d;     /* full extents (NOT half-extents) -- matches NOCK's own sx/sy/sz exactly */
     float r, g, b;      /* real OpenGL-convention [0,1] color, for rendering only */
     float friction;      /* read, not yet consumed by collision -- real, named future work */
+    int material_idx;    /* index into CustomLevelData.materials, resolved at parse time -- see
+                             level_boxes_resolve_material's own doc comment for the real fallback
+                             when a wall's own material name isn't in the level's materials array */
 } LevelBox;
 
 typedef struct {
@@ -60,6 +80,8 @@ typedef struct {
     int ground_plane_squares;
     LevelBox boxes[LEVEL_BOXES_MAX];
     int count;
+    LevelBoxMaterial materials[LEVEL_BOXES_MAX_MATERIALS];
+    int material_count;
 } CustomLevelData;
 
 static inline const char *level_boxes_skip_ws(const char *p) {
@@ -107,12 +129,50 @@ static inline int level_boxes_parse_string(const char *p, char *out, size_t outs
     return *p == '"';
 }
 
+// level_boxes_find_array_end returns the position of the closing ']' matching open_bracket (which
+// must point AT a '[') via real bracket-depth counting -- NOT the previous "find the last ']' in
+// the rest of the buffer" trick (only ever correct by coincidence when the array being bounded
+// happens to be the very last field in the document; S459-16 broke that coincidence by adding a
+// "materials" array after "walls" in IDUNA's own real export field order, surfacing this as a
+// real, live bug this rewrite fixes for every caller, not just the new one). Safe here without
+// string-aware quote-skipping because every array this file ever bounds (walls, materials) holds
+// only numeric/boolean/short-plain-name fields -- no string value in either shape can itself
+// contain a literal '[' or ']'.
+static inline const char *level_boxes_find_array_end(const char *open_bracket, const char *buf_end) {
+    int depth = 0;
+    const char *p = open_bracket;
+    while (p < buf_end) {
+        if (*p == '[') depth++;
+        else if (*p == ']') { depth--; if (depth == 0) return p; }
+        p++;
+    }
+    return NULL;
+}
+
 // level_boxes_parse_bool parses a real, unquoted JSON boolean literal (`true`/`false`, no other
 // spellings -- this is what every real JSON serializer, including Go's own encoding/json, always
 // emits for a bool field) starting at p. Returns 1 on success, 0 if p doesn't start with either.
 static inline int level_boxes_parse_bool(const char *p, int *out) {
     if (strncmp(p, "true", 4) == 0) { *out = 1; return 1; }
     if (strncmp(p, "false", 5) == 0) { *out = 0; return 1; }
+    return 0;
+}
+
+// level_boxes_resolve_material finds `name` in out->materials, falling back to
+// LEVEL_BOXES_DEFAULT_MATERIAL ("brick") if not found, then to index 0 as a last resort (only
+// reachable if the level's own real "brick" material row was itself renamed/deleted in IDUNA --
+// real, honest degradation, never a crash/out-of-bounds read). Always returns a valid index into
+// a materials array with material_count >= 1 (level_boxes_parse_json's own real, guaranteed
+// invariant after parsing).
+static inline int level_boxes_resolve_material(const CustomLevelData *out, const char *name) {
+    if (name && name[0]) {
+        for (int i = 0; i < out->material_count; i++) {
+            if (strcmp(out->materials[i].name, name) == 0) return i;
+        }
+    }
+    for (int i = 0; i < out->material_count; i++) {
+        if (strcmp(out->materials[i].name, LEVEL_BOXES_DEFAULT_MATERIAL) == 0) return i;
+    }
     return 0;
 }
 
@@ -152,14 +212,65 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
         if (level_boxes_parse_number(gps_val, &squares_f) && squares_f > 0) out->ground_plane_squares = (int)squares_f;
     }
 
+    // Materials (S459-16) -- parsed BEFORE walls so each wall's own "material" name can be
+    // resolved to an index immediately. Real, sane fallback for a hand-written or pre-S459-16
+    // export with no "materials" array at all: synthesize a single built-in
+    // LEVEL_BOXES_DEFAULT_MATERIAL entry so material_idx is NEVER -1 for any real caller -- no
+    // "-1 sentinel" case downstream in physics.h/apps/lobby.
+    out->material_count = 0;
+    const char *mat_arr_key = level_boxes_find_key(buf, end, "materials");
+    if (mat_arr_key) {
+        const char *mat_arr = level_boxes_skip_ws(mat_arr_key);
+        if (*mat_arr == '[') {
+            const char *mat_arr_end = level_boxes_find_array_end(mat_arr, end);
+            if (mat_arr_end) {
+                const char *mcursor = mat_arr + 1;
+                while (mcursor < mat_arr_end && out->material_count < LEVEL_BOXES_MAX_MATERIALS) {
+                    mcursor = level_boxes_skip_ws(mcursor);
+                    if (mcursor >= mat_arr_end) break;
+                    if (*mcursor == ',') { mcursor++; continue; }
+                    if (*mcursor != '{') { mcursor++; continue; }
+                    const char *mobj_start = mcursor;
+                    const char *mobj_end = strchr(mobj_start, '}');
+                    if (!mobj_end || mobj_end > mat_arr_end) break;
+
+                    LevelBoxMaterial *mat = &out->materials[out->material_count];
+                    memset(mat, 0, sizeof(*mat));
+                    const char *nv = level_boxes_find_key(mobj_start, mobj_end, "name");
+                    if (nv) level_boxes_parse_string(nv, mat->name, sizeof(mat->name));
+                    const char *sv = level_boxes_find_key(mobj_start, mobj_end, "shader_name");
+                    if (sv) level_boxes_parse_string(sv, mat->shader_name, sizeof(mat->shader_name));
+                    else strncpy(mat->shader_name, "standard", sizeof(mat->shader_name) - 1);
+                    float spec_f = 0, shin_f = 8;
+                    const char *spv = level_boxes_find_key(mobj_start, mobj_end, "specular");
+                    if (spv) level_boxes_parse_number(spv, &spec_f);
+                    const char *shv = level_boxes_find_key(mobj_start, mobj_end, "shininess");
+                    if (shv) level_boxes_parse_number(shv, &shin_f);
+                    mat->specular = spec_f;
+                    mat->shininess = shin_f;
+                    if (mat->name[0]) out->material_count++;
+                    mcursor = mobj_end + 1;
+                }
+            }
+        }
+    }
+    if (out->material_count == 0) {
+        LevelBoxMaterial *mat = &out->materials[0];
+        strncpy(mat->name, LEVEL_BOXES_DEFAULT_MATERIAL, sizeof(mat->name) - 1);
+        strncpy(mat->shader_name, "standard", sizeof(mat->shader_name) - 1);
+        mat->specular = 0.04f;
+        mat->shininess = 6.0f;
+        out->material_count = 1;
+    }
+
     const char *arr = level_boxes_find_key(buf, end, "walls");
     if (!arr) return 0;
     arr = level_boxes_skip_ws(arr);
     if (*arr != '[') return 0;
-    arr++;
 
-    const char *arr_end = strrchr(arr, ']');
+    const char *arr_end = level_boxes_find_array_end(arr, end);
     if (!arr_end) return 0;
+    arr++;
 
     int count = 0;
     const char *cursor = arr;
@@ -193,11 +304,21 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
         if ((v = level_boxes_find_key(obj_start, obj_end, "friction"))) level_boxes_parse_number(v, &friction);
         if (!ok) return 0;
 
+        // material (S459-16) -- absent/empty resolves to LEVEL_BOXES_DEFAULT_MATERIAL via
+        // level_boxes_resolve_material, matching every pre-S459-16 wall's own real, existing
+        // walls_json (no "material" key at all).
+        char material_name[LEVEL_BOXES_MAX_NAME];
+        material_name[0] = '\0';
+        if ((v = level_boxes_find_key(obj_start, obj_end, "material"))) {
+            level_boxes_parse_string(v, material_name, sizeof(material_name));
+        }
+
         LevelBox *box = &out->boxes[count];
         box->x = x; box->y = y; box->z = z;
         box->w = sx; box->h = sy; box->d = sz;
         box->r = r; box->g = g; box->b = b;
         box->friction = friction;
+        box->material_idx = level_boxes_resolve_material(out, material_name);
         count++;
         cursor = obj_end + 1;
     }

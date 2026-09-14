@@ -252,6 +252,23 @@ static float g_custom_level_g[CUSTOM_LEVEL_MAX_BOXES + 1];
 static float g_custom_level_b[CUSTOM_LEVEL_MAX_BOXES + 1];
 static int g_custom_level_count = 0;
 
+// S459-16, founder real-time: "i think it makes sense to abstract into material first so it
+// cleanly translates into papercraft ... we will want materials for concrete and wood ... this
+// is going to need to play with shaders too so build that in from day 1." Same real "small,
+// separate parallel array, indexed the same as map_geo" pattern g_custom_level_r/g/b above already
+// established -- g_custom_level_material_idx[i] is a real index into the small material-shading
+// table below (NOT a duplicate name string per box; names only exist in the loader's own
+// LevelBoxMaterial table, packages/world/level_boxes.h). #define'd here (not
+// LEVEL_BOXES_MAX_MATERIALS from level_boxes.h) so physics.h keeps its own real, existing "zero
+// dependency on the JSON-parsing loader" boundary -- the two constants are kept equal by hand.
+#define CUSTOM_LEVEL_MAX_MATERIALS 16
+#define CUSTOM_LEVEL_MATERIAL_NAME_LEN 32
+static int g_custom_level_material_idx[CUSTOM_LEVEL_MAX_BOXES + 1];
+static char g_custom_level_material_name[CUSTOM_LEVEL_MAX_MATERIALS][CUSTOM_LEVEL_MATERIAL_NAME_LEN];
+static float g_custom_level_material_specular[CUSTOM_LEVEL_MAX_MATERIALS];
+static float g_custom_level_material_shininess[CUSTOM_LEVEL_MAX_MATERIALS];
+static int g_custom_level_material_count = 0;
+
 // S459-08, founder real-time: "i want there to be a plane by default that the player collides
 // with - the checkerboard in the level editor - that should constitute the plane for that
 // level... configurable in terms of size... turn on able and off able per level." A real,
@@ -277,6 +294,7 @@ static int g_custom_level_ground_plane_squares = 2;
 static inline void phys_set_custom_level(const float *x, const float *y, const float *z,
                                           const float *w, const float *h, const float *d,
                                           const float *r, const float *g, const float *b,
+                                          const int *material_idx,
                                           int count, int ground_plane_enabled, int ground_plane_squares) {
     int n = count > CUSTOM_LEVEL_MAX_BOXES ? CUSTOM_LEVEL_MAX_BOXES : count;
     // index 0 is a deliberate, always-zeroed dummy -- see the doc comment on g_custom_level_geo's
@@ -284,6 +302,7 @@ static inline void phys_set_custom_level(const float *x, const float *y, const f
     // own established skip-index-0 convention instead of fighting it per-callsite.
     memset(&g_custom_level_geo[0], 0, sizeof(g_custom_level_geo[0]));
     g_custom_level_r[0] = g_custom_level_g[0] = g_custom_level_b[0] = 0.0f;
+    g_custom_level_material_idx[0] = 0;
     for (int i = 0; i < n; i++) {
         g_custom_level_geo[i + 1].x = x[i];
         g_custom_level_geo[i + 1].y = y[i];
@@ -294,10 +313,28 @@ static inline void phys_set_custom_level(const float *x, const float *y, const f
         g_custom_level_r[i + 1] = r[i];
         g_custom_level_g[i + 1] = g[i];
         g_custom_level_b[i + 1] = b[i];
+        g_custom_level_material_idx[i + 1] = (material_idx && material_idx[i] >= 0 && material_idx[i] < g_custom_level_material_count)
+            ? material_idx[i] : 0;
     }
     g_custom_level_count = n + 1;
     g_custom_level_ground_plane_enabled = ground_plane_enabled;
     g_custom_level_ground_plane_squares = ground_plane_squares > 0 ? ground_plane_squares : 1;
+}
+
+// phys_set_custom_level_materials loads the level's own small material-shading table (S459-16) --
+// call this BEFORE phys_set_custom_level so material_idx values passed to that call can already be
+// validated/clamped against a real, current g_custom_level_material_count. Names are real, plain
+// ASCII identifiers (brick/concrete/wood/metal/...), matched against apps/lobby's own static
+// ProcTexture globals by name at render time -- see draw_map's own material-texture lookup.
+static inline void phys_set_custom_level_materials(const char names[][CUSTOM_LEVEL_MATERIAL_NAME_LEN],
+                                                     const float *specular, const float *shininess, int count) {
+    int n = count > CUSTOM_LEVEL_MAX_MATERIALS ? CUSTOM_LEVEL_MAX_MATERIALS : count;
+    for (int i = 0; i < n; i++) {
+        snprintf(g_custom_level_material_name[i], CUSTOM_LEVEL_MATERIAL_NAME_LEN, "%s", names[i]);
+        g_custom_level_material_specular[i] = specular[i];
+        g_custom_level_material_shininess[i] = shininess[i];
+    }
+    g_custom_level_material_count = n;
 }
 
 #define GARAGE_KILL_Y -30.0f

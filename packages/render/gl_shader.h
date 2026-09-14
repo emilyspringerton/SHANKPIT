@@ -47,6 +47,8 @@ void gl_use_program(GLuint program);
 GLint gl_get_uniform_location(GLuint program, const char *name);
 void gl_uniform_matrix4fv(GLint location, const float *m16);
 void gl_uniform4fv(GLint location, const float *v4);
+void gl_uniform3fv(GLint location, const float *v3);
+void gl_uniform1f(GLint location, float v);
 
 /* A single reusable GPU buffer for CPU-generated geometry that changes
  * every frame (skinned mesh output, etc). Vertex layout is fixed: location

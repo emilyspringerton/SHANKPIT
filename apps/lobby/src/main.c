@@ -45,6 +45,7 @@
 #include "../../../packages/render/retro_lighting.h"
 #include "../../../packages/audio/audio.h"
 #include "../../../packages/render/gl_shader.h"
+#include "../../../packages/render/material_shaders.h"
 #include "../../../packages/goldenband/gband_mesh_rig.h"
 
 /* ── S144-02 Stage B: GOLDENBAND skinned mesh for Tyler ──────────────────────
@@ -422,7 +423,27 @@ static ProcTexture g_vehicle_glitch_tex = {0};
  * own NORTHSTAR note), procedural is the deliberate placeholder for now. */
 static ProcTexture g_ground_tex = {0};
 static ProcTexture g_wall_brick_tex = {0};
+// S459-16, founder real-time: "we will want materials for concrete and wood ... for the
+// materials if you could have a some kind of metal or shiny texture i dunno" -- three more real
+// procedural textures, same generate-once-at-startup convention as g_wall_brick_tex above.
+static ProcTexture g_wall_concrete_tex = {0};
+static ProcTexture g_wall_wood_tex = {0};
+static ProcTexture g_wall_metal_tex = {0};
 static RetroSky g_retro_sky = {0};
+
+// material_texture_for_name maps a custom level's own real material name (from
+// g_custom_level_material_name, set via phys_set_custom_level_materials) to the matching real
+// procedural texture above -- any unrecognized name (a material this native build doesn't have a
+// built-in generator for yet) falls back to brick, the same real, honest default
+// LEVEL_BOXES_DEFAULT_MATERIAL already uses at the JSON-parsing layer.
+static GLuint material_texture_for_name(const char *name) {
+    if (name) {
+        if (strcmp(name, "concrete") == 0) return g_wall_concrete_tex.tex_id;
+        if (strcmp(name, "wood") == 0) return g_wall_wood_tex.tex_id;
+        if (strcmp(name, "metal") == 0) return g_wall_metal_tex.tex_id;
+    }
+    return g_wall_brick_tex.tex_id;
+}
 
 typedef enum {
     SKIN_BAT = 0,
@@ -1459,6 +1480,34 @@ static void level_select_menu_open(void) {
     level_select_open = 1;
 }
 
+// level_boxes_apply_to_physics -- shared by both real load paths in this file (level-select and
+// the --level CLI flag): copies a loaded CustomLevelData's boxes + materials (S459-16) into
+// physics.h's own custom-level buffers. Not in level_boxes.h itself -- that header is deliberately
+// kept free of any dependency on physics.h (see its own doc comment), so this glue lives on the
+// caller's side, same real boundary apps/server/src/main.c's own --level handler keeps too.
+static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
+    float x[LEVEL_BOXES_MAX], y[LEVEL_BOXES_MAX], z[LEVEL_BOXES_MAX];
+    float w[LEVEL_BOXES_MAX], h[LEVEL_BOXES_MAX], d[LEVEL_BOXES_MAX];
+    float r[LEVEL_BOXES_MAX], g[LEVEL_BOXES_MAX], b[LEVEL_BOXES_MAX];
+    int material_idx[LEVEL_BOXES_MAX];
+    for (int bi = 0; bi < lvl->count; bi++) {
+        x[bi] = lvl->boxes[bi].x; y[bi] = lvl->boxes[bi].y; z[bi] = lvl->boxes[bi].z;
+        w[bi] = lvl->boxes[bi].w; h[bi] = lvl->boxes[bi].h; d[bi] = lvl->boxes[bi].d;
+        r[bi] = lvl->boxes[bi].r; g[bi] = lvl->boxes[bi].g; b[bi] = lvl->boxes[bi].b;
+        material_idx[bi] = lvl->boxes[bi].material_idx;
+    }
+    char mat_names[LEVEL_BOXES_MAX_MATERIALS][CUSTOM_LEVEL_MATERIAL_NAME_LEN];
+    float mat_specular[LEVEL_BOXES_MAX_MATERIALS], mat_shininess[LEVEL_BOXES_MAX_MATERIALS];
+    for (int mi = 0; mi < lvl->material_count; mi++) {
+        strncpy(mat_names[mi], lvl->materials[mi].name, CUSTOM_LEVEL_MATERIAL_NAME_LEN - 1);
+        mat_names[mi][CUSTOM_LEVEL_MATERIAL_NAME_LEN - 1] = '\0';
+        mat_specular[mi] = lvl->materials[mi].specular;
+        mat_shininess[mi] = lvl->materials[mi].shininess;
+    }
+    phys_set_custom_level_materials(mat_names, mat_specular, mat_shininess, lvl->material_count);
+    phys_set_custom_level(x, y, z, w, h, d, r, g, b, material_idx, lvl->count, lvl->ground_plane_enabled, lvl->ground_plane_squares);
+}
+
 // level_select_confirm -- fetches the chosen level's real export, loads it into physics.h's own
 // custom-level buffers, and starts a real local match on it. Mirrors lobby_start_action's own
 // "enter game" tail exactly (death_cam_blend/mouse mode/projection matrix) since this is a real,
@@ -1473,20 +1522,20 @@ static void level_select_confirm(void) {
         return;
     }
 
-    float x[LEVEL_BOXES_MAX], y[LEVEL_BOXES_MAX], z[LEVEL_BOXES_MAX];
-    float w[LEVEL_BOXES_MAX], h[LEVEL_BOXES_MAX], d[LEVEL_BOXES_MAX];
-    float r[LEVEL_BOXES_MAX], g[LEVEL_BOXES_MAX], b[LEVEL_BOXES_MAX];
-    for (int bi = 0; bi < lvl.count; bi++) {
-        x[bi] = lvl.boxes[bi].x; y[bi] = lvl.boxes[bi].y; z[bi] = lvl.boxes[bi].z;
-        w[bi] = lvl.boxes[bi].w; h[bi] = lvl.boxes[bi].h; d[bi] = lvl.boxes[bi].d;
-        r[bi] = lvl.boxes[bi].r; g[bi] = lvl.boxes[bi].g; b[bi] = lvl.boxes[bi].b;
-    }
-    phys_set_custom_level(x, y, z, w, h, d, r, g, b, lvl.count, lvl.ground_plane_enabled, lvl.ground_plane_squares);
+    level_boxes_apply_to_physics(&lvl);
 
     level_select_open = 0;
     app_state = STATE_GAME_LOCAL;
     local_init_match(1, MODE_DEATHMATCH);
     scene_load(SCENE_CUSTOM_LEVEL);
+    // REAL, FOUND, LIVE BUG (2026-09-14, found while live-verifying S459-16's own material
+    // rendering): scene_load only updates the GLOBAL local_state.scene_id -- draw_scene's own
+    // per-frame render resync (`local_state.scene_id = render_p->scene_id;`) reads the PLAYER
+    // ENTITY's own scene_id instead, which local_init_match just set to SCENE_GARAGE_OSAKA at
+    // spawn and this call never touched -- so the very next frame silently reverted the scene
+    // back to garage, undoing scene_load's own effect. A custom level picked from the in-game
+    // menu never actually rendered past frame 1 until this fix.
+    local_state.players[0].scene_id = SCENE_CUSTOM_LEVEL;
 
     death_cam_blend = 0.0f;
     SDL_SetRelativeMouseMode(SDL_TRUE);
@@ -1953,6 +2002,27 @@ void draw_map(const RetroLightingState *lighting) {
     int ref_id = (my_client_id >= 0 && my_client_id < MAX_CLIENTS) ? my_client_id : 0;
     const PlayerState *rp = &local_state.players[ref_id];
 
+    /* S459-16: real per-box specular highlight (SCENE_CUSTOM_LEVEL only, see the per-box gate
+       below) -- camera-only MVP + dominant light direction + camera world position computed ONCE
+       per draw_map call, not per box, matching draw_flashlight_beam's own real camera-VP-capture
+       pattern. */
+    Mat4 material_mvp;
+    float material_light_dir[3];
+    float material_cam_pos[3];
+    int material_pass_active = (phys_scene_id == SCENE_CUSTOM_LEVEL && g_material_shader_ready);
+    if (material_pass_active) {
+        Mat4 mproj, mmodelview;
+        glGetFloatv(GL_PROJECTION_MATRIX, mproj.m);
+        glGetFloatv(GL_MODELVIEW_MATRIX, mmodelview.m);
+        material_mvp = mat4_multiply(&mproj, &mmodelview);
+        if (lighting->allow_moonlight) {
+            material_light_dir[0] = lighting->moon_dir_x; material_light_dir[1] = lighting->moon_dir_y; material_light_dir[2] = lighting->moon_dir_z;
+        } else {
+            material_light_dir[0] = lighting->sun_dir_x; material_light_dir[1] = lighting->sun_dir_y; material_light_dir[2] = lighting->sun_dir_z;
+        }
+        material_cam_pos[0] = rp->x; material_cam_pos[1] = rp->y + EYE_HEIGHT; material_cam_pos[2] = rp->z;
+    }
+
     for(int i=1; i<map_count; i++) {
         Box b = map_geo[i];
         float style = 0.5f + 0.5f * sinf((b.x + b.z) * 0.003f);
@@ -2027,7 +2097,15 @@ void draw_map(const RetroLightingState *lighting) {
          * times that axis's actual box dimension (b.w/b.h/b.d), so tile density stays consistent
          * in world units no matter how big or small an individual box is. */
         glEnable(GL_TEXTURE_2D);
-        glBindTexture(GL_TEXTURE_2D, g_wall_brick_tex.tex_id);
+        /* S459-16: only SCENE_CUSTOM_LEVEL boxes carry a real per-box material index
+           (g_custom_level_material_idx, set via phys_set_custom_level) -- every other scene's own
+           hand-authored geometry keeps its real, existing, unconditional brick look unchanged. */
+        GLuint box_tex = g_wall_brick_tex.tex_id;
+        if (phys_scene_id == SCENE_CUSTOM_LEVEL && i < CUSTOM_LEVEL_MAX_BOXES + 1) {
+            int mi = g_custom_level_material_idx[i];
+            if (mi >= 0 && mi < g_custom_level_material_count) box_tex = material_texture_for_name(g_custom_level_material_name[mi]);
+        }
+        glBindTexture(GL_TEXTURE_2D, box_tex);
         const float wall_uv_density = 0.6f;
         const float uw = b.w * wall_uv_density, uh = b.h * wall_uv_density, ud = b.d * wall_uv_density;
 
@@ -2090,6 +2168,15 @@ void draw_map(const RetroLightingState *lighting) {
         }
 
         glPopMatrix();
+
+        if (material_pass_active && i < CUSTOM_LEVEL_MAX_BOXES + 1) {
+            int mi = g_custom_level_material_idx[i];
+            if (mi >= 0 && mi < g_custom_level_material_count) {
+                draw_material_specular_box(b.x, b.y, b.z, b.w, b.h, b.d,
+                                            g_custom_level_material_specular[mi], g_custom_level_material_shininess[mi],
+                                            material_mvp.m, material_light_dir, material_cam_pos);
+            }
+        }
     }
 }
 
@@ -7860,15 +7947,7 @@ int main(int argc, char* argv[]) {
             // geometry itself, it does not force the scene on its own.
             CustomLevelData lvl;
             if (level_boxes_load_from_file(argv[i+1], &lvl)) {
-                float x[LEVEL_BOXES_MAX], y[LEVEL_BOXES_MAX], z[LEVEL_BOXES_MAX];
-                float w[LEVEL_BOXES_MAX], h[LEVEL_BOXES_MAX], d[LEVEL_BOXES_MAX];
-                float r[LEVEL_BOXES_MAX], g[LEVEL_BOXES_MAX], b[LEVEL_BOXES_MAX];
-                for (int bi = 0; bi < lvl.count; bi++) {
-                    x[bi] = lvl.boxes[bi].x; y[bi] = lvl.boxes[bi].y; z[bi] = lvl.boxes[bi].z;
-                    w[bi] = lvl.boxes[bi].w; h[bi] = lvl.boxes[bi].h; d[bi] = lvl.boxes[bi].d;
-                    r[bi] = lvl.boxes[bi].r; g[bi] = lvl.boxes[bi].g; b[bi] = lvl.boxes[bi].b;
-                }
-                phys_set_custom_level(x, y, z, w, h, d, r, g, b, lvl.count, lvl.ground_plane_enabled, lvl.ground_plane_squares);
+                level_boxes_apply_to_physics(&lvl);
             }
             i++;
         }
@@ -7889,6 +7968,7 @@ int main(int argc, char* argv[]) {
     SDL_GL_CreateContext(win);
     gband_shader_and_mesh_init();
     flashlight_shader_init();
+    material_shader_init();
     proctex_init();
     proc_tex_create(&g_vehicle_noise_tex, 64, 64);
     proctex_make_noise_rgba(&g_vehicle_noise_tex, 64, 64, g_vehicle_style.seed);
@@ -7902,6 +7982,15 @@ int main(int argc, char* argv[]) {
     proc_tex_create(&g_wall_brick_tex, 128, 128);
     proctex_make_wall_brick_rgba(&g_wall_brick_tex, 128, 128, 0x8823u);
     proctex_upload_to_gl(&g_wall_brick_tex);
+    proc_tex_create(&g_wall_concrete_tex, 128, 128);
+    proctex_make_concrete_rgba(&g_wall_concrete_tex, 128, 128, 0x1177u);
+    proctex_upload_to_gl(&g_wall_concrete_tex);
+    proc_tex_create(&g_wall_wood_tex, 128, 128);
+    proctex_make_wood_rgba(&g_wall_wood_tex, 128, 128, 0x3399u);
+    proctex_upload_to_gl(&g_wall_wood_tex);
+    proc_tex_create(&g_wall_metal_tex, 128, 128);
+    proctex_make_metal_rgba(&g_wall_metal_tex, 128, 128, 0x5511u);
+    proctex_upload_to_gl(&g_wall_metal_tex);
     retro_sky_init(&g_retro_sky);
     net_init();
     

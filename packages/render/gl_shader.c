@@ -32,6 +32,8 @@ static PFNGLBINDATTRIBLOCATIONPROC p_glBindAttribLocation;
 static PFNGLGETUNIFORMLOCATIONPROC p_glGetUniformLocation;
 static PFNGLUNIFORMMATRIX4FVPROC   p_glUniformMatrix4fv;
 static PFNGLUNIFORM4FVPROC         p_glUniform4fv;
+static PFNGLUNIFORM3FVPROC         p_glUniform3fv;
+static PFNGLUNIFORM1FPROC          p_glUniform1f;
 
 static int g_extensions_loaded = 0;
 
@@ -69,6 +71,8 @@ int gl_shader_load_extensions(void) {
     LOAD(p_glGetUniformLocation, "glGetUniformLocation");
     LOAD(p_glUniformMatrix4fv, "glUniformMatrix4fv");
     LOAD(p_glUniform4fv, "glUniform4fv");
+    LOAD(p_glUniform3fv, "glUniform3fv");
+    LOAD(p_glUniform1f, "glUniform1f");
     g_extensions_loaded = ok;
     return ok;
 }
@@ -146,6 +150,16 @@ void gl_uniform_matrix4fv(GLint location, const float *m16) {
 void gl_uniform4fv(GLint location, const float *v4) {
     if (!g_extensions_loaded || location < 0) return;
     p_glUniform4fv(location, 1, v4);
+}
+
+void gl_uniform3fv(GLint location, const float *v3) {
+    if (!g_extensions_loaded || location < 0) return;
+    p_glUniform3fv(location, 1, v3);
+}
+
+void gl_uniform1f(GLint location, float v) {
+    if (!g_extensions_loaded || location < 0) return;
+    p_glUniform1f(location, v);
 }
 
 int gl_dynamic_vbo_init(DynamicVBO *vbo, GLsizei capacity_verts) {
