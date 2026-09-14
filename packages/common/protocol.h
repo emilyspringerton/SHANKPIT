@@ -401,7 +401,19 @@ typedef struct {
     unsigned int event_counter;
 } CtfMatchState;
 
-typedef enum { MODE_DEATHMATCH=0, MODE_TDM=1, MODE_SURVIVAL=2, MODE_CTF=3, MODE_ODDBALL=4, MODE_LOCAL=98, MODE_NET=99, MODE_EVOLUTION=100, MODE_TDMB=101, MODE_TDMO=102, MODE_CTFB=103, MODE_CTFO=104, MODE_STORY=105, MODE_HEADED_BOT=106, MODE_STORY_CAVE=107 } GameMode;
+/* MODE_QUEUE=108 -- S459-34, founder real-time: "set up a bot queue... 3 bots - 4 player games...
+ * network queue... architect the bots the same way the bots work for brawlpit... packet level
+ * bots just like brawlpit." A real, networked, non-team free-for-all mode (same generic non-TDMO
+ * connect path MODE_DEATHMATCH/MODE_CTF already use -- see server_handle_packet, no team
+ * assignment needed) whose population is filled by REAL packet-level bot client PROCESSES (see
+ * apps2/emily-bot, launched via ops/shankpit-bot-pool.sh), not an in-process PlayerState puppet
+ * the way MODE_TDMO's own tdmo_spawn_bot_on_team is -- the server never drives a QUEUE bot's
+ * inputs itself; a QUEUE bot connects, sends real PacketUserCmd, and is completely
+ * indistinguishable from a real human client on the wire, matching BRAWLPIT's own real
+ * rl_bot_pool.py precedent (a standing pool of real UDP clients queuing through the same real
+ * matchmaker packets humans use) more literally than BRAWLPIT's own ORDINARY matchmaker bot-fill
+ * (which is actually the same in-process-puppet pattern TDMO already uses here). */
+typedef enum { MODE_DEATHMATCH=0, MODE_TDM=1, MODE_SURVIVAL=2, MODE_CTF=3, MODE_ODDBALL=4, MODE_LOCAL=98, MODE_NET=99, MODE_EVOLUTION=100, MODE_TDMB=101, MODE_TDMO=102, MODE_CTFB=103, MODE_CTFO=104, MODE_STORY=105, MODE_HEADED_BOT=106, MODE_STORY_CAVE=107, MODE_QUEUE=108 } GameMode;
 typedef enum {
     STORY_PHASE_CUTSCENE = 0,    /* intro cutscene (TYLER episode — Tyler arrives) */
     STORY_PHASE_PLAYING = 1,

@@ -1,0 +1,13 @@
+[Unit]
+Description=SHANKPIT QUEUE bot pool (S459-34) -- 3 real packet-level bots
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/fatbaby/SHANKPIT
+ExecStart=/home/fatbaby/SHANKPIT/ops/shankpit-bot-pool.sh 127.0.0.1 6969 3
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -324,6 +324,23 @@ static void tdmo_activate_match(unsigned int now_ms) {
     tdmo_ensure_population(now_ms);
 }
 
+// queue_activate_match -- S459-34, the real MODE_QUEUE match activation. Deliberately much
+// smaller than tdmo_activate_match: no teams, no score-limit bookkeeping, no in-process bot
+// population call -- MODE_QUEUE's own population is filled entirely by real, external, packet-
+// level bot client processes connecting exactly like a human would (ops/shankpit-bot-pool.sh),
+// never an in-process PlayerState puppet, so there is no server-side "ensure population" step to
+// call here at all. Reuses the generic non-TDMO connect path every other free-for-all mode
+// (MODE_DEATHMATCH/MODE_CTF) already goes through for per-player setup.
+static void queue_activate_match(unsigned int now_ms) {
+    local_init_match(1, MODE_QUEUE);
+    g_server_match_scene = g_dm_rotation[g_dm_rotation_idx];
+    scene_load(g_server_match_scene);
+    local_state.game_mode = MODE_QUEUE;
+    local_state.match_over = 0;
+    local_state.players[0].active = 0;
+    g_round_start_ms = now_ms;
+}
+
 static int find_slot_by_addr(const struct sockaddr_in *addr) {
     for (int i = 1; i < MAX_CLIENTS; i++) {
         if (slots[i].active && addr_equal(&slots[i].addr, addr)) {
@@ -594,7 +611,13 @@ int parse_server_mode(int argc, char **argv) {
     return mode;
 }
 
-void server_net_init() {
+// server_net_init -- `port` defaults to 6969 (the real, standard SHANKPIT UDP port) but is now
+// real, CLI-configurable (`--port N`, S459-34) -- added specifically so a second, independent
+// server instance (e.g. for local dev/testing) can run without colliding with an already-bound
+// live instance on the standard port, rather than needing to stop a shared, real, already-running
+// service to test against (the same real caution this monorepo's own "never restart a shared
+// matchmaker based on a process check alone" precedent already establishes elsewhere).
+void server_net_init(int port) {
     setbuf(stdout, NULL);
     #ifdef _WIN32
     WSADATA wsa; WSAStartup(MAKEWORD(2,2), &wsa);
@@ -610,14 +633,14 @@ void server_net_init() {
     int flags = fcntl(sock, F_GETFL, 0); fcntl(sock, F_SETFL, flags | O_NONBLOCK);
     #endif
     bind_addr.sin_family = AF_INET;
-    bind_addr.sin_port = htons(6969);
+    bind_addr.sin_port = htons((unsigned short)port);
     bind_addr.sin_addr.s_addr = INADDR_ANY;
-    NET_SERVER_LOG("STARTUP mode=pending bind_addr=0.0.0.0 port=%d scene=%d", 6969, g_server_match_scene);
+    NET_SERVER_LOG("STARTUP mode=pending bind_addr=0.0.0.0 port=%d scene=%d", port, g_server_match_scene);
     if (bind(sock, (struct sockaddr*)&bind_addr, sizeof(bind_addr)) < 0) {
-        NET_ERR_LOG("BIND_FAILED port=%d", 6969);
+        NET_ERR_LOG("BIND_FAILED port=%d", port);
         exit(1);
     } else {
-        NET_SERVER_LOG("SERVER_STARTED bind_addr=0.0.0.0 port=%d", 6969);
+        NET_SERVER_LOG("SERVER_STARTED bind_addr=0.0.0.0 port=%d", port);
     }
 }
 
@@ -668,8 +691,17 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
             requested_mode = (unsigned char)buffer[sizeof(NetHeader)];
         }
         NET_SERVER_LOG("CONNECT_RX src=%s size=%d requested_mode=%d", addr_buf, size, requested_mode);
+        // Real, found-live fix (S459-34): `mode_before` was referenced below (CONNECT_ACCEPT log)
+        // but never declared anywhere -- a genuine latent bug invisible under the default build
+        // (NET_VERBOSE_LOG=0 strips the whole log call, arguments included, so the undeclared
+        // identifier never actually needed to exist), only surfacing as a real compile error once
+        // NET_VERBOSE_LOG=1 is turned on to verify this same feature. Captured here, before either
+        // activate_match call below can change local_state.game_mode.
+        int mode_before = local_state.game_mode;
         if (requested_mode == MODE_TDMO && local_state.game_mode != MODE_TDMO) {
             tdmo_activate_match(get_server_time());
+        } else if (requested_mode == MODE_QUEUE && local_state.game_mode != MODE_QUEUE) {
+            queue_activate_match(get_server_time());
         }
         PlayerState *p = &local_state.players[client_id];
         client_last_seq[client_id] = 0;
@@ -690,6 +722,19 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
             phys_respawn(p, get_server_time());
             local_state.client_meta[client_id].active = 1;
             tdmo_ensure_population(get_server_time());
+        } else if (local_state.game_mode == MODE_QUEUE) {
+            // Real, found-live fix (S459-34, caught via a real 3-bot connect test under
+            // NET_VERBOSE_LOG=1): every OTHER free-for-all mode's default match scene is fixed at
+            // server startup, so a never-yet-used PlayerState slot's zero-initialized scene_id
+            // (0) already happens to match it -- but queue_activate_match changes
+            // g_server_match_scene DYNAMICALLY (first real QUEUE connect can fire after the
+            // server already started in a different mode/scene), so a newly connecting player's
+            // scene_id needs the same explicit sync TDMO's own branch above already does, or
+            // players connecting before vs. after that scene settles end up scattered across two
+            // different scene_ids and never see each other. Confirmed live: without this, a
+            // 3-bot test connect produced scene_id=0 for the first bot and scene_id=1 for the
+            // next two.
+            p->scene_id = g_server_match_scene;
         }
         p->in_fwd = 0.0f;
         p->in_strafe = 0.0f;
@@ -891,6 +936,7 @@ void server_broadcast() {
 }
 
 int main(int argc, char *argv[]) {
+    int server_port = 6969;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--record") == 0) {
             recorder.enabled = 1;
@@ -901,6 +947,9 @@ int main(int argc, char *argv[]) {
             recorder.enabled = 1;
             recorder_init_file(argv[i + 1]);
             i++;
+        } else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
+            server_port = atoi(argv[i + 1]);
+            i++;
         }
     }
 
@@ -908,7 +957,7 @@ int main(int argc, char *argv[]) {
         recorder_init_file("shankpit_recording.lispasm");
     }
 
-    server_net_init();
+    server_net_init(server_port);
     int mode = parse_server_mode(argc, argv);
     NET_SERVER_LOG("MODE_SELECTED mode=%d", mode);
     local_init_match(1, mode);

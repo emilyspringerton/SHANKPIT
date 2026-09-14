@@ -115,7 +115,9 @@ func main() {
 	allowCollapse  := flag.Bool("allow-collapse", false, "enable Collapse-corridor spirits (Andras chaos mode)")
 	sessions       := flag.Int("sessions", 0, "number of self-play sessions (0 = infinite)")
 	sessionDur     := flag.Duration("session-duration", 60*time.Second, "max duration per session")
+	mode           := flag.Uint("mode", uint(common.GameModeDeathmatch), "PacketConnect game_mode byte to request (S459-34: 108 = queue)")
 	flag.Parse()
+	requestedGameMode = uint8(*mode)
 
 	for i := 1; *sessions == 0 || i <= *sessions; i++ {
 		if *sessions > 0 {
@@ -688,14 +690,22 @@ func receiveLoop(conn *net.UDPConn, state *botState, verbose bool) {
 	}
 }
 
-// sendConnect sends a PacketConnect with DM game mode and optional IDUNA JWT.
+// requestedGameMode -- S459-34, founder real-time: "architect the bots the same way the bots
+// work for brawlpit... packet level bots just like brawlpit." Package-level (not threaded through
+// runSession's own already-long parameter list) since it's a single, process-lifetime connect
+// choice set once from the -mode flag in main(), the same real shape g_vehicle_style-style globals
+// already use elsewhere in this monorepo for "one flag, read in one place deep in the call chain."
+// Defaults to GameModeDeathmatch, this bot's own long-standing real default.
+var requestedGameMode = common.GameModeDeathmatch
+
+// sendConnect sends a PacketConnect with the requested game mode and optional IDUNA JWT.
 // Wire format: [0]=type [1:12]=zeros [12]=game_mode [13..268]=JWT (null-padded).
 // JWT is loaded from SHANKPIT_AUTH_TOKEN env or ~/.shankpit/auth.json {"token":"..."}.
 func sendConnect(conn *net.UDPConn) {
 	const jwtFieldLen = 256
 	buf := make([]byte, 13+jwtFieldLen)
 	buf[0] = common.PacketConnect
-	buf[12] = common.GameModeDeathmatch
+	buf[12] = requestedGameMode
 
 	if jwt := loadShankpitJWT(); jwt != "" {
 		copy(buf[13:], []byte(jwt))

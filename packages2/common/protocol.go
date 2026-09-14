@@ -31,6 +31,11 @@ const (
 	GameModeSurvival   uint8 = 2
 	GameModeCTF        uint8 = 3
 	GameModeRacing     uint8 = 4
+	// GameModeQueue mirrors packages/common/protocol.h's own MODE_QUEUE=108 (S459-34) -- the
+	// real, networked bot-fill queue mode. Kept numerically identical since PacketConnect's
+	// mode byte is shared wire format between the C server (apps/server) and any Go client
+	// (apps2/emily-bot) that connects to it.
+	GameModeQueue uint8 = 108
 )
 
 const (
