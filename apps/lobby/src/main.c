@@ -6983,10 +6983,10 @@ void draw_projectiles() {
 // but only for STATE_GAME_LOCAL, never wired into the networked STATE_GAME_NET path at all.
 // Same "both sides independently load identical geometry" contract this file's own --level doc
 // comment already establishes for the CLI-flag case (client and server never transmit level
-// geometry over the wire itself) -- applied here via the same real name lookup
-// (QUEUE_DEFAULT_LEVEL_NAME) the server itself uses, so both sides derive the identical level
-// independently instead of one trusting bytes sent by the other.
-#define QUEUE_DEFAULT_LEVEL_NAME "44"
+// geometry over the wire itself) -- applied here via the same real registry lookup the server
+// itself uses (S459-41: whichever level is admin-flagged `is_default_queue`, not a hardcoded
+// name), so both sides derive the identical level independently instead of one trusting bytes
+// sent by the other.
 static int g_queue_level_loaded = 0; // only latches once the real fetch+apply SUCCEEDS -- a transient failure retries on the next scene-entry instead of leaving the client permanently geometry-less for the rest of the session
 static void client_load_queue_level(void) {
     if (g_queue_level_loaded) return;
@@ -6994,7 +6994,7 @@ static void client_load_queue_level(void) {
     int count = level_boxes_fetch_registry_list(entries, LEVEL_REGISTRY_MAX_ENTRIES);
     int found_id = -1;
     for (int i = 0; i < count; i++) {
-        if (strcmp(entries[i].name, QUEUE_DEFAULT_LEVEL_NAME) == 0) { found_id = entries[i].id; break; }
+        if (entries[i].is_default_queue) { found_id = entries[i].id; break; }
     }
     if (found_id < 0) return; // real, honest no-op -- matches the server's own oil-tanker fallback (a built-in scene needs no client fetch at all)
     CustomLevelData lvl;

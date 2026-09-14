@@ -366,16 +366,15 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
 //
 // S459-38, founder real-time: "DEFAULT QUEUE TO USE THE LEVEL CALLE 44 (NEW FUNCTIONALITY
 // QUEUEING INTO LEVELS WITH BOTS)" / "default it to the oil tanker if no online levels
-// available." Real, live registry lookup (checked directly, not assumed): the level named "44"
-// is real, id=6, GET https://okemily.com/api/v1/shankpit-levels confirmed it live at the time
-// this was written. Matched by NAME (not a hardcoded id) since that's how the founder actually
-// refers to it and an id is a real, separate implementation detail that could legitimately
-// change if the level ever gets deleted/recreated -- a name lookup stays correct either way, at
-// the real cost of an extra registry-list round-trip before the export fetch. Falls back to
+// available." S459-41, same real thread: "need to add an option to shankpit levels to set a
+// level as default for queue" -- replaced the original hardcoded-name lookup ("44") with a real,
+// admin-settable `is_default_queue` flag on the level registry itself (LevelRegistryEntry, see
+// level_boxes.h). Whichever level is currently flagged wins -- no game-side rebuild needed to
+// change the default, just a real admin action in NOCK's own level editor. Falls back to
 // SCENE_OIL_TANKER (bypassing the normal g_dm_rotation choice entirely, matching the founder's
 // own explicit instruction) on ANY real failure along the way -- registry unreachable, no level
-// named "44" in it, or the export fetch/parse itself failing -- never a half-loaded level.
-#define QUEUE_DEFAULT_LEVEL_NAME "44"
+// currently flagged as default, or the export fetch/parse itself failing -- never a half-loaded
+// level.
 static void queue_activate_match(unsigned int now_ms) {
     local_init_match(1, MODE_QUEUE);
     local_state.game_mode = MODE_QUEUE;
@@ -387,7 +386,7 @@ static void queue_activate_match(unsigned int now_ms) {
     int count = level_boxes_fetch_registry_list(entries, LEVEL_REGISTRY_MAX_ENTRIES);
     int found_id = -1;
     for (int i = 0; i < count; i++) {
-        if (strcmp(entries[i].name, QUEUE_DEFAULT_LEVEL_NAME) == 0) { found_id = entries[i].id; break; }
+        if (entries[i].is_default_queue) { found_id = entries[i].id; break; }
     }
     CustomLevelData lvl;
     if (found_id >= 0 && level_boxes_fetch_export(found_id, &lvl)) {

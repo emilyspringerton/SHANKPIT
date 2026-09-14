@@ -83,13 +83,21 @@ ea: $(LOBBY_BIN) $(GO_SERVER_BIN)
 	@ls -lh $(EA_DIR)/
 
 # ---- STEAM EA BUILD (Windows cross-compile, requires mingw-w64) ----
+# Real, found-live fix (S459-41 follow-up): this target used to target i686-w64-mingw32-gcc, but
+# the only real mingw SDL2 dev kit checked out on this box (/tmp/sdl2_mingw) is x86_64, matching
+# the Go server's own GOARCH=amd64 above -- 32-bit and 64-bit mingw libs are never interchangeable
+# (verified live: linking against the x86_64 archive with the i686 compiler leaves real symbols
+# like SDL_GetError undefined, since the .o members are a different COFF machine type entirely).
+# SDL2_MINGW_PREFIX is overridable for a box with its dev kit somewhere else.
+SDL2_MINGW_PREFIX ?= /tmp/sdl2_mingw
 ea-windows: $(BIN_DIR)
 	@echo "🪟 Cross-compiling Go server for Windows..."
 	GOWORK=off GOOS=windows GOARCH=amd64 go build -o $(BIN_DIR)/shank_go_server.exe ./apps2/server-go/
-	@echo "🔨 Cross-compiling C client for Windows (requires i686-w64-mingw32-gcc)..."
-	i686-w64-mingw32-gcc $(CFLAGS) $(INCLUDES) $(LOBBY_SRC) \
+	@echo "🔨 Cross-compiling C client for Windows (requires x86_64-w64-mingw32-gcc)..."
+	x86_64-w64-mingw32-gcc $(CFLAGS) $(INCLUDES) -I$(SDL2_MINGW_PREFIX)/include $(LOBBY_SRC) \
 		-o $(BIN_DIR)/shank_lobby.exe \
-		-lSDL2 -lopengl32 -lglu32 -lm -static-libgcc
+		-L$(SDL2_MINGW_PREFIX)/lib -lSDL2 -lopengl32 -lglu32 -lm -static-libgcc \
+		-lws2_32 -ldinput8 -ldxguid -ldxerr8 -luser32 -lgdi32 -lwinmm -limm32 -lole32 -loleaut32 -lshell32 -lsetupapi -lversion -luuid
 	@echo "📦 Packaging EA build (Windows)..."
 	@mkdir -p dist/ea-windows
 	@cp $(BIN_DIR)/shank_go_server.exe dist/ea-windows/

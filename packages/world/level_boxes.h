@@ -416,6 +416,11 @@ typedef struct {
     int id;
     char name[LEVEL_REGISTRY_NAME_LEN];
     int wall_count;
+    // is_default_queue (S459-41, founder real-time: "need to add an option to shankpit levels to
+    // set a level as default for queue") -- exactly one level is flagged as the real, global
+    // QUEUE default at a time (internal/shankpit.LevelSummary's own real is_default_queue field,
+    // same shape shankpit_sprays.is_default already established).
+    int is_default_queue;
 } LevelRegistryEntry;
 
 // level_boxes_parse_registry_list parses IDUNA's real GET /api/v1/shankpit-levels response (a
@@ -445,6 +450,9 @@ static inline int level_boxes_parse_registry_list(const char *json, LevelRegistr
                     float wc_f = 0;
                     if (level_boxes_parse_number(wc_val, &wc_f)) out[count].wall_count = (int)wc_f;
                 }
+                out[count].is_default_queue = 0;
+                const char *dq_val = level_boxes_find_key(obj_start, obj_end, "is_default_queue");
+                if (dq_val) level_boxes_parse_bool(dq_val, &out[count].is_default_queue);
                 count++;
             }
         }
