@@ -378,3 +378,65 @@ Removed the stale heuristic; live-verified clean on the redeployed standing bot 
 **Real, honest, still open**: native in-game inference (wiring a trained checkpoint into the
 *actual playable* QUEUE bot pool, not just training) remains real, separate, unbuilt work — the
 founder's own next-named ask. A round-timer wire field (§2) also remains open.
+
+## 12. Roadmap / Vision (S459-56)
+
+Founder real-time: "northstar this whole thing." Real status check and forward plan for where
+this pipeline goes next, grounded in what's actually built and tested — not speculation about
+game-cloning or external AI agents, which is a real, separate, much bigger conversation this repo
+isn't the place to chase.
+
+**What's real and working today**: a full, closed loop — real wire-protocol packet capture (§1),
+an 84-feature observation vector (§2), a 5-tier reward function including a real multikill spike
+(§3, §5.5-equivalent — see S459-52 elsewhere in `EMILY/BACKLOG.md`), a real training environment
+speaking the live server's own actual UDP protocol (§9), a real 3-role self-play league
+orchestrator with PFSP matchmaking and Elo (§11), a real remote checkpoint registry with a NOCK
+admin UI (§10), and a real drop-in Colab bootstrap script (§10). Live-verified end to end, not
+just designed: real training runs have produced real checkpoints, real league members, and a real
+registry entry visible in production NOCK today.
+
+**What's real and NOT done — three concrete next steps, in the order they were actually asked
+for**:
+
+1. **Native in-game inference** (the founder's own next-named ask, still open). Right now a
+   trained checkpoint only ever gets *evaluated* by a Python process
+   (`frozen_policy_bot.py`) — the actual, live, standing QUEUE bot pool
+   (`shankpit-bot-pool.service`) still runs `apps2/emily-bot`'s own hand-written heuristic, never
+   a trained policy. BRAWLPIT's own real precedent (`scripts/export_policy_weights.py` + a small,
+   hand-rolled MLP forward-pass reader, `packages/common/mlp_policy.h`) is the concrete template:
+   export a checkpoint's own small MLP weights (SHANKPIT's policy network is the same order of
+   magnitude — 84 inputs, 2 tiny hidden layers, 7 outputs — trivial to hand-roll a native forward
+   pass for) into a real, portable format, then give `apps2/emily-bot` a real `-checkpoint <path>`
+   flag that runs that native inference loop instead of the heuristic. Real, deliberate
+   difference from BRAWLPIT worth naming up front: BRAWLPIT's inference target is its own native
+   C client; SHANKPIT's standing bot pool is already Go, so this is a Go MLP forward pass, not a
+   C one — a real, new (if small) piece of code, not a straight file copy.
+
+2. **Multi-main league** (founder real-time: "what about multi main league? multiple fresh
+   policies - lets say 3 start from scratch each with dedicated exploiters"). A real, legitimate
+   architecture — arguably closer to the actual AlphaStar league (which ran multiple independent
+   Main agents, not one) than what S459-54 just built. Real, named tradeoffs:
+   - **Diversity payoff is real**: independent Main lineages can't all collapse into the same
+     local optimum together, and each gets its own dedicated exploiter pressure.
+   - **Compute cost is the real, current blocker**: this pipeline trains roles *sequentially*, one
+     at a time (§11's own real, named scope-down — no `--num-envs` yet). 3 independent Mains × (1
+     Main + 2 dedicated exploiters each) = 9 lineages per generation instead of 3, roughly 3x the
+     wall-clock. This box already struggled to complete a 2-generation, 3-role test under real,
+     concurrent load (§11's own honest report) — 9 lineages would be materially worse until
+     either that's addressed or training moves to a dedicated, less-contended box.
+   - **Real code changes needed**: `rl_league.py`'s `LeagueRole` enum and the `sample_for_*` PFSP
+     functions currently assume one singular Main. Multi-main needs either a real `lineage` tag
+     alongside `role`, or reworking League Exploiter's own sampling to pull across *every* Main
+     lineage rather than "the" Main.
+   - **Recommendation**: real, worth building, but after (1) native inference actually closes the
+     loop for the single-Main league that already exists — training more diverse Mains before
+     anything ever plays a real game with any of them is solving the wrong problem first.
+
+3. **A round-timer wire field** (§2's own long-standing, still-open gap) — small, real, mechanical.
+
+**The honest bigger picture**: this monorepo now has real, independently-verified, working
+self-play PFSP league infrastructure across three separate games (REDGARDEN → BRAWLPIT →
+SHANKPIT, each a real, adapted port, not a copy-paste). That's a genuinely notable, reusable asset
+on its own — the actual "SHANKPIT as a training platform" question isn't whether the ML works (it
+does, today, verified), it's whether anyone plays against a checkpoint that's actually running in
+the real game, which is exactly what step (1) above closes.
