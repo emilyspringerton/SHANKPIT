@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
 """
-scripts/colab_train.py (S459-50) -- the real, single "drop into one Colab cell" bootstrap.
-Founder real-time: "ensure we have the colab training skrip" -- a direct, faithful port of
-BRAWLPIT/scripts/colab_train.py, scoped to SHANKPIT's own real pipeline (scripts/
+scripts/colab_train.py (S459-50, updated S459-59) -- the real, single "drop into one Colab cell"
+bootstrap. Founder real-time: "ensure we have the colab training skrip" -- a direct, faithful port
+of BRAWLPIT/scripts/colab_train.py, scoped to SHANKPIT's own real pipeline (scripts/
 rl_env_packet.py / rl_train_packet.py / rl_league.py / rl_registry.py, S459-45/46/48/49).
 
 Paste this whole file's contents into one Colab cell and run it (or, once SHANKPIT is already
 cloned somewhere, `!python3 scripts/colab_train.py`) -- it clones/updates the repo, builds the
 real training binaries (bin/shank_server, bin/emily-bot), installs gymnasium/stable_baselines3,
-authenticates against IDUNA, and kicks off a real training run via rl_train_packet.py, pushing the
-final checkpoint to the shared SHANKPIT-RL registry (IDUNA/internal/shankpit/checkpoint_store.go)
-when an agent secret is given.
+authenticates against IDUNA, and kicks off a real training run via rl_train_packet.py.
 
-Real, honest scope difference from BRAWLPIT's own colab_train.py: SHANKPIT's registry has no
---resume-from-registry warm-start yet (rl_train_packet.py always starts a fresh policy) and no
---num-envs parallel-rollout support yet -- both real, named, deferred gaps (see
-docs/BOT_TRAINING_NORTHSTAR.md §9), not silently dropped from the port.
+REAL, FOUND, LIVE CORRECTION (S459-59): this file previously invoked rl_train_packet.py with a
+stale single-agent CLI (--port/--opponents/--out) left over from before S459-54 rewrote that
+script into the real 3-role (Main/Main Exploiter/League Exploiter) self-play league orchestrator
+(--league-dir/--output-dir/--registry-url/etc, no --port/--opponents/--out at all anymore) --
+running the old cell as written would fail immediately with an argparse error, never training
+anything. Fixed here: this cell now runs the real league orchestrator directly, which trains all
+3 roles together and pushes each generation's checkpoints to the shared registry itself (no
+separate push_checkpoint call needed afterward, unlike the old single-agent flow this replaces).
+--resume-from-registry (real, warm-starts every role from its own newest registry checkpoint) is
+also real and live now, unlike this doc's own previous "not built yet" claim -- see
+rl_train_packet.py's own --resume-from-registry for the real contract.
 
 On "oauth into IDUNA to get the token used for training": this system's real token exchange for a
 MACHINE (not a human) is IDUNA's M2M agent-secret grant (POST /api/v1/auth/agent) -- the same
@@ -23,7 +28,8 @@ mechanism every other automated agent in this monorepo uses, not a browser OAuth
 
 Prereqs: a GitHub personal access token with `repo` read scope (this repo is private), and the
 real SHANKPIT-RL agent secret from IDUNA/var/agent-secrets.env (IDUNA_SECRET_SHANKPIT_RL) if you
-want this run to push to the shared registry -- leave the secret blank for a local-only smoke run.
+want this run to push to the shared registry -- leave the secret blank for a local-only smoke run
+(no registry push, --resume-from-registry unavailable).
 """
 
 import getpass
@@ -134,41 +140,41 @@ def main():
     else:
         print("No agent secret given -- this run will train locally only and NOT join the shared registry.")
 
-    timesteps = os.environ.get("SHANKPIT_TOTAL_TIMESTEPS", "20000")
-    out_path = os.environ.get("SHANKPIT_CHECKPOINT_OUT", "var/rl_checkpoints/ppo_shankpit_queue_colab.zip")
+    # Real 3-role self-play league orchestrator (S459-54) -- trains Main/Main Exploiter/League
+    # Exploiter together in one run, generation by generation, and pushes each generation's 3
+    # checkpoints to the shared registry itself (when --registry-url/secret are set) -- no
+    # separate push_checkpoint call needed here, unlike the old single-agent flow this replaces.
+    output_dir = os.environ.get("SHANKPIT_RL_OUTPUT_DIR", "var/rl_checkpoints/colab")
     cmd = [
         sys.executable, "scripts/rl_train_packet.py",
-        "--port", os.environ.get("SHANKPIT_TRAIN_PORT", "17777"),
-        "--timesteps", timesteps,
+        "--total-timesteps", os.environ.get("SHANKPIT_TOTAL_TIMESTEPS", "20000"),
         "--max-episode-steps", os.environ.get("SHANKPIT_MAX_EPISODE_STEPS", "1000"),
-        "--opponents", os.environ.get("SHANKPIT_OPPONENTS", "2"),
-        "--out", out_path,
+        "--output-dir", output_dir,
+        "--league-dir", os.environ.get("SHANKPIT_LEAGUE_DIR", "league_data"),
+        "--heuristic-opponents", os.environ.get("SHANKPIT_HEURISTIC_OPPONENTS", "1"),
     ]
-    # rl_train_packet.py now defaults --fast-forward ON (matching BRAWLPIT's own hardcoded
-    # behavior) -- only pass --no-fast-forward for a debugging session that explicitly wants
-    # real-time tick correspondence.
-    if os.environ.get("SHANKPIT_FAST_FORWARD") == "0":
-        cmd.append("--no-fast-forward")
+    pushing_to_registry = bool(iduna_agent_secret)
+    if pushing_to_registry:
+        cmd += [
+            "--registry-url", IDUNA_BASE_URL,
+            "--registry-agent-name", "SHANKPIT-RL",
+            "--registry-agent-secret", iduna_agent_secret,
+            "--registry-source-location", "colab",
+        ]
+        # Warm-start every role from its own newest registry checkpoint instead of a fresh
+        # network -- real and live (S459-54), opt-in via env var since a from-scratch run is a
+        # real, valid choice too (e.g. deliberately starting a fresh multi-main league member).
+        if os.environ.get("SHANKPIT_RESUME_FROM_REGISTRY") == "1":
+            cmd.append("--resume-from-registry")
 
-    print("\nStarting real training -- this runs until --timesteps completes or the cell/runtime is stopped.", flush=True)
+    print("\nStarting real league training -- this runs until --total-timesteps completes per "
+          "role, or the cell/runtime is stopped.", flush=True)
     _stream(cmd)
 
-    if iduna_agent_secret:
-        from rl_registry import push_checkpoint, authenticate as _auth
-        jwt = _auth(IDUNA_BASE_URL, "SHANKPIT-RL", iduna_agent_secret)
-        print(f"\nPushing {out_path} to the shared registry at {IDUNA_BASE_URL}...")
-        result = push_checkpoint(
-            IDUNA_BASE_URL, jwt,
-            role=os.environ.get("SHANKPIT_ROLE", "main"),
-            generation=int(os.environ.get("SHANKPIT_GENERATION", "1")),
-            elo=float(os.environ.get("SHANKPIT_ELO", "1500")),
-            source_location="colab",
-            path=out_path,
-        )
-        print(f"Pushed -- registered as id={result['id']} name={result['name']}")
-        print(f"View it in NOCK: {IDUNA_BASE_URL}/admin/nock#shankpit-ai-opponents")
     del iduna_agent_secret
-    print(f"\nDone. Local checkpoint: {out_path}")
+    print(f"\nDone. Local checkpoints: {output_dir}/")
+    if pushing_to_registry:
+        print(f"View the league in NOCK: {IDUNA_BASE_URL}/admin/nock#shankpit-ai-opponents")
 
 
 if __name__ == "__main__":
