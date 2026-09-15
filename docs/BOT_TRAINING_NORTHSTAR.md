@@ -274,9 +274,42 @@ produce a real predicted action from a synthetic observation. This is a real, wo
 proof: connect → real observations → real policy update → real checkpoint → checkpoint loads and
 predicts.
 
+## 10. Remote checkpoint registry + Colab script (S459-49/50)
+
+Founder real-time: "bring in the bot registry affordances on NOCK all the same - ability to
+disable - hide disabled - set default (defer this...) - for shankpit" then "ensure we have the
+colab training skrip."
+
+A real, shared, IDUNA-hosted checkpoint registry now exists for SHANKPIT, mirroring BRAWLPIT's
+own established one (`IDUNA/internal/brawlpit/checkpoint_store.go`) field-for-field: new
+`shankpit_rl_checkpoints` table, `IDUNA/internal/shankpit/checkpoint_store.go` (9 tests),
+`IDUNA/internal/http/handlers/shankpit_checkpoints.go`, real public list/download +
+admin-cookie-gated activate/disable routes, and a new "SHANKPIT AI Opponents" tab in NOCK
+(`frontend/nock/src/ShankpitAiOpponents.tsx`) — Disable and Hide Disabled are real and fully
+wired; "Set as opponent" is deliberately deferred per the founder's own explicit instruction (the
+button exists, but shows a DaisyUI "not implemented" alert — the backend endpoint itself is real
+and already wired, flipping the stub needs no backend work).
+
+New `scripts/rl_registry.py`: a real client (`authenticate`/`push_checkpoint`/`list_checkpoints`/
+`download_checkpoint`), a direct port of `BRAWLPIT/scripts/rl_registry.py`. A new M2M agent
+(`SHANKPIT-RL`, `shankpit.checkpoints.write`) was provisioned via `cmd/bootstrap` (idempotent, no
+`-rotate` — verified with `--dry-run` first that it touched nothing else). **Live-verified, not
+just built**: pushed the real S459-48 training checkpoint
+(`var/rl_checkpoints/ppo_shankpit_queue_smoke.zip`) to the live registry, listed it back, and
+pulled it back byte-identical (SHA256 match) — the registry now holds one real, non-fabricated
+entry, visible in NOCK today.
+
+New `scripts/colab_train.py`: the real "drop into one Colab cell" bootstrap, a direct structural
+port of `BRAWLPIT/scripts/colab_train.py` (same `_run`/`_stream`/`_bootstrap_repo`/
+`_bootstrap_build` shape, same real Colab-output-visibility fix) — clones the repo, builds
+`bin/shank_server`/`bin/emily-bot`, installs `gymnasium`/`stable_baselines3`, runs
+`rl_train_packet.py`, and pushes the resulting checkpoint to the shared registry when a real
+agent secret is given.
+
 **Real, honest, still not done**: `scripts/rl_league.py`'s own `register_generation_snapshot()`
 needs 3 real, DISTINCT checkpoints (MAIN/MAIN_EXPLOITER/LEAGUE_EXPLOITER) to mean anything —
 duplicating today's one smoke-test checkpoint into all 3 roles would be fabricated, not real,
 archetype diversity, so registration is deliberately deferred until real, distinct training runs
-exist to register. A round-timer wire field (§2) and the Colab notebook (explicitly gated by the
-founder on the above) both remain open.
+exist to register. `rl_train_packet.py` has no `--resume-from-registry` warm-start or
+`--num-envs` parallel-rollout support (both real BRAWLPIT features, not yet ported). A
+round-timer wire field (§2) remains open.
