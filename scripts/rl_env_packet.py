@@ -162,9 +162,16 @@ class NetPlayer(ctypes.LittleEndianStructure):
         ("reload_timer", ctypes.c_uint16),
         ("ability_cooldown", ctypes.c_uint16),
         ("kill_streak", ctypes.c_uint8),  # S459-52
-        ("_pad3", ctypes.c_uint8 * 3),  # trailing padding -- the real compiled struct rounds up to a 4-byte multiple (72), verified via the same offsetof/sizeof probe technique this file's own module doc comment establishes
+        ("_pad3", ctypes.c_uint8 * 3),  # real compiler padding before the next float-aligned field
+        # vx/vy/vz -- S459-69, real velocity now on the wire (fix for jump "rubberbanding" -- see
+        # protocol.h's own NetPlayer.vx/vy/vz doc comment for the full why). Verified via the same
+        # real offsetof/sizeof C probe technique this file's own module doc comment establishes:
+        # offsetof(vx)=72, sizeof(NetPlayer)=84 (grew from 72).
+        ("vx", ctypes.c_float),
+        ("vy", ctypes.c_float),
+        ("vz", ctypes.c_float),
     ]
-assert ctypes.sizeof(NetPlayer) == 72, ctypes.sizeof(NetPlayer)
+assert ctypes.sizeof(NetPlayer) == 84, ctypes.sizeof(NetPlayer)
 
 
 # --- Encode/decode helpers, matching apps2/emily-bot/main.go + snapshot.go byte-for-byte ---
@@ -198,7 +205,7 @@ def decode_snapshot(data: bytes):
     """Returns a list of NetPlayer copies, or None if data is too short to trust. Mirrors
     apps2/emily-bot/snapshot.go's own decodePacketSnapshot exactly: entity_count lives at
     NetHeader offset 8, entities start at offset 13 (12-byte header + 1 redundant count byte),
-    each entity is sizeof(NetPlayer)=72 bytes (S459-52 -- grew from 68 when kill_streak was added).
+    each entity is sizeof(NetPlayer)=84 bytes (S459-69 -- grew from 72 when vx/vy/vz were added).
     A truncated/overclaiming buffer stops safely at however many whole entities actually fit,
     never misparses past the real buffer end."""
     if len(data) < 13 or data[0] != PACKET_SNAPSHOT:

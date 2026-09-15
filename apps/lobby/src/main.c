@@ -7978,7 +7978,7 @@ static void client_decay_pending_correction(unsigned int now_ms) {
     if (fabsf(reconcile_corr_pitch) < 0.01f) reconcile_corr_pitch = 0.0f;
 }
 
-static void client_reconcile_local_player(unsigned int ack_seq, float auth_x, float auth_y, float auth_z, float auth_yaw, float auth_pitch) {
+static void client_reconcile_local_player(unsigned int ack_seq, float auth_x, float auth_y, float auth_z, float auth_yaw, float auth_pitch, float auth_vx, float auth_vy, float auth_vz) {
     if (my_client_id <= 0 || my_client_id >= MAX_CLIENTS) return;
     if (ack_seq <= net_last_reconciled_ack) return;
 
@@ -7997,6 +7997,15 @@ static void client_reconcile_local_player(unsigned int ack_seq, float auth_x, fl
     int prev_jump = p->in_jump;
 
     p->x = auth_x; p->y = auth_y; p->z = auth_z;
+    // S459-69, the real fix for jump "rubberbanding" (see NetPlayer.vx/vy/vz's own doc comment,
+    // protocol.h, for the full why -- and S459-68's own real, named lesson: a velocity ESTIMATE
+    // reconstructed from two position samples is unsafe across a changing-acceleration interval
+    // like a jump arc, and caused a much worse regression when tried). This is not an estimate --
+    // it's the server's own EXACT velocity for this exact acked tick, now on the wire. Setting it
+    // directly here means the replay below starts from the real physics state instead of
+    // whatever the client's own local prediction had accumulated (which is exactly what could
+    // silently diverge with nothing to correct it, per S459-67's own real root-cause finding).
+    p->vx = auth_vx; p->vy = auth_vy; p->vz = auth_vz;
     p->yaw = norm_yaw_deg(auth_yaw);
     p->pitch = clamp_pitch_deg(auth_pitch);
 
@@ -8231,6 +8240,7 @@ void net_process_snapshot(char *buffer, int len) {
     unsigned int local_ack_seq = 0;
     float local_auth_x = 0.0f, local_auth_y = 0.0f, local_auth_z = 0.0f;
     float local_auth_yaw = 0.0f, local_auth_pitch = 0.0f;
+    float local_auth_vx = 0.0f, local_auth_vy = 0.0f, local_auth_vz = 0.0f; // S459-69
 
     for(int i=0; i<count; i++) {
         if (cursor + (int)sizeof(NetPlayer) > len) break;
@@ -8326,6 +8336,7 @@ void net_process_snapshot(char *buffer, int len) {
             local_auth_z = np->z;
             local_auth_yaw = np->yaw;
             local_auth_pitch = np->pitch;
+            local_auth_vx = np->vx; local_auth_vy = np->vy; local_auth_vz = np->vz; // S459-69
 
             int first_local_snapshot_sync = !net_have_initial_local_snapshot_sync;
 
@@ -8378,7 +8389,7 @@ void net_process_snapshot(char *buffer, int len) {
     }
 
     if (local_seen) {
-        client_reconcile_local_player(local_ack_seq, local_auth_x, local_auth_y, local_auth_z, local_auth_yaw, local_auth_pitch);
+        client_reconcile_local_player(local_ack_seq, local_auth_x, local_auth_y, local_auth_z, local_auth_yaw, local_auth_pitch, local_auth_vx, local_auth_vy, local_auth_vz);
     }
 
     for (int id = 1; id < MAX_CLIENTS; id++) {

@@ -225,6 +225,16 @@ typedef struct {
     // this tick AND kill_streak >= 2 means a real double-kill-or-higher just landed, with
     // kill_streak itself telling you which tier.
     unsigned char kill_streak;
+    // vx/vy/vz -- S459-69, real fix for jump "rubberbanding" (S459-65/67/68's own real, named
+    // root cause and the lesson from S459-68's failed attempt at reconstructing it without wire
+    // support: velocity cannot be safely estimated from two position samples across an arbitrary
+    // network interval when acceleration isn't constant in between -- jumping is exactly that
+    // case, gravity + the instant JUMP_FORCE impulse mean vy swings hard and fast every tick).
+    // The real, correct fix: put the server's own EXACT velocity on the wire so
+    // client_reconcile_local_player can set it directly, not guess it. Real, honest cost: 12
+    // bytes per player per snapshot -- negligible against this protocol's own real measured sizes
+    // (a typical few-hundred-byte snapshot, nowhere near MTU, see S459-65/66's own investigation).
+    float vx, vy, vz;
 } NetPlayer;
 
 typedef struct {

@@ -977,6 +977,7 @@ void server_broadcast() {
             np.reload_timer = (unsigned short)(p->reload_timer < 0 ? 0 : (p->reload_timer > 65535 ? 65535 : p->reload_timer));
             np.ability_cooldown = (unsigned short)(p->ability_cooldown < 0 ? 0 : (p->ability_cooldown > 65535 ? 65535 : p->ability_cooldown));
             np.kill_streak = (unsigned char)(p->kill_streak < 0 ? 0 : (p->kill_streak > 255 ? 255 : p->kill_streak));
+            np.vx = p->vx; np.vy = p->vy; np.vz = p->vz; // S459-69: real velocity on the wire, see NetPlayer's own doc comment
             p->accumulated_reward = 0;
             memcpy(buffer + cursor, &np, sizeof(NetPlayer)); cursor += (int)sizeof(NetPlayer);
             count++;

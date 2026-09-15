@@ -27,11 +27,16 @@ import (
 
 const (
 	netHeaderSize = 12 // type(1) client_id(1) sequence(2) timestamp(4) entity_count(1) scene_id(1) pad(2)
-	// netPlayerSize -- S459-47: grew from 64 to 68 bytes when reload_timer/ability_cooldown were
-	// added to the wire (packages/common/protocol.h). Re-verified via the same real, compiled
-	// offsetof()/sizeof() probe technique this file's own module doc comment already establishes
-	// -- never hand-guessed.
-	netPlayerSize = 68
+	// netPlayerSize -- S459-69, real, found-live bug (discovered as a side effect of adding
+	// vx/vy/vz to the wire): this constant was STALE at 68 bytes -- it never got updated when
+	// kill_streak (S459-52) grew the real compiled struct from 68 to 72 bytes, meaning every
+	// snapshot with 2+ entities has been decoding every entity after the first with the WRONG
+	// stride (reading 4 bytes short each time) ever since S459-52 shipped -- the exact same class
+	// of "parsing desyncs completely after the first entity" bug this file's own module doc
+	// comment already describes fixing once (S459-44), silently reintroduced. Now 84 bytes (72 +
+	// the new vx/vy/vz, S459-69) -- re-verified via the same real, compiled offsetof()/sizeof()
+	// probe technique this file's own module doc comment already establishes, never hand-guessed.
+	netPlayerSize = 84
 
 	// NetPlayer field byte offsets, matching packages/common/protocol.h's real field order and
 	// this platform's real struct alignment (verified via a compiled offsetof() probe, not
@@ -66,6 +71,10 @@ const (
 	offDeathDirZ     = 60
 	offReloadTimer     = 64 // S459-47, real ticks remaining reloading (0 = not reloading)
 	offAbilityCooldown = 66 // S459-47, real ticks remaining on the SHARED ability-cooldown timer (sniper storm activation AND katana dash both gate on this one field -- see this file's own doc comment on decodedPlayer.AbilityCooldown)
+	offKillStreak      = 68 // S459-52 (never decoded here before -- added alongside the real S459-69 netPlayerSize fix)
+	offVx              = 72 // S459-69, real velocity on the wire (fix for jump "rubberbanding")
+	offVy              = 76
+	offVz              = 80
 )
 
 func f32(buf []byte, off int) float32 {
@@ -131,6 +140,10 @@ type decodedPlayer struct {
 	// who activated storm can't ALSO immediately dash, but once abilityCooldown reaches 0 they
 	// CAN dash while still holding unspent storm charges from earlier.
 	abilityCooldown uint16
+	// killStreak -- S459-52 (never decoded here before this file's own S459-69 stride fix).
+	killStreak uint8
+	// vx, vy, vz -- S459-69, real, server-authoritative velocity, now on the wire.
+	vx, vy, vz float32
 }
 
 // decodePacketSnapshot parses a real PacketSnapshot buffer per the layout documented above.
@@ -173,6 +186,10 @@ func decodePacketSnapshot(buf []byte, n int) ([]decodedPlayer, bool) {
 			stormCharges:  buf[off+offStormCharges],
 			reloadTimer:   u16(buf, off+offReloadTimer),
 			abilityCooldown: u16(buf, off+offAbilityCooldown),
+			killStreak:    buf[off+offKillStreak],
+			vx:            f32(buf, off+offVx),
+			vy:            f32(buf, off+offVy),
+			vz:            f32(buf, off+offVz),
 		}
 		out = append(out, e)
 		off += netPlayerSize

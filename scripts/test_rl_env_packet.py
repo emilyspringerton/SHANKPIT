@@ -23,8 +23,8 @@ class TestStructSizes(unittest.TestCase):
     def test_user_cmd_is_36_bytes(self):
         self.assertEqual(ctypes.sizeof(UserCmd), 36)
 
-    def test_net_player_is_72_bytes(self):
-        self.assertEqual(ctypes.sizeof(NetPlayer), 72)
+    def test_net_player_is_84_bytes(self):
+        self.assertEqual(ctypes.sizeof(NetPlayer), 84)  # S459-69: grew from 72 when vx/vy/vz were added
 
     def test_net_player_field_offsets_match_the_real_compiled_c_struct(self):
         # Real offsets verified via a compiled sizeof/offsetof C probe against protocol.h during
@@ -40,6 +40,7 @@ class TestStructSizes(unittest.TestCase):
             "death_elapsed_ms": 50, "death_duration_ms": 52,
             "death_dir_x": 56, "death_dir_z": 60,
             "reload_timer": 64, "ability_cooldown": 66, "kill_streak": 68,
+            "vx": 72, "vy": 76, "vz": 80,  # S459-69
         }
         for field, off in expected.items():
             self.assertEqual(getattr(NetPlayer, field).offset, off, f"field {field}")
@@ -82,13 +83,14 @@ class TestUsercmdWireLayout(unittest.TestCase):
 class TestSnapshotWireLayout(unittest.TestCase):
     def _build_snapshot(self, entities):
         header_size = 12
-        buf = bytearray(header_size + 1 + 72 * len(entities))
+        entity_size = ctypes.sizeof(NetPlayer)
+        buf = bytearray(header_size + 1 + entity_size * len(entities))
         buf[0] = 2  # PACKET_SNAPSHOT
         buf[8] = len(entities)  # entity_count
         off = header_size + 1
         for e in entities:
-            buf[off:off + 72] = bytes(e)
-            off += 72
+            buf[off:off + entity_size] = bytes(e)
+            off += entity_size
         return bytes(buf)
 
     def test_decodes_multiple_players_in_order(self):
@@ -109,7 +111,7 @@ class TestSnapshotWireLayout(unittest.TestCase):
         p1 = NetPlayer(id=1, scene_id=9, health=100)
         p2 = NetPlayer(id=2, scene_id=9, health=50)
         data = self._build_snapshot([p1, p2])
-        truncated = data[:12 + 1 + 72]  # only room for the first entity
+        truncated = data[:12 + 1 + ctypes.sizeof(NetPlayer)]  # only room for the first entity
         decoded = decode_snapshot(truncated)
         self.assertEqual(len(decoded), 1)
         self.assertEqual(decoded[0].id, 1)
