@@ -66,6 +66,23 @@ typedef struct {
                              when a wall's own material name isn't in the level's materials array */
 } LevelBox;
 
+/* S459-58, founder real-time: "add spawners to nock so we can add spawners for ffa" / "actual
+   make them team based but fall back to ffa" / "call it red team and blue team". team mirrors
+   IDUNA/internal/shankpit.Spawner's own real team convention exactly -- SHANKPIT's own real, live
+   TDMB_RED_TEAM=0/TDMB_BLUE_TEAM=1 (packages/simulation/local_game.h), with -1 as the real
+   FFA/"any team" sentinel. LEVEL_BOXES_MAX_SPAWNERS matches
+   IDUNA/internal/shankpit.MaxSpawners exactly. */
+#define LEVEL_BOXES_MAX_SPAWNERS 64
+#define LEVEL_BOXES_SPAWNER_TEAM_FFA (-1)
+#define LEVEL_BOXES_SPAWNER_TEAM_RED 0
+#define LEVEL_BOXES_SPAWNER_TEAM_BLUE 1
+
+typedef struct {
+    float x, y, z; /* world units, matches LevelBox's own convention */
+    float yaw;      /* degrees */
+    int team;        /* -1 = FFA/any team, 0 = Red Team, 1 = Blue Team */
+} LevelSpawner;
+
 typedef struct {
     char name[LEVEL_BOXES_MAX_NAME];
     float width, height, depth; /* the editor's own real authored level dimensions -- NOT read
@@ -82,6 +99,8 @@ typedef struct {
     int count;
     LevelBoxMaterial materials[LEVEL_BOXES_MAX_MATERIALS];
     int material_count;
+    LevelSpawner spawners[LEVEL_BOXES_MAX_SPAWNERS]; /* S459-58 */
+    int spawner_count;
 } CustomLevelData;
 
 static inline const char *level_boxes_skip_ws(const char *p) {
@@ -324,6 +343,47 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
     }
 
     out->count = count;
+
+    // Spawners (S459-58) -- parsed the same real, small-scanner way as materials above. Absent
+    // "spawners" key (a pre-S459-58 export) is a real, honest "no author-placed spawns" state,
+    // not an error -- spawner_count stays 0 and the caller falls back to the already-built S459-57
+    // computed-scatter spawn logic (see physics.h's own scene_spawn_point).
+    out->spawner_count = 0;
+    const char *sp_arr_key = level_boxes_find_key(buf, end, "spawners");
+    if (sp_arr_key) {
+        const char *sp_arr = level_boxes_skip_ws(sp_arr_key);
+        if (*sp_arr == '[') {
+            const char *sp_arr_end = level_boxes_find_array_end(sp_arr, end);
+            if (sp_arr_end) {
+                const char *scursor = sp_arr + 1;
+                while (scursor < sp_arr_end && out->spawner_count < LEVEL_BOXES_MAX_SPAWNERS) {
+                    scursor = level_boxes_skip_ws(scursor);
+                    if (scursor >= sp_arr_end) break;
+                    if (*scursor == ',') { scursor++; continue; }
+                    if (*scursor != '{') { scursor++; continue; }
+                    const char *sobj_start = scursor;
+                    const char *sobj_end = strchr(sobj_start, '}');
+                    if (!sobj_end || sobj_end > sp_arr_end) break;
+
+                    LevelSpawner *sp = &out->spawners[out->spawner_count];
+                    memset(sp, 0, sizeof(*sp));
+                    const char *v2;
+                    if ((v2 = level_boxes_find_key(sobj_start, sobj_end, "x"))) level_boxes_parse_number(v2, &sp->x);
+                    if ((v2 = level_boxes_find_key(sobj_start, sobj_end, "y"))) level_boxes_parse_number(v2, &sp->y);
+                    if ((v2 = level_boxes_find_key(sobj_start, sobj_end, "z"))) level_boxes_parse_number(v2, &sp->z);
+                    if ((v2 = level_boxes_find_key(sobj_start, sobj_end, "yaw"))) level_boxes_parse_number(v2, &sp->yaw);
+                    sp->team = LEVEL_BOXES_SPAWNER_TEAM_FFA;
+                    if ((v2 = level_boxes_find_key(sobj_start, sobj_end, "team"))) {
+                        float team_f = LEVEL_BOXES_SPAWNER_TEAM_FFA;
+                        if (level_boxes_parse_number(v2, &team_f)) sp->team = (int)team_f;
+                    }
+                    out->spawner_count++;
+                    scursor = sobj_end + 1;
+                }
+            }
+        }
+    }
+
     return 1;
 }
 

@@ -1782,6 +1782,15 @@ static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
     }
     phys_set_custom_level_materials(mat_names, mat_shaders, mat_specular, mat_shininess, lvl->material_count);
     phys_set_custom_level(x, y, z, w, h, d, r, g, b, material_idx, lvl->count, lvl->ground_plane_enabled, lvl->ground_plane_squares);
+
+    // S459-58: real, author-placed spawn points, team/FFA-aware.
+    float sp_x[LEVEL_BOXES_MAX_SPAWNERS], sp_y[LEVEL_BOXES_MAX_SPAWNERS], sp_z[LEVEL_BOXES_MAX_SPAWNERS];
+    int sp_team[LEVEL_BOXES_MAX_SPAWNERS];
+    for (int si = 0; si < lvl->spawner_count; si++) {
+        sp_x[si] = lvl->spawners[si].x; sp_y[si] = lvl->spawners[si].y; sp_z[si] = lvl->spawners[si].z;
+        sp_team[si] = lvl->spawners[si].team;
+    }
+    phys_set_custom_level_spawners(sp_x, sp_y, sp_z, sp_team, lvl->spawner_count);
 }
 
 // level_select_confirm -- fetches the chosen level's real export, loads it into physics.h's own

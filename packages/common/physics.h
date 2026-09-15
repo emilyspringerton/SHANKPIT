@@ -306,6 +306,43 @@ static int g_custom_level_material_count = 0;
 static int g_custom_level_ground_plane_enabled = 1;
 static int g_custom_level_ground_plane_squares = 2;
 
+// S459-58, founder real-time: "add spawners to nock so we can add spawners for ffa" / "actual
+// make them team based but fall back to ffa" / "call it red team and blue team". Real,
+// author-placed spawn points loaded from a level's own real "spawners" export field
+// (packages/world/level_boxes.h's own LevelSpawner) -- a real, separate, parallel table from
+// g_custom_level_geo, same "small, separate parallel array" precedent
+// g_custom_level_material_idx/etc already established above. team uses SHANKPIT's own real, live
+// TDMB_RED_TEAM=0/TDMB_BLUE_TEAM=1 convention (packages/simulation/local_game.h) with -1 as the
+// real FFA/"any team" sentinel. CUSTOM_LEVEL_MAX_SPAWNERS matches
+// IDUNA/internal/shankpit.MaxSpawners / LEVEL_BOXES_MAX_SPAWNERS exactly.
+#define CUSTOM_LEVEL_MAX_SPAWNERS 64
+#define CUSTOM_LEVEL_SPAWNER_TEAM_FFA (-1)
+#define CUSTOM_LEVEL_SPAWNER_TEAM_RED 0
+#define CUSTOM_LEVEL_SPAWNER_TEAM_BLUE 1
+static float g_custom_level_spawner_x[CUSTOM_LEVEL_MAX_SPAWNERS];
+static float g_custom_level_spawner_y[CUSTOM_LEVEL_MAX_SPAWNERS];
+static float g_custom_level_spawner_z[CUSTOM_LEVEL_MAX_SPAWNERS];
+static int g_custom_level_spawner_team[CUSTOM_LEVEL_MAX_SPAWNERS];
+static int g_custom_level_spawner_count = 0;
+
+// phys_set_custom_level_spawners loads the level's own real, author-placed spawn points -- call
+// this alongside phys_set_custom_level (order doesn't matter relative to that call, unlike
+// phys_set_custom_level_materials, since spawners don't reference box/material indices). An
+// empty/absent spawners array (count == 0, e.g. every pre-S459-58 level) is a real, honest, valid state
+// -- scene_spawn_point's own SCENE_CUSTOM_LEVEL branch below falls back to the already-built
+// S459-57 computed-scatter spawn logic in exactly that case.
+static inline void phys_set_custom_level_spawners(const float *x, const float *y, const float *z,
+                                                    const int *team, int count) {
+    int n = count > CUSTOM_LEVEL_MAX_SPAWNERS ? CUSTOM_LEVEL_MAX_SPAWNERS : count;
+    for (int i = 0; i < n; i++) {
+        g_custom_level_spawner_x[i] = x[i];
+        g_custom_level_spawner_y[i] = y[i];
+        g_custom_level_spawner_z[i] = z[i];
+        g_custom_level_spawner_team[i] = team[i];
+    }
+    g_custom_level_spawner_count = n;
+}
+
 // phys_set_custom_level copies a loaded level's own boxes + ground plane config into the buffers
 // above -- call this BEFORE phys_set_scene(SCENE_CUSTOM_LEVEL) so the geometry is already there
 // the moment that scene is actually selected (matches every other scene's own "init then select"
@@ -1717,6 +1754,44 @@ static inline int get_ctf_capture_zone(int scene_id, int team_id, float *x, floa
     return 1;
 }
 
+// custom_level_pick_spawner (S459-58) -- real, author-placed spawn-point selection for
+// SCENE_CUSTOM_LEVEL, team/FFA-aware. `team` is CUSTOM_LEVEL_SPAWNER_TEAM_RED/_BLUE for a real
+// team-mode player, or CUSTOM_LEVEL_SPAWNER_TEAM_FFA for an FFA player -- founder real-time:
+// "actual make them team based but fall back to ffa": prefer a spawner tagged for the player's
+// own real team; if none exists, fall back to an FFA-tagged spawner (the real fallback for both
+// FFA matches AND a team match missing that team's own spawner); if the level has no matching
+// spawner of EITHER kind, return 0 so the caller falls back to the already-built S459-57
+// computed-scatter logic -- a real, honest "author placed zero usable spawners" case, never a
+// crash or an out-of-bounds read. Deterministic per-slot selection (not random) so multiple
+// players spread across whatever real spawners exist instead of clustering by chance, same real
+// reasoning as scene_spawn_point's own golden-angle scatter.
+static inline int custom_level_pick_spawner(int team, int slot, float *out_x, float *out_y, float *out_z) {
+    if (g_custom_level_spawner_count <= 0) return 0;
+    int team_matches[CUSTOM_LEVEL_MAX_SPAWNERS];
+    int team_match_count = 0;
+    int ffa_matches[CUSTOM_LEVEL_MAX_SPAWNERS];
+    int ffa_match_count = 0;
+    for (int i = 0; i < g_custom_level_spawner_count; i++) {
+        if (g_custom_level_spawner_team[i] == team) {
+            team_matches[team_match_count++] = i;
+        } else if (g_custom_level_spawner_team[i] == CUSTOM_LEVEL_SPAWNER_TEAM_FFA) {
+            ffa_matches[ffa_match_count++] = i;
+        }
+    }
+    int idx;
+    if (team_match_count > 0) {
+        idx = team_matches[((slot % team_match_count) + team_match_count) % team_match_count];
+    } else if (ffa_match_count > 0) {
+        idx = ffa_matches[((slot % ffa_match_count) + ffa_match_count) % ffa_match_count];
+    } else {
+        return 0;
+    }
+    *out_x = g_custom_level_spawner_x[idx];
+    *out_y = g_custom_level_spawner_y[idx];
+    *out_z = g_custom_level_spawner_z[idx];
+    return 1;
+}
+
 static inline void scene_spawn_point(int scene_id, int slot, float *out_x, float *out_y, float *out_z) {
     if (scene_id == SCENE_GARAGE_OSAKA) {
         float offsets[] = {-20.0f, 0.0f, 20.0f, -10.0f, 10.0f};
@@ -1789,6 +1864,13 @@ static inline void scene_spawn_point(int scene_id, int slot, float *out_x, float
     // actual footprint. Falls back to the old generic behavior only if no custom level is
     // currently loaded at all (g_custom_level_count <= 1, i.e. only the dummy index-0 entry) --
     // a real, honest "nothing to compute a real point from" case, not silently pretending one.
+    // S459-58: no PlayerState/team available at this call site (plain scene_id+slot), so only a
+    // real FFA-tagged spawner can be used here -- team-aware selection happens in
+    // scene_spawn_for_player below, which has the real player and calls custom_level_pick_spawner
+    // directly before ever reaching this function for SCENE_CUSTOM_LEVEL.
+    if (scene_id == SCENE_CUSTOM_LEVEL && custom_level_pick_spawner(CUSTOM_LEVEL_SPAWNER_TEAM_FFA, slot, out_x, out_y, out_z)) {
+        return;
+    }
     if (scene_id == SCENE_CUSTOM_LEVEL && g_custom_level_count > 1) {
         float min_x = 1e9f, max_x = -1e9f, min_z = 1e9f, max_z = -1e9f, max_y = -1e9f;
         for (int i = 1; i < g_custom_level_count; i++) {
@@ -1828,6 +1910,25 @@ static inline void scene_spawn_point(int scene_id, int slot, float *out_x, float
 }
 
 static inline void scene_spawn_for_player(PlayerState *p, float *out_x, float *out_y, float *out_z) {
+    // S459-58: real, author-placed spawn points for SCENE_CUSTOM_LEVEL, team/FFA-aware -- founder
+    // real-time: "add spawners to nock so we can add spawners for ffa" / "actual make them team
+    // based but fall back to ffa" / "call it red team and blue team". Only reachable here (not
+    // scene_spawn_point directly) because PlayerState's own real team_id is needed to prefer a
+    // team-matching spawner -- same real team_mode/team fallback convention every other scene
+    // below already uses (spectator/unset team_id falls back to an id-parity split).
+    if (p->scene_id == SCENE_CUSTOM_LEVEL) {
+        int team_mode = phys_team_mode_enabled();
+        int team = CUSTOM_LEVEL_SPAWNER_TEAM_FFA;
+        if (team_mode) {
+            team = p->team_id;
+            if (team != CUSTOM_LEVEL_SPAWNER_TEAM_RED && team != CUSTOM_LEVEL_SPAWNER_TEAM_BLUE) team = (p->id % 2);
+        }
+        if (custom_level_pick_spawner(team, p->id + (int)(p->deaths * 3), out_x, out_y, out_z)) return;
+        // No usable spawner of either kind (team or FFA) -- real, honest fall-through to the
+        // already-built S459-57 computed-scatter logic inside scene_spawn_point.
+        scene_spawn_point(p->scene_id, p->id, out_x, out_y, out_z);
+        return;
+    }
     if (p->scene_id != SCENE_VOXWORLD && p->scene_id != SCENE_DUST_COMPOUND &&
         p->scene_id != SCENE_OIL_TANKER && p->scene_id != SCENE_STADIUM &&
         p->scene_id != SCENE_POO_POO_ISLAND) {
