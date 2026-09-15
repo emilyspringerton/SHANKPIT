@@ -209,6 +209,8 @@ static void server_advance_dm_rotation(unsigned int now_ms) {
         if (!p->active) continue;
         p->kills = 0;
         p->deaths = 0;
+        p->kill_streak = 0; // S459-52 -- a new round starts every multikill streak fresh
+        p->last_kill_time_ms = 0;
         p->state = STATE_ALIVE;
         p->health = 100;
         p->shield = 100;
@@ -231,6 +233,8 @@ static void server_advance_queue_round(unsigned int now_ms) {
         if (!p->active) continue;
         p->kills = 0;
         p->deaths = 0;
+        p->kill_streak = 0; // S459-52 -- a new round starts every multikill streak fresh
+        p->last_kill_time_ms = 0;
         p->state = STATE_ALIVE;
         p->health = 100;
         p->shield = 100;
@@ -962,6 +966,7 @@ void server_broadcast() {
             np.death_dir_z = p->death_dir_z;
             np.reload_timer = (unsigned short)(p->reload_timer < 0 ? 0 : (p->reload_timer > 65535 ? 65535 : p->reload_timer));
             np.ability_cooldown = (unsigned short)(p->ability_cooldown < 0 ? 0 : (p->ability_cooldown > 65535 ? 65535 : p->ability_cooldown));
+            np.kill_streak = (unsigned char)(p->kill_streak < 0 ? 0 : (p->kill_streak > 255 ? 255 : p->kill_streak));
             p->accumulated_reward = 0;
             memcpy(buffer + cursor, &np, sizeof(NetPlayer)); cursor += (int)sizeof(NetPlayer);
             count++;

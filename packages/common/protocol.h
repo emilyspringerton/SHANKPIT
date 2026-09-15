@@ -218,6 +218,13 @@ typedef struct {
     // ability cooldown constants in physics.h -- 260/340/420/480 -- for ability_cooldown).
     unsigned short reload_timer;
     unsigned short ability_cooldown;
+    // kill_streak -- S459-52, real multikill mechanic (see PlayerState.kill_streak's own doc
+    // comment in this same file for the full design). The real, persistent, rolling-window kill
+    // count -- a consumer (the reward function, a future client-side "DOUBLE KILL" HUD callout)
+    // detects a NEW multikill by combining this with the existing `kills` delta: kills increased
+    // this tick AND kill_streak >= 2 means a real double-kill-or-higher just landed, with
+    // kill_streak itself telling you which tier.
+    unsigned char kill_streak;
 } NetPlayer;
 
 typedef struct {
@@ -273,6 +280,20 @@ typedef struct {
     int is_shooting; int jump_timer;
     int health; int shield; int shield_regen_timer; int state;
     int kills; int deaths; int hit_feedback; float recoil_anim;
+    // kill_streak / last_kill_time_ms -- S459-52, founder real-time: "add double kills to
+    // SHANKPIT and then make the bot double kill aware in terms of rewards (spike)" / "same for
+    // tripple kill" / "same for killtacular (4)" / "im aware that in 4 player pvp killtacular is
+    // impossible thats fine implement it still 4 player is just what we are doing right now."
+    // Real, standard multikill mechanic (Halo's own real naming/window convention: consecutive
+    // kills land within MULTIKILL_WINDOW_MS of each other, tracked PER ATTACKER regardless of
+    // that attacker's own deaths in between -- a real kill-RATE streak, not a life streak).
+    // kill_streak is the real, persistent count of kills landed within the current rolling
+    // window; last_kill_time_ms is when the most recent one landed. Both live on PlayerState
+    // (server-authoritative, like every other combat stat here) and reach the wire via
+    // NetPlayer.kill_streak (protocol.h) -- see phys_enter_death_state's own doc comment in
+    // physics.h for exactly where this updates.
+    int kill_streak;
+    unsigned int last_kill_time_ms;
     int level;
     int xp;
     int xp_to_next;

@@ -62,6 +62,20 @@
 #define KATANA_DASH_HIT_RADIUS_SQ (KATANA_DASH_HIT_RADIUS * KATANA_DASH_HIT_RADIUS)
 #define KATANA_DASH_HIT_MAX 8
 
+// S459-52, real multikill mechanic -- see phys_enter_death_state's own doc comment for the full
+// design/rationale. MULTIKILL_WINDOW_MS=4000 matches the real, well-known genre convention
+// (Halo's own real multikill window) this naming is borrowed from. Bonus magnitudes are a real,
+// deliberately super-linear escalation (not a flat per-extra-kill increment), sized against the
+// existing +150.0 base-kill credit (phys_enter_death_state) and REWARD_FEEDBACK_SCALE=1/50 (both
+// scripts/rl_env_packet.py and apps2/emily-bot/reward.go apply the same scale to
+// accumulated_reward): double=+75 -> +1.5 final reward, triple=+250 -> +5.0, killtacular=+1000
+// -> +20.0 -- each tier reads as a genuinely different-magnitude event during training, not just
+// "one more kill" (+150 -> +3.0 on its own).
+#define MULTIKILL_WINDOW_MS 4000
+#define MULTIKILL_BONUS_DOUBLE 75.0f
+#define MULTIKILL_BONUS_TRIPLE 250.0f
+#define MULTIKILL_BONUS_KILLTACULAR 1000.0f
+
 void evolve_bot(PlayerState *loser, PlayerState *winner);
 PlayerState* get_best_bot();
 void phys_respawn(PlayerState *p, unsigned int now);
@@ -2318,6 +2332,33 @@ static inline void phys_enter_death_state(PlayerState *attacker, PlayerState *ta
         attacker->kills++;
         attacker->accumulated_reward += 150.0f;
         attacker->hit_feedback = 30;
+        // S459-52, real multikill tracking -- founder real-time: "add double kills to SHANKPIT
+        // and then make the bot double kill aware in terms of rewards (spike)" / "same for
+        // tripple kill" / "same for killtacular (4)". Real, standard Halo-style rolling window:
+        // a kill lands within MULTIKILL_WINDOW_MS of the attacker's own previous kill extends
+        // the real streak; otherwise it starts a fresh one at 1. Deliberately NOT reset by the
+        // attacker's own death in between (a real kill-RATE streak, not a life streak -- matches
+        // the real genre convention this naming is borrowed from). accumulated_reward's own real
+        // +150 base-kill credit above stays exactly as-is; the multikill bonus is a SEPARATE,
+        // additive spike layered on top (see the escalating tier table below), not a replacement.
+        if (attacker->last_kill_time_ms != 0 && now_ms >= attacker->last_kill_time_ms &&
+            (now_ms - attacker->last_kill_time_ms) <= MULTIKILL_WINDOW_MS) {
+            attacker->kill_streak++;
+        } else {
+            attacker->kill_streak = 1;
+        }
+        attacker->last_kill_time_ms = now_ms;
+        // Escalating spike, per the founder's own explicit real-time tuning: "make sure double
+        // kill has a healthy reward tho" (not token), "and a tripple somewhere in the middle",
+        // "way more rewards for a killtacular" -- a real, deliberately super-linear ladder, not a
+        // flat per-extra-kill increment, so a killtacular reads as a genuinely different-magnitude
+        // event during training, not just "one more kill." Founder-acknowledged real, current
+        // constraint named directly: "im aware that in 4 player pvp killtacular is impossible
+        // thats fine implement it still 4 player is just what we are doing right now" -- built
+        // for the real mechanic regardless of today's population cap.
+        if (attacker->kill_streak == 2) attacker->accumulated_reward += MULTIKILL_BONUS_DOUBLE;
+        else if (attacker->kill_streak == 3) attacker->accumulated_reward += MULTIKILL_BONUS_TRIPLE;
+        else if (attacker->kill_streak >= 4) attacker->accumulated_reward += MULTIKILL_BONUS_KILLTACULAR;
     }
     target->deaths++;
     target->state = STATE_DEAD;
