@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-15
+
+- S459-50: real remote checkpoint registry client (scripts/rl_registry.py) and Colab training script (scripts/colab_train.py, a direct port of BRAWLPIT's own), live-verified by pushing the real S459-48 checkpoint to the live registry and pulling it back byte-identical (sess-20260905-0720-ec33e7c5)
+
+
 ## 2026-09-14
 - S459-48: real packet-level PPO training pipeline working end-to-end (scripts/rl_env_packet.py, rl_train_packet.py, 26 tests) -- found and fixed 3 real, live-production bugs along the way: QUEUE connect never spawned the player, phys_respawn's scene whitelist missing SCENE_CUSTOM_LEVEL (was kicking players out of NEWPIT on every death), and no void/out-of-bounds death existed anywhere in the codebase. Added --fast-forward server flag. First real training run completed, checkpoint verified loadable. (sess-20260905-0720-ec33e7c5)
 - S459-47: fixed real self is_shooting/is_crouching (no server round-trip needed), decoded the real dual sniper-storm/katana-dash ability-cooldown mechanic (one shared cooldown gates both, storm charges persist independently), added reload_timer/ability_cooldown to the wire protocol, added real AABB raycast wall/floor-distance features -- ObservationSize 72 -> 84 (sess-20260905-0720-ec33e7c5)
