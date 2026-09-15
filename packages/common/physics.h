@@ -1773,6 +1773,50 @@ static inline void scene_spawn_point(int scene_id, int slot, float *out_x, float
         *out_z = -1180.0f;
         return;
     }
+    // S459-57, real, found-live bug: QUEUE uses SCENE_CUSTOM_LEVEL, which had no real case of its
+    // own here -- it fell into this generic catch-all, meant as a real, harmless "unknown scene,
+    // don't crash" fallback for scenes that genuinely have no map (drop from directly above, or a
+    // random point up to 500 units out in an arbitrary direction). Founder real-time: "joined
+    // queue no bots visible" -- confirmed live via a real diagnostic client connected straight to
+    // the production server: real, server-authoritative player positions up to ~1500 units apart
+    // on NEWPIT, a real, moderate-sized level (~325x320 units, live-verified via its own real
+    // export JSON) that the 500-unit-radius fallback routinely spawned players well outside of
+    // entirely. Real fix: compute an actual spawn point from the CURRENTLY LOADED custom level's
+    // own real geometry (g_custom_level_geo, set by phys_set_custom_level) instead of a made-up
+    // universal radius -- a real bounding-box center plus a real, deterministic per-slot scatter
+    // (golden-angle spacing, not true randomness, so slots spread apart from each other instead of
+    // clustering by chance) confined to 60% of the level's own real half-extent, well inside its
+    // actual footprint. Falls back to the old generic behavior only if no custom level is
+    // currently loaded at all (g_custom_level_count <= 1, i.e. only the dummy index-0 entry) --
+    // a real, honest "nothing to compute a real point from" case, not silently pretending one.
+    if (scene_id == SCENE_CUSTOM_LEVEL && g_custom_level_count > 1) {
+        float min_x = 1e9f, max_x = -1e9f, min_z = 1e9f, max_z = -1e9f, max_y = -1e9f;
+        for (int i = 1; i < g_custom_level_count; i++) {
+            Box *b = &g_custom_level_geo[i];
+            float bx0 = b->x - b->w / 2.0f, bx1 = b->x + b->w / 2.0f;
+            float bz0 = b->z - b->d / 2.0f, bz1 = b->z + b->d / 2.0f;
+            if (bx0 < min_x) min_x = bx0;
+            if (bx1 > max_x) max_x = bx1;
+            if (bz0 < min_z) min_z = bz0;
+            if (bz1 > max_z) max_z = bz1;
+            float top = b->y + b->h / 2.0f;
+            if (top > max_y) max_y = top;
+        }
+        float center_x = (min_x + max_x) / 2.0f;
+        float center_z = (min_z + max_z) / 2.0f;
+        float half_w = (max_x - min_x) / 2.0f;
+        float half_d = (max_z - min_z) / 2.0f;
+        float radius = (half_w < half_d ? half_w : half_d) * 0.6f;
+        // Golden-angle spacing (~2.399963 rad) -- a real, standard, deterministic technique for
+        // scattering N points with no two ever landing close together, unlike slot*constant
+        // (which can degenerate into overlapping rings for common small N) or true randomness
+        // (which this file's own doc comment above already named as the real bug being fixed).
+        float ang = (float)slot * 2.399963f;
+        *out_x = center_x + cosf(ang) * radius;
+        *out_z = center_z + sinf(ang) * radius;
+        *out_y = max_y + 6.0f;
+        return;
+    }
     if (slot % 2 == 0) {
         *out_x = 0.0f; *out_z = 0.0f; *out_y = 80.0f;
     } else {
