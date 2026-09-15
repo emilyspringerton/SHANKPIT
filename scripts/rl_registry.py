@@ -59,17 +59,23 @@ def _multipart_body(fields, files):
     return b"".join(parts), f"multipart/form-data; boundary={boundary}"
 
 
-def push_checkpoint(base_url, jwt, role, generation, elo, source_location, path):
+def push_checkpoint(base_url, jwt, role, generation, elo, source_location, path, eval_note=""):
     """POST /api/v1/shankpit-checkpoints -- uploads one real checkpoint file + its metadata.
     Requires a JWT carrying the real shankpit.checkpoints.write permission (see IDUNA/migrations/
     truestore/202609150022_shankpit_rl_checkpoints.sql's own new SHANKPIT-RL agent). Returns the
-    real registered Checkpoint dict (id/name/sha256/size_bytes/created_at)."""
+    real registered Checkpoint dict (id/name/sha256/size_bytes/created_at).
+
+    eval_note (S459-63, founder real-time: "how the fuck is my colab log gonna help it just says
+    training") -- a real, plain-text summary of this generation's own evaluation match outcome
+    (kill counts, or a crash reason), pushed alongside the checkpoint so it's visible through this
+    same registry API without needing access to the training process's own stdout. Optional,
+    empty by default (generation 0 has nothing to evaluate against yet)."""
     with open(path, "rb") as f:
         file_bytes = f.read()
     files = [("file", os.path.basename(path), file_bytes)]
 
     body, content_type = _multipart_body(
-        {"role": role, "generation": generation, "elo": elo, "source_location": source_location},
+        {"role": role, "generation": generation, "elo": elo, "source_location": source_location, "eval_note": eval_note},
         files,
     )
     req = urllib.request.Request(

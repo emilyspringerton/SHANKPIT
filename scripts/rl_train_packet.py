@@ -206,7 +206,13 @@ def _run_evaluation_match(host, port, checkpoint_a, checkpoint_b, duration_secon
     real tradeoff BRAWLPIT's own EVAL_MAX_TICKS cap accepts for the identical reason (this runs
     up to 3x every single generation, so it has to stay fast, not full-match-length).
 
-    Returns score_a: 1.0 (A won on kills), 0.0 (B won), 0.5 (tied or either report failed)."""
+    Returns (score_a, note): score_a is 1.0 (A won on kills), 0.0 (B won), 0.5 (tied or either
+    report failed). note (S459-63) is a real, short, human-readable summary of what actually
+    happened -- real kill counts on a genuine result, or the captured crash/report-failure reason
+    -- meant to be pushed alongside the checkpoint itself (rl_registry.py's own push_checkpoint
+    eval_note parameter) so it's visible through the registry API without needing access to this
+    process's own stdout (founder real-time: "how the fuck is my colab log gonna help it just
+    says training")."""
     server = _spawn_server(port)
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -252,24 +258,27 @@ def _run_evaluation_match(host, port, checkpoint_a, checkpoint_b, duration_secon
                 with open(report_a) as f:
                     kills_a = json.load(f)["kills"]
             except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
+                tail_a = _tail(log_a, n=3)  # short -- this same text also has to fit in the pushed eval_note
                 print(f"    [eval] checkpoint A ({os.path.basename(checkpoint_a)}) report unreadable ({e}) "
                       f"-- treating as a draw. bot A's own output:\n{_tail(log_a)}", flush=True)
-                return 0.5
+                return 0.5, f"CRASH: bot A report unreadable ({e}); log tail: {tail_a}"
             try:
                 with open(report_b) as f:
                     kills_b = json.load(f)["kills"]
             except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
+                tail_b = _tail(log_b, n=3)
                 print(f"    [eval] checkpoint B ({os.path.basename(checkpoint_b)}) report unreadable ({e}) "
                       f"-- treating as a draw. bot B's own output:\n{_tail(log_b)}", flush=True)
-                return 0.5
+                return 0.5, f"CRASH: bot B report unreadable ({e}); log tail: {tail_b}"
 
             print(f"    [eval] {os.path.basename(checkpoint_a)} kills={kills_a} vs "
                   f"{os.path.basename(checkpoint_b)} kills={kills_b} (both reports read fine)", flush=True)
+            note = f"vs prior gen: kills {kills_a}-{kills_b}"
             if kills_a > kills_b:
-                return 1.0
+                return 1.0, note
             if kills_a < kills_b:
-                return 0.0
-            return 0.5  # a real, genuine tie -- both bots reported successfully with equal kills
+                return 0.0, note
+            return 0.5, note  # a real, genuine tie -- both bots reported successfully with equal kills
     finally:
         server.terminate()
         try:
@@ -517,11 +526,14 @@ def main():
         # displays. Fixed by running evaluation first, so the Elo pushed below is the real,
         # current, post-match number.
         main_reverted_to = None
+        eval_notes = {}  # S459-63: role -> real, short summary of THIS generation's own vs-prior-gen eval, pushed alongside the checkpoint
         for role, member in registered.items():
             if role in reset_roles or role not in prev_checkpoint_paths:
+                eval_notes[role] = "no prior generation to evaluate against yet"
                 continue
             try:
-                score_a = _run_evaluation_match(args.host, EVAL_PORT, checkpoint_paths[role], prev_checkpoint_paths[role])
+                score_a, note = _run_evaluation_match(args.host, EVAL_PORT, checkpoint_paths[role], prev_checkpoint_paths[role])
+                eval_notes[role] = note
                 league.record_match_result(member.id, prev_member_ids[role], score_a)
                 new_elo, prev_elo = league.get_elo(member.id), league.get_elo(prev_member_ids[role])
                 print(f"[gen {generation}]   -> evaluated {role.value} vs its own prior generation: "
@@ -540,6 +552,7 @@ def main():
                         models[LeagueRole.MAIN] = PPO.load(best_checkpoint_path[LeagueRole.MAIN], device=args.device)
                         main_reverted_to = (best_checkpoint_path[LeagueRole.MAIN], best_member_id[LeagueRole.MAIN])
             except Exception as e:  # noqa: BLE001 -- an evaluation match failing must never crash real, in-progress training
+                eval_notes[role] = f"CRASH: evaluation match itself failed ({e})"
                 print(f"[gen {generation}]   -> WARNING: evaluation match for {role.value} failed ({e}), Elo unchanged")
 
         remote_ids = {}
@@ -548,7 +561,8 @@ def main():
             if registry_jwt:
                 try:
                     remote = push_checkpoint(args.registry_url, registry_jwt, role.value, generation,
-                                              elo, args.registry_source_location, checkpoint_paths[role])
+                                              elo, args.registry_source_location, checkpoint_paths[role],
+                                              eval_note=eval_notes.get(role, ""))
                     remote_ids[role] = remote["id"]
                     print(f"[gen {generation}]   -> pushed to remote registry as checkpoint id={remote['id']} (elo={elo:.0f})")
                 except Exception as e:  # noqa: BLE001 -- a registry outage must never crash a real, in-progress training run
@@ -563,7 +577,7 @@ def main():
             if opponent_path is None:
                 continue
             try:
-                score_a = _run_evaluation_match(args.host, EVAL_PORT, checkpoint_paths[role], opponent_path)
+                score_a, _note = _run_evaluation_match(args.host, EVAL_PORT, checkpoint_paths[role], opponent_path)
                 wins, losses = local_wins_losses[role].get(opponent_id, (0, 0))
                 if score_a == 1.0:
                     local_wins_losses[role][opponent_id] = (wins + 1, losses)
