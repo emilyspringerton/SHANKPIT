@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-15
+- S459-52: real multikill mechanic (double/triple/killtacular) with an escalating reward spike (+75/+250/+1000, added directly to accumulated_reward) -- NetPlayer wire struct grew 68->72 bytes (sess-20260905-0720-ec33e7c5)
 - S459-51: --fast-forward now defaults ON (matching BRAWLPIT exactly, ~3.5x training throughput) and a Fibonacci-scaled survival-streak reward bonus, both ported from BRAWLPIT (sess-20260905-0720-ec33e7c5)
 - S459-50 follow-up: colab_train.py now installs a real Go toolchain before building emily-bot -- fixes a real 'go: not found' failure hit on the first live Colab run (sess-20260905-0720-ec33e7c5)
 
