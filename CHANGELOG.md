@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-15
+- S459-50 follow-up: colab_train.py now installs a real Go toolchain before building emily-bot -- fixes a real 'go: not found' failure hit on the first live Colab run (sess-20260905-0720-ec33e7c5)
 
 - S459-50: real remote checkpoint registry client (scripts/rl_registry.py) and Colab training script (scripts/colab_train.py, a direct port of BRAWLPIT's own), live-verified by pushing the real S459-48 checkpoint to the live registry and pulling it back byte-identical (sess-20260905-0720-ec33e7c5)
 
