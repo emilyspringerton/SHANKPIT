@@ -983,6 +983,22 @@ static int32_t net_server_time_offset_ms = 0;
 static uint32_t net_last_snapshot_server_ts = 0;
 static uint32_t net_last_reconciled_ack = 0;
 static uint32_t net_last_corr_decay_ms = 0;
+// S459-67, real, found-live structural gap (residual jump "rubberbanding" after S459-65's own
+// hard-snap threshold fix): NetPlayer (packages/common/protocol.h) never puts vx/vy/vz or
+// on_ground on the wire -- only position/yaw/pitch. client_reconcile_local_player below
+// therefore resets p->x/y/z to the real authoritative position on every reconcile, but has never
+// touched p->vy at all -- the replay that follows keeps simulating from whatever LOCALLY
+// PREDICTED velocity the client already had, which can silently diverge from the server's own
+// real velocity (any externally-applied impulse the client can't predict -- knockback,
+// explosions, hit-stun -- plus ordinary float/timing drift during a fast vertical arc) and never
+// gets corrected, since there's no wire field to correct it FROM. These track the previous real
+// authoritative position + its own real client-recorded send timestamp so a real, finite-
+// difference velocity can be estimated between two confirmed authoritative points and used to
+// re-seed p->vx/vy/vz before replay, instead of trusting a potentially-already-diverged local
+// value.
+static float net_prev_auth_x = 0.0f, net_prev_auth_y = 0.0f, net_prev_auth_z = 0.0f;
+static unsigned int net_prev_auth_cmd_ts = 0;
+static int net_prev_auth_valid = 0;
 
 static int net_local_pid = -1;
 static int net_spawn_protect_cmds = 0;
@@ -1251,6 +1267,7 @@ static void reset_client_render_state_for_net() {
     reconcile_corr_z = 0.0f;
     reconcile_corr_yaw = 0.0f;
     reconcile_corr_pitch = 0.0f;
+    net_prev_auth_valid = 0; // S459-67 -- a fresh connect has no real prior auth point to diff against
     net_server_time_sync = 0;
     net_server_time_offset_ms = 0;
     net_last_snapshot_server_ts = 0;
@@ -1293,6 +1310,7 @@ static void client_apply_spawn_transition_sync(PlayerState *p, const NetPlayer *
     reconcile_corr_z = 0.0f;
     reconcile_corr_yaw = 0.0f;
     reconcile_corr_pitch = 0.0f;
+    net_prev_auth_valid = 0; // S459-67 -- a spawn/respawn teleport is a real position discontinuity, not real motion to diff against
     memset(client_cmd_hist, 0, sizeof(client_cmd_hist));
     memset(net_cmd_history, 0, sizeof(net_cmd_history));
     net_cmd_history_count = 0;
@@ -7999,6 +8017,31 @@ static void client_reconcile_local_player(unsigned int ack_seq, float auth_x, fl
     p->x = auth_x; p->y = auth_y; p->z = auth_z;
     p->yaw = norm_yaw_deg(auth_yaw);
     p->pitch = clamp_pitch_deg(auth_pitch);
+
+    // S459-67: re-seed velocity from a real, finite-difference estimate between this and the
+    // PREVIOUS real authoritative position, instead of leaving p->vx/vy/vz at whatever the local
+    // prediction already had (which may have silently diverged -- see this function's own
+    // net_prev_auth_x doc comment above for the full why). Uses the client's own recorded send
+    // timestamp for each acked sequence (client_cmd_hist), a real, meaningful time base rather
+    // than wall-clock now_ms (which would include local processing jitter this ack's own real
+    // network round-trip doesn't reflect). Skipped (keeps the existing prediction) on the very
+    // first reconcile of a session/life (no real prior point yet) or a clearly-bogus dt (a
+    // dropped/reordered ack, a respawn) -- a real, honest "not enough data yet" case, not a
+    // silent wrong guess.
+    UserCmd ack_cmd = client_cmd_hist[ack_seq % CLIENT_RECON_HISTORY];
+    if (net_prev_auth_valid && ack_cmd.sequence == ack_seq) {
+        float dt = (float)(ack_cmd.timestamp - net_prev_auth_cmd_ts) / 1000.0f;
+        if (dt > 0.005f && dt < 0.5f) {
+            p->vx = (auth_x - net_prev_auth_x) / dt;
+            p->vy = (auth_y - net_prev_auth_y) / dt;
+            p->vz = (auth_z - net_prev_auth_z) / dt;
+        }
+    }
+    if (ack_cmd.sequence == ack_seq) {
+        net_prev_auth_x = auth_x; net_prev_auth_y = auth_y; net_prev_auth_z = auth_z;
+        net_prev_auth_cmd_ts = ack_cmd.timestamp;
+        net_prev_auth_valid = 1;
+    }
 
     int replayed = 0;
     for (unsigned int seq = ack_seq + 1; seq <= net_latest_seq_sent; seq++) {
