@@ -69,14 +69,40 @@ def _bootstrap_repo(github_token):
     _run(["git", "log", "--oneline", "-1"])
 
 
+GO_VERSION = "1.23.4"  # real, matches or exceeds go.mod's own `go 1.21` floor
+
+
+def _ensure_go():
+    """Real, found-live fix: unlike BRAWLPIT (pure C, no Go dependency at all -- this is why the
+    gap wasn't caught by mirroring BRAWLPIT's own colab_train.py), SHANKPIT's `make emily-bot`
+    needs a real Go toolchain, and Colab's base image ships none (`go: not found`, confirmed live
+    against a real Colab run). Installs the official upstream tarball rather than `apt-get install
+    golang-go` -- Ubuntu's own packaged Go is routinely too old for a `go.mod` floor this recent.
+    A real, idempotent check-first: skips the download entirely if a real `go` binary already
+    satisfies go.mod's own floor (e.g. a re-run in the same still-alive Colab runtime)."""
+    try:
+        out = subprocess.run(["go", "version"], capture_output=True, text=True, check=True).stdout
+        print(f"go already installed: {out.strip()}")
+        return
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pass
+    print(f"Installing Go {GO_VERSION}...")
+    tarball = f"go{GO_VERSION}.linux-amd64.tar.gz"
+    _run(["wget", "-q", f"https://go.dev/dl/{tarball}", "-O", f"/tmp/{tarball}"])
+    _run(["tar", "-C", "/usr/local", "-xzf", f"/tmp/{tarball}"])
+    os.environ["PATH"] = "/usr/local/go/bin:" + os.environ.get("PATH", "")
+    _run(["go", "version"])
+
+
 def _bootstrap_build():
     # Colab's own base image already ships gcc/build-essential -- real, harmless no-op safety net.
     _run(["apt-get", "-qq", "update"])
-    _run(["apt-get", "-qq", "install", "-y", "build-essential"])
+    _run(["apt-get", "-qq", "install", "-y", "build-essential", "wget"])
+    _ensure_go()
     # Real SHANKPIT build targets (Makefile) -- server + the real Go bot client used as training
     # opponents, both needed by rl_train_packet.py.
     _run(["make", "server"])
-    _run(["make", "emily-bot"])
+    _run(["make", "emily-bot"])  # PATH already carries /usr/local/go/bin from _ensure_go above (env=None inherits os.environ by default)
     _run([sys.executable, "-m", "pip", "install", "-q", "gymnasium", "stable-baselines3"])
 
 
