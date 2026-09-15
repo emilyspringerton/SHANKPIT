@@ -310,6 +310,21 @@ class Wall:
     x: float; y: float; z: float
     sx: float; sy: float; sz: float
 
+    def __post_init__(self):
+        # S459-73, real, measured perf fix: raycast()/_slab() used to recompute each wall's own
+        # AABB bounds (w.x - w.sx/2, w.x + w.sx/2, etc.) from scratch on EVERY call -- but a
+        # wall's own geometry never changes during a run, and build_observation calls raycast 5x
+        # per tick against the SAME wall list every time (4 wall rays + 1 floor ray). Precomputed
+        # once here instead of redone 5x/tick/wall forever. cProfile confirmed this real (see
+        # S459-72's own commit) as the actual dominant remaining cost after the earlier numpy-
+        # scalar fix -- not a guess.
+        self.lo_x = self.x - self.sx / 2.0
+        self.hi_x = self.x + self.sx / 2.0
+        self.lo_y = self.y - self.sy / 2.0
+        self.hi_y = self.y + self.sy / 2.0
+        self.lo_z = self.z - self.sz / 2.0
+        self.hi_z = self.z + self.sz / 2.0
+
 
 def fetch_queue_level_geometry():
     """Real, one-shot fetch of the currently-flagged QUEUE default level's box list -- mirrors
@@ -335,6 +350,11 @@ def fetch_queue_level_geometry():
 
 
 def _slab(origin, d, lo, hi, tmin, tmax):
+    """Kept as a real, standalone, testable reference implementation of one real axis test --
+    test_rl_env_packet.py exercises this directly. raycast() below no longer calls this: S459-73
+    inlines the identical math straight into its own loop (real, measured Python function-call
+    overhead -- 1.25M calls/50k build_observation calls in cProfile, tuple pack/unpack included --
+    on a hot path executed 5x every single tick)."""
     eps = 1e-6
     if abs(d) < eps:
         return (tmin, tmax, True) if lo <= origin <= hi else (tmin, tmax, False)
@@ -346,21 +366,73 @@ def _slab(origin, d, lo, hi, tmin, tmax):
     return tmin, tmax, tmin <= tmax
 
 
+_SLAB_EPS = 1e-6
+
+
 def raycast(walls, ox, oy, oz, dx, dy, dz, cap):
     """Real AABB slab-method raycast against a real box list -- byte-for-byte the same algorithm
     as apps2/emily-bot/geometry.go's own levelGeometry.raycast, verified there with a direct unit
-    test (TestRaycast_SimpleWall)."""
+    test (TestRaycast_SimpleWall), and as _slab's own real per-axis math above (kept as the
+    reference _slab still tests directly).
+
+    S459-73, real, measured perf fix: the axis-test logic is inlined directly here (no more a
+    separate _slab() call per axis -- real Python function-call + tuple pack/unpack overhead on a
+    hot path) and reads each Wall's own precomputed lo_x/hi_x/etc bounds (Wall.__post_init__)
+    instead of recomputing `w.x - w.sx/2` etc from scratch on every single call. cProfile
+    confirmed raycast/_slab was the real, dominant remaining cost (34% of build_observation) after
+    S459-72's own numpy-scalar fix -- this targets that specific, measured bottleneck."""
     if not walls:
         return cap
     best = cap
     for w in walls:
         tmin, tmax = 0.0, best
-        tmin, tmax, ok = _slab(ox, dx, w.x - w.sx / 2, w.x + w.sx / 2, tmin, tmax)
-        if ok:
-            tmin, tmax, ok = _slab(oy, dy, w.y - w.sy / 2, w.y + w.sy / 2, tmin, tmax)
-        if ok:
-            tmin, tmax, ok = _slab(oz, dz, w.z - w.sz / 2, w.z + w.sz / 2, tmin, tmax)
-        if ok and 0 < tmin < best:
+
+        if abs(dx) < _SLAB_EPS:
+            if not (w.lo_x <= ox <= w.hi_x):
+                continue
+        else:
+            t1 = (w.lo_x - ox) / dx
+            t2 = (w.hi_x - ox) / dx
+            if t1 > t2:
+                t1, t2 = t2, t1
+            if t1 > tmin:
+                tmin = t1
+            if t2 < tmax:
+                tmax = t2
+            if tmin > tmax:
+                continue
+
+        if abs(dy) < _SLAB_EPS:
+            if not (w.lo_y <= oy <= w.hi_y):
+                continue
+        else:
+            t1 = (w.lo_y - oy) / dy
+            t2 = (w.hi_y - oy) / dy
+            if t1 > t2:
+                t1, t2 = t2, t1
+            if t1 > tmin:
+                tmin = t1
+            if t2 < tmax:
+                tmax = t2
+            if tmin > tmax:
+                continue
+
+        if abs(dz) < _SLAB_EPS:
+            if not (w.lo_z <= oz <= w.hi_z):
+                continue
+        else:
+            t1 = (w.lo_z - oz) / dz
+            t2 = (w.hi_z - oz) / dz
+            if t1 > t2:
+                t1, t2 = t2, t1
+            if t1 > tmin:
+                tmin = t1
+            if t2 < tmax:
+                tmax = t2
+            if tmin > tmax:
+                continue
+
+        if 0 < tmin < best:
             best = tmin
     return best
 

@@ -11,7 +11,7 @@ from rl_env_packet import (
     NetHeader, UserCmd, NetPlayer,
     encode_connect, decode_welcome, encode_usercmd, decode_snapshot,
     build_observation, compute_reward, RewardSnapshot, OBS_SIZE,
-    Wall, raycast, decode_action, _fibonacci, SURVIVAL_STREAK_FIB_CAP,
+    Wall, raycast, _slab, decode_action, _fibonacci, SURVIVAL_STREAK_FIB_CAP,
     WPN_MAGNUM, WPN_SNIPER, STATE_ALIVE, STATE_DEAD,
 )
 
@@ -183,6 +183,41 @@ class TestRaycast(unittest.TestCase):
 
     def test_no_walls_returns_cap(self):
         self.assertEqual(raycast([], 0, 0, 0, 0, 0, -1, 40), 40)
+
+    def test_matches_slab_reference_on_random_cases(self):
+        # S459-73: raycast() now inlines _slab's own per-axis math directly (real, measured perf
+        # fix -- see this file's own module doc comment / CHANGELOG for the cProfile numbers).
+        # This locks in that the inlined version stays numerically identical to _slab, the real,
+        # standalone reference implementation still tested directly above -- a real regression
+        # guard, not just a smoke test, matching the 200k-random-trial equivalence check this fix
+        # was actually verified with before shipping.
+        import random
+        rng = random.Random(1234)
+        for _ in range(2000):
+            walls = [
+                Wall(rng.uniform(-50, 50), rng.uniform(-10, 10), rng.uniform(-50, 50),
+                     rng.uniform(1, 20), rng.uniform(1, 20), rng.uniform(1, 20))
+                for _ in range(rng.randint(0, 5))
+            ]
+            ox, oy, oz = rng.uniform(-30, 30), rng.uniform(-5, 5), rng.uniform(-30, 30)
+            dx, dy, dz = rng.uniform(-1, 1), rng.uniform(-1, 1), rng.uniform(-1, 1)
+            cap = rng.uniform(10, 100)
+
+            got = raycast(walls, ox, oy, oz, dx, dy, dz, cap)
+
+            # Real, standalone reference: the exact pre-S459-73 algorithm, calling _slab per axis.
+            best = cap
+            for w in walls:
+                tmin, tmax = 0.0, best
+                tmin, tmax, ok = _slab(ox, dx, w.x - w.sx / 2, w.x + w.sx / 2, tmin, tmax)
+                if ok:
+                    tmin, tmax, ok = _slab(oy, dy, w.y - w.sy / 2, w.y + w.sy / 2, tmin, tmax)
+                if ok:
+                    tmin, tmax, ok = _slab(oz, dz, w.z - w.sz / 2, w.z + w.sz / 2, tmin, tmax)
+                if ok and 0 < tmin < best:
+                    best = tmin
+
+            self.assertAlmostEqual(got, best, places=9)
 
 
 class TestComputeReward(unittest.TestCase):
