@@ -152,9 +152,9 @@ def main():
     # that same per-generation training amount, not a guess. Real, honest cost this trades for:
     # at this box's own live-measured ~4-5 min/generation, 100 generations is a genuinely long
     # run (multiple hours), well past a free-tier Colab session's own real idle/hard-cap limits --
-    # if the runtime disconnects partway through, SHANKPIT_RESUME_FROM_REGISTRY=1 (already real
-    # and live, S459-54) picks back up from each role's own latest pushed registry checkpoint on
-    # the next run instead of losing progress.
+    # if the runtime disconnects partway through, --resume-from-registry (now always on when
+    # pushing to the registry, see S459-71 below) picks back up from each role's own latest
+    # pushed checkpoint on the next run instead of losing progress.
     output_dir = os.environ.get("SHANKPIT_RL_OUTPUT_DIR", "var/rl_checkpoints/colab")
     cmd = [
         sys.executable, "scripts/rl_train_packet.py",
@@ -172,11 +172,15 @@ def main():
             "--registry-agent-secret", iduna_agent_secret,
             "--registry-source-location", "colab",
         ]
-        # Warm-start every role from its own newest registry checkpoint instead of a fresh
-        # network -- real and live (S459-54), opt-in via env var since a from-scratch run is a
-        # real, valid choice too (e.g. deliberately starting a fresh multi-main league member).
-        if os.environ.get("SHANKPIT_RESUME_FROM_REGISTRY") == "1":
-            cmd.append("--resume-from-registry")
+        # S459-71, real, found-live correction: this used to be opt-in behind
+        # SHANKPIT_RESUME_FROM_REGISTRY=1 -- founder real-time: "i should always have that in the
+        # skrip - i said just like brawlpit thas how brawlpit works please fix it". Checked
+        # BRAWLPIT/scripts/colab_train.py directly: it always passes --resume-from-registry
+        # unconditionally whenever pushing to the registry, no separate flag -- this now matches
+        # that exactly. Warm-starts every role from its own newest registry checkpoint (real PPO
+        # weights, not just an Elo number) so this runtime continues the SAME shared league other
+        # runs have been training, instead of a fresh random network every time.
+        cmd.append("--resume-from-registry")
 
     print("\nStarting real league training -- this runs until --total-timesteps completes per "
           "role, or the cell/runtime is stopped.", flush=True)
