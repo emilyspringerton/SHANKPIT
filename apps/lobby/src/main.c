@@ -939,7 +939,21 @@ static int net_requested_mode = MODE_DEATHMATCH;
    interpolator to produce t in [0,1].  Keep this at ~0.75x the interval. */
 #define INTERP_DELAY_MS 24
 #define RECONCILE_DECAY_LAMBDA 12.0f
-#define RECONCILE_HARD_SNAP_DIST 2.0f
+// RECONCILE_HARD_SNAP_DIST -- S459-65, real, found-live bug: founder real-time report ("it like
+// slams me back on to the ground before i can get much verticality at all") of jump feeling
+// broken while horizontal movement felt fine -- exactly what this threshold being too tight for
+// the game's own real physics would cause. Live-measured directly (a real diagnostic client
+// holding jump against an isolated dev server, not a guess): a single real jump reaches ~8.65
+// world units of vertical height within ~300ms (JUMP_FORCE=0.95, GRAVITY_FLOAT=0.025/tick,
+// packages/common/physics.h). The old 2.0f threshold meant EVERY real jump's own predicted-vs-
+// authoritative divergence exceeded it almost immediately, so the smooth, decaying correction
+// path (reconcile_corr_x/y/z below) never engaged for jumping at all -- every jump instead took
+// the "totally desynced, snap the camera hard with zero smoothing" path meant for genuine
+// teleports/warps/bugs, not normal expressive gameplay. Bumped with real margin above the
+// measured real jump peak (not a guess at exactly how high a jump can go) so normal, even fast,
+// jumpy movement stays on the smooth-correction path; a true anomaly (an actual desync bug, a
+// warp, a cheat) is still many times this and still gets caught.
+#define RECONCILE_HARD_SNAP_DIST 12.0f
 #define RECONCILE_HARD_SNAP_YAW 45.0f
 #define RECONCILE_CORR_MAX 1.2f
 UserCmd net_cmd_history[NET_CMD_HISTORY];
