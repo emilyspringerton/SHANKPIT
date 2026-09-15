@@ -144,10 +144,21 @@ def main():
     # Exploiter together in one run, generation by generation, and pushes each generation's 3
     # checkpoints to the shared registry itself (when --registry-url/secret are set) -- no
     # separate push_checkpoint call needed here, unlike the old single-agent flow this replaces.
+    # S459-70, founder real-time: "it only goes like 5 generations can you make it go like 100?"
+    # -- generation count is real-timesteps-driven, not a separate knob: rl_train_packet.py's own
+    # main loop runs until total_timesteps is exhausted, producing one generation per
+    # --save-freq(=4096, its own real default) chunk -- 20000/4096 rounds to the real 5
+    # generations being seen. 409600 = 100 * 4096, a real default sized for "100 generations" at
+    # that same per-generation training amount, not a guess. Real, honest cost this trades for:
+    # at this box's own live-measured ~4-5 min/generation, 100 generations is a genuinely long
+    # run (multiple hours), well past a free-tier Colab session's own real idle/hard-cap limits --
+    # if the runtime disconnects partway through, SHANKPIT_RESUME_FROM_REGISTRY=1 (already real
+    # and live, S459-54) picks back up from each role's own latest pushed registry checkpoint on
+    # the next run instead of losing progress.
     output_dir = os.environ.get("SHANKPIT_RL_OUTPUT_DIR", "var/rl_checkpoints/colab")
     cmd = [
         sys.executable, "scripts/rl_train_packet.py",
-        "--total-timesteps", os.environ.get("SHANKPIT_TOTAL_TIMESTEPS", "20000"),
+        "--total-timesteps", os.environ.get("SHANKPIT_TOTAL_TIMESTEPS", "409600"),
         "--max-episode-steps", os.environ.get("SHANKPIT_MAX_EPISODE_STEPS", "1000"),
         "--output-dir", output_dir,
         "--league-dir", os.environ.get("SHANKPIT_LEAGUE_DIR", "league_data"),
