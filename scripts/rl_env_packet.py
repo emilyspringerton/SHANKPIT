@@ -32,6 +32,7 @@ real bots already do every day (no SHANKPIT_AUTH_TOKEN set for them).
 """
 
 import ctypes
+import math
 import socket
 import struct
 import sys
@@ -404,9 +405,9 @@ def build_observation(me: NetPlayer, peers: list, walls: Optional[list]) -> np.n
     # --- Self (26) ---
     obs[i] = _clamp01(me.health / 100.0); i += 1
     obs[i] = _clamp01(me.shield / 100.0); i += 1
-    yaw_rad = me.yaw * np.pi / 180.0
-    obs[i] = np.sin(yaw_rad); i += 1
-    obs[i] = np.cos(yaw_rad); i += 1
+    yaw_rad = me.yaw * math.pi / 180.0
+    obs[i] = math.sin(yaw_rad); i += 1
+    obs[i] = math.cos(yaw_rad); i += 1
     obs[i] = _clamp_signed(me.pitch / 90.0); i += 1
     weapon_onehot_start = i
     if 0 <= me.current_weapon < 8:
@@ -422,7 +423,7 @@ def build_observation(me: NetPlayer, peers: list, walls: Optional[list]) -> np.n
     obs[i] = _clamp01(me.deaths / 10.0); i += 1
     obs[i] = 1.0 if me.hit_feedback else 0.0; i += 1
     obs[i] = _clamp01(me.storm_charges / 5.0); i += 1
-    obs[i] = float(np.tanh(me.reward_feedback / 50.0)); i += 1
+    obs[i] = math.tanh(me.reward_feedback / 50.0); i += 1
     obs[i] = _clamp01(me.reload_timer / RELOAD_TIMER_CAP); i += 1
     obs[i] = _clamp01(me.ability_cooldown / ABILITY_COOLDOWN_CAP); i += 1
     obs[i] = 1.0 if me.ability_cooldown == 0 else 0.0; i += 1
@@ -434,7 +435,7 @@ def build_observation(me: NetPlayer, peers: list, walls: Optional[list]) -> np.n
         if p.scene_id != me.scene_id or p.id == me.id:
             continue
         dx, dy, dz = p.x - me.x, p.y - me.y, p.z - me.z
-        dist = float(np.sqrt(dx * dx + dy * dy + dz * dz))
+        dist = math.sqrt(dx * dx + dy * dy + dz * dz)
         visible.append((dist, p, dx, dy, dz))
     visible.sort(key=lambda t: t[0])
 
@@ -443,12 +444,12 @@ def build_observation(me: NetPlayer, peers: list, walls: Optional[list]) -> np.n
         base = opp_start + slot * PER_OPPONENT_FEATURES
         if slot < len(visible):
             dist, p, dx, dy, dz = visible[slot]
-            bearing = (np.degrees(np.arctan2(dx, -dz)) - me.yaw)
-            bearing_rad = np.radians(bearing)
+            bearing = (math.degrees(math.atan2(dx, -dz)) - me.yaw)
+            bearing_rad = math.radians(bearing)
             obs[base + 0] = 1.0
             obs[base + 1] = _clamp01(dist / DIST_CAP)
-            obs[base + 2] = np.sin(bearing_rad)
-            obs[base + 3] = np.cos(bearing_rad)
+            obs[base + 2] = math.sin(bearing_rad)
+            obs[base + 3] = math.cos(bearing_rad)
             obs[base + 4] = _clamp_signed(dy / ELEV_CAP)
             obs[base + 5] = _clamp01(p.health / 100.0)
             obs[base + 6] = WEAPON_LETHALITY.get(p.current_weapon, 0.0)
@@ -470,22 +471,22 @@ def build_observation(me: NetPlayer, peers: list, walls: Optional[list]) -> np.n
         obs[agg_start + 3] = _clamp01(sum(1 for _, p, *_ in visible if p.is_shooting) / 7.0)
         obs[agg_start + 4] = _clamp01(sum(1 for _, p, *_ in visible if p.health < 30) / 7.0)
         max_kills = max([me.kills] + [p.kills for _, p, *_ in visible])
-        obs[agg_start + 6] = float(np.tanh((me.kills - max_kills) / 5.0))
-    obs[agg_start + 5] = float(np.tanh(me.kills / (me.deaths + 1.0)))
+        obs[agg_start + 6] = math.tanh((me.kills - max_kills) / 5.0)
+    obs[agg_start + 5] = math.tanh(me.kills / (me.deaths + 1.0))
     # obs[agg_start+7], obs[agg_start+8] -- team-architected placeholders (S459-46), always 0 in FFA
     i = agg_start + AGGREGATE_FEATURES
 
     # --- Geometry (5), real raycast -- S459-47 ---
     geo_start = i
-    fwd_dx, fwd_dz = float(np.sin(yaw_rad)), float(-np.cos(yaw_rad))
-    left_rad = (me.yaw - 90) * np.pi / 180.0
-    right_rad = (me.yaw + 90) * np.pi / 180.0
-    back_rad = (me.yaw + 180) * np.pi / 180.0
+    fwd_dx, fwd_dz = math.sin(yaw_rad), -math.cos(yaw_rad)
+    left_rad = (me.yaw - 90) * math.pi / 180.0
+    right_rad = (me.yaw + 90) * math.pi / 180.0
+    back_rad = (me.yaw + 180) * math.pi / 180.0
     if walls:
         obs[geo_start + 0] = _clamp01(raycast(walls, me.x, me.y, me.z, fwd_dx, 0, fwd_dz, WALL_RAY_CAP) / WALL_RAY_CAP)
-        obs[geo_start + 1] = _clamp01(raycast(walls, me.x, me.y, me.z, float(np.sin(left_rad)), 0, float(-np.cos(left_rad)), WALL_RAY_CAP) / WALL_RAY_CAP)
-        obs[geo_start + 2] = _clamp01(raycast(walls, me.x, me.y, me.z, float(np.sin(right_rad)), 0, float(-np.cos(right_rad)), WALL_RAY_CAP) / WALL_RAY_CAP)
-        obs[geo_start + 3] = _clamp01(raycast(walls, me.x, me.y, me.z, float(np.sin(back_rad)), 0, float(-np.cos(back_rad)), WALL_RAY_CAP) / WALL_RAY_CAP)
+        obs[geo_start + 1] = _clamp01(raycast(walls, me.x, me.y, me.z, math.sin(left_rad), 0, -math.cos(left_rad), WALL_RAY_CAP) / WALL_RAY_CAP)
+        obs[geo_start + 2] = _clamp01(raycast(walls, me.x, me.y, me.z, math.sin(right_rad), 0, -math.cos(right_rad), WALL_RAY_CAP) / WALL_RAY_CAP)
+        obs[geo_start + 3] = _clamp01(raycast(walls, me.x, me.y, me.z, math.sin(back_rad), 0, -math.cos(back_rad), WALL_RAY_CAP) / WALL_RAY_CAP)
         obs[geo_start + 4] = _clamp01(raycast(walls, me.x, me.y, me.z, 0, -1, 0, FLOOR_RAY_CAP) / FLOOR_RAY_CAP)
     # else: stays real, honest 0 -- see this module's own doc comment / geometry.go's precedent
 
@@ -603,7 +604,7 @@ def _reward_snapshot_from(me: NetPlayer, peers: list) -> RewardSnapshot:
         if p.scene_id != me.scene_id or p.id == me.id:
             continue
         dx, dy, dz = p.x - me.x, p.y - me.y, p.z - me.z
-        d = float(np.sqrt(dx * dx + dy * dy + dz * dz))
+        d = math.sqrt(dx * dx + dy * dy + dz * dz)
         if best is None or d < best:
             best = d
             nearest_dist, nearest_health = d, p.health / 100.0
