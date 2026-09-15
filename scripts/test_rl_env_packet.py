@@ -11,7 +11,7 @@ from rl_env_packet import (
     NetHeader, UserCmd, NetPlayer,
     encode_connect, decode_welcome, encode_usercmd, decode_snapshot,
     build_observation, compute_reward, RewardSnapshot, OBS_SIZE,
-    Wall, raycast, decode_action,
+    Wall, raycast, decode_action, _fibonacci, SURVIVAL_STREAK_FIB_CAP,
     WPN_MAGNUM, WPN_SNIPER, STATE_ALIVE, STATE_DEAD,
 )
 
@@ -23,8 +23,8 @@ class TestStructSizes(unittest.TestCase):
     def test_user_cmd_is_36_bytes(self):
         self.assertEqual(ctypes.sizeof(UserCmd), 36)
 
-    def test_net_player_is_68_bytes(self):
-        self.assertEqual(ctypes.sizeof(NetPlayer), 68)
+    def test_net_player_is_72_bytes(self):
+        self.assertEqual(ctypes.sizeof(NetPlayer), 72)
 
     def test_net_player_field_offsets_match_the_real_compiled_c_struct(self):
         # Real offsets verified via a compiled sizeof/offsetof C probe against protocol.h during
@@ -39,7 +39,7 @@ class TestStructSizes(unittest.TestCase):
             "storm_charges": 44, "kills": 46, "deaths": 48,
             "death_elapsed_ms": 50, "death_duration_ms": 52,
             "death_dir_x": 56, "death_dir_z": 60,
-            "reload_timer": 64, "ability_cooldown": 66,
+            "reload_timer": 64, "ability_cooldown": 66, "kill_streak": 68,
         }
         for field, off in expected.items():
             self.assertEqual(getattr(NetPlayer, field).offset, off, f"field {field}")
@@ -82,13 +82,13 @@ class TestUsercmdWireLayout(unittest.TestCase):
 class TestSnapshotWireLayout(unittest.TestCase):
     def _build_snapshot(self, entities):
         header_size = 12
-        buf = bytearray(header_size + 1 + 68 * len(entities))
+        buf = bytearray(header_size + 1 + 72 * len(entities))
         buf[0] = 2  # PACKET_SNAPSHOT
         buf[8] = len(entities)  # entity_count
         off = header_size + 1
         for e in entities:
-            buf[off:off + 68] = bytes(e)
-            off += 68
+            buf[off:off + 72] = bytes(e)
+            off += 72
         return bytes(buf)
 
     def test_decodes_multiple_players_in_order(self):
@@ -109,7 +109,7 @@ class TestSnapshotWireLayout(unittest.TestCase):
         p1 = NetPlayer(id=1, scene_id=9, health=100)
         p2 = NetPlayer(id=2, scene_id=9, health=50)
         data = self._build_snapshot([p1, p2])
-        truncated = data[:12 + 1 + 68]  # only room for the first entity
+        truncated = data[:12 + 1 + 72]  # only room for the first entity
         decoded = decode_snapshot(truncated)
         self.assertEqual(len(decoded), 1)
         self.assertEqual(decoded[0].id, 1)
@@ -206,6 +206,57 @@ class TestComputeReward(unittest.TestCase):
         disengaged = RewardSnapshot(health=25, reward_feedback=0, deaths=0,
                                      nearest_enemy_dist=10, nearest_enemy_health_frac=0.5)
         self.assertGreater(compute_reward(prev, disengaged), compute_reward(prev, engaged))
+
+    def test_survival_streak_none_is_a_real_noop(self):
+        prev = RewardSnapshot(health=100, reward_feedback=0, deaths=0, nearest_enemy_dist=0, nearest_enemy_health_frac=0)
+        cur = RewardSnapshot(health=100, reward_feedback=0, deaths=0, nearest_enemy_dist=0, nearest_enemy_health_frac=0)
+        # No survival_ticks given -- reward should equal just the flat REWARD_ALIVE_PER_TICK tier.
+        from rl_env_packet import REWARD_ALIVE_PER_TICK
+        self.assertAlmostEqual(compute_reward(prev, cur), REWARD_ALIVE_PER_TICK)
+
+    def test_survival_streak_grows_with_ticks(self):
+        prev = RewardSnapshot(health=100, reward_feedback=0, deaths=0, nearest_enemy_dist=0, nearest_enemy_health_frac=0)
+        cur = RewardSnapshot(health=100, reward_feedback=0, deaths=0, nearest_enemy_dist=0, nearest_enemy_health_frac=0)
+        early = compute_reward(prev, cur, survival_ticks=2)
+        later = compute_reward(prev, cur, survival_ticks=8)
+        self.assertGreater(later, early)
+
+    def test_survival_streak_scales_with_low_health(self):
+        prev = RewardSnapshot(health=100, reward_feedback=0, deaths=0, nearest_enemy_dist=0, nearest_enemy_health_frac=0)
+        full_health = RewardSnapshot(health=100, reward_feedback=0, deaths=0, nearest_enemy_dist=0, nearest_enemy_health_frac=0)
+        low_health = RewardSnapshot(health=1, reward_feedback=0, deaths=0, nearest_enemy_dist=0, nearest_enemy_health_frac=0)
+        r_full = compute_reward(prev, full_health, survival_ticks=5)
+        r_low = compute_reward(prev, low_health, survival_ticks=5)
+        self.assertGreater(r_low, r_full)
+
+    def test_survival_streak_never_pays_on_the_death_tick(self):
+        prev = RewardSnapshot(health=20, reward_feedback=0, deaths=0, nearest_enemy_dist=0, nearest_enemy_health_frac=0)
+        died = RewardSnapshot(health=0, reward_feedback=0, deaths=1, nearest_enemy_dist=0, nearest_enemy_health_frac=0)
+        # Even with a real, positive (stale) survival_ticks, the death-tick guard must refuse to pay tier 5.
+        with_streak = compute_reward(prev, died, survival_ticks=10)
+        without_streak = compute_reward(prev, died, survival_ticks=None)
+        self.assertAlmostEqual(with_streak, without_streak)
+
+    def test_survival_streak_stops_paying_past_the_cap_not_just_clamps(self):
+        # Real, found-live bug this port ships already-fixed (see the module doc comment): the
+        # term must stop applying entirely once survival_ticks exceeds the cap, not keep paying
+        # fib(cap) forever.
+        prev = RewardSnapshot(health=100, reward_feedback=0, deaths=0, nearest_enemy_dist=0, nearest_enemy_health_frac=0)
+        cur = RewardSnapshot(health=100, reward_feedback=0, deaths=0, nearest_enemy_dist=0, nearest_enemy_health_frac=0)
+        at_cap = compute_reward(prev, cur, survival_ticks=SURVIVAL_STREAK_FIB_CAP)
+        past_cap = compute_reward(prev, cur, survival_ticks=SURVIVAL_STREAK_FIB_CAP + 1)
+        from rl_env_packet import REWARD_ALIVE_PER_TICK
+        self.assertGreater(at_cap, REWARD_ALIVE_PER_TICK)
+        self.assertAlmostEqual(past_cap, REWARD_ALIVE_PER_TICK)  # tier 5 contributes nothing past the cap
+
+
+class TestFibonacci(unittest.TestCase):
+    def test_matches_the_real_standard_sequence(self):
+        self.assertEqual([_fibonacci(n) for n in range(1, 8)], [1, 1, 2, 3, 5, 8, 13])
+
+    def test_zero_and_negative_are_zero(self):
+        self.assertEqual(_fibonacci(0), 0)
+        self.assertEqual(_fibonacci(-5), 0)
 
 
 class TestDecodeAction(unittest.TestCase):

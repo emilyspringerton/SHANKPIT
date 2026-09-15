@@ -60,16 +60,66 @@ func TestBuildObservation_NearestOpponentOrdering(t *testing.T) {
 func TestComputeReward_KillCreditAndDeathPenalty(t *testing.T) {
 	prev := PlayerRewardSnapshot{Health: 100, Deaths: 0}
 	cur := PlayerRewardSnapshot{Health: 100, Deaths: 0, RewardFeedback: 150.0} // a confirmed kill
-	r := computeReward(prev, cur, TeamRewardContext{})
+	r := computeReward(prev, cur, TeamRewardContext{}, 0)
 	if r <= 0 {
 		t.Fatalf("expected positive reward for a kill, got %v", r)
 	}
 
 	prevD := PlayerRewardSnapshot{Health: 20, Deaths: 0}
 	curD := PlayerRewardSnapshot{Health: 0, Deaths: 1}
-	rd := computeReward(prevD, curD, TeamRewardContext{})
+	rd := computeReward(prevD, curD, TeamRewardContext{}, 0)
 	if rd >= 0 {
 		t.Fatalf("expected negative reward for a death, got %v", rd)
+	}
+}
+
+func TestComputeReward_SurvivalStreak(t *testing.T) {
+	prev := PlayerRewardSnapshot{Health: 100, Deaths: 0}
+	cur := PlayerRewardSnapshot{Health: 100, Deaths: 0}
+
+	early := computeReward(prev, cur, TeamRewardContext{}, 2)
+	later := computeReward(prev, cur, TeamRewardContext{}, 8)
+	if later <= early {
+		t.Fatalf("expected a longer streak to score higher: early=%v later=%v", early, later)
+	}
+
+	fullHealth := computeReward(prev, PlayerRewardSnapshot{Health: 100, Deaths: 0}, TeamRewardContext{}, 5)
+	lowHealth := computeReward(prev, PlayerRewardSnapshot{Health: 1, Deaths: 0}, TeamRewardContext{}, 5)
+	if lowHealth <= fullHealth {
+		t.Fatalf("expected a low-health streak to score higher: fullHealth=%v lowHealth=%v", fullHealth, lowHealth)
+	}
+
+	// Real, found-live bug this port ships already-fixed: must stop paying entirely past the
+	// cap, not keep paying fib(cap) forever.
+	atCap := computeReward(prev, cur, TeamRewardContext{}, survivalStreakFibCap)
+	pastCap := computeReward(prev, cur, TeamRewardContext{}, survivalStreakFibCap+1)
+	baseline := computeReward(prev, cur, TeamRewardContext{}, 0)
+	if atCap <= baseline {
+		t.Fatalf("expected tier 5 to contribute something at the cap, got atCap=%v baseline=%v", atCap, baseline)
+	}
+	if pastCap != baseline {
+		t.Fatalf("expected tier 5 to contribute NOTHING past the cap, got pastCap=%v baseline=%v", pastCap, baseline)
+	}
+
+	// Never pays on the death tick itself, even with a stale positive survivalTicks.
+	prevAlive := PlayerRewardSnapshot{Health: 20, Deaths: 0}
+	died := PlayerRewardSnapshot{Health: 0, Deaths: 1}
+	withStreak := computeReward(prevAlive, died, TeamRewardContext{}, 10)
+	withoutStreak := computeReward(prevAlive, died, TeamRewardContext{}, 0)
+	if withStreak != withoutStreak {
+		t.Fatalf("expected tier 5 to refuse to pay on the death tick: withStreak=%v withoutStreak=%v", withStreak, withoutStreak)
+	}
+}
+
+func TestFibonacci(t *testing.T) {
+	want := []int{1, 1, 2, 3, 5, 8, 13}
+	for i, w := range want {
+		if got := fibonacci(i + 1); got != w {
+			t.Fatalf("fibonacci(%d) = %d, want %d", i+1, got, w)
+		}
+	}
+	if fibonacci(0) != 0 || fibonacci(-5) != 0 {
+		t.Fatalf("expected fibonacci(n<=0) == 0")
 	}
 }
 
@@ -156,8 +206,8 @@ func TestComputeReward_LowHealthShaping(t *testing.T) {
 	engaged := PlayerRewardSnapshot{Health: 25, NearestEnemyDist: 4} // closing distance while low HP
 	disengaged := PlayerRewardSnapshot{Health: 25, NearestEnemyDist: 10} // creating distance while low HP
 
-	rEngaged := computeReward(prev, engaged, TeamRewardContext{})
-	rDisengaged := computeReward(prev, disengaged, TeamRewardContext{})
+	rEngaged := computeReward(prev, engaged, TeamRewardContext{}, 0)
+	rDisengaged := computeReward(prev, disengaged, TeamRewardContext{}, 0)
 	if rDisengaged <= rEngaged {
 		t.Fatalf("expected disengaging while low HP to score higher than engaging: engaged=%v disengaged=%v", rEngaged, rDisengaged)
 	}

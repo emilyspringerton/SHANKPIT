@@ -14,7 +14,7 @@ code sharing beyond this file.
 Real, byte-exact wire layout -- verified via a compiled sizeof/offsetof C probe against this
 exact build during S459-44/45/47 (not guessed), self-checked again here at import time the same
 way BRAWLPIT's own ctypes.Structure definitions assert their own sizeof:
-  NetHeader=12 bytes, UserCmd=36 bytes, NetPlayer=68 bytes.
+  NetHeader=12 bytes, UserCmd=36 bytes, NetPlayer=72 bytes (S459-52).
 
 Real, deliberate architectural difference from BRAWLPIT's own env, not an oversight: SHANKPIT's
 QUEUE mode has NO PacketResetMatch (BRAWLPIT's own env was blocked for a while on exactly this
@@ -161,8 +161,10 @@ class NetPlayer(ctypes.LittleEndianStructure):
         ("death_dir_z", ctypes.c_float),
         ("reload_timer", ctypes.c_uint16),
         ("ability_cooldown", ctypes.c_uint16),
+        ("kill_streak", ctypes.c_uint8),  # S459-52
+        ("_pad3", ctypes.c_uint8 * 3),  # trailing padding -- the real compiled struct rounds up to a 4-byte multiple (72), verified via the same offsetof/sizeof probe technique this file's own module doc comment establishes
     ]
-assert ctypes.sizeof(NetPlayer) == 68, ctypes.sizeof(NetPlayer)
+assert ctypes.sizeof(NetPlayer) == 72, ctypes.sizeof(NetPlayer)
 
 
 # --- Encode/decode helpers, matching apps2/emily-bot/main.go + snapshot.go byte-for-byte ---
@@ -196,18 +198,20 @@ def decode_snapshot(data: bytes):
     """Returns a list of NetPlayer copies, or None if data is too short to trust. Mirrors
     apps2/emily-bot/snapshot.go's own decodePacketSnapshot exactly: entity_count lives at
     NetHeader offset 8, entities start at offset 13 (12-byte header + 1 redundant count byte),
-    each entity is sizeof(NetPlayer)=68 bytes. A truncated/overclaiming buffer stops safely at
-    however many whole entities actually fit, never misparses past the real buffer end."""
+    each entity is sizeof(NetPlayer)=72 bytes (S459-52 -- grew from 68 when kill_streak was added).
+    A truncated/overclaiming buffer stops safely at however many whole entities actually fit,
+    never misparses past the real buffer end."""
     if len(data) < 13 or data[0] != PACKET_SNAPSHOT:
         return None
     count = data[8]
     out = []
     off = 13
+    entity_size = ctypes.sizeof(NetPlayer)
     for _ in range(count):
-        if off + 68 > len(data):
+        if off + entity_size > len(data):
             break
         out.append(NetPlayer.from_buffer_copy(data, off))
-        off += 68
+        off += entity_size
     return out
 
 
@@ -481,7 +485,8 @@ def build_observation(me: NetPlayer, peers: list, walls: Optional[list]) -> np.n
     return obs
 
 
-# --- Reward (mirrors apps2/emily-bot/reward.go's 4-tier design exactly) ---
+# --- Reward (mirrors apps2/emily-bot/reward.go's 4-tier design, plus a 5th tier ported from
+# BRAWLPIT's own rl_env_packet.py -- see below) ---
 
 REWARD_FEEDBACK_SCALE = 1.0 / 50.0
 REWARD_DEATH = -1.0
@@ -490,6 +495,43 @@ REWARD_LOW_HEALTH_ENGAGED_PER_TICK = -0.02
 REWARD_LOW_HEALTH_DISENGAGED_PER_TICK = 0.01
 REWARD_ALIVE_PER_TICK = 0.001
 REWARD_APPROACH_ADVANTAGED_TARGET_PER_TICK = 0.01
+
+# Tier 5: real, growing survival-streak shaping -- founder real-time (S459-51): "give us the
+# survival streak bonus" (this session's own direct follow-up after asking whether the pipeline
+# was "event driven with the discounted reward over time"), pointing at BRAWLPIT's own real
+# design: "add a reward that ticks up over time so fib like 1 1 2 3 5 reward for not die also it
+# should go exponentially ish for the higher damage you are it should reward you even more when
+# you oof it resets." A direct, faithful port of BRAWLPIT/scripts/rl_env_packet.py's own tier 5
+# (REWARD_SURVIVAL_STREAK_UNIT/_fibonacci/SURVIVAL_STREAK_FIB_CAP), including BRAWLPIT's own
+# real, found-and-fixed bug: the per-tick Fibonacci value must stop being PAID once survival_ticks
+# exceeds the cap, not just have its INDEX clamped at the cap (the original BRAWLPIT bug paid
+# fib(cap) forever after the cap, letting a long-surviving life rack up unbounded total reward --
+# a real reward-hacking incentive toward passive stalling, caught live by the founder noticing
+# "they walked up a gradient of stupidity"). Ported here already fixed -- SHANKPIT never has the
+# broken version.
+#
+# One real, deliberate adaptation from BRAWLPIT's own design: BRAWLPIT is a Smash-style game where
+# "damage" is a percentage that goes UP (0% -> 300%+) the more punishment a stock has taken, so
+# BRAWLPIT scales the streak bonus by `DAMAGE_EXP_BASE ** (damage / 100)`. SHANKPIT is a
+# health-based shooter where health goes DOWN (100 -> 0) as a life takes punishment -- the real
+# equivalent "how close to death is this life" quantity is `(100 - health) / 100`, not health
+# itself. Same real intent either way: surviving one more tick while nearly dead is worth
+# deliberately more than surviving one more tick at full health.
+REWARD_SURVIVAL_STREAK_UNIT = 0.001  # same tiny order of magnitude as REWARD_ALIVE_PER_TICK -- an EARLY streak tick stays negligible, the Fibonacci/exponential growth below is what makes it matter
+SURVIVAL_STREAK_FIB_CAP = 14  # matches BRAWLPIT's own real, bug-fixed cap exactly -- sum(fib(1..14))=986, so the real bounded worst-case total per life (sustained at 0 health the whole time) is 0.001*986*2.0**1.0=1.972, safely under REWARD_DEATH's own magnitude
+SURVIVAL_STREAK_HEALTH_EXP_BASE = 2.0  # doubles every -100% health equivalent (SHANKPIT has no >100% overshoot the way BRAWLPIT's damage does, so this caps out at a single doubling at 0 health)
+
+
+def _fibonacci(n: int) -> int:
+    """The real, standard Fibonacci sequence, 1-indexed (fib(1)=1, fib(2)=1, fib(3)=2, fib(4)=3,
+    fib(5)=5, ...) -- exactly the sequence the founder named, a direct port of BRAWLPIT's own
+    _fibonacci. Iterative, not recursive: n is always small (bounded by SURVIVAL_STREAK_FIB_CAP)."""
+    if n <= 0:
+        return 0
+    a, b = 1, 1
+    for _ in range(n - 1):
+        a, b = b, a + b
+    return a
 
 
 @dataclass
@@ -501,11 +543,22 @@ class RewardSnapshot:
     nearest_enemy_health_frac: float  # 0 if none visible
 
 
-def compute_reward(prev: RewardSnapshot, cur: RewardSnapshot) -> float:
-    """4-tier reward, a direct Python port of apps2/emily-bot/reward.go's own computeReward.
-    Team term omitted entirely here (not just zeroed) -- FFA-only per the founder's own explicit
-    S459-46 instruction; see reward.go's own TeamRewardContext doc comment for the real,
-    architected-not-built team design this would extend into."""
+def compute_reward(prev: RewardSnapshot, cur: RewardSnapshot, survival_ticks: Optional[int] = None) -> float:
+    """5-tier reward, a direct Python port of apps2/emily-bot/reward.go's own computeReward
+    (tiers 1-4) plus BRAWLPIT's own real survival-streak tier (tier 5, see its own module-level
+    doc comment above). Team term omitted entirely here (not just zeroed) -- FFA-only per the
+    founder's own explicit S459-46 instruction.
+
+    `survival_ticks` is the real count of consecutive ticks this life has lasted (including this
+    one), maintained by the caller and reset to 0 the tick a death happens -- optional and
+    backward-compatible (None skips tier 5 entirely, matching BRAWLPIT's own established
+    optional-degrade convention for this exact parameter).
+
+    S459-52's real multikill bonus (double/triple/killtacular, packages/common/physics.h's
+    MULTIKILL_BONUS_*) needs NO separate tier here -- it's added directly to the server's own
+    accumulated_reward (the exact same field the base +150 kill credit already uses), so it
+    reaches the bot automatically through tier 1's own reward_feedback term above the instant a
+    multikill lands. No new code path was needed to make the bot "reward-aware" of it."""
     reward = 0.0
     reward += cur.reward_feedback * REWARD_FEEDBACK_SCALE
     if cur.deaths > prev.deaths:
@@ -523,6 +576,15 @@ def compute_reward(prev: RewardSnapshot, cur: RewardSnapshot) -> float:
     if (cur.nearest_enemy_dist > 0 and cur.nearest_enemy_dist < prev.nearest_enemy_dist and
             cur.nearest_enemy_health_frac > 0 and cur.nearest_enemy_health_frac < cur.health / 100.0):
         reward += REWARD_APPROACH_ADVANTAGED_TARGET_PER_TICK
+
+    # Tier 5: survival streak (see this module's own top-level doc comment for the full
+    # rationale, including the real bug this port ships already-fixed). Refuses to apply on the
+    # exact tick a death happened, even if the caller passes a stale/positive survival_ticks --
+    # "it resets" is enforced here, not just trusted to the caller.
+    if (survival_ticks is not None and 0 < survival_ticks <= SURVIVAL_STREAK_FIB_CAP
+            and cur.deaths == prev.deaths):
+        health_scale = SURVIVAL_STREAK_HEALTH_EXP_BASE ** ((100.0 - cur.health) / 100.0)
+        reward += REWARD_SURVIVAL_STREAK_UNIT * _fibonacci(survival_ticks) * health_scale
 
     return reward
 
@@ -593,6 +655,7 @@ if gym is not None:
             self.walls = None
             self._steps_this_episode = 0
             self._prev_reward_snap: Optional[RewardSnapshot] = None
+            self._survival_ticks = 0  # tier 5: real, consecutive-tick life counter, reset on every death (mirrors BRAWLPIT's own BrawlpitPacketEnv._survival_ticks)
             self._cur_yaw = 0.0
             self._cur_pitch = 0.0
 
@@ -633,6 +696,7 @@ if gym is not None:
             self._connect_if_needed()
             me, entities = self._wait_for_alive_snapshot()
             self._steps_this_episode = 0
+            self._survival_ticks = 0  # a fresh episode is a fresh life
             self._cur_yaw, self._cur_pitch = me.yaw, me.pitch
             self._prev_reward_snap = _reward_snapshot_from(me, entities)
             obs = build_observation(me, entities, self.walls)
@@ -657,7 +721,11 @@ if gym is not None:
                         self._steps_this_episode >= self.max_episode_steps, {})
 
             cur_snap = _reward_snapshot_from(me, entities)
-            reward = compute_reward(self._prev_reward_snap, cur_snap)
+            if cur_snap.deaths > self._prev_reward_snap.deaths:
+                self._survival_ticks = 0
+            else:
+                self._survival_ticks += 1
+            reward = compute_reward(self._prev_reward_snap, cur_snap, survival_ticks=self._survival_ticks)
             self._prev_reward_snap = cur_snap
 
             terminated = me.state == STATE_DEAD

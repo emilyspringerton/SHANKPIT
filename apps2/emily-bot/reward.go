@@ -24,6 +24,8 @@
 // what a team term would need and why it isn't guessed at here.
 package main
 
+import "math"
+
 const (
 	// Tier 1: outcome. RewardKillKnown/RewardDamageKnown are NOT independent constants here --
 	// they ARE physics.h's own +150.0/+0.5 (see this file's own module doc comment), already
@@ -61,6 +63,26 @@ const (
 	// penalty since SHANKPIT/QUEUE has continuous respawns (no single terminal "did nothing all
 	// match" case the way a timed 1v1 stock match has).
 	rewardApproachAdvantagedTargetPerTick = 0.01
+
+	// Tier 5: real, growing survival-streak shaping -- S459-51, founder real-time: "give us the
+	// survival streak bonus," pointing at BRAWLPIT's own real design (originally: "add a reward
+	// that ticks up over time so fib like 1 1 2 3 5 reward for not die also it should go
+	// exponentially ish for the higher damage you are it should reward you even more when you oof
+	// it resets"). A direct, faithful port of BRAWLPIT/scripts/rl_env_packet.py's own tier 5,
+	// mirrored here for the same reason every other tier already is -- keeping the Go bot-pool AI
+	// and the Python training env's reward semantics faithful ports of each other, not two
+	// independently-drifting designs. Ported already carrying BRAWLPIT's own real, found-and-
+	// fixed bug fix: the per-tick value must stop being PAID once the streak exceeds the cap, not
+	// just have its Fibonacci index clamped there (the original bug paid fib(cap) forever after
+	// the cap -- a real reward-hacking incentive toward passive stalling).
+	//
+	// Real, deliberate adaptation from BRAWLPIT's own damage-percent scaling (Smash-style damage
+	// climbs 0->300%+): SHANKPIT is health-based (100->0), so the "how close to death" scale here
+	// is (100-health)/100, not health itself -- same real intent, surviving one more tick near
+	// death is worth more than surviving one more tick at full health.
+	rewardSurvivalStreakUnit = 0.001
+	survivalStreakFibCap = 14 // matches BRAWLPIT's own real, bug-fixed cap exactly
+	survivalStreakHealthExpBase = 2.0
 )
 
 // TeamRewardContext -- Team reward, architected not built (S459-46). A real, currently-unused
@@ -96,11 +118,34 @@ type PlayerRewardSnapshot struct {
 	NearestEnemyHealthFrac float32 // health of the nearest visible enemy, 0 if none visible
 }
 
+// fibonacci -- the real, standard sequence, 1-indexed (fib(1)=1, fib(2)=1, fib(3)=2, fib(4)=3,
+// fib(5)=5, ...), a direct port of BRAWLPIT/scripts/rl_env_packet.py's own _fibonacci. n is
+// always small in practice (bounded by survivalStreakFibCap), so no memoization needed.
+func fibonacci(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	a, b := 1, 1
+	for i := 0; i < n-1; i++ {
+		a, b = b, a+b
+	}
+	return a
+}
+
 // computeReward -- the real, per-tick dense reward. prev/cur are the same bot's own state one
 // tick apart (the caller's own responsibility to snapshot before/after, same convention
 // BRAWLPIT's own compute_reward(prev_own, prev_opp, cur_own, cur_opp, ...) already establishes).
 // team is accepted but, per this file's own module doc comment, contributes nothing yet.
-func computeReward(prev, cur PlayerRewardSnapshot, team TeamRewardContext) float32 {
+// survivalTicks is the real count of consecutive ticks this life has lasted (including this one),
+// maintained by the caller and reset to 0 the tick a death happens -- 0 skips tier 5 entirely,
+// matching this repo's own established optional-degrade convention for this exact parameter
+// (BRAWLPIT's own compute_reward treats survival_ticks=None the same way).
+//
+// S459-52's real multikill bonus (double/triple/killtacular, packages/common/physics.h's
+// MULTIKILL_BONUS_*) needs no separate tier here -- it's added directly to the server's own
+// accumulated_reward (the same field the base +150 kill credit already uses), so it reaches the
+// bot automatically through tier 1's own RewardFeedback term the instant a multikill lands.
+func computeReward(prev, cur PlayerRewardSnapshot, team TeamRewardContext, survivalTicks int) float32 {
 	var reward float32
 
 	// Tier 1: outcome -- trust the server's own real reward_feedback signal directly.
@@ -127,6 +172,14 @@ func computeReward(prev, cur PlayerRewardSnapshot, team TeamRewardContext) float
 	if cur.NearestEnemyDist > 0 && cur.NearestEnemyDist < prev.NearestEnemyDist &&
 		cur.NearestEnemyHealthFrac > 0 && cur.NearestEnemyHealthFrac < cur.Health/100.0 {
 		reward += rewardApproachAdvantagedTargetPerTick
+	}
+
+	// Tier 5: survival streak (see this const block's own doc comment for the full rationale,
+	// including the real bug this port ships already-fixed). Refuses to apply on the exact tick
+	// a death happened, even with a stale/positive survivalTicks -- "it resets" is enforced here.
+	if survivalTicks > 0 && survivalTicks <= survivalStreakFibCap && cur.Deaths == prev.Deaths {
+		healthScale := math.Pow(survivalStreakHealthExpBase, float64(100.0-cur.Health)/100.0)
+		reward += float32(rewardSurvivalStreakUnit * float64(fibonacci(survivalTicks)) * healthScale)
 	}
 
 	// Team term -- deliberately a no-op today (see TeamRewardContext's own doc comment).
