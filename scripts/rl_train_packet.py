@@ -122,17 +122,27 @@ def _spawn_heuristic_bots(host, port, count):
     return procs
 
 
-def _spawn_frozen_policy_bot(host, port, checkpoint_path, session_duration=None, report_kills_to=None):
+def _spawn_frozen_policy_bot(host, port, checkpoint_path, session_duration=None, report_kills_to=None, log_path=None):
     """Launches scripts/frozen_policy_bot.py as a real, separate OS process -- the real self-play
     primitive this file's own module doc comment names (SHANKPIT has no in-process opponent slot
-    the way BRAWLPIT's own packet env does)."""
+    the way BRAWLPIT's own packet env does). log_path (S459-61), when given, captures real
+    stdout+stderr to a file instead of silencing it -- a crashed bot's own traceback used to be
+    invisible (subprocess.DEVNULL), indistinguishable from a real, successful 0-0 tie. None
+    (every non-evaluation caller -- the real self-play/heuristic opponents spawned during actual
+    training) keeps the original DEVNULL behavior; those run for the whole generation and would
+    otherwise flood the parent's own log."""
     cmd = [sys.executable, FROZEN_BOT_SCRIPT, "--host", host, "--port", str(port),
            "--checkpoint", checkpoint_path]
     if session_duration is not None:
         cmd += ["--session-duration", str(session_duration)]
     if report_kills_to is not None:
         cmd += ["--report-kills-to", report_kills_to]
-    proc = subprocess.Popen(cmd, cwd=REPO_ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if log_path is not None:
+        log_f = open(log_path, "w")
+        proc = subprocess.Popen(cmd, cwd=REPO_ROOT, stdout=log_f, stderr=subprocess.STDOUT)
+        proc._shankpit_log_file = log_f  # closed by the caller once the process has exited
+    else:
+        proc = subprocess.Popen(cmd, cwd=REPO_ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     _spawned_procs.append(proc)
     return proc
 
@@ -202,27 +212,64 @@ def _run_evaluation_match(host, port, checkpoint_a, checkpoint_b, duration_secon
         with tempfile.TemporaryDirectory() as tmpdir:
             report_a = os.path.join(tmpdir, "a.json")
             report_b = os.path.join(tmpdir, "b.json")
-            bot_a = _spawn_frozen_policy_bot(host, port, checkpoint_a, duration_seconds, report_a)
-            bot_b = _spawn_frozen_policy_bot(host, port, checkpoint_b, duration_seconds, report_b)
+            # S459-61: these two bots used to run with stdout/stderr silenced entirely
+            # (subprocess.DEVNULL) -- a real crash (bad checkpoint load, a Colab-specific
+            # environment gap, etc.) was invisible, indistinguishable in the log from a genuine
+            # 0-0 tie. Captured to real files instead so a crash's own traceback is printed below
+            # when the report can't be read, matching this pipeline's own established S439
+            # Colab-output-visibility precedent.
+            log_a = os.path.join(tmpdir, "a.log")
+            log_b = os.path.join(tmpdir, "b.log")
+            bot_a = _spawn_frozen_policy_bot(host, port, checkpoint_a, duration_seconds, report_a, log_a)
+            bot_b = _spawn_frozen_policy_bot(host, port, checkpoint_b, duration_seconds, report_b, log_b)
             bot_a.wait(timeout=duration_seconds + 15)
             bot_b.wait(timeout=duration_seconds + 15)
             for p in (bot_a, bot_b):
                 if p in _spawned_procs:
                     _spawned_procs.remove(p)
+                # Flush+close the captured log file now that the process has exited, so _tail()
+                # below reads everything the bot actually wrote, not a partially-buffered file.
+                log_f = getattr(p, "_shankpit_log_file", None)
+                if log_f is not None:
+                    log_f.close()
+
+            # S459-61, real, found-live gap: this function used to return a silent 0.5 for BOTH
+            # a genuine 0-0 tie (both bots really did fight for the full window and neither
+            # landed a kill -- a real, plausible outcome this early in training, especially at
+            # EVAL_DURATION_SECONDS=30s) and a bot crash/report-write failure -- founder
+            # real-time: "i have 2 gens same elo seems wrong" gave no way to tell which was
+            # actually happening from the training log alone. Now prints which case it was, so
+            # the NEXT run's own log answers the question directly instead of needing a guess.
+            def _tail(path, n=15):
+                try:
+                    with open(path) as f:
+                        lines = f.readlines()
+                    return "".join(lines[-n:]).rstrip() or "(empty)"
+                except OSError:
+                    return "(log file missing)"
 
             try:
                 with open(report_a) as f:
                     kills_a = json.load(f)["kills"]
+            except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
+                print(f"    [eval] checkpoint A ({os.path.basename(checkpoint_a)}) report unreadable ({e}) "
+                      f"-- treating as a draw. bot A's own output:\n{_tail(log_a)}", flush=True)
+                return 0.5
+            try:
                 with open(report_b) as f:
                     kills_b = json.load(f)["kills"]
-            except (FileNotFoundError, json.JSONDecodeError, KeyError):
-                return 0.5  # a real, honest degrade -- a crashed/timed-out bot never corrupts training, just reads as an inconclusive draw
+            except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
+                print(f"    [eval] checkpoint B ({os.path.basename(checkpoint_b)}) report unreadable ({e}) "
+                      f"-- treating as a draw. bot B's own output:\n{_tail(log_b)}", flush=True)
+                return 0.5
 
+            print(f"    [eval] {os.path.basename(checkpoint_a)} kills={kills_a} vs "
+                  f"{os.path.basename(checkpoint_b)} kills={kills_b} (both reports read fine)", flush=True)
             if kills_a > kills_b:
                 return 1.0
             if kills_a < kills_b:
                 return 0.0
-            return 0.5
+            return 0.5  # a real, genuine tie -- both bots reported successfully with equal kills
     finally:
         server.terminate()
         try:
