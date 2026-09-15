@@ -94,6 +94,17 @@ def list_checkpoints(base_url, role=None):
         return json.load(resp)
 
 
+def get_active_checkpoint(base_url):
+    """GET /api/v1/shankpit-checkpoints/active (S459-62) -- real, public, no auth needed, same
+    trust level list_checkpoints above already has. Returns the real Checkpoint dict, or None if
+    no checkpoint has ever been activated (IDUNA returns a real, honest `null`, not a 404) --
+    ops/shankpit-bot-pool.sh's own real, deliberate stopgap consumer: "can we update the QUEUE to
+    use the active opponent until we have a league to queue against?" (founder real-time)."""
+    url = f"{base_url}/api/v1/shankpit-checkpoints/active"
+    with urllib.request.urlopen(url, timeout=15) as resp:
+        return json.load(resp)
+
+
 def download_checkpoint(base_url, checkpoint_id, dest_path):
     """GET /api/v1/shankpit-checkpoints/<id>/download -- real, public, streams the raw .zip
     bytes to `dest_path`. Returns dest_path for convenience."""
@@ -130,6 +141,9 @@ if __name__ == "__main__":
     pull_p.add_argument("id", type=int)
     pull_p.add_argument("dest")
 
+    active_p = sub.add_parser("active", help="print the real, currently-activated checkpoint's id (or nothing, exit 1, if none is set)")
+    active_p.add_argument("--base-url", default=os.environ.get("IDUNA_BASE_URL", "https://okemily.com"))
+
     args = p.parse_args()
 
     if args.cmd == "push":
@@ -146,3 +160,8 @@ if __name__ == "__main__":
     elif args.cmd == "pull":
         path = download_checkpoint(args.base_url, args.id, args.dest)
         print(f"downloaded -> {path}")
+    elif args.cmd == "active":
+        c = get_active_checkpoint(args.base_url)
+        if c is None:
+            raise SystemExit(1)  # real, honest "no active opponent set" -- a plain exit code a shell script can branch on
+        print(c["id"])
