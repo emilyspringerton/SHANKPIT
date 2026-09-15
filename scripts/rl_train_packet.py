@@ -454,19 +454,21 @@ def main():
                     _spawned_procs.remove(proc)
 
         registered = register_generation_snapshot(league, generation, checkpoint_paths, reset_roles=reset_roles)
-        remote_ids = {}
         for role, member in registered.items():
-            elo = league.get_elo(member.id)
-            print(f"[gen {generation}] registered {role.value} -> league member {member.id} (elo={elo:.0f})")
-            if registry_jwt:
-                try:
-                    remote = push_checkpoint(args.registry_url, registry_jwt, role.value, generation,
-                                              elo, args.registry_source_location, checkpoint_paths[role])
-                    remote_ids[role] = remote["id"]
-                    print(f"[gen {generation}]   -> pushed to remote registry as checkpoint id={remote['id']}")
-                except Exception as e:  # noqa: BLE001 -- a registry outage must never crash a real, in-progress training run
-                    print(f"[gen {generation}]   -> WARNING: push to remote registry failed ({e}), continuing locally")
+            print(f"[gen {generation}] registered {role.value} -> league member {member.id} "
+                  f"(elo={league.get_elo(member.id):.0f}, inherited -- not yet evaluated this generation)")
 
+        # S459-60, real, found-live bug (same category as BRAWLPIT's own S424 "ELOs stuck at
+        # 1500" -- the piece that actually MOVES Elo wasn't connected to what gets reported):
+        # this evaluation-match block, which is the ONLY thing that ever calls
+        # league.record_match_result and moves a checkpoint's real Elo, used to run AFTER the
+        # push-to-registry block below. So every checkpoint was pushed to IDUNA carrying its
+        # pre-evaluation, purely-INHERITED Elo (1500 forever at generation 0, and never updated
+        # again after that, since push_checkpoint is a one-shot POST -- IDUNA has no endpoint to
+        # patch a checkpoint's Elo after the fact). The local league's own Elo WAS moving
+        # correctly the whole time; it just never reached the remote registry NOCK actually
+        # displays. Fixed by running evaluation first, so the Elo pushed below is the real,
+        # current, post-match number.
         main_reverted_to = None
         for role, member in registered.items():
             if role in reset_roles or role not in prev_checkpoint_paths:
@@ -492,6 +494,18 @@ def main():
                         main_reverted_to = (best_checkpoint_path[LeagueRole.MAIN], best_member_id[LeagueRole.MAIN])
             except Exception as e:  # noqa: BLE001 -- an evaluation match failing must never crash real, in-progress training
                 print(f"[gen {generation}]   -> WARNING: evaluation match for {role.value} failed ({e}), Elo unchanged")
+
+        remote_ids = {}
+        for role, member in registered.items():
+            elo = league.get_elo(member.id)  # the real, current, post-evaluation Elo
+            if registry_jwt:
+                try:
+                    remote = push_checkpoint(args.registry_url, registry_jwt, role.value, generation,
+                                              elo, args.registry_source_location, checkpoint_paths[role])
+                    remote_ids[role] = remote["id"]
+                    print(f"[gen {generation}]   -> pushed to remote registry as checkpoint id={remote['id']} (elo={elo:.0f})")
+                except Exception as e:  # noqa: BLE001 -- a registry outage must never crash a real, in-progress training run
+                    print(f"[gen {generation}]   -> WARNING: push to remote registry failed ({e}), continuing locally")
 
         for role, member in registered.items():
             opponent_id = self_play_opponent_ids.get(role)
