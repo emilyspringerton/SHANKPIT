@@ -206,6 +206,102 @@ jobs:
             ShankPit_Bots_*.zip
             SHANKPIT_CONSTRUCT.txt
 
+  debug_build:
+    name: 🐛 Debug Build (verbose net logging)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # S459-53, founder real-time: "any debugging EXEs need to be added as independent CICD
+    # builds with their own artifacts" (after being told, correctly, to stop hand-building and
+    # sending .exe files directly -- "i download from artifacts only"). A real, independent job
+    # (not a step tacked onto the release build above) so a debug build is a real, separate
+    # artifact with its own name, never silently bundled into or confused with the real release
+    # zips build/release.yml's own job produces. Deliberately in tests.yml, not release.yml --
+    # founder real-time: "they may be included in releases if you choose" -- judgment call made
+    # here: verbose network logging is a troubleshooting tool for founder/dev use, not something
+    # a real player downloading a tagged GitHub Release needs bundled in; tests.yml already runs
+    # on every push, so a fresh debug build is available via Actions artifacts (the founder's own
+    # stated download path) far more often than a tagged release would provide one anyway.
+    #
+    # Builds via `make`, not a fourth hand-duplicated gcc invocation -- this repo has TWO real,
+    # documented prior CI outages (release.yml's own comments, 2026-09-10 and 2026-09-14) from
+    # exactly that anti-pattern (a hand-copied source list silently drifting from the Makefile's
+    # own LOBBY_SRC). CFLAGS/SDL2_MINGW_PREFIX are real, already-overridable Makefile variables
+    # (SDL2_MINGW_PREFIX added this same session, S459-41's own ea-windows fix) -- a plain
+    # command-line `make CFLAGS=... ea-windows` override, no Makefile changes needed here.
+    #
+    # NET_VERBOSE_LOG=1 (apps/server + apps/lobby): the real, general connect/snapshot/usercmd
+    # trace macro used throughout this session's own live debugging (S459-34 through S459-48).
+    # NET_JITTER_DIAG=1 / NET_PARITY_DEBUG=1 (apps/lobby only -- grep-confirmed neither macro is
+    # referenced anywhere in apps/server): the real reconciliation-jitter diagnostic macros a
+    # founder report ("i am still getting a lot of reconciliation jitter") was investigated with
+    # earlier this session.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Normalize merged layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -e apps ] && [ -d apps2 ]; then ln -s apps2 apps; fi
+          if [ ! -e packages ] && [ -d packages2 ]; then ln -s packages2 packages; fi
+          if [ ! -e docs ] && [ -d docs2 ]; then ln -s docs2 docs; fi
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install Dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64 zip build-essential wget
+
+          rm -rf sdl2_mingw SDL2-2.30.10 SDL2-devel-2.30.10-mingw.tar.gz || true
+          wget -q --tries=3 --timeout=30 --retry-connrefused \
+            https://github.com/libsdl-org/SDL/releases/download/release-2.30.10/SDL2-devel-2.30.10-mingw.tar.gz
+          tar xzf SDL2-devel-2.30.10-mingw.tar.gz
+          mv SDL2-2.30.10/x86_64-w64-mingw32 ./sdl2_mingw
+
+      - name: Build debug Linux server (NET_VERBOSE_LOG=1)
+        shell: bash
+        run: |
+          set -euo pipefail
+          make server CFLAGS="-O2 -Wall -D_REENTRANT -DNET_VERBOSE_LOG=1"
+          mv bin/shank_server ShankServer_Linux_Debug
+
+      - name: Build debug Windows client (NET_VERBOSE_LOG=1, NET_JITTER_DIAG=1, NET_PARITY_DEBUG=1)
+        shell: bash
+        run: |
+          set -euo pipefail
+          make ea-windows \
+            CFLAGS="-O2 -Wall -D_REENTRANT -DNET_VERBOSE_LOG=1 -DNET_JITTER_DIAG=1 -DNET_PARITY_DEBUG=1" \
+            SDL2_MINGW_PREFIX=./sdl2_mingw
+          mv bin/shank_lobby.exe ShankPitDebug.exe
+
+      - name: Bundle debug artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD="debug_${{ github.run_number }}_${GITHUB_SHA::7}"
+
+          mkdir -p ShankPit_Debug
+          cp ShankServer_Linux_Debug ShankPit_Debug/
+          cp ShankPitDebug.exe ShankPit_Debug/
+          cp sdl2_mingw/bin/SDL2.dll ShankPit_Debug/
+          printf '%s\n' "start ShankPitDebug.exe" > ShankPit_Debug/PLAY_DEBUG.bat
+          printf '%s\n' "NET_VERBOSE_LOG=1 ./ShankServer_Linux_Debug --deathmatch" > ShankPit_Debug/RUN_DEBUG_SERVER.sh
+          chmod +x ShankPit_Debug/RUN_DEBUG_SERVER.sh
+          zip -r "ShankPit_Debug_${BUILD}.zip" ShankPit_Debug
+
+      - name: Upload debug build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShankPit_Debug_Builds_${{ github.run_number }}_${{ github.sha }}
+          path: ShankPit_Debug_*.zip
+
   dragonfly_construct:
     name: 🐉 Dragonfly Backend Construct
     runs-on: ubuntu-latest
