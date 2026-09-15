@@ -144,8 +144,11 @@ def main():
         "--opponents", os.environ.get("SHANKPIT_OPPONENTS", "2"),
         "--out", out_path,
     ]
-    if os.environ.get("SHANKPIT_FAST_FORWARD") == "1":
-        cmd.append("--fast-forward")
+    # rl_train_packet.py now defaults --fast-forward ON (matching BRAWLPIT's own hardcoded
+    # behavior) -- only pass --no-fast-forward for a debugging session that explicitly wants
+    # real-time tick correspondence.
+    if os.environ.get("SHANKPIT_FAST_FORWARD") == "0":
+        cmd.append("--no-fast-forward")
 
     print("\nStarting real training -- this runs until --timesteps completes or the cell/runtime is stopped.", flush=True)
     _stream(cmd)

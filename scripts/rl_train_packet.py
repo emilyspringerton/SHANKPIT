@@ -54,19 +54,18 @@ def main():
     parser.add_argument("--timesteps", type=int, default=20000)
     parser.add_argument("--max-episode-steps", type=int, default=1000)
     parser.add_argument("--opponents", type=int, default=2, help="real emily-bot opponent processes to launch")
-    # --fast-forward defaults OFF here, deliberately -- a real, found tradeoff, not an oversight.
-    # Under fast-forward the server races far ahead of one single-threaded Python learner's own
-    # step() rate (verified live: ~500K ticks/sec vs. a Python step loop's real per-call overhead),
-    # so the real number of server ticks between one prev/cur reward snapshot pair becomes large
-    # and uncontrolled -- reward.go/compute_reward's own per-tick shaping terms (REWARD_ALIVE_
-    # PER_TICK etc.) were designed assuming roughly one real tick between observations, the same
-    # assumption every other real consumer of this reward function (apps2/emily-bot itself) relies
-    # on. Event-based reward (a real kill/death) stays correct regardless of tick count, but the
-    # small per-tick shaping terms get noisy. Real, honest tradeoff: --fast-forward is available
-    # for throughput once this is revisited with a batched/vectorized env that can keep pace, but
-    # a real first training pass wants the per-tick reward semantics to actually mean what
-    # reward.go's own doc comment says they mean.
-    parser.add_argument("--fast-forward", action="store_true", default=False)
+    # --fast-forward defaults ON now, matching BRAWLPIT's own rl_train_packet.py exactly (that
+    # script hardcodes it unconditionally, no flag at all -- see _spawn_server's own doc comment).
+    # Real, found-live correction of this file's own earlier, more conservative default-OFF
+    # choice: the theoretical concern (server races ahead of a single-threaded Python learner's
+    # step() rate, making the real tick count between one prev/cur reward pair large and
+    # uncontrolled, adding noise to the small per-tick shaping terms) is real, but BRAWLPIT's own
+    # live registry proves it doesn't actually block real learning in practice -- real checkpoints
+    # at generation 549 with real, sane Elo values, trained the exact same way. Kept as a real,
+    # overridable flag (--no-fast-forward) rather than removed entirely, for a debugging session
+    # that specifically wants real-time tick correspondence.
+    parser.add_argument("--fast-forward", action="store_true", default=True)
+    parser.add_argument("--no-fast-forward", dest="fast_forward", action="store_false")
     parser.add_argument("--own-server", action="store_true", default=True,
                         help="launch a fresh, isolated shank_server for this training run (default) rather than attach to an already-running one")
     parser.add_argument("--attach", action="store_true", help="attach to an already-running server at --host/--port instead of launching one")
