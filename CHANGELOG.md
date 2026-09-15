@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-15
+- S459-56: added a real roadmap/vision section to BOT_TRAINING_NORTHSTAR.md -- native in-game inference and multi-main league scoped with real tradeoffs, not built yet (sess-20260905-0720-ec33e7c5)
 - S459-53: real, independent debug-build CI job (tests.yml) producing its own artifact with NET_VERBOSE_LOG/NET_JITTER_DIAG/NET_PARITY_DEBUG enabled -- verified passing on real GitHub Actions (sess-20260905-0720-ec33e7c5)
 - S459-54: real 3-role self-play league orchestrator (rl_train_packet.py rewrite), matching BRAWLPIT -- Main/Main Exploiter/League Exploiter train together and register each generation via rl_league.py's PFSP sampling; new frozen_policy_bot.py is the real self-play primitive SHANKPIT's continuous-world server needs (a separate process running frozen-checkpoint inference, since there's no in-process opponent slot like BRAWLPIT has). Live-verified: a real minimal run trained and registered all 3 real checkpoints. (sess-20260905-0720-ec33e7c5)
 - S459-55: fixed a real, live bug where a stale heuristic health estimator fought the real server-reported health every tick, causing bots to get permanently stuck in fake retreat and drift thousands of units off-map -- directly explained bots appearing to vanish from QUEUE (sess-20260905-0720-ec33e7c5)
