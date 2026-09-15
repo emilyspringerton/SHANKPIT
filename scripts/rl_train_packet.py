@@ -89,6 +89,12 @@ ROLE_BASE_PORTS = {
 EVAL_PORT = 18278  # past every role's own reserved block, so it can never collide
 
 EVAL_DURATION_SECONDS = 30.0  # real wall-clock window for a per-generation evaluation match -- short by design (this runs up to 3x every generation, see BRAWLPIT's own EVAL_MAX_TICKS doc comment for the identical real performance rationale), matching this file's own EVAL_PORT server running --fast-forward
+# EVAL_STARTUP_GRACE_SECONDS (S459-64) -- real, generous headroom on TOP of EVAL_DURATION_SECONDS
+# for real subprocess startup cost (PPO.load() + torch/sb3 import overhead, incurred by BOTH eval
+# bots concurrently) BEFORE the match's own 30s window even starts ticking -- a real, found-live
+# Colab bug: the old +15s margin was sized for a fast, uncontended dev CPU and every real Colab
+# evaluation match timed out against it, permanently masking real Elo movement as "tied."
+EVAL_STARTUP_GRACE_SECONDS = 90.0
 
 REGRESSION_ELO_THRESHOLD = 100.0  # same real, deliberately conservative constant BRAWLPIT's own regression guard uses -- see _should_revert_main's own doc comment
 
@@ -228,8 +234,21 @@ def _run_evaluation_match(host, port, checkpoint_a, checkpoint_b, duration_secon
             log_b = os.path.join(tmpdir, "b.log")
             bot_a = _spawn_frozen_policy_bot(host, port, checkpoint_a, duration_seconds, report_a, log_a)
             bot_b = _spawn_frozen_policy_bot(host, port, checkpoint_b, duration_seconds, report_b, log_b)
-            bot_a.wait(timeout=duration_seconds + 15)
-            bot_b.wait(timeout=duration_seconds + 15)
+            # S459-64, real, found-live bug via the new S459-63 eval_note diagnostic itself:
+            # founder's own real Colab run showed every single evaluation match failing with
+            # "timed out after 45.0 seconds" (duration_seconds=30 + the old +15 grace) -- on
+            # every generation, both roles, never once succeeding. The prior +15s margin was
+            # sized for this dev box's own fast, uncontended CPU; it never accounted for real
+            # startup cost BEFORE the 30s match window even starts ticking (PPO.load() +
+            # torch/sb3 import overhead, TWICE, running CONCURRENTLY for bot_a and bot_b, on a
+            # slower/shared Colab CPU) -- that startup cost alone can plausibly exceed 15s under
+            # real contention, pushing the total past the old deadline even though the match
+            # itself would have finished normally. EVAL_STARTUP_GRACE_SECONDS is a real, generous
+            # bump (not a guess at exactly how slow Colab is -- a deliberately wide margin, since
+            # this only matters in the slow-startup case, not the common one) so a genuinely slow
+            # environment gets real headroom instead of every eval silently degrading to "tied."
+            bot_a.wait(timeout=duration_seconds + EVAL_STARTUP_GRACE_SECONDS)
+            bot_b.wait(timeout=duration_seconds + EVAL_STARTUP_GRACE_SECONDS)
             for p in (bot_a, bot_b):
                 if p in _spawned_procs:
                     _spawned_procs.remove(p)
