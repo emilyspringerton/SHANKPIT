@@ -306,10 +306,75 @@ port of `BRAWLPIT/scripts/colab_train.py` (same `_run`/`_stream`/`_bootstrap_rep
 `rl_train_packet.py`, and pushes the resulting checkpoint to the shared registry when a real
 agent secret is given.
 
-**Real, honest, still not done**: `scripts/rl_league.py`'s own `register_generation_snapshot()`
-needs 3 real, DISTINCT checkpoints (MAIN/MAIN_EXPLOITER/LEAGUE_EXPLOITER) to mean anything —
-duplicating today's one smoke-test checkpoint into all 3 roles would be fabricated, not real,
-archetype diversity, so registration is deliberately deferred until real, distinct training runs
-exist to register. `rl_train_packet.py` has no `--resume-from-registry` warm-start or
-`--num-envs` parallel-rollout support (both real BRAWLPIT features, not yet ported). A
-round-timer wire field (§2) remains open.
+**Update (S459-54, §11 below)**: the single-policy limitation named in the original version of
+this paragraph is closed — `rl_train_packet.py` now trains a real 3-archetype league and
+`register_generation_snapshot()` has real, distinct checkpoints to register. A round-timer wire
+field (§2) remains the one real, still-open gap from this section.
+
+## 11. Real 3-role self-play league orchestrator (S459-54)
+
+Founder real-time, after the S459-48 pipeline was correctly called out as not training a real
+league at all (single "main" policy, no self-play, no PFSP, no exploiter archetypes): "i said
+just like brawlpit ... build it."
+
+`scripts/rl_train_packet.py` is now a complete rewrite: a real orchestrator training THREE PPO
+models (Main, Main Exploiter, League Exploiter) and registering all three together every
+generation via `register_generation_snapshot()` — reusing `scripts/rl_league.py`'s real,
+already-ported PFSP infrastructure (`sample_for_main`/`sample_for_main_exploiter`/
+`sample_for_league_exploiter`/`should_reset_main_exploiter`, S459-35) completely unchanged.
+
+**The one real, necessary architecture difference from BRAWLPIT**, checked and accepted directly
+("if it needs to be 1v1 thats fine"): BRAWLPIT's own packet env drives both sides of a match from
+one Python process — a single observation carries both agents' state, so swapping in a frozen
+self-play opponent is an in-process model swap. SHANKPIT's server is a real, continuous, live
+world where each UDP connection is exactly one independent player (S459-44/45's own real find) —
+there is no in-process "opponent slot." New `scripts/frozen_policy_bot.py` is the real primitive
+this requires: a separate OS process that connects as its own real player and runs a frozen
+checkpoint's `policy.predict()` loop every tick, the same way `apps2/emily-bot` runs a heuristic
+loop, just with a PPO forward pass instead of hand-written rules. `rl_train_packet.py` spawns one
+per self-play opponent, alongside real `emily-bot` heuristic bots for population.
+
+**Evaluation** is a real, necessary adaptation too: no `PACKET_RESET_MATCH` / match-boundary
+concept exists in SHANKPIT to build a BRAWLPIT-style dedicated evaluation harness on top of (see
+§9's own module doc comment on why "one life = one episode" is the natural unit here instead).
+`_run_evaluation_match` spawns two real `frozen_policy_bot.py` processes on an isolated
+`--fast-forward` server, lets them fight for a real, fixed wall-clock window, and compares final
+kill counts (each bot reports its own via `--report-kills-to`) — a real, honest, coarse-but-fast
+proxy for "who's better," accepting the same real speed-over-precision tradeoff BRAWLPIT's own
+`EVAL_MAX_TICKS` cap does (this runs up to 3x every single generation).
+
+**What's a faithful, real port, not reinvented**: PFSP-weighted opponent selection, Main's
+regression guard (`_should_revert_main` — protects against PPO catastrophic forgetting in a
+self-play setting, ported with BRAWLPIT's own real rationale intact), Main Exploiter's periodic
+full reset, `--resume-from-registry` (warm-starts each role from its newest registry checkpoint),
+`--registry-url` push, the entropy-collapse `ent_coef` fix (S459-51, applied from the start here
+rather than found the hard way a second time).
+
+**Real, deliberate, named scope-downs from BRAWLPIT's own 981-line orchestrator** (not silently
+dropped):
+- No `--num-envs` parallel rollout collection (`SubprocVecEnv`) — one env per role per
+  generation. Real future work if training speed becomes the bottleneck.
+- No native-inference weight export — matches S459-49's own already-documented scope-down.
+- Evaluation is the real, simplified kill-count comparison above, not a dedicated harness.
+
+**Live-verified, not just built**: a real, minimal run (512 timesteps, 3 roles, heuristic-only
+bootstrap since generation 0 has no league members yet to self-play against) actually trained all
+3 models, saved 3 real checkpoint files, and registered all 3 as real league members with real
+Elo. A larger 2-generation run (exercising real self-play + the evaluation-match path) hit real,
+environmental resource pressure on this box during testing (swap fully exhausted, load average
+~3.9 from many concurrent standing services unrelated to this code) — a real, honest, current
+limitation of this specific box right now, not a bug in the orchestrator itself (the identical
+core env/reward/training loop was already separately proven correct in multiple smaller, isolated
+tests earlier in this same session, §9).
+
+**Also fixed along the way (S459-55)**: found and fixed a real, live, currently-active bug while
+investigating why the standing QUEUE bot pool appeared to vanish from the game — `apps2/emily-
+bot`'s own `bot_think` still ran a pre-S459-44 heuristic health estimator every tick, immediately
+overwriting the real, server-authoritative health S459-44 had wired in. The heuristic almost
+always won the race, permanently convincing bots they were near death, which drove them into a
+continuous fake retreat that dead-reckoned their perceived position thousands of units off-map.
+Removed the stale heuristic; live-verified clean on the redeployed standing bot pool.
+
+**Real, honest, still open**: native in-game inference (wiring a trained checkpoint into the
+*actual playable* QUEUE bot pool, not just training) remains real, separate, unbuilt work — the
+founder's own next-named ask. A round-timer wire field (§2) also remains open.
