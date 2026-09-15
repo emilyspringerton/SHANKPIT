@@ -90,6 +90,27 @@ def push_checkpoint(base_url, jwt, role, generation, elo, source_location, path,
         raise RuntimeError(f"push_checkpoint failed ({e.code}): {e.read().decode(errors='replace')}") from e
 
 
+def update_checkpoint_elo(base_url, jwt, checkpoint_id, elo, eval_note=""):
+    """PATCH /api/v1/shankpit-checkpoints/<id> (S459-76) -- real fix for a checkpoint's own Elo
+    never moving after its initial push. Requires the same real shankpit.checkpoints.write JWT
+    push_checkpoint uses -- an already-registered checkpoint's real skill rating keeps moving
+    every time a LATER generation evaluates against it (record_match_result updates BOTH
+    members' local elo), but until this endpoint existed there was no way to reflect that back
+    onto the remote registry row for anything but the checkpoint that was just pushed. Returns
+    the real, updated Checkpoint dict."""
+    body = json.dumps({"elo": elo, "eval_note": eval_note}).encode()
+    req = urllib.request.Request(
+        f"{base_url}/api/v1/shankpit-checkpoints/{checkpoint_id}", data=body,
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {jwt}"},
+        method="PATCH",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.load(resp)
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"update_checkpoint_elo failed ({e.code}): {e.read().decode(errors='replace')}") from e
+
+
 def list_checkpoints(base_url, role=None):
     """GET /api/v1/shankpit-checkpoints[?role=...] -- real, public, no auth needed (same trust
     level GET /api/v1/shankpit-levels already established)."""

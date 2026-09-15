@@ -71,7 +71,7 @@ except ImportError:
     BaseCallback = object
 
 from rl_env_packet import ShankpitQueueEnv, gym as _gym  # noqa: E402
-from rl_registry import authenticate, download_checkpoint, list_checkpoints, push_checkpoint  # noqa: E402
+from rl_registry import authenticate, download_checkpoint, list_checkpoints, push_checkpoint, update_checkpoint_elo  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SERVER_BIN = os.path.join(REPO_ROOT, "bin", "shank_server")
@@ -557,6 +557,27 @@ def main():
                 new_elo, prev_elo = league.get_elo(member.id), league.get_elo(prev_member_ids[role])
                 print(f"[gen {generation}]   -> evaluated {role.value} vs its own prior generation: "
                       f"score_a={score_a} (local elo now {new_elo:.0f} vs {prev_elo:.0f})")
+
+                # S459-76, real, found-live gap: founder real-time "im a little concerned that
+                # the elos of the generation 0 bots arent going up and down... can we make sure
+                # the elos are set up to go up and down not just whatever the first elo into the
+                # registry is?" record_match_result above just updated the PRIOR generation's own
+                # real local Elo too (it's a real, symmetric two-sided update -- elo_update always
+                # touches both members), but that prior generation was already pushed to the
+                # remote registry BEFORE this evaluation ever ran, with whatever Elo it had at
+                # push time (1500 for a real gen 0, since it had nothing to evaluate against yet).
+                # Nothing ever pushed the UPDATE back -- so a checkpoint's own remote Elo was
+                # permanently frozen at its push-time value forever, no matter how many later
+                # generations evaluated against it afterward. Now real: patch the prior
+                # generation's own already-registered row with its real, current post-match Elo.
+                if registry_jwt and role in prev_remote_ids:
+                    try:
+                        update_checkpoint_elo(args.registry_url, registry_jwt, prev_remote_ids[role], prev_elo,
+                                               eval_note=f"vs gen {generation}: score_a={1.0 - score_a}")
+                        print(f"[gen {generation}]   -> updated prior generation's own remote elo "
+                              f"(checkpoint id={prev_remote_ids[role]}, elo={prev_elo:.0f})")
+                    except Exception as e:  # noqa: BLE001 -- a registry outage must never crash a real, in-progress training run
+                        print(f"[gen {generation}]   -> WARNING: updating prior generation's remote elo failed ({e})")
 
                 if role == LeagueRole.MAIN:
                     if new_elo >= best_elo[LeagueRole.MAIN]:
