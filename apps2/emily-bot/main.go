@@ -345,18 +345,20 @@ func (s *botState) think() common.UserCmd {
 		nearestDist = 0 // no target — weaponForRange returns Magnum as default
 	}
 
-	// Health estimation: decay when an enemy is close, regenerate when clear.
-	if nearest != nil && nearestDist < closeRange {
-		s.myHealth -= 0.5
-		if s.myHealth < 0 {
-			s.myHealth = 0
-		}
-	} else if nearest == nil && s.myHealth < 100 {
-		s.myHealth += 0.2
-		if s.myHealth > 100 {
-			s.myHealth = 100
-		}
-	}
+	// S459-55, real, found-live bug: this used to be a heuristic ESTIMATE of health (decay near
+	// enemies, regenerate when clear) from before real health was ever decoded off the wire.
+	// Since S459-44 added the real, server-authoritative `state.myHealth = float32(e.health)`
+	// assignment in the PacketSnapshot handler, this heuristic has been running EVERY tick right
+	// alongside it and immediately overwriting the real value with a fake one -- the two were
+	// fighting each other, and since bot_think (this function) runs far more often than a fresh
+	// snapshot arrives, the heuristic almost always won. Confirmed live: a standing bot pool
+	// process stuck logging "[emily-bot] retreating: hp=14 nearest=8296.1" for minutes straight
+	// -- the fake, decayed health kept the bot convinced it was dying, so it fled continuously
+	// (fwd=-1 every tick below) while dead-reckoning integrated that constant backward motion
+	// completely unchecked, drifting the bot's own perceived position thousands of units from
+	// the real level and from every other real player -- directly explaining "pretty sure the
+	// bots arent showing up in queue." Real fix: just stop overwriting it. s.myHealth is now the
+	// real, server-reported value the whole time, updated whenever a fresh snapshot arrives.
 
 	// Retreat below 30 HP — flee from nearest enemy, don't shoot.
 	retreating := s.myHealth < 30
