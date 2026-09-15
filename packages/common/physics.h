@@ -2614,27 +2614,95 @@ static inline void katana_update_dash_damage(PlayerState *p, PlayerState *target
     }
 }
 
+// trace_map_boxes -- S459-74, real, found-live bug: this used to test ONLY whether the segment's
+// own far ENDPOINT (x2,y2,z2 -- always exactly SPRAY_PLACE_RANGE/FLASHLIGHT_RANGE units out along
+// the look direction) happened to land inside some box's volume -- never an actual ray/segment-
+// vs-box intersection test at all. Founder real-time: "its really unreliable to do a spray you
+// have to hit the button over and over... if i run along a wall i can spray it a bunch as i pass
+// but if i look right at it i have to like run up and back and spray a bunch and itll finally
+// take" -- exactly what that bug produces: facing a wall dead-on only "hits" at the one specific
+// standoff distance where the fixed-40-units-out point happens to fall inside the wall's own
+// real volume; walking alongside a wall makes that point wander in and out of it by chance. The
+// same function backs the flashlight beam's own real wall-clamping too (see draw_flashlight_beam
+// above), so this fixes both.
+//
+// Real fix: a genuine closest-hit segment-vs-AABB test using the standard slab method (same real
+// algorithm already correctly proven in scripts/rl_env_packet.py's own raycast()/_slab(), and
+// S459-73's own 200k-random-trial-verified inlined C-equivalent math -- ported here, not
+// reinvented) -- walks every box, finds the real intersection fraction t in [0,1] along the
+// segment for each, and keeps the SMALLEST (closest) real hit, computing the real face normal
+// from which axis produced it. Falls back to the existing terrain/floor check (unchanged, a
+// real, separate, not-yet-along-segment concern) only when no box is actually hit.
 static inline int trace_map_boxes(float x1, float y1, float z1, float x2, float y2, float z2,
               float *out_x, float *out_y, float *out_z, float *nx, float *ny, float *nz) {
-    for(int i=1; i<map_count; i++) {
+    float dx = x2 - x1, dy = y2 - y1, dz = z2 - z1;
+    const float eps = 1e-6f;
+    float best_t = 1.0f; // fraction along the segment, 1.0 = the full segment length (no hit yet)
+    int hit = 0;
+    float best_nx = 0.0f, best_ny = 0.0f, best_nz = 0.0f;
+
+    for (int i = 1; i < map_count; i++) {
         Box b = map_geo[i];
-        if (x2 > b.x - b.w/2 && x2 < b.x + b.w/2 &&
-            z2 > b.z - b.d/2 && z2 < b.z + b.d/2 &&
-            y2 > b.y - b.h/2 && y2 < b.y + b.h/2) {
-            float dx = x1 - b.x; float dz = z1 - b.z;
-            float w = b.w; float d = b.d;
-            if (fabs(dx)/w > fabs(dz)/d) {
-                *nx = (dx > 0) ? 1.0f : -1.0f; *ny = 0.0f; *nz = 0.0f;
-                *out_x = (dx > 0) ? b.x + b.w/2 + 0.1f : b.x - b.w/2 - 0.1f;
-                *out_y = y2; *out_z = z2;
+        float lo_x = b.x - b.w / 2.0f, hi_x = b.x + b.w / 2.0f;
+        float lo_y = b.y - b.h / 2.0f, hi_y = b.y + b.h / 2.0f;
+        float lo_z = b.z - b.d / 2.0f, hi_z = b.z + b.d / 2.0f;
+        float tmin = 0.0f, tmax = best_t;
+        int axis_hit = -1;
+        float sign = 0.0f;
+        int ok = 1;
+
+        if (fabsf(dx) < eps) {
+            if (!(x1 >= lo_x && x1 <= hi_x)) ok = 0;
+        } else {
+            float t1 = (lo_x - x1) / dx, t2 = (hi_x - x1) / dx;
+            float s = -1.0f;
+            if (t1 > t2) { float tmp = t1; t1 = t2; t2 = tmp; s = 1.0f; }
+            if (t1 > tmin) { tmin = t1; axis_hit = 0; sign = s; }
+            if (t2 < tmax) tmax = t2;
+            if (tmin > tmax) ok = 0;
+        }
+        if (ok) {
+            if (fabsf(dy) < eps) {
+                if (!(y1 >= lo_y && y1 <= hi_y)) ok = 0;
             } else {
-                *nx = 0.0f; *ny = 0.0f; *nz = (dz > 0) ? 1.0f : -1.0f;
-                *out_x = x2; *out_y = y2;
-                *out_z = (dz > 0) ? b.z + b.d/2 + 0.1f : b.z - b.d/2 - 0.1f;
+                float t1 = (lo_y - y1) / dy, t2 = (hi_y - y1) / dy;
+                float s = -1.0f;
+                if (t1 > t2) { float tmp = t1; t1 = t2; t2 = tmp; s = 1.0f; }
+                if (t1 > tmin) { tmin = t1; axis_hit = 1; sign = s; }
+                if (t2 < tmax) tmax = t2;
+                if (tmin > tmax) ok = 0;
             }
-            return 1;
+        }
+        if (ok) {
+            if (fabsf(dz) < eps) {
+                if (!(z1 >= lo_z && z1 <= hi_z)) ok = 0;
+            } else {
+                float t1 = (lo_z - z1) / dz, t2 = (hi_z - z1) / dz;
+                float s = -1.0f;
+                if (t1 > t2) { float tmp = t1; t1 = t2; t2 = tmp; s = 1.0f; }
+                if (t1 > tmin) { tmin = t1; axis_hit = 2; sign = s; }
+                if (t2 < tmax) tmax = t2;
+                if (tmin > tmax) ok = 0;
+            }
+        }
+
+        if (ok && axis_hit >= 0 && tmin >= 0.0f && tmin < best_t) {
+            best_t = tmin;
+            hit = 1;
+            best_nx = (axis_hit == 0) ? sign : 0.0f;
+            best_ny = (axis_hit == 1) ? sign : 0.0f;
+            best_nz = (axis_hit == 2) ? sign : 0.0f;
         }
     }
+
+    if (hit) {
+        *out_x = x1 + dx * best_t;
+        *out_y = y1 + dy * best_t;
+        *out_z = z1 + dz * best_t;
+        *nx = best_nx; *ny = best_ny; *nz = best_nz;
+        return 1;
+    }
+
     float terrain_ground = 0.0f;
     int terrain_ok = 0;
     if (g_scene_terrain.active && terrain_contains_world(&g_scene_terrain, x2, z2)) {

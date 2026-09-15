@@ -1273,6 +1273,18 @@ static void reset_client_render_state_for_net() {
     g_paused = 0;
     g_pause_sel = 0;
     net_local_pid = -1;
+    // S459-74, real, found-live bug: founder real-time: "when you switch levels the sprays dont
+    // disappear they are floating in space where the walls used to be." Spray decals are keyed
+    // by scene_id (draw_spray_decals(scene_id) below), but every custom level shares the exact
+    // SAME SCENE_CUSTOM_LEVEL scene_id regardless of which real NOCK level is actually loaded --
+    // that filter can't tell two different custom levels apart, so old sprays from a level you've
+    // left keep rendering against geometry that no longer exists. net_connect() (right after this
+    // real reset point) re-fetches the currently-loaded level's own real geometry
+    // (g_queue_level_loaded = 0, S459-39) -- clearing the decal buffer here matches that same
+    // real "fresh connect, fresh level" boundary this codebase already treats as the moment level
+    // identity can change.
+    g_spray_decal_count = 0;
+    g_spray_decal_next = 0;
 }
 
 static void client_apply_spawn_transition_sync(PlayerState *p, const NetPlayer *np, const char *reason_tag) {
@@ -1882,13 +1894,40 @@ static void spray_select_confirm(void) {
 // buffer. A no-op (not an error) when nothing is hit, or when the player hasn't picked a spray
 // yet -- see draw_spray_decals for the real, honest reason the decal itself is a flat-tinted
 // placeholder, not the spray's real uploaded artwork.
+// client_prefetch_default_spray -- S459-74, real, found-live fix. Founder real-time: "it jitters
+// when you first use a spray to donload the spray it sprays backwards". Root cause:
+// spray_registry_fetch_list() is a real, genuinely BLOCKING network call (level_boxes_fetch_url,
+// shells out to curl via popen) -- and spray_place_decal's own lazy default-select used to call
+// it INLINE, mid-gameplay-input-handling, the very first time a player ever pressed T. The main
+// loop (rendering, mouse-delta processing) stalls for that call's real wall-clock duration; by
+// the time it returns, cam_yaw/cam_pitch reflect however the OS's own event queue batched up
+// during the stall, not the smooth angle spray_place_decal's own raycast expects -- reading as a
+// jitter/"sprays backward" on exactly that first use, never again after (g_selected_spray_id is
+// cached from then on). Real fix: resolve it proactively at scene entry (client_apply_scene_id,
+// the same real checkpoint client_load_queue_level's own S459-39 fix already uses for level
+// geometry) instead of reactively on the player's own first spray input -- the real network stall
+// now overlaps the scene's own existing travel_overlay_until_ms window, not active gameplay.
+static int g_default_spray_prefetched = 0;
+static void client_prefetch_default_spray(void) {
+    if (g_default_spray_prefetched || g_selected_spray_id >= 0) return;
+    g_default_spray_prefetched = 1; // set BEFORE the real fetch -- a transient failure (registry unreachable) shouldn't retry every single scene entry; spray_place_decal's own fallback below still covers a genuinely never-resolved case
+    SprayRegistryEntry entries[SPRAY_SELECT_MAX_ENTRIES];
+    int count = spray_registry_fetch_list(entries, SPRAY_SELECT_MAX_ENTRIES);
+    for (int i = 0; i < count; i++) {
+        if (entries[i].is_default) {
+            g_selected_spray_id = entries[i].id;
+            snprintf(g_selected_spray_name, sizeof(g_selected_spray_name), "%s", entries[i].name);
+            break;
+        }
+    }
+}
+
 #define SPRAY_PLACE_RANGE 40.0f
 static void spray_place_decal(void) {
-    // Lazy default-select: a player who never opened the LOBBY_SPRAYS menu had g_selected_spray_id
-    // stuck at -1 forever, so T was a silent no-op with zero feedback (founder real-time, 2026-09-14:
-    // "T doesn't actually do anything"). Fall back to the registry's own is_default entry here,
-    // matching NOCK's whole reason for having a default in the first place -- "set the default" so
-    // spraying works out of the box without a menu visit.
+    // Real, honest fallback -- normally already resolved by client_prefetch_default_spray at
+    // scene entry (S459-74), off the input hot path; this stays as the real safety net for a
+    // registry that was unreachable at that earlier point (matches "T doesn't actually do
+    // anything" founder real-time, 2026-09-14, the original reason this lazy-resolve exists).
     if (g_selected_spray_id < 0) {
         int count = spray_registry_fetch_list(spray_select_entries, SPRAY_SELECT_MAX_ENTRIES);
         for (int i = 0; i < count; i++) {
@@ -7033,6 +7072,7 @@ static void client_apply_scene_id(int scene_id, unsigned int now_ms) {
         if (scene_id == SCENE_CUSTOM_LEVEL && net_requested_mode == MODE_QUEUE) {
             client_load_queue_level();
         }
+        client_prefetch_default_spray(); // S459-74 -- real, off-input-path resolve, every scene entry (cheap no-op once resolved)
         phys_set_scene(scene_id);
         travel_overlay_until_ms = now_ms + 500;
         for (int i = 0; i < MAX_PROJECTILES; i++) {
@@ -7849,6 +7889,7 @@ void net_connect() {
     if (sock < 0) return;
     local_state.game_mode = net_requested_mode;
     g_queue_level_loaded = 0; // real reset per S459-39: a fresh connect attempt deserves a fresh level-fetch attempt, not a stale failure/success latched from a previous session
+    g_default_spray_prefetched = 0; // S459-74, same real reasoning -- a transient registry failure on a prior connect shouldn't be latched forever
     NET_CLIENT_LOG("CONNECT_BEGIN host=%s port=%d mode=%d", SERVER_HOST, SERVER_PORT, net_requested_mode);
     /* Try numeric IP first (no DNS stall); fall back to gethostbyname only for hostnames.
        Cache the result so repeated JOIN attempts don't re-resolve. */
