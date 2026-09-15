@@ -3093,6 +3093,18 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
     if (p->attack_cooldown > 0) p->attack_cooldown--;
     if (p->is_shooting > 0) p->is_shooting--;
     if (p->ability_cooldown > 0) p->ability_cooldown--;
+    // S459-66, real, found-live bug: founder real-time report of a "false positive" red kill
+    // ring on the sniper, followed by a real one -- hit_feedback (the wire field driving the
+    // red double-ring kill marker, apps/lobby's own draw_hud >=25 check) was NEVER reset back to
+    // 0 anywhere in this codebase, server or client, once set (10/15/20/30 at the various real
+    // hit/kill call sites above). A real kill (hit_feedback=30) therefore stayed on the
+    // attacker's own PlayerState and kept broadcasting on every snapshot (~31Hz,
+    // SERVER_SNAPSHOT_INTERVAL_TICKS) until their NEXT hit landed -- so the next real shot,
+    // whatever its own actual outcome, visually looked like an immediate second kill ring (the
+    // stale 30 still being sent), only for a genuinely new kill's own real hit_feedback=30 to
+    // arrive right after, reading as two kill rings for one real kill. Fixed the same way every
+    // other real per-tick timer in this function already decays.
+    if (p->hit_feedback > 0) p->hit_feedback--;
 
     if (p->katana_slash_timer > 0) p->katana_slash_timer--;
     if (p->dash_timer > 0) {
