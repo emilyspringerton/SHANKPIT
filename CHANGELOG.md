@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-16
+- Add HUMANNESS_NORTHSTAR.md: realistic scriptable NPC framework grounded in MISHRI's real jitter/mood/perception implementation (sess-20260905-0720-ec33e7c5)
 - Add a real, runnable demo level (hallway, two differently-scripted doors) under examples/story-doors/demo_level (sess-20260905-0720-ec33e7c5)
 - Story System S459-82: doors can fetch their compiled script from IDUNA by URL instead of only a local file (sess-20260905-0720-ec33e7c5)
 - Story System Phase 1: real, tested scriptable doors (PARENA->C->dlopen->collision toggle), live-verified with a real server + UDP test client (sess-20260905-0720-ec33e7c5)
