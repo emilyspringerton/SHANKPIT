@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-16
+- Story System S459-82: doors can fetch their compiled script from IDUNA by URL instead of only a local file (sess-20260905-0720-ec33e7c5)
 - Story System Phase 1: real, tested scriptable doors (PARENA->C->dlopen->collision toggle), live-verified with a real server + UDP test client (sess-20260905-0720-ec33e7c5)
 - STORY_SYSTEM_NORTHSTAR.md: fold in scriptable characters (idle state machine) and generic trigger volumes (enemy spawns, sounds, scripted events), generalizing entrance/exit markers into one trigger kind (sess-20260905-0720-ec33e7c5)
 - Add STORY_SYSTEM_NORTHSTAR.md: scriptable map objects (PARENA) + Half-Life-style level-chaining story system (sess-20260905-0720-ec33e7c5)
