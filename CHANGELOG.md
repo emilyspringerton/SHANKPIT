@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-16
+- STORY_SYSTEM_NORTHSTAR.md: fold in scriptable characters (idle state machine) and generic trigger volumes (enemy spawns, sounds, scripted events), generalizing entrance/exit markers into one trigger kind (sess-20260905-0720-ec33e7c5)
 - Add STORY_SYSTEM_NORTHSTAR.md: scriptable map objects (PARENA) + Half-Life-style level-chaining story system (sess-20260905-0720-ec33e7c5)
 
 - Add basic 4x MSAA anti-aliasing to the lobby client -- S459-78 (sess-20260905-0720-ec33e7c5)
