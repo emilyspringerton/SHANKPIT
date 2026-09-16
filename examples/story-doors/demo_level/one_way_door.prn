@@ -1,0 +1,15 @@
+(module doorscript)
+(import math)
+
+; A second, DIFFERENT door behavior from door_tick.prn's own hysteresis (3/5-unit open/close) --
+; a real, deliberately different pattern to show door-tick can be whatever a designer wants: once
+; a player gets within 2 units, this door opens PERMANENTLY (sticky state -- it never re-checks
+; distance again once state is already 1.0). Same real (dist-to-player, state) -> new-state
+; contract every door script uses; the "stickiness" is just what THIS script's own logic does
+; with those two inputs, not a special case the host needs to know about.
+(defn door-tick [(dist-to-player : F64) (state : F64)] : F64
+  (if (> state 0.5)
+    1.0
+    (if (< dist-to-player 3.5)
+      1.0
+      0.0)))

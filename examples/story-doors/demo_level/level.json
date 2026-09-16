@@ -1,0 +1,21 @@
+{
+  "name": "story-doors-demo",
+  "width": 60, "height": 10, "depth": 60,
+  "ground_plane_enabled": 1, "ground_plane_squares": 20,
+  "walls": [
+    { "x": -3.5, "y": 2, "z": 20, "sx": 1, "sy": 4, "sz": 40, "r": 0.35, "g": 0.35, "b": 0.4, "friction": 1.0 },
+    { "x": 3.5,  "y": 2, "z": 20, "sx": 1, "sy": 4, "sz": 40, "r": 0.35, "g": 0.35, "b": 0.4, "friction": 1.0 },
+    { "x": 0, "y": 2, "z": 12, "sx": 6, "sy": 4, "sz": 1, "r": 0.6, "g": 0.3, "b": 0.2, "friction": 1.0 },
+    { "x": 0, "y": 2, "z": 26, "sx": 6, "sy": 4, "sz": 1, "r": 0.2, "g": 0.5, "b": 0.6, "friction": 1.0 }
+  ],
+  "materials": [
+    { "name": "brick", "shader_name": "standard", "specular": 0.04, "shininess": 6.0 }
+  ],
+  "spawners": [
+    { "x": 0, "y": 1, "z": 2, "yaw": 0, "team": -1 }
+  ],
+  "doors": [
+    { "box_index": 2, "script_path": "examples/story-doors/demo_level/door_tick.so" },
+    { "box_index": 3, "script_path": "examples/story-doors/demo_level/one_way_door.so" }
+  ]
+}
