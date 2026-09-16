@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-16
+- Add STORY_SYSTEM_NORTHSTAR.md: scriptable map objects (PARENA) + Half-Life-style level-chaining story system (sess-20260905-0720-ec33e7c5)
 
 - Add basic 4x MSAA anti-aliasing to the lobby client -- S459-78 (sess-20260905-0720-ec33e7c5)
 
