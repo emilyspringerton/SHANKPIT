@@ -8777,6 +8777,17 @@ int main(int argc, char* argv[]) {
 
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER);
     audio_init();
+    /* Basic anti-aliasing (founder real-time: "can you add some basic anti aliasing") -- real
+     * hardware MSAA via the GL context's own multisample framebuffer, requested through SDL's GL
+     * attributes. These MUST be set before SDL_CreateWindow when SDL_WINDOW_OPENGL is passed --
+     * on X11/GLX (this box's own real platform) the window's pixel format/visual is chosen at
+     * creation time, so setting them after the window exists is a real no-op, not just a style
+     * preference. 4x is a real, conservative default (the same sample count REDGARDEN/ECOWAR's
+     * own SDL2/GL clients already request) -- cheap on any GPU capable of running this renderer
+     * at all, and softens the legacy fixed-function pipeline's own un-antialiased polygon edges
+     * without needing a post-process shader pass. */
+    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
+    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
     SDL_Window *win = SDL_CreateWindow("SHANKPIT", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
     g_win = win;
     /* Real Xbox controller support (2026-08-04, founder: "ensure we have controller mappings for
@@ -8788,6 +8799,23 @@ int main(int argc, char* argv[]) {
         if (SDL_IsGameController(gi)) { g_shank_pad = SDL_GameControllerOpen(gi); if (g_shank_pad) break; }
     }
     SDL_GL_CreateContext(win);
+    /* Real, honest check, not an assumption: only enable GL_MULTISAMPLE if the driver actually
+     * granted a multisample framebuffer for the requested attributes above -- some software
+     * rasterizers (e.g. Xvfb's own llvmpipe, used by this client's real automated screenshot
+     * tests) silently fall back to 0 sample buffers rather than failing SDL_CreateWindow, and
+     * enabling GL_MULTISAMPLE with no multisample buffer present is a defined no-op in the GL
+     * spec, not a bug -- this just avoids a misleading log/assumption either way. */
+    {
+        int msaa_buffers = 0, msaa_samples = 0;
+        SDL_GL_GetAttribute(SDL_GL_MULTISAMPLEBUFFERS, &msaa_buffers);
+        SDL_GL_GetAttribute(SDL_GL_MULTISAMPLESAMPLES, &msaa_samples);
+        if (msaa_buffers > 0 && msaa_samples > 0) {
+            glEnable(GL_MULTISAMPLE);
+            printf("[gl] MSAA enabled: %dx\n", msaa_samples);
+        } else {
+            printf("[gl] MSAA not available from this driver -- rendering without anti-aliasing.\n");
+        }
+    }
     gband_shader_and_mesh_init();
     flashlight_shader_init();
     material_shader_init();
