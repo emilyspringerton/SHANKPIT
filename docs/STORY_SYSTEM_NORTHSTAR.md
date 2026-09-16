@@ -8,7 +8,10 @@ levels together. we can even use the same levels to create 2 stories that vary v
 to the order of the chapters (novel called crossings does this)" -> "we actually need multiple
 entrances or exits [...] almost a tree structure but not totally think about time loops and
 arbitrary story definition if exit b go here if exit a go here if 2 decisions ago you said a
-then next time we go c etc parena scriptable."
+then next time we go c etc parena scriptable" -> "also scriptable characters state machine
+dynamic idle look around check watch etc" -> "also scriptable player events like hitting a
+certain hallway loads in the next enemies trigger sounds trigger events like characters falling
+out of a vent etc."
 
 This doc scopes three real, coupled systems in the order they actually depend on each other, not
 a flat feature list. Nothing here is built yet -- this is the design pass before code, same
@@ -22,12 +25,13 @@ discipline `docs/ANTICHEAT_NORTHSTAR.md` already established for this repo.
    *which* one. A story system that says "go from level A to level B" has nothing to name B
    with today. This was already a real, found-live bug this session (spray decals leaking
    across level switches, S459-74) caused by exactly this gap.
-2. **Scriptable map objects** (doors/ladders/screens, and -- load-bearing for the story system --
-   entrance/exit markers). A level's `LevelBox` array (`packages/world/level_boxes.h`) today
-   carries only geometry + color + material name + an unused `friction` field -- no
-   trigger/interact/script concept exists anywhere in SHANKPIT. An "exit marker" IS an
-   interactable object (a trigger volume that runs a script when a player enters it), so this
-   has to exist before the story system has anything to hook into.
+2. **Scriptable map objects** (doors/ladders/screens, ambient characters, and generic trigger
+   volumes -- which entrance/exit markers turn out to be a special case of, see below). A
+   level's `LevelBox` array (`packages/world/level_boxes.h`) today carries only geometry + color
+   + material name + an unused `friction` field -- no trigger/interact/script concept exists
+   anywhere in SHANKPIT. An "exit marker" IS an interactable object (a trigger volume that runs
+   a script when a player enters it), so this has to exist before the story system has anything
+   to hook into.
 3. **The story engine** (the actual "stitch levels into a narrative" system). Depends on both of
    the above: it needs levels to be individually addressable (#1) and it needs a real place to
    attach "when the player reaches exit marker B, run this decision" (#2).
@@ -53,7 +57,7 @@ protocol change (same category as S459-69's `vx/vy/vz` addition to `NetPlayer` t
 grow the struct, rebuild/redeploy client+server+bots in lockstep) and a real client-side keying
 change, not a rewrite of the level system.
 
-## Part 2: scriptable map objects (doors, ladders, screens, markers)
+## Part 2: scriptable map objects (doors, ladders, screens, characters, triggers)
 
 **The real, proven pattern to extend** (not invented here): PAPERCRAFT's `level_mod.prn` is the
 one checked-in precedent for PARENA driving real gameplay decisions inside a hand-written C host.
@@ -66,23 +70,56 @@ compiled `.so` at level-load time instead of linking it in at build time.
 
 **Object model**: a new map-object type, distinct from the pure-geometry `LevelBox` array --
 call it `LevelInteractable` (name TBD at implementation time): position/orientation, an object
-`kind` (door | ladder | screen | exit_marker | entrance_marker, extensible), and a
-`script_asset_id` referencing a real, compiled behavior. A **narrow, fixed function contract per
-kind** (same discipline `internal/nock/procgen.go`'s `validateProcTextureSource` already
-enforces for texture scripts -- reject anything outside the contract, don't trust the emitter
-alone): e.g.
+`kind` (door | ladder | screen | character | trigger, extensible), and a `script_asset_id`
+referencing a real, compiled behavior. A **narrow, fixed function contract per kind** (same
+discipline `internal/nock/procgen.go`'s `validateProcTextureSource` already enforces for texture
+scripts -- reject anything outside the contract, don't trust the emitter alone):
 
 ```
 (defn door-tick [(dist-to-nearest-player : F64) (input-held : Bool) (door-state : DoorState)] : DoorState ...)
 (defn ladder-tick [(player-vertical-input : F64) (on-ladder : Bool)] : F64 ...)   ; returns a vertical velocity override
 (defn screen-render [(state : ScreenState)] : ScreenContent ...)                  ; what text/image the screen shows
+(defn character-tick [(state : CharacterState) (idle-timer : F64) (player-nearby : Bool)] : CharacterState ...)
+(defn on-trigger [(already-fired : Bool)] : TriggerAction ...)
 ```
 
-Ladders and doors are real per-tick state machines the server evaluates every tick for every
-placed instance (same tick-loop shape bot AI already uses in `apps/server/src/main.c`'s main
-loop -- a new "map object update" pass slots in right after the per-player physics pass, before
-snapshot broadcast, per this session's own earlier finding). Screens are lower-frequency
-(re-evaluated on interaction, not every tick).
+Ladders, doors, and characters are real per-tick state machines the server evaluates every tick
+for every placed instance (same tick-loop shape bot AI already uses in
+`apps/server/src/main.c`'s main loop -- a new "map object update" pass slots in right after the
+per-player physics pass, before snapshot broadcast, per this session's own earlier finding).
+Screens are lower-frequency (re-evaluated on interaction, not every tick). Triggers are
+lowest-frequency of all -- evaluated once, on volume entry (see below).
+
+**Characters** (founder real-time: "also scriptable characters state machine dynamic idle look
+around check watch etc"): `CharacterState` is a small enum (Idle, LookAround, CheckWatch, ...
+extensible), and `character-tick` is weighted-random-ish transition + per-state timer logic --
+the same shape a real ambient-NPC behavior system always is, no new mechanism invented. Each
+`CharacterState` maps to a real `.gband` clip pulled from the NOCK animation repository
+(S144-09, this session) for playback. One real, named gap: `gb_blend` (GOLDENBAND's runtime
+interpolator) only nlerps between adjacent ticks of the SAME clip -- a smooth cut between two
+DIFFERENT clips (Idle -> LookAround) needs a small new cross-clip blend helper that doesn't
+exist yet. Cosmetic-only (a hard cut works as a real, if rougher, v0), not a blocker.
+
+**Trigger volumes, generalized** (founder real-time: "also scriptable player events like hitting
+a certain hallway loads in the next enemies trigger sounds trigger events like characters
+falling out of a vent etc"): rather than a separate `exit_marker`/`entrance_marker` kind, a
+single `trigger` kind covers all of it. `on-trigger` returns a `TriggerAction` -- a tagged
+result the C host interprets and executes, not a live callback the script makes itself:
+
+```
+TriggerAction = SpawnEnemies(spawner-ids) | PlaySound(sound-id) | SpawnCharacterEvent(character-id, entry-point) | AdvanceStory(exit-id) | NoOp
+```
+
+This is the same "script returns data, host executes" discipline `door-tick` already uses (a
+door script returns a new `DoorState`, it doesn't directly move geometry), kept deliberately
+narrow: PARENA never gets a live handle into game internals, only a fixed, host-defined
+vocabulary of actions. The real tradeoff, named honestly: that vocabulary has to be extended
+deliberately every time a genuinely new action type is needed (can't express arbitrary new
+behavior without a host-side code change) -- less flexible than free-form scripting, far easier
+to reason about safety- and performance-wise, and consistent with every other kind above.
+`AdvanceStory` is what makes an "exit marker" real: it's just a `trigger` volume whose script
+returns `AdvanceStory`, which is what Part 3 below actually hooks into -- there is no separate
+marker kind after all.
 
 **Target/trust question, resolved**: `procgen.go`'s own texture pipeline deliberately avoided
 PARENA's C target for *LLM-generated* source specifically because an unrestricted `#target`/
@@ -125,11 +162,10 @@ without special-casing any of it:
   exactly that -- the level pool and the story logic are already cleanly separated in this
   model, not coupled.
 
-**Where it runs**: `next-chapter` is evaluated server-side, once, at the moment a player crosses
-an exit marker (Part 2's `exit_marker` kind) -- not a per-tick cost. Same PARENA C-target /
-`level_mod.prn`-style linking as Part 2's objects; a story's compiled behavior is really just
-another script asset the object system already has a place for (an exit marker's
-`script_asset_id` points at a `next-chapter` implementation instead of a `door-tick` one).
+**Where it runs**: `next-chapter` is evaluated server-side, once, at the moment a `trigger`
+volume's `on-trigger` script returns `AdvanceStory(exit-id)` (Part 2) -- not a per-tick cost.
+Same PARENA C-target / `level_mod.prn`-style linking as Part 2's objects; a story's compiled
+behavior is really just another script asset the object system already has a place for.
 
 ## NOCK authoring surface
 
@@ -151,10 +187,14 @@ that reveals the same raw PARENA textarea for a real custom `next-chapter` scrip
    compile pipeline (PARENA -> C -> shared object, mirroring `procgen.go`'s
    PARENA->Java->`javac` pipeline but targeting C + `dlopen`), and ONE real object kind
    (recommend: door, the simplest state machine) end to end, NOCK-authored.
-3. **Phase 2**: ladder and screen kinds, plus entrance/exit marker kinds specifically (these are
-   "just doors with different tick contracts," not a new system).
-4. **Phase 3**: the story engine itself -- `next-chapter` evaluation wired to exit-marker
-   crossing, the batteries-included ordered-list NOCK UI, then the advanced PARENA-scripted path.
+3. **Phase 2**: ladder, screen, character, and trigger kinds (these are "just objects with
+   different tick/event contracts," not a new system) -- trigger's `TriggerAction` vocabulary
+   can start as just `AdvanceStory`/`NoOp` and grow `SpawnEnemies`/`PlaySound`/
+   `SpawnCharacterEvent` as real content needs them, rather than building the full vocabulary
+   speculatively.
+4. **Phase 3**: the story engine itself -- `next-chapter` evaluation wired to a trigger's
+   `AdvanceStory` action, the batteries-included ordered-list NOCK UI, then the advanced
+   PARENA-scripted path.
 
 ## What this does not cover (explicitly deferred)
 
