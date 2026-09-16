@@ -232,12 +232,16 @@ that reveals the same raw PARENA textarea for a real custom `next-chapter` scrip
    closed loop: compiled a script through IDUNA, confirmed byte-identical output to a
    hand-compiled one, downloaded it back over real HTTP into a real running SHANKPIT server, and
    a real connected client walked through the resulting door -- the entire "via the nock tools"
-   gap from this doc's own opening line is closed for the door kind. **What still doesn't exist,
-   named honestly**: a NOCK UI page for actually WRITING a door script (the compile/store API
-   exists; no textarea-and-Create-button page like the texture/animation ones point at it yet),
-   door state on the wire protocol (a reconnecting client re-derives nothing about door state
-   today), and any client-side visual door movement/animation (server-side collision only -- a
-   player currently sees no visual change when a door opens, only that they can now walk through
+   gap from this doc's own opening line is closed for the door kind.
+   **Follow-up, same day -- founder: "fill the gap in the designer can't write scripts."** The
+   missing NOCK UI page now exists: `DoorScripts`/`DoorScriptRow` (IDUNA's `frontend/nock/src/
+   App.tsx`), the same real blank-slate-textarea-plus-Create-button pattern the texture/animation
+   tools already use, with a one-click copy of the row's own real, public `script_url` ready to
+   paste straight into a level's `doors` array. A map designer can now go from "write PARENA" to
+   "door works in-game" without touching a terminal at all. **What still doesn't exist, named
+   honestly**: door state on the wire protocol (a reconnecting client re-derives nothing about
+   door state today), and any client-side visual door movement/animation (server-side collision
+   only -- a player currently sees no visual change when a door opens, only that they can now walk through
    where a wall used to block them).
 3. **Phase 2**: ladder, screen, character, and trigger kinds (these are "just objects with
    different tick/event contracts," not a new system) -- trigger's `TriggerAction` vocabulary
