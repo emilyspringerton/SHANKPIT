@@ -219,15 +219,26 @@ that reveals the same raw PARENA textarea for a real custom `next-chapter` scrip
    connected UDP test client (not just unit-level): an "always closed" control script proved the
    player gets and stays genuinely stuck at the box surface (z held exactly at the collision
    boundary for 380 real ticks), and the real hysteresis script (open within 3 units, close
-   past 5) proved the player walks straight through once close enough. **What Phase 1 does NOT
-   yet include, named honestly**: the NOCK authoring UI, IDUNA-hosted script compile/storage
-   (the real automation `internal/nock/procgen.go` already has for the Java-target texture
-   pipeline -- this pass used a hand-run `parena build`+`gcc`, a local `.so` path in the level
-   JSON, matching PAPERCRAFT's own committed-generated-`.c` convention rather than the live
-   compile-on-upload path), door state on the wire protocol (a reconnecting client re-derives
-   nothing about door state today), and any client-side visual door movement/animation (this
-   pass is server-side collision only -- a player currently sees no visual change when a door
-   opens, only that they can now walk through where a wall used to block them).
+   past 5) proved the player walks straight through once close enough.
+   **Follow-up, same day -- founder: "you know what we are tryna do fill in the gaps."**
+   IDUNA-hosted script compile/storage is now real: `internal/nock/door_script_compile.go`
+   (real `parena build` + `gcc -shared -fPIC`, same two-real-step shape `procgen.go` already
+   automates for the Java-target texture pipeline) + `door_script_store.go` (CRUD, admin-gated
+   author API at `/admin/nock/api/door-scripts`, public download at
+   `/api/v1/nock-door-scripts/:id/download` -- SHANKPIT's own server has no IDUNA login, same
+   posture shankpit-levels' own public export already has). `LevelDoor` gained `script_url`
+   (`packages/world/level_boxes.h`); `story_doors_init` downloads and caches it locally before
+   `dlopen`, script_path staying a real local-dev fallback. Live-verified as one real, full
+   closed loop: compiled a script through IDUNA, confirmed byte-identical output to a
+   hand-compiled one, downloaded it back over real HTTP into a real running SHANKPIT server, and
+   a real connected client walked through the resulting door -- the entire "via the nock tools"
+   gap from this doc's own opening line is closed for the door kind. **What still doesn't exist,
+   named honestly**: a NOCK UI page for actually WRITING a door script (the compile/store API
+   exists; no textarea-and-Create-button page like the texture/animation ones point at it yet),
+   door state on the wire protocol (a reconnecting client re-derives nothing about door state
+   today), and any client-side visual door movement/animation (server-side collision only -- a
+   player currently sees no visual change when a door opens, only that they can now walk through
+   where a wall used to block them).
 3. **Phase 2**: ladder, screen, character, and trigger kinds (these are "just objects with
    different tick/event contracts," not a new system) -- trigger's `TriggerAction` vocabulary
    can start as just `AdvanceStory`/`NoOp` and grow `SpawnEnemies`/`PlaySound`/
