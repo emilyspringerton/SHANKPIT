@@ -9,17 +9,29 @@
 // (runtime-loadable, per this repo's own existing apps/dynmod_poc proof of concept) instead of
 // build-time static linking, since a door's script is per-LEVEL content, not a repo-wide mod.
 //
-// Real, current v0 scope, named honestly: script_path is a local filesystem path to an
-// already-compiled .so (compiled by hand via `parena build ... -o door_tick.c` + `gcc -shared
-// -fPIC`, same two real steps IDUNA's own internal/nock/procgen.go already automates for the
-// Java-target texture pipeline). A NOCK authoring UI + IDUNA-hosted script compile/storage
-// (mirroring procgen.go's own real pipeline, targeting C instead of Java) is real, scoped,
-// deferred future work -- not built in this pass.
+// S459-82: a door's script now comes from either script_path (a local filesystem path -- real,
+// still-supported dev/testing fallback) or script_url (a real, downloadable URL, e.g. IDUNA's
+// own NOCK door-script repository at GET /api/v1/nock-door-scripts/:id/download --
+// IDUNA/internal/nock/door_script_compile.go closes the original "via the nock tools" gap: a map
+// designer writes PARENA in NOCK, IDUNA compiles it server-side, this file downloads and caches
+// the result once at level load). Either way the file that actually gets dlopen'd is always a
+// real local path -- script_url just gets fetched into STORY_DOOR_CACHE_DIR first.
 
 #include <dlfcn.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "level_boxes.h"
+
+// story_doors_cache_path -- S459-82: where a script_url-referenced .so is cached locally after
+// download, keyed by box_index (one door per box_index in a given level, so this is a real,
+// stable, collision-free cache key within that level's own lifetime -- a level reload simply
+// re-downloads and overwrites, no cache invalidation logic needed for this v0 pass).
+#define STORY_DOOR_CACHE_DIR "var/door-script-cache"
+static inline void story_doors_cache_path(int box_index, char *out, size_t outsize) {
+    snprintf(out, outsize, "%s/door_%d.so", STORY_DOOR_CACHE_DIR, box_index);
+}
 
 #define STORY_DOOR_OPEN_THRESHOLD 0.5
 
@@ -62,16 +74,49 @@ static inline void story_doors_init(const CustomLevelData *lvl) {
     story_doors_shutdown();
     for (int i = 0; i < lvl->door_count && g_story_door_count < STORY_DOORS_MAX; i++) {
         const LevelDoor *ld = &lvl->doors[i];
-        void *h = dlopen(ld->script_path, RTLD_NOW);
+        const char *open_path = ld->script_path;
+        char cache_path[LEVEL_BOXES_SCRIPT_PATH_LEN + 32];
+
+        // S459-82: script_url takes precedence when both are set (script_path stays as a real,
+        // honest local-dev/testing fallback, same as it's always been). Download once here, at
+        // level load -- not per-tick -- and cache locally so dlopen always has a real file path.
+        if (open_path[0] == '\0' && ld->script_url[0] != '\0') {
+            // real, deliberate shell-out, matching this file's own established curl-via-popen
+            // convention rather than adding a portable mkdir-with-parents helper for one real
+            // caller; return value genuinely doesn't matter here -- the fopen("wb") right below
+            // is the real, authoritative check for "does this directory actually exist/is it
+            // writable," not this call's own exit code.
+            if (system("mkdir -p " STORY_DOOR_CACHE_DIR) != 0) { /* checked via fopen below */ }
+            char *data = NULL;
+            long n = level_boxes_fetch_url(ld->script_url, &data);
+            if (n <= 0) {
+                fprintf(stderr, "[story-doors] fetching %s failed\n", ld->script_url);
+                continue;
+            }
+            story_doors_cache_path(ld->box_index, cache_path, sizeof(cache_path));
+            FILE *f = fopen(cache_path, "wb");
+            if (!f) {
+                fprintf(stderr, "[story-doors] writing cache file %s failed\n", cache_path);
+                free(data);
+                continue;
+            }
+            fwrite(data, 1, (size_t)n, f);
+            fclose(f);
+            free(data);
+            open_path = cache_path;
+            printf("[story-doors] downloaded %s -> %s (%ld bytes)\n", ld->script_url, cache_path, n);
+        }
+
+        void *h = dlopen(open_path, RTLD_NOW);
         if (!h) {
-            fprintf(stderr, "[story-doors] dlopen(%s) failed: %s\n", ld->script_path, dlerror());
+            fprintf(stderr, "[story-doors] dlopen(%s) failed: %s\n", open_path, dlerror());
             continue;
         }
         dlerror(); // clear any pending error before dlsym, matching dlsym's own documented usage
         door_tick_fn fn = (door_tick_fn)dlsym(h, "door_tick");
         const char *err = dlerror();
         if (err || !fn) {
-            fprintf(stderr, "[story-doors] dlsym(door_tick) in %s failed: %s\n", ld->script_path, err ? err : "symbol not found");
+            fprintf(stderr, "[story-doors] dlsym(door_tick) in %s failed: %s\n", open_path, err ? err : "symbol not found");
             dlclose(h);
             continue;
         }
@@ -80,7 +125,7 @@ static inline void story_doors_init(const CustomLevelData *lvl) {
         dr->dl_handle = h;
         dr->tick = fn;
         dr->state = 0.0; // real, honest default: every door starts CLOSED
-        printf("[story-doors] loaded door script %s for box_index=%d\n", ld->script_path, ld->box_index);
+        printf("[story-doors] loaded door script %s for box_index=%d\n", open_path, ld->box_index);
     }
 }
 

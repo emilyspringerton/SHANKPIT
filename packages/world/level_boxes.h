@@ -96,7 +96,13 @@ typedef struct {
 
 typedef struct {
     int box_index;                              /* which boxes[] entry this door controls */
-    char script_path[LEVEL_BOXES_SCRIPT_PATH_LEN]; /* local path to a compiled door_tick .so */
+    char script_path[LEVEL_BOXES_SCRIPT_PATH_LEN]; /* local path to a compiled door_tick .so --
+        used directly if set; empty means "use script_url instead" */
+    char script_url[LEVEL_BOXES_SCRIPT_PATH_LEN]; /* S459-82: a real, downloadable URL (e.g.
+        IDUNA's own GET /api/v1/nock-door-scripts/:id/download, internal/http/handlers/
+        nock_door_scripts_public.go) -- story_doors.h downloads this once at level load and
+        caches it locally before dlopen, same real "no local script authoring toolchain needed"
+        closing of the original "via the nock tools" gap this whole system started from. */
 } LevelDoor;
 
 typedef struct {
@@ -431,7 +437,11 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
                     if ((v3 = level_boxes_find_key(dobj_start, dobj_end, "script_path"))) {
                         level_boxes_parse_string(v3, door->script_path, sizeof(door->script_path));
                     }
-                    if (door->box_index >= 0 && door->box_index < count && door->script_path[0] != '\0') {
+                    if ((v3 = level_boxes_find_key(dobj_start, dobj_end, "script_url"))) {
+                        level_boxes_parse_string(v3, door->script_url, sizeof(door->script_url));
+                    }
+                    if (door->box_index >= 0 && door->box_index < count &&
+                        (door->script_path[0] != '\0' || door->script_url[0] != '\0')) {
                         out->door_count++;
                     }
                     dcursor = dobj_end + 1;
