@@ -23,6 +23,7 @@
 #include "../../../packages/common/net_sim.h"
 #include "../../../packages/simulation/local_game.h"
 #include "../../../packages/world/level_boxes.h"
+#include "../../../packages/world/story_doors.h"
 
 /* cutscene handshake globals — defined in lobby/main.c for the client;
    server sim uses local_game.h but never renders cutscenes, so stub to 0. */
@@ -395,6 +396,10 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
 
     g_server_match_scene = SCENE_CUSTOM_LEVEL;
     scene_load(g_server_match_scene);
+
+    // Story System Phase 1 -- dlopen this level's own real door scripts now that
+    // g_custom_level_box_authored_y is populated (phys_set_custom_level above).
+    story_doors_init(lvl);
 }
 
 // queue_activate_match -- S459-34, the real MODE_QUEUE match activation. Deliberately much
@@ -1346,6 +1351,11 @@ int main(int argc, char *argv[]) {
         }
 
         update_projectiles(now);
+        // Story System Phase 1 (docs/STORY_SYSTEM_NORTHSTAR.md Part 2) -- real, once-per-tick
+        // door script evaluation, right after the rest of the tick's own physics/state updates
+        // and before the snapshot broadcast, so a door's new state is reflected in the very
+        // snapshot this tick sends out.
+        story_doors_tick(local_state.players, MAX_CLIENTS);
         if (server_team_mode_enabled(local_state.game_mode)) {
             for (int i = 0; i < MAX_CLIENTS; i++) {
                 PlayerState *pp = &local_state.players[i];

@@ -83,6 +83,22 @@ typedef struct {
     int team;        /* -1 = FFA/any team, 0 = Red Team, 1 = Blue Team */
 } LevelSpawner;
 
+/* Story System Phase 1 (docs/STORY_SYSTEM_NORTHSTAR.md Part 2) -- the first real scriptable map
+   object, door only for this pass (ladder/screen/character/trigger are named future kinds, not
+   yet implemented). A door is a real, existing LevelBox (box_index, 0-based into boxes[]) whose
+   collision the server toggles open/closed based on a compiled PARENA script's own decision
+   (see apps/server/src/main.c's DoorRuntime and phys_set_custom_level_box_y). script_path is a
+   real local filesystem path to a compiled .so for this v0 pass -- NOCK authoring/IDUNA-hosted
+   script storage is real, named, deferred future work (see the NORTHSTAR doc's own "what this
+   does not cover"), not silently assumed solved. */
+#define LEVEL_BOXES_MAX_DOORS 16
+#define LEVEL_BOXES_SCRIPT_PATH_LEN 256
+
+typedef struct {
+    int box_index;                              /* which boxes[] entry this door controls */
+    char script_path[LEVEL_BOXES_SCRIPT_PATH_LEN]; /* local path to a compiled door_tick .so */
+} LevelDoor;
+
 typedef struct {
     char name[LEVEL_BOXES_MAX_NAME];
     float width, height, depth; /* the editor's own real authored level dimensions -- NOT read
@@ -101,6 +117,8 @@ typedef struct {
     int material_count;
     LevelSpawner spawners[LEVEL_BOXES_MAX_SPAWNERS]; /* S459-58 */
     int spawner_count;
+    LevelDoor doors[LEVEL_BOXES_MAX_DOORS]; /* Story System Phase 1 */
+    int door_count;
 } CustomLevelData;
 
 static inline const char *level_boxes_skip_ws(const char *p) {
@@ -379,6 +397,44 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
                     }
                     out->spawner_count++;
                     scursor = sobj_end + 1;
+                }
+            }
+        }
+    }
+
+    // Doors (Story System Phase 1) -- parsed the same real, small-scanner way as spawners above.
+    // Absent "doors" key is a real, honest "no scriptable doors in this level" state, not an
+    // error -- door_count stays 0.
+    out->door_count = 0;
+    const char *door_arr_key = level_boxes_find_key(buf, end, "doors");
+    if (door_arr_key) {
+        const char *door_arr = level_boxes_skip_ws(door_arr_key);
+        if (*door_arr == '[') {
+            const char *door_arr_end = level_boxes_find_array_end(door_arr, end);
+            if (door_arr_end) {
+                const char *dcursor = door_arr + 1;
+                while (dcursor < door_arr_end && out->door_count < LEVEL_BOXES_MAX_DOORS) {
+                    dcursor = level_boxes_skip_ws(dcursor);
+                    if (dcursor >= door_arr_end) break;
+                    if (*dcursor == ',') { dcursor++; continue; }
+                    if (*dcursor != '{') { dcursor++; continue; }
+                    const char *dobj_start = dcursor;
+                    const char *dobj_end = strchr(dobj_start, '}');
+                    if (!dobj_end || dobj_end > door_arr_end) break;
+
+                    LevelDoor *door = &out->doors[out->door_count];
+                    memset(door, 0, sizeof(*door));
+                    const char *v3;
+                    float box_index_f = -1.0f;
+                    if ((v3 = level_boxes_find_key(dobj_start, dobj_end, "box_index"))) level_boxes_parse_number(v3, &box_index_f);
+                    door->box_index = (int)box_index_f;
+                    if ((v3 = level_boxes_find_key(dobj_start, dobj_end, "script_path"))) {
+                        level_boxes_parse_string(v3, door->script_path, sizeof(door->script_path));
+                    }
+                    if (door->box_index >= 0 && door->box_index < count && door->script_path[0] != '\0') {
+                        out->door_count++;
+                    }
+                    dcursor = dobj_end + 1;
                 }
             }
         }

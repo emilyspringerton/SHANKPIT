@@ -265,6 +265,10 @@ static float g_custom_level_r[CUSTOM_LEVEL_MAX_BOXES + 1];
 static float g_custom_level_g[CUSTOM_LEVEL_MAX_BOXES + 1];
 static float g_custom_level_b[CUSTOM_LEVEL_MAX_BOXES + 1];
 static int g_custom_level_count = 0;
+// Story System Phase 1 (docs/STORY_SYSTEM_NORTHSTAR.md Part 2): the real, authored y of each
+// custom-level box, independent of any open/closed offset a door script has temporarily applied
+// to g_custom_level_geo[slot].y -- see phys_set_custom_level_box_y/phys_custom_level_box_pos.
+static float g_custom_level_box_authored_y[CUSTOM_LEVEL_MAX_BOXES + 1];
 
 // S459-16, founder real-time: "i think it makes sense to abstract into material first so it
 // cleanly translates into papercraft ... we will want materials for concrete and wood ... this
@@ -362,9 +366,11 @@ static inline void phys_set_custom_level(const float *x, const float *y, const f
     memset(&g_custom_level_geo[0], 0, sizeof(g_custom_level_geo[0]));
     g_custom_level_r[0] = g_custom_level_g[0] = g_custom_level_b[0] = 0.0f;
     g_custom_level_material_idx[0] = 0;
+    g_custom_level_box_authored_y[0] = 0.0f;
     for (int i = 0; i < n; i++) {
         g_custom_level_geo[i + 1].x = x[i];
         g_custom_level_geo[i + 1].y = y[i];
+        g_custom_level_box_authored_y[i + 1] = y[i]; // Story System Phase 1 -- real y, before any door offset
         g_custom_level_geo[i + 1].z = z[i];
         g_custom_level_geo[i + 1].w = w[i];
         g_custom_level_geo[i + 1].h = h[i];
@@ -378,6 +384,38 @@ static inline void phys_set_custom_level(const float *x, const float *y, const f
     g_custom_level_count = n + 1;
     g_custom_level_ground_plane_enabled = ground_plane_enabled;
     g_custom_level_ground_plane_squares = ground_plane_squares > 0 ? ground_plane_squares : 1;
+}
+
+// phys_set_custom_level_box_y -- Story System Phase 1 (docs/STORY_SYSTEM_NORTHSTAR.md Part 2):
+// the one real, minimal mechanism a compiled door script's own decision turns into an actual
+// collision change. Moves the box CUSTOM_LEVEL_DOOR_OPEN_Y_OFFSET world units below its real
+// authored position when open (well outside any realistic play area, given resolve_collision's
+// own real per-box AABB check at physics.h's line ~3067 needs w/h/d > 0 to safely no-op a box --
+// relocating it out of range is the correct fix, not zeroing its extents), and restores the real
+// authored y when closed. box_index is 0-based (matches LevelDoor.box_index); the actual
+// g_custom_level_geo slot is box_index+1 per phys_set_custom_level's own established "index 0 is
+// a dummy" convention.
+#define CUSTOM_LEVEL_DOOR_OPEN_Y_OFFSET 1000.0f
+static inline void phys_set_custom_level_box_y(int box_index, int is_open) {
+    if (box_index < 0 || box_index >= CUSTOM_LEVEL_MAX_BOXES) return;
+    int slot = box_index + 1;
+    if (slot >= g_custom_level_count) return;
+    g_custom_level_geo[slot].y = is_open
+        ? g_custom_level_box_authored_y[slot] - CUSTOM_LEVEL_DOOR_OPEN_Y_OFFSET
+        : g_custom_level_box_authored_y[slot];
+}
+
+// phys_custom_level_box_pos -- real, current x/y/z of a custom-level box's own authored center
+// (Story System Phase 1: what a door script's "distance to nearest player" input is measured
+// against). Returns 0 (out/unwritten) for an out-of-range box_index.
+static inline int phys_custom_level_box_pos(int box_index, float *x, float *y, float *z) {
+    if (box_index < 0 || box_index >= CUSTOM_LEVEL_MAX_BOXES) return 0;
+    int slot = box_index + 1;
+    if (slot >= g_custom_level_count) return 0;
+    *x = g_custom_level_geo[slot].x;
+    *y = g_custom_level_box_authored_y[slot];
+    *z = g_custom_level_geo[slot].z;
+    return 1;
 }
 
 // phys_set_custom_level_materials loads the level's own small material-shading table (S459-16) --

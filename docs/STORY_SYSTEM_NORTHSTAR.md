@@ -202,11 +202,32 @@ that reveals the same raw PARENA textarea for a real custom `next-chapter` scrip
 
 ## Real, phased build order
 
-1. **Phase 0**: per-level scene identity (Part 1). Blocking, small, mechanical.
-2. **Phase 1**: the object system's real plumbing -- `LevelInteractable` format, the server-side
-   compile pipeline (PARENA -> C -> shared object, mirroring `procgen.go`'s
-   PARENA->Java->`javac` pipeline but targeting C + `dlopen`), and ONE real object kind
-   (recommend: door, the simplest state machine) end to end, NOCK-authored.
+1. **Phase 0**: per-level scene identity (Part 1). Blocking, small, mechanical. Not yet done --
+   Phase 1 below was built and tested first, against a single hand-authored test level, so it
+   didn't need a real level identity yet; this stays a real blocker before multiple distinct
+   custom levels with their own doors can coexist correctly.
+2. **Phase 1 -- DONE, 2026-09-16, door kind only.** The real plumbing exists and is tested end to
+   end: `LevelDoor` (`packages/world/level_boxes.h`, `box_index` + `script_path`, parsed from a
+   level's own `doors` JSON array), the PARENA->C compile pipeline (`parena build door_tick.prn
+   -o door_tick.c` + `gcc -shared -fPIC`, real, not automated yet -- see below), server-side
+   `dlopen`/`dlsym` loading and once-per-tick evaluation (`packages/world/story_doors.h`,
+   `story_doors_init`/`story_doors_tick`, wired into `apps/server/src/main.c` right after
+   `update_projectiles`), and the actual collision effect (`phys_set_custom_level_box_y`,
+   `packages/common/physics.h` -- relocates the box 1000 units below its authored position when
+   open, restores it when closed). Real example script + compile instructions:
+   `examples/story-doors/door_tick.prn`. Live-verified with a real running server and a real
+   connected UDP test client (not just unit-level): an "always closed" control script proved the
+   player gets and stays genuinely stuck at the box surface (z held exactly at the collision
+   boundary for 380 real ticks), and the real hysteresis script (open within 3 units, close
+   past 5) proved the player walks straight through once close enough. **What Phase 1 does NOT
+   yet include, named honestly**: the NOCK authoring UI, IDUNA-hosted script compile/storage
+   (the real automation `internal/nock/procgen.go` already has for the Java-target texture
+   pipeline -- this pass used a hand-run `parena build`+`gcc`, a local `.so` path in the level
+   JSON, matching PAPERCRAFT's own committed-generated-`.c` convention rather than the live
+   compile-on-upload path), door state on the wire protocol (a reconnecting client re-derives
+   nothing about door state today), and any client-side visual door movement/animation (this
+   pass is server-side collision only -- a player currently sees no visual change when a door
+   opens, only that they can now walk through where a wall used to block them).
 3. **Phase 2**: ladder, screen, character, and trigger kinds (these are "just objects with
    different tick/event contracts," not a new system) -- trigger's `TriggerAction` vocabulary
    can start as just `AdvanceStory`/`NoOp` and grow `SpawnEnemies`/`PlaySound`/
@@ -215,6 +236,27 @@ that reveals the same raw PARENA textarea for a real custom `next-chapter` scrip
 4. **Phase 3**: the story engine itself -- `next-chapter` evaluation wired to a trigger's
    `AdvanceStory` action, the batteries-included ordered-list NOCK UI, then the advanced
    PARENA-scripted path.
+
+## Explicitly NOT part of this system: real physics objects
+
+Founder real-time: "object physics interractable like half life 2 pick up a cinder block put it
+on the other side of a teeter totter to get it to stay like that so you can jump on the other
+side to get up etc movable objects have mass and put forces onto other objects via the mass" ->
+"we need all of it." This is real, wanted, and deliberately named here as OUT of scope for this
+document rather than folded in: everything above (doors/ladders/screens/characters/triggers) is
+scripted DECISION logic -- a PARENA function returning a new discrete state or a tagged action,
+evaluated against simple scalar inputs. A HL2-style physics object (mass, momentum, a teeter-
+totter pivot that responds to weight, forces propagating between objects) is real rigid-body
+SIMULATION -- continuous math over positions/velocities/torques/contacts, checked directly:
+`packages/common/physics.h`'s own real collision model is AABB-vs-point box collision for
+players only (`resolve_collision`'s own real per-box overlap test), with no mass, no rigid body
+concept, and no object-on-object force transfer anywhere in this codebase. Extending it to real
+movable, massive, forceful objects is a genuinely different, large engine addition -- not a new
+`LevelInteractable` kind, not PARENA-scriptable in the same sense (a rigid body solver runs every
+tick over continuous state, it doesn't return a discrete enum). Real, honest status: wanted,
+acknowledged, not scoped -- deserves its own NORTHSTAR pass grounded in what a real, minimal
+rigid-body/constraint solver for this specific game would need, not bolted onto this doc's own
+object-kind model as a sixth kind.
 
 ## What this does not cover (explicitly deferred)
 

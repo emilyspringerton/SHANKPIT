@@ -1,0 +1,9 @@
+(module doorscript)
+(import math)
+
+(defn door-tick [(dist-to-player : F64) (state : F64)] : F64
+  (if (< dist-to-player 3.0)
+    1.0
+    (if (> dist-to-player 5.0)
+      0.0
+      state)))
