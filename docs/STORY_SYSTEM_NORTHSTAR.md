@@ -100,6 +100,16 @@ interpolator) only nlerps between adjacent ticks of the SAME clip -- a smooth cu
 DIFFERENT clips (Idle -> LookAround) needs a small new cross-clip blend helper that doesn't
 exist yet. Cosmetic-only (a hard cut works as a real, if rougher, v0), not a blocker.
 
+**Ambient dialogue** (founder real-time: "random interactions where the ais ask a question and
+the other gives a random answer like half life" -- HL2's own real citizen-bark precedent): a
+`Talking` `CharacterState` two nearby characters can both enter together, driven by a small
+question/answer pool rather than new mechanism -- one character's `character-tick` picks a
+question line (weighted-random, same as any other state transition), the other picks a matching
+answer line, both play a real `.gband` talk-gesture clip for the exchange's duration. Line pools
+are just data (small string/id tables), not scripted logic -- `character-tick`'s own real
+contract only needs to return "which line index," the host resolves index -> actual text/audio,
+same "script returns data, host executes" discipline every other kind here already uses.
+
 **Trigger volumes, generalized** (founder real-time: "also scriptable player events like hitting
 a certain hallway loads in the next enemies trigger sounds trigger events like characters
 falling out of a vent etc"): rather than a separate `exit_marker`/`entrance_marker` kind, a
@@ -120,6 +130,16 @@ to reason about safety- and performance-wise, and consistent with every other ki
 `AdvanceStory` is what makes an "exit marker" real: it's just a `trigger` volume whose script
 returns `AdvanceStory`, which is what Part 3 below actually hooks into -- there is no separate
 marker kind after all.
+
+**Sound** (founder real-time: "and scriptable sound for voice overs and enemies also different
+footsteps sounds per material etc"): two genuinely different mechanisms, not one. Voiceover/
+enemy sound is already covered -- it's just more `PlaySound`/dialogue-line-index outputs from
+`trigger`/`character` scripts above, no new plumbing. Per-material footsteps are NOT
+PARENA-scriptable and don't need to be: `LevelBox` already carries a real `material_idx` into
+`LevelBoxMaterial materials[]` (`packages/world/level_boxes.h`), so footstep sound is a plain
+data lookup (material name/id -> sound id) the client does locally based on which box the
+player's currently standing on -- same category as the material's existing `shader_name` field,
+not scripted logic.
 
 **Target/trust question, resolved**: `procgen.go`'s own texture pipeline deliberately avoided
 PARENA's C target for *LLM-generated* source specifically because an unrestricted `#target`/
