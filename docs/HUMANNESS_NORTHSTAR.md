@@ -140,9 +140,23 @@ land in later, matching the same "narrow function contract per kind" discipline 
 
 ## Real, phased build order
 
-1. **Phase 1**: `humanness.h`/`.c` — the four real primitives above, a real behavioral-contract
-   test suite matching MISHRI's own `humanness.test.ts` bar (bounds-check jittered output, not
-   smoke tests), no integration yet.
+1. **Phase 1 -- DONE, 2026-09-17.** `packages/simulation/humanness.h`/`.c`: the four real
+   primitives (`humanness_reaction_delay_ms`, `humanness_aim_noise`, `humanness_smooth_turn_step`,
+   `humanness_tick_mood`/`humanness_get_startled`), plus `humanness_state_init`. Real Box-Muller
+   Gaussian for aim noise (matching MISHRI's own `addNoise()` exactly, not an approximation);
+   mood re-roll weighted toward NEUTRAL (MISHRI's own real weighting), rescaled from MISHRI's own
+   5-20 *minute* window to a real 5-20 *second* one (SHANKPIT's own NPC encounters are short,
+   moment-to-moment, not hours-long Minecraft sessions -- a deliberate unit-scaling choice, named
+   in the header, not a typo). `packages/simulation/humanness_test.c`: 7 real, MISHRI-bar
+   behavioral-contract assertions, not smoke tests -- reaction delay stays bounded over 200
+   trials; STARTLED mood is verifiably, statistically faster than TIRED (249ms vs 866ms mean over
+   500 trials); aim noise is exactly zero at perfect skill and a real, genuine zero-mean spread
+   (variance 16.5) at zero skill; smooth-turn genuinely overshoots at least once AND always
+   converges across 100 independent trials; mood reroll timing and the startled override are both
+   exercised directly. `gcc -Wall -Wextra` clean, no warnings. No integration into `story_ai.c`/
+   `character-tick` yet (Phase 2/3, below) -- this module doesn't get called by anything real
+   yet, same honest "primitives proven in isolation first" ordering `gband.c`'s own sampler and
+   `gseq.c`'s own sequencer both already used in this monorepo.
 2. **Phase 2**: wire into `story_ai.c` — reaction delay, aim noise, and turn-overshoot on the
    combat FSM's existing hook points, live-verified against a real running server + connected
    client (same discipline every other Story System phase this session already used).
