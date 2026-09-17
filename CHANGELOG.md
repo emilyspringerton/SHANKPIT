@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-17
+- STORY_SYSTEM_NORTHSTAR.md: fold in scriptable elevators (door+trigger composite + new platform-movement primitive) (sess-20260905-0720-ec33e7c5)
 - Humanness Phase 2: wire jitter/mood into story_ai.c's combat FSM (turn overshoot, real aim noise, jittered attack cooldowns); found + fixed a real dead-data gap (aim_error_deg was never consumed) (sess-20260905-0720-ec33e7c5)
 
 - Humanness Phase 1: real jitter/mood primitives (reaction delay, Gaussian aim noise, overshoot turning) modeled on MISHRI, 7 real behavioral-contract tests (sess-20260905-0720-ec33e7c5)
