@@ -99,10 +99,15 @@ jobs:
           # not, so it failed the identical way: `undefined reference to arena_init/arena_alloc/
           # png_decode/arena_free_all`. Confirmed live via the real GitHub Actions API job log
           # before writing this fix (job 104109838314), same as the gband_mesh_rig precedent above.
-          # A real, standing lesson from now TWO real incidents: this CI step's own source list is
+          # A real, standing lesson from now THREE real incidents (2026-09-17, S459-87/88:
+          # packages/simulation/humanness.c was added to the Makefile's own LOBBY_SRC/SERVER_SRC
+          # but not here -- `undefined reference to humanness_tick_mood/humanness_smooth_turn_
+          # step/humanness_reaction_delay_ms/humanness_state_init/humanness_aim_noise`, confirmed
+          # live via the real GitHub Actions API job log (run 35167996887) before writing this
+          # fix, same discipline as the two precedents above): this CI step's own source list is
           # never automatically kept in sync with the Makefile's LOBBY_SRC -- any future new
           # packages/*.c file added to LOBBY_SRC needs this list updated by hand too.
-          x86_64-w64-mingw32-gcc apps/lobby/src/main.c packages/simulation/story_ai.c packages/simulation/cutscene.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/world/terrain.c packages/world/parena_runtime.c packages/world/png_decode_gen.c packages/audio/audio.c \
+          x86_64-w64-mingw32-gcc apps/lobby/src/main.c packages/simulation/story_ai.c packages/simulation/humanness.c packages/simulation/cutscene.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/world/terrain.c packages/world/parena_runtime.c packages/world/png_decode_gen.c packages/audio/audio.c \
             packages/goldenband/gband_mesh_rig.c packages/goldenband/gband.c packages/goldenband/gskel.c packages/goldenband/gmesh.c \
             -o ShankPit.exe \
             -O2 -static-libgcc \
@@ -124,7 +129,7 @@ jobs:
           set -euo pipefail
           test -f apps/server/src/main.c
 
-          gcc apps/server/src/main.c packages/simulation/story_ai.c packages/world/terrain.c \
+          gcc apps/server/src/main.c packages/simulation/story_ai.c packages/simulation/humanness.c packages/world/terrain.c \
             -o ShankServer_Linux \
             -O2 -static \
             -I. \

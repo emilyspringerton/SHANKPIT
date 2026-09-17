@@ -90,7 +90,19 @@ jobs:
           # copy was never touched). Two real, hand-maintained copies of one build command is the
           # actual root cause of this whole recurring class of bug -- named here, not fixed by
           # unifying them in this pass (a real, separate refactor, not attempted under this fix).
-          x86_64-w64-mingw32-gcc apps/lobby/src/main.c packages/simulation/story_ai.c packages/simulation/cutscene.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/world/terrain.c packages/world/parena_runtime.c packages/world/png_decode_gen.c packages/audio/audio.c packages/goldenband/gband.c packages/goldenband/gband_mesh_rig.c packages/goldenband/gmesh.c packages/goldenband/gskel.c \
+          #
+          # THIRD real recurrence (2026-09-17, S459-87/88): packages/simulation/humanness.c was
+          # added to the Makefile's own LOBBY_SRC/SERVER_SRC but missed both hand-copies here and
+          # in release.yml -- confirmed live via the real GitHub Actions API job log (run
+          # 35167996887, `undefined reference to humanness_tick_mood`/etc.) before fixing, same
+          # discipline as the two precedents above. Deduplicating these hand-copies into one real
+          # source (a Makefile target both workflows call) is still real, separate, not-yet-
+          # attempted work -- a real Makefile target for exactly this shape already exists
+          # (`make ea-windows`, uses $(LOBBY_SRC) directly, immune to this whole bug class) but
+          # bundles a full EA dist package (Go server cross-compile + packaging) this CI step
+          # doesn't want, and reusing it here without first checking the release artifact
+          # naming/upload steps stay correct is a real, separate risk not taken under this fix.
+          x86_64-w64-mingw32-gcc apps/lobby/src/main.c packages/simulation/story_ai.c packages/simulation/humanness.c packages/simulation/cutscene.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/world/terrain.c packages/world/parena_runtime.c packages/world/png_decode_gen.c packages/audio/audio.c packages/goldenband/gband.c packages/goldenband/gband_mesh_rig.c packages/goldenband/gmesh.c packages/goldenband/gskel.c \
             -o ShankPit.exe \
             -O2 -static-libgcc \
             -I./sdl2_mingw/include \
@@ -111,7 +123,7 @@ jobs:
           set -euo pipefail
           test -f apps/server/src/main.c
 
-          gcc apps/server/src/main.c packages/simulation/story_ai.c packages/world/terrain.c \
+          gcc apps/server/src/main.c packages/simulation/story_ai.c packages/simulation/humanness.c packages/world/terrain.c \
             -o ShankServer_Linux \
             -O2 -static \
             -I. \
