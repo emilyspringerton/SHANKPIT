@@ -171,15 +171,22 @@ static void gband_shader_and_mesh_init(void) {
        inspect before committing to using them, not assumed). A kit that fails to load is a real,
        loud SDL_Log, never a silent gap -- draw_player_skin_mannequin's own kit-selection logic
        (below) must degrade to a different real, ready kit rather than assume every index loaded. */
-    g_skel_npc_kit_mannequin = gband_skel_npc_load_kit("assets/goldenband", "mannequin_npc", "UAL1_Standard_Idle_Loop", "UAL1_Standard_Walk_Loop");
+    /* S470 follow-up (founder real-time: "wave to the player... and then dance before resuming
+       patrol"). greet/dance clip names checked directly against the live asset library before
+       wiring: George/Stan/Mike/Leela each have a real per-character "_Hello" greeting gesture but
+       no distinct per-character dance asset today, so their own Hello clip is passed for BOTH
+       greet and dance (a real double-wave flourish, not a fabricated "dance" claim). The
+       mannequin has the inverse gap: no real Hello-equivalent (greet passed NULL, falls back to
+       idle for that phase) but a genuine UAL1_Standard_Dance_Loop for the dance phase. */
+    g_skel_npc_kit_mannequin = gband_skel_npc_load_kit("assets/goldenband", "mannequin_npc", "UAL1_Standard_Idle_Loop", "UAL1_Standard_Walk_Loop", NULL, "UAL1_Standard_Dance_Loop");
     if (g_skel_npc_kit_mannequin < 0) SDL_Log("S467: mannequin_npc kit load failed");
-    g_skel_npc_kit_stan = gband_skel_npc_load_kit("assets/goldenband", "Stan", "Stan_Idle", "Stan_Walk");
+    g_skel_npc_kit_stan = gband_skel_npc_load_kit("assets/goldenband", "Stan", "Stan_Idle", "Stan_Walk", "Stan_Hello", "Stan_Hello");
     if (g_skel_npc_kit_stan < 0) SDL_Log("S468: Stan kit load failed");
-    g_skel_npc_kit_mike = gband_skel_npc_load_kit("assets/goldenband", "Mike", "Mike_Idle", "Mike_Walk");
+    g_skel_npc_kit_mike = gband_skel_npc_load_kit("assets/goldenband", "Mike", "Mike_Idle", "Mike_Walk", "Mike_Hello", "Mike_Hello");
     if (g_skel_npc_kit_mike < 0) SDL_Log("S468: Mike kit load failed");
-    g_skel_npc_kit_leela = gband_skel_npc_load_kit("assets/goldenband", "Leela", "Leela_Idle", "Leela_Walk");
+    g_skel_npc_kit_leela = gband_skel_npc_load_kit("assets/goldenband", "Leela", "Leela_Idle", "Leela_Walk", "Leela_Hello", "Leela_Hello");
     if (g_skel_npc_kit_leela < 0) SDL_Log("S468: Leela kit load failed");
-    g_skel_npc_kit_george = gband_skel_npc_load_kit("assets/goldenband", "George", "George_Idle", "George_Walk");
+    g_skel_npc_kit_george = gband_skel_npc_load_kit("assets/goldenband", "George", "George_Idle", "George_Walk", "George_Hello", "George_Hello");
     if (g_skel_npc_kit_george < 0) SDL_Log("S468: George kit load failed");
 
     g_skel_npc_ready = (g_skel_npc_kit_mannequin >= 0 || g_skel_npc_kit_stan >= 0 || g_skel_npc_kit_mike >= 0 ||
@@ -5341,6 +5348,10 @@ static void draw_player_skin_tyler(PlayerState *p, float draw_pitch, float draw_
 // from p->id instead, cycling past any kit that failed to load -- real, genuine visual variety
 // between NPCs today (the founder's own five real characters) rather than every one sharing a
 // single look, honestly not yet tied to which AIRole that NPC actually is.
+//
+// S470: p->anim_override IS now a real networked field (unlike AIRole above) -- see its own doc
+// comment in protocol.h -- forcing the GREET/DANCE gesture gband_skel_npc_draw plays regardless
+// of this NPC's current movement, driven server-side by story_ai.c's own ai_run_greet.
 static void draw_player_skin_mannequin(PlayerState *p, float draw_pitch, float draw_recoil) {
     if (!g_skel_npc_ready) {
         draw_player_skin_tyler(p, draw_pitch, draw_recoil);
@@ -5359,6 +5370,7 @@ static void draw_player_skin_mannequin(PlayerState *p, float draw_pitch, float d
     float draw_yaw = norm_yaw_deg(p->yaw);
     float facing_rad = -draw_yaw * 0.0174533f;
     gband_skel_npc_draw(kit_index, p->id, p->x, p->y, p->z, facing_rad, g_gband_frame_dt_ms,
+                         p->anim_override,
                          &g_gband_frame_vp, skel_npc_draw_skinned);
 }
 
@@ -8513,6 +8525,7 @@ void net_process_snapshot(char *buffer, int len) {
         p->carried_flag_team_id = np->carried_flag_team_id;
         p->storm_charges = np->storm_charges;
         p->hit_feedback = np->hit_feedback;
+        p->anim_override = np->anim_override;
         if (net_prev_kills[id] >= 0 && (int)np->kills > net_prev_kills[id]) {
             char kill_msg[CHAT_LINE_MAX];
             const char *tag = (id == my_client_id) ? "[you]" : "[bot]";
