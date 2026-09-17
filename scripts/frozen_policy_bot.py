@@ -88,9 +88,17 @@ def main():
         fwd, strafe, cur_yaw, cur_pitch, buttons, weapon_idx = decode_action(action, cur_yaw, cur_pitch)
         client.send_action(fwd, strafe, cur_yaw, cur_pitch, buttons, weapon_idx)
 
-        entities = client.recv_snapshot()
-        if not entities:
+        # Real, live-found bug (2026-09-17, founder real-time: "no bots in my game"): a dropped
+        # or not-yet-ready UDP snapshot is normal and frequent, not an error -- but reassigning
+        # `entities` unconditionally before this guard left it as None on that tick, and the
+        # NEXT loop iteration's build_observation call above used that now-None value as
+        # `peers`, crashing with "TypeError: 'NoneType' object is not iterable" and killing the
+        # whole bot process. Fix: only replace `entities`/`me` when a snapshot actually arrived,
+        # so a missed packet just keeps using the last known-good state instead of nulling it.
+        new_entities = client.recv_snapshot()
+        if not new_entities:
             continue
+        entities = new_entities
         me = next((e for e in entities if e.id == client.client_id), None)
 
     client.close()
