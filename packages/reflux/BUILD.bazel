@@ -1,0 +1,13 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# REFLUX (S485) -- SHANKPIT's own native port of ECOWAR's real cross-mod pub/sub primitive
+# (ECOWAR/packages/reflux/reflux_runtime.h, EMILY/BACKLOG.md SECTION 380/381). Same API/ABI, own
+# log, zero cross-repo dependency, per the founder's own explicit "keep all of the code in
+# shankpit". A real, standalone package -- packages/simulation/story_buttons.h and
+# packages/world/story_doors.h both depend on this, neither depends on the other through it.
+cc_library(
+    name = "reflux",
+    srcs = ["reflux_runtime.c"],
+    hdrs = ["reflux_runtime.h"],
+    visibility = ["//visibility:public"],
+)

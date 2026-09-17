@@ -5,6 +5,7 @@
 #include "../common/physics.h"
 #include "../common/shared_movement.h"
 #include "story_ai.h"
+#include "story_buttons.h"
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
@@ -1872,6 +1873,12 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
                 p->in_shoot = 0;
             }
         }
+        // S485, REFLUX pub/sub buttons -- deliberately unconditional, NOT gated to one game_mode
+        // (S481c's own resolved policy: a general level feature never hard-codes to a single
+        // mode). Runs after CTFB's own use-interaction handling above so a CTFB flag pickup and a
+        // REFLUX button press never fight over the same in_use/use_was_down edge in one tick --
+        // both read p->in_use, only the first one this tick to match something actually acts.
+        story_buttons_handle_use_interactions(p, cmd_time);
         phys_set_scene(p->scene_id);
         update_entity(p, 0.016f, server_context, cmd_time);
         if (local_state.game_mode == MODE_CTFB) ctf_try_capture(p, cmd_time);

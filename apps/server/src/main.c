@@ -24,6 +24,7 @@
 #include "../../../packages/simulation/local_game.h"
 #include "../../../packages/world/level_boxes.h"
 #include "../../../packages/world/story_doors.h"
+#include "../../../packages/simulation/story_buttons.h"
 
 /* cutscene handshake globals — defined in lobby/main.c for the client;
    server sim uses local_game.h but never renders cutscenes, so stub to 0. */
@@ -455,6 +456,9 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
     // Story System Phase 1 -- dlopen this level's own real door scripts now that
     // g_custom_level_box_authored_y is populated (phys_set_custom_level above).
     story_doors_init(lvl);
+
+    // S485, REFLUX pub/sub buttons -- real, placed interact triggers for this level.
+    story_buttons_init(lvl);
 
     // S461-01/S464 -- real, author-placed waypoint/cover graph, if any (empty is a real, honest
     // "not authored for this level yet" state, not an error). Flat-array unpack, same pattern

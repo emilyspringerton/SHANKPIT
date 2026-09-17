@@ -112,6 +112,16 @@ typedef struct {
 
 typedef struct {
     int box_index;                              /* which boxes[] entry this door controls */
+    /* subscribe_button_id (S485, REFLUX pub/sub -- founder real-time: "the bridge listens for a
+       button the button has no idea the bridge exists"). -1 (the default, every pre-S485 level's
+       own real absent-key JSON) means "normal auto-proximity door," completely unchanged. >= 0
+       means this door ignores distance-to-player ENTIRELY and instead toggles open/closed only
+       when a REFLUX_ACTION_BUTTON_PRESSED action with a == this value appears in the shared
+       REFLUX log (packages/reflux/reflux_runtime.h) -- i.e. this door subscribes to whichever
+       LevelButton was authored with that same button_id, by convention, with zero direct
+       reference between the two objects beyond that shared integer. See story_doors.h's own
+       story_doors_tick for the real polling/toggle logic. */
+    int subscribe_button_id;
     char script_path[LEVEL_BOXES_SCRIPT_PATH_LEN]; /* local path to a compiled door_tick .so --
         used directly if set; empty means "use script_url instead" */
     char script_url[LEVEL_BOXES_SCRIPT_PATH_LEN]; /* S459-82: a real, downloadable URL (e.g.
@@ -123,6 +133,26 @@ typedef struct {
         attached at all) is NOT an error -- see door_tick_builtin_proximity below, the real
         default behavior every door gets without requiring any script. */
 } LevelDoor;
+
+/* LevelButton (S485, REFLUX pub/sub) -- a real, author-placed, reusable interact trigger.
+ * Founder real-time: "we need buttons - how am i gonna put a button on a wall next to a door to
+ * open a door?" -> "we need a reusable button that can be put in different places... we dont want
+ * those [interaction paths] to be totally different code paths unless there is a good reason."
+ * Deliberately generic: a button knows NOTHING about what it controls -- pressing it (a real,
+ * edge-triggered BTN_USE interact within range, see story_buttons.h) only ever dispatches
+ * REFLUX_ACTION_BUTTON_PRESSED(button_id, player_id, 0) into the shared REFLUX log. Any number of
+ * doors (or, real future work, other REFLUX subscribers -- vents, bridges, AI reactions) can
+ * independently subscribe to that same button_id with zero coupling to the button or to each
+ * other -- matching the founder's own explicit "the button has no idea the bridge exists."
+ * button_id is author-assigned (NOCK's own concern, not validated for uniqueness here -- two
+ * buttons sharing an id is a real, valid "either one presses the same subscribers" design, not
+ * an error). box_index is which boxes[] entry is this button's own physical, walkable-up-to
+ * panel (its OWN box, distinct from whatever door(s) it controls). */
+#define LEVEL_BOXES_MAX_BUTTONS 16
+typedef struct {
+    int box_index;
+    int button_id;
+} LevelButton;
 
 /* door_tick_builtin_proximity -- S473 follow-up (found live, 2026-09-17, founder real-time: "i
    dont know why this never moved forward i kept asking for doors please make doors actually
@@ -226,6 +256,8 @@ typedef struct {
     int spawner_count;
     LevelDoor doors[LEVEL_BOXES_MAX_DOORS]; /* Story System Phase 1 */
     int door_count;
+    LevelButton buttons[LEVEL_BOXES_MAX_BUTTONS]; /* S485, REFLUX pub/sub */
+    int button_count;
     LevelNavNode nav_nodes[LEVEL_BOXES_MAX_NAV_NODES]; /* S461-01/S464 */
     int nav_node_count;
     LevelCharacter characters[LEVEL_BOXES_MAX_CHARACTERS]; /* S467 */
@@ -576,10 +608,15 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
 
                     LevelDoor *door = &out->doors[out->door_count];
                     memset(door, 0, sizeof(*door));
+                    door->subscribe_button_id = -1; /* default: normal auto-proximity door */
                     const char *v3;
                     float box_index_f = -1.0f;
                     if ((v3 = level_boxes_find_key(dobj_start, dobj_end, "box_index"))) level_boxes_parse_number(v3, &box_index_f);
                     door->box_index = (int)box_index_f;
+                    if ((v3 = level_boxes_find_key(dobj_start, dobj_end, "subscribe_button_id"))) {
+                        float sub_f = -1.0f;
+                        if (level_boxes_parse_number(v3, &sub_f)) door->subscribe_button_id = (int)sub_f;
+                    }
                     if ((v3 = level_boxes_find_key(dobj_start, dobj_end, "script_path"))) {
                         level_boxes_parse_string(v3, door->script_path, sizeof(door->script_path));
                     }
@@ -598,6 +635,43 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
                         out->door_count++;
                     }
                     dcursor = dobj_end + 1;
+                }
+            }
+        }
+    }
+
+    // Buttons (S485, REFLUX pub/sub) -- same real, small-scanner convention as doors above.
+    // Absent "buttons" key is a real, honest "no buttons authored for this level" state, not an
+    // error.
+    out->button_count = 0;
+    const char *btn_arr_key = level_boxes_find_key(buf, end, "buttons");
+    if (btn_arr_key) {
+        const char *btn_arr = level_boxes_skip_ws(btn_arr_key);
+        if (*btn_arr == '[') {
+            const char *btn_arr_end = level_boxes_find_array_end(btn_arr, end);
+            if (btn_arr_end) {
+                const char *bcursor = btn_arr + 1;
+                while (bcursor < btn_arr_end && out->button_count < LEVEL_BOXES_MAX_BUTTONS) {
+                    bcursor = level_boxes_skip_ws(bcursor);
+                    if (bcursor >= btn_arr_end) break;
+                    if (*bcursor == ',') { bcursor++; continue; }
+                    if (*bcursor != '{') { bcursor++; continue; }
+                    const char *bobj_start = bcursor;
+                    const char *bobj_end = strchr(bobj_start, '}');
+                    if (!bobj_end || bobj_end > btn_arr_end) break;
+
+                    LevelButton *btn = &out->buttons[out->button_count];
+                    memset(btn, 0, sizeof(*btn));
+                    const char *v4;
+                    float bbox_f = -1.0f, bid_f = 0.0f;
+                    if ((v4 = level_boxes_find_key(bobj_start, bobj_end, "box_index"))) level_boxes_parse_number(v4, &bbox_f);
+                    if ((v4 = level_boxes_find_key(bobj_start, bobj_end, "button_id"))) level_boxes_parse_number(v4, &bid_f);
+                    btn->box_index = (int)bbox_f;
+                    btn->button_id = (int)bid_f;
+                    if (btn->box_index >= 0 && btn->box_index < count) {
+                        out->button_count++;
+                    }
+                    bcursor = bobj_end + 1;
                 }
             }
         }

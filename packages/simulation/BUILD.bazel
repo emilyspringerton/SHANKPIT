@@ -18,8 +18,12 @@ cc_library(
         "neural_net.h",
         "parena_runtime.h",
         "story_ai.h",
+        "story_buttons.h",  # S485, REFLUX pub/sub buttons -- header-only, included by local_game.h
     ],
-    deps = ["//packages/common:common_headers"],
+    deps = [
+        "//packages/common:common_headers",
+        "//packages/reflux",
+    ],
     visibility = ["//visibility:public"],
 )
 

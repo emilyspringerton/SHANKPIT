@@ -1892,6 +1892,10 @@ static void level_select_menu_open(void) {
 typedef struct {
     int box_index;
     double state;
+    int subscribe_button_id; // S485, REFLUX pub/sub -- -1 = normal proximity door, unchanged.
+                              // dlfcn-free (same as door_tick_builtin_proximity itself), so this
+                              // works in the lobby build too, unlike a custom PARENA door script.
+    int reflux_cursor;
 } LobbyDoorRuntime;
 #define LOBBY_DOORS_MAX LEVEL_BOXES_MAX_DOORS
 static LobbyDoorRuntime g_lobby_doors[LOBBY_DOORS_MAX];
@@ -1902,6 +1906,8 @@ static void lobby_doors_init(const CustomLevelData *lvl) {
     for (int i = 0; i < lvl->door_count && g_lobby_door_count < LOBBY_DOORS_MAX; i++) {
         g_lobby_doors[g_lobby_door_count].box_index = lvl->doors[i].box_index;
         g_lobby_doors[g_lobby_door_count].state = 0.0; /* every door starts CLOSED */
+        g_lobby_doors[g_lobby_door_count].subscribe_button_id = lvl->doors[i].subscribe_button_id;
+        g_lobby_doors[g_lobby_door_count].reflux_cursor = reflux_host_log_size();
         g_lobby_door_count++;
     }
 }
@@ -1912,6 +1918,26 @@ static void lobby_doors_init(const CustomLevelData *lvl) {
 static void lobby_doors_tick(void) {
     for (int i = 0; i < g_lobby_door_count; i++) {
         LobbyDoorRuntime *dr = &g_lobby_doors[i];
+
+        // S485, REFLUX pub/sub -- see story_doors_tick's own identical branch for the full
+        // rationale; mirrored here so button-controlled doors work in local single-player too.
+        if (dr->subscribe_button_id >= 0) {
+            int log_size = reflux_host_log_size();
+            int was_open = dr->state >= STORY_DOOR_OPEN_THRESHOLD;
+            for (int li = dr->reflux_cursor; li < log_size; li++) {
+                if (reflux_host_action_type_at(li) == REFLUX_ACTION_BUTTON_PRESSED
+                    && reflux_host_action_a_at(li) == dr->subscribe_button_id) {
+                    dr->state = (dr->state >= STORY_DOOR_OPEN_THRESHOLD) ? 0.0 : 1.0;
+                }
+            }
+            dr->reflux_cursor = log_size;
+            int is_open = dr->state >= STORY_DOOR_OPEN_THRESHOLD;
+            if (is_open != was_open) {
+                phys_set_custom_level_box_y(dr->box_index, is_open);
+            }
+            continue;
+        }
+
         float bx, by, bz;
         if (!phys_custom_level_box_pos(dr->box_index, &bx, &by, &bz)) continue;
 
@@ -1988,6 +2014,7 @@ static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
     }
     phys_set_custom_level_spawners(sp_x, sp_y, sp_z, sp_team, lvl->spawner_count);
     lobby_doors_init(lvl);
+    story_buttons_init(lvl); // S485, REFLUX pub/sub buttons -- dlfcn-free, real in local single-player too
 
     // S477, real fix (founder real-time, live playtest: "i walk over to the block where the
     // level exit should be... i say out loud beam me up scotty and then nothing happens"). This

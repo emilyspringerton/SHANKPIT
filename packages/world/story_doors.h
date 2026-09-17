@@ -23,6 +23,7 @@
 #include <string.h>
 
 #include "level_boxes.h"
+#include "../reflux/reflux_runtime.h"
 
 // story_doors_cache_path -- S459-82: where a script_url-referenced .so is cached locally after
 // download, keyed by box_index (one door per box_index in a given level, so this is a real,
@@ -42,10 +43,19 @@ typedef double (*door_tick_fn)(double, double);
 typedef struct {
     int box_index;
     void *dl_handle;
-    door_tick_fn tick;
+    door_tick_fn tick; // NULL for a button-subscribing door (subscribe_button_id >= 0) -- that
+                        // case never calls a dist-based tick function at all, see story_doors_tick.
     double state; // 0.0 = closed, 1.0 = open (a script MAY return intermediate values for a
                   // future opening/closing animation state; this v0 pass only acts on the
                   // >= STORY_DOOR_OPEN_THRESHOLD collision toggle, per phys_set_custom_level_box_y)
+    // subscribe_button_id/reflux_cursor -- S485, REFLUX pub/sub. -1 = normal door (dist-driven,
+    // via `tick` above, completely unchanged). >= 0 = this door ignores distance-to-player
+    // entirely; story_doors_tick instead polls the shared REFLUX log starting at reflux_cursor
+    // for REFLUX_ACTION_BUTTON_PRESSED actions whose own `a` payload matches this id, and toggles
+    // `state` once per match (real open<->closed TOGGLE semantics, not proximity hysteresis --
+    // founder real-time: "a door that is open and closable gives you more agency").
+    int subscribe_button_id;
+    int reflux_cursor;
 } DoorRuntime;
 
 #define STORY_DOORS_MAX LEVEL_BOXES_MAX_DOORS
@@ -75,6 +85,23 @@ static inline void story_doors_init(const CustomLevelData *lvl) {
         const char *open_path = ld->script_path;
         char cache_path[LEVEL_BOXES_SCRIPT_PATH_LEN + 32];
 
+        // S485, REFLUX pub/sub: a button-subscribing door skips proximity/script logic entirely
+        // -- it's driven purely by REFLUX_ACTION_BUTTON_PRESSED matches, see story_doors_tick.
+        // reflux_cursor starts at the log's CURRENT size (not 0) so a button pressed before this
+        // level loaded (a stale action already in the shared log from a previous level) never
+        // retroactively fires a door that just spawned in closed.
+        if (ld->subscribe_button_id >= 0) {
+            DoorRuntime *dr = &g_story_doors[g_story_door_count++];
+            dr->box_index = ld->box_index;
+            dr->dl_handle = NULL;
+            dr->tick = NULL;
+            dr->state = 0.0;
+            dr->subscribe_button_id = ld->subscribe_button_id;
+            dr->reflux_cursor = reflux_host_log_size();
+            printf("[story-doors] box_index=%d subscribes to button_id=%d via REFLUX\n", ld->box_index, ld->subscribe_button_id);
+            continue;
+        }
+
         // Real, working default (found live, 2026-09-17): no script_path AND no script_url means
         // this door genuinely has no custom PARENA script attached -- a real, common, EXPECTED
         // case, not a malformed export. Register it with door_tick_builtin_proximity right away
@@ -87,6 +114,7 @@ static inline void story_doors_init(const CustomLevelData *lvl) {
             dr->dl_handle = NULL;
             dr->tick = door_tick_builtin_proximity;
             dr->state = 0.0;
+            dr->subscribe_button_id = -1;
             printf("[story-doors] no script attached for box_index=%d -- using builtin proximity default\n", ld->box_index);
             continue;
         }
@@ -139,6 +167,7 @@ static inline void story_doors_init(const CustomLevelData *lvl) {
         dr->dl_handle = h;
         dr->tick = fn;
         dr->state = 0.0; // real, honest default: every door starts CLOSED
+        dr->subscribe_button_id = -1;
         printf("[story-doors] loaded door script %s for box_index=%d\n", open_path, ld->box_index);
     }
 }
@@ -152,6 +181,30 @@ static inline void story_doors_init(const CustomLevelData *lvl) {
 static inline void story_doors_tick(const PlayerState *players, int max_clients) {
     for (int i = 0; i < g_story_door_count; i++) {
         DoorRuntime *dr = &g_story_doors[i];
+
+        // S485, REFLUX pub/sub: a button-subscribing door ignores distance-to-player entirely --
+        // poll the shared log from this door's own last-seen cursor, toggle once per matching
+        // REFLUX_ACTION_BUTTON_PRESSED (real open<->closed TOGGLE, not proximity hysteresis).
+        // Multiple matches arriving in the same tick (unlikely but real -- e.g. two players
+        // pressing linked buttons the same tick) toggle multiple times, same as multiple real
+        // presses across separate ticks would.
+        if (dr->subscribe_button_id >= 0) {
+            int log_size = reflux_host_log_size();
+            int was_open = dr->state >= STORY_DOOR_OPEN_THRESHOLD;
+            for (int li = dr->reflux_cursor; li < log_size; li++) {
+                if (reflux_host_action_type_at(li) == REFLUX_ACTION_BUTTON_PRESSED
+                    && reflux_host_action_a_at(li) == dr->subscribe_button_id) {
+                    dr->state = (dr->state >= STORY_DOOR_OPEN_THRESHOLD) ? 0.0 : 1.0;
+                }
+            }
+            dr->reflux_cursor = log_size;
+            int is_open = dr->state >= STORY_DOOR_OPEN_THRESHOLD;
+            if (is_open != was_open) {
+                phys_set_custom_level_box_y(dr->box_index, is_open);
+            }
+            continue;
+        }
+
         float bx, by, bz;
         if (!phys_custom_level_box_pos(dr->box_index, &bx, &by, &bz)) continue;
 
