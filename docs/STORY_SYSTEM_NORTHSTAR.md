@@ -292,6 +292,20 @@ that reveals the same raw PARENA textarea for a real custom `next-chapter` scrip
    can start as just `AdvanceStory`/`NoOp` and grow `SpawnEnemies`/`PlaySound`/
    `SpawnCharacterEvent` as real content needs them, rather than building the full vocabulary
    speculatively.
+   **`character` kind — DONE, 2026-09-17.** Founder real-time: "continue filling in the gaps in
+   our level editor scriptable env characters etc." A level author places a specific `AIRole` +
+   position (`internal/shankpit.Character`, new "Characters" panel in
+   `ShankpitLevelEditor.tsx`); `server_apply_custom_level` spawns it for real
+   (`story_ai_spawn_enemy`) when that level loads in `MODE_STORY`/`MODE_STORY_CAVE`, gated so it
+   can never fire during a live `MODE_QUEUE` round (real safety analysis in the shipping commit,
+   not assumed). Depended on two real prerequisites this session found and closed first:
+   `story_ai_tick` wasn't reachable on the dedicated server AT ALL before this session (it was
+   local-single-player-only, `apps/lobby/src/main.c`'s own `local_update`) and the only general,
+   arbitrary-model animation path (`gband_skel_npc`) was a single frozen demo with no AI
+   connection — both real, found gaps, both closed (see `EMILY/BACKLOG.md` S466/S467). Live-
+   verified end to end with a hand-authored test level. `ladder`/`screen`/`trigger` remain real,
+   not-yet-built follow-up — `character` was picked first because it was the one the founder
+   named directly, twice.
 4. **Phase 3**: the story engine itself -- `next-chapter` evaluation wired to a trigger's
    `AdvanceStory` action, the batteries-included ordered-list NOCK UI, then the advanced
    PARENA-scripted path.
