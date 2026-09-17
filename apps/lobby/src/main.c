@@ -48,6 +48,7 @@
 #include "../../../packages/render/gl_shader.h"
 #include "../../../packages/render/material_shaders.h"
 #include "../../../packages/goldenband/gband_mesh_rig.h"
+#include "../../../packages/goldenband/gband_skel_npc.h"
 
 /* ── S144-02 Stage B: GOLDENBAND skinned mesh for Tyler ──────────────────────
  * Ports REDGARDEN/GFD's S144-07 gband_mesh_rig onto the shader/VBO
@@ -66,6 +67,15 @@ static GLuint g_gband_program = 0;
 static DynamicVBO g_gband_vbo;
 static int g_gband_shader_ready = 0;
 static int g_gband_mesh_ready = 0;
+
+/* S459-97: a real, general-skeleton NPC -- the founder's own imported mannequin mesh+rig paired
+ * with a UAL2_Standard_RM mocap clip, both a real 65-joint rig, rendered via GOLDENBAND's new
+ * gpose.c (general N-joint FK+skinning) instead of gband_mesh_rig.c's Tyler-specific 5-joint
+ * path. Own dedicated VBO -- the mannequin's own real triangle count (6415 tris / 19245
+ * flattened verts) is well past g_gband_vbo's 4096-vert Tyler-sized capacity. */
+static DynamicVBO g_skel_npc_vbo;
+static int g_skel_npc_shader_ready = 0;
+static int g_skel_npc_ready = 0;
 
 /* Per-frame camera-only view*projection, captured once in draw_scene right
  * after the legacy fixed-function camera (gluPerspective/gluLookAt) is set
@@ -125,6 +135,21 @@ static void gband_shader_and_mesh_init(void) {
         return;
     }
     SDL_Log("S144-02 Stage B: GOLDENBAND skinned mesh ready");
+
+    /* S459-97: same shader (pos+normal, world-space-baked verts -- identical contract to
+       gband_draw_skinned above), a bigger dedicated VBO for the mannequin's own real vertex
+       count. */
+    if (!gl_dynamic_vbo_init(&g_skel_npc_vbo, 20000)) {
+        SDL_Log("S459-97: skel NPC VBO init failed -- mannequin NPC disabled");
+        return;
+    }
+    g_skel_npc_shader_ready = 1;
+    g_skel_npc_ready = gband_skel_npc_init("assets/goldenband", "mannequin_npc", "ual2_standard_rm");
+    if (!g_skel_npc_ready) {
+        SDL_Log("S459-97: mannequin_npc asset load failed -- no mannequin NPC this run");
+        return;
+    }
+    SDL_Log("S459-97: general-skeleton NPC ready (mannequin_npc + ual2_standard_rm)");
 }
 
 static void gband_draw_skinned(const float *verts6, int vert_count, const Mat4 *mvp, const Mat4 *model) {
@@ -138,6 +163,16 @@ static void gband_draw_skinned(const float *verts6, int vert_count, const Mat4 *
     gl_uniform_matrix4fv(gl_get_uniform_location(g_gband_program, "u_mvp"), mvp->m);
     gl_uniform4fv(gl_get_uniform_location(g_gband_program, "u_color"), base_color);
     gl_dynamic_vbo_draw(&g_gband_vbo, verts6, vert_count, GL_TRIANGLES);
+    gl_use_program(0);
+}
+
+static void skel_npc_draw_skinned(const float *verts6, int vert_count, const Mat4 *mvp, const Mat4 *model) {
+    (void)model; /* world transform pre-baked into verts6, same contract as gband_draw_skinned */
+    static const float base_color[4] = {0.55f, 0.50f, 0.46f, 1.0f}; /* a plain mannequin tan, distinct from Tyler's grey */
+    gl_use_program(g_gband_program); /* same shader as Tyler -- pos+normal in, flat-lit color out */
+    gl_uniform_matrix4fv(gl_get_uniform_location(g_gband_program, "u_mvp"), mvp->m);
+    gl_uniform4fv(gl_get_uniform_location(g_gband_program, "u_color"), base_color);
+    gl_dynamic_vbo_draw(&g_skel_npc_vbo, verts6, vert_count, GL_TRIANGLES);
     gl_use_program(0);
 }
 
@@ -7294,7 +7329,14 @@ void draw_scene(PlayerState *render_p) {
     retro_lighting_eval(now_ms * 0.001f, g_world_lighting_preset, &world_lighting);
     retro_tune_world_fog(&world_lighting, local_state.scene_id);
     
-    draw_grid(); 
+    draw_grid();
+    if (g_skel_npc_ready && g_skel_npc_shader_ready && render_p->scene_id == SCENE_VOXWORLD) {
+        /* S459-97: one static, real, general-skeleton NPC as the first proof of gpose.c's own
+           N-joint FK+skinning path -- fixed position near spawn, always playing its one real
+           imported clip (ual2_standard_rm) on a loop. Reuses the same per-frame VP/dt captured
+           above for Tyler's own draw. */
+        gband_skel_npc_draw(0, 4.0f, 0.0f, 4.0f, 0.0f, g_gband_frame_dt_ms, &g_gband_frame_vp, skel_npc_draw_skinned);
+    }
     update_and_draw_trails();
     draw_terrain(&world_lighting);
     draw_voxworld_grass_overlay(&world_lighting, render_p);
