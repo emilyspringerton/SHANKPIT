@@ -92,6 +92,14 @@ typedef struct {
     float x, y, z; /* world units, matches LevelBox's own convention */
     float yaw;      /* degrees */
     int team;        /* -1 = FFA/any team, 0 = Red Team, 1 = Blue Team */
+    /* id (S491) -- real, found-live gap: the author-assigned spawner id (NOCK's own real, stable
+       Spawner.id) was never actually parsed here at all, dropped silently since nothing needed to
+       target a SPECIFIC spawner by id before LevelExit.target_spawner_id existed. 0 if absent
+       (every pre-S491 level's own real, existing spawners JSON) -- a real, honest "this spawner
+       has no addressable id" state; custom_level_pick_spawner_by_id treats 0 as never matching
+       (0 is also LevelExit.target_spawner_id's own "no specific target" sentinel, so this can
+       never produce a false match). */
+    int id;
 } LevelSpawner;
 
 /* Story System Phase 1 (docs/STORY_SYSTEM_NORTHSTAR.md Part 2) -- the first real scriptable map
@@ -224,14 +232,27 @@ typedef struct {
 
 /* S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1 (founder real-time: "we need the loading
    points or whatever the opposite of the spawners is") -- a real, author-placed exit trigger
-   volume. A player entering it (server-authoritative distance check, MODE_STORY only) transitions
-   to this LEVEL's own real next_level_id below -- every exit volume in a level leads to the SAME
-   next level (v0 is a chain, not a per-exit destination; see the NORTHSTAR doc for why a general
-   graph is deliberately deferred). Mirrors LevelCharacter's own "no cross-reference" simplicity,
-   plus a radius. */
+   volume. A player entering it (server-authoritative distance check, ANY mode as of S477 -- this
+   comment previously said "MODE_STORY only," stale since that fix) transitions to this LEVEL's
+   own real next_level_id below -- every exit volume in a level leads to the SAME next level (v0
+   is a chain, not a per-exit DESTINATION LEVEL; see the NORTHSTAR doc for why a general graph is
+   deliberately deferred).
+
+   target_spawner_id (S491, founder real-time -- GTA-style building interiors: "how can i specify
+   which spawner the exit leads to for the seamless experience of exiting the building"). 0 (the
+   default, every pre-S491 exit's own real absent-key JSON) means "no specific target -- use the
+   destination level's normal team/FFA spawner selection," completely unchanged. >= 1 means this
+   exit, when triggered, overrides that default and places the player at the destination level's
+   own Spawner whose author-assigned id matches exactly (see story_check_level_exits' own real
+   override logic and custom_level_pick_spawner_by_id) -- e.g. a building's front-door exit
+   targeting the exact spawner standing just outside that door, so leaving feels seamless instead
+   of dropping the player at a random spawner across the map. A stale/missing id (the target
+   spawner was renamed or deleted since this exit was authored) is a real, honest, non-fatal
+   miss -- falls back to the same default selection as target_spawner_id=0, never a crash. */
 typedef struct {
     float x, y, z;
     float radius;
+    int target_spawner_id;
 } LevelExit;
 
 #define LEVEL_BOXES_MAX_LEVEL_EXITS 8 /* matches IDUNA/internal/shankpit.MaxLevelExits exactly */
@@ -570,6 +591,10 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
                     LevelSpawner *sp = &out->spawners[out->spawner_count];
                     memset(sp, 0, sizeof(*sp));
                     const char *v2;
+                    if ((v2 = level_boxes_find_key(sobj_start, sobj_end, "id"))) {
+                        float id_f = 0.0f;
+                        if (level_boxes_parse_number(v2, &id_f)) sp->id = (int)id_f;
+                    }
                     if ((v2 = level_boxes_find_key(sobj_start, sobj_end, "x"))) level_boxes_parse_number(v2, &sp->x);
                     if ((v2 = level_boxes_find_key(sobj_start, sobj_end, "y"))) level_boxes_parse_number(v2, &sp->y);
                     if ((v2 = level_boxes_find_key(sobj_start, sobj_end, "z"))) level_boxes_parse_number(v2, &sp->z);
@@ -781,6 +806,10 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
                     if ((v6 = level_boxes_find_key(leobj_start, leobj_end, "y"))) level_boxes_parse_number(v6, &lex->y);
                     if ((v6 = level_boxes_find_key(leobj_start, leobj_end, "z"))) level_boxes_parse_number(v6, &lex->z);
                     if ((v6 = level_boxes_find_key(leobj_start, leobj_end, "radius"))) level_boxes_parse_number(v6, &lex->radius);
+                    if ((v6 = level_boxes_find_key(leobj_start, leobj_end, "target_spawner_id"))) {
+                        float tsid_f = 0.0f;
+                        if (level_boxes_parse_number(v6, &tsid_f)) lex->target_spawner_id = (int)tsid_f;
+                    }
                     out->level_exit_count++;
                     lecursor = leobj_end + 1;
                 }

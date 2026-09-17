@@ -341,6 +341,10 @@ static float g_custom_level_spawner_x[CUSTOM_LEVEL_MAX_SPAWNERS];
 static float g_custom_level_spawner_y[CUSTOM_LEVEL_MAX_SPAWNERS];
 static float g_custom_level_spawner_z[CUSTOM_LEVEL_MAX_SPAWNERS];
 static int g_custom_level_spawner_team[CUSTOM_LEVEL_MAX_SPAWNERS];
+// g_custom_level_spawner_id (S491) -- the spawner's own real, author-assigned id (LevelSpawner.id,
+// NOCK's own stable per-spawner identity), previously dropped entirely at this layer since nothing
+// needed to target a SPECIFIC spawner by id before now. See custom_level_pick_spawner_by_id.
+static int g_custom_level_spawner_id[CUSTOM_LEVEL_MAX_SPAWNERS];
 static int g_custom_level_spawner_count = 0;
 
 // phys_set_custom_level_spawners loads the level's own real, author-placed spawn points -- call
@@ -350,13 +354,14 @@ static int g_custom_level_spawner_count = 0;
 // -- scene_spawn_point's own SCENE_CUSTOM_LEVEL branch below falls back to the already-built
 // S459-57 computed-scatter spawn logic in exactly that case.
 static inline void phys_set_custom_level_spawners(const float *x, const float *y, const float *z,
-                                                    const int *team, int count) {
+                                                    const int *team, const int *id, int count) {
     int n = count > CUSTOM_LEVEL_MAX_SPAWNERS ? CUSTOM_LEVEL_MAX_SPAWNERS : count;
     for (int i = 0; i < n; i++) {
         g_custom_level_spawner_x[i] = x[i];
         g_custom_level_spawner_y[i] = y[i];
         g_custom_level_spawner_z[i] = z[i];
         g_custom_level_spawner_team[i] = team[i];
+        g_custom_level_spawner_id[i] = id[i];
     }
     g_custom_level_spawner_count = n;
 }
@@ -1848,6 +1853,28 @@ static inline int custom_level_pick_spawner(int team, int slot, float *out_x, fl
     *out_y = g_custom_level_spawner_y[idx];
     *out_z = g_custom_level_spawner_z[idx];
     return 1;
+}
+
+// custom_level_pick_spawner_by_id (S491, founder real-time -- GTA-style building interiors: "how
+// can i specify which spawner the exit leads to for the seamless experience of exiting the
+// building"). A real, minimal, additive sibling to custom_level_pick_spawner above -- not a
+// replacement, not team/FFA-aware at all (a specifically-targeted exit doesn't care about team
+// balance, it cares about one exact author-placed spot). spawner_id <= 0 (LevelExit's own "no
+// specific target" sentinel) or no matching spawner found (a stale reference -- the target was
+// renamed/deleted since this exit was authored) both return 0, the same real, honest "no match"
+// contract every other pick function here already uses -- the caller falls back to the normal
+// team/FFA selection, never crashes or silently mis-teleports.
+static inline int custom_level_pick_spawner_by_id(int spawner_id, float *out_x, float *out_y, float *out_z) {
+    if (spawner_id <= 0) return 0;
+    for (int i = 0; i < g_custom_level_spawner_count; i++) {
+        if (g_custom_level_spawner_id[i] == spawner_id) {
+            *out_x = g_custom_level_spawner_x[i];
+            *out_y = g_custom_level_spawner_y[i];
+            *out_z = g_custom_level_spawner_z[i];
+            return 1;
+        }
+    }
+    return 0;
 }
 
 static inline void scene_spawn_point(int scene_id, int slot, float *out_x, float *out_y, float *out_z) {

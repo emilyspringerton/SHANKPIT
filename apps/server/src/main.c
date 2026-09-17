@@ -444,11 +444,13 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
     // S459-58: real, author-placed spawn points, team/FFA-aware.
     float sp_x[LEVEL_BOXES_MAX_SPAWNERS], sp_y[LEVEL_BOXES_MAX_SPAWNERS], sp_z[LEVEL_BOXES_MAX_SPAWNERS];
     int sp_team[LEVEL_BOXES_MAX_SPAWNERS];
+    int sp_id[LEVEL_BOXES_MAX_SPAWNERS]; // S491: threads each spawner's own author-assigned id through
     for (int si = 0; si < lvl->spawner_count; si++) {
         sp_x[si] = lvl->spawners[si].x; sp_y[si] = lvl->spawners[si].y; sp_z[si] = lvl->spawners[si].z;
         sp_team[si] = lvl->spawners[si].team;
+        sp_id[si] = lvl->spawners[si].id;
     }
-    phys_set_custom_level_spawners(sp_x, sp_y, sp_z, sp_team, lvl->spawner_count);
+    phys_set_custom_level_spawners(sp_x, sp_y, sp_z, sp_team, sp_id, lvl->spawner_count);
 
     g_server_match_scene = SCENE_CUSTOM_LEVEL;
     scene_load(g_server_match_scene);
@@ -562,6 +564,7 @@ static void story_check_level_exits(unsigned int now_ms) {
     if (now_ms - g_story_last_level_transition_ms < STORY_LEVEL_TRANSITION_DEBOUNCE_MS) return;
 
     int triggered = 0;
+    int triggered_target_spawner_id = 0; /* S491: which exit fired, if any, carries its own target */
     for (int pi = 0; pi < MAX_CLIENTS && !triggered; pi++) {
         PlayerState *p = &local_state.players[pi];
         if (!p->active || p->state == STATE_DEAD) continue;
@@ -569,7 +572,11 @@ static void story_check_level_exits(unsigned int now_ms) {
             LevelExit *ex = &g_story_level_exits[i];
             float dx = p->x - ex->x, dy = p->y - ex->y, dz = p->z - ex->z;
             float dist2 = dx * dx + dy * dy + dz * dz;
-            if (dist2 <= ex->radius * ex->radius) { triggered = 1; break; }
+            if (dist2 <= ex->radius * ex->radius) {
+                triggered = 1;
+                triggered_target_spawner_id = ex->target_spawner_id;
+                break;
+            }
         }
     }
     if (!triggered) return;
@@ -589,9 +596,23 @@ static void story_check_level_exits(unsigned int now_ms) {
         if (!p->active) continue;
         p->scene_id = g_server_match_scene;
         phys_respawn(p, now_ms);
+        // S491, founder real-time -- GTA-style building interiors: "how can i specify which
+        // spawner the exit leads to for the seamless experience of exiting the building." A real,
+        // surgical override: phys_respawn already did its full normal reset (health/state/ammo/
+        // team-or-FFA spawn selection); if the exit that fired this transition named a specific
+        // target spawner AND it still exists in the destination level, just overwrite the
+        // resulting position with that exact spot. A stale/missing target (custom_level_pick_
+        // spawner_by_id returns 0) is a real, honest, non-fatal miss -- the normal spawn position
+        // phys_respawn already computed stands, never a crash or silent mis-teleport.
+        if (triggered_target_spawner_id > 0) {
+            float tx, ty, tz;
+            if (custom_level_pick_spawner_by_id(triggered_target_spawner_id, &tx, &ty, &tz)) {
+                p->x = tx; p->y = ty; p->z = tz;
+            }
+        }
     }
     g_story_last_level_transition_ms = now_ms;
-    NET_SERVER_LOG("STORY_LEVEL_TRANSITION next_level_id=%d name=%s", next_id, lvl.name);
+    NET_SERVER_LOG("STORY_LEVEL_TRANSITION next_level_id=%d name=%s target_spawner_id=%d", next_id, lvl.name, triggered_target_spawner_id);
 }
 
 // queue_activate_match -- S459-34, the real MODE_QUEUE match activation. Deliberately much

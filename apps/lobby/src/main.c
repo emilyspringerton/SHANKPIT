@@ -2008,11 +2008,13 @@ static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
     // S459-58: real, author-placed spawn points, team/FFA-aware.
     float sp_x[LEVEL_BOXES_MAX_SPAWNERS], sp_y[LEVEL_BOXES_MAX_SPAWNERS], sp_z[LEVEL_BOXES_MAX_SPAWNERS];
     int sp_team[LEVEL_BOXES_MAX_SPAWNERS];
+    int sp_id[LEVEL_BOXES_MAX_SPAWNERS]; // S491: threads each spawner's own author-assigned id through
     for (int si = 0; si < lvl->spawner_count; si++) {
         sp_x[si] = lvl->spawners[si].x; sp_y[si] = lvl->spawners[si].y; sp_z[si] = lvl->spawners[si].z;
         sp_team[si] = lvl->spawners[si].team;
+        sp_id[si] = lvl->spawners[si].id;
     }
-    phys_set_custom_level_spawners(sp_x, sp_y, sp_z, sp_team, lvl->spawner_count);
+    phys_set_custom_level_spawners(sp_x, sp_y, sp_z, sp_team, sp_id, lvl->spawner_count);
     lobby_doors_init(lvl);
     story_buttons_init(lvl); // S485, REFLUX pub/sub buttons -- dlfcn-free, real in local single-player too
 
@@ -2104,11 +2106,16 @@ static void lobby_check_story_level_exits(unsigned int now_ms) {
     if (!hero->active || hero->state == STATE_DEAD) return;
 
     int triggered = 0;
+    int triggered_target_spawner_id = 0; /* S491: mirrors story_check_level_exits' own logic */
     for (int i = 0; i < g_story_level_exit_count; i++) {
         LevelExit *ex = &g_story_level_exits[i];
         float dx = hero->x - ex->x, dy = hero->y - ex->y, dz = hero->z - ex->z;
         float dist2 = dx * dx + dy * dy + dz * dz;
-        if (dist2 <= ex->radius * ex->radius) { triggered = 1; break; }
+        if (dist2 <= ex->radius * ex->radius) {
+            triggered = 1;
+            triggered_target_spawner_id = ex->target_spawner_id;
+            break;
+        }
     }
     if (!triggered) return;
 
@@ -2120,6 +2127,13 @@ static void lobby_check_story_level_exits(unsigned int now_ms) {
     }
     lobby_apply_story_level(&lvl);
     phys_respawn(hero, now_ms);
+    // S491 -- see story_check_level_exits' own identical override for the full rationale.
+    if (triggered_target_spawner_id > 0) {
+        float tx, ty, tz;
+        if (custom_level_pick_spawner_by_id(triggered_target_spawner_id, &tx, &ty, &tz)) {
+            hero->x = tx; hero->y = ty; hero->z = tz;
+        }
+    }
     g_story_last_level_transition_ms = now_ms;
 }
 
