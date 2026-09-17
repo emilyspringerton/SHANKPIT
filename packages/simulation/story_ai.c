@@ -68,6 +68,7 @@ static const char *ai_mode_name(AIMode mode) {
         case AI_MODE_SEARCH: return "SEARCH";
         case AI_MODE_ALLY_FOLLOW: return "ALLY";
         case AI_MODE_FLEE: return "FLEE";
+        case AI_MODE_LEASH_RETURN: return "LEASH_RETURN";
         default: return "DISABLED";
     }
 }
@@ -81,6 +82,9 @@ static const char *ai_role_name(AIRole role) {
         case AI_ROLE_GUARD: return "GUARD";
         case AI_ROLE_STORM_CALLER: return "STORM_CALLER";
         case AI_ROLE_BOMBARDIER: return "BOMBARDIER";
+        case AI_ROLE_RELENTLESS_PURSUER: return "PURSUER";
+        case AI_ROLE_TERRITORIAL_BEAST: return "TERRITORIAL_BEAST";
+        case AI_ROLE_BLIND_STALKER: return "BLIND_STALKER";
         default: return "UNKNOWN";
     }
 }
@@ -144,6 +148,7 @@ static void ai_assign_role_defaults(AIController *ai, PlayerState *p) {
     ai->aggression = 0.6f;
     ai->aim_error_deg = 5.0f;
     ai->move_speed_scale = 0.7f;
+    ai->leash_radius = 0.0f; /* S462 -- per-role default; only AI_ROLE_TERRITORIAL_BEAST sets one */
 
     switch (ai->role) {
         case AI_ROLE_RIFT_HOUND:
@@ -239,6 +244,60 @@ static void ai_assign_role_defaults(AIController *ai, PlayerState *p) {
             ai->aim_error_deg = 9.0f;
             ai->move_speed_scale = 0.42f;
             break;
+        case AI_ROLE_RELENTLESS_PURSUER:
+            /* "Zombie / Relentless Pursuer" -- founder real-time: "Distance Thresholds & Direct
+             * Lines... Paths straight toward the player's last known position. Ignores personal
+             * safety or tactical positioning." Melee-only, attack_range == preferred_range (the
+             * combat function never backs off, no kiting), maximum courage/aggression -- courage
+             * 1.0 also clears S461-01's flee gate (courage < 0.7) outright, which is the whole
+             * point of this archetype: it does not retreat, ever. */
+            p->current_weapon = WPN_KNIFE;
+            ai->vision_range = 150.0f;
+            ai->vision_fov_deg = 110.0f;
+            ai->hearing_range = 110.0f;
+            ai->attack_range = 16.0f;
+            ai->preferred_range = 16.0f;
+            ai->courage = 1.0f;
+            ai->aggression = 1.0f;
+            ai->aim_error_deg = 12.0f;
+            ai->move_speed_scale = 0.62f;
+            break;
+        case AI_ROLE_TERRITORIAL_BEAST:
+            /* "Territorial Beast" -- founder real-time: "Radius Anchoring & Return Leashes...
+             * Patrols a fixed vector coordinate. Aggros if the player enters their sphere, but
+             * retreats if pulled too far away." leash_radius is this role's own real default;
+             * story_ai_spawn_enemy sets home_x/y/z to the real spawn position for every role
+             * (a no-op for the other two new roles below, whose leash_radius stays 0). */
+            p->current_weapon = WPN_SHOTGUN;
+            ai->vision_range = 170.0f;
+            ai->vision_fov_deg = 130.0f;
+            ai->hearing_range = 95.0f;
+            ai->attack_range = 22.0f;
+            ai->preferred_range = 16.0f;
+            ai->courage = 0.75f;
+            ai->aggression = 0.8f;
+            ai->aim_error_deg = 9.0f;
+            ai->move_speed_scale = 0.68f;
+            ai->leash_radius = 120.0f;
+            break;
+        case AI_ROLE_BLIND_STALKER:
+            /* "Ambush Predator" + "Sightless Echo-Locator" combined -- the founder's own two
+             * sections both center on the same real behavior (charge off non-visual detection),
+             * treated here as one archetype rather than two. Near-zero vision_range means
+             * ai_gather_perception's own existing dist<=vision_range check almost never passes --
+             * this role is functionally blind and detects almost entirely through the existing
+             * hearing_range/recently-fired path, zero new perception code needed for that part. */
+            p->current_weapon = WPN_KATANA;
+            ai->vision_range = 8.0f;
+            ai->vision_fov_deg = 360.0f; /* irrelevant at this range -- left wide rather than tuned */
+            ai->hearing_range = 150.0f;
+            ai->attack_range = 20.0f;
+            ai->preferred_range = 20.0f;
+            ai->courage = 0.9f;
+            ai->aggression = 0.95f;
+            ai->aim_error_deg = 7.0f;
+            ai->move_speed_scale = 0.9f;
+            break;
         default:
             break;
     }
@@ -315,6 +374,9 @@ int story_ai_spawn_enemy(ServerState *s, AIRole role, float x, float y, float z)
     ai->flee_path_index = 0;
     ai->squad_id = -1; /* S461-03 -- not in a squad until story_ai_form_squad joins one */
     ai->squad_role = SQUAD_ROLE_NONE;
+    ai->home_x = x; /* S462 -- every role's real spawn position; only load-bearing when */
+    ai->home_y = y; /* leash_radius > 0 (AI_ROLE_TERRITORIAL_BEAST's own default) */
+    ai->home_z = z;
     ai_assign_role_defaults(ai, p);
 
     return slot;
@@ -642,6 +704,95 @@ static void ai_run_flee(ServerState *s, AIController *ai, unsigned int now_ms) {
     }
 }
 
+/* S462: founder real-time: "layer Perlin Noise or Sine Overrides onto your steering engine...
+   inject a perpendicular offset using a time-based sine wave: offset = LeftVector *
+   sin(Time.time * frequency) * amplitude." SHANKPIT's movement is 2D top-down (x/z), so the
+   "LeftVector" perpendicular offset collapses to a straight sine value on in_strafe -- no
+   separate vector math needed, same real simplification ai_run_search's own orbit math already
+   makes for its circular motion. player_id phase-shifts each instance so a pack of these doesn't
+   weave in lockstep. */
+static float ai_weave_strafe(const AIController *ai, unsigned int now_ms, float freq, float amplitude) {
+    return sinf((float)now_ms * 0.001f * freq + (float)ai->player_id * 1.7f) * amplitude;
+}
+
+/* S462 "Zombie / Relentless Pursuer": direct-line pursuit only. Unlike every other role's combat
+   function, this one has no preferred_range kiting/backing-off branch at all -- it always closes,
+   matching the founder's own "ignores personal safety or tactical positioning" exactly. */
+static void ai_combat_pursuer(ServerState *s, AIController *ai, PlayerState *p, const AIPerception *per, unsigned int now_ms) {
+    float target_yaw = ai_angle_to(per->to_player_x, per->to_player_z);
+    target_yaw += humanness_aim_noise(&ai->humanness, ai_clamp(1.0f - ai->aim_error_deg / 10.0f, 0.0f, 1.0f));
+    ai_turn_towards(ai, p, target_yaw, 8.0f);
+    p->in_fwd = 1.0f * ai->move_speed_scale;
+    p->in_strafe = ai_weave_strafe(ai, now_ms, 2.2f, 0.5f);
+    if (per->dist <= ai->attack_range && now_ms >= ai->next_attack_ms) {
+        p->in_shoot = 1;
+        ai->next_attack_ms = now_ms + humanness_reaction_delay_ms(&ai->humanness, 340U);
+    }
+    (void)s;
+}
+
+/* S462 "Territorial Beast": ordinary preferred_range combat, no different from Trooper's own
+   shape here -- the real, distinctive behavior for this role is AI_MODE_LEASH_RETURN, checked
+   unconditionally in story_ai_tick before this function ever runs. */
+static void ai_combat_territorial_beast(ServerState *s, AIController *ai, PlayerState *p, const AIPerception *per, unsigned int now_ms) {
+    float target_yaw = ai_angle_to(per->to_player_x, per->to_player_z);
+    target_yaw += humanness_aim_noise(&ai->humanness, ai_clamp(1.0f - ai->aim_error_deg / 10.0f, 0.0f, 1.0f));
+    ai_turn_towards(ai, p, target_yaw, 6.0f);
+    if (per->dist > ai->preferred_range + 10.0f) p->in_fwd = 0.9f * ai->move_speed_scale;
+    else if (per->dist < ai->preferred_range - 10.0f) p->in_fwd = -0.3f * ai->move_speed_scale;
+    else p->in_fwd = 0.0f;
+    p->in_strafe = ai_weave_strafe(ai, now_ms, 1.6f, 0.6f);
+    if (per->dist <= ai->attack_range && now_ms >= ai->next_attack_ms) {
+        p->in_shoot = 1;
+        ai->next_attack_ms = now_ms + humanness_reaction_delay_ms(&ai->humanness, 480U);
+    }
+    (void)s;
+}
+
+/* S462 "Ambush Predator": once it has a target at all -- which, given this role's near-zero
+   vision_range, is almost always via hearing rather than sight -- it commits hard, no kiting, no
+   hesitation, the widest/fastest weave of the three (the least predictable charge once
+   triggered). Reuses WPN_KATANA's own existing real dash ability as the literal "charge," same
+   real precedent ai_combat_hound already established for that mechanic. */
+static void ai_combat_blind_stalker(ServerState *s, AIController *ai, PlayerState *p, const AIPerception *per, unsigned int now_ms) {
+    float target_yaw = ai_angle_to(per->to_player_x, per->to_player_z);
+    target_yaw += humanness_aim_noise(&ai->humanness, ai_clamp(1.0f - ai->aim_error_deg / 10.0f, 0.0f, 1.0f));
+    ai_turn_towards(ai, p, target_yaw, 9.0f);
+    p->in_fwd = 1.0f * ai->move_speed_scale;
+    p->in_strafe = ai_weave_strafe(ai, now_ms, 3.0f, 0.7f);
+    if (per->dist <= ai->attack_range && now_ms >= ai->next_attack_ms) {
+        p->in_shoot = 1;
+        ai->next_attack_ms = now_ms + humanness_reaction_delay_ms(&ai->humanness, 300U);
+    }
+    if (p->ability_cooldown == 0 && per->dist > 25.0f && per->dist < 90.0f) {
+        p->in_ability = 1;
+    }
+    (void)s;
+}
+
+/* S462: founder real-time pseudocode (TerritorialAutoPilot::Update), followed closely --
+   real arrival back home (dist < 2.0) is the only exit, matching "Arrived back home" exactly.
+   Real stun immunity while returning, using the actual existing stunned_until_ms/
+   stun_immune_until_ms fields (packages/common/protocol.h) rather than inventing a new flag --
+   matches the founder's own SetInvulnerableToStun(true) intent with a real, already-wired
+   mechanic. Re-armed every tick (not just once on entry) so a player repeatedly re-engaging
+   mid-retreat can't outlast a single window. */
+static void ai_run_leash_return(ServerState *s, AIController *ai, unsigned int now_ms) {
+    PlayerState *p = &s->players[ai->player_id];
+    float dx = ai->home_x - p->x;
+    float dz = ai->home_z - p->z;
+    float dist = ai_len2(dx, dz);
+
+    p->stunned_until_ms = 0;
+    p->stun_immune_until_ms = now_ms + 500U;
+
+    if (dist < 2.0f) {
+        ai_set_mode(ai, AI_MODE_PATROL, now_ms);
+        return;
+    }
+    ai_move_towards(ai, p, ai->home_x, ai->home_z, 0.85f * ai->move_speed_scale, 6.0f, 10.0f);
+}
+
 static void ai_combat_hound(ServerState *s, AIController *ai, PlayerState *p, const AIPerception *per, unsigned int now_ms) {
     PlayerState *hero = &s->players[0];
     float target_yaw = ai_angle_to(per->to_player_x, per->to_player_z);
@@ -802,8 +953,11 @@ static void ai_run_combat(ServerState *s, AIController *ai, const AIPerception *
     else if (ai->role == AI_ROLE_STORY_ALLY) ai_combat_ally(s, ai, p, per, now_ms);
     else if (ai->role == AI_ROLE_STORM_CALLER) ai_combat_storm_caller(s, ai, p, per, now_ms);
     else if (ai->role == AI_ROLE_BOMBARDIER) ai_combat_bombardier(s, ai, p, per, now_ms);
+    else if (ai->role == AI_ROLE_RELENTLESS_PURSUER) ai_combat_pursuer(s, ai, p, per, now_ms);
+    else if (ai->role == AI_ROLE_TERRITORIAL_BEAST) ai_combat_territorial_beast(s, ai, p, per, now_ms);
+    else if (ai->role == AI_ROLE_BLIND_STALKER) ai_combat_blind_stalker(s, ai, p, per, now_ms);
     else ai_combat_trooper(s, ai, p, per, now_ms);
-    ai_squad_apply_role_bias(ai, p); /* S461-03 */
+    ai_squad_apply_role_bias(ai, p); /* S461-03 -- a real no-op for these roles, squad_id stays -1 */
 }
 
 void story_ai_tick(ServerState *s, unsigned int now_ms) {
@@ -846,6 +1000,21 @@ void story_ai_tick(ServerState *s, unsigned int now_ms) {
            interrupt it (the founder's own spec: "forced the NPC into a locked 'scripted state'").
            ai_run_scripted below owns its own exit via ai_set_mode. */
         if (ai->mode == AI_MODE_SCRIPTED) continue;
+
+        /* S462: real leash override, checked before anything else (including combat/flee) so it
+           forces unconditionally, matching the founder's own pseudocode exactly ("If the monster
+           is dragged too far from its zone, force a retreat"). leash_radius == 0 for every role
+           except AI_ROLE_TERRITORIAL_BEAST makes this a real no-op for the rest of the roster.
+           Once in AI_MODE_LEASH_RETURN, stays there until ai_run_leash_return's own real arrival
+           check exits it -- re-entering the radius alone does not cancel the return early. */
+        if (ai->leash_radius > 0.0f) {
+            float home_dist = ai_len2(s->players[ai->player_id].x - ai->home_x, s->players[ai->player_id].z - ai->home_z);
+            if (home_dist > ai->leash_radius) {
+                ai_set_mode(ai, AI_MODE_LEASH_RETURN, now_ms);
+                continue;
+            }
+            if (ai->mode == AI_MODE_LEASH_RETURN) continue;
+        }
 
         wants_combat = per->visible;
         search_timeout = STORY_AI_SEARCH_MIN_MS + (((unsigned int)ai->player_id * 317U) % STORY_AI_SEARCH_VAR_MS);
@@ -909,6 +1078,7 @@ void story_ai_tick(ServerState *s, unsigned int now_ms) {
         else if (ai->mode == AI_MODE_COMBAT) ai_run_combat(s, ai, &g_story_perception[i], now_ms);
         else if (ai->mode == AI_MODE_FLEE) ai_run_flee(s, ai, now_ms);
         else if (ai->mode == AI_MODE_SCRIPTED) ai_run_scripted(s, ai, now_ms);
+        else if (ai->mode == AI_MODE_LEASH_RETURN) ai_run_leash_return(s, ai, now_ms);
     }
 
 #if STORY_AI_DEBUG
@@ -1025,6 +1195,16 @@ void story_ai_seed_voxworld_encounter(ServerState *s) {
         if (id_bm > 0) squad_b[sb_n++] = id_bm;
         if (sb_n > 0) story_ai_form_squad(squad_b, sb_n);
     }
+
+    /* S462: three real, deliberately solo spawns -- never passed to story_ai_form_squad, each
+       placed away from the two hostile squads above (a lone monster sharing a squad's engagement
+       space would undercut the whole point of a distinct, non-coordinated archetype). Pursuer
+       roams a flank corridor; the Territorial Beast is anchored well clear of the main fight so
+       its leash actually matters; the Blind Stalker sits in a real dead zone off to the side,
+       matching its own "ambush predator... sits ... then charges" description. */
+    story_ai_spawn_enemy(s, AI_ROLE_RELENTLESS_PURSUER, cx + 20.0f, 8.0f, cz + 70.0f);
+    story_ai_spawn_enemy(s, AI_ROLE_TERRITORIAL_BEAST, cx - 100.0f, 8.0f, cz + 60.0f);
+    story_ai_spawn_enemy(s, AI_ROLE_BLIND_STALKER, cx + 90.0f, 8.0f, cz + 40.0f);
 
     /* S461-01: first real, hand-authored waypoint/cover graph for this encounter -- a loop of
        plain waypoints plus two cover nodes, seeded fresh (story_ai_reset already cleared

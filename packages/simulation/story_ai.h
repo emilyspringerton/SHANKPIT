@@ -21,7 +21,12 @@ typedef enum {
     AI_MODE_SEARCH,
     AI_MODE_FLEE,
     AI_MODE_ALLY_FOLLOW,
-    AI_MODE_SCRIPTED
+    AI_MODE_SCRIPTED,
+    /* S462 -- real Territorial Beast radius-anchor/leash retreat (founder real-time: "Radius
+       Anchoring & Return Leashes... retreats if pulled too far away"). Forced unconditionally
+       (even mid-combat) whenever distance-from-home exceeds leash_radius; exits only on real
+       arrival back home, not on the radius re-check alone. See ai_run_leash_return. */
+    AI_MODE_LEASH_RETURN
 } AIMode;
 
 typedef enum {
@@ -38,7 +43,15 @@ typedef enum {
      * built on real, already-proven SHANKPIT weapon mechanics -- not
      * invented systems. */
     AI_ROLE_STORM_CALLER,  /* WPN_SNIPER -- long-range storm-charge burst threat */
-    AI_ROLE_BOMBARDIER     /* WPN_MISSILE -- heavy, slow, real splash-AOE spammer */
+    AI_ROLE_BOMBARDIER,    /* WPN_MISSILE -- heavy, slow, real splash-AOE spammer */
+    /* S462 -- solo, non-squad enemy archetypes (founder real-time: "the auto-pilot AI shifts its
+       focus away from tactical communication and onto territorial boundaries, distinct sensory
+       profiles, and physiological drives"). Never joined to a squad (story_ai_form_squad is
+       never called for them) -- squad_id stays -1, the same default every AI spawns with. */
+    AI_ROLE_RELENTLESS_PURSUER, /* "Zombie" -- direct-line pursuit only, never kites, never flees */
+    AI_ROLE_TERRITORIAL_BEAST,  /* radius-anchored home + leash retreat, see AI_MODE_LEASH_RETURN */
+    AI_ROLE_BLIND_STALKER       /* "Ambush Predator" + "Sightless Echo-Locator" combined -- near-
+                                    zero vision, detects almost entirely by hearing */
 } AIRole;
 
 typedef struct {
@@ -124,6 +137,13 @@ typedef struct {
        "arrived, now holding" timer -- SCRIPTED and PATROL are mutually exclusive per AI. */
     float scripted_marker_x, scripted_marker_y, scripted_marker_z;
     unsigned int scripted_hold_ms;
+
+    /* S462 -- home anchor, set to this AI's own real spawn position for EVERY role
+       (story_ai_spawn_enemy), but only load-bearing when leash_radius > 0 (AI_ROLE_TERRITORIAL_
+       BEAST's own per-role default; every other role keeps leash_radius == 0, a real no-op --
+       the story_ai_tick leash check never fires for them). */
+    float home_x, home_y, home_z;
+    float leash_radius;
 } AIController;
 
 /* S461-03 -- a real, persistent group of specific AIController slots (by index into the
