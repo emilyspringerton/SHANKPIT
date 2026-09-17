@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-17
+- feat(ai): real NOCK-authored waypoint/cover graph loading -- new LevelNavNode parser + story_ai_load_nav_graph, wired into server_apply_custom_level. Closes AI_WAYPOINT_NAV_NORTHSTAR.md's own NOCK-authoring gap: a SCENE_CUSTOM_LEVEL no longer needs hardcoded C to get a real waypoint/cover graph (sess-20260905-0720-ec33e7c5)
 - feat(goldenband): vendor gpose_look_at (bone-controller look-at) + new gsync.c/.h (multi-actor frame sync barrier) from GOLDENBAND; added gsync.c to LOBBY_SRC. AI_SCRIPTED_ANIMATION_NORTHSTAR.md updated -- both real, tested, but not yet wired to any gameplay consumer (nothing connects story_ai's NPCs to gband_skel_npc rendering yet, unchanged finding) (sess-20260905-0720-ec33e7c5)
 - docs(story-system): STORY_SYSTEM_NORTHSTAR.md + level_boxes.h updated -- NOCK door-authoring gap closed on the IDUNA side (see IDUNA's own CHANGELOG), a level author can now attach a compiled door script to a placed wall directly in ShankpitLevelEditor.tsx (sess-20260905-0720-ec33e7c5)
 - feat(ai): S462 real solo/non-squad enemy archetypes -- AI_ROLE_RELENTLESS_PURSUER (never kites, never flees), AI_ROLE_TERRITORIAL_BEAST (real leash/anchor retreat via new AI_MODE_LEASH_RETURN, real stun immunity while returning), AI_ROLE_BLIND_STALKER (near-zero vision, hearing-only detection reuses existing perception code). Real sine-wave weaving for all three. docs2/specs/AI_SOLO_ENEMY_NORTHSTAR.md names scent-trail tracking and utility-based drives as real, not-yet-built follow-up (sess-20260905-0720-ec33e7c5)
