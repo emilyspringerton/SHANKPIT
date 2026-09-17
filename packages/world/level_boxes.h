@@ -107,8 +107,43 @@ typedef struct {
         IDUNA's own GET /api/v1/nock-door-scripts/:id/download, internal/http/handlers/
         nock_door_scripts_public.go) -- story_doors.h downloads this once at level load and
         caches it locally before dlopen, same real "no local script authoring toolchain needed"
-        closing of the original "via the nock tools" gap this whole system started from. */
+        closing of the original "via the nock tools" gap this whole system started from. Empty
+        script_path AND script_url (the real, common case: a door with no custom PARENA script
+        attached at all) is NOT an error -- see door_tick_builtin_proximity below, the real
+        default behavior every door gets without requiring any script. */
 } LevelDoor;
+
+/* door_tick_builtin_proximity -- S473 follow-up (found live, 2026-09-17, founder real-time: "i
+   dont know why this never moved forward i kept asking for doors please make doors actually
+   work"). Real root cause: a door with no script attached used to still emit a real script_url
+   pointing at a nonexistent script id (id 0), a guaranteed 404 -- so a door placed without first
+   writing+attaching a custom PARENA door_tick script silently did nothing at all, on every
+   platform including the dedicated server, with zero visible feedback to the level author. This
+   is the real, working default every door now gets automatically: opens once a player closes to
+   within OPEN_DIST, closes once they're back out past CLOSE_DIST (a real hysteresis band between
+   the two, CLOSE_DIST > OPEN_DIST, so a door standing exactly at the boundary doesn't flicker
+   open/closed every tick) -- same real `(dist, state) -> new_state` contract door_tick_fn already
+   uses server-side, so this slots in as a real fallback there with zero changes to DoorRuntime's
+   own tick-invocation code, AND is dlfcn-free (pure static C, no dynamic loading at all) so it's
+   the ONLY door behavior currently available in the lobby build (dlopen/dlfcn.h is POSIX-only --
+   the lobby's own Windows-cross-compiled client has no dlopen equivalent wired up, a real,
+   separate, not-yet-attempted lift, not something this pass silently promises). A door WITH a
+   real, attached custom script keeps using that script's own real logic unchanged -- this is
+   purely additive for the no-script case. */
+#define LEVEL_BOXES_DOOR_BUILTIN_OPEN_DIST 8.0
+#define LEVEL_BOXES_DOOR_BUILTIN_CLOSE_DIST 12.0
+/* STORY_DOOR_OPEN_THRESHOLD -- the real, shared boolean interpretation of a door's own continuous
+   state value (>= this means "open enough to disable collision"), used identically by both
+   story_doors.h's dlopen'd-script path (server-only) and the lobby's own builtin-only path below
+   -- moved here (was originally story_doors.h-only) once a real second, dlfcn-free consumer
+   existed. A script MAY return intermediate values for a future opening/closing animation state;
+   only this threshold's own collision toggle is acted on today. */
+#define STORY_DOOR_OPEN_THRESHOLD 0.5
+static inline double door_tick_builtin_proximity(double dist, double state) {
+    if (dist <= LEVEL_BOXES_DOOR_BUILTIN_OPEN_DIST) return 1.0;
+    if (dist >= LEVEL_BOXES_DOOR_BUILTIN_CLOSE_DIST) return 0.0;
+    return state;
+}
 
 /* S461-01/S464 -- a real, author-placed waypoint/cover node, same JSON authoring convention as
    LevelDoor above (founder real-time: "we are going to need a waypoint system in the levels and
@@ -536,8 +571,15 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
                     if ((v3 = level_boxes_find_key(dobj_start, dobj_end, "script_url"))) {
                         level_boxes_parse_string(v3, door->script_url, sizeof(door->script_url));
                     }
-                    if (door->box_index >= 0 && door->box_index < count &&
-                        (door->script_path[0] != '\0' || door->script_url[0] != '\0')) {
+                    // REAL, FOUND, PRE-EXISTING BUG (2026-09-17, founder real-time: "i dont know
+                    // why this never moved forward i kept asking for doors please make doors
+                    // actually work"): this used to ALSO require a real script_path/script_url
+                    // before counting the door as existing at all -- so an unscripted door was
+                    // silently dropped HERE, at parse time, before door_tick_builtin_proximity's
+                    // own fallback in story_doors_init ever got a chance to run. A door only
+                    // needs a real box_index to be a real door; whether it has a script is a
+                    // separate, later concern (story_doors_init's own real fallback).
+                    if (door->box_index >= 0 && door->box_index < count) {
                         out->door_count++;
                     }
                     dcursor = dobj_end + 1;

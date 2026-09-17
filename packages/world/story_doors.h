@@ -33,8 +33,6 @@ static inline void story_doors_cache_path(int box_index, char *out, size_t outsi
     snprintf(out, outsize, "%s/door_%d.so", STORY_DOOR_CACHE_DIR, box_index);
 }
 
-#define STORY_DOOR_OPEN_THRESHOLD 0.5
-
 // door_tick's own real, fixed contract (docs/STORY_SYSTEM_NORTHSTAR.md Part 2):
 //   (defn door-tick [(dist-to-player : F64) (state : F64)] : F64 ...)
 // emitted by PARENA's C target as `double door_tick(double, double)` -- checked directly against
@@ -76,6 +74,22 @@ static inline void story_doors_init(const CustomLevelData *lvl) {
         const LevelDoor *ld = &lvl->doors[i];
         const char *open_path = ld->script_path;
         char cache_path[LEVEL_BOXES_SCRIPT_PATH_LEN + 32];
+
+        // Real, working default (found live, 2026-09-17): no script_path AND no script_url means
+        // this door genuinely has no custom PARENA script attached -- a real, common, EXPECTED
+        // case, not a malformed export. Register it with door_tick_builtin_proximity right away
+        // and move on, rather than falling through into the dlopen path below (which used to
+        // always get attempted against an empty path and fail). See door_tick_builtin_proximity's
+        // own doc comment in level_boxes.h for the full story.
+        if (ld->script_path[0] == '\0' && ld->script_url[0] == '\0') {
+            DoorRuntime *dr = &g_story_doors[g_story_door_count++];
+            dr->box_index = ld->box_index;
+            dr->dl_handle = NULL;
+            dr->tick = door_tick_builtin_proximity;
+            dr->state = 0.0;
+            printf("[story-doors] no script attached for box_index=%d -- using builtin proximity default\n", ld->box_index);
+            continue;
+        }
 
         // S459-82: script_url takes precedence when both are set (script_path stays as a real,
         // honest local-dev/testing fallback, same as it's always been). Download once here, at
