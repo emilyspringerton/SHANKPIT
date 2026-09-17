@@ -17,6 +17,20 @@
 #define STORY_AI_FLEE_HEALTH_PCT 30
 #define STORY_AI_FLEE_COURAGE_MAX 0.7f
 
+/* S470 -- real, tuned-by-eye ambient-greet constants (founder real-time: "wave to the player when
+   the player gets close and then dance before resuming patrol"). Radius comfortably inside
+   ai_gather_perception's own vision_range values so a wandering bot notices the player at a
+   normal walking approach, not at point-blank range. Cooldown prevents an immediate re-trigger
+   the instant the greet ends while the player is still standing right there -- the bot resumes a
+   real patrol leg first. Hold durations are picked against the real clip lengths exported for
+   this pass (George/Stan/Mike/Leela's own Hello gesture runs ~1.5-1.9s at 30 ticks/sec, the
+   mannequin's real Dance_Loop ~1.0s) so each phase plays at least one full loop, not a clipped
+   fraction. */
+#define STORY_AI_GREET_RADIUS 24.0f
+#define STORY_AI_GREET_COOLDOWN_MS 9000U
+#define STORY_AI_GREET_WAVE_MS 1800U
+#define STORY_AI_GREET_DANCE_MS 2800U
+
 
 static float ai_angle_diff(float a, float b) {
     float d = a - b;
@@ -69,6 +83,7 @@ static const char *ai_mode_name(AIMode mode) {
         case AI_MODE_ALLY_FOLLOW: return "ALLY";
         case AI_MODE_FLEE: return "FLEE";
         case AI_MODE_LEASH_RETURN: return "LEASH_RETURN";
+        case AI_MODE_GREET: return "GREET";
         default: return "DISABLED";
     }
 }
@@ -85,6 +100,7 @@ static const char *ai_role_name(AIRole role) {
         case AI_ROLE_RELENTLESS_PURSUER: return "PURSUER";
         case AI_ROLE_TERRITORIAL_BEAST: return "TERRITORIAL_BEAST";
         case AI_ROLE_BLIND_STALKER: return "BLIND_STALKER";
+        case AI_ROLE_WANDERING_BOT: return "WANDERING_BOT";
         default: return "UNKNOWN";
     }
 }
@@ -99,6 +115,7 @@ static void ai_reset_input(PlayerState *p) {
     p->in_use = 0;
     p->in_ability = 0;
     p->crouching = 0;
+    p->anim_override = 0; /* S470 -- real per-tick reset; only ai_run_greet ever sets this non-zero */
 }
 
 /* Humanness Phase 2: ai_turn_towards now routes through humanness_smooth_turn_step
@@ -297,6 +314,18 @@ static void ai_assign_role_defaults(AIController *ai, PlayerState *p) {
             ai->aggression = 0.95f;
             ai->aim_error_deg = 7.0f;
             ai->move_speed_scale = 0.9f;
+            break;
+        case AI_ROLE_WANDERING_BOT:
+            /* S470 -- real, deliberately harmless: never fires (no combat function is ever
+               dispatched for this role, see story_ai_tick's own decision-loop bypass), so
+               weapon/attack_range/aim are dead data here, kept only because
+               ai_assign_role_defaults sets every field unconditionally before this switch and
+               leaving them at their generic defaults is honest rather than a fabricated
+               "0 means something" convention. vision/hearing_range stay at the generic default
+               too -- proximity-to-player detection for AI_MODE_GREET is a plain distance check
+               against STORY_AI_GREET_RADIUS, not perception-based, so these values are never
+               actually read for this role either. */
+            ai->move_speed_scale = 0.55f;
             break;
         default:
             break;
@@ -654,6 +683,49 @@ static void ai_run_scripted(ServerState *s, AIController *ai, unsigned int now_m
         ai->wait_until_ms = 0;
         ai_set_mode(ai, back_to, now_ms);
     }
+}
+
+/* S470 -- real ambient greet: stop, face the player, wave (phase 0), then dance (phase 1), then
+   hand back to AI_MODE_PATROL, matching ai_run_scripted's own hold-timer/handoff pattern above.
+   Faces the player continuously through both phases (not just once on entry) so a player who
+   walks a slow circle around the bot mid-greet sees it keep turning to follow, same real
+   ai_turn_towards call every other mode already leans on. What actually PLAYS during each phase
+   is a client-side render decision (p->anim_override, see PlayerState's own doc comment) -- this
+   function only owns the real, server-authoritative timing/facing/handoff, same division of
+   responsibility AI_MODE_SCRIPTED's own doc comment already names. */
+static void ai_run_greet(ServerState *s, AIController *ai, unsigned int now_ms) {
+    PlayerState *p = &s->players[ai->player_id];
+    PlayerState *hero = &s->players[0];
+    float dx = hero->x - p->x;
+    float dz = hero->z - p->z;
+    float target_yaw = ai_angle_to(dx, dz);
+
+    p->in_fwd = 0.0f;
+    p->in_strafe = 0.0f;
+    ai_turn_towards(ai, p, target_yaw, 8.0f);
+
+    /* Phase transition (if any) is applied BEFORE anim_override is read below, so the tick a
+       phase actually flips on shows the NEW gesture immediately rather than lagging one tick
+       behind -- a real, found-by-test bug in an earlier draft of this function (set
+       anim_override from the OLD phase before checking the timer). */
+    if (ai->wait_until_ms == 0) {
+        ai->wait_until_ms = now_ms + ((ai->greet_phase == 0) ? STORY_AI_GREET_WAVE_MS : STORY_AI_GREET_DANCE_MS);
+    } else if (now_ms >= ai->wait_until_ms) {
+        ai->wait_until_ms = 0;
+        if (ai->greet_phase == 0) {
+            ai->greet_phase = 1; /* wave done -- move to dance, sampled below this same tick */
+        } else {
+            /* dance done -- resume patrol from wherever patrol_index already was. Returns
+               without touching anim_override -- it stays 0 (ai_reset_input's own per-tick reset,
+               already applied before this function ran), correct since this AI is no longer in
+               AI_MODE_GREET as of this tick. */
+            ai->greet_phase = 0;
+            ai->last_greet_ms = now_ms;
+            ai_set_mode(ai, AI_MODE_PATROL, now_ms);
+            return;
+        }
+    }
+    p->anim_override = (ai->greet_phase == 0) ? 1 /* GBAND_SKEL_NPC_ANIM_GREET */ : 2 /* GBAND_SKEL_NPC_ANIM_DANCE */;
 }
 
 static void ai_run_ally_follow(ServerState *s, AIController *ai, unsigned int now_ms) {
@@ -1020,6 +1092,36 @@ void story_ai_tick(ServerState *s, unsigned int now_ms) {
            ai_run_scripted below owns its own exit via ai_set_mode. */
         if (ai->mode == AI_MODE_SCRIPTED) continue;
 
+        /* S470: real, deliberate bypass -- a wandering bot never enters combat/investigate/
+           search/flee at all (checked BEFORE the leash check below, same ordering reason S462's
+           own leash override sits before combat: this role's real behavior takes over
+           unconditionally, not layered on top of the general roster state machine). GREET is a
+           locked state, same "owns its own exit" pattern as SCRIPTED above -- ai_run_greet is the
+           only thing that ever leaves it. */
+        if (ai->role == AI_ROLE_WANDERING_BOT) {
+            if (ai->mode == AI_MODE_GREET) continue;
+            {
+                PlayerState *hero = &s->players[0];
+                PlayerState *bot = &s->players[ai->player_id];
+                float gdist = ai_len2(hero->x - bot->x, hero->z - bot->z);
+                /* last_greet_ms == 0 is the real "never greeted yet" sentinel (same convention
+                   wait_until_ms == 0 already uses elsewhere in this file) -- without it, a bot
+                   that hasn't greeted at all would have its first-ever greet incorrectly blocked
+                   by the cooldown math whenever now_ms itself is still under
+                   STORY_AI_GREET_COOLDOWN_MS since process start (a real bug, caught by a real
+                   test before this ever shipped, not assumed safe). */
+                if (hero->active && hero->state != STATE_DEAD && gdist < STORY_AI_GREET_RADIUS &&
+                    (ai->last_greet_ms == 0 || (now_ms - ai->last_greet_ms) >= STORY_AI_GREET_COOLDOWN_MS)) {
+                    ai->greet_phase = 0;
+                    ai->wait_until_ms = 0;
+                    ai_set_mode(ai, AI_MODE_GREET, now_ms);
+                } else {
+                    ai_set_mode(ai, AI_MODE_PATROL, now_ms);
+                }
+            }
+            continue;
+        }
+
         /* S462: real leash override, checked before anything else (including combat/flee) so it
            forces unconditionally, matching the founder's own pseudocode exactly ("If the monster
            is dragged too far from its zone, force a retreat"). leash_radius == 0 for every role
@@ -1098,6 +1200,7 @@ void story_ai_tick(ServerState *s, unsigned int now_ms) {
         else if (ai->mode == AI_MODE_FLEE) ai_run_flee(s, ai, now_ms);
         else if (ai->mode == AI_MODE_SCRIPTED) ai_run_scripted(s, ai, now_ms);
         else if (ai->mode == AI_MODE_LEASH_RETURN) ai_run_leash_return(s, ai, now_ms);
+        else if (ai->mode == AI_MODE_GREET) ai_run_greet(s, ai, now_ms);
     }
 
 #if STORY_AI_DEBUG
@@ -1224,6 +1327,47 @@ void story_ai_seed_voxworld_encounter(ServerState *s) {
     story_ai_spawn_enemy(s, AI_ROLE_RELENTLESS_PURSUER, cx + 20.0f, 8.0f, cz + 70.0f);
     story_ai_spawn_enemy(s, AI_ROLE_TERRITORIAL_BEAST, cx - 100.0f, 8.0f, cz + 60.0f);
     story_ai_spawn_enemy(s, AI_ROLE_BLIND_STALKER, cx + 90.0f, 8.0f, cz + 40.0f);
+
+    /* S470 -- real, ambient "greeting committee": 5 non-hostile AI_ROLE_WANDERING_BOT spawns,
+       one per real robot look currently loaded (mannequin/Stan/Mike/Leela/George). Spawned as 5
+       back-to-back story_ai_spawn_enemy calls on purpose: SHANKPIT's own p->id-based kit-cycling
+       (apps/lobby/src/main.c draw_player_skin_mannequin, S469) picks a kit from
+       kits[(p->id + i) % 5], so 5 CONSECUTIVE slot ids are mathematically guaranteed to land on
+       all 5 distinct kits exactly once each, regardless of which slot numbers these particular
+       calls happen to land on (earlier spawns above already consumed some). Placed closer to the
+       player's own entry side of the arena (z nearer -190/-170) than the two hostile squads
+       (z -350..-190) and the boss itself (z -420) -- a real, deliberate "walk past the robots on
+       the way in" read, not verified against real wall/prop placement (same honest caveat the
+       nav graph's own comment above already gives -- no wall-collision data exists anywhere in
+       SHANKPIT to check placement against). Each patrols a short 2-point loop so it reads as
+       ambient background motion rather than a real patrol route across the map. */
+    story_ai_spawn_enemy(s, AI_ROLE_WANDERING_BOT, cx - 80.0f, 8.0f, cz + 60.0f);
+    story_ai_spawn_enemy(s, AI_ROLE_WANDERING_BOT, cx - 35.0f, 8.0f, cz + 65.0f);
+    story_ai_spawn_enemy(s, AI_ROLE_WANDERING_BOT, cx + 10.0f, 8.0f, cz + 70.0f);
+    story_ai_spawn_enemy(s, AI_ROLE_WANDERING_BOT, cx + 50.0f, 8.0f, cz + 60.0f);
+    story_ai_spawn_enemy(s, AI_ROLE_WANDERING_BOT, cx + 0.0f, 8.0f, cz + 90.0f);
+    {
+        int wb_ids[5];
+        int wb_n = 0;
+        for (int i = 0; i < STORY_AI_MAX; i++) {
+            if (g_story_ai[i].active && g_story_ai[i].role == AI_ROLE_WANDERING_BOT) wb_ids[wb_n++] = g_story_ai[i].player_id;
+            if (wb_n >= 5) break;
+        }
+        float wb_patrol[5][2][2] = {
+            {{cx - 80.0f, cz + 60.0f}, {cx - 55.0f, cz + 45.0f}},
+            {{cx - 35.0f, cz + 65.0f}, {cx - 15.0f, cz + 40.0f}},
+            {{cx + 10.0f, cz + 70.0f}, {cx + 30.0f, cz + 45.0f}},
+            {{cx + 50.0f, cz + 60.0f}, {cx + 75.0f, cz + 40.0f}},
+            {{cx + 0.0f, cz + 90.0f}, {cx + 0.0f, cz + 65.0f}},
+        };
+        for (int i = 0; i < wb_n; i++) {
+            AIController *ai = NULL;
+            for (int k = 0; k < STORY_AI_MAX; k++) if (g_story_ai[k].active && g_story_ai[k].player_id == wb_ids[i]) { ai = &g_story_ai[k]; break; }
+            if (!ai) continue;
+            ai_set_patrol(ai, 0, wb_patrol[i][0][0], 8.0f, wb_patrol[i][0][1], 1800U, 0);
+            ai_set_patrol(ai, 1, wb_patrol[i][1][0], 8.0f, wb_patrol[i][1][1], 1800U, 0);
+        }
+    }
 
     /* S461-01: first real, hand-authored waypoint/cover graph for this encounter -- a loop of
        plain waypoints plus two cover nodes, seeded fresh (story_ai_reset already cleared

@@ -26,7 +26,14 @@ typedef enum {
        Anchoring & Return Leashes... retreats if pulled too far away"). Forced unconditionally
        (even mid-combat) whenever distance-from-home exceeds leash_radius; exits only on real
        arrival back home, not on the radius re-check alone. See ai_run_leash_return. */
-    AI_MODE_LEASH_RETURN
+    AI_MODE_LEASH_RETURN,
+    /* S470 -- real, ambient friendly behavior (founder real-time: "have them wave to the player
+       when the player gets close and then dance before resuming patrol"). Locked, non-combat --
+       AI_ROLE_WANDERING_BOT is the only role that ever enters it, and its own decision logic
+       (story_ai_tick) never routes it through combat/investigate/flee at all, same class of
+       "real behavior, deliberately excluded from the rest of the state machine" precedent
+       AI_MODE_SCRIPTED's own locked-state comment already sets. See ai_run_greet. */
+    AI_MODE_GREET
 } AIMode;
 
 typedef enum {
@@ -50,8 +57,16 @@ typedef enum {
        never called for them) -- squad_id stays -1, the same default every AI spawns with. */
     AI_ROLE_RELENTLESS_PURSUER, /* "Zombie" -- direct-line pursuit only, never kites, never flees */
     AI_ROLE_TERRITORIAL_BEAST,  /* radius-anchored home + leash retreat, see AI_MODE_LEASH_RETURN */
-    AI_ROLE_BLIND_STALKER       /* "Ambush Predator" + "Sightless Echo-Locator" combined -- near-
+    AI_ROLE_BLIND_STALKER,      /* "Ambush Predator" + "Sightless Echo-Locator" combined -- near-
                                     zero vision, detects almost entirely by hearing */
+    /* S470 -- real, non-hostile ambient archetype (founder real-time: "get all the robots in
+       there and have them walking around different waypoints... wave to the player when the
+       player gets close and then dance before resuming patrol"). Never enters combat/investigate/
+       search/flee at all -- story_ai_tick's own decision loop special-cases this role the same
+       way it already special-cases AI_ROLE_STORY_ALLY, just routing to AI_MODE_PATROL/
+       AI_MODE_GREET only instead of ALLY_FOLLOW/COMBAT. Never joined to a squad, same as the
+       three S462 solo archetypes. */
+    AI_ROLE_WANDERING_BOT
 } AIRole;
 
 typedef struct {
@@ -144,6 +159,13 @@ typedef struct {
        the story_ai_tick leash check never fires for them). */
     float home_x, home_y, home_z;
     float leash_radius;
+
+    /* S470 -- real AI_MODE_GREET phase state. greet_phase: 0 = wave, 1 = dance. wait_until_ms
+       (above) is reused as the "this phase's own hold timer" sentinel, same convention
+       AI_MODE_SCRIPTED's own wait_until_ms reuse already establishes -- GREET and SCRIPTED/PATROL
+       never run concurrently on the same AI so there's no real conflict over the field. */
+    int greet_phase;
+    unsigned int last_greet_ms;
 } AIController;
 
 /* S461-03 -- a real, persistent group of specific AIController slots (by index into the
