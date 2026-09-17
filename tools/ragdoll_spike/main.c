@@ -33,6 +33,30 @@
 // requirement for a believable ragdoll, not a nice-to-have -- that's the real next spike/design
 // question, not per-bone collision shapes or mass tuning (those are comparatively minor next to
 // getting joints to stop folding flat).
+//
+// ITERATION 2 (S494, founder real-time: "just work on ragdoll physics" / "we are going to need
+// to define masses for objects im sure for rigid body physics"). Added real per-bone mass
+// (proportional to each joint's own parent-bone length -- a thigh genuinely outweighs a finger
+// bone now, replacing the original uniform inv_mass=1) and a real bend constraint (a one-sided
+// minimum-distance constraint between a joint and its own grandparent, the standard PBD technique
+// for bend resistance -- see BendConstraint's own doc comment).
+//
+// RESULT, real and conclusive, and NOT the fix it looked like it would be: the bend constraint
+// works exactly as designed -- verified directly, 0/63 constraints violated at the final settled
+// state, every joint stays at least 85% extended from its own grandparent, real hyperextension/
+// fold-back is genuinely prevented. But the whole body STILL collapses completely flat (every
+// joint at y=0.000, spread out in the XZ plane) by t=0.75s, unchanged from iteration 1. Real,
+// important, hard-won lesson: a fully-extended limb lying FLAT on the ground satisfies every
+// distance AND bend constraint simultaneously -- neither constraint type has any concept of
+// "orientation relative to gravity/up" at all, only relative distances BETWEEN points. This is a
+// fundamental ceiling, not a tuning problem: NO number or combination of point-distance
+// constraints (equality or one-sided) can ever stop a chain from lying flat, because that failure
+// mode isn't a distance violation. A genuinely believable ragdoll needs actual per-BONE
+// orientation state (not just per-joint position) and real angular/swing-twist joint limits
+// constraining relative rotation between adjacent bones -- a categorically different, larger
+// technique (true rigid-body dynamics with quaternion orientations) than point-mass PBD can reach
+// by adding more constraints of the same kind. That's the real, now sharply-defined Phase 2 --
+// not an incremental extension of what's built here.
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -70,6 +94,22 @@ typedef struct {
     float rest_len;
 } DistanceConstraint;
 
+// BendConstraint -- S494 follow-up to S484's own named next step ("angular/joint-limit
+// constraints... are the actual next architecture question," per this file's own header
+// comment/EMILY BACKLOG.md S484). A real, standard, lightweight PBD technique (used for bend
+// resistance in rope/cloth sims): a ONE-SIDED minimum-distance constraint between a joint and its
+// own grandparent (skipping the parent in between). Folding a knee/elbow backward brings the
+// child joint CLOSE to its grandparent even though neither adjacent bone-LENGTH constraint is
+// violated -- that's exactly the failure mode the spike's own real result found ("converges to
+// every joint flat at y=0... distance-only constraints don't stop a knee/elbow folding backward").
+// Unlike DistanceConstraint (an EQUALITY constraint, always pulls toward exact rest_len), this
+// only ever pushes APART, and only when already closer than min_dist -- doing nothing once the
+// joint is extended past that, so it never fights the natural, correct bend of a relaxed limb.
+typedef struct {
+    int a, b;
+    float min_dist;
+} BendConstraint;
+
 static float vlen(const float a[3], const float b[3]) {
     float dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
     return sqrtf(dx * dx + dy * dy + dz * dz);
@@ -102,7 +142,23 @@ int main(void) {
     // major Mat4, translation is m[12..14]).
     static Body bodies[MAX_JOINTS];
     static DistanceConstraint constraints[MAX_JOINTS];
+    static BendConstraint bend_constraints[MAX_JOINTS];
     int constraint_count = 0;
+    int bend_constraint_count = 0;
+
+    // BONE_MASS_PER_UNIT_LENGTH/MIN_JOINT_MASS -- S494, founder real-time: "we are going to need
+    // to define masses for objects im sure for rigid body physics." Real, deliberate, simplest
+    // physically-motivated model that doesn't need a hand-authored per-rig mass table: a joint's
+    // own mass is proportional to the length of the bone connecting it to ITS OWN parent (a
+    // longer limb segment -- a thigh vs. a finger bone -- masses more), matching this file's own
+    // established "no engine-specific calibration, a real relative-scale approximation" spirit.
+    // Units are arbitrary (this is a relative-mass spike, not calibrated to real kilograms) --
+    // what matters is a THIGH bone genuinely outweighing a FINGER bone, not the absolute number.
+    // MIN_JOINT_MASS floors near-zero-length bones (leaf/stub joints) so they never become
+    // absurdly light (a body with near-zero mass gets thrown around by every constraint
+    // correction applied to it, real PBD instability, not just "unrealistic").
+    #define BONE_MASS_PER_UNIT_LENGTH 1.0f
+    #define MIN_JOINT_MASS 0.15f
 
     float min_y = 1e9f;
     for (uint32_t j = 0; j < skel.joint_count; j++) {
@@ -110,28 +166,46 @@ int main(void) {
         bodies[j].pos[1] = joint_world[j][13];
         bodies[j].pos[2] = joint_world[j][14];
         memcpy(bodies[j].prev_pos, bodies[j].pos, sizeof(bodies[j].pos));
-        bodies[j].inv_mass = 1.0f; // uniform 1kg-equivalent point mass -- real per-bone mass
-                                    // estimation (volume-from-capsule-radius * density) is real
-                                    // future work, not needed to answer the settle-or-explode
-                                    // question this spike exists for.
         strncpy(bodies[j].name, skel.joints[j].name, GSKEL_NAME_LEN - 1);
         if (bodies[j].pos[1] < min_y) min_y = bodies[j].pos[1];
 
         int32_t parent = skel.joints[j].parent_index;
+        float own_bone_len = 0.0f;
         if (parent >= 0) {
-            float rest_len = vlen(bodies[j].pos, bodies[parent].pos);
+            own_bone_len = vlen(bodies[j].pos, bodies[parent].pos);
             // A zero-length bone (two joints sharing one world position, e.g. an end-effector
             // stub) can't be a distance constraint -- skip it rather than divide-by-zero-ish
             // degenerate behavior later.
-            if (rest_len > 0.0001f) {
+            if (own_bone_len > 0.0001f) {
                 constraints[constraint_count].a = j;
                 constraints[constraint_count].b = (int)parent;
-                constraints[constraint_count].rest_len = rest_len;
+                constraints[constraint_count].rest_len = own_bone_len;
                 constraint_count++;
             }
+
+            // Bend constraint against the grandparent, if one exists -- see BendConstraint's own
+            // doc comment. GSKEL_FORMAT's own real "parent_index < child index" invariant means
+            // `parent` (and its own parent) are already fully positioned by this point in the
+            // single forward pass -- no second pass needed.
+            int32_t grandparent = skel.joints[parent].parent_index;
+            if (grandparent >= 0) {
+                float parent_bone_len = vlen(bodies[parent].pos, bodies[grandparent].pos);
+                float full_extension = own_bone_len + parent_bone_len;
+                if (full_extension > 0.0001f) {
+                    bend_constraints[bend_constraint_count].a = j;
+                    bend_constraints[bend_constraint_count].b = grandparent;
+                    bend_constraints[bend_constraint_count].min_dist = full_extension * 0.85f;
+                    bend_constraint_count++;
+                }
+            }
         }
+
+        float mass = own_bone_len * BONE_MASS_PER_UNIT_LENGTH;
+        if (mass < MIN_JOINT_MASS) mass = MIN_JOINT_MASS;
+        bodies[j].inv_mass = 1.0f / mass;
     }
-    printf("built %d bodies, %d distance constraints\n", skel.joint_count, constraint_count);
+    printf("built %d bodies, %d distance constraints, %d bend constraints\n",
+           skel.joint_count, constraint_count, bend_constraint_count);
     printf("rest-pose lowest joint y = %.3f (ground plane assumed at y=0)\n", min_y);
 
     // Lift the whole ragdoll above the ground plane before dropping it -- the rest pose's own
@@ -192,6 +266,30 @@ int main(void) {
                     bb->pos[k] += diff[k] * corr_b;
                 }
             }
+
+            // Bend constraints -- S494, same Gauss-Seidel relaxation pass so they cooperate with
+            // the distance constraints instead of fighting them one full tick behind. ONE-SIDED:
+            // only corrects when the joint has folded CLOSER to its grandparent than min_dist
+            // allows, pushing them apart; a limb already extended past that does nothing here.
+            for (int c = 0; c < bend_constraint_count; c++) {
+                Body *ba = &bodies[bend_constraints[c].a];
+                Body *bb = &bodies[bend_constraints[c].b];
+                float diff[3] = {ba->pos[0] - bb->pos[0], ba->pos[1] - bb->pos[1], ba->pos[2] - bb->pos[2]};
+                float len = sqrtf(diff[0] * diff[0] + diff[1] * diff[1] + diff[2] * diff[2]);
+                if (len < 0.0001f || len >= bend_constraints[c].min_dist) continue; // already far enough apart -- real no-op
+                float err = (len - bend_constraints[c].min_dist) / len; // negative -- len is below min_dist
+                float w_sum = ba->inv_mass + bb->inv_mass;
+                if (w_sum < 0.0001f) continue;
+                // Same real, hand-derived sign convention the distance-constraint fix above
+                // already established (delta_p_i = -invMass_i/w_sum * C * gradient_i) -- err is
+                // negative here (below the minimum), so this pushes a and b APART, correctly.
+                float corr_a = -ba->inv_mass / w_sum * err;
+                float corr_b = bb->inv_mass / w_sum * err;
+                for (int k = 0; k < 3; k++) {
+                    ba->pos[k] += diff[k] * corr_a;
+                    bb->pos[k] += diff[k] * corr_b;
+                }
+            }
             // Ground plane constraint (y >= 0), same relaxation pass so it cooperates with the
             // distance constraints instead of fighting them one full tick behind. Real, found-
             // live bug in the first cut of this spike: clamping pos.y without also clamping
@@ -224,6 +322,23 @@ int main(void) {
                    tick, tick * DT, min_yt, max_yt, sum_y / skel.joint_count);
         }
     }
+
+    // Real verification, not an assumption: confirm the bend constraints are actually holding
+    // (no grandparent pair closer than its own min_dist) at the final settled state -- proves
+    // they're doing real work even though (see below) the whole-body flat-collapse persists for
+    // a different, separate reason.
+    int bend_violations = 0;
+    float worst_violation = 0.0f;
+    for (int c = 0; c < bend_constraint_count; c++) {
+        float d = vlen(bodies[bend_constraints[c].a].pos, bodies[bend_constraints[c].b].pos);
+        if (d < bend_constraints[c].min_dist - 0.01f) { // small tolerance for solver residual
+            bend_violations++;
+            float violation = bend_constraints[c].min_dist - d;
+            if (violation > worst_violation) worst_violation = violation;
+        }
+    }
+    printf("\nbend constraint check: %d/%d violated at final state (worst=%.4f)\n",
+           bend_violations, bend_constraint_count, worst_violation);
 
     printf("\nfinal per-joint positions:\n");
     for (uint32_t j = 0; j < skel.joint_count; j++) {
