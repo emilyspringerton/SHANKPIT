@@ -104,12 +104,20 @@ static void ai_turn_towards(AIController *ai, PlayerState *p, float target_yaw, 
     humanness_smooth_turn_step(&p->yaw, target_yaw, max_turn_deg, 1.0f, &ai->humanness, &ai->turn_overshooting);
 }
 
-static void ai_move_towards(AIController *ai, PlayerState *p, float tx, float tz, float speed_scale, float turn_speed) {
+/* S461-02 real arrival steering: when slow_radius > 0, speed scales down linearly as the AI
+   closes inside it (classic seek+arrival, not a flat speed until collision with the stop
+   check) -- floored at 0.15 rather than 0 so it still visibly closes the last few units instead
+   of asymptotically crawling to a halt. slow_radius == 0 keeps the old constant-speed approach
+   for callers where the target is a continuously-moving point (e.g. ai_run_search's orbit) or a
+   repulsion vector rather than a real destination, where "arrival" doesn't mean anything. */
+static void ai_move_towards(AIController *ai, PlayerState *p, float tx, float tz, float speed_scale, float turn_speed, float slow_radius) {
     float dx = tx - p->x;
     float dz = tz - p->z;
+    float dist = ai_len2(dx, dz);
     float yaw = ai_angle_to(dx, dz);
+    float arrival_scale = (slow_radius > 0.0f && dist < slow_radius) ? ai_clamp(dist / slow_radius, 0.15f, 1.0f) : 1.0f;
     ai_turn_towards(ai, p, yaw, turn_speed);
-    p->in_fwd = ai_clamp(speed_scale, -1.0f, 1.0f);
+    p->in_fwd = ai_clamp(speed_scale * arrival_scale, -1.0f, 1.0f);
 }
 
 static void ai_assign_role_defaults(AIController *ai, PlayerState *p) {
@@ -373,7 +381,7 @@ static void ai_run_patrol(ServerState *s, AIController *ai, unsigned int now_ms)
         }
     }
 
-    ai_move_towards(ai, p, pt->x, pt->z, 0.45f * ai->move_speed_scale, 4.0f);
+    ai_move_towards(ai, p, pt->x, pt->z, 0.45f * ai->move_speed_scale, 4.0f, 8.0f);
 }
 
 static void ai_run_investigate(ServerState *s, AIController *ai, unsigned int now_ms) {
@@ -382,7 +390,7 @@ static void ai_run_investigate(ServerState *s, AIController *ai, unsigned int no
     float dz = ai->last_known_z - p->z;
     float dist = ai_len2(dx, dz);
     (void)now_ms;
-    ai_move_towards(ai, p, ai->last_known_x, ai->last_known_z, 0.65f * ai->move_speed_scale, 6.0f);
+    ai_move_towards(ai, p, ai->last_known_x, ai->last_known_z, 0.65f * ai->move_speed_scale, 6.0f, 10.0f);
     if (dist < 7.0f) ai_set_mode(ai, AI_MODE_SEARCH, now_ms);
 }
 
@@ -391,7 +399,7 @@ static void ai_run_search(ServerState *s, AIController *ai, unsigned int now_ms)
     float t = (float)(now_ms - ai->mode_entered_ms) * 0.001f;
     float orbit_x = ai->last_known_x + cosf(t + (float)ai->player_id) * 10.0f;
     float orbit_z = ai->last_known_z + sinf(t + (float)ai->player_id) * 10.0f;
-    ai_move_towards(ai, p, orbit_x, orbit_z, 0.42f * ai->move_speed_scale, 3.0f);
+    ai_move_towards(ai, p, orbit_x, orbit_z, 0.42f * ai->move_speed_scale, 3.0f, 0.0f);
     p->in_strafe = sinf(t * 1.3f) * 0.55f;
 }
 
@@ -402,8 +410,8 @@ static void ai_run_ally_follow(ServerState *s, AIController *ai, unsigned int no
     float dz = hero->z - p->z;
     float dist = ai_len2(dx, dz);
     (void)now_ms;
-    if (dist > 20.0f) ai_move_towards(ai, p, hero->x, hero->z, 0.70f * ai->move_speed_scale, 7.0f);
-    else if (dist < 9.0f) ai_move_towards(ai, p, p->x - dx, p->z - dz, 0.40f * ai->move_speed_scale, 6.0f);
+    if (dist > 20.0f) ai_move_towards(ai, p, hero->x, hero->z, 0.70f * ai->move_speed_scale, 7.0f, 15.0f);
+    else if (dist < 9.0f) ai_move_towards(ai, p, p->x - dx, p->z - dz, 0.40f * ai->move_speed_scale, 6.0f, 0.0f);
     else p->in_fwd = 0.0f;
 }
 
