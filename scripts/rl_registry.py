@@ -143,6 +143,44 @@ def download_checkpoint(base_url, checkpoint_id, dest_path):
     return dest_path
 
 
+def fetch_default_queue_level(base_url, dest_path):
+    """Real, live fix (2026-09-17, founder real-time: "NO training should have already been on a
+    custom level i had asked for that i didnt realize it didnt get built like that" / "DEFAULT
+    FOR QUEUE SHOULD SET TRAINING LEVEL"): rl_train_packet.py never wired up the same
+    `is_default_queue` level flag apps/server/src/main.c's own real queue_activate_match already
+    uses to pick MODE_QUEUE's level -- training always ran on the hardcoded --deathmatch scene
+    rotation instead, so setting a level's "default for queue" flag in NOCK's SHANKPIT level
+    editor had zero effect on what bots actually trained against.
+
+    GET /api/v1/shankpit-levels (real, public, no auth -- same trust level list_checkpoints
+    already has), finds the one entry with is_default_queue true, downloads its real export
+    (GET /api/v1/shankpit-levels/<id>/export -- the exact same JSON shape
+    packages/world/level_boxes.h's own level_boxes_fetch_export already consumes over the wire,
+    and level_boxes_load_from_file parses with the identical parser) to dest_path.
+
+    Returns (name, id, box_count) on success, or None if no level is currently flagged
+    is_default_queue (or the registry itself is unreachable) -- callers should fall back to the
+    built-in scene rotation on None, never crash a real, in-progress training run over this."""
+    try:
+        with urllib.request.urlopen(f"{base_url}/api/v1/shankpit-levels", timeout=15) as resp:
+            levels = json.load(resp)
+    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
+        return None
+    default_level = next((lvl for lvl in levels if lvl.get("is_default_queue")), None)
+    if default_level is None:
+        return None
+    level_id = default_level["id"]
+    try:
+        with urllib.request.urlopen(f"{base_url}/api/v1/shankpit-levels/{level_id}/export", timeout=15) as resp:
+            export_bytes = resp.read()
+    except (urllib.error.URLError, urllib.error.HTTPError):
+        return None
+    with open(dest_path, "wb") as f:
+        f.write(export_bytes)
+    box_count = len(json.loads(export_bytes).get("walls", []))
+    return (default_level.get("name", "?"), level_id, box_count)
+
+
 if __name__ == "__main__":
     import argparse
 

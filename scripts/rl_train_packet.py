@@ -71,7 +71,7 @@ except ImportError:
     BaseCallback = object
 
 from rl_env_packet import ShankpitQueueEnv, gym as _gym  # noqa: E402
-from rl_registry import authenticate, download_checkpoint, list_checkpoints, push_checkpoint, update_checkpoint_elo  # noqa: E402
+from rl_registry import authenticate, download_checkpoint, fetch_default_queue_level, list_checkpoints, push_checkpoint, update_checkpoint_elo  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SERVER_BIN = os.path.join(REPO_ROOT, "bin", "shank_server")
@@ -104,13 +104,29 @@ REGRESSION_ELO_THRESHOLD = 100.0  # same real, deliberately conservative constan
 # the full mechanism). Applied here from the start rather than found the hard way a second time.
 DEFAULT_ENT_COEF = 0.01
 
+# S459-104: authenticate() issues a real, short-lived (1hr) Bearer JWT -- refresh proactively at
+# 45 minutes so a long training run never has a real gap where it's silently running on an
+# expired token (see the refresh call site's own doc comment for the full "we train a bunch that
+# never gets checked in" bug this closes).
+REGISTRY_JWT_REFRESH_SECONDS = 45 * 60
+
 _spawned_procs = []
+
+# S459-104, founder real-time: "DEFAULT FOR QUEUE SHOULD SET TRAINING LEVEL" -- set once at
+# startup by main() (fetch_default_queue_level below), read by every _spawn_server call. None
+# means no level is currently flagged is_default_queue (or the registry was unreachable) -- the
+# real, honest fallback is the built-in --deathmatch scene rotation, same as before this existed.
+_training_level_path = None
 
 
 def _spawn_server(port):
-    """Starts one real bin/shank_server --deathmatch --fast-forward --port <port> subprocess."""
-    proc = subprocess.Popen([SERVER_BIN, "--deathmatch", "--fast-forward", "--port", str(port)],
-                             cwd=REPO_ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    """Starts one real bin/shank_server --deathmatch --fast-forward --port <port> subprocess --
+    plus --level <path> when a level is currently flagged is_default_queue in NOCK's SHANKPIT
+    level editor (see fetch_default_queue_level's own doc comment for the real gap this closes)."""
+    args = [SERVER_BIN, "--deathmatch", "--fast-forward", "--port", str(port)]
+    if _training_level_path:
+        args += ["--level", _training_level_path]
+    proc = subprocess.Popen(args, cwd=REPO_ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     _spawned_procs.append(proc)
     time.sleep(0.5)  # real, minimal startup grace period -- server_net_init binds synchronously
     return proc
@@ -410,17 +426,49 @@ def main():
     args = p.parse_args()
 
     registry_jwt = None
+    registry_jwt_issued_at = 0.0
     if args.registry_url:
         if not args.registry_agent_secret:
             print("--registry-url was set but --registry-agent-secret (or IDUNA_AGENT_SECRET) "
                   "wasn't -- refusing to silently skip the registry push.")
             return 1
         registry_jwt = authenticate(args.registry_url, args.registry_agent_name, args.registry_agent_secret)
+        registry_jwt_issued_at = time.time()
         print(f"Authenticated with the remote checkpoint registry at {args.registry_url}.")
 
+    # S459-104, founder real-time: "DEFAULT FOR QUEUE SHOULD SET TRAINING LEVEL HAVE THE TRAINING
+    # LEVEL OUTPUT IN THE COLAB SKRIP SO WE CAN SEE ITS WORKING" -- real gap: this orchestrator
+    # never wired up the same is_default_queue level flag apps/server/src/main.c's own
+    # queue_activate_match already uses, so setting "default for queue" in NOCK's SHANKPIT level
+    # editor had zero effect on what bots actually trained against -- always the hardcoded
+    # --deathmatch scene rotation. Public endpoint, no registry auth needed, so this runs
+    # regardless of --registry-url. Printed plainly (not buried in a debug flag) precisely so it's
+    # visible in the Colab log, per the founder's own explicit ask.
+    global _training_level_path
+    level_fetch_url = args.registry_url or os.environ.get("IDUNA_BASE_URL")
+    if level_fetch_url:
+        level_dest = os.path.join(args.output_dir, "_training_level.json")
+        os.makedirs(args.output_dir, exist_ok=True)
+        result = fetch_default_queue_level(level_fetch_url, level_dest)
+        if result:
+            level_name, level_id, box_count = result
+            _training_level_path = level_dest
+            print(f"TRAINING_LEVEL name={level_name!r} id={level_id} boxes={box_count} "
+                  f"(is_default_queue in NOCK's SHANKPIT level editor) -- {level_dest}")
+        else:
+            print("TRAINING_LEVEL: no level is currently flagged is_default_queue (or the "
+                  "registry was unreachable) -- falling back to the built-in --deathmatch scene "
+                  "rotation, same as before this existed.")
+    else:
+        print("TRAINING_LEVEL: no --registry-url/IDUNA_BASE_URL set -- can't look up "
+              "is_default_queue, using the built-in --deathmatch scene rotation.")
+
     if args.resume_from_registry and not args.registry_url:
-        print("--resume-from-registry needs --registry-url (or IDUNA_BASE_URL) set.")
-        return 1
+        # Real, deliberate: resume defaults to True now (see the flag's own doc comment), so this
+        # is simply "resuming is impossible without a registry" -- not an error. Forcing every
+        # registry-less local/test run to pass --no-resume-from-registry just to avoid an abort
+        # would be a real regression the default-flip should never have caused.
+        args.resume_from_registry = False
 
     if not _HAVE_SB3 or _gym is None:
         print("stable_baselines3 and/or gymnasium are not installed -- nothing was run.")
@@ -472,6 +520,26 @@ def main():
         best_member_id[LeagueRole.MAIN] = prev_member_ids[LeagueRole.MAIN]
 
     while min(timesteps_done.values()) < args.total_timesteps:
+        # S459-104, founder real-time: "can you build token refreshing in whenever it checks in
+        # new models can you have it refresh the token it expires and then we train a bunch that
+        # never gets checked in" -- authenticate() returns a real, short-lived (1hr) Bearer JWT,
+        # obtained once at startup. A long-running training session (many generations of real
+        # wall-clock training, latency-bound at one real UDP round trip per env step) can easily
+        # outlive that hour -- every push_checkpoint/update_checkpoint_elo call after expiry was
+        # silently swallowed (each call site's own "a registry outage must never crash a real,
+        # in-progress training run" except-and-continue), so real training kept happening locally
+        # but nothing ever reached the registry again for the rest of the run. Proactively
+        # re-authenticate well before the real 1hr expiry rather than waiting to react to a 401.
+        if registry_jwt and (time.time() - registry_jwt_issued_at) > REGISTRY_JWT_REFRESH_SECONDS:
+            try:
+                registry_jwt = authenticate(args.registry_url, args.registry_agent_name, args.registry_agent_secret)
+                age_s = time.time() - registry_jwt_issued_at
+                registry_jwt_issued_at = time.time()
+                print(f"[gen {generation}] refreshed registry auth token (previous one was {age_s:.0f}s old)")
+            except Exception as e:  # noqa: BLE001 -- a refresh failure must never crash a real, in-progress training run
+                print(f"[gen {generation}] WARNING: registry auth token refresh failed ({e}), "
+                      f"continuing with the existing token until it actually stops working")
+
         checkpoint_paths = {}
         reset_roles = set()
         self_play_opponent_ids = {}
