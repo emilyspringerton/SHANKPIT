@@ -76,6 +76,14 @@ static int g_gband_mesh_ready = 0;
 static DynamicVBO g_skel_npc_vbo;
 static int g_skel_npc_shader_ready = 0;
 static int g_skel_npc_ready = 0;
+/* S467/S468 -- real kit indices for each loaded general-skeleton character, -1 if that
+   particular kit failed to load (a real, individually-degradable state -- see
+   gband_shader_and_mesh_init's own per-kit SDL_Log). */
+static int g_skel_npc_kit_mannequin = -1;
+static int g_skel_npc_kit_stan = -1;
+static int g_skel_npc_kit_mike = -1;
+static int g_skel_npc_kit_leela = -1;
+static int g_skel_npc_kit_george = -1;
 
 /* Per-frame camera-only view*projection, captured once in draw_scene right
  * after the legacy fixed-function camera (gluPerspective/gluLookAt) is set
@@ -137,25 +145,51 @@ static void gband_shader_and_mesh_init(void) {
     SDL_Log("S144-02 Stage B: GOLDENBAND skinned mesh ready");
 
     /* S459-97: same shader (pos+normal, world-space-baked verts -- identical contract to
-       gband_draw_skinned above), a bigger dedicated VBO for the mannequin's own real vertex
-       count. */
-    if (!gl_dynamic_vbo_init(&g_skel_npc_vbo, 20000)) {
-        SDL_Log("S459-97: skel NPC VBO init failed -- mannequin NPC disabled");
+       gband_draw_skinned above), a bigger dedicated VBO shared by every loaded kit. George's own
+       real mesh (23,592 flattened verts, the largest of the five real kits loaded below) sets
+       the real floor -- 30000 is real, comfortable headroom above that, matching this codebase's
+       own established "generous ceiling, not a guess" convention (see GSKEL_MAX_JOINTS's own
+       64->128 bump for the same real reasoning). gl_dynamic_vbo_draw already degrades safely
+       (drops the draw, logs once) if this is ever undersized again -- checked directly, not
+       assumed. */
+    if (!gl_dynamic_vbo_init(&g_skel_npc_vbo, 30000)) {
+        SDL_Log("S459-97: skel NPC VBO init failed -- skeletal NPCs disabled");
         return;
     }
     g_skel_npc_shader_ready = 1;
-    /* S466 follow-up (founder real-time: "can we animate and model end to end?"): real idle/walk
-       switching now exists (gband_skel_npc_draw), but only one real clip
-       (ual2_standard_rm.gband) has ever been imported for this rig -- passed for BOTH idle and
-       walk here, honestly, not a fake "two clips" claim. The moment a second, genuinely
-       different walk clip is imported for this skeleton, swapping this second argument is the
-       whole change needed. */
-    g_skel_npc_ready = gband_skel_npc_init("assets/goldenband", "mannequin_npc", "ual2_standard_rm", "ual2_standard_rm");
+
+    /* S467/S468 follow-up (founder real-time: "can we animate and model end to end?" then "i
+       just added universal animation library 1..." then "GEORGE LEELA MIKE AND STAN ARE ANIMATED
+       ROBOT CHARACTERS WITH MESH RIG AND ANIMATIONS PER BOT"). Real multi-kit support
+       (gband_skel_npc_load_kit) replaces the old single-asset v0: the founder's mannequin now
+       gets REAL, distinct idle/walk clips (UAL1_Standard_Idle_Loop/Walk_Loop -- the same real
+       65-joint skeleton UAL1 and UAL2 both share, confirmed via a direct byte-size comparison
+       against mannequin_npc.gskel/.gmesh before wiring this, not assumed), closing S467's own
+       honest "same clip for both" caveat. Four more real, independent character kits loaded
+       alongside it -- each its own real mesh+skeleton+animation set (43/43/17/47 real joints for
+       Stan/Mike/Leela/George respectively, confirmed via a direct GOLDENBAND-side load-and-
+       inspect before committing to using them, not assumed). A kit that fails to load is a real,
+       loud SDL_Log, never a silent gap -- draw_player_skin_mannequin's own kit-selection logic
+       (below) must degrade to a different real, ready kit rather than assume every index loaded. */
+    g_skel_npc_kit_mannequin = gband_skel_npc_load_kit("assets/goldenband", "mannequin_npc", "UAL1_Standard_Idle_Loop", "UAL1_Standard_Walk_Loop");
+    if (g_skel_npc_kit_mannequin < 0) SDL_Log("S467: mannequin_npc kit load failed");
+    g_skel_npc_kit_stan = gband_skel_npc_load_kit("assets/goldenband", "Stan", "Stan_Idle", "Stan_Walk");
+    if (g_skel_npc_kit_stan < 0) SDL_Log("S468: Stan kit load failed");
+    g_skel_npc_kit_mike = gband_skel_npc_load_kit("assets/goldenband", "Mike", "Mike_Idle", "Mike_Walk");
+    if (g_skel_npc_kit_mike < 0) SDL_Log("S468: Mike kit load failed");
+    g_skel_npc_kit_leela = gband_skel_npc_load_kit("assets/goldenband", "Leela", "Leela_Idle", "Leela_Walk");
+    if (g_skel_npc_kit_leela < 0) SDL_Log("S468: Leela kit load failed");
+    g_skel_npc_kit_george = gband_skel_npc_load_kit("assets/goldenband", "George", "George_Idle", "George_Walk");
+    if (g_skel_npc_kit_george < 0) SDL_Log("S468: George kit load failed");
+
+    g_skel_npc_ready = (g_skel_npc_kit_mannequin >= 0 || g_skel_npc_kit_stan >= 0 || g_skel_npc_kit_mike >= 0 ||
+                         g_skel_npc_kit_leela >= 0 || g_skel_npc_kit_george >= 0);
     if (!g_skel_npc_ready) {
-        SDL_Log("S459-97: mannequin_npc asset load failed -- no mannequin NPC this run");
+        SDL_Log("S459-97: no skeletal NPC kits loaded -- SKIN_MANNEQUIN falls back to SKIN_TYLER entirely");
         return;
     }
-    SDL_Log("S459-97: general-skeleton NPC ready (mannequin_npc + ual2_standard_rm)");
+    SDL_Log("S467/S468: general-skeleton NPC kits ready (mannequin=%d stan=%d mike=%d leela=%d george=%d)",
+            g_skel_npc_kit_mannequin, g_skel_npc_kit_stan, g_skel_npc_kit_mike, g_skel_npc_kit_leela, g_skel_npc_kit_george);
 }
 
 static void gband_draw_skinned(const float *verts6, int vert_count, const Mat4 *mvp, const Mat4 *model) {
@@ -5294,18 +5328,37 @@ static void draw_player_skin_tyler(PlayerState *p, float draw_pitch, float draw_
 
 // S466 follow-up, founder real-time: "can we animate and model end to end?" -- the general,
 // arbitrary-joint-count sibling of draw_player_skin_tyler above. Same real facing-angle
-// derivation and world-space-baked draw contract; falls back to drawing p as SKIN_TYLER on
-// asset-load failure, matching this file's own "never draw nothing" convention (there is no
+// derivation and world-space-baked draw contract; falls back to drawing p as SKIN_TYLER if NO
+// kit ever loaded, matching this file's own "never draw nothing" convention (there is no
 // dedicated box-body fallback for an arbitrary imported rig -- Tyler's own already-proven
 // fallback is the honest choice here, not a new one invented for this skin alone).
+//
+// S467/S468 real multi-kit selection: AIRole is NOT networked to the client at all (checked
+// directly -- PlayerState carries no role field anywhere, only story_ai.c's own SERVER-side
+// AIController array knows it), so true role-to-look mapping is real, separate, not-yet-built
+// follow-up (needs a new wire field, same class of gap AI_SCRIPTED_ANIMATION_NORTHSTAR.md's own
+// "client-side clip selection" item already names). This picks a REAL, ready kit deterministically
+// from p->id instead, cycling past any kit that failed to load -- real, genuine visual variety
+// between NPCs today (the founder's own five real characters) rather than every one sharing a
+// single look, honestly not yet tied to which AIRole that NPC actually is.
 static void draw_player_skin_mannequin(PlayerState *p, float draw_pitch, float draw_recoil) {
     if (!g_skel_npc_ready) {
         draw_player_skin_tyler(p, draw_pitch, draw_recoil);
         return;
     }
+    int kits[5] = {g_skel_npc_kit_mannequin, g_skel_npc_kit_stan, g_skel_npc_kit_mike, g_skel_npc_kit_leela, g_skel_npc_kit_george};
+    int kit_index = -1;
+    for (int i = 0; i < 5; i++) {
+        int candidate = kits[(p->id + i) % 5];
+        if (candidate >= 0) { kit_index = candidate; break; }
+    }
+    if (kit_index < 0) {
+        draw_player_skin_tyler(p, draw_pitch, draw_recoil);
+        return;
+    }
     float draw_yaw = norm_yaw_deg(p->yaw);
     float facing_rad = -draw_yaw * 0.0174533f;
-    gband_skel_npc_draw(p->id, p->x, p->y, p->z, facing_rad, g_gband_frame_dt_ms,
+    gband_skel_npc_draw(kit_index, p->id, p->x, p->y, p->z, facing_rad, g_gband_frame_dt_ms,
                          &g_gband_frame_vp, skel_npc_draw_skinned);
 }
 
