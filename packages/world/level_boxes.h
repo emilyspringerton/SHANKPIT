@@ -88,9 +88,14 @@ typedef struct {
    yet implemented). A door is a real, existing LevelBox (box_index, 0-based into boxes[]) whose
    collision the server toggles open/closed based on a compiled PARENA script's own decision
    (see apps/server/src/main.c's DoorRuntime and phys_set_custom_level_box_y). script_path is a
-   real local filesystem path to a compiled .so for this v0 pass -- NOCK authoring/IDUNA-hosted
-   script storage is real, named, deferred future work (see the NORTHSTAR doc's own "what this
-   does not cover"), not silently assumed solved. */
+   real local filesystem path to a compiled .so, still supported as a local-dev fallback; the
+   real, live path is script_url (S459-81/82: IDUNA's nock_door_scripts repository compiles
+   PARENA -> .so and serves it for download) -- and, as of 2026-09-17 (founder real-time: "how do
+   i put doors in my levels?"), NOCK's own ShankpitLevelEditor.tsx has a real UI to attach one of
+   those scripts to a placed wall (IDUNA/internal/shankpit.Door, exported via doorsForExport).
+   The one thing that stays real, named, deferred future work: a door authored this way can only
+   reference one of a level's own ROOT walls, never a wall contributed by a nested composed
+   object (matching flattenObjects' own already-established scope limit for ground planes). */
 #define LEVEL_BOXES_MAX_DOORS 16
 #define LEVEL_BOXES_SCRIPT_PATH_LEN 256
 

@@ -268,6 +268,25 @@ that reveals the same raw PARENA textarea for a real custom `next-chapter` scrip
    door state today), and any client-side visual door movement/animation (server-side collision
    only -- a player currently sees no visual change when a door opens, only that they can now walk through
    where a wall used to block them).
+   **Follow-up, 2026-09-17 -- founder real-time: "how do i put doors in my levels?"** The last
+   real gap in the authoring loop is closed: a level author could write a PARENA door script
+   (DoorScripts page) and compile it, but had no way to actually ATTACH one to a placed wall --
+   `ShankpitLevel` (both the IDUNA DB row and the frontend type) had no `doors` concept at all,
+   checked directly, not assumed. New `IDUNA/internal/shankpit.Door` (`wall_id` + `script_id`,
+   `doors_json` column, migration `202609170001`), a real `WallInspector` UI control in
+   `ShankpitLevelEditor.tsx` (a "Door script" dropdown on the selected cube's own inspector panel
+   -- a wall IS a door exactly when it has a script attached, no separate toggle to fall out of
+   sync), and a real `doorsForExport` resolver: a door's `wall_id` maps to that wall's actual
+   0-based POSITION in the exported `walls[]` array (not the wall's own persisted id, and not the
+   door's own id -- `level_boxes.h`'s parser indexes directly into the boxes it just parsed), and
+   `script_id` resolves to the real absolute `nock-door-scripts` download URL SHANKPIT's own
+   `story_doors.h` already fetches. A door referencing a deleted wall is silently skipped at
+   export (never crashes), matching this whole system's existing "an author's own stale
+   reference mustn't break the level" discipline. **Real, deliberate scope limit, matching
+   `flattenObjects`' own established "only the root level's own X reaches the native client"
+   precedent for ground planes**: a door can only be attached to one of a level's own ROOT
+   walls, never a wall contributed by a nested composed object -- attaching a door to an object's
+   own interior wall is real, separate, not-yet-scoped follow-up.
 3. **Phase 2**: ladder, screen, character, and trigger kinds (these are "just objects with
    different tick/event contracts," not a new system) -- trigger's `TriggerAction` vocabulary
    can start as just `AdvanceStory`/`NoOp` and grow `SpawnEnemies`/`PlaySound`/
