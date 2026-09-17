@@ -29,6 +29,7 @@
    server sim uses local_game.h but never renders cutscenes, so stub to 0. */
 int g_story_cutscene_done   = 0;
 int g_story_outro_requested = 0;
+int g_shankpit_is_server    = 1; /* see local_game.h's own doc comment on this flag */
 
 #include "server_mode.h"
 #include "server_state.h"
@@ -783,6 +784,15 @@ int parse_server_mode(int argc, char **argv) {
             mode = MODE_TDMO;
         } else if (strcmp(argv[i], "--deathmatch") == 0) {
             mode = MODE_DEATHMATCH;
+        } else if (strcmp(argv[i], "--story") == 0) {
+            // S465 follow-up: MODE_STORY was real in the enum and in local_init_match's own
+            // switch, but genuinely unreachable on the dedicated server -- this parser never
+            // recognized any flag for it, confirmed by reading this function before adding the
+            // flag, not assumed. Without this, story_ai_tick's own new server-side wiring
+            // (above) has no real way to be exercised at all.
+            mode = MODE_STORY;
+        } else if (strcmp(argv[i], "--story-cave") == 0) {
+            mode = MODE_STORY_CAVE;
         }
     }
     return mode;
@@ -1229,6 +1239,27 @@ int main(int argc, char *argv[]) {
         if (local_state.game_mode == MODE_TDMO) {
             tdmo_ensure_population(now);
         }
+        // S465 follow-up, founder real-time: "wire story_ai_tick into the server's own tick
+        // loop." Real, found-live gap this closes: story_ai_tick was only ever called from
+        // local_update, itself only invoked by the LOBBY binary's own local single-player input
+        // path (apps/lobby/src/main.c) -- confirmed by grep before this fix, not assumed -- so
+        // every S461/S462/S465 NPC behavior (squads, flee, scripted sequences, solo archetypes,
+        // the NOCK-authored waypoint graph) never actually ran on the dedicated multiplayer
+        // server, under any game mode. story_ai_tick already self-gates on game_mode ==
+        // MODE_STORY && story_phase == STORY_PHASE_PLAYING (a real no-op for every other mode,
+        // same discipline story_doors_tick's own unconditional per-tick call already relies on)
+        // -- calling it here unconditionally is safe. Placed BEFORE the per-player movement loop
+        // below so any AI-set in_fwd/in_strafe/yaw this tick are already in place when
+        // shankpit_simulate_movement_tick (packages/common/net_sim.h) reads them for every
+        // active player slot -- that function is already generic across real players AND bots
+        // (no is_bot branch), so no separate movement-application step is needed here, unlike
+        // local_update's own bespoke MODE_STORY accelerate() branch.
+        //
+        // Real, deliberate scope limit, not attempted here: story_boss_tick/story_swarm_tick/
+        // mechanism_tick/story_cave_endure_tick (VOXWORLD's own specific boss-fight content,
+        // single-"hero"-targeted) stay lobby-only for now -- this fix covers the general,
+        // NOCK-placeable story_ai NPC system, not that specific single-player boss encounter.
+        story_ai_tick(&local_state, now);
         double now_sec = now_seconds();
         for (int i = 1; i < MAX_CLIENTS; i++) {
             if (slots[i].active && now_sec - slots[i].last_heard > 5.0) {

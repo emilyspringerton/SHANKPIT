@@ -27,6 +27,7 @@
    standalone test links; not exercised. */
 int g_story_cutscene_done = 0;
 int g_story_outro_requested = 0;
+int g_shankpit_is_server = 0; /* see local_game.h's own doc comment on this flag */
 
 #include "local_game.h"
 

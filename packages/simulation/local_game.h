@@ -26,6 +26,20 @@ static int tdmb_last_kills[MAX_CLIENTS];
  */
 extern int g_story_cutscene_done;
 extern int g_story_outro_requested;
+/* g_shankpit_is_server -- S465 follow-up, founder real-time: "wire story_ai_tick into the
+   server's own tick loop." Real, found-live gap this half of the fix closes: g_story_cutscene_
+   done is real, honest "client renderer only" state (cutscene.h's own header comment: "Client-
+   side only -- no network state") -- a DEDICATED server has no renderer to ever set it, so
+   local_init_match's own STORY_PHASE_CUTSCENE start would leave story_phase stuck there forever
+   on a headless process, and story_ai_tick/every other MODE_STORY tick function gates on
+   STORY_PHASE_PLAYING. Each binary that includes this header defines its own real copy (same
+   established per-binary-definition convention g_story_cutscene_done already uses) --
+   apps/server/src/main.c sets it 1, apps/lobby/src/main.c and the story-swarm test harness set
+   it 0. See local_init_match's own real use of this flag: the dedicated server skips straight to
+   STORY_PHASE_PLAYING (no gameplay-blocking reason to wait on a per-CLIENT cutscene render that
+   the server can't observe -- each connected client is still free to show its own local intro
+   cutscene independently; this only affects the server's OWN authoritative phase gate). */
+extern int g_shankpit_is_server;
 #define SHANKPIT_HELI_DEBUG 0
 #define TDMB_BLUE_TEAM 1
 #define TDMB_RED_TEAM 0
@@ -1914,7 +1928,9 @@ void local_init_match(int num_players, int mode) {
     local_state.transition_timer = 0;
     local_state.winning_team = -1;
     local_state.score_limit = (mode == MODE_TDMB || mode == MODE_TDMO || mode == MODE_HEADED_BOT) ? TDMB_SCORE_LIMIT : (mode == MODE_CTFB ? CTFB_SCORE_LIMIT : 0);
-    local_state.story_phase = (mode == MODE_STORY || mode == MODE_STORY_CAVE) ? STORY_PHASE_CUTSCENE : STORY_PHASE_PLAYING;
+    /* g_shankpit_is_server: the dedicated server skips straight to PLAYING -- see this flag's
+       own doc comment above for why STORY_PHASE_CUTSCENE would otherwise never end there. */
+    local_state.story_phase = (!g_shankpit_is_server && (mode == MODE_STORY || mode == MODE_STORY_CAVE)) ? STORY_PHASE_CUTSCENE : STORY_PHASE_PLAYING;
     local_state.story_phase_start_ms = 0;
     story_clear_swarm();
 
