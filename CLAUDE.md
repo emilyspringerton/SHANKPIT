@@ -78,6 +78,30 @@ Then commit and push EMILY:
 cd /home/fatbaby/EMILY && git add context/golden-docs-index.md && git commit -m "golden-index: add NAME" && git push
 ```
 
+## Level Registry Doubles as Living Documentation (standing instruction)
+
+Founder real-time, 2026-09-17: "write into your claude files that when you verify levels write
+them into the registry and leave them there as an example designers can use to try to figure out
+how to use the feature without blowing a bunch of tokens asking for help." When verifying any
+level-editor feature (doors, widgets, materials, exits, nav nodes, characters, spawners, etc.),
+create the verification as a REAL level (or widget) in the live IDUNA NOCK registry
+(`shankpit_levels`/`shankpit_widgets` — same DB the `/admin/nock` UI reads) instead of a
+throwaway local JSON file in a scratchpad directory. Give it a clear, self-describing name (e.g.
+`TUTORIAL_DOOR`) so a designer opening the level list can find and inspect a working, minimal
+example of the feature without asking a question that burns tokens. This registry is currently
+being treated as a development/staging registry — "assume this is the development level registry
+we are developing in the open." When a separate registry is stood up later for real
+user-created content, the founder may clone this one forward (including our own story levels) —
+that's a future decision, not something to build now.
+
+**Levels are never story-mode-only.** "Either way levels are story mode so never hard code
+anything to only work in story mode that doesnt make sense — if something is happening in
+multiplayer and it is bad i will let you know — having characters in multiplayer is totally
+normal as an idea think about bosses in fortnite etc." Do not gate a general level feature
+(doors, characters, exits, widgets, etc.) to `MODE_STORY` only. The only legitimate uses of a
+`MODE_STORY` check are genuinely mode-specific: entry-point selection (`is_story_start`),
+cutscene HUD rendering, and similar — never "should this feature work at all."
+
 ## Founder Real-Time Direction
 
 Whenever the founder gives real-time direction — a new ask, a correction, a "can we also..." —
