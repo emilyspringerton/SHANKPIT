@@ -146,6 +146,20 @@ typedef struct {
 
 #define LEVEL_BOXES_MAX_CHARACTERS 16 /* matches STORY_AI_MAX, packages/simulation/story_ai.h */
 
+/* S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1 (founder real-time: "we need the loading
+   points or whatever the opposite of the spawners is") -- a real, author-placed exit trigger
+   volume. A player entering it (server-authoritative distance check, MODE_STORY only) transitions
+   to this LEVEL's own real next_level_id below -- every exit volume in a level leads to the SAME
+   next level (v0 is a chain, not a per-exit destination; see the NORTHSTAR doc for why a general
+   graph is deliberately deferred). Mirrors LevelCharacter's own "no cross-reference" simplicity,
+   plus a radius. */
+typedef struct {
+    float x, y, z;
+    float radius;
+} LevelExit;
+
+#define LEVEL_BOXES_MAX_LEVEL_EXITS 8 /* matches IDUNA/internal/shankpit.MaxLevelExits exactly */
+
 typedef struct {
     char name[LEVEL_BOXES_MAX_NAME];
     float width, height, depth; /* the editor's own real authored level dimensions -- NOT read
@@ -170,6 +184,12 @@ typedef struct {
     int nav_node_count;
     LevelCharacter characters[LEVEL_BOXES_MAX_CHARACTERS]; /* S467 */
     int character_count;
+    LevelExit level_exits[LEVEL_BOXES_MAX_LEVEL_EXITS]; /* S473 */
+    int level_exit_count;
+    /* next_level_id (S473) -- 0 is the real "no next level" sentinel (matches this loader's own
+       established "0/absent is a real, honest sentinel, not an error" convention elsewhere --
+       IDUNA's own real primary keys start at 1, so 0 never collides with a real level id). */
+    int next_level_id;
 } CustomLevelData;
 
 static inline const char *level_boxes_skip_ws(const char *p) {
@@ -308,6 +328,15 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
     if (height_val) level_boxes_parse_number(height_val, &out->height);
     const char *depth_val = level_boxes_find_key(buf, end, "depth");
     if (depth_val) level_boxes_parse_number(depth_val, &out->depth);
+
+    // next_level_id (S473) -- absent key is a real, honest "end of the story"/"not part of a
+    // chain" state, not an error -- out->next_level_id stays 0.
+    out->next_level_id = 0;
+    const char *nli_val = level_boxes_find_key(buf, end, "next_level_id");
+    if (nli_val) {
+        float nli_f = 0;
+        if (level_boxes_parse_number(nli_val, &nli_f)) out->next_level_id = (int)nli_f;
+    }
 
     // Ground plane fields (S459-08) -- real, sane defaults (enabled, 2 squares) for a
     // hand-written or pre-S459-08 file that omits them, matching this file's own established
@@ -594,6 +623,40 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
         }
     }
 
+    // Level exits (S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1) -- same real, small-scanner
+    // convention as characters above. Absent "level_exits" key is a real, honest "no authored
+    // exit points for this level" state, not an error -- level_exit_count stays 0.
+    out->level_exit_count = 0;
+    const char *le_arr_key = level_boxes_find_key(buf, end, "level_exits");
+    if (le_arr_key) {
+        const char *le_arr = level_boxes_skip_ws(le_arr_key);
+        if (*le_arr == '[') {
+            const char *le_arr_end = level_boxes_find_array_end(le_arr, end);
+            if (le_arr_end) {
+                const char *lecursor = le_arr + 1;
+                while (lecursor < le_arr_end && out->level_exit_count < LEVEL_BOXES_MAX_LEVEL_EXITS) {
+                    lecursor = level_boxes_skip_ws(lecursor);
+                    if (lecursor >= le_arr_end) break;
+                    if (*lecursor == ',') { lecursor++; continue; }
+                    if (*lecursor != '{') { lecursor++; continue; }
+                    const char *leobj_start = lecursor;
+                    const char *leobj_end = strchr(leobj_start, '}');
+                    if (!leobj_end || leobj_end > le_arr_end) break;
+
+                    LevelExit *lex = &out->level_exits[out->level_exit_count];
+                    memset(lex, 0, sizeof(*lex));
+                    const char *v6;
+                    if ((v6 = level_boxes_find_key(leobj_start, leobj_end, "x"))) level_boxes_parse_number(v6, &lex->x);
+                    if ((v6 = level_boxes_find_key(leobj_start, leobj_end, "y"))) level_boxes_parse_number(v6, &lex->y);
+                    if ((v6 = level_boxes_find_key(leobj_start, leobj_end, "z"))) level_boxes_parse_number(v6, &lex->z);
+                    if ((v6 = level_boxes_find_key(leobj_start, leobj_end, "radius"))) level_boxes_parse_number(v6, &lex->radius);
+                    out->level_exit_count++;
+                    lecursor = leobj_end + 1;
+                }
+            }
+        }
+    }
+
     return 1;
 }
 
@@ -691,6 +754,12 @@ typedef struct {
     // QUEUE default at a time (internal/shankpit.LevelSummary's own real is_default_queue field,
     // same shape shankpit_sprays.is_default already established).
     int is_default_queue;
+    // is_story_start (S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1, founder real-time: "we
+    // dont need the text cutscene in the beginning we just need to spawn into the first map that
+    // the story is") -- exactly one level is flagged as the real, global MODE_STORY entry level
+    // at a time (internal/shankpit.LevelSummary's own real is_story_start field), same shape
+    // is_default_queue above already established.
+    int is_story_start;
 } LevelRegistryEntry;
 
 // level_boxes_parse_registry_list parses IDUNA's real GET /api/v1/shankpit-levels response (a
@@ -723,6 +792,9 @@ static inline int level_boxes_parse_registry_list(const char *json, LevelRegistr
                 out[count].is_default_queue = 0;
                 const char *dq_val = level_boxes_find_key(obj_start, obj_end, "is_default_queue");
                 if (dq_val) level_boxes_parse_bool(dq_val, &out[count].is_default_queue);
+                out[count].is_story_start = 0;
+                const char *ss_val = level_boxes_find_key(obj_start, obj_end, "is_story_start");
+                if (ss_val) level_boxes_parse_bool(ss_val, &out[count].is_story_start);
                 count++;
             }
         }
