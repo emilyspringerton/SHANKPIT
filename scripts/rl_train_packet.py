@@ -383,9 +383,23 @@ def main():
     p.add_argument("--registry-agent-name", default=os.environ.get("IDUNA_AGENT_NAME", "SHANKPIT-RL"))
     p.add_argument("--registry-agent-secret", default=os.environ.get("IDUNA_AGENT_SECRET"))
     p.add_argument("--registry-source-location", default=os.environ.get("SHANKPIT_SOURCE_LOCATION", "unknown"))
-    p.add_argument("--resume-from-registry", action="store_true",
-                   help="requires --registry-url. Warm-starts each role from the newest checkpoint "
-                        "that role already has in the shared registry instead of a fresh network.")
+    # Real, found-live fix (2026-09-17, founder: "the shankpit elos... the bottom 3 bots still
+    # have 1500 that seems wrong"): default is now ON, with an explicit opt-out. S459-71 already
+    # fixed colab_train.py's own wrapper to always pass this flag -- but this script itself, when
+    # invoked directly (bypassing that wrapper), still defaulted to off. Every generation with no
+    # prior lineage to compare against skips evaluation entirely (see the resume_generation logic
+    # below) and keeps its default/inherited ELO forever -- confirmed live: 113 of 350 SHANKPIT
+    # checkpoints (32%) stuck at exactly 1500, traced to fresh (non-resumed) launches. Resuming is
+    # a no-op without --registry-url regardless of this default (see the guard just below).
+    p.add_argument("--resume-from-registry", dest="resume_from_registry", action="store_true", default=True,
+                   help="Default: on. Warm-starts each role from the newest checkpoint that role "
+                        "already has in the shared registry instead of a fresh network -- a fresh "
+                        "network never gets evaluated against anything (see module doc), so this "
+                        "is what keeps every checkpoint's ELO real. No-op if --registry-url isn't "
+                        "set. Use --no-resume-from-registry to opt out.")
+    p.add_argument("--no-resume-from-registry", dest="resume_from_registry", action="store_false",
+                   help="Opt out of the default-on resume behavior -- start every role from a "
+                        "fresh network even if the registry already has checkpoints for it.")
     p.add_argument("--device", default=os.environ.get("SHANKPIT_RL_DEVICE", "cpu"),
                    help="stable_baselines3 device. Defaults to 'cpu' -- this pipeline's own tiny "
                         "MLP policy plus one real UDP round trip per environment step is "
@@ -547,7 +561,33 @@ def main():
         main_reverted_to = None
         eval_notes = {}  # S459-63: role -> real, short summary of THIS generation's own vs-prior-gen eval, pushed alongside the checkpoint
         for role, member in registered.items():
-            if role in reset_roles or role not in prev_checkpoint_paths:
+            # Real, found-live fix (2026-09-17, founder: "the shankpit elos... the bottom 3
+            # bots still have 1500"): Main Exploiter resets to a fresh network every
+            # --reset-every-n-generations (5, by default) and used to be registered with a
+            # fresh inherited 1500 AND have evaluation skipped outright every single time --
+            # confirmed live via the real registry data, main_exploiter sits stuck at 1500 for
+            # 40% of its rows vs ~27% for the other two roles, exactly the ~1-in-5 rate resets
+            # fire at. A reset network isn't untestable, though -- it has a real, natural
+            # opponent already tracked (best_checkpoint_path[MAIN], the whole reason Main
+            # Exploiter exists is to probe the current best Main), so evaluate against that
+            # instead of skipping.
+            if role in reset_roles:
+                main_opponent_path = best_checkpoint_path.get(LeagueRole.MAIN)
+                main_opponent_id = best_member_id.get(LeagueRole.MAIN)
+                if main_opponent_path is None or main_opponent_id is None or main_opponent_id == member.id:
+                    eval_notes[role] = "reset generation, no real Main checkpoint yet to evaluate against"
+                    continue
+                try:
+                    score_a, note = _run_evaluation_match(args.host, EVAL_PORT, checkpoint_paths[role], main_opponent_path)
+                    eval_notes[role] = f"reset generation, vs current best Main: {note}"
+                    league.record_match_result(member.id, main_opponent_id, score_a)
+                    print(f"[gen {generation}]   -> evaluated {role.value} (reset) vs current best Main: "
+                          f"score_a={score_a} (local elo now {league.get_elo(member.id):.0f})")
+                except Exception as e:  # noqa: BLE001 -- an evaluation match failing must never crash real, in-progress training
+                    eval_notes[role] = f"CRASH: reset-generation evaluation vs Main failed ({e})"
+                    print(f"[gen {generation}]   -> WARNING: reset-generation evaluation for {role.value} failed ({e}), Elo unchanged")
+                continue
+            if role not in prev_checkpoint_paths:
                 eval_notes[role] = "no prior generation to evaluate against yet"
                 continue
             try:
