@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-17
+- Fix CI: add humanness.c to both hand-copied build lists in release.yml/tests.yml (third recurrence of this exact drift bug) (sess-20260905-0720-ec33e7c5)
 - Correct a wrong Humanness Phase 2 claim (story_ai_tick is actually live, called from local_game.h) and wire humanness into the second real story-mode AI system, story_swarm_tick (sess-20260905-0720-ec33e7c5)
 - STORY_SYSTEM_NORTHSTAR.md: fold in scriptable elevators (door+trigger composite + new platform-movement primitive) (sess-20260905-0720-ec33e7c5)
 - Humanness Phase 2: wire jitter/mood into story_ai.c's combat FSM (turn overshoot, real aim noise, jittered attack cooldowns); found + fixed a real dead-data gap (aim_error_deg was never consumed) (sess-20260905-0720-ec33e7c5)
