@@ -1933,6 +1933,20 @@ static void lobby_doors_tick(void) {
     }
 }
 
+// S473/S477, STORY_LEVEL_SEQUENCING_NORTHSTAR.md -- lobby's own local-single-player mirror of
+// apps/server/src/main.c's identically-named globals. Two separate processes, two separate
+// copies -- no shared header exists anywhere in this codebase for this kind of per-process
+// runtime state (matches how level_boxes_apply_to_physics below is ALREADY a separate, parallel
+// hand-maintained implementation of server_apply_custom_level's own overlapping box/spawner
+// logic, not a shared function). Moved here (was originally declared further down, inside what
+// is now lobby_apply_story_level's own real scope) so level_boxes_apply_to_physics itself can
+// capture them -- see S477's own real fix below for why that matters.
+#define STORY_LEVEL_EXIT_MAX LEVEL_BOXES_MAX_LEVEL_EXITS
+static LevelExit g_story_level_exits[STORY_LEVEL_EXIT_MAX];
+static int g_story_level_exit_count = 0;
+static int g_story_next_level_id = 0; /* 0 = none */
+static unsigned int g_story_last_level_transition_ms = 0;
+
 // level_boxes_apply_to_physics -- shared by both real load paths in this file (level-select and
 // the --level CLI flag): copies a loaded CustomLevelData's boxes + materials (S459-16) into
 // physics.h's own custom-level buffers. Not in level_boxes.h itself -- that header is deliberately
@@ -1972,30 +1986,36 @@ static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
     }
     phys_set_custom_level_spawners(sp_x, sp_y, sp_z, sp_team, lvl->spawner_count);
     lobby_doors_init(lvl);
+
+    // S477, real fix (founder real-time, live playtest: "i walk over to the block where the
+    // level exit should be... i say out loud beam me up scotty and then nothing happens"). This
+    // capture used to live only in lobby_apply_story_level below, gated to MODE_STORY -- but a
+    // level's own real exits/next_level_id are author-authored DATA, not a story-mode-only
+    // concept, and level_select_confirm's own real, ordinary deathmatch level load never went
+    // through lobby_apply_story_level at all, so g_story_level_exit_count silently stayed 0 for
+    // any level (like the founder's own real "nextown") loaded the normal way. Captured HERE,
+    // in the one real loader BOTH load paths already share, so every custom level load gets it
+    // regardless of mode -- see lobby_check_story_level_exits's own matching real fix for why
+    // the ACTION side needed the same unscoping.
+    g_story_level_exit_count = lvl->level_exit_count < STORY_LEVEL_EXIT_MAX ? lvl->level_exit_count : STORY_LEVEL_EXIT_MAX;
+    for (int ei = 0; ei < g_story_level_exit_count; ei++) g_story_level_exits[ei] = lvl->level_exits[ei];
+    g_story_next_level_id = lvl->next_level_id;
 }
 
-// S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1 -- lobby's own local-single-player mirror of
-// apps/server/src/main.c's identically-named globals. Two separate processes, two separate
-// copies -- no shared header exists anywhere in this codebase for this kind of per-process
-// runtime state (matches how level_boxes_apply_to_physics above is ALREADY a separate, parallel
-// hand-maintained implementation of server_apply_custom_level's own overlapping box/spawner
-// logic, not a shared function).
-#define STORY_LEVEL_EXIT_MAX LEVEL_BOXES_MAX_LEVEL_EXITS
-static LevelExit g_story_level_exits[STORY_LEVEL_EXIT_MAX];
-static int g_story_level_exit_count = 0;
-static int g_story_next_level_id = 0; /* 0 = none */
-static unsigned int g_story_last_level_transition_ms = 0;
-
 // lobby_apply_story_level -- lobby's own local-single-player mirror of apps/server/src/main.c's
-// server_apply_custom_level, scoped to what MODE_STORY actually needs here: boxes/materials/
-// spawners (level_boxes_apply_to_physics above), story_ai characters + nav graph (mirrors
-// server_apply_custom_level's own MODE_STORY branch exactly), this level's own real exit/
-// next_level_id state, and the real scene_id double-set level_select_confirm's own doc comment
-// above already found live-necessary (scene_load alone isn't enough -- draw_scene's per-frame
-// resync reads the PLAYER ENTITY's own scene_id, not the global). Deliberately does NOT call
-// story_doors_init -- door scripting (dlopen'd compiled .so via story_doors.h) is server-only,
-// never wired into the lobby build (checked directly, not assumed), a real, honest, named scope
-// limit rather than a silent gap.
+// server_apply_custom_level, scoped to what MODE_STORY actually needs here on TOP of
+// level_boxes_apply_to_physics above (boxes/materials/spawners/exits/next_level_id, all real
+// regardless of mode as of S477): story_ai characters + nav graph (mirrors server_apply_custom_
+// level's own MODE_STORY branch exactly), and the real scene_id double-set level_select_confirm's
+// own doc comment already found live-necessary (scene_load alone isn't enough -- draw_scene's
+// per-frame resync reads the PLAYER ENTITY's own scene_id, not the global). Still real, honestly
+// scoped to story-relevant setup only -- calling this for a plain deathmatch-mode exit transition
+// is safe (story_ai_reset + an empty character/nav-node loop is a real, harmless no-op when the
+// target level authored none, and story_boss/story_phase are simply unread outside MODE_STORY),
+// so S477's own exit-trigger fix reuses this same function for ANY mode rather than forking a
+// second, near-identical one. Deliberately does NOT call story_doors_init -- door scripting
+// (dlopen'd compiled .so via story_doors.h) is server-only, never wired into the lobby build
+// (checked directly, not assumed), a real, honest, named scope limit rather than a silent gap.
 static void lobby_apply_story_level(const CustomLevelData *lvl) {
     level_boxes_apply_to_physics(lvl);
     scene_load(SCENE_CUSTOM_LEVEL);
@@ -2027,10 +2047,9 @@ static void lobby_apply_story_level(const CustomLevelData *lvl) {
     story_ai_load_nav_graph(lvl->nav_node_count, nn_x, nn_y, nn_z, nn_is_cover,
                              nn_cover_dir_x, nn_cover_dir_z, nn_neighbor_counts, nn_neighbors_flat);
 
-    g_story_level_exit_count = lvl->level_exit_count < STORY_LEVEL_EXIT_MAX ? lvl->level_exit_count : STORY_LEVEL_EXIT_MAX;
-    for (int ei = 0; ei < g_story_level_exit_count; ei++) g_story_level_exits[ei] = lvl->level_exits[ei];
-    g_story_next_level_id = lvl->next_level_id;
-
+    // level_boxes_apply_to_physics (called at the top of this function) already captured
+    // g_story_level_exits/g_story_next_level_id -- real, no duplicate capture needed here as of
+    // S477.
     local_state.story_boss.active = 0; /* replacing VOXWORLD's own encounter, not extending it */
     local_state.story_phase = STORY_PHASE_PLAYING; /* real skip of the intro cutscene */
 }
@@ -2039,9 +2058,17 @@ static void lobby_apply_story_level(const CustomLevelData *lvl) {
 // apps/server/src/main.c's story_check_level_exits, same real design (full 3D distance, a real
 // debounce against the new level's own spawn point landing back inside an exit radius). See that
 // function's own doc comment for the full reasoning.
+//
+// S477, real fix (founder real-time, live playtest: "i walk over to the block where the level
+// exit should be... i say out loud beam me up scotty and then nothing happens... i am on
+// nextown"). This used to be gated to MODE_STORY only -- but exits are real, author-authored
+// level data, not a story-mode-only concept, and the founder's own real "nextown" level (a plain
+// level-select/deathmatch load, is_story_start=false) never ran this check at all, regardless of
+// how correctly the exit was placed. The g_story_level_exit_count/g_story_next_level_id checks
+// below are already a real, sufficient gate on their own (a level with no exits authored is a
+// real, honest no-op in ANY mode) -- no separate mode check is needed.
 #define STORY_LEVEL_TRANSITION_DEBOUNCE_MS 3000U
 static void lobby_check_story_level_exits(unsigned int now_ms) {
-    if (local_state.game_mode != MODE_STORY) return;
     if (g_story_level_exit_count <= 0 || g_story_next_level_id <= 0) return;
     if (now_ms - g_story_last_level_transition_ms < STORY_LEVEL_TRANSITION_DEBOUNCE_MS) return;
     PlayerState *hero = &local_state.players[0];

@@ -490,42 +490,53 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
         NET_SERVER_LOG("CUSTOM_LEVEL_CHARACTERS_SPAWNED count=%d", lvl->character_count);
     }
 
-    // S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1 -- real, unconditional capture (not
-    // mode-gated like characters above): a level's own exits/next_level_id are harmless, inert
-    // data outside MODE_STORY (story_check_level_exits' own real gate is what actually gives them
-    // effect), and capturing them unconditionally here means this state is always current for
-    // whatever level is actually loaded, matching g_server_match_scene's own real "always current"
-    // convention a few lines above. Real, deliberate full reset (not append) every call.
+    // S473/S477, STORY_LEVEL_SEQUENCING_NORTHSTAR.md -- real, unconditional capture (not
+    // mode-gated like characters above): a level's own exits/next_level_id are real for ANY
+    // mode as of S477 (story_check_level_exits' own exit_count/next_level_id check is a real,
+    // sufficient gate on its own now, not a MODE_STORY check), and capturing them unconditionally
+    // here means this state is always current for whatever level is actually loaded, matching
+    // g_server_match_scene's own real "always current" convention a few lines above. Real,
+    // deliberate full reset (not append) every call.
     g_story_level_exit_count = lvl->level_exit_count < STORY_LEVEL_EXIT_MAX ? lvl->level_exit_count : STORY_LEVEL_EXIT_MAX;
     for (int ei = 0; ei < g_story_level_exit_count; ei++) g_story_level_exits[ei] = lvl->level_exits[ei];
     g_story_next_level_id = lvl->next_level_id;
 }
 
 // story_check_level_exits -- S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1 real, live level
-// transition. MODE_STORY only, hero (player 0) only -- same real single-"hero"-targeted scope
-// this file's own story_ai_tick comment already names for VOXWORLD's boss content, matching how
-// every real story_ai.c perception check already reads s->players[0] as THE player. Reuses the
-// ALREADY-PROVEN-SAFE server_apply_custom_level mid-game level-swap path (the exact mechanism
-// server_advance_queue_round already uses every real QUEUE round, not a new primitive) to fetch
-// and apply next_level_id, then phys_respawn (which already consults the new level's own real
-// Spawners once scene_id == SCENE_CUSTOM_LEVEL, same real spawn-point selection every other
-// custom-level entry already relies on). Full 3D distance (not story_ai.c's own XZ-only
+// transition. Reuses the ALREADY-PROVEN-SAFE server_apply_custom_level mid-game level-swap path
+// (the exact mechanism server_advance_queue_round already uses every real QUEUE round, not a new
+// primitive) to fetch and apply next_level_id. Full 3D distance (not story_ai.c's own XZ-only
 // convention) -- a placed exit volume should not fire for a player merely near the same X/Z on a
 // different floor/level in Y, a real, deliberate difference from ai_len2's own 2D scope.
+//
+// S477, real fix (founder real-time, live playtest: "i walk over to the block where the level
+// exit should be... i say out loud beam me up scotty and then nothing happens... i am on
+// nextown"). This used to be gated to MODE_STORY + player 0 ("hero") only -- but exits are real,
+// author-authored level data, not a story-mode-only concept, and the founder's own real
+// "nextown" level (a plain level-select/deathmatch load, is_story_start=false) never ran this
+// check at all. g_story_level_exit_count/g_story_next_level_id are already a real, sufficient
+// gate on their own (a level with no exits authored is a real, honest no-op in ANY mode) -- no
+// separate mode check needed. Now checks EVERY real active player (not just slot 0, which the
+// dedicated server never even uses for a real connected client -- server main() explicitly
+// deactivates it), and respawns EVERY active player after a real transition, not just whoever
+// triggered it -- the whole world's own geometry just changed under everyone, matching (and
+// improving on) server_advance_queue_round's own existing "the whole server moves together on a
+// level change" precedent.
 #define STORY_LEVEL_TRANSITION_DEBOUNCE_MS 3000U
 static void story_check_level_exits(unsigned int now_ms) {
-    if (local_state.game_mode != MODE_STORY) return;
     if (g_story_level_exit_count <= 0 || g_story_next_level_id <= 0) return;
     if (now_ms - g_story_last_level_transition_ms < STORY_LEVEL_TRANSITION_DEBOUNCE_MS) return;
-    PlayerState *hero = &local_state.players[0];
-    if (!hero->active || hero->state == STATE_DEAD) return;
 
     int triggered = 0;
-    for (int i = 0; i < g_story_level_exit_count; i++) {
-        LevelExit *ex = &g_story_level_exits[i];
-        float dx = hero->x - ex->x, dy = hero->y - ex->y, dz = hero->z - ex->z;
-        float dist2 = dx * dx + dy * dy + dz * dz;
-        if (dist2 <= ex->radius * ex->radius) { triggered = 1; break; }
+    for (int pi = 0; pi < MAX_CLIENTS && !triggered; pi++) {
+        PlayerState *p = &local_state.players[pi];
+        if (!p->active || p->state == STATE_DEAD) continue;
+        for (int i = 0; i < g_story_level_exit_count; i++) {
+            LevelExit *ex = &g_story_level_exits[i];
+            float dx = p->x - ex->x, dy = p->y - ex->y, dz = p->z - ex->z;
+            float dist2 = dx * dx + dy * dy + dz * dz;
+            if (dist2 <= ex->radius * ex->radius) { triggered = 1; break; }
+        }
     }
     if (!triggered) return;
 
@@ -534,13 +545,17 @@ static void story_check_level_exits(unsigned int now_ms) {
     if (!level_boxes_fetch_export(next_id, &lvl)) {
         NET_SERVER_LOG("STORY_LEVEL_TRANSITION_FAILED next_level_id=%d -- export fetch failed", next_id);
         /* Real debounce even on failure -- an unreachable next level must not be hammered with a
-           real curl fetch every single tick the player stands in the exit volume. */
+           real curl fetch every single tick a player stands in the exit volume. */
         g_story_last_level_transition_ms = now_ms;
         return;
     }
     server_apply_custom_level(&lvl);
-    hero->scene_id = g_server_match_scene;
-    phys_respawn(hero, now_ms);
+    for (int pi = 0; pi < MAX_CLIENTS; pi++) {
+        PlayerState *p = &local_state.players[pi];
+        if (!p->active) continue;
+        p->scene_id = g_server_match_scene;
+        phys_respawn(p, now_ms);
+    }
     g_story_last_level_transition_ms = now_ms;
     NET_SERVER_LOG("STORY_LEVEL_TRANSITION next_level_id=%d name=%s", next_id, lvl.name);
 }
