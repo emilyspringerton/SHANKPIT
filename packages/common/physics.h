@@ -16,9 +16,17 @@
 #define GRAVITY_DROP 0.075f  
 #define JUMP_FORCE 0.95f     
 #define MAX_SPEED 0.95f      
-#define FRICTION 0.15f      
-#define ACCEL 0.6f          
-#define STOP_SPEED 0.1f     
+// FRICTION/STOP_SPEED -- S478a, founder real-time: "how hard would it be to increase the
+// friction some at the edges of blocks by default so its a little easier to stick to platforms?
+// right now the physics are so slippery it can be unreasonably hard to parkour." Doubled from the
+// original 0.15/0.1 -- a real, global ground-friction bump (there is no literal "edge" concept in
+// this physics code; every grounded player already decelerates via this one constant everywhere,
+// see apply_friction below). Deliberately leaves SLIDE_FRICTION (the crouch-slide mechanic) alone
+// -- that slipperiness is a real, intentional feature, not the bug being fixed here. See S478b for
+// the separate, real per-material friction layered on top of this baseline.
+#define FRICTION 0.30f
+#define ACCEL 0.6f
+#define STOP_SPEED 0.15f
 #define SLIDE_FRICTION 0.01f 
 #define CROUCH_SPEED 0.35f  
 
@@ -293,6 +301,12 @@ static char g_custom_level_material_name[CUSTOM_LEVEL_MAX_MATERIALS][CUSTOM_LEVE
 static char g_custom_level_material_shader[CUSTOM_LEVEL_MAX_MATERIALS][CUSTOM_LEVEL_MATERIAL_NAME_LEN];
 static float g_custom_level_material_specular[CUSTOM_LEVEL_MAX_MATERIALS];
 static float g_custom_level_material_shininess[CUSTOM_LEVEL_MAX_MATERIALS];
+// g_custom_level_material_friction -- S478b, founder real-time: "make the material friction
+// stuff working per cube" -- real ground-friction decay constant per material, consumed by
+// apply_friction below via resolve_collision's own per-box material_idx lookup (PlayerState's
+// new ground_friction field). Same real "small, parallel array indexed by material slot"
+// precedent as specular/shininess above.
+static float g_custom_level_material_friction[CUSTOM_LEVEL_MAX_MATERIALS];
 static int g_custom_level_material_count = 0;
 
 // S459-08, founder real-time: "i want there to be a plane by default that the player collides
@@ -425,13 +439,19 @@ static inline int phys_custom_level_box_pos(int box_index, float *x, float *y, f
 // ProcTexture globals by name at render time -- see draw_map's own material-texture lookup.
 static inline void phys_set_custom_level_materials(const char names[][CUSTOM_LEVEL_MATERIAL_NAME_LEN],
                                                      const char shaders[][CUSTOM_LEVEL_MATERIAL_NAME_LEN],
-                                                     const float *specular, const float *shininess, int count) {
+                                                     const float *specular, const float *shininess,
+                                                     const float *friction, int count) {
     int n = count > CUSTOM_LEVEL_MAX_MATERIALS ? CUSTOM_LEVEL_MAX_MATERIALS : count;
     for (int i = 0; i < n; i++) {
         snprintf(g_custom_level_material_name[i], CUSTOM_LEVEL_MATERIAL_NAME_LEN, "%s", names[i]);
         snprintf(g_custom_level_material_shader[i], CUSTOM_LEVEL_MATERIAL_NAME_LEN, "%s", (shaders && shaders[i][0]) ? shaders[i] : "standard");
         g_custom_level_material_specular[i] = specular[i];
         g_custom_level_material_shininess[i] = shininess[i];
+        // friction == NULL is a real, valid caller (a pre-S478b call site that hasn't been
+        // updated to pass friction yet) -- falls back to the same 0.30 baseline
+        // packages/world/level_boxes.h's own parser defaults an absent JSON "friction" key to,
+        // so an un-migrated caller behaves identically to an un-migrated level export.
+        g_custom_level_material_friction[i] = friction ? friction[i] : 0.30f;
     }
     g_custom_level_material_count = n;
 }
@@ -2849,12 +2869,17 @@ void apply_friction(PlayerState *p) {
     
     float drop = 0;
     if (!p->in_vehicle && p->on_ground) {
+        // S478b -- ground_friction is resolve_collision's own real, per-tick resolved value
+        // (the box/material actually being stood on, or the global FRICTION baseline for
+        // flat-floor/terrain ground which has no material). Replaces the flat FRICTION constant
+        // this used to always read directly.
+        float ground_fric = p->ground_friction;
         if (p->crouching) {
             if (speed > 0.75f) drop = speed * SLIDE_FRICTION;
-            else drop = speed * (FRICTION * 3.0f); 
+            else drop = speed * (ground_fric * 3.0f);
         } else {
             float control = (speed < STOP_SPEED) ? STOP_SPEED : speed;
-            drop = control * FRICTION; 
+            drop = control * ground_fric;
         }
     }
     float newspeed = speed - drop;
@@ -3047,6 +3072,12 @@ void resolve_collision(PlayerState *p) {
     float pw = p->in_vehicle ? 3.0f : PLAYER_WIDTH;
     float ph = p->in_vehicle ? 3.0f : (p->crouching ? (PLAYER_HEIGHT / 2.0f) : PLAYER_HEIGHT);
     p->on_ground = 0;
+    // S478b real, per-tick default: the flat-floor/terrain landing branches below have no
+    // material concept (only SCENE_CUSTOM_LEVEL boxes do -- see the per-box loop's own real
+    // material_idx lookup further down), so they keep this global baseline. Set unconditionally,
+    // every tick, so a player who just left a sticky/slick custom-level box doesn't keep its
+    // stale friction value after stepping onto ordinary ground.
+    p->ground_friction = FRICTION;
     g_last_ground_source_terrain = 0;
     // Real, found-live bug (founder real-time: "i made a level with an embeded level and for
     // some reason when i jump it teleports me outside the walls"): the per-box loop below used
@@ -3110,6 +3141,16 @@ void resolve_collision(PlayerState *p) {
                 if (frame_prev_y >= b.y + b.h/2) {
                     p->y = b.y + b.h/2; p->vy = 0; p->on_ground = 1;
                     g_last_ground_source_terrain = 0;
+                    // S478b real, per-box ground friction -- only SCENE_CUSTOM_LEVEL boxes carry
+                    // a real material_idx (g_custom_level_material_idx is populated exclusively
+                    // by phys_set_custom_level; every other built-in scene's own map_geo array
+                    // has no parallel material table at all). Landing on more than one box in
+                    // the same tick (real, see frame_prev_y's own doc comment above) means
+                    // whichever box's landing branch runs LAST wins -- same real "last one wins"
+                    // convention p->y itself already has in that same scenario.
+                    if (phys_scene_id == SCENE_CUSTOM_LEVEL) {
+                        p->ground_friction = g_custom_level_material_friction[g_custom_level_material_idx[i]];
+                    }
                 } else {
                     float dx = p->x - b.x; float dz = p->z - b.z;
                     float w = (b.w > 0.1f) ? b.w : 1.0f;

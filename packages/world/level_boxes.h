@@ -22,8 +22,11 @@
 // dependency on the huge, scene-heavy physics header and can't accidentally couple to it.
 //
 // Field mapping, NOCK export -> this loader's own output (collision-relevant fields only; id and
-// friction are read but not currently used -- named, not silently dropped, real future work once
-// per-box friction/material actually matters to physics.h's own collision resolution):
+// a Wall's own per-box `friction` are read but still not consumed -- real, deliberate, S478b:
+// ground friction resolves per-MATERIAL now (LevelBoxMaterial.friction below, consumed by
+// physics.h's own apply_friction via material_idx), not per-box, matching how shader_name/
+// specular/shininess already work. A Wall's own bare `friction` field stays parsed-but-ignored
+// legacy, not silently dropped -- named here, not a regression):
 //   sx -> w, sy -> h, sz -> d (full extents both sides -- exact match, no unit conversion needed)
 
 #include <stdio.h>
@@ -54,13 +57,21 @@ typedef struct {
         header's own doc comment for the real "NOCK stores the name, native owns the code" split) */
     float specular;
     float shininess;
+    float friction; /* S478b, founder real-time: "make the material friction stuff working per
+        cube" -- real, live ground friction, resolved per-box via material_idx and consumed by
+        packages/common/physics.h's own apply_friction (NOT this file -- level_boxes.h stays
+        physics.h-free by design, see this header's own top-of-file doc comment). Absent in a
+        pre-S478b export defaults to 0.30, matching physics.h's own tuned global FRICTION
+        baseline exactly (see this field's own parse site below). */
 } LevelBoxMaterial;
 
 typedef struct {
     float x, y, z;    /* center, world units -- matches physics.h's own real Box convention */
     float w, h, d;     /* full extents (NOT half-extents) -- matches NOCK's own sx/sy/sz exactly */
     float r, g, b;      /* real OpenGL-convention [0,1] color, for rendering only */
-    float friction;      /* read, not yet consumed by collision -- real, named future work */
+    float friction;      /* read, deliberately NOT consumed by collision -- S478b resolves ground
+                             friction per-MATERIAL instead (materials[material_idx].friction),
+                             not per-box; this legacy field stays parsed but ignored */
     int material_idx;    /* index into CustomLevelData.materials, resolved at parse time -- see
                              level_boxes_resolve_material's own doc comment for the real fallback
                              when a wall's own material name isn't in the level's materials array */
@@ -415,13 +426,16 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
                     const char *sv = level_boxes_find_key(mobj_start, mobj_end, "shader_name");
                     if (sv) level_boxes_parse_string(sv, mat->shader_name, sizeof(mat->shader_name));
                     else strncpy(mat->shader_name, "standard", sizeof(mat->shader_name) - 1);
-                    float spec_f = 0, shin_f = 8;
+                    float spec_f = 0, shin_f = 8, fric_f = 0.30f;
                     const char *spv = level_boxes_find_key(mobj_start, mobj_end, "specular");
                     if (spv) level_boxes_parse_number(spv, &spec_f);
                     const char *shv = level_boxes_find_key(mobj_start, mobj_end, "shininess");
                     if (shv) level_boxes_parse_number(shv, &shin_f);
+                    const char *frv = level_boxes_find_key(mobj_start, mobj_end, "friction");
+                    if (frv) level_boxes_parse_number(frv, &fric_f);
                     mat->specular = spec_f;
                     mat->shininess = shin_f;
+                    mat->friction = fric_f;
                     if (mat->name[0]) out->material_count++;
                     mcursor = mobj_end + 1;
                 }
@@ -434,6 +448,7 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
         strncpy(mat->shader_name, "standard", sizeof(mat->shader_name) - 1);
         mat->specular = 0.04f;
         mat->shininess = 6.0f;
+        mat->friction = 0.30f;
         out->material_count = 1;
     }
 

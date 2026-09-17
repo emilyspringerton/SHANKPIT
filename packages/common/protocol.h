@@ -286,6 +286,15 @@ typedef struct {
     int active; int is_bot;
     int team_id;
     float x, y, z; float vx, vy, vz; float yaw, pitch; int on_ground;
+    // ground_friction -- S478b, founder real-time: "make the material friction stuff working per
+    // cube" -- resolved by resolve_collision (physics.h) every tick a landing branch sets
+    // on_ground, from whichever box's own material the player is actually standing on (falls
+    // back to physics.h's own global FRICTION constant for the flat-floor/terrain case, which
+    // has no material). apply_friction reads this instead of the flat global constant. Not
+    // networked (NetPlayer, protocol.h's own wire struct) -- a real, server/lobby-only physics
+    // input, same class as e.g. dash_vx/dash_vy/dash_vz above, never something a client needs to
+    // see.
+    float ground_friction;
     float in_fwd;
     float in_strafe;
     int in_jump; int in_shoot; int in_reload; int crouching; int in_use; int in_bike;

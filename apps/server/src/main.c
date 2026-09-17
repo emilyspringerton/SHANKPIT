@@ -412,6 +412,7 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
     char mat_names[LEVEL_BOXES_MAX_MATERIALS][CUSTOM_LEVEL_MATERIAL_NAME_LEN];
     char mat_shaders[LEVEL_BOXES_MAX_MATERIALS][CUSTOM_LEVEL_MATERIAL_NAME_LEN];
     float mat_specular[LEVEL_BOXES_MAX_MATERIALS], mat_shininess[LEVEL_BOXES_MAX_MATERIALS];
+    float mat_friction[LEVEL_BOXES_MAX_MATERIALS];
     for (int mi = 0; mi < lvl->material_count; mi++) {
         strncpy(mat_names[mi], lvl->materials[mi].name, CUSTOM_LEVEL_MATERIAL_NAME_LEN - 1);
         mat_names[mi][CUSTOM_LEVEL_MATERIAL_NAME_LEN - 1] = '\0';
@@ -419,8 +420,9 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
         mat_shaders[mi][CUSTOM_LEVEL_MATERIAL_NAME_LEN - 1] = '\0';
         mat_specular[mi] = lvl->materials[mi].specular;
         mat_shininess[mi] = lvl->materials[mi].shininess;
+        mat_friction[mi] = lvl->materials[mi].friction;
     }
-    phys_set_custom_level_materials(mat_names, mat_shaders, mat_specular, mat_shininess, lvl->material_count);
+    phys_set_custom_level_materials(mat_names, mat_shaders, mat_specular, mat_shininess, mat_friction, lvl->material_count);
     phys_set_custom_level(x, y, z, w, h, d, r, g, b, material_idx, lvl->count, lvl->ground_plane_enabled, lvl->ground_plane_squares);
 
     // S459-58: real, author-placed spawn points, team/FFA-aware.
