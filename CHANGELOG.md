@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-17
+
+- Humanness Phase 1: real jitter/mood primitives (reaction delay, Gaussian aim noise, overshoot turning) modeled on MISHRI, 7 real behavioral-contract tests (sess-20260905-0720-ec33e7c5)
+
+
 ## 2026-09-16
 - Add HUMANNESS_NORTHSTAR.md: realistic scriptable NPC framework grounded in MISHRI's real jitter/mood/perception implementation (sess-20260905-0720-ec33e7c5)
 - Add a real, runnable demo level (hallway, two differently-scripted doors) under examples/story-doors/demo_level (sess-20260905-0720-ec33e7c5)
