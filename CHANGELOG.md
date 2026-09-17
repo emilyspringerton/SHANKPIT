@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-17
+- feat(ai): S461-01 real waypoint/cover A* pathfinding (packages/simulation/ai_nav.c/.h) wired into story_ai.c's previously-dead AI_MODE_FLEE; health<30+courage<0.7 triggers real cover-seeking, VOXWORLD encounter gets a first hand-authored graph, NORTHSTAR doc at docs2/specs/AI_WAYPOINT_NAV_NORTHSTAR.md per founder direction to northstar the levels/maps waypoint system (sess-20260905-0720-ec33e7c5)
 - feat(ai): S461-02 real seek/arrival steering in story_ai.c -- ai_move_towards now decelerates within a per-caller slow_radius instead of constant speed until the separate stop-distance check, applied to patrol/investigate/ally-approach; search-orbit and ally-backoff keep slow_radius=0 since their targets aren't real destinations (sess-20260905-0720-ec33e7c5)
 - fix(server): QUEUE self-heals onto the current default-queue level every round instead of only on first activation -- fixes 'joined into both levels' when a level is changed mid-session (server kept old collision geometry while client re-fetched the new one) (sess-20260905-0720-ec33e7c5)
 - feat(rl): training now respects the queue's default level (is_default_queue) instead of the hardcoded --deathmatch scene rotation -- BRAWLPIT had this (S431-01), SHANKPIT never did. Also: registry auth JWT now proactively refreshes every 45min so long training runs don't silently stop pushing checkpoints after 1hr expiry (sess-20260905-0720-ec33e7c5)
