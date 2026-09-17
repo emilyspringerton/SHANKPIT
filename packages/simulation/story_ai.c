@@ -40,6 +40,7 @@ static unsigned int g_story_debug_next_log_ms = 0;
 static AINavGraph g_story_nav; /* S461-01 -- real, hand-authored waypoint/cover graph, see
                                    story_ai_seed_voxworld_encounter and
                                    docs2/specs/AI_WAYPOINT_NAV_NORTHSTAR.md */
+static AISquad g_story_squads[STORY_AI_SQUAD_MAX]; /* S461-03 -- real squad leader system */
 
 static float ai_len2(float x, float z) { return sqrtf(x * x + z * z); }
 static float ai_angle_to(float dx, float dz) { return atan2f(dx, dz) * (180.0f / 3.14159265f); }
@@ -250,6 +251,7 @@ void story_ai_reset(ServerState *s) {
     memset(g_story_perception, 0, sizeof(g_story_perception));
     g_story_debug_next_log_ms = 0;
     ai_nav_reset(&g_story_nav);
+    memset(g_story_squads, 0, sizeof(g_story_squads));
     if (!s) return;
     for (i = 1; i < MAX_CLIENTS; i++) {
         s->players[i].active = 0;
@@ -311,6 +313,8 @@ int story_ai_spawn_enemy(ServerState *s, AIRole role, float x, float y, float z)
     ai->flee_target_node = -1; /* S461-01 -- not yet computed */
     ai->flee_path_len = 0;
     ai->flee_path_index = 0;
+    ai->squad_id = -1; /* S461-03 -- not in a squad until story_ai_form_squad joins one */
+    ai->squad_role = SQUAD_ROLE_NONE;
     ai_assign_role_defaults(ai, p);
 
     return slot;
@@ -324,6 +328,109 @@ static void ai_set_patrol(AIController *ai, int idx, float x, float y, float z, 
     ai->patrol[idx].wait_ms = wait_ms;
     ai->patrol[idx].behavior_hint = hint;
     if (ai->patrol_count < idx + 1) ai->patrol_count = idx + 1;
+}
+
+static int ai_index_by_player_id(int player_id) {
+    int i;
+    for (i = 0; i < STORY_AI_MAX; i++) {
+        if (g_story_ai[i].active && g_story_ai[i].player_id == player_id) return i;
+    }
+    return -1;
+}
+
+/* S461-03: position 0 in a squad's member list is always the leader; positions 1+ cycle through
+   the three real combat-role biases ai_squad_apply_role_bias actually implements. */
+static AISquadRole ai_squad_role_for_position(int pos) {
+    if (pos == 0) return SQUAD_ROLE_LEADER;
+    switch ((pos - 1) % 3) {
+        case 0: return SQUAD_ROLE_FLANK_LEFT;
+        case 1: return SQUAD_ROLE_FLANK_RIGHT;
+        default: return SQUAD_ROLE_SUPPRESS;
+    }
+}
+
+int story_ai_form_squad(const int *player_ids, int count) {
+    int slot = -1;
+    int i;
+    AISquad *sq;
+    if (!player_ids || count <= 0 || count > STORY_AI_SQUAD_MAX_MEMBERS) return -1;
+    for (i = 0; i < STORY_AI_SQUAD_MAX; i++) {
+        if (!g_story_squads[i].active) { slot = i; break; }
+    }
+    if (slot < 0) return -1;
+
+    sq = &g_story_squads[slot];
+    memset(sq, 0, sizeof(*sq));
+    for (i = 0; i < count; i++) {
+        int idx = ai_index_by_player_id(player_ids[i]);
+        if (idx < 0) return -1;
+        sq->member_ai_index[sq->member_count++] = idx;
+    }
+    sq->active = 1;
+    for (i = 0; i < sq->member_count; i++) {
+        AIController *ai = &g_story_ai[sq->member_ai_index[i]];
+        ai->squad_id = slot;
+        ai->squad_role = ai_squad_role_for_position(i);
+    }
+    return slot;
+}
+
+/* S461-03: real, live re-evaluation, called once per tick before combat dispatch. Compacting
+   member_ai_index in place (dropping dead/inactive members, keeping the survivors' relative
+   order) means position 0 is automatically whichever survivor was highest-priority before the
+   leader died -- promotion falls out of the same reassignment loop that recycles flank/suppress
+   roles, not a separate special case. Matches the founder's own real-time spec: "the Squad class
+   instantly re-evaluates and promotes ... to change their auto-pilot state dynamically." */
+static void ai_squad_reevaluate(ServerState *s) {
+    int qi, i, w;
+    for (qi = 0; qi < STORY_AI_SQUAD_MAX; qi++) {
+        AISquad *sq = &g_story_squads[qi];
+        if (!sq->active) continue;
+        w = 0;
+        for (i = 0; i < sq->member_count; i++) {
+            int idx = sq->member_ai_index[i];
+            AIController *ai = &g_story_ai[idx];
+            PlayerState *p = &s->players[ai->player_id];
+            if (!ai->active || !p->active || p->state == STATE_DEAD) {
+                ai->squad_id = -1;
+                ai->squad_role = SQUAD_ROLE_NONE;
+                continue;
+            }
+            sq->member_ai_index[w++] = idx;
+        }
+        sq->member_count = w;
+        if (sq->member_count == 0) {
+            sq->active = 0;
+            continue;
+        }
+        for (i = 0; i < sq->member_count; i++) {
+            g_story_ai[sq->member_ai_index[i]].squad_role = ai_squad_role_for_position(i);
+        }
+    }
+}
+
+/* S461-03: layered ON TOP of whatever the per-role combat function (ai_combat_hound/trooper/
+   etc.) already set, same "real behavior added on top, baseline unchanged for non-squad AIs"
+   pattern humanness.c's own turn/aim jitter already uses. Squad role only biases positioning,
+   never overrides the per-role weapon/ability logic those functions already own. */
+static void ai_squad_apply_role_bias(const AIController *ai, PlayerState *p) {
+    if (ai->squad_id < 0) return;
+    switch (ai->squad_role) {
+        case SQUAD_ROLE_FLANK_LEFT:
+            p->in_strafe = ai_clamp(-fabsf(p->in_strafe) - 0.25f, -1.0f, 1.0f);
+            break;
+        case SQUAD_ROLE_FLANK_RIGHT:
+            p->in_strafe = ai_clamp(fabsf(p->in_strafe) + 0.25f, -1.0f, 1.0f);
+            break;
+        case SQUAD_ROLE_SUPPRESS:
+            /* Real suppressing fire: hold ground and keep shooting (in_shoot is already set by
+               the per-role combat function above) rather than closing distance. */
+            p->in_fwd *= 0.35f;
+            p->in_strafe *= 0.4f;
+            break;
+        default:
+            break;
+    }
 }
 
 static int ai_player_recently_fired(const PlayerState *player) {
@@ -647,6 +754,7 @@ static void ai_run_combat(ServerState *s, AIController *ai, const AIPerception *
     else if (ai->role == AI_ROLE_STORM_CALLER) ai_combat_storm_caller(s, ai, p, per, now_ms);
     else if (ai->role == AI_ROLE_BOMBARDIER) ai_combat_bombardier(s, ai, p, per, now_ms);
     else ai_combat_trooper(s, ai, p, per, now_ms);
+    ai_squad_apply_role_bias(ai, p); /* S461-03 */
 }
 
 void story_ai_tick(ServerState *s, unsigned int now_ms) {
@@ -674,6 +782,8 @@ void story_ai_tick(ServerState *s, unsigned int now_ms) {
     }
 
     g_story_bb.alert_level = (g_story_bb.player_visible_count > 0) ? 2 : ((now_ms - g_story_bb.last_global_alert_ms) < 2500U ? 1 : 0);
+
+    ai_squad_reevaluate(s); /* S461-03 -- before combat dispatch so this tick's roles are current */
 
     for (i = 0; i < STORY_AI_MAX; i++) {
         AIController *ai = &g_story_ai[i];
@@ -839,6 +949,26 @@ void story_ai_seed_voxworld_encounter(ServerState *s) {
             ai_set_patrol(ai, 0, cx - 60.0f, 0.0f, cz - 10.0f, 900U, 0);
             ai_set_patrol(ai, 1, cx - 44.0f, 0.0f, cz + 6.0f, 900U, 0);
         }
+    }
+
+    /* S461-03: two real squads for this encounter -- the melee/mid-range cluster (troopers +
+       hound + brute) and the ranged/flank pair (storm caller + bombardier), matching the same
+       "many enemies with different threats" grouping S181-05 already established for the
+       roster. Ally is deliberately never squadded (stays -1, per story_ai_spawn_enemy's own
+       init) -- it has its own dedicated mode (AI_MODE_ALLY_FOLLOW), not a hostile-squad role. */
+    {
+        int squad_a[4];
+        int squad_b[2];
+        int sa_n = 0, sb_n = 0;
+        if (id_a > 0) squad_a[sa_n++] = id_a;
+        if (id_b > 0) squad_a[sa_n++] = id_b;
+        if (id_h > 0) squad_a[sa_n++] = id_h;
+        if (id_g > 0) squad_a[sa_n++] = id_g;
+        if (sa_n > 0) story_ai_form_squad(squad_a, sa_n);
+
+        if (id_sc > 0) squad_b[sb_n++] = id_sc;
+        if (id_bm > 0) squad_b[sb_n++] = id_bm;
+        if (sb_n > 0) story_ai_form_squad(squad_b, sb_n);
     }
 
     /* S461-01: first real, hand-authored waypoint/cover graph for this encounter -- a loop of
