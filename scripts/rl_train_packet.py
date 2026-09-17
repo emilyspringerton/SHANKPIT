@@ -467,7 +467,19 @@ def _find_latest_registry_checkpoint(registry_url, role_value):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--total-timesteps", type=int, default=200_000)
-    p.add_argument("--save-freq", type=int, default=4096)
+    # save-freq -- real, per-generation training chunk size (a "generation" is one
+    # model.learn(total_timesteps=min(save_freq, remaining)) call). Real, found-live gap
+    # (founder real-time: "it wasnt traning for enough ticks per generation"): this defaulted to
+    # 4096, nearly 5x smaller than BRAWLPIT/scripts/rl_train_packet.py's own analogous
+    # --save-freq=20_000 -- a real drift from the sibling implementation this whole file was
+    # explicitly built to mirror ("brawlpit repo exact model for now"), not a deliberate choice.
+    # At SB3 PPO's own default n_steps=2048 (one env, no vectorization here), 4096 is only two
+    # real rollout-collection+update cycles per generation -- a genuinely small amount of
+    # experience to learn from before checkpointing and picking a new opponent, and a real,
+    # plausible explanation for 60 generations of flat/declining Elo. Bumped to match BRAWLPIT
+    # exactly. colab_train.py now exposes this as SHANKPIT_SAVE_FREQ (previously not
+    # overridable from Colab at all -- hardcoded to whatever this file's own default was).
+    p.add_argument("--save-freq", type=int, default=20_000)
     p.add_argument("--league-dir", default=os.environ.get("SHANKPIT_LEAGUE_DIR", "league_data"))
     p.add_argument("--reset-every-n-generations", type=int, default=5,
                    help="Main Exploiter's own periodic full reset cadence. <= 0 disables it.")

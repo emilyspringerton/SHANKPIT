@@ -146,15 +146,23 @@ def main():
     # separate push_checkpoint call needed here, unlike the old single-agent flow this replaces.
     # S459-70, founder real-time: "it only goes like 5 generations can you make it go like 100?"
     # -- generation count is real-timesteps-driven, not a separate knob: rl_train_packet.py's own
-    # main loop runs until total_timesteps is exhausted, producing one generation per
-    # --save-freq(=4096, its own real default) chunk -- 20000/4096 rounds to the real 5
-    # generations being seen. 409600 = 100 * 4096, a real default sized for "100 generations" at
-    # that same per-generation training amount, not a guess. Real, honest cost this trades for:
-    # at this box's own live-measured ~4-5 min/generation, 100 generations is a genuinely long
-    # run (multiple hours), well past a free-tier Colab session's own real idle/hard-cap limits --
-    # if the runtime disconnects partway through, --resume-from-registry (now always on when
-    # pushing to the registry, see S459-71 below) picks back up from each role's own latest
-    # pushed checkpoint on the next run instead of losing progress.
+    # main loop runs until total_timesteps is exhausted, producing one generation per --save-freq
+    # chunk. Real, honest cost this trades for: at this box's own live-measured ~4-5 min/
+    # generation (at the OLD, too-small save-freq -- see below), a long run is well past a free-
+    # tier Colab session's own real idle/hard-cap limits -- if the runtime disconnects partway
+    # through, --resume-from-registry (now always on when pushing to the registry, see S459-71
+    # below) picks back up from each role's own latest pushed checkpoint on the next run instead
+    # of losing progress.
+    #
+    # SHANKPIT_SAVE_FREQ -- real, found-live gap (founder real-time: "it wasnt traning for enough
+    # ticks per generation"): --save-freq (the per-generation chunk size) was never exposed here
+    # at all -- hardcoded to whatever rl_train_packet.py's own CLI default happened to be, with no
+    # way to override it from Colab. That default (4096) was itself nearly 5x smaller than
+    # BRAWLPIT/scripts/rl_train_packet.py's own analogous --save-freq=20_000, a real drift from
+    # the sibling implementation this file was explicitly built to mirror, not a deliberate
+    # choice -- see rl_train_packet.py's own --save-freq doc comment for the full reasoning. Now
+    # real and overridable; the new rl_train_packet.py default (20_000, matching BRAWLPIT) applies
+    # automatically here too when unset.
     output_dir = os.environ.get("SHANKPIT_RL_OUTPUT_DIR", "var/rl_checkpoints/colab")
     cmd = [
         sys.executable, "scripts/rl_train_packet.py",
@@ -164,6 +172,8 @@ def main():
         "--league-dir", os.environ.get("SHANKPIT_LEAGUE_DIR", "league_data"),
         "--heuristic-opponents", os.environ.get("SHANKPIT_HEURISTIC_OPPONENTS", "1"),
     ]
+    if os.environ.get("SHANKPIT_SAVE_FREQ"):
+        cmd += ["--save-freq", os.environ["SHANKPIT_SAVE_FREQ"]]
     pushing_to_registry = bool(iduna_agent_secret)
     if pushing_to_registry:
         cmd += [
