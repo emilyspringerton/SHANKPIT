@@ -112,8 +112,15 @@ jobs:
           # it) -- added to this hand-copy and tests.yml's own copy in the same pass this time,
           # not after a separate CI failure, per the standing lesson these prior three
           # recurrences already named.
+          # FIFTH real recurrence (2026-09-17, S470): packages/goldenband/gseq.c, gpose.c, gsync.c,
+          # and gband_skel_npc.c were each added to the Makefile's own LOBBY_SRC across S464/S467
+          # but never made it into this hand-copy or tests.yml's own -- found while touching
+          # gband_skel_npc.c again for this pass, same undefined-reference failure mode the third
+          # recurrence above hit (gseq_clip_load/gpose_compute_skin_matrices/gsync_*/
+          # gband_skel_npc_load_kit all missing). Added to this hand-copy and tests.yml's own copy
+          # in the same pass, not after a separate CI failure, per the standing lesson.
           x86_64-w64-mingw32-gcc apps/lobby/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/cutscene.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/world/terrain.c packages/world/parena_runtime.c packages/world/png_decode_gen.c packages/audio/audio.c \
-            packages/goldenband/gband_mesh_rig.c packages/goldenband/gband.c packages/goldenband/gskel.c packages/goldenband/gmesh.c \
+            packages/goldenband/gband_mesh_rig.c packages/goldenband/gband.c packages/goldenband/gskel.c packages/goldenband/gmesh.c packages/goldenband/gseq.c packages/goldenband/gpose.c packages/goldenband/gsync.c packages/goldenband/gband_skel_npc.c \
             -o ShankPit.exe \
             -O2 -static-libgcc \
             -I./sdl2_mingw/include \
