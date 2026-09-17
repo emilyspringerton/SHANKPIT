@@ -8,6 +8,14 @@
 #define STORY_AI_SEEN_MEMORY_MS 3200U
 #define STORY_AI_SEARCH_MIN_MS 5000U
 #define STORY_AI_SEARCH_VAR_MS 3000U
+/* S461-01: real health-gated flee trigger. Threshold matches bot_client's own existing
+   w_retreat convention ("health-aware retreat multiplier (activated when hp < 30%)",
+   packages/common/protocol.h) rather than inventing a new number. Courage gate keeps the
+   tank-identity roles (Brute 1.0, Bombardier 0.9, Hound 0.8) fighting through low health --
+   only the roles whose own combat comments already lean on "keeps distance"/"backs away"
+   (Trooper 0.55, Storm Caller 0.35, Guard's 0.5 default) actually flee. */
+#define STORY_AI_FLEE_HEALTH_PCT 30
+#define STORY_AI_FLEE_COURAGE_MAX 0.7f
 
 
 static float ai_angle_diff(float a, float b) {
@@ -29,6 +37,9 @@ static AIController g_story_ai[STORY_AI_MAX];
 static AIWorldBlackboard g_story_bb;
 static AIPerception g_story_perception[STORY_AI_MAX];
 static unsigned int g_story_debug_next_log_ms = 0;
+static AINavGraph g_story_nav; /* S461-01 -- real, hand-authored waypoint/cover graph, see
+                                   story_ai_seed_voxworld_encounter and
+                                   docs2/specs/AI_WAYPOINT_NAV_NORTHSTAR.md */
 
 static float ai_len2(float x, float z) { return sqrtf(x * x + z * z); }
 static float ai_angle_to(float dx, float dz) { return atan2f(dx, dz) * (180.0f / 3.14159265f); }
@@ -55,6 +66,7 @@ static const char *ai_mode_name(AIMode mode) {
         case AI_MODE_COMBAT: return "COMBAT";
         case AI_MODE_SEARCH: return "SEARCH";
         case AI_MODE_ALLY_FOLLOW: return "ALLY";
+        case AI_MODE_FLEE: return "FLEE";
         default: return "DISABLED";
     }
 }
@@ -237,6 +249,7 @@ void story_ai_reset(ServerState *s) {
     memset(&g_story_bb, 0, sizeof(g_story_bb));
     memset(g_story_perception, 0, sizeof(g_story_perception));
     g_story_debug_next_log_ms = 0;
+    ai_nav_reset(&g_story_nav);
     if (!s) return;
     for (i = 1; i < MAX_CLIENTS; i++) {
         s->players[i].active = 0;
@@ -295,6 +308,9 @@ int story_ai_spawn_enemy(ServerState *s, AIRole role, float x, float y, float z)
     ai->next_attack_ms = 0;
     humanness_state_init(&ai->humanness, 0); /* Humanness Phase 2 -- real, fresh per-instance state */
     ai->turn_overshooting = 0;
+    ai->flee_target_node = -1; /* S461-01 -- not yet computed */
+    ai->flee_path_len = 0;
+    ai->flee_path_index = 0;
     ai_assign_role_defaults(ai, p);
 
     return slot;
@@ -413,6 +429,61 @@ static void ai_run_ally_follow(ServerState *s, AIController *ai, unsigned int no
     if (dist > 20.0f) ai_move_towards(ai, p, hero->x, hero->z, 0.70f * ai->move_speed_scale, 7.0f, 15.0f);
     else if (dist < 9.0f) ai_move_towards(ai, p, p->x - dx, p->z - dz, 0.40f * ai->move_speed_scale, 6.0f, 0.0f);
     else p->in_fwd = 0.0f;
+}
+
+/* S461-01: real tactical flee -- queries the hand-authored cover graph once (on first entry into
+   AI_MODE_FLEE), A*s to the nearest cover node that actually faces away from the current threat,
+   and holds there once arrived. Deliberately terminal: this codebase has no health-regen system
+   anywhere, so re-triggering combat after fleeing would mean charging back out at the same low
+   health that caused the flee in the first place -- "wounded, hides, stays hidden" is the
+   honest v0 behavior, not a bug. A regen-driven re-engage is real, separate follow-up work. */
+static void ai_run_flee(ServerState *s, AIController *ai, unsigned int now_ms) {
+    PlayerState *p = &s->players[ai->player_id];
+    (void)now_ms;
+
+    if (ai->flee_target_node < 0 && ai->flee_path_len == 0) {
+        ai->flee_target_node = ai_nav_find_cover(&g_story_nav, p->x, p->z, ai->last_known_x, ai->last_known_z);
+        if (ai->flee_target_node >= 0) {
+            int len = ai_nav_find_path(&g_story_nav, p->x, p->z, ai->flee_target_node, ai->flee_path, AI_NAV_MAX_PATH);
+            ai->flee_path_len = (len > 0) ? len : 0;
+            ai->flee_path_index = 0;
+        }
+    }
+
+    if (ai->flee_target_node >= 0 && ai->flee_path_index < ai->flee_path_len) {
+        int node = ai->flee_path[ai->flee_path_index];
+        const AINavNode *n = &g_story_nav.nodes[node];
+        float dx = n->x - p->x;
+        float dz = n->z - p->z;
+        if (ai_len2(dx, dz) < 4.0f) {
+            ai->flee_path_index++;
+        } else {
+            ai_move_towards(ai, p, n->x, n->z, 0.85f * ai->move_speed_scale, 8.0f, 8.0f);
+            return;
+        }
+    }
+
+    if (ai->flee_target_node >= 0) {
+        const AINavNode *n = &g_story_nav.nodes[ai->flee_target_node];
+        ai_move_towards(ai, p, n->x, n->z, 0.0f, 5.0f, 4.0f); /* hold at cover */
+        return;
+    }
+
+    /* Real, honest fallback: no cover graph authored for this scene (or nothing in it faces away
+       from the current threat) -- move directly away from the last-known threat position rather
+       than doing nothing. */
+    {
+        float away_x = p->x - ai->last_known_x;
+        float away_z = p->z - ai->last_known_z;
+        float mag = ai_len2(away_x, away_z);
+        if (mag < 0.0001f) {
+            away_x = 1.0f;
+            away_z = 0.0f;
+            mag = 1.0f;
+        }
+        ai_move_towards(ai, p, p->x + (away_x / mag) * 40.0f, p->z + (away_z / mag) * 40.0f,
+                         0.85f * ai->move_speed_scale, 8.0f, 0.0f);
+    }
 }
 
 static void ai_combat_hound(ServerState *s, AIController *ai, PlayerState *p, const AIPerception *per, unsigned int now_ms) {
@@ -621,6 +692,15 @@ void story_ai_tick(ServerState *s, unsigned int now_ms) {
             continue;
         }
 
+        /* S461-01: real health-gated flee, checked before combat/investigate assignment so a
+           wounded, low-courage AI breaks off instead of re-entering the fight that wounded it.
+           Terminal by design once triggered -- see ai_run_flee's own comment for why. */
+        if (ai->mode == AI_MODE_FLEE ||
+            (s->players[ai->player_id].health < STORY_AI_FLEE_HEALTH_PCT && ai->courage < STORY_AI_FLEE_COURAGE_MAX)) {
+            ai_set_mode(ai, AI_MODE_FLEE, now_ms);
+            continue;
+        }
+
         if (wants_combat && attackers < STORY_AI_MAX_ATTACKERS) {
             ai_set_mode(ai, AI_MODE_COMBAT, now_ms);
             attackers++;
@@ -663,6 +743,7 @@ void story_ai_tick(ServerState *s, unsigned int now_ms) {
         else if (ai->mode == AI_MODE_SEARCH) ai_run_search(s, ai, now_ms);
         else if (ai->mode == AI_MODE_ALLY_FOLLOW) ai_run_ally_follow(s, ai, now_ms);
         else if (ai->mode == AI_MODE_COMBAT) ai_run_combat(s, ai, &g_story_perception[i], now_ms);
+        else if (ai->mode == AI_MODE_FLEE) ai_run_flee(s, ai, now_ms);
     }
 
 #if STORY_AI_DEBUG
@@ -758,6 +839,29 @@ void story_ai_seed_voxworld_encounter(ServerState *s) {
             ai_set_patrol(ai, 0, cx - 60.0f, 0.0f, cz - 10.0f, 900U, 0);
             ai_set_patrol(ai, 1, cx - 44.0f, 0.0f, cz + 6.0f, 900U, 0);
         }
+    }
+
+    /* S461-01: first real, hand-authored waypoint/cover graph for this encounter -- a loop of
+       plain waypoints plus two cover nodes, seeded fresh (story_ai_reset already cleared
+       g_story_nav) each time this encounter spawns. cover_dir on each node is a first pass, not
+       yet checked against this scene's actual wall/prop placement (no wall-collision data
+       exists anywhere in SHANKPIT to verify it against -- see
+       docs2/specs/AI_WAYPOINT_NAV_NORTHSTAR.md) -- flagged as real, unverified follow-up rather
+       than presented as tuned. */
+    {
+        int n0 = ai_nav_add_node(&g_story_nav, cx - 20.0f, 8.0f, cz - 40.0f, 0, 0.0f, 0.0f);
+        int n1 = ai_nav_add_node(&g_story_nav, cx - 45.0f, 8.0f, cz - 15.0f, 1, -1.0f, 0.3f);
+        int n2 = ai_nav_add_node(&g_story_nav, cx - 10.0f, 8.0f, cz + 10.0f, 0, 0.0f, 0.0f);
+        int n3 = ai_nav_add_node(&g_story_nav, cx + 30.0f, 8.0f, cz + 5.0f, 0, 0.0f, 0.0f);
+        int n4 = ai_nav_add_node(&g_story_nav, cx + 45.0f, 8.0f, cz - 25.0f, 1, 1.0f, -0.2f);
+        int n5 = ai_nav_add_node(&g_story_nav, cx + 10.0f, 8.0f, cz - 45.0f, 0, 0.0f, 0.0f);
+        ai_nav_link(&g_story_nav, n0, n1);
+        ai_nav_link(&g_story_nav, n1, n2);
+        ai_nav_link(&g_story_nav, n2, n3);
+        ai_nav_link(&g_story_nav, n3, n4);
+        ai_nav_link(&g_story_nav, n4, n5);
+        ai_nav_link(&g_story_nav, n5, n0);
+        ai_nav_link(&g_story_nav, n0, n2); /* a chord across the loop, real shortcut for A* to find */
     }
 
 #if STORY_AI_DEBUG

@@ -107,7 +107,12 @@ jobs:
           # fix, same discipline as the two precedents above): this CI step's own source list is
           # never automatically kept in sync with the Makefile's LOBBY_SRC -- any future new
           # packages/*.c file added to LOBBY_SRC needs this list updated by hand too.
-          x86_64-w64-mingw32-gcc apps/lobby/src/main.c packages/simulation/story_ai.c packages/simulation/humanness.c packages/simulation/cutscene.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/world/terrain.c packages/world/parena_runtime.c packages/world/png_decode_gen.c packages/audio/audio.c \
+          # FOURTH real recurrence (2026-09-17, S461-01): packages/simulation/ai_nav.c was added
+          # to the Makefile's own LOBBY_SRC/SERVER_SRC alongside story_ai.c (which now calls into
+          # it) -- added to this hand-copy and tests.yml's own copy in the same pass this time,
+          # not after a separate CI failure, per the standing lesson these prior three
+          # recurrences already named.
+          x86_64-w64-mingw32-gcc apps/lobby/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/cutscene.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/world/terrain.c packages/world/parena_runtime.c packages/world/png_decode_gen.c packages/audio/audio.c \
             packages/goldenband/gband_mesh_rig.c packages/goldenband/gband.c packages/goldenband/gskel.c packages/goldenband/gmesh.c \
             -o ShankPit.exe \
             -O2 -static-libgcc \
@@ -129,7 +134,7 @@ jobs:
           set -euo pipefail
           test -f apps/server/src/main.c
 
-          gcc apps/server/src/main.c packages/simulation/story_ai.c packages/simulation/humanness.c packages/world/terrain.c \
+          gcc apps/server/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/world/terrain.c \
             -o ShankServer_Linux \
             -O2 -static \
             -I. \

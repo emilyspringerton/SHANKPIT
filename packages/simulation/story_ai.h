@@ -3,6 +3,7 @@
 
 #include "../common/protocol.h"
 #include "humanness.h"
+#include "ai_nav.h"
 
 #define STORY_AI_MAX 16
 #define STORY_AI_PATROL_MAX_POINTS 8
@@ -83,6 +84,15 @@ typedef struct {
        each primitive actually does. */
     HumannessState humanness;
     int turn_overshooting;
+
+    /* S461-01 -- real tactical pathing/cover state for AI_MODE_FLEE, computed once on first
+       entry (see ai_run_flee's own comments for why this is intentionally terminal, not
+       re-computed every tick). flee_target_node == -1 means either not yet computed or no
+       reachable cover was found (falls back to a plain repulsion vector). */
+    int flee_target_node;
+    int flee_path[AI_NAV_MAX_PATH];
+    int flee_path_len;
+    int flee_path_index;
 } AIController;
 
 typedef struct {
