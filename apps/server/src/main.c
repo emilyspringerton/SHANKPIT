@@ -123,11 +123,21 @@ static NetServerDiag g_net_diag;
 // bot-league lane, meant for quick, frequent matches rather than long DM sessions.
 #define SERVER_QUEUE_FRAG_LIMIT 20
 #define SERVER_QUEUE_ROUND_MS (4 * 60 * 1000)
+// S459-99, founder real-time: "matchmaking for queue is down... if you start a game it stays
+// open... when you get 10 kills it resets to 0 like a new game maybe that game is still stuck
+// open." Root cause: server_advance_queue_round used to fire the SAME tick the frag limit was
+// hit, silently resetting stats in place with zero match-over signal -- indistinguishable from a
+// match that never actually ends. SERVER_QUEUE_INTERMISSION_MS gives QUEUE a real, brief,
+// observable match_over window (mirroring the team-mode match_over flag already used by
+// MODE_TDMO/CTF, just auto-clearing instead of waiting on a player's own 'R' keypress, since
+// QUEUE has no single "owner" to press it) before the next round actually starts.
+#define SERVER_QUEUE_INTERMISSION_MS (5 * 1000)
 
 static const int g_dm_rotation[] = { SCENE_STADIUM, SCENE_VOXWORLD, SCENE_OIL_TANKER, SCENE_POO_POO_ISLAND };
 static int g_dm_rotation_idx = 0;
 static int g_server_match_scene = SCENE_GARAGE_OSAKA;
 static unsigned int g_round_start_ms = 0;
+static unsigned int g_queue_intermission_start_ms = 0; // S459-99, 0 = not currently in intermission
 static int g_fast_forward = 0; // S459-48 -- see --fast-forward's own doc comment in main() for the real rationale
 static int g_tdmo_tie_breaker = 0;
 
@@ -427,6 +437,7 @@ static void queue_activate_match(unsigned int now_ms) {
     local_state.match_over = 0;
     local_state.players[0].active = 0;
     g_round_start_ms = now_ms;
+    g_queue_intermission_start_ms = 0;
 
     LevelRegistryEntry entries[LEVEL_REGISTRY_MAX_ENTRIES];
     int count = level_boxes_fetch_registry_list(entries, LEVEL_REGISTRY_MAX_ENTRIES);
@@ -1339,14 +1350,25 @@ int main(int argc, char *argv[]) {
         }
 
         if (local_state.game_mode == MODE_QUEUE) {
-            int top_frags = 0;
-            for (int i = 1; i < MAX_CLIENTS; i++) {
-                PlayerState *p = &local_state.players[i];
-                if (!p->active || p->scene_id != g_server_match_scene) continue;
-                if (p->kills > top_frags) top_frags = p->kills;
-            }
-            if ((now - g_round_start_ms) >= SERVER_QUEUE_ROUND_MS || top_frags >= SERVER_QUEUE_FRAG_LIMIT) {
+            // S459-99: a real match_over intermission instead of an instant, invisible
+            // in-place reset -- see SERVER_QUEUE_INTERMISSION_MS's own comment for the bug this
+            // closes.
+            if (!local_state.match_over) {
+                int top_frags = 0;
+                for (int i = 1; i < MAX_CLIENTS; i++) {
+                    PlayerState *p = &local_state.players[i];
+                    if (!p->active || p->scene_id != g_server_match_scene) continue;
+                    if (p->kills > top_frags) top_frags = p->kills;
+                }
+                if ((now - g_round_start_ms) >= SERVER_QUEUE_ROUND_MS || top_frags >= SERVER_QUEUE_FRAG_LIMIT) {
+                    local_state.match_over = 1;
+                    g_queue_intermission_start_ms = now;
+                    NET_SERVER_LOG("QUEUE_MATCH_OVER top_frags=%d", top_frags);
+                }
+            } else if ((now - g_queue_intermission_start_ms) >= SERVER_QUEUE_INTERMISSION_MS) {
                 server_advance_queue_round(now);
+                local_state.match_over = 0;
+                g_queue_intermission_start_ms = 0;
             }
         }
 
