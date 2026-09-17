@@ -1918,6 +1918,126 @@ static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
     phys_set_custom_level_spawners(sp_x, sp_y, sp_z, sp_team, lvl->spawner_count);
 }
 
+// S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1 -- lobby's own local-single-player mirror of
+// apps/server/src/main.c's identically-named globals. Two separate processes, two separate
+// copies -- no shared header exists anywhere in this codebase for this kind of per-process
+// runtime state (matches how level_boxes_apply_to_physics above is ALREADY a separate, parallel
+// hand-maintained implementation of server_apply_custom_level's own overlapping box/spawner
+// logic, not a shared function).
+#define STORY_LEVEL_EXIT_MAX LEVEL_BOXES_MAX_LEVEL_EXITS
+static LevelExit g_story_level_exits[STORY_LEVEL_EXIT_MAX];
+static int g_story_level_exit_count = 0;
+static int g_story_next_level_id = 0; /* 0 = none */
+static unsigned int g_story_last_level_transition_ms = 0;
+
+// lobby_apply_story_level -- lobby's own local-single-player mirror of apps/server/src/main.c's
+// server_apply_custom_level, scoped to what MODE_STORY actually needs here: boxes/materials/
+// spawners (level_boxes_apply_to_physics above), story_ai characters + nav graph (mirrors
+// server_apply_custom_level's own MODE_STORY branch exactly), this level's own real exit/
+// next_level_id state, and the real scene_id double-set level_select_confirm's own doc comment
+// above already found live-necessary (scene_load alone isn't enough -- draw_scene's per-frame
+// resync reads the PLAYER ENTITY's own scene_id, not the global). Deliberately does NOT call
+// story_doors_init -- door scripting (dlopen'd compiled .so via story_doors.h) is server-only,
+// never wired into the lobby build (checked directly, not assumed), a real, honest, named scope
+// limit rather than a silent gap.
+static void lobby_apply_story_level(const CustomLevelData *lvl) {
+    level_boxes_apply_to_physics(lvl);
+    scene_load(SCENE_CUSTOM_LEVEL);
+    local_state.players[0].scene_id = SCENE_CUSTOM_LEVEL;
+
+    story_ai_reset(&local_state);
+    for (int ci = 0; ci < lvl->character_count; ci++) {
+        const LevelCharacter *lc = &lvl->characters[ci];
+        if (lc->role < AI_ROLE_RIFT_HOUND || lc->role > AI_ROLE_BLIND_STALKER) continue;
+        story_ai_spawn_enemy(&local_state, (AIRole)lc->role, lc->x, lc->y, lc->z);
+    }
+
+    float nn_x[LEVEL_BOXES_MAX_NAV_NODES], nn_y[LEVEL_BOXES_MAX_NAV_NODES], nn_z[LEVEL_BOXES_MAX_NAV_NODES];
+    int nn_is_cover[LEVEL_BOXES_MAX_NAV_NODES];
+    float nn_cover_dir_x[LEVEL_BOXES_MAX_NAV_NODES], nn_cover_dir_z[LEVEL_BOXES_MAX_NAV_NODES];
+    int nn_neighbor_counts[LEVEL_BOXES_MAX_NAV_NODES];
+    int nn_neighbors_flat[LEVEL_BOXES_MAX_NAV_NODES * LEVEL_BOXES_MAX_NAV_NEIGHBORS];
+    for (int ni = 0; ni < lvl->nav_node_count; ni++) {
+        nn_x[ni] = lvl->nav_nodes[ni].x; nn_y[ni] = lvl->nav_nodes[ni].y; nn_z[ni] = lvl->nav_nodes[ni].z;
+        nn_is_cover[ni] = lvl->nav_nodes[ni].is_cover;
+        nn_cover_dir_x[ni] = lvl->nav_nodes[ni].cover_dir_x;
+        nn_cover_dir_z[ni] = lvl->nav_nodes[ni].cover_dir_z;
+        nn_neighbor_counts[ni] = lvl->nav_nodes[ni].neighbor_count;
+        for (int k = 0; k < LEVEL_BOXES_MAX_NAV_NEIGHBORS; k++) {
+            nn_neighbors_flat[ni * LEVEL_BOXES_MAX_NAV_NEIGHBORS + k] =
+                (k < lvl->nav_nodes[ni].neighbor_count) ? lvl->nav_nodes[ni].neighbors[k] : -1;
+        }
+    }
+    story_ai_load_nav_graph(lvl->nav_node_count, nn_x, nn_y, nn_z, nn_is_cover,
+                             nn_cover_dir_x, nn_cover_dir_z, nn_neighbor_counts, nn_neighbors_flat);
+
+    g_story_level_exit_count = lvl->level_exit_count < STORY_LEVEL_EXIT_MAX ? lvl->level_exit_count : STORY_LEVEL_EXIT_MAX;
+    for (int ei = 0; ei < g_story_level_exit_count; ei++) g_story_level_exits[ei] = lvl->level_exits[ei];
+    g_story_next_level_id = lvl->next_level_id;
+
+    local_state.story_boss.active = 0; /* replacing VOXWORLD's own encounter, not extending it */
+    local_state.story_phase = STORY_PHASE_PLAYING; /* real skip of the intro cutscene */
+}
+
+// lobby_check_story_level_exits -- lobby's own local-single-player mirror of
+// apps/server/src/main.c's story_check_level_exits, same real design (full 3D distance, a real
+// debounce against the new level's own spawn point landing back inside an exit radius). See that
+// function's own doc comment for the full reasoning.
+#define STORY_LEVEL_TRANSITION_DEBOUNCE_MS 3000U
+static void lobby_check_story_level_exits(unsigned int now_ms) {
+    if (local_state.game_mode != MODE_STORY) return;
+    if (g_story_level_exit_count <= 0 || g_story_next_level_id <= 0) return;
+    if (now_ms - g_story_last_level_transition_ms < STORY_LEVEL_TRANSITION_DEBOUNCE_MS) return;
+    PlayerState *hero = &local_state.players[0];
+    if (!hero->active || hero->state == STATE_DEAD) return;
+
+    int triggered = 0;
+    for (int i = 0; i < g_story_level_exit_count; i++) {
+        LevelExit *ex = &g_story_level_exits[i];
+        float dx = hero->x - ex->x, dy = hero->y - ex->y, dz = hero->z - ex->z;
+        float dist2 = dx * dx + dy * dy + dz * dz;
+        if (dist2 <= ex->radius * ex->radius) { triggered = 1; break; }
+    }
+    if (!triggered) return;
+
+    int next_id = g_story_next_level_id;
+    CustomLevelData lvl;
+    if (!level_boxes_fetch_export(next_id, &lvl)) {
+        g_story_last_level_transition_ms = now_ms;
+        return;
+    }
+    lobby_apply_story_level(&lvl);
+    phys_respawn(hero, now_ms);
+    g_story_last_level_transition_ms = now_ms;
+}
+
+// lobby_start_story_mode -- S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1 (founder real-time:
+// "we dont need the text cutscene in the beginning we just need to spawn into the first map that
+// the story is"). Factored out of the two previously-duplicated MODE_STORY entry points (the
+// menu-click handler and the direct lobby-action handler) below -- both now call this instead of
+// hand-repeating local_init_match + cutscene_start. A level flagged is_story_start replaces
+// VOXWORLD's own default entirely (real skip of the intro cutscene, via lobby_apply_story_level's
+// own STORY_PHASE_PLAYING set); with no such level authored yet, this is a real, honest no-op and
+// the existing VOXWORLD intro-cutscene path runs exactly as before.
+static void lobby_start_story_mode(void) {
+    local_init_match(1, MODE_STORY);
+    LevelRegistryEntry entries[LEVEL_REGISTRY_MAX_ENTRIES];
+    int count = level_boxes_fetch_registry_list(entries, LEVEL_REGISTRY_MAX_ENTRIES);
+    int story_start_id = -1;
+    for (int i = 0; i < count; i++) {
+        if (entries[i].is_story_start) { story_start_id = entries[i].id; break; }
+    }
+    CustomLevelData lvl;
+    if (story_start_id >= 0 && level_boxes_fetch_export(story_start_id, &lvl)) {
+        lobby_apply_story_level(&lvl);
+        return;
+    }
+    local_state.story_phase_start_ms = SDL_GetTicks();
+    g_story_cutscene_done   = 0;
+    g_story_outro_requested = 0;
+    cutscene_start(&g_story_cs, g_cutscene_intro, g_cutscene_intro_count, SDL_GetTicks());
+}
+
 // level_select_confirm -- fetches the chosen level's real export, loads it into physics.h's own
 // custom-level buffers, and starts a real local match on it. Mirrors lobby_start_action's own
 // "enter game" tail exactly (death_cam_blend/mouse mode/projection matrix) since this is a real,
@@ -2338,13 +2458,7 @@ static void lobby_apply_ui_state() {
         local_init_match(1, MODE_DEATHMATCH);
     } else if (strcmp(ui_state.active_mode_id, "mode.story") == 0) {
         app_state = STATE_GAME_LOCAL;
-        local_init_match(1, MODE_STORY);
-        local_state.story_phase_start_ms = SDL_GetTicks();
-        g_story_cutscene_done   = 0;
-        g_story_outro_requested = 0;
-        cutscene_start(&g_story_cs,
-                       g_cutscene_intro, g_cutscene_intro_count,
-                       SDL_GetTicks());
+        lobby_start_story_mode();
     } else if (strcmp(ui_state.active_mode_id, "mode.story_cave") == 0) {
         app_state = STATE_GAME_LOCAL;
         local_init_match(1, MODE_STORY_CAVE);
@@ -2431,13 +2545,7 @@ static void lobby_start_action(int action) {
                 local_init_match(1, MODE_DEATHMATCH);
                 break;
             case LOBBY_STORY:
-                local_init_match(1, MODE_STORY);
-                local_state.story_phase_start_ms = SDL_GetTicks();
-                g_story_cutscene_done   = 0;
-                g_story_outro_requested = 0;
-                cutscene_start(&g_story_cs,
-                               g_cutscene_intro, g_cutscene_intro_count,
-                               SDL_GetTicks());
+                lobby_start_story_mode();
                 break;
             case LOBBY_STORY_CAVE:
                 local_init_match(1, MODE_STORY_CAVE);
@@ -9684,6 +9792,7 @@ int main(int argc, char* argv[]) {
                     local_state.story_phase_start_ms = now_ms;
                 }
                 local_update(input_fwd, input_str, cam_yaw, cam_pitch, input_shoot, wpn_req, input_jump, input_crouch, input_reload, input_ability, input_bike, NULL, now_ms);
+                lobby_check_story_level_exits(now_ms);
             }
                 accumulator -= TICK_DT;
             }
