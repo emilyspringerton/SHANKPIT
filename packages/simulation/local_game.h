@@ -813,6 +813,18 @@ static void story_clear_swarm(void) {
     memset(&local_state.story_rift, 0, sizeof(local_state.story_rift));
 }
 
+/* Humanness Phase 2, real correction (docs/HUMANNESS_NORTHSTAR.md): found live that
+   packages/simulation/story_ai.c's own AIController/story_ai_tick system -- the one this
+   Phase 2 pass originally wired humanness into -- is NOT the code path that actually runs in a
+   real playthrough. story_swarm_tick below is the real, live enemy AI for MODE_STORY (called
+   from the real per-tick update path, ~line 1856). g_story_swarm_humanness/g_story_swarm_
+   overshoot are a real, index-parallel side array (StoryEnemy itself lives in
+   packages/common/protocol.h, the shared wire-protocol header -- keeping HumannessState out of
+   it avoids giving `common` a real dependency on `simulation`, the wrong direction for this
+   repo's own existing layering, story_ai.h already depends on protocol.h, not the reverse). */
+static HumannessState g_story_swarm_humanness[STORY_MAX_SWARM_ENEMIES];
+static int g_story_swarm_overshoot[STORY_MAX_SWARM_ENEMIES];
+
 static void story_enemy_setup_stats(StoryEnemy *enemy, int type) {
     enemy->type = type;
     enemy->active = 1;
@@ -845,6 +857,8 @@ static int story_spawn_enemy(int type, float x, float y, float z, unsigned int n
         enemy->yaw = 0.0f;
         enemy->spawn_ms = now_ms;
         enemy->last_attack_ms = now_ms;
+        humanness_state_init(&g_story_swarm_humanness[i], now_ms); /* Humanness Phase 2 */
+        g_story_swarm_overshoot[i] = 0;
         return 1;
     }
     return 0;
@@ -1213,16 +1227,25 @@ static void story_swarm_tick(PlayerState *hero, unsigned int now_ms) {
         float dx = hero->x - enemy->x;
         float dz = hero->z - enemy->z;
         float dist = sqrtf(dx * dx + dz * dz);
+        humanness_tick_mood(&g_story_swarm_humanness[i], now_ms); /* Humanness Phase 2 */
         if (dist > 0.001f) {
             float inv = 1.0f / dist;
             enemy->vx = dx * inv * enemy->speed;
             enemy->vz = dz * inv * enemy->speed;
             enemy->x += enemy->vx;
             enemy->z += enemy->vz;
-            enemy->yaw = atan2f(dx, dz) * (180.0f / 3.14159f);
+            /* Humanness Phase 2: real, mood-scaled turn speed + genuine occasional overshoot
+               instead of an instant yaw snap -- the live enemy previously turned to face the
+               player with zero smoothing at all, a real gap this fixes. */
+            float target_yaw = atan2f(dx, dz) * (180.0f / 3.14159f);
+            humanness_smooth_turn_step(&enemy->yaw, target_yaw, 300.0f, 1.0f / 60.0f,
+                                        &g_story_swarm_humanness[i], &g_story_swarm_overshoot[i]);
         }
         enemy->y = voxworld_height_at(enemy->x, enemy->z);
-        if (dist <= enemy->attack_radius && now_ms - enemy->last_attack_ms >= 850U) {
+        /* Humanness Phase 2: the fixed 850ms attack cooldown now gets real jitter instead of
+           firing on a metronome. */
+        if (dist <= enemy->attack_radius &&
+            now_ms - enemy->last_attack_ms >= humanness_reaction_delay_ms(&g_story_swarm_humanness[i], 850U)) {
             enemy->last_attack_ms = now_ms;
             int damage = enemy->damage;
             hero->shield_regen_timer = SHIELD_REGEN_DELAY;

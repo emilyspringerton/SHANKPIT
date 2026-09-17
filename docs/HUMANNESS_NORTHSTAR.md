@@ -167,18 +167,34 @@ land in later, matching the same "narrow function contract per kind" discipline 
    `HumannessState humanness` + `int turn_overshooting` field, initialized in
    `story_ai_spawn_enemy`, ticked once per AI per frame in `story_ai_tick`. Also fixed: `Makefile`
    didn't build `humanness.c` into either `LOBBY_SRC`/`SERVER_SRC` (both now do, since `story_ai.c`
-   is compiled into both). **Real, honest, found-live gap this phase surfaced, not caused**:
-   `story_ai_tick` (and `story_ai_spawn_enemy`/`story_ai_reset`) have no call site anywhere in
-   `apps/server/src/main.c` -- story mode's own AI is compiled into the live server binary but
-   never actually invoked by it today. Wiring story mode into the live game loop is real,
-   separate, not-yet-scoped work, not fixed in this pass. Live-verified the only honest way
-   available given that gap: a direct, real integration test
-   (`packages/simulation/story_ai_humanness_test.c`) spawns a real enemy and runs 3000 real
-   `story_ai_tick` calls, asserting genuine yaw movement, 117 real jittered attack cycles fired
-   over that window, and consecutive attack-cooldown gaps that genuinely vary (proving
-   `humanness_reaction_delay_ms` is live, not dead code) -- same real "prove the primitives are
-   actually wired" bar Phase 1's own tests already held themselves to, adapted for the one real
-   constraint this phase found. `gcc -Wall -Wextra` clean on `make server`/`lobby`/`emily-bot`.
+   is compiled into both).
+   **Correction, same day**: this doc originally claimed `story_ai_tick` "has no call site
+   anywhere in `apps/server/src/main.c`" and treated `story_ai.c` as effectively dead code --
+   checked again, more carefully, and that was WRONG. `story_ai_tick` IS called live, from
+   `packages/simulation/local_game.h:1767` (`local_update`, gated on `STORY_PHASE_PLAYING`) --
+   the earlier grep only searched `apps/server/src/main.c`/`apps/lobby/src/main.c` directly and
+   missed that both link `local_game.h`, where the real call lives. Live-verified with a direct
+   integration test (`packages/simulation/story_ai_humanness_test.c`): spawns a real enemy, runs
+   3000 real `story_ai_tick` calls, asserts genuine yaw movement, 117 real jittered attack
+   cycles, and attack-cooldown gaps that genuinely vary.
+   **What's real and separate, correctly found**: story mode has a SECOND, genuinely different
+   live enemy-AI system for a different real phase -- `story_swarm_tick`
+   (`packages/simulation/local_game.h`, called during `STORY_PHASE_SWARM`, the wave of enemies
+   after the boss fight opens a rift), a simpler direct-homing-and-attack loop with no turn
+   smoothing or cooldown jitter of its own at all. Humanness wired into this one too, same pass:
+   `story_swarm_tick`'s own instant `atan2`-snap turning now routes through
+   `humanness_smooth_turn_step` (a real, index-parallel `g_story_swarm_humanness`/
+   `g_story_swarm_overshoot` array, since `StoryEnemy` itself lives in `packages/common/
+   protocol.h`, the shared wire-protocol header, and giving `common` a real dependency on
+   `simulation` would invert this repo's own established layering), and the fixed 850ms attack
+   cooldown now goes through `humanness_reaction_delay_ms`. Live-verified with a second direct
+   integration test (`packages/simulation/story_swarm_humanness_test.c`): spawns a real swarm
+   enemy, confirms turning is genuinely incremental/smoothed (not an instant snap) across the
+   first several real ticks, and confirms 13 real attacks landed with genuinely varying gaps.
+   `gcc -Wall -Wextra` clean on `make server`/`lobby`/`emily-bot`; both Phase 1's own
+   `humanness_test.c` and the full Python test suite (36 tests) still pass unaffected. **Net
+   result**: both of story mode's real, live enemy-AI systems (the `STORY_PHASE_PLAYING` combat
+   FSM and the `STORY_PHASE_SWARM` wave) now have real jitter/mood behavior, not just one.
 3. **Phase 3**: wire into `character-tick` — mood-driven idle-substate timing/selection.
 4. **Phase 4**: PARENA-scriptable per-role personality config (deferred, see above).
 3. **Phase 3**: wire into `character-tick` — mood-driven idle-substate timing/selection.
