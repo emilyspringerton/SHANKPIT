@@ -217,6 +217,17 @@ jobs:
           cp ShankPit.exe ShankPit_Client/
           cp sdl2_mingw/bin/SDL2.dll ShankPit_Client/
           cp SHANKPIT_CONSTRUCT.txt ShankPit_Client/
+          # S470 real fix (founder real-time, live report against a real screenshot: "no robots
+          # tho" -- every character, including the player's own tyler_body, rendered as a plain
+          # box body). Root cause: EVERY runtime asset load in apps/lobby/src/main.c resolves a
+          # RELATIVE path under "assets/goldenband/..." -- this zip never included assets/ at all,
+          # so on a real machine running the extracted client, gband_mesh_rig_init/
+          # gband_skel_npc_load_kit failed for tyler_body AND all 5 robot kits alike, every single
+          # run, unconditionally. Not a GPU/driver issue -- reproducible on any machine. ShankPit_
+          # World (the dedicated server) deliberately does NOT get this: the server never renders,
+          # never links packages/goldenband at all (confirmed directly against its own gcc build
+          # command above), so it has no real use for these assets.
+          cp -r assets ShankPit_Client/
           printf '%s\n' "start ShankPit.exe" > ShankPit_Client/PLAY.bat
           zip -r "ShankPit_Client_${BUILD}.zip" ShankPit_Client
 
