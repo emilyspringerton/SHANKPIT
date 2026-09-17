@@ -8092,6 +8092,35 @@ static void client_reconcile_local_player(unsigned int ack_seq, float auth_x, fl
     p->yaw = norm_yaw_deg(auth_yaw);
     p->pitch = clamp_pitch_deg(auth_pitch);
 
+    // Real, found-live bug (founder real-time: "reconciliation is like broken ish still when you
+    // shoot the ammo flickers its weird" / "i often get 2 kill indicators"). client_apply_cmd_
+    // movement -> shankpit_simulate_movement_tick -> update_entity -> update_weapons, and
+    // update_weapons has real, NON-idempotent side effects beyond movement: it decrements
+    // p->ammo[w] on every replayed shoot command, decays p->hit_feedback, ticks reload/attack/
+    // ability/katana/dash timers -- every one of those commands already fired once during this
+    // exact frame's own original prediction AND was already resolved authoritatively by the
+    // server (that's why this reconciliation is happening at all). Replaying them re-applies
+    // those side effects a second time: ammo gets re-decremented for shots already accounted for
+    // (a visible too-low flicker until the next snapshot's own authoritative ammo arrives and
+    // snaps it back), and hit_feedback decays faster than the server's own real ~31Hz rate, so it
+    // can dip below draw_hud's own kill-ring threshold and jump back above it on the next
+    // snapshot -- reading as two kill rings for one real kill (the exact same bug class S459-66's
+    // hit_feedback-never-reset fix and the weapon_idx flicker fix above already hit, just a
+    // different non-idempotent field each time). Reconciliation only needs to replay MOVEMENT --
+    // the server is already authoritative for every weapon-fire side effect -- so snapshot every
+    // field update_weapons touches beyond position/velocity and restore it after the replay loop.
+    int saved_ammo[MAX_WEAPONS];
+    memcpy(saved_ammo, p->ammo, sizeof(saved_ammo));
+    int saved_reload_timer = p->reload_timer;
+    int saved_attack_cooldown = p->attack_cooldown;
+    int saved_is_shooting = p->is_shooting;
+    int saved_hit_feedback = p->hit_feedback;
+    float saved_recoil_anim = p->recoil_anim;
+    int saved_storm_charges = p->storm_charges;
+    int saved_ability_cooldown = p->ability_cooldown;
+    int saved_katana_slash_timer = p->katana_slash_timer;
+    int saved_dash_timer = p->dash_timer;
+
     int replayed = 0;
     for (unsigned int seq = ack_seq + 1; seq <= net_latest_seq_sent; seq++) {
         UserCmd cmd = client_cmd_hist[seq % CLIENT_RECON_HISTORY];
@@ -8099,6 +8128,17 @@ static void client_reconcile_local_player(unsigned int ack_seq, float auth_x, fl
         client_apply_cmd_movement(p, &cmd, cmd.timestamp);
         replayed++;
     }
+
+    memcpy(p->ammo, saved_ammo, sizeof(saved_ammo));
+    p->reload_timer = saved_reload_timer;
+    p->attack_cooldown = saved_attack_cooldown;
+    p->is_shooting = saved_is_shooting;
+    p->hit_feedback = saved_hit_feedback;
+    p->recoil_anim = saved_recoil_anim;
+    p->storm_charges = saved_storm_charges;
+    p->ability_cooldown = saved_ability_cooldown;
+    p->katana_slash_timer = saved_katana_slash_timer;
+    p->dash_timer = saved_dash_timer;
 
     float ex = prev_x - p->x;
     float ey = prev_y - p->y;
