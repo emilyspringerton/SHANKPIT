@@ -111,6 +111,38 @@ def update_checkpoint_elo(base_url, jwt, checkpoint_id, elo, eval_note=""):
         raise RuntimeError(f"update_checkpoint_elo failed ({e.code}): {e.read().decode(errors='replace')}") from e
 
 
+def push_heartbeat(base_url, hec_token, event_type, data):
+    """S474 (founder real-time: "can we have more debugging in the heartbeat? like when main
+    chooses an opponent log it log the results log the elo of the winner go up elo of the loser
+    go down") -- POST /services/collector, IDUNA's real, Splunk-HEC-shaped unified logging
+    backend (internal/http/handlers/logs.go), so a training run's own per-generation heartbeat
+    (opponent chosen, eval result, generation registered) survives an ephemeral Colab session's
+    own stdout instead of being lost the moment it disconnects. Auth is a bearer HEC TOKEN
+    (`Authorization: Splunk <token>`), NOT the JWT authenticate() above uses -- a real, separate
+    auth convention this one real endpoint uses (matching Splunk's own actual HEC design), not an
+    inconsistency. Silently returns False on ANY failure (missing hec_token, network error, the
+    logging backend itself being down) -- a real, deliberate no-op, same "must never crash real,
+    in-progress training" discipline this file's own callers already apply around update_
+    checkpoint_elo/push_checkpoint. Returns True only on a real, confirmed 200."""
+    if not hec_token:
+        return False
+    body = json.dumps({
+        "event": {**data, "event_type": event_type},
+        "sourcetype": "shankpit:rl:heartbeat",
+        "source": "rl_train_packet.py",
+    }).encode()
+    req = urllib.request.Request(
+        f"{base_url}/services/collector", data=body,
+        headers={"Content-Type": "application/json", "Authorization": f"Splunk {hec_token}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.status == 200
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
+        return False
+
+
 def list_checkpoints(base_url, role=None):
     """GET /api/v1/shankpit-checkpoints[?role=...] -- real, public, no auth needed (same trust
     level GET /api/v1/shankpit-levels already established)."""

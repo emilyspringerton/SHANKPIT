@@ -71,7 +71,7 @@ except ImportError:
     BaseCallback = object
 
 from rl_env_packet import ShankpitQueueEnv, gym as _gym  # noqa: E402
-from rl_registry import authenticate, download_checkpoint, fetch_default_queue_level, list_checkpoints, push_checkpoint, update_checkpoint_elo  # noqa: E402
+from rl_registry import authenticate, download_checkpoint, fetch_default_queue_level, list_checkpoints, push_checkpoint, push_heartbeat, update_checkpoint_elo  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SERVER_BIN = os.path.join(REPO_ROOT, "bin", "shank_server")
@@ -88,7 +88,20 @@ ROLE_BASE_PORTS = {
 }
 EVAL_PORT = 18278  # past every role's own reserved block, so it can never collide
 
-EVAL_DURATION_SECONDS = 30.0  # real wall-clock window for a per-generation evaluation match -- short by design (this runs up to 3x every generation, see BRAWLPIT's own EVAL_MAX_TICKS doc comment for the identical real performance rationale), matching this file's own EVAL_PORT server running --fast-forward
+EVAL_DURATION_SECONDS = 30.0  # real MAX wall-clock safety cap for a per-generation evaluation match, not the primary stopping condition (see EVAL_KILLS_TO below) -- short by design (this runs up to 3x every generation, see BRAWLPIT's own EVAL_MAX_TICKS doc comment for the identical real performance rationale), matching this file's own EVAL_PORT server running --fast-forward
+# EVAL_KILLS_TO (S474 follow-up, founder real-time: "first to 1 may not be as good as like first
+# to 5" / "we didnt turn brawlpit down to stock 1" / "first to 5 is roughly equivalent to 5
+# stock") -- the real primary stopping condition for an evaluation match as of this pass: whoever
+# reaches this many kills first wins, matching BRAWLPIT's own real 5-stock convention instead of a
+# single decisive kill deciding the whole match. A single-kill outcome is genuinely noisy this
+# early in training (confirmed directly against the real, live registry: score_a flipping
+# 1.0/0.0/1.0 between ADJACENT generations, real kill counts like "3-7"/"9-13" from actual
+# matches) -- first positioning luck or one early engagement shouldn't be the whole signal.
+# EVAL_DURATION_SECONDS above stays as a real, honest safety cap for the case neither side ever
+# reaches this many kills (two very passive/weak policies) -- see _run_evaluation_match's own
+# doc comment for exactly how the two combine.
+EVAL_KILLS_TO = 5
+EVAL_POLL_INTERVAL_SECONDS = 1.0  # matches frozen_policy_bot.py's own --report-interval default order of magnitude
 # EVAL_STARTUP_GRACE_SECONDS (S459-64) -- real, generous headroom on TOP of EVAL_DURATION_SECONDS
 # for real subprocess startup cost (PPO.load() + torch/sb3 import overhead, incurred by BOTH eval
 # bots concurrently) BEFORE the match's own 30s window even starts ticking -- a real, found-live
@@ -218,15 +231,19 @@ def _should_revert_main(new_elo, best_elo_so_far, threshold=REGRESSION_ELO_THRES
     return best_elo_so_far - new_elo >= threshold
 
 
-def _run_evaluation_match(host, port, checkpoint_a, checkpoint_b, duration_seconds=EVAL_DURATION_SECONDS):
+def _run_evaluation_match(host, port, checkpoint_a, checkpoint_b, duration_seconds=EVAL_DURATION_SECONDS, kills_to=EVAL_KILLS_TO):
     """Real, minimal 1v1 evaluation match -- SHANKPIT's own necessary analog to BRAWLPIT's
     dedicated rl_evaluate.py (no PACKET_RESET_MATCH / match-boundary concept exists here to build
     a cleaner one on top of, see this module's own top-of-file doc comment). Spawns two real
-    frozen_policy_bot.py processes on an isolated, --fast-forward server, lets them fight for a
-    real, fixed wall-clock window, and compares final kill counts (each bot reports its own via
-    --report-kills-to) -- a real, honest, coarse-but-fast proxy for "who's better," the same
-    real tradeoff BRAWLPIT's own EVAL_MAX_TICKS cap accepts for the identical reason (this runs
-    up to 3x every single generation, so it has to stay fast, not full-match-length).
+    frozen_policy_bot.py processes on an isolated, --fast-forward server.
+
+    S474: the real, primary stopping condition is now first-to-kills_to (BRAWLPIT's own real
+    5-stock convention, not a single decisive kill) -- polls both bots' own periodically-
+    rewritten report files (frozen_policy_bot.py's own --report-interval) and terminates both the
+    moment either side reaches kills_to, rather than always waiting out the full duration_seconds.
+    duration_seconds (+ EVAL_STARTUP_GRACE_SECONDS) stays a real, honest safety cap for the case
+    neither side ever reaches kills_to (two very passive/weak policies) -- falls through to
+    reading each bot's own final natural report in that case.
 
     Returns (score_a, note): score_a is 1.0 (A won on kills), 0.0 (B won), 0.5 (tied or either
     report failed). note (S459-63) is a real, short, human-readable summary of what actually
@@ -250,6 +267,14 @@ def _run_evaluation_match(host, port, checkpoint_a, checkpoint_b, duration_secon
             log_b = os.path.join(tmpdir, "b.log")
             bot_a = _spawn_frozen_policy_bot(host, port, checkpoint_a, duration_seconds, report_a, log_a)
             bot_b = _spawn_frozen_policy_bot(host, port, checkpoint_b, duration_seconds, report_b, log_b)
+
+            def _read_kills(path):
+                try:
+                    with open(path) as f:
+                        return json.load(f)["kills"]
+                except (FileNotFoundError, json.JSONDecodeError, KeyError, OSError):
+                    return None
+
             # S459-64, real, found-live bug via the new S459-63 eval_note diagnostic itself:
             # founder's own real Colab run showed every single evaluation match failing with
             # "timed out after 45.0 seconds" (duration_seconds=30 + the old +15 grace) -- on
@@ -263,9 +288,25 @@ def _run_evaluation_match(host, port, checkpoint_a, checkpoint_b, duration_secon
             # bump (not a guess at exactly how slow Colab is -- a deliberately wide margin, since
             # this only matters in the slow-startup case, not the common one) so a genuinely slow
             # environment gets real headroom instead of every eval silently degrading to "tied."
-            bot_a.wait(timeout=duration_seconds + EVAL_STARTUP_GRACE_SECONDS)
-            bot_b.wait(timeout=duration_seconds + EVAL_STARTUP_GRACE_SECONDS)
+            deadline = time.time() + duration_seconds + EVAL_STARTUP_GRACE_SECONDS
+            early_kills = None  # (kills_a, kills_b) at the moment a real first-to-kills_to fires, or None
+            while time.time() < deadline:
+                if bot_a.poll() is not None and bot_b.poll() is not None:
+                    break  # both already exited on their own (hit session_duration) -- read final reports below
+                ka, kb = _read_kills(report_a), _read_kills(report_b)
+                if (ka is not None and ka >= kills_to) or (kb is not None and kb >= kills_to):
+                    early_kills = (ka or 0, kb or 0)
+                    break
+                time.sleep(EVAL_POLL_INTERVAL_SECONDS)
+
+            if early_kills is not None:
+                for p in (bot_a, bot_b):
+                    p.terminate()
             for p in (bot_a, bot_b):
+                try:
+                    p.wait(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    p.kill()
                 if p in _spawned_procs:
                     _spawned_procs.remove(p)
                 # Flush+close the captured log file now that the process has exited, so _tail()
@@ -276,11 +317,11 @@ def _run_evaluation_match(host, port, checkpoint_a, checkpoint_b, duration_secon
 
             # S459-61, real, found-live gap: this function used to return a silent 0.5 for BOTH
             # a genuine 0-0 tie (both bots really did fight for the full window and neither
-            # landed a kill -- a real, plausible outcome this early in training, especially at
-            # EVAL_DURATION_SECONDS=30s) and a bot crash/report-write failure -- founder
-            # real-time: "i have 2 gens same elo seems wrong" gave no way to tell which was
-            # actually happening from the training log alone. Now prints which case it was, so
-            # the NEXT run's own log answers the question directly instead of needing a guess.
+            # landed a kill -- a real, plausible outcome this early in training) and a bot
+            # crash/report-write failure -- founder real-time: "i have 2 gens same elo seems
+            # wrong" gave no way to tell which was actually happening from the training log
+            # alone. Now prints which case it was, so the NEXT run's own log answers the
+            # question directly instead of needing a guess.
             def _tail(path, n=15):
                 try:
                     with open(path) as f:
@@ -289,26 +330,38 @@ def _run_evaluation_match(host, port, checkpoint_a, checkpoint_b, duration_secon
                 except OSError:
                     return "(log file missing)"
 
-            try:
-                with open(report_a) as f:
-                    kills_a = json.load(f)["kills"]
-            except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
-                tail_a = _tail(log_a, n=3)  # short -- this same text also has to fit in the pushed eval_note
-                print(f"    [eval] checkpoint A ({os.path.basename(checkpoint_a)}) report unreadable ({e}) "
-                      f"-- treating as a draw. bot A's own output:\n{_tail(log_a)}", flush=True)
-                return 0.5, f"CRASH: bot A report unreadable ({e}); log tail: {tail_a}"
-            try:
-                with open(report_b) as f:
-                    kills_b = json.load(f)["kills"]
-            except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
-                tail_b = _tail(log_b, n=3)
-                print(f"    [eval] checkpoint B ({os.path.basename(checkpoint_b)}) report unreadable ({e}) "
-                      f"-- treating as a draw. bot B's own output:\n{_tail(log_b)}", flush=True)
-                return 0.5, f"CRASH: bot B report unreadable ({e}); log tail: {tail_b}"
+            if early_kills is not None:
+                # A real early stop already told us the true, current kill counts at decision
+                # time -- re-reading the report files after terminate() adds nothing (SIGTERM
+                # gives frozen_policy_bot.py no chance to write a fresher one) and risks reading
+                # nothing at all if the process died mid-write.
+                kills_a, kills_b = early_kills
+                print(f"    [eval] {os.path.basename(checkpoint_a)} kills={kills_a} vs "
+                      f"{os.path.basename(checkpoint_b)} kills={kills_b} (early stop: reached {kills_to})", flush=True)
+                note = f"first-to-{kills_to}: kills {kills_a}-{kills_b}"
+            else:
+                try:
+                    with open(report_a) as f:
+                        kills_a = json.load(f)["kills"]
+                except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
+                    tail_a = _tail(log_a, n=3)  # short -- this same text also has to fit in the pushed eval_note
+                    print(f"    [eval] checkpoint A ({os.path.basename(checkpoint_a)}) report unreadable ({e}) "
+                          f"-- treating as a draw. bot A's own output:\n{_tail(log_a)}", flush=True)
+                    return 0.5, f"CRASH: bot A report unreadable ({e}); log tail: {tail_a}"
+                try:
+                    with open(report_b) as f:
+                        kills_b = json.load(f)["kills"]
+                except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
+                    tail_b = _tail(log_b, n=3)
+                    print(f"    [eval] checkpoint B ({os.path.basename(checkpoint_b)}) report unreadable ({e}) "
+                          f"-- treating as a draw. bot B's own output:\n{_tail(log_b)}", flush=True)
+                    return 0.5, f"CRASH: bot B report unreadable ({e}); log tail: {tail_b}"
 
-            print(f"    [eval] {os.path.basename(checkpoint_a)} kills={kills_a} vs "
-                  f"{os.path.basename(checkpoint_b)} kills={kills_b} (both reports read fine)", flush=True)
-            note = f"vs prior gen: kills {kills_a}-{kills_b}"
+                print(f"    [eval] {os.path.basename(checkpoint_a)} kills={kills_a} vs "
+                      f"{os.path.basename(checkpoint_b)} kills={kills_b} (both reports read fine, "
+                      f"timed out before either reached {kills_to})", flush=True)
+                note = f"timed out before first-to-{kills_to}: kills {kills_a}-{kills_b}"
+
             if kills_a > kills_b:
                 return 1.0, note
             if kills_a < kills_b:
@@ -399,6 +452,14 @@ def main():
     p.add_argument("--registry-agent-name", default=os.environ.get("IDUNA_AGENT_NAME", "SHANKPIT-RL"))
     p.add_argument("--registry-agent-secret", default=os.environ.get("IDUNA_AGENT_SECRET"))
     p.add_argument("--registry-source-location", default=os.environ.get("SHANKPIT_SOURCE_LOCATION", "unknown"))
+    p.add_argument("--hec-token", default=os.environ.get("IDUNA_HEC_TOKEN"),
+                   help="S474 (founder real-time: 'can we have more debugging in the heartbeat'). "
+                        "If set (or IDUNA_HEC_TOKEN in the environment), every opponent selection, "
+                        "eval result, and generation registration also pushes a real, structured "
+                        "heartbeat event to IDUNA's unified logging backend (POST /services/"
+                        "collector) at --registry-url, so a run's own history survives past an "
+                        "ephemeral Colab session's stdout. A real, deliberate no-op (training keeps "
+                        "running exactly as before) if this isn't set.")
     # Real, found-live fix (2026-09-17, founder: "the shankpit elos... the bottom 3 bots still
     # have 1500 that seems wrong"): default is now ON, with an explicit opt-out. S459-71 already
     # fixed colab_train.py's own wrapper to always pass this flag -- but this script itself, when
@@ -559,8 +620,14 @@ def main():
             if self_play_opponent:
                 _spawn_frozen_policy_bot(args.host, port, self_play_opponent)
                 print(f"[gen {generation}] {role.value}: real self-play opponent ({self_play_opponent_id})", flush=True)
+                push_heartbeat(args.registry_url, args.hec_token, "opponent_chosen", {
+                    "generation": generation, "role": role.value, "opponent_id": self_play_opponent_id,
+                })
             else:
                 print(f"[gen {generation}] {role.value}: no league members registered yet -- heuristic-only bootstrap", flush=True)
+                push_heartbeat(args.registry_url, args.hec_token, "opponent_chosen", {
+                    "generation": generation, "role": role.value, "opponent_id": None, "note": "heuristic-only bootstrap",
+                })
             if args.heuristic_opponents > 0:
                 _spawn_heuristic_bots(args.host, port, args.heuristic_opponents)
             time.sleep(1.0)  # real grace period for opponents to connect+spawn before the trainee starts stepping
@@ -614,6 +681,10 @@ def main():
         for role, member in registered.items():
             print(f"[gen {generation}] registered {role.value} -> league member {member.id} "
                   f"(elo={league.get_elo(member.id):.0f}, inherited -- not yet evaluated this generation)")
+            push_heartbeat(args.registry_url, args.hec_token, "generation_registered", {
+                "generation": generation, "role": role.value, "member_id": member.id,
+                "elo_inherited": league.get_elo(member.id), "reset": role in reset_roles,
+            })
 
         # S459-60, real, found-live bug (same category as BRAWLPIT's own S424 "ELOs stuck at
         # 1500" -- the piece that actually MOVES Elo wasn't connected to what gets reported):
@@ -646,14 +717,25 @@ def main():
                     eval_notes[role] = "reset generation, no real Main checkpoint yet to evaluate against"
                     continue
                 try:
+                    elo_before = league.get_elo(member.id)
                     score_a, note = _run_evaluation_match(args.host, EVAL_PORT, checkpoint_paths[role], main_opponent_path)
                     eval_notes[role] = f"reset generation, vs current best Main: {note}"
                     league.record_match_result(member.id, main_opponent_id, score_a)
+                    elo_after = league.get_elo(member.id)
                     print(f"[gen {generation}]   -> evaluated {role.value} (reset) vs current best Main: "
-                          f"score_a={score_a} (local elo now {league.get_elo(member.id):.0f})")
+                          f"score_a={score_a} (local elo now {elo_after:.0f})")
+                    push_heartbeat(args.registry_url, args.hec_token, "eval_result", {
+                        "generation": generation, "role": role.value, "opponent_id": main_opponent_id,
+                        "opponent_kind": "current_best_main_reset_eval", "score_a": score_a, "note": note,
+                        "elo_before": elo_before, "elo_after": elo_after,
+                    })
                 except Exception as e:  # noqa: BLE001 -- an evaluation match failing must never crash real, in-progress training
                     eval_notes[role] = f"CRASH: reset-generation evaluation vs Main failed ({e})"
                     print(f"[gen {generation}]   -> WARNING: reset-generation evaluation for {role.value} failed ({e}), Elo unchanged")
+                    push_heartbeat(args.registry_url, args.hec_token, "eval_result", {
+                        "generation": generation, "role": role.value, "opponent_id": main_opponent_id,
+                        "opponent_kind": "current_best_main_reset_eval", "error": str(e),
+                    })
                 continue
             if role not in prev_checkpoint_paths:
                 eval_notes[role] = "no prior generation to evaluate against yet"
@@ -665,6 +747,11 @@ def main():
                 new_elo, prev_elo = league.get_elo(member.id), league.get_elo(prev_member_ids[role])
                 print(f"[gen {generation}]   -> evaluated {role.value} vs its own prior generation: "
                       f"score_a={score_a} (local elo now {new_elo:.0f} vs {prev_elo:.0f})")
+                push_heartbeat(args.registry_url, args.hec_token, "eval_result", {
+                    "generation": generation, "role": role.value, "opponent_id": prev_member_ids[role],
+                    "opponent_kind": "prior_generation", "score_a": score_a, "note": note,
+                    "elo_after": new_elo, "opponent_elo_after": prev_elo,
+                })
 
                 # S459-76, real, found-live gap: founder real-time "im a little concerned that
                 # the elos of the generation 0 bots arent going up and down... can we make sure
@@ -702,6 +789,10 @@ def main():
             except Exception as e:  # noqa: BLE001 -- an evaluation match failing must never crash real, in-progress training
                 eval_notes[role] = f"CRASH: evaluation match itself failed ({e})"
                 print(f"[gen {generation}]   -> WARNING: evaluation match for {role.value} failed ({e}), Elo unchanged")
+                push_heartbeat(args.registry_url, args.hec_token, "eval_result", {
+                    "generation": generation, "role": role.value, "opponent_id": prev_member_ids.get(role),
+                    "opponent_kind": "prior_generation", "error": str(e),
+                })
 
         remote_ids = {}
         for role, member in registered.items():
@@ -736,8 +827,16 @@ def main():
                     recent_results_vs_main.append(1 if score_a == 1.0 else 0)
                     recent_results_vs_main[:] = recent_results_vs_main[-20:]
                 print(f"[gen {generation}]   -> PFSP feedback: {role.value} vs {opponent_id}: score_a={score_a}")
+                push_heartbeat(args.registry_url, args.hec_token, "eval_result", {
+                    "generation": generation, "role": role.value, "opponent_id": opponent_id,
+                    "opponent_kind": "pfsp_sampled", "score_a": score_a, "note": _note,
+                })
             except Exception as e:  # noqa: BLE001
                 print(f"[gen {generation}]   -> WARNING: PFSP feedback match for {role.value} failed ({e})")
+                push_heartbeat(args.registry_url, args.hec_token, "eval_result", {
+                    "generation": generation, "role": role.value, "opponent_id": opponent_id,
+                    "opponent_kind": "pfsp_sampled", "error": str(e),
+                })
 
         prev_checkpoint_paths = dict(checkpoint_paths)
         prev_member_ids = {role: member.id for role, member in registered.items()}

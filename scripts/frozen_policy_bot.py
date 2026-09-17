@@ -23,6 +23,7 @@ exploitable fixed line every match) but never calls model.learn() or saves anyth
 
 import argparse
 import json
+import os
 import sys
 import time
 
@@ -47,6 +48,13 @@ def main():
                    help="real, minimal evaluation-match support (S459-54): writes {\"kills\": N, \"deaths\": N} "
                         "to this path when the session ends, so an orchestrator running two of these against "
                         "each other can determine a winner without a third observer connection.")
+    p.add_argument("--report-interval", type=float, default=1.5,
+                   help="S474 follow-up (founder real-time: 'first to 1 may not be as good as first to 5' -- "
+                        "an orchestrator wants to detect a decisive early result, not just read a final "
+                        "count once the whole session ends). Also overwrites --report-kills-to's own file "
+                        "at this real interval throughout the session (not just once at the end), so an "
+                        "orchestrator polling it can end an evaluation match the moment one side reaches a "
+                        "real kill target, instead of always waiting out the full --session-duration.")
     args = p.parse_args()
 
     if PPO is None:
@@ -80,9 +88,24 @@ def main():
         if candidate is not None and candidate.state == STATE_ALIVE:
             me = candidate
 
+    last_report_at = 0.0
+
+    def _write_report():
+        if not args.report_kills_to:
+            return
+        k = int(me.kills) if me is not None else 0
+        d = int(me.deaths) if me is not None else 0
+        tmp = args.report_kills_to + f".tmp{os.getpid()}"
+        with open(tmp, "w") as f:
+            json.dump({"kills": k, "deaths": d}, f)
+        os.replace(tmp, args.report_kills_to)  # atomic, matching rl_league.py's own established convention -- a poller never reads a half-written file
+
     while time.time() - start < args.session_duration:
         if me is None:
             break
+        if args.report_interval > 0 and time.time() - last_report_at >= args.report_interval:
+            _write_report()
+            last_report_at = time.time()
         obs = build_observation(me, entities, walls)
         action, _ = model.predict(obs, deterministic=False)
         fwd, strafe, cur_yaw, cur_pitch, buttons, weapon_idx = decode_action(action, cur_yaw, cur_pitch)
@@ -103,10 +126,9 @@ def main():
 
     client.close()
     if args.report_kills_to:
+        _write_report()
         final_kills = int(me.kills) if me is not None else 0
         final_deaths = int(me.deaths) if me is not None else 0
-        with open(args.report_kills_to, "w") as f:
-            json.dump({"kills": final_kills, "deaths": final_deaths}, f)
         print(f"[frozen-policy-bot] reported kills={final_kills} deaths={final_deaths} -> {args.report_kills_to}")
     print("[frozen-policy-bot] session ended")
     return 0
