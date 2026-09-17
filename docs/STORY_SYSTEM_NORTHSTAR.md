@@ -151,6 +151,31 @@ not a compromise: it's what PAPERCRAFT's own precedent already uses, and it's wh
 per-tick door/ladder evaluation cheap enough to run for every instance, every tick, in a 60Hz
 server loop (no JVM round trip the way the texture pipeline's Java target would require).
 
+**Elevators** (founder real-time: "we need scriptable elevators with doors as NPCs spawners and
+level stitch points"): not a new, seventh object kind -- a real COMPOSITE of three kinds already
+scoped above, plus one genuinely new mechanism. An elevator is:
+- a `door` (or two -- the elevator's own doors, opening/closing at each stop, same `door-tick`
+  contract already built and tested, S459-81/82),
+- a `trigger` at each floor stop, firing `SpawnEnemies`/`SpawnCharacterEvent` on arrival (an
+  ambush waiting on the floor above, a character riding along) or `AdvanceStory` at a top/bottom
+  floor that's really a level-stitch point (exactly Part 3's own `AdvanceStory` action below --
+  riding an elevator to the top floor is a real `exit-taken` the story engine already knows how
+  to handle, no special case needed),
+- plus one real, new primitive neither door nor trigger has: **platform movement** -- the one
+  thing genuinely missing is a box that translates smoothly between real, named stop positions
+  over time, not just toggling open/closed like a door does. `phys_set_custom_level_box_y`
+  (S459-81) already proves the mechanism (server mutates a `map_geo` box's own position, players
+  standing on it get carried because collision is resolved fresh every tick against wherever the
+  box currently is) -- an elevator generalizes it from a single Y-offset toggle to a real,
+  multi-stop position interpolation: `(defn elevator-tick [(state : ElevatorState) (call-floor :
+  F64)] : ElevatorPose ...)` returning a real `(x, y, z, door-state)` pose per tick, the same
+  "script returns data, host executes" discipline every other kind already uses. Real, deferred
+  design question, not solved here: whether a moving elevator car needs its own dedicated
+  `LevelInteractable` kind (`elevator`) that bundles a door + a trigger + this new pose-return
+  contract into one authored object, or stays three separately-placed, script-linked objects a
+  designer wires together by hand. Not built in this pass -- named here so the composition is
+  clear before Phase 2 (ladder/screen/character/trigger kinds) picks a real answer.
+
 ## Part 3: the story engine
 
 **The real shape, from the founder's own framing**: a story is not a fixed list or a fixed tree
