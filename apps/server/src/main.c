@@ -516,7 +516,15 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
     }
     for (int ci = 0; ci < lvl->character_count; ci++) {
         const LevelCharacter *lc = &lvl->characters[ci];
-        if (lc->role < AI_ROLE_RIFT_HOUND || lc->role > AI_ROLE_BLIND_STALKER) {
+        // S492, real, found-live gap: this range check (and its Go-side mirror,
+        // internal/shankpit.validateCharacters) both stopped at AI_ROLE_BLIND_STALKER, one enum
+        // value short of AI_ROLE_WANDERING_BOT -- the exact role a designer would want for
+        // "walking around the city... even just standing there and having their head turn and
+        // look at you." A level author who managed to author role=10 anyway (e.g. hand-edited
+        // JSON, before NOCK's own dropdown gap was also fixed) would have silently lost that
+        // character here, logged as an "invalid role," not spawned as the real, working
+        // non-hostile ambient bot it actually is.
+        if (lc->role < AI_ROLE_RIFT_HOUND || lc->role > AI_ROLE_WANDERING_BOT) {
             NET_SERVER_LOG("CUSTOM_LEVEL_CHARACTER_SKIPPED reason=invalid_role role=%d", lc->role);
             continue;
         }

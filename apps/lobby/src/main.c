@@ -2055,7 +2055,7 @@ static void lobby_apply_story_level(const CustomLevelData *lvl) {
     story_ai_reset(&local_state);
     for (int ci = 0; ci < lvl->character_count; ci++) {
         const LevelCharacter *lc = &lvl->characters[ci];
-        if (lc->role < AI_ROLE_RIFT_HOUND || lc->role > AI_ROLE_BLIND_STALKER) continue;
+        if (lc->role < AI_ROLE_RIFT_HOUND || lc->role > AI_ROLE_WANDERING_BOT) continue; // S492, mirrors apps/server's own identical fix
         story_ai_spawn_enemy(&local_state, (AIRole)lc->role, lc->x, lc->y, lc->z);
     }
 
