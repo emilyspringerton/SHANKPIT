@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-17
+- fix(client): reconciliation replay no longer re-fires weapon side effects (ammo flicker on shoot, duplicate kill indicators) -- same bug class as two prior narrow patches (weapon_idx flicker, hit_feedback decay), fixed at the actual root this time: reconciliation now only replays movement, never re-applies update_weapons' non-idempotent side effects (sess-20260905-0720-ec33e7c5)
 - fix(rl): Main Exploiter reset generations now get a real evaluation (was stuck at 1500 forever on every periodic reset, confirmed live: 40% of main_exploiter checkpoints stuck vs ~27% for the other two roles) -- also flipped --resume-from-registry to default-on in rl_train_packet.py itself (S459-71 only fixed the colab_train.py wrapper) (sess-20260905-0720-ec33e7c5)
 - fix(server): MODE_QUEUE now holds a real 5s match_over intermission before starting the next round instead of instantly resetting stats in place -- root cause of the reported 'matchmaking stuck open' feeling (sess-20260905-0720-ec33e7c5)
 - feat(goldenband): general-skeleton NPC via new gpose.c FK+skinning module -- spawns the founder's own imported mannequin mesh + UAL2_Standard_RM mocap clip as a real NPC in SCENE_VOXWORLD (sess-20260905-0720-ec33e7c5)
