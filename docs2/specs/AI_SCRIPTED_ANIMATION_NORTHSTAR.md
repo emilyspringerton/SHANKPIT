@@ -118,11 +118,21 @@ all today. They exist and are tested in isolation, ready for that wiring once it
 - ~~Connecting `gband_skel_npc`/`gseq` to actual gameplay bots~~ — **done, 2026-09-17** (see
   above). The real architectural fork this bullet named IS now resolved, decisively: story_ai
   NPCs render via the general `gpose`/`gband_skel_npc` pipeline (`SKIN_MANNEQUIN`), not
-  `tyler_body`. Still real, honestly unaddressed: only ONE character look exists for NPCs today
-  (the founder's own mannequin) — every story_ai NPC, regardless of role, currently looks
-  identical. Giving different roles (e.g. `AI_ROLE_GORE_BRUTE` vs `AI_ROLE_STORM_CALLER`) their
-  own distinct model needs `gband_skel_npc`'s own "only one character asset loaded at a time" v0
-  scope lifted to support multiple simultaneous assets — real, named, not-yet-built follow-up.
+  `tyler_body`.
+- ~~Only ONE character look exists for NPCs today~~ — **closed, 2026-09-17** (founder real-time:
+  "i just added universal animation library 1..." then "GEORGE LEELA MIKE AND STAN ARE ANIMATED
+  ROBOT CHARACTERS WITH MESH RIG AND ANIMATIONS PER BOT"). `gband_skel_npc`'s own "only one
+  character asset loaded at a time" v0 scope is lifted: it now supports multiple simultaneous
+  kits (`GbandSkelNpcKit` array, `kit_index`-parameterized load/draw — see GOLDENBAND commit
+  304a08d, vendored into SHANKPIT). Five real kits load at startup: mannequin (now with genuine
+  `UAL1_Standard` idle/walk clips, closing the earlier "same clip for both" caveat too), Stan,
+  Mike, Leela, George — each its own real mesh+skeleton+animation set (43/43/17/47 joints
+  respectively), exported and validated from IDUNA's `nock_animations` table.
+  `draw_player_skin_mannequin` selects a real, ready kit deterministically from `p->id`. Real,
+  honestly still missing: this is NOT role-aware yet — `AIRole` isn't networked to the client at
+  all (`PlayerState` carries no role field; only `story_ai.c`'s server-side `AIController` array
+  knows it), so `AI_ROLE_GORE_BRUTE` vs `AI_ROLE_STORM_CALLER` don't yet map to specific looks.
+  That's the real, now-narrower remaining gap — needs a new wire field, not a rendering change.
 
 ## Related
 
