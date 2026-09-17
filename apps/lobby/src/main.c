@@ -1878,6 +1878,61 @@ static void level_select_menu_open(void) {
     level_select_open = 1;
 }
 
+// lobby_doors_init/lobby_doors_tick -- real, working doors for the lobby (found live, 2026-09-17,
+// founder real-time: "i dont know why this never moved forward i kept asking for doors please
+// make doors actually work"). apps/server/src/main.c's own story_doors.h supports real, custom
+// dlopen'd PARENA scripts per door -- <dlfcn.h> is POSIX-only, and the lobby's own distributed
+// client is cross-compiled for Windows (x86_64-w64-mingw32-gcc, no dlopen equivalent wired up
+// here), so that path genuinely can't be reused as-is; a real, honest, named limitation, not
+// silently worked around. What CAN run everywhere (pure static C, no dynamic loading at all) is
+// door_tick_builtin_proximity (level_boxes.h) -- the same real default every unscripted door now
+// gets server-side too. The lobby always uses it; a door WITH a custom script attached still
+// opens/closes correctly on the dedicated server, just not (yet) in local single-player -- named
+// here, not glossed over.
+typedef struct {
+    int box_index;
+    double state;
+} LobbyDoorRuntime;
+#define LOBBY_DOORS_MAX LEVEL_BOXES_MAX_DOORS
+static LobbyDoorRuntime g_lobby_doors[LOBBY_DOORS_MAX];
+static int g_lobby_door_count = 0;
+
+static void lobby_doors_init(const CustomLevelData *lvl) {
+    g_lobby_door_count = 0;
+    for (int i = 0; i < lvl->door_count && g_lobby_door_count < LOBBY_DOORS_MAX; i++) {
+        g_lobby_doors[g_lobby_door_count].box_index = lvl->doors[i].box_index;
+        g_lobby_doors[g_lobby_door_count].state = 0.0; /* every door starts CLOSED */
+        g_lobby_door_count++;
+    }
+}
+
+// lobby_doors_tick -- mirrors story_doors_tick's own real per-tick evaluation (min distance from
+// any active player to the door's own authored box position), called from the same per-frame
+// local-simulation loop story_check_level_exits/local_update already run from.
+static void lobby_doors_tick(void) {
+    for (int i = 0; i < g_lobby_door_count; i++) {
+        LobbyDoorRuntime *dr = &g_lobby_doors[i];
+        float bx, by, bz;
+        if (!phys_custom_level_box_pos(dr->box_index, &bx, &by, &bz)) continue;
+
+        double min_dist = 1e9;
+        for (int pi = 0; pi < MAX_CLIENTS; pi++) {
+            const PlayerState *p = &local_state.players[pi];
+            if (!p->active || p->state == STATE_DEAD) continue;
+            double dx = p->x - bx, dy = p->y - by, dz = p->z - bz;
+            double d = sqrt(dx * dx + dy * dy + dz * dz);
+            if (d < min_dist) min_dist = d;
+        }
+
+        int was_open = dr->state >= STORY_DOOR_OPEN_THRESHOLD;
+        dr->state = door_tick_builtin_proximity(min_dist, dr->state);
+        int is_open = dr->state >= STORY_DOOR_OPEN_THRESHOLD;
+        if (is_open != was_open) {
+            phys_set_custom_level_box_y(dr->box_index, is_open);
+        }
+    }
+}
+
 // level_boxes_apply_to_physics -- shared by both real load paths in this file (level-select and
 // the --level CLI flag): copies a loaded CustomLevelData's boxes + materials (S459-16) into
 // physics.h's own custom-level buffers. Not in level_boxes.h itself -- that header is deliberately
@@ -1916,6 +1971,7 @@ static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
         sp_team[si] = lvl->spawners[si].team;
     }
     phys_set_custom_level_spawners(sp_x, sp_y, sp_z, sp_team, lvl->spawner_count);
+    lobby_doors_init(lvl);
 }
 
 // S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1 -- lobby's own local-single-player mirror of
@@ -9793,6 +9849,7 @@ int main(int argc, char* argv[]) {
                 }
                 local_update(input_fwd, input_str, cam_yaw, cam_pitch, input_shoot, wpn_req, input_jump, input_crouch, input_reload, input_ability, input_bike, NULL, now_ms);
                 lobby_check_story_level_exits(now_ms);
+                lobby_doors_tick();
             }
                 accumulator -= TICK_DT;
             }
