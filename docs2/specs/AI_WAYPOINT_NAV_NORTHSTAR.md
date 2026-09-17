@@ -50,20 +50,29 @@ re-engage would mean walking back into the same fight at the same low health tha
 flee in the first place. "Wounded, hides, stays hidden" is the honest v0 behavior. A
 regen-driven re-engage cycle is real, separate follow-up work, not scoped here.
 
+## NOCK level-editor authoring — shipped (2026-09-17)
+
+Founder real-time, direct follow-up: "we are going to need a waypoint system in the levels and
+maps northstar it" / "continue filling in the gaps in our level editor." `SCENE_CUSTOM_LEVEL`
+levels can now carry a real waypoint/cover graph end to end: `ShankpitLevelEditor.tsx` has a
+"Waypoint / cover nodes" panel (place nodes at the spawner marker, toggle cover + direction, link
+neighbors via a checklist — position edited numerically, same v0 scope `ObjectInspector` already
+uses, not 3D-dragged), IDUNA's `internal/shankpit.NavNode` + `navNodesForExport` resolve authored
+node ids into real export-time array positions, and SHANKPIT's new `LevelNavNode` parser
+(`packages/world/level_boxes.h`) + `story_ai_load_nav_graph` load that graph into `g_story_nav`
+when a custom level loads (`server_apply_custom_level`) — replacing the previous state where the
+*only* way to get a graph into the running server was hardcoded C in
+`story_ai_seed_voxworld_encounter`. See `EMILY/BACKLOG.md`'s own entry for full commit references.
+
 ## Real, not-yet-built follow-up work
 
-- **Per-level/map authoring.** Only `SCENE_VOXWORLD`'s story encounter has a graph. Every other
-  scene (`SCENE_GARAGE_OSAKA`, `SCENE_STADIUM`, `SCENE_DUST_COMPOUND`, `SCENE_CITY`,
-  `SCENE_OIL_TANKER`, `SCENE_POO_POO_ISLAND`, `SCENE_STORY_CAVE`, `SCENE_CUSTOM_LEVEL`) has none —
-  `ai_nav_find_cover`/`ai_nav_find_path` correctly no-op (return -1 / fall back to repulsion) in
-  an unauthored scene rather than crashing, but no NPC in those scenes gets real tactical
-  behavior yet. Authoring a graph per scene, by hand, following `story_ai_seed_voxworld_
-  encounter`'s own pattern, is the direct next step.
-- **NOCK level-editor authoring.** `SCENE_CUSTOM_LEVEL` (levels authored in NOCK's SHANKPIT level
-  editor, per `protocol.h`'s own comment) has no way to author waypoint/cover nodes at all today
-  — NOCK's level editor would need a real waypoint-placement tool, and the exported level format
-  would need a real place to carry the graph, before `SCENE_CUSTOM_LEVEL` can have NPCs with any
-  tactical behavior. Not scoped here; a real, separate NOCK-side feature.
+- **Per-scene authoring for the built-in story scenes.** Only `SCENE_VOXWORLD`'s story encounter
+  has a graph (hardcoded); the other built-in scenes (`SCENE_GARAGE_OSAKA`, `SCENE_STADIUM`,
+  `SCENE_DUST_COMPOUND`, `SCENE_CITY`, `SCENE_OIL_TANKER`, `SCENE_POO_POO_ISLAND`,
+  `SCENE_STORY_CAVE`) still have none — `ai_nav_find_cover`/`ai_nav_find_path` correctly no-op in
+  an unauthored scene rather than crashing, but no NPC in those scenes gets real tactical behavior
+  yet. `SCENE_CUSTOM_LEVEL` no longer needs this (NOCK authoring covers it, see above) — this item
+  is now scoped narrowly to the built-in, non-custom scenes only.
 - **cover_dir verification against real level geometry.** Flagged above — the VOXWORLD graph's
   two cover nodes need checking against the actual level once there's a way to do that (currently
   none — no wall-collision or prop-placement query exists anywhere in SHANKPIT).
