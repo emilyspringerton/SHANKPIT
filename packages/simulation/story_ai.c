@@ -84,17 +84,31 @@ static void ai_reset_input(PlayerState *p) {
     p->crouching = 0;
 }
 
-static void ai_turn_towards(PlayerState *p, float target_yaw, float max_turn_deg) {
-    float diff = ai_angle_diff(target_yaw, p->yaw);
-    diff = ai_clamp(diff, -max_turn_deg, max_turn_deg);
-    p->yaw += diff;
+/* Humanness Phase 2: ai_turn_towards now routes through humanness_smooth_turn_step
+   (docs/HUMANNESS_NORTHSTAR.md) instead of a flat clamp-lerp -- real, mood-scaled turn speed
+   and a real, occasional overshoot-then-settle, matching MISHRI's own real smoothTurn()
+   behavior. max_turn_deg keeps its own existing real meaning (the per-call turn budget every
+   caller already tunes -- 10.0f for the hound, 4.0f for the brute, etc.) by treating it as a
+   real turn_speed_deg_per_sec with dt_seconds=1.0 -- so an unmodified (neutral-mood,
+   not-mid-overshoot) call behaves identically to the old clamp, and humanness only ever adds
+   real behavior on top, never silently changes the tuned baseline. ai may be NULL (a caller with
+   no real AIController context, e.g. none in this file today, but kept honest rather than
+   assumed) -- falls back to the old, exact clamp-lerp with no jitter in that case. */
+static void ai_turn_towards(AIController *ai, PlayerState *p, float target_yaw, float max_turn_deg) {
+    if (!ai) {
+        float diff = ai_angle_diff(target_yaw, p->yaw);
+        diff = ai_clamp(diff, -max_turn_deg, max_turn_deg);
+        p->yaw += diff;
+        return;
+    }
+    humanness_smooth_turn_step(&p->yaw, target_yaw, max_turn_deg, 1.0f, &ai->humanness, &ai->turn_overshooting);
 }
 
-static void ai_move_towards(PlayerState *p, float tx, float tz, float speed_scale, float turn_speed) {
+static void ai_move_towards(AIController *ai, PlayerState *p, float tx, float tz, float speed_scale, float turn_speed) {
     float dx = tx - p->x;
     float dz = tz - p->z;
     float yaw = ai_angle_to(dx, dz);
-    ai_turn_towards(p, yaw, turn_speed);
+    ai_turn_towards(ai, p, yaw, turn_speed);
     p->in_fwd = ai_clamp(speed_scale, -1.0f, 1.0f);
 }
 
@@ -271,6 +285,8 @@ int story_ai_spawn_enemy(ServerState *s, AIRole role, float x, float y, float z)
     ai->last_known_z = s->players[0].z;
     ai->next_decision_ms = 0;
     ai->next_attack_ms = 0;
+    humanness_state_init(&ai->humanness, 0); /* Humanness Phase 2 -- real, fresh per-instance state */
+    ai->turn_overshooting = 0;
     ai_assign_role_defaults(ai, p);
 
     return slot;
@@ -357,7 +373,7 @@ static void ai_run_patrol(ServerState *s, AIController *ai, unsigned int now_ms)
         }
     }
 
-    ai_move_towards(p, pt->x, pt->z, 0.45f * ai->move_speed_scale, 4.0f);
+    ai_move_towards(ai, p, pt->x, pt->z, 0.45f * ai->move_speed_scale, 4.0f);
 }
 
 static void ai_run_investigate(ServerState *s, AIController *ai, unsigned int now_ms) {
@@ -366,7 +382,7 @@ static void ai_run_investigate(ServerState *s, AIController *ai, unsigned int no
     float dz = ai->last_known_z - p->z;
     float dist = ai_len2(dx, dz);
     (void)now_ms;
-    ai_move_towards(p, ai->last_known_x, ai->last_known_z, 0.65f * ai->move_speed_scale, 6.0f);
+    ai_move_towards(ai, p, ai->last_known_x, ai->last_known_z, 0.65f * ai->move_speed_scale, 6.0f);
     if (dist < 7.0f) ai_set_mode(ai, AI_MODE_SEARCH, now_ms);
 }
 
@@ -375,7 +391,7 @@ static void ai_run_search(ServerState *s, AIController *ai, unsigned int now_ms)
     float t = (float)(now_ms - ai->mode_entered_ms) * 0.001f;
     float orbit_x = ai->last_known_x + cosf(t + (float)ai->player_id) * 10.0f;
     float orbit_z = ai->last_known_z + sinf(t + (float)ai->player_id) * 10.0f;
-    ai_move_towards(p, orbit_x, orbit_z, 0.42f * ai->move_speed_scale, 3.0f);
+    ai_move_towards(ai, p, orbit_x, orbit_z, 0.42f * ai->move_speed_scale, 3.0f);
     p->in_strafe = sinf(t * 1.3f) * 0.55f;
 }
 
@@ -386,20 +402,24 @@ static void ai_run_ally_follow(ServerState *s, AIController *ai, unsigned int no
     float dz = hero->z - p->z;
     float dist = ai_len2(dx, dz);
     (void)now_ms;
-    if (dist > 20.0f) ai_move_towards(p, hero->x, hero->z, 0.70f * ai->move_speed_scale, 7.0f);
-    else if (dist < 9.0f) ai_move_towards(p, p->x - dx, p->z - dz, 0.40f * ai->move_speed_scale, 6.0f);
+    if (dist > 20.0f) ai_move_towards(ai, p, hero->x, hero->z, 0.70f * ai->move_speed_scale, 7.0f);
+    else if (dist < 9.0f) ai_move_towards(ai, p, p->x - dx, p->z - dz, 0.40f * ai->move_speed_scale, 6.0f);
     else p->in_fwd = 0.0f;
 }
 
 static void ai_combat_hound(ServerState *s, AIController *ai, PlayerState *p, const AIPerception *per, unsigned int now_ms) {
     PlayerState *hero = &s->players[0];
     float target_yaw = ai_angle_to(per->to_player_x, per->to_player_z);
-    ai_turn_towards(p, target_yaw, 10.0f);
+    /* Humanness Phase 2: aim_error_deg was set per role (ai_assign_role_defaults) but
+       never actually consumed anywhere -- a real, found dead-data gap. Now real: skill
+       derived from it drives a real Gaussian aim-noise term on the actual firing angle. */
+    target_yaw += humanness_aim_noise(&ai->humanness, ai_clamp(1.0f - ai->aim_error_deg / 10.0f, 0.0f, 1.0f));
+    ai_turn_towards(ai, p, target_yaw, 10.0f);
     p->in_fwd = 1.0f * ai->move_speed_scale;
     p->in_strafe = ((now_ms / 260U + (unsigned int)ai->player_id) % 2U) ? 0.85f : -0.85f;
     if (per->dist <= ai->attack_range && now_ms >= ai->next_attack_ms) {
         p->in_shoot = 1;
-        ai->next_attack_ms = now_ms + 380U;
+        ai->next_attack_ms = now_ms + humanness_reaction_delay_ms(&ai->humanness, 380U); /* Humanness Phase 2: real jitter on the fixed per-role cooldown */
     }
     if (p->on_ground && ((now_ms / 900U + (unsigned int)ai->player_id) % 3U == 0U) && per->dist < 24.0f) {
         p->in_jump = 1;
@@ -418,7 +438,11 @@ static void ai_combat_hound(ServerState *s, AIController *ai, PlayerState *p, co
 
 static void ai_combat_trooper(ServerState *s, AIController *ai, PlayerState *p, const AIPerception *per, unsigned int now_ms) {
     float target_yaw = ai_angle_to(per->to_player_x, per->to_player_z);
-    ai_turn_towards(p, target_yaw, 7.0f);
+    /* Humanness Phase 2: aim_error_deg was set per role (ai_assign_role_defaults) but
+       never actually consumed anywhere -- a real, found dead-data gap. Now real: skill
+       derived from it drives a real Gaussian aim-noise term on the actual firing angle. */
+    target_yaw += humanness_aim_noise(&ai->humanness, ai_clamp(1.0f - ai->aim_error_deg / 10.0f, 0.0f, 1.0f));
+    ai_turn_towards(ai, p, target_yaw, 7.0f);
     if (per->dist > ai->preferred_range + 8.0f) p->in_fwd = 0.72f * ai->move_speed_scale;
     else if (per->dist < ai->preferred_range - 12.0f) p->in_fwd = -0.48f * ai->move_speed_scale;
     else p->in_fwd = 0.08f;
@@ -427,7 +451,7 @@ static void ai_combat_trooper(ServerState *s, AIController *ai, PlayerState *p, 
     if (per->dist <= ai->attack_range && now_ms >= ai->next_attack_ms) {
         unsigned int burst_gate = (now_ms / 170U) % 5U;
         p->in_shoot = (burst_gate < 3U) ? 1 : 0;
-        ai->next_attack_ms = now_ms + 110U;
+        ai->next_attack_ms = now_ms + humanness_reaction_delay_ms(&ai->humanness, 110U); /* Humanness Phase 2: real jitter on the fixed per-role cooldown */
     }
     /* S181-05 real ability: Frag Toss (physics.h's new WPN_AR ability
      * branch -- real splash-damage projectile, not a stub). Fired while
@@ -442,12 +466,16 @@ static void ai_combat_trooper(ServerState *s, AIController *ai, PlayerState *p, 
 
 static void ai_combat_brute(ServerState *s, AIController *ai, PlayerState *p, const AIPerception *per, unsigned int now_ms) {
     float target_yaw = ai_angle_to(per->to_player_x, per->to_player_z);
-    ai_turn_towards(p, target_yaw, 4.0f);
+    /* Humanness Phase 2: aim_error_deg was set per role (ai_assign_role_defaults) but
+       never actually consumed anywhere -- a real, found dead-data gap. Now real: skill
+       derived from it drives a real Gaussian aim-noise term on the actual firing angle. */
+    target_yaw += humanness_aim_noise(&ai->humanness, ai_clamp(1.0f - ai->aim_error_deg / 10.0f, 0.0f, 1.0f));
+    ai_turn_towards(ai, p, target_yaw, 4.0f);
     p->in_fwd = 0.55f * ai->move_speed_scale;
     p->in_strafe = 0.0f;
     if (per->dist <= ai->attack_range && now_ms >= ai->next_attack_ms) {
         p->in_shoot = 1;
-        ai->next_attack_ms = now_ms + 520U;
+        ai->next_attack_ms = now_ms + humanness_reaction_delay_ms(&ai->humanness, 520U); /* Humanness Phase 2: real jitter on the fixed per-role cooldown */
     }
     /* S181-05 real ability: Ground Slam (physics.h's new WPN_SHOTGUN
      * ability branch -- real splash+stun, not a stub). Only once the
@@ -463,7 +491,11 @@ static void ai_combat_brute(ServerState *s, AIController *ai, PlayerState *p, co
 
 static void ai_combat_storm_caller(ServerState *s, AIController *ai, PlayerState *p, const AIPerception *per, unsigned int now_ms) {
     float target_yaw = ai_angle_to(per->to_player_x, per->to_player_z);
-    ai_turn_towards(p, target_yaw, 5.0f);
+    /* Humanness Phase 2: aim_error_deg was set per role (ai_assign_role_defaults) but
+       never actually consumed anywhere -- a real, found dead-data gap. Now real: skill
+       derived from it drives a real Gaussian aim-noise term on the actual firing angle. */
+    target_yaw += humanness_aim_noise(&ai->humanness, ai_clamp(1.0f - ai->aim_error_deg / 10.0f, 0.0f, 1.0f));
+    ai_turn_towards(ai, p, target_yaw, 5.0f);
     /* Actively maintains distance -- backs away if the player closes
      * inside preferred_range, unlike Trooper which just stops advancing.
      * A storm caller that lets itself get out-ranged into melee has lost
@@ -475,7 +507,7 @@ static void ai_combat_storm_caller(ServerState *s, AIController *ai, PlayerState
 
     if (per->dist <= ai->attack_range && now_ms >= ai->next_attack_ms) {
         p->in_shoot = 1;
-        ai->next_attack_ms = now_ms + 260U;
+        ai->next_attack_ms = now_ms + humanness_reaction_delay_ms(&ai->humanness, 260U); /* Humanness Phase 2: real jitter on the fixed per-role cooldown */
     }
     /* Real ability: the 5-round storm-charge burst (physics.h's existing
      * WPN_SNIPER branch, unmodified -- this role is the first AI to
@@ -491,7 +523,11 @@ static void ai_combat_storm_caller(ServerState *s, AIController *ai, PlayerState
 
 static void ai_combat_bombardier(ServerState *s, AIController *ai, PlayerState *p, const AIPerception *per, unsigned int now_ms) {
     float target_yaw = ai_angle_to(per->to_player_x, per->to_player_z);
-    ai_turn_towards(p, target_yaw, 4.0f);
+    /* Humanness Phase 2: aim_error_deg was set per role (ai_assign_role_defaults) but
+       never actually consumed anywhere -- a real, found dead-data gap. Now real: skill
+       derived from it drives a real Gaussian aim-noise term on the actual firing angle. */
+    target_yaw += humanness_aim_noise(&ai->humanness, ai_clamp(1.0f - ai->aim_error_deg / 10.0f, 0.0f, 1.0f));
+    ai_turn_towards(ai, p, target_yaw, 4.0f);
     if (per->dist > ai->preferred_range + 15.0f) p->in_fwd = 0.5f * ai->move_speed_scale;
     else if (per->dist < ai->preferred_range - 20.0f) p->in_fwd = -0.35f * ai->move_speed_scale;
     else p->in_fwd = 0.0f;
@@ -502,7 +538,7 @@ static void ai_combat_bombardier(ServerState *s, AIController *ai, PlayerState *
      * sustained area denial from a slow-moving heavy, not a special move. */
     if (per->dist <= ai->attack_range && now_ms >= ai->next_attack_ms) {
         p->in_shoot = 1;
-        ai->next_attack_ms = now_ms + 950U;
+        ai->next_attack_ms = now_ms + humanness_reaction_delay_ms(&ai->humanness, 950U); /* Humanness Phase 2: real jitter on the fixed per-role cooldown */
     }
     (void)s;
 }
@@ -510,12 +546,16 @@ static void ai_combat_bombardier(ServerState *s, AIController *ai, PlayerState *
 static void ai_combat_ally(ServerState *s, AIController *ai, PlayerState *p, const AIPerception *per, unsigned int now_ms) {
     PlayerState *hero = &s->players[0];
     float target_yaw = ai_angle_to(per->to_player_x, per->to_player_z);
-    ai_turn_towards(p, target_yaw, 6.0f);
+    /* Humanness Phase 2: aim_error_deg was set per role (ai_assign_role_defaults) but
+       never actually consumed anywhere -- a real, found dead-data gap. Now real: skill
+       derived from it drives a real Gaussian aim-noise term on the actual firing angle. */
+    target_yaw += humanness_aim_noise(&ai->humanness, ai_clamp(1.0f - ai->aim_error_deg / 10.0f, 0.0f, 1.0f));
+    ai_turn_towards(ai, p, target_yaw, 6.0f);
     if (per->dist > ai->preferred_range) p->in_fwd = 0.4f;
     else if (per->dist < 15.0f) p->in_fwd = -0.25f;
     if (per->dist <= ai->attack_range && now_ms >= ai->next_attack_ms) {
         p->in_shoot = ((now_ms / 190U + (unsigned int)ai->player_id) % 4U) < 2U;
-        ai->next_attack_ms = now_ms + 180U;
+        ai->next_attack_ms = now_ms + humanness_reaction_delay_ms(&ai->humanness, 180U); /* Humanness Phase 2: real jitter on the fixed per-role cooldown */
     }
     if (ai_len2(hero->x - p->x, hero->z - p->z) < 7.0f) p->in_strafe = 0.6f;
 }
@@ -543,6 +583,7 @@ void story_ai_tick(ServerState *s, unsigned int now_ms) {
         if (!ai->active) continue;
         if (ai->player_id <= 0 || ai->player_id >= MAX_CLIENTS) continue;
         if (!s->players[ai->player_id].active || s->players[ai->player_id].state == STATE_DEAD) continue;
+        humanness_tick_mood(&ai->humanness, now_ms); /* Humanness Phase 2 -- real, once per AI per tick */
         ai_gather_perception(s, ai, &g_story_perception[i], now_ms);
         if (g_story_perception[i].visible) {
             g_story_bb.player_visible_count++;

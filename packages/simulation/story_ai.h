@@ -2,6 +2,7 @@
 #define STORY_AI_H
 
 #include "../common/protocol.h"
+#include "humanness.h"
 
 #define STORY_AI_MAX 16
 #define STORY_AI_PATROL_MAX_POINTS 8
@@ -75,6 +76,13 @@ typedef struct {
 
     unsigned int next_attack_ms;
     unsigned int next_decision_ms;
+
+    /* Humanness Phase 2 (docs/HUMANNESS_NORTHSTAR.md) -- real per-instance jitter/mood state,
+       fed into ai_turn_towards' own real overshoot-then-settle turning and aim noise, and into
+       each role's own attack-cooldown scheduling. See humanness.h's own doc comments for what
+       each primitive actually does. */
+    HumannessState humanness;
+    int turn_overshooting;
 } AIController;
 
 typedef struct {

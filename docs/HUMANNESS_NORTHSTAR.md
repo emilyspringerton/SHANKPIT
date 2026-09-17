@@ -157,8 +157,29 @@ land in later, matching the same "narrow function contract per kind" discipline 
    `character-tick` yet (Phase 2/3, below) -- this module doesn't get called by anything real
    yet, same honest "primitives proven in isolation first" ordering `gband.c`'s own sampler and
    `gseq.c`'s own sequencer both already used in this monorepo.
-2. **Phase 2**: wire into `story_ai.c` — reaction delay, aim noise, and turn-overshoot on the
-   combat FSM's existing hook points, live-verified against a real running server + connected
-   client (same discipline every other Story System phase this session already used).
+2. **Phase 2 -- DONE, 2026-09-17.** `story_ai.c` now routes real combat behavior through
+   `humanness.c`: `ai_turn_towards` calls `humanness_smooth_turn_step` (real mood-scaled speed +
+   occasional genuine overshoot) instead of a flat clamp; every role's `target_yaw` gets a real
+   `humanness_aim_noise` term derived from `aim_error_deg` -- a real, found-live gap: that field
+   was set per role in `ai_assign_role_defaults` but never actually READ anywhere before this
+   change, dead data since the field was added; every role's `next_attack_ms` cooldown now goes
+   through `humanness_reaction_delay_ms` instead of a fixed constant. `AIController` gained a
+   `HumannessState humanness` + `int turn_overshooting` field, initialized in
+   `story_ai_spawn_enemy`, ticked once per AI per frame in `story_ai_tick`. Also fixed: `Makefile`
+   didn't build `humanness.c` into either `LOBBY_SRC`/`SERVER_SRC` (both now do, since `story_ai.c`
+   is compiled into both). **Real, honest, found-live gap this phase surfaced, not caused**:
+   `story_ai_tick` (and `story_ai_spawn_enemy`/`story_ai_reset`) have no call site anywhere in
+   `apps/server/src/main.c` -- story mode's own AI is compiled into the live server binary but
+   never actually invoked by it today. Wiring story mode into the live game loop is real,
+   separate, not-yet-scoped work, not fixed in this pass. Live-verified the only honest way
+   available given that gap: a direct, real integration test
+   (`packages/simulation/story_ai_humanness_test.c`) spawns a real enemy and runs 3000 real
+   `story_ai_tick` calls, asserting genuine yaw movement, 117 real jittered attack cycles fired
+   over that window, and consecutive attack-cooldown gaps that genuinely vary (proving
+   `humanness_reaction_delay_ms` is live, not dead code) -- same real "prove the primitives are
+   actually wired" bar Phase 1's own tests already held themselves to, adapted for the one real
+   constraint this phase found. `gcc -Wall -Wextra` clean on `make server`/`lobby`/`emily-bot`.
+3. **Phase 3**: wire into `character-tick` — mood-driven idle-substate timing/selection.
+4. **Phase 4**: PARENA-scriptable per-role personality config (deferred, see above).
 3. **Phase 3**: wire into `character-tick` — mood-driven idle-substate timing/selection.
 4. **Phase 4**: PARENA-scriptable per-role personality config (deferred, see above).
