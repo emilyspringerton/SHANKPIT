@@ -97,13 +97,17 @@ all today. They exist and are tested in isolation, ready for that wiring once it
   already broadcast implicitly via bot behavior, but not explicitly as an enum the client can
   switch on) or inferring it from position/velocity — real, undecided design work. `gsync`'s own
   ignition signal is ready to consume once this exists; it doesn't help until something calls it.
-- **`gpose_look_at`/`gsync` are not called anywhere in SHANKPIT yet.** Both are real, tested
-  library functions with zero call sites in `apps/lobby/src/main.c` or anywhere else — the actual
-  prerequisite, unchanged from this doc's own original finding below, is still real: nothing
-  connects `story_ai.c`'s server-authoritative NPCs to `gband_skel_npc`'s rendering at all (bots
-  render via `tyler_body`/`draw_player_3rd` instead). Wiring look-at/sync to real gameplay needs
-  that connection first, or a real decision to extend `tyler_body`'s own hardcoded channel system
-  with an equivalent instead (a genuinely different, not-yet-scoped path).
+- **`gpose_look_at`/`gsync` are still not called anywhere in SHANKPIT.** Real, tested library
+  functions, zero call sites. But the actual prerequisite this bullet originally named —
+  "nothing connects `story_ai.c`'s NPCs to `gband_skel_npc`'s rendering" — is now **closed**
+  (2026-09-17, founder real-time: "can we animate and model end to end?"): `story_ai`-controlled
+  NPCs render via `gband_skel_npc_draw` today (new `SKIN_MANNEQUIN`, forced onto `is_bot` players
+  in `MODE_STORY`/`MODE_STORY_CAVE` via `draw_player_3rd`'s existing `forced_skin` mechanism —
+  see `EMILY/BACKLOG.md`'s own entry for the full commit). `gband_skel_npc` also gained real
+  idle/walk clip switching in the same pass (previously a single frozen clip). What's real,
+  honestly still missing: `gpose_look_at`/`gsync` themselves are STILL not wired into this new
+  connection — the render path exists now, but nothing calls look-at for a neck/torso bone or
+  drives multi-actor sync through it yet. That's the real, now-much-smaller remaining gap.
 - **Phoneme/audio-driven mouth-controller lip sync.** Checked directly before attempting anything:
   `packages/audio/audio.c` synthesizes every sound as a PCM wavetable at init — there is no WAV/
   external-audio-file loader anywhere in this codebase, so even the founder's own simpler framing
@@ -111,11 +115,14 @@ all today. They exist and are tested in isolation, ready for that wiring once it
   amplitude-envelope driving, not full phoneme classification) has no real voice-line asset to
   sample from yet. The actual prerequisite is a WAV/dialogue-asset pipeline, not a smarter
   analysis algorithm. Out of scope for this pass; not even design-sketched beyond this finding.
-- **Connecting `gband_skel_npc`/`gseq` to actual gameplay bots**, if that ever becomes the desired
-  direction instead of extending `tyler_body`/`draw_player_3rd` — a real, undecided architectural
-  fork this doc deliberately does not resolve. `story_ai_seed_voxworld_encounter` and
-  `AI_WAYPOINT_NAV_NORTHSTAR.md` both already assume bots render via the existing `tyler_body`
-  path; nothing here changes that assumption.
+- ~~Connecting `gband_skel_npc`/`gseq` to actual gameplay bots~~ — **done, 2026-09-17** (see
+  above). The real architectural fork this bullet named IS now resolved, decisively: story_ai
+  NPCs render via the general `gpose`/`gband_skel_npc` pipeline (`SKIN_MANNEQUIN`), not
+  `tyler_body`. Still real, honestly unaddressed: only ONE character look exists for NPCs today
+  (the founder's own mannequin) — every story_ai NPC, regardless of role, currently looks
+  identical. Giving different roles (e.g. `AI_ROLE_GORE_BRUTE` vs `AI_ROLE_STORM_CALLER`) their
+  own distinct model needs `gband_skel_npc`'s own "only one character asset loaded at a time" v0
+  scope lifted to support multiple simultaneous assets — real, named, not-yet-built follow-up.
 
 ## Related
 
