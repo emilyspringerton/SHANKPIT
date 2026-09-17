@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-17
+- feat(goldenband): general-skeleton NPC via new gpose.c FK+skinning module -- spawns the founder's own imported mannequin mesh + UAL2_Standard_RM mocap clip as a real NPC in SCENE_VOXWORLD (sess-20260905-0720-ec33e7c5)
 - Fix CI: add humanness.c to both hand-copied build lists in release.yml/tests.yml (third recurrence of this exact drift bug) (sess-20260905-0720-ec33e7c5)
 - Correct a wrong Humanness Phase 2 claim (story_ai_tick is actually live, called from local_game.h) and wire humanness into the second real story-mode AI system, story_swarm_tick (sess-20260905-0720-ec33e7c5)
 - STORY_SYSTEM_NORTHSTAR.md: fold in scriptable elevators (door+trigger composite + new platform-movement primitive) (sess-20260905-0720-ec33e7c5)
