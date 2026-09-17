@@ -23,8 +23,11 @@ class TestStructSizes(unittest.TestCase):
     def test_user_cmd_is_36_bytes(self):
         self.assertEqual(ctypes.sizeof(UserCmd), 36)
 
-    def test_net_player_is_84_bytes(self):
-        self.assertEqual(ctypes.sizeof(NetPlayer), 84)  # S459-69: grew from 72 when vx/vy/vz were added
+    def test_net_player_is_88_bytes(self):
+        # S470: grew from 84 to 88 when anim_override was added (S459-69 grew it 72->84 before
+        # that, for vx/vy/vz) -- this exact assertion is what should have caught the mirror
+        # drifting stale a second time; it didn't because this test itself wasn't updated either.
+        self.assertEqual(ctypes.sizeof(NetPlayer), 88)
 
     def test_net_player_field_offsets_match_the_real_compiled_c_struct(self):
         # Real offsets verified via a compiled sizeof/offsetof C probe against protocol.h during
@@ -41,6 +44,7 @@ class TestStructSizes(unittest.TestCase):
             "death_dir_x": 56, "death_dir_z": 60,
             "reload_timer": 64, "ability_cooldown": 66, "kill_streak": 68,
             "vx": 72, "vy": 76, "vz": 80,  # S459-69
+            "anim_override": 84,  # S470 -- verified via a real compiled offsetof(NetPlayer, anim_override) C probe
         }
         for field, off in expected.items():
             self.assertEqual(getattr(NetPlayer, field).offset, off, f"field {field}")

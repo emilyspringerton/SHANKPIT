@@ -171,8 +171,25 @@ class NetPlayer(ctypes.LittleEndianStructure):
         ("vx", ctypes.c_float),
         ("vy", ctypes.c_float),
         ("vz", ctypes.c_float),
+        # anim_override -- S470, real found-live fix (found live via a founder bug report: "the
+        # traing was bad" -> a Colab session failing at env.reset() with "no live respawn
+        # snapshot within timeout" whenever a SECOND real entity (a heuristic bot, or any other
+        # player) was present in the same snapshot). Root cause: protocol.h's own NetPlayer grew
+        # from 84 to 88 bytes when anim_override was added (S470, this exact class of bug already
+        # happened once before, 72->84 for vx/vy/vz, S459-69) -- this ctypes mirror was never
+        # updated to match. With a stale, too-small stride, decode_snapshot correctly decoded the
+        # FIRST entity in any multi-entity snapshot but read every entity AFTER it from the wrong
+        # offset -- garbage id/state/health, which meant self.client.client_id (a real player
+        # connecting SECOND, as a real training client almost always does behind a heuristic bot
+        # or self-play opponent) could never be found among the snapshot's own entities, so
+        # _wait_for_alive_snapshot spun for its own full real timeout on every single reset().
+        # Live-verified via a real C sizeof(NetPlayer) probe (88) against this file's own stale 84,
+        # and by reproducing end to end: server + 1 heuristic bot + a real second client hung
+        # exactly like this until this fix landed, then resolved immediately.
+        ("anim_override", ctypes.c_uint8),
+        ("_pad4", ctypes.c_uint8 * 3),  # trailing padding to round 85 -> 88 (struct's own 4-byte float/uint alignment)
     ]
-assert ctypes.sizeof(NetPlayer) == 84, ctypes.sizeof(NetPlayer)
+assert ctypes.sizeof(NetPlayer) == 88, ctypes.sizeof(NetPlayer)
 
 
 # --- Encode/decode helpers, matching apps2/emily-bot/main.go + snapshot.go byte-for-byte ---
@@ -206,7 +223,8 @@ def decode_snapshot(data: bytes):
     """Returns a list of NetPlayer copies, or None if data is too short to trust. Mirrors
     apps2/emily-bot/snapshot.go's own decodePacketSnapshot exactly: entity_count lives at
     NetHeader offset 8, entities start at offset 13 (12-byte header + 1 redundant count byte),
-    each entity is sizeof(NetPlayer)=84 bytes (S459-69 -- grew from 72 when vx/vy/vz were added).
+    each entity is sizeof(NetPlayer)=88 bytes (S470 -- grew from 84 when anim_override was added,
+    itself grown from 72 by S459-69's own vx/vy/vz).
     A truncated/overclaiming buffer stops safely at however many whole entities actually fit,
     never misparses past the real buffer end."""
     if len(data) < 13 or data[0] != PACKET_SNAPSHOT:

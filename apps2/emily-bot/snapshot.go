@@ -27,16 +27,23 @@ import (
 
 const (
 	netHeaderSize = 12 // type(1) client_id(1) sequence(2) timestamp(4) entity_count(1) scene_id(1) pad(2)
-	// netPlayerSize -- S459-69, real, found-live bug (discovered as a side effect of adding
-	// vx/vy/vz to the wire): this constant was STALE at 68 bytes -- it never got updated when
-	// kill_streak (S459-52) grew the real compiled struct from 68 to 72 bytes, meaning every
-	// snapshot with 2+ entities has been decoding every entity after the first with the WRONG
-	// stride (reading 4 bytes short each time) ever since S459-52 shipped -- the exact same class
-	// of "parsing desyncs completely after the first entity" bug this file's own module doc
-	// comment already describes fixing once (S459-44), silently reintroduced. Now 84 bytes (72 +
-	// the new vx/vy/vz, S459-69) -- re-verified via the same real, compiled offsetof()/sizeof()
-	// probe technique this file's own module doc comment already establishes, never hand-guessed.
-	netPlayerSize = 84
+	// netPlayerSize -- S470, real, found-live bug, the exact same class silently reintroduced a
+	// THIRD time (S459-44 fixed it once at 18->64/68, S459-69 fixed it again at 68->72 when
+	// kill_streak shipped without updating this constant, both already documented above/below).
+	// This time: anim_override (S470) grew the real compiled struct from 84 to 88 bytes, and
+	// this constant (and rl_train_packet.py's own separate Python ctypes mirror -- fixed
+	// alongside this commit) were never updated. Found live via a founder bug report ("the
+	// traing was bad" -> a Colab training run hanging at env.reset() -- "no live respawn
+	// snapshot within timeout" -- whenever a SECOND real entity, e.g. a heuristic bot, shared the
+	// same snapshot as the training client) and reproduced end to end: with a stale, too-small
+	// stride, any entity after the first in a multi-entity snapshot decodes from the wrong
+	// offset -- garbage id/state/position, so a real client's own player could never be found
+	// among the snapshot's own entities whenever it connected as the SECOND (or later) real
+	// participant, which a real training client almost always does (behind a heuristic bot or
+	// self-play opponent). Now 88 bytes (84 + anim_override) -- re-verified via the same real,
+	// compiled offsetof()/sizeof() probe technique this file's own module doc comment already
+	// establishes, never hand-guessed.
+	netPlayerSize = 88
 
 	// NetPlayer field byte offsets, matching packages/common/protocol.h's real field order and
 	// this platform's real struct alignment (verified via a compiled offsetof() probe, not
