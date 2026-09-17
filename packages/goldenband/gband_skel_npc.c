@@ -13,14 +13,23 @@
 
 static GSkel g_skel;
 static GMesh g_mesh;
-static GSeqClip g_clip;
-static GSeq g_seq;
+static GSeqClip g_idle_clip, g_walk_clip;
+static GSeq g_idle_seq, g_walk_seq;
 static int g_ready = 0;
 
 static float *g_out_buf; /* owned, 6 floats per output vertex (pos+normal) */
 static uint32_t g_out_capacity_verts;
 
-int gband_skel_npc_init(const char *asset_dir, const char *mesh_name, const char *clip_name) {
+static void init_single_clip_seq(GSeq *seq) {
+    memset(seq, 0, sizeof(*seq));
+    seq->steps[0].clip_index = 0;
+    seq->steps[0].duration_seconds = -1.0f; /* the clip's own real duration */
+    seq->step_count = 1;
+    seq->blend_seconds = 0.0f; /* single, looping clip -- nothing to cross-fade into */
+    seq->loop = 1;
+}
+
+int gband_skel_npc_init(const char *asset_dir, const char *mesh_name, const char *idle_clip_name, const char *walk_clip_name) {
     char path[512], gband_path[512], manifest_path[512];
 
     snprintf(path, sizeof(path), "%s/%s.gskel", asset_dir, mesh_name);
@@ -28,20 +37,20 @@ int gband_skel_npc_init(const char *asset_dir, const char *mesh_name, const char
     snprintf(path, sizeof(path), "%s/%s.gmesh", asset_dir, mesh_name);
     if (!gmesh_init(path, &g_mesh)) return 0;
 
-    snprintf(gband_path, sizeof(gband_path), "%s/%s.gband", asset_dir, clip_name);
-    snprintf(manifest_path, sizeof(manifest_path), "%s/%s.gband.json", asset_dir, clip_name);
-    if (!gseq_clip_load(gband_path, manifest_path, &g_clip)) { gmesh_free(&g_mesh); return 0; }
+    snprintf(gband_path, sizeof(gband_path), "%s/%s.gband", asset_dir, idle_clip_name);
+    snprintf(manifest_path, sizeof(manifest_path), "%s/%s.gband.json", asset_dir, idle_clip_name);
+    if (!gseq_clip_load(gband_path, manifest_path, &g_idle_clip)) { gmesh_free(&g_mesh); return 0; }
 
-    memset(&g_seq, 0, sizeof(g_seq));
-    g_seq.steps[0].clip_index = 0;
-    g_seq.steps[0].duration_seconds = -1.0f; /* the clip's own real duration */
-    g_seq.step_count = 1;
-    g_seq.blend_seconds = 0.0f; /* nothing to cross-fade into with a single, looping clip */
-    g_seq.loop = 1;
+    snprintf(gband_path, sizeof(gband_path), "%s/%s.gband", asset_dir, walk_clip_name);
+    snprintf(manifest_path, sizeof(manifest_path), "%s/%s.gband.json", asset_dir, walk_clip_name);
+    if (!gseq_clip_load(gband_path, manifest_path, &g_walk_clip)) { gseq_clip_free(&g_idle_clip); gmesh_free(&g_mesh); return 0; }
+
+    init_single_clip_seq(&g_idle_seq);
+    init_single_clip_seq(&g_walk_seq);
 
     g_out_capacity_verts = g_mesh.index_count;
     g_out_buf = (float *)malloc((size_t)g_out_capacity_verts * 6 * sizeof(float));
-    if (!g_out_buf) { gseq_clip_free(&g_clip); gmesh_free(&g_mesh); return 0; }
+    if (!g_out_buf) { gseq_clip_free(&g_idle_clip); gseq_clip_free(&g_walk_clip); gmesh_free(&g_mesh); return 0; }
 
     g_ready = 1;
     return 1;
@@ -49,7 +58,8 @@ int gband_skel_npc_init(const char *asset_dir, const char *mesh_name, const char
 
 void gband_skel_npc_shutdown(void) {
     if (!g_ready) return;
-    gseq_clip_free(&g_clip);
+    gseq_clip_free(&g_idle_clip);
+    gseq_clip_free(&g_walk_clip);
     gmesh_free(&g_mesh);
     free(g_out_buf);
     g_out_buf = NULL;
@@ -59,8 +69,16 @@ void gband_skel_npc_shutdown(void) {
 int gband_skel_npc_ready(void) { return g_ready; }
 
 #define MAX_NPC_SLOTS 32
-static GSeqPlayer g_players[MAX_NPC_SLOTS];
+static GSeqPlayer g_idle_players[MAX_NPC_SLOTS];
+static GSeqPlayer g_walk_players[MAX_NPC_SLOTS];
 static int g_players_init[MAX_NPC_SLOTS];
+static float g_prev_x[MAX_NPC_SLOTS];
+static float g_prev_z[MAX_NPC_SLOTS];
+static int g_has_prev[MAX_NPC_SLOTS];
+/* Same real epsilon gband_mesh_rig.c's own MOVE_EPSILON already uses -- kept in sync by hand
+   (no shared header between the two siblings), matching how SHANKPIT_GRID_CELL_SIZE is already
+   hand-kept in sync across a different real boundary elsewhere in this monorepo. */
+#define GBAND_SKEL_NPC_MOVE_EPSILON 0.02f
 
 void gband_skel_npc_draw(int npc_slot, float npc_x, float npc_y, float npc_z, float facing_rad, float dt_ms,
                           const Mat4 *vp,
@@ -69,16 +87,32 @@ void gband_skel_npc_draw(int npc_slot, float npc_x, float npc_y, float npc_z, fl
     if (!g_ready) return;
     if (npc_slot < 0 || npc_slot >= MAX_NPC_SLOTS) return;
 
-    GSeqPlayer *player = &g_players[npc_slot];
     if (!g_players_init[npc_slot]) {
-        gseq_player_init(player, &g_seq, &g_clip);
+        gseq_player_init(&g_idle_players[npc_slot], &g_idle_seq, &g_idle_clip);
+        gseq_player_init(&g_walk_players[npc_slot], &g_walk_seq, &g_walk_clip);
         g_players_init[npc_slot] = 1;
     }
-    gseq_player_advance(player, dt_ms / 1000.0f);
+
+    int walking = 0;
+    if (g_has_prev[npc_slot]) {
+        float mdx = npc_x - g_prev_x[npc_slot];
+        float mdz = npc_z - g_prev_z[npc_slot];
+        walking = (mdx * mdx + mdz * mdz) > (GBAND_SKEL_NPC_MOVE_EPSILON * GBAND_SKEL_NPC_MOVE_EPSILON);
+    }
+    g_prev_x[npc_slot] = npc_x;
+    g_prev_z[npc_slot] = npc_z;
+    g_has_prev[npc_slot] = 1;
+
+    /* Both tracks always advance, even the one not currently sampled, so switching back never
+       causes a visible time-jump (same real reason this file's own header comment names). */
+    gseq_player_advance(&g_idle_players[npc_slot], dt_ms / 1000.0f);
+    gseq_player_advance(&g_walk_players[npc_slot], dt_ms / 1000.0f);
+
+    GSeqPlayer *active = walking ? &g_walk_players[npc_slot] : &g_idle_players[npc_slot];
 
     float pose_rot[GSKEL_MAX_JOINTS * 4];
     float pose_trans[GSKEL_MAX_JOINTS * 3];
-    gseq_player_sample_pose(player, &g_skel, pose_rot, pose_trans);
+    gseq_player_sample_pose(active, &g_skel, pose_rot, pose_trans);
 
     float skin[GSKEL_MAX_JOINTS][16];
     gpose_compute_skin_matrices(&g_skel, pose_rot, pose_trans, skin);

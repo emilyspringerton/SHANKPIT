@@ -144,7 +144,13 @@ static void gband_shader_and_mesh_init(void) {
         return;
     }
     g_skel_npc_shader_ready = 1;
-    g_skel_npc_ready = gband_skel_npc_init("assets/goldenband", "mannequin_npc", "ual2_standard_rm");
+    /* S466 follow-up (founder real-time: "can we animate and model end to end?"): real idle/walk
+       switching now exists (gband_skel_npc_draw), but only one real clip
+       (ual2_standard_rm.gband) has ever been imported for this rig -- passed for BOTH idle and
+       walk here, honestly, not a fake "two clips" claim. The moment a second, genuinely
+       different walk clip is imported for this skeleton, swapping this second argument is the
+       whole change needed. */
+    g_skel_npc_ready = gband_skel_npc_init("assets/goldenband", "mannequin_npc", "ual2_standard_rm", "ual2_standard_rm");
     if (!g_skel_npc_ready) {
         SDL_Log("S459-97: mannequin_npc asset load failed -- no mannequin NPC this run");
         return;
@@ -766,6 +772,12 @@ typedef enum {
     SKIN_TREE,
     SKIN_PIZZA,
     SKIN_TYLER,
+    /* S466 follow-up, founder real-time: "can we animate and model end to end?" -- the general,
+       arbitrary-joint-count pipeline (gpose.c/gband_skel_npc.c), distinct from SKIN_TYLER's own
+       hardcoded-5-joint gband_mesh_rig.c. Not a player-selectable cosmetic (see
+       clamp_skin_id/g_selected_skin's own real callers) -- forced onto story_ai-controlled NPCs
+       in MODE_STORY only, see draw_player_3rd's own forced_skin logic. */
+    SKIN_MANNEQUIN,
     SKIN_COUNT
 } PlayerSkin;
 
@@ -792,7 +804,8 @@ static const char *SKIN_LABELS[SKIN_COUNT] = {
     "FROG",
     "TREE",
     "PIZZA",
-    "TYLER"
+    "TYLER",
+    "MANNEQUIN"
 };
 static const char *SKIN_CONFIG_PATH = "shankpit_skin.cfg";
 static void ensure_skin_selection_visible(void);
@@ -5279,6 +5292,23 @@ static void draw_player_skin_tyler(PlayerState *p, float draw_pitch, float draw_
     glPushMatrix(); glTranslatef(0.64f, 1.03f, 0.57f); glRotatef(draw_pitch,1,0,0); glRotatef(-draw_recoil*10.0f,1,0,0); glScalef(0.72f,0.72f,0.72f); draw_gun_model(p->current_weapon); glPopMatrix();
 }
 
+// S466 follow-up, founder real-time: "can we animate and model end to end?" -- the general,
+// arbitrary-joint-count sibling of draw_player_skin_tyler above. Same real facing-angle
+// derivation and world-space-baked draw contract; falls back to drawing p as SKIN_TYLER on
+// asset-load failure, matching this file's own "never draw nothing" convention (there is no
+// dedicated box-body fallback for an arbitrary imported rig -- Tyler's own already-proven
+// fallback is the honest choice here, not a new one invented for this skin alone).
+static void draw_player_skin_mannequin(PlayerState *p, float draw_pitch, float draw_recoil) {
+    if (!g_skel_npc_ready) {
+        draw_player_skin_tyler(p, draw_pitch, draw_recoil);
+        return;
+    }
+    float draw_yaw = norm_yaw_deg(p->yaw);
+    float facing_rad = -draw_yaw * 0.0174533f;
+    gband_skel_npc_draw(p->id, p->x, p->y, p->z, facing_rad, g_gband_frame_dt_ms,
+                         &g_gband_frame_vp, skel_npc_draw_skinned);
+}
+
 static void draw_player_skin_emiree(PlayerState *p, float draw_pitch, float draw_recoil) {
     /* Emiree is the first PS2/FFXI-inspired premium low-poly skin pass: material-zoned, silhouette-first, with subtle authored glow accents. */
     PlayerAnimPose pose = compute_player_anim_pose(p);
@@ -5578,6 +5608,13 @@ void draw_player_3rd(PlayerState *p) {
         int forced_skin = -1;
         if (local_state.game_mode == MODE_TDMB || local_state.game_mode == MODE_TDMO || local_state.game_mode == MODE_CTFB) {
             forced_skin = (p->team_id == 1) ? SKIN_NINJA : SKIN_PIRATE;
+        } else if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) && p->is_bot) {
+            /* S466 follow-up, founder real-time: "can we animate and model end to end?" -- real,
+               visible proof the general pipeline drives a distinct, AI-controlled character:
+               story_ai NPCs (now genuinely ticking/moving as of S466) render as the founder's own
+               imported mannequin instead of cloning whatever skin the human player happens to
+               have selected. The hero (index 0, is_bot==0) keeps their own chosen skin. */
+            forced_skin = SKIN_MANNEQUIN;
         }
         int draw_skin = (forced_skin >= 0) ? forced_skin : clamp_skin_id(g_selected_skin);
         const CharacterDefinition *def = character_definition_for_skin(draw_skin);
@@ -5646,6 +5683,9 @@ void draw_player_3rd(PlayerState *p) {
                 break;
             case SKIN_TYLER:
                 draw_player_skin_tyler(p, draw_pitch, draw_recoil);
+                break;
+            case SKIN_MANNEQUIN:
+                draw_player_skin_mannequin(p, draw_pitch, draw_recoil);
                 break;
             case SKIN_BAT:
             default:
@@ -7331,13 +7371,12 @@ void draw_scene(PlayerState *render_p) {
     retro_tune_world_fog(&world_lighting, local_state.scene_id);
     
     draw_grid();
-    if (g_skel_npc_ready && g_skel_npc_shader_ready && render_p->scene_id == SCENE_VOXWORLD) {
-        /* S459-97: one static, real, general-skeleton NPC as the first proof of gpose.c's own
-           N-joint FK+skinning path -- fixed position near spawn, always playing its one real
-           imported clip (ual2_standard_rm) on a loop. Reuses the same per-frame VP/dt captured
-           above for Tyler's own draw. */
-        gband_skel_npc_draw(0, 4.0f, 0.0f, 4.0f, 0.0f, g_gband_frame_dt_ms, &g_gband_frame_vp, skel_npc_draw_skinned);
-    }
+    /* S459-97's own original static demo call (one frozen mannequin at a fixed spawn position)
+       is removed as of S466's follow-up -- superseded by real draws: every active story_ai NPC
+       now renders through this exact same gband_skel_npc_draw path via SKIN_MANNEQUIN
+       (draw_player_skin_mannequin, dispatched from draw_player_3rd's own per-player switch),
+       driven by real AI-controlled position instead of a hardcoded (4,0,4). Keeping the old
+       static call too would just draw a confusing, motionless 10th "NPC" next to the real ones. */
     update_and_draw_trails();
     draw_terrain(&world_lighting);
     draw_voxworld_grass_overlay(&world_lighting, render_p);
@@ -7503,7 +7542,10 @@ static int skin_menu_visible_count(void) {
 }
 
 static int skin_menu_row_count(void) {
-    return SKIN_COUNT;
+    /* SKIN_MANNEQUIN is deliberately excluded from the player-facing cosmetic menu (see its own
+       enum doc comment) -- it's forced onto story_ai NPCs in MODE_STORY, never player-chosen. As
+       the real last enum value before SKIN_COUNT, one fewer row hides exactly it. */
+    return SKIN_COUNT - 1;
 }
 
 static int skin_menu_visible_skin_count(void) {
