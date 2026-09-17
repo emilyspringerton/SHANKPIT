@@ -383,6 +383,17 @@ static void tdmo_activate_match(unsigned int now_ms) {
     tdmo_ensure_population(now_ms);
 }
 
+// S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1 -- the CURRENTLY loaded level's own real exit
+// trigger volumes + next_level_id, captured every time server_apply_custom_level runs (any mode --
+// harmless when not MODE_STORY, since story_check_level_exits below only ever reads these under
+// that gate). A real, deliberate reset on every load (not just append) so a level swap never
+// leaves a stale exit from the PREVIOUS level active.
+#define STORY_LEVEL_EXIT_MAX LEVEL_BOXES_MAX_LEVEL_EXITS
+static LevelExit g_story_level_exits[STORY_LEVEL_EXIT_MAX];
+static int g_story_level_exit_count = 0;
+static int g_story_next_level_id = 0; /* 0 = none, matches CustomLevelData's own sentinel */
+static unsigned int g_story_last_level_transition_ms = 0; /* real debounce -- see its own use below */
+
 // server_apply_custom_level -- the real box/material extraction + phys_set_custom_level* apply
 // sequence, factored out of main()'s own real --level CLI handling (below) so S459-38's own real
 // QUEUE-level-loading logic (queue_activate_match, right below) can share it instead of
@@ -478,6 +489,60 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
         }
         NET_SERVER_LOG("CUSTOM_LEVEL_CHARACTERS_SPAWNED count=%d", lvl->character_count);
     }
+
+    // S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1 -- real, unconditional capture (not
+    // mode-gated like characters above): a level's own exits/next_level_id are harmless, inert
+    // data outside MODE_STORY (story_check_level_exits' own real gate is what actually gives them
+    // effect), and capturing them unconditionally here means this state is always current for
+    // whatever level is actually loaded, matching g_server_match_scene's own real "always current"
+    // convention a few lines above. Real, deliberate full reset (not append) every call.
+    g_story_level_exit_count = lvl->level_exit_count < STORY_LEVEL_EXIT_MAX ? lvl->level_exit_count : STORY_LEVEL_EXIT_MAX;
+    for (int ei = 0; ei < g_story_level_exit_count; ei++) g_story_level_exits[ei] = lvl->level_exits[ei];
+    g_story_next_level_id = lvl->next_level_id;
+}
+
+// story_check_level_exits -- S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1 real, live level
+// transition. MODE_STORY only, hero (player 0) only -- same real single-"hero"-targeted scope
+// this file's own story_ai_tick comment already names for VOXWORLD's boss content, matching how
+// every real story_ai.c perception check already reads s->players[0] as THE player. Reuses the
+// ALREADY-PROVEN-SAFE server_apply_custom_level mid-game level-swap path (the exact mechanism
+// server_advance_queue_round already uses every real QUEUE round, not a new primitive) to fetch
+// and apply next_level_id, then phys_respawn (which already consults the new level's own real
+// Spawners once scene_id == SCENE_CUSTOM_LEVEL, same real spawn-point selection every other
+// custom-level entry already relies on). Full 3D distance (not story_ai.c's own XZ-only
+// convention) -- a placed exit volume should not fire for a player merely near the same X/Z on a
+// different floor/level in Y, a real, deliberate difference from ai_len2's own 2D scope.
+#define STORY_LEVEL_TRANSITION_DEBOUNCE_MS 3000U
+static void story_check_level_exits(unsigned int now_ms) {
+    if (local_state.game_mode != MODE_STORY) return;
+    if (g_story_level_exit_count <= 0 || g_story_next_level_id <= 0) return;
+    if (now_ms - g_story_last_level_transition_ms < STORY_LEVEL_TRANSITION_DEBOUNCE_MS) return;
+    PlayerState *hero = &local_state.players[0];
+    if (!hero->active || hero->state == STATE_DEAD) return;
+
+    int triggered = 0;
+    for (int i = 0; i < g_story_level_exit_count; i++) {
+        LevelExit *ex = &g_story_level_exits[i];
+        float dx = hero->x - ex->x, dy = hero->y - ex->y, dz = hero->z - ex->z;
+        float dist2 = dx * dx + dy * dy + dz * dz;
+        if (dist2 <= ex->radius * ex->radius) { triggered = 1; break; }
+    }
+    if (!triggered) return;
+
+    int next_id = g_story_next_level_id;
+    CustomLevelData lvl;
+    if (!level_boxes_fetch_export(next_id, &lvl)) {
+        NET_SERVER_LOG("STORY_LEVEL_TRANSITION_FAILED next_level_id=%d -- export fetch failed", next_id);
+        /* Real debounce even on failure -- an unreachable next level must not be hammered with a
+           real curl fetch every single tick the player stands in the exit volume. */
+        g_story_last_level_transition_ms = now_ms;
+        return;
+    }
+    server_apply_custom_level(&lvl);
+    hero->scene_id = g_server_match_scene;
+    phys_respawn(hero, now_ms);
+    g_story_last_level_transition_ms = now_ms;
+    NET_SERVER_LOG("STORY_LEVEL_TRANSITION next_level_id=%d name=%s", next_id, lvl.name);
 }
 
 // queue_activate_match -- S459-34, the real MODE_QUEUE match activation. Deliberately much
@@ -1215,6 +1280,41 @@ int main(int argc, char *argv[]) {
         g_server_match_scene = SCENE_GARAGE_OSAKA;
     }
 
+    // S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1 (founder real-time: "lets not work on
+    // voxworld this is a legacy world ... we dont need the text cutscene in the beginning we
+    // just need to spawn into the first map that the story is"). A real, deliberate override
+    // AFTER local_init_match's own default VOXWORLD setup above -- same "deliberately the LAST
+    // word on scene selection" pattern the --level CLI flag's own doc comment below already
+    // establishes, positioned BEFORE that flag so --level (if the operator gives one) still wins,
+    // matching that flag's own explicit intent. A level flagged is_story_start replaces VOXWORLD
+    // entirely: server_apply_custom_level's own MODE_STORY branch spawns THIS level's own real
+    // Characters (story_ai_reset already clears whatever local_init_match seeded), the legacy
+    // boss is explicitly disabled (it belongs to the VOXWORLD encounter this level is replacing,
+    // not a NOCK-authored one), and the intro cutscene never runs (STORY_PHASE_PLAYING is already
+    // set unconditionally for the server, see local_state.story_phase's own g_shankpit_is_server
+    // branch in local_game.h -- the "skip the cutscene" ask was always already true server-side;
+    // this real override is what actually replaces VOXWORLD's own content). With no such level
+    // authored yet, this is a real, honest no-op and VOXWORLD's own existing path runs unchanged.
+    if (mode == MODE_STORY) {
+        LevelRegistryEntry story_entries[LEVEL_REGISTRY_MAX_ENTRIES];
+        int story_entry_count = level_boxes_fetch_registry_list(story_entries, LEVEL_REGISTRY_MAX_ENTRIES);
+        int story_start_id = -1;
+        for (int i = 0; i < story_entry_count; i++) {
+            if (story_entries[i].is_story_start) { story_start_id = story_entries[i].id; break; }
+        }
+        if (story_start_id >= 0) {
+            CustomLevelData lvl;
+            if (level_boxes_fetch_export(story_start_id, &lvl)) {
+                server_apply_custom_level(&lvl);
+                local_state.story_boss.active = 0;
+                local_state.story_phase = STORY_PHASE_PLAYING;
+                NET_SERVER_LOG("STORY_START_LEVEL_LOADED id=%d name=%s", story_start_id, lvl.name);
+            } else {
+                NET_SERVER_LOG("STORY_START_LEVEL_FETCH_FAILED id=%d -- falling back to VOXWORLD", story_start_id);
+            }
+        }
+    }
+
     // --level <path> -- a level authored in NOCK's SHANKPIT level editor (EMILY/BACKLOG.md
     // SECTION 459, founder real-time: "get the level loading to work"). Deliberately the LAST
     // word on scene selection (after mode/rotation above), matching every other real, deliberate
@@ -1284,6 +1384,7 @@ int main(int argc, char *argv[]) {
         // single-"hero"-targeted) stay lobby-only for now -- this fix covers the general,
         // NOCK-placeable story_ai NPC system, not that specific single-player boss encounter.
         story_ai_tick(&local_state, now);
+        story_check_level_exits(now);
         double now_sec = now_seconds();
         for (int i = 1; i < MAX_CLIENTS; i++) {
             if (slots[i].active && now_sec - slots[i].last_heard > 5.0) {
