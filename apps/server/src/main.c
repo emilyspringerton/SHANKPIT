@@ -234,11 +234,27 @@ static void server_advance_dm_rotation(unsigned int now_ms) {
 
 // server_advance_queue_round -- S459-43. Same quiet-reset shape as server_advance_dm_rotation
 // (no explicit "match over" pause/scoreboard state -- matches this codebase's own existing DM
-// precedent of just resetting stats and continuing), deliberately NOT reloading the level: QUEUE
-// always plays the one admin-flagged default level (S459-41), so re-running queue_activate_match
-// here would just be a wasted registry round-trip against the same level every round.
+// precedent of just resetting stats and continuing).
+//
+// S459-105, real correction to this comment's own prior claim (2026-09-17, founder real-time:
+// "i switched the queue level and then tried to join queue and it think it tried to join me into
+// like both levels or something"): this function used to deliberately skip reloading the level
+// on the stated assumption that the admin-flagged default never changes mid-session -- false the
+// moment NOCK's own level editor lets someone change it live, which left the server running
+// stale collision geometry against a client that had already re-fetched the new one. Now calls
+// queue_load_default_level() every round (see its own doc comment) -- a real, deliberately
+// unconditional re-fetch, not a wasted round-trip: it's the ONLY way this server process ever
+// finds out the flag changed.
+static void queue_load_default_level(void);
+
 static void server_advance_queue_round(unsigned int now_ms) {
     g_round_start_ms = now_ms;
+    // S459-105: self-heal onto whatever level is CURRENTLY flagged default-for-queue, every
+    // round -- see queue_load_default_level's own doc comment for the real "joined into both
+    // levels" bug this closes. A no-op cost-wise if nothing changed (server_apply_custom_level
+    // just re-applies the same real box list), so this runs unconditionally rather than trying
+    // to detect "did it actually change" first.
+    queue_load_default_level();
     for (int i = 0; i < MAX_CLIENTS; i++) {
         PlayerState *p = &local_state.players[i];
         if (!p->active) continue;
@@ -431,14 +447,21 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
 // own explicit instruction) on ANY real failure along the way -- registry unreachable, no level
 // currently flagged as default, or the export fetch/parse itself failing -- never a half-loaded
 // level.
-static void queue_activate_match(unsigned int now_ms) {
-    local_init_match(1, MODE_QUEUE);
-    local_state.game_mode = MODE_QUEUE;
-    local_state.match_over = 0;
-    local_state.players[0].active = 0;
-    g_round_start_ms = now_ms;
-    g_queue_intermission_start_ms = 0;
-
+// queue_load_default_level -- real, found-live fix (2026-09-17, founder real-time: "i switched
+// the queue level and then tried to join queue and it think it tried to join me into like both
+// levels or something"). Root cause: this fetch-and-apply sequence used to run ONLY once, inside
+// queue_activate_match, at the very first transition into MODE_QUEUE for the server process's
+// entire lifetime -- changing a level's own real "default for queue" flag in NOCK's level editor
+// had zero effect on an already-running QUEUE match, forever, until the server process itself
+// was restarted. Meanwhile the CLIENT independently re-fetches the current default level on its
+// own join path (client_load_queue_level) -- so a mid-session level change left the client
+// rendering the NEW level's geometry while the server kept simulating collision against the OLD
+// one, reading as "joined into both levels" (new visuals, old invisible walls). Factored out so
+// server_advance_queue_round (S459-100's own real, observable "a new round is starting" boundary
+// -- see its own doc comment) can call this too, self-healing QUEUE onto whatever level is
+// CURRENTLY flagged default at the start of every round, not just the server's own first ever
+// activation.
+static void queue_load_default_level(void) {
     LevelRegistryEntry entries[LEVEL_REGISTRY_MAX_ENTRIES];
     int count = level_boxes_fetch_registry_list(entries, LEVEL_REGISTRY_MAX_ENTRIES);
     int found_id = -1;
@@ -455,6 +478,16 @@ static void queue_activate_match(unsigned int now_ms) {
                    found_id < 0 ? "level_44_not_found" : "export_fetch_failed");
     g_server_match_scene = SCENE_OIL_TANKER;
     scene_load(g_server_match_scene);
+}
+
+static void queue_activate_match(unsigned int now_ms) {
+    local_init_match(1, MODE_QUEUE);
+    local_state.game_mode = MODE_QUEUE;
+    local_state.match_over = 0;
+    local_state.players[0].active = 0;
+    g_round_start_ms = now_ms;
+    g_queue_intermission_start_ms = 0;
+    queue_load_default_level();
 }
 
 static int find_slot_by_addr(const struct sockaddr_in *addr) {
