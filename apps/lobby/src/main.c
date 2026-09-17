@@ -139,10 +139,19 @@ static void gband_shader_and_mesh_init(void) {
 
     g_gband_mesh_ready = gband_mesh_rig_init("assets/goldenband", "tyler_body");
     if (!g_gband_mesh_ready) {
+        /* S470 fix (founder real-time, live report: "no robots tho" against a real screenshot
+           showing two plain box-body figures): this used to `return` here, which -- since it sits
+           BEFORE the skeletal-NPC-kit loading below -- incorrectly aborted loading every one of
+           the 5 robot kits too, even though that code shares only the already-confirmed-working
+           shader/VBO infra with tyler_body, not the tyler_body asset itself. A real, found,
+           pre-existing control-flow bug: tyler_body failing to load (a player-body-only asset)
+           should degrade the PLAYER's own visual to a box body, same as the log line below always
+           said -- it was never supposed to take the independent robot roster down with it. Falls
+           through now instead of returning. */
         SDL_Log("S144-02 Stage B: tyler_body asset load failed -- Tyler uses box body");
-        return;
+    } else {
+        SDL_Log("S144-02 Stage B: GOLDENBAND skinned mesh ready");
     }
-    SDL_Log("S144-02 Stage B: GOLDENBAND skinned mesh ready");
 
     /* S459-97: same shader (pos+normal, world-space-baked verts -- identical contract to
        gband_draw_skinned above), a bigger dedicated VBO shared by every loaded kit. George's own
