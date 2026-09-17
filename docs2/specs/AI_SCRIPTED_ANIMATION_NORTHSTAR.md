@@ -62,6 +62,31 @@ pattern, not the rendering layer:
 
 `make server` and `make lobby` both build clean.
 
+## Engine-layer primitives shipped since this doc was written (2026-09-17, GOLDENBAND)
+
+Apple #20015, direct founder follow-up: "continue scripted-sequence animation work in GOLDENBAND
+— multi-actor frame synchronization... plus procedural bone-controller look-at and phoneme
+lip-sync layering on top of gseq/gpose." Both real, buildable pieces named below shipped as
+tested, engine-agnostic GOLDENBAND library code (source: `GOLDENBAND/src/`, vendored here per the
+usual convention) — **neither is wired to any SHANKPIT gameplay consumer yet**, since (per the
+finding below) nothing in SHANKPIT actually drives `gband_skel_npc`/`gseq` from gameplay state at
+all today. They exist and are tested in isolation, ready for that wiring once it happens.
+
+- **Bone-controller look-at — `gpose_look_at`** (`packages/goldenband/gpose.c`/`.h`). Rotates a
+  caller-specified local "forward" axis on one joint to face a world-space target, nlerp-clamped
+  to a max turn angle (the founder's own "up to 30 degrees" example) so it never breaks a locked
+  pose outright. Built on a newly-exposed `gpose_compute_joint_world` (the FK loop
+  `gpose_compute_skin_matrices` already ran internally, now a real, separate, reusable primitive).
+  5 real tests (unclamped/clamped/degenerate cases), all passing.
+- **Multi-actor frame synchronization — `gsync.c`/`.h`** (new module, `GSYNC_MAX_MEMBERS`-member
+  named barrier). Members report arrival independently (pathfinding speeds vary, matching the
+  founder's own framing exactly); `gsync_check_ignition` fires exactly once, the real tick every
+  member has arrived, so a caller resets every one of its own `GSeqPlayer`s to `elapsed=0`
+  simultaneously — real "Wait state, then simultaneous ignition," without this module ever
+  touching an animation type itself (same engine-agnostic discipline every other GOLDENBAND
+  module already holds itself to). 5 real tests (ignition timing, idempotent re-arrival, early
+  arrivals genuinely waiting, re-arming by name, degenerate member-count rejection).
+
 ## What's real, honestly not built yet
 
 - **Client-side clip selection during the hold.** `AI_MODE_SCRIPTED` is server-authoritative
@@ -70,19 +95,22 @@ pattern, not the rendering layer:
   exactly like a stationary bot in any other mode (whatever `draw_player_3rd`'s existing idle pose
   already is). Wiring "this AI is in SCRIPTED, play clip X" needs either a new wire field (mode is
   already broadcast implicitly via bot behavior, but not explicitly as an enum the client can
-  switch on) or inferring it from position/velocity — real, undecided design work.
-- **Multi-actor frame synchronization** (matched-name entities, early arrivals wait, simultaneous
-  ignition). Nothing here builds toward this yet — it needs a real new primitive (something like
-  S461-03's squad grouping, but keyed by a shared marker/name and gated on ALL members reaching
-  "arrived" before any of them starts the locked animation, not just each one independently).
-  Real, separate follow-up.
-- **Bone-controller look-at** (neck/torso tracking a target, layered over a locked or looping
-  clip). Small and self-contained on top of `gpose.c`'s existing FK path (see above), but not
-  started — needs a joint-index lookup by name (skeleton manifests already carry joint names) and
-  a per-frame quaternion override before `gpose_compute_skin_matrices` runs.
-- **Phoneme/audio-driven mouth-controller lip sync.** The largest, least-started piece — needs
-  real waveform-to-phoneme mapping integrated with `packages/audio/audio.c`, which currently has
-  no such analysis. Out of scope for this pass entirely; not even design-sketched yet.
+  switch on) or inferring it from position/velocity — real, undecided design work. `gsync`'s own
+  ignition signal is ready to consume once this exists; it doesn't help until something calls it.
+- **`gpose_look_at`/`gsync` are not called anywhere in SHANKPIT yet.** Both are real, tested
+  library functions with zero call sites in `apps/lobby/src/main.c` or anywhere else — the actual
+  prerequisite, unchanged from this doc's own original finding below, is still real: nothing
+  connects `story_ai.c`'s server-authoritative NPCs to `gband_skel_npc`'s rendering at all (bots
+  render via `tyler_body`/`draw_player_3rd` instead). Wiring look-at/sync to real gameplay needs
+  that connection first, or a real decision to extend `tyler_body`'s own hardcoded channel system
+  with an equivalent instead (a genuinely different, not-yet-scoped path).
+- **Phoneme/audio-driven mouth-controller lip sync.** Checked directly before attempting anything:
+  `packages/audio/audio.c` synthesizes every sound as a PCM wavetable at init — there is no WAV/
+  external-audio-file loader anywhere in this codebase, so even the founder's own simpler framing
+  ("jiggled the mouth mesh in sync with the volume frequency of the .wav voice file" — real
+  amplitude-envelope driving, not full phoneme classification) has no real voice-line asset to
+  sample from yet. The actual prerequisite is a WAV/dialogue-asset pipeline, not a smarter
+  analysis algorithm. Out of scope for this pass; not even design-sketched beyond this finding.
 - **Connecting `gband_skel_npc`/`gseq` to actual gameplay bots**, if that ever becomes the desired
   direction instead of extending `tyler_body`/`draw_player_3rd` — a real, undecided architectural
   fork this doc deliberately does not resolve. `story_ai_seed_voxworld_encounter` and
