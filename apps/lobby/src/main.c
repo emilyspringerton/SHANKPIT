@@ -5376,8 +5376,23 @@ static void draw_player_skin_mannequin(PlayerState *p, float draw_pitch, float d
         draw_player_skin_tyler(p, draw_pitch, draw_recoil);
         return;
     }
+    /* S471 fix (founder real-time, live report: "locomotion going in reverse... hes moving
+       backwards"). This blindly copied draw_player_skin_tyler's own facing_rad formula
+       (-draw_yaw, no offset) when this function was first written -- but that specific formula
+       was itself a real, deliberately-calibrated correction FOR tyler_body's own oddball
+       BVH-imported bind pose (see draw_player_skin_tyler's own comment above: verified live via
+       Xvfb screenshot that tyler_body's bind pose rests facing -Z, a full 180 degrees different
+       from the box body's own +Z-authored convention that every OTHER model in this file uses,
+       glRotatef(180.0f - draw_yaw, 0,1,0)). The 5 robot kits are glTF-imported (a completely
+       different pipeline from tyler_body's BVH import), and glTF/Mixamo-style rigs conventionally
+       rest facing +Z -- the SAME convention the box body already uses, not tyler_body's own
+       special case. Real, honest limitation: this fix has NOT been visually re-verified (this
+       sandbox has no real GL driver) -- it's the box-convention formula every other real model in
+       this file uses except tyler_body's own specifically-calibrated exception, applied uniformly
+       to all 5 kits since they share one glTF-family import pipeline, not confirmed frame-by-frame
+       against a real screenshot the way tyler_body's own fix was. */
     float draw_yaw = norm_yaw_deg(p->yaw);
-    float facing_rad = -draw_yaw * 0.0174533f;
+    float facing_rad = (180.0f - draw_yaw) * 0.0174533f;
     gband_skel_npc_draw(kit_index, p->id, p->x, p->y, p->z, facing_rad, g_gband_frame_dt_ms,
                          p->anim_override,
                          &g_gband_frame_vp, skel_npc_draw_skinned);
