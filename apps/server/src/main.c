@@ -104,6 +104,21 @@ typedef struct {
     unsigned int stale_cmds;
     unsigned int malformed;
     unsigned int last_summary_ms;
+    // last_status_ms -- S483 follow-up, real, found-live fix: the [STATUS] Tick print below used
+    // to throttle by TICK COUNT (tick % 600 == 0), a real, reasonable ~10-second cadence at a
+    // normal server's own real ~60 ticks/sec -- but --fast-forward decouples tick count from wall
+    // time entirely (confirmed live: ~500K ticks/sec), so the exact same modulo condition instead
+    // fires hundreds of times PER SECOND, unconditionally, even with zero clients connected.
+    // Founder real-time: a real, multi-hour Colab RL training run (which always runs
+    // --fast-forward) silently broke after this print's own output started being captured to a
+    // real log file instead of discarded (a separate, real fix in rl_train_packet.py's own
+    // _spawn_server) -- writing that firehose continuously, especially to a slower/network-backed
+    // --output-dir (e.g. a Colab Drive mount), is a real, plausible way to stall the server's own
+    // tick loop badly enough to explain a client connecting but never seeing a snapshot in time.
+    // Real, same fix shape as last_summary_ms/net_server_emit_summary immediately above -- wall-
+    // clock throttled, not tick-count throttled, so it behaves identically regardless of how fast
+    // ticks are actually advancing.
+    unsigned int last_status_ms;
     unsigned int first_snapshot_logged[MAX_CLIENTS];
     unsigned int connect_ms[MAX_CLIENTS];
     unsigned int first_usercmd_pkt_seen[MAX_CLIENTS];
@@ -1654,7 +1669,10 @@ int main(int argc, char *argv[]) {
         }
         active_count = connected;
         
-        if (tick % 60 == 0 && (active_count > 0 || tick % 600 == 0)) {
+        // Real wall-clock throttle (see last_status_ms's own doc comment above for the full
+        // --fast-forward rationale) -- once per real second while someone's connected, once per
+        // real 10 seconds otherwise, regardless of how fast ticks are actually advancing.
+        if (net_should_log_every(&g_net_diag.last_status_ms, active_count > 0 ? 1000 : 10000, now)) {
             printf("[STATUS] Tick: %u | Clients: %d\n", tick, active_count);
             for (int i = 1; i < MAX_CLIENTS; i++) {
                 if (!slots[i].active && !slots[i].welcomed && !slots[i].cmd_seen) continue;
