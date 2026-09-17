@@ -235,6 +235,12 @@ typedef struct {
     // bytes per player per snapshot -- negligible against this protocol's own real measured sizes
     // (a typical few-hundred-byte snapshot, nowhere near MTU, see S459-65/66's own investigation).
     float vx, vy, vz;
+    // anim_override -- S470, real wire counterpart to PlayerState's own field of the same name
+    // (see its doc comment for the full 0/1/2 GREET/DANCE convention). Only ever non-zero for a
+    // story_ai-controlled bot mid-greet; a real, honest 1 byte/player/snapshot cost, same
+    // "negligible against this protocol's own real measured sizes" reasoning vx/vy/vz's own
+    // comment above already gives.
+    unsigned char anim_override;
 } NetPlayer;
 
 typedef struct {
@@ -348,6 +354,16 @@ typedef struct {
     int race_checkpoint_idx;
     int race_item_slot;
     int race_ultimate_charge;
+    /* anim_override -- S470, founder real-time: "have them wave to the player when the player
+       gets close and then dance before resuming patrol." story_ai.c's own ai_run_greet is the
+       only writer (via ai_reset_input's own per-tick reset to 0, same convention as every other
+       per-tick AI input field on this struct); the client-side render path
+       (draw_player_skin_mannequin -> gband_skel_npc_draw) is the only reader. 0 = auto (the
+       existing movement-driven idle/walk pick), 1 = GREET, 2 = DANCE -- kept in sync BY HAND
+       with GOLDENBAND's own GBAND_SKEL_NPC_ANIM_* constants (gband_skel_npc.h), same class of
+       manual cross-module sync gband_skel_npc.c's own GBAND_SKEL_NPC_MOVE_EPSILON comment
+       already documents (no shared header between story_ai.c and gband_skel_npc.h by design). */
+    int anim_override;
 } PlayerState;
 
 typedef struct {

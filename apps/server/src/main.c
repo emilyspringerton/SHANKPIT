@@ -1073,6 +1073,7 @@ void server_broadcast() {
             np.carried_flag_team_id = (signed char)p->carried_flag_team_id;
             np.hit_feedback = (unsigned char)p->hit_feedback;
             np.storm_charges = (unsigned char)p->storm_charges;
+            np.anim_override = (unsigned char)p->anim_override;
             np.kills = (unsigned short)(p->kills < 0 ? 0 : p->kills);
             np.deaths = (unsigned short)(p->deaths < 0 ? 0 : p->deaths);
             unsigned int death_elapsed = 0;
