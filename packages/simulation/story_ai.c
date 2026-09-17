@@ -351,6 +351,25 @@ void story_ai_reset(ServerState *s) {
     }
 }
 
+// story_ai_despawn_all_characters -- see story_ai.h's own doc comment for the full rationale.
+void story_ai_despawn_all_characters(ServerState *s) {
+    int i;
+    if (!s) return;
+    for (i = 0; i < STORY_AI_MAX; i++) {
+        if (!g_story_ai[i].active) continue;
+        int pid = g_story_ai[i].player_id;
+        if (pid >= 1 && pid < MAX_CLIENTS) {
+            s->players[pid].active = 0;
+            s->players[pid].is_bot = 1;
+            s->players[pid].team_id = -1;
+            s->players[pid].carried_flag_team_id = -1;
+            s->players[pid].state = STATE_ALIVE;
+        }
+        memset(&g_story_ai[i], 0, sizeof(g_story_ai[i]));
+        memset(&g_story_perception[i], 0, sizeof(g_story_perception[i]));
+    }
+}
+
 int story_ai_spawn_enemy(ServerState *s, AIRole role, float x, float y, float z) {
     int slot = -1;
     int i;

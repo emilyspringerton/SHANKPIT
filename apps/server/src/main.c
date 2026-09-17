@@ -471,24 +471,37 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
 
     // S467 (STORY_SYSTEM_NORTHSTAR.md Phase 2's "character" kind, founder real-time: "continue
     // filling in the gaps in our level editor scriptable env characters etc") -- real, author-
-    // placed story_ai NPCs. Gated to MODE_STORY/MODE_STORY_CAVE ONLY: this function's OTHER real
-    // call site (queue_load_default_level, via server_advance_queue_round) re-fires every real
-    // MODE_QUEUE round while players are already connected -- story_ai_reset deactivates every
-    // player slot 1..MAX_CLIENTS-1, which would silently disconnect real connected humans if
-    // this branch ever ran there. Confirmed safe: server_advance_queue_round's own real call site
-    // is itself gated on game_mode == MODE_QUEUE, so this branch can never fire from that path.
-    // The other call site (the one-time --level CLI flag) runs synchronously before the tick
-    // loop's own recvfrom polling ever starts, so no real player can have connected yet either.
+    // placed story_ai NPCs.
+    //
+    // S480, real fix (founder real-time: "can we make the characters stuff work outside of story
+    // mode? ... theres no way for me to test the story mode unless we were to build a level
+    // select interface... which is what the levels menu already is"). This used to be hard-gated
+    // to MODE_STORY/MODE_STORY_CAVE only, for a real, genuine safety reason: the full
+    // story_ai_reset deactivates every player slot 1..MAX_CLIENTS-1 unconditionally, which would
+    // silently disconnect real connected humans (or the QUEUE bot pool) if it ever ran while this
+    // function's OTHER real call site (queue_load_default_level, via server_advance_queue_round)
+    // re-fires every MODE_QUEUE round with players already connected. That real risk is still
+    // real -- but it's a reason to use a SAFER reset outside MODE_STORY, not a reason characters
+    // can never spawn there at all. story_ai_despawn_all_characters (story_ai.c) only ever
+    // deactivates the specific player slots g_story_ai itself spawned into (tracked via each
+    // AIController's own player_id) -- every other slot, human or otherwise-bot, is left
+    // completely untouched. MODE_STORY/MODE_STORY_CAVE keep using the original full
+    // story_ai_reset unchanged (safe there -- single-hero, no other real connected players to
+    // protect).
     if (local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) {
         story_ai_reset(&local_state);
-        for (int ci = 0; ci < lvl->character_count; ci++) {
-            const LevelCharacter *lc = &lvl->characters[ci];
-            if (lc->role < AI_ROLE_RIFT_HOUND || lc->role > AI_ROLE_BLIND_STALKER) {
-                NET_SERVER_LOG("CUSTOM_LEVEL_CHARACTER_SKIPPED reason=invalid_role role=%d", lc->role);
-                continue;
-            }
-            story_ai_spawn_enemy(&local_state, (AIRole)lc->role, lc->x, lc->y, lc->z);
+    } else {
+        story_ai_despawn_all_characters(&local_state);
+    }
+    for (int ci = 0; ci < lvl->character_count; ci++) {
+        const LevelCharacter *lc = &lvl->characters[ci];
+        if (lc->role < AI_ROLE_RIFT_HOUND || lc->role > AI_ROLE_BLIND_STALKER) {
+            NET_SERVER_LOG("CUSTOM_LEVEL_CHARACTER_SKIPPED reason=invalid_role role=%d", lc->role);
+            continue;
         }
+        story_ai_spawn_enemy(&local_state, (AIRole)lc->role, lc->x, lc->y, lc->z);
+    }
+    if (lvl->character_count > 0) {
         NET_SERVER_LOG("CUSTOM_LEVEL_CHARACTERS_SPAWNED count=%d", lvl->character_count);
     }
 

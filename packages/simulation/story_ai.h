@@ -193,6 +193,18 @@ typedef struct {
 } AIWorldBlackboard;
 
 void story_ai_reset(ServerState *s);
+// story_ai_despawn_all_characters -- S480, founder real-time: "can we make the characters stuff
+// work outside of story mode?" Real, safe alternative to story_ai_reset for a non-MODE_STORY
+// level load: story_ai_reset deactivates EVERY player slot 1..MAX_CLIENTS-1 unconditionally --
+// exactly right for MODE_STORY's own real single-hero-plus-NPCs world, but a genuine regression
+// risk anywhere real connected humans (or the QUEUE bot pool) might occupy those same slots. This
+// walks g_story_ai's own active entries and deactivates ONLY the specific player slots they
+// themselves spawned into (via each AIController's own player_id), leaving every other slot --
+// human or otherwise-bot -- completely untouched. Does not touch g_story_bb (a real, global,
+// per-tick-recomputed-from-scratch blackboard, see story_ai_tick's own top-of-tick memset --
+// self-heals within one tick regardless) or g_story_nav (reloaded unconditionally by
+// story_ai_load_nav_graph right after this runs at every real call site, mode-agnostic already).
+void story_ai_despawn_all_characters(ServerState *s);
 int story_ai_spawn_enemy(ServerState *s, AIRole role, float x, float y, float z);
 void story_ai_tick(ServerState *s, unsigned int now_ms);
 void story_ai_seed_voxworld_encounter(ServerState *s);
