@@ -455,6 +455,29 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
         story_ai_load_nav_graph(lvl->nav_node_count, nn_x, nn_y, nn_z, nn_is_cover,
                                  nn_cover_dir_x, nn_cover_dir_z, nn_neighbor_counts, nn_neighbors_flat);
     }
+
+    // S467 (STORY_SYSTEM_NORTHSTAR.md Phase 2's "character" kind, founder real-time: "continue
+    // filling in the gaps in our level editor scriptable env characters etc") -- real, author-
+    // placed story_ai NPCs. Gated to MODE_STORY/MODE_STORY_CAVE ONLY: this function's OTHER real
+    // call site (queue_load_default_level, via server_advance_queue_round) re-fires every real
+    // MODE_QUEUE round while players are already connected -- story_ai_reset deactivates every
+    // player slot 1..MAX_CLIENTS-1, which would silently disconnect real connected humans if
+    // this branch ever ran there. Confirmed safe: server_advance_queue_round's own real call site
+    // is itself gated on game_mode == MODE_QUEUE, so this branch can never fire from that path.
+    // The other call site (the one-time --level CLI flag) runs synchronously before the tick
+    // loop's own recvfrom polling ever starts, so no real player can have connected yet either.
+    if (local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) {
+        story_ai_reset(&local_state);
+        for (int ci = 0; ci < lvl->character_count; ci++) {
+            const LevelCharacter *lc = &lvl->characters[ci];
+            if (lc->role < AI_ROLE_RIFT_HOUND || lc->role > AI_ROLE_BLIND_STALKER) {
+                NET_SERVER_LOG("CUSTOM_LEVEL_CHARACTER_SKIPPED reason=invalid_role role=%d", lc->role);
+                continue;
+            }
+            story_ai_spawn_enemy(&local_state, (AIRole)lc->role, lc->x, lc->y, lc->z);
+        }
+        NET_SERVER_LOG("CUSTOM_LEVEL_CHARACTERS_SPAWNED count=%d", lvl->character_count);
+    }
 }
 
 // queue_activate_match -- S459-34, the real MODE_QUEUE match activation. Deliberately much

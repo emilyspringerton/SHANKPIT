@@ -130,6 +130,22 @@ typedef struct {
     int neighbors[LEVEL_BOXES_MAX_NAV_NEIGHBORS];
 } LevelNavNode;
 
+/* S467 follow-up (STORY_SYSTEM_NORTHSTAR.md Phase 2's own "character" kind, founder real-time:
+   "continue filling in the gaps in our level editor scriptable env characters etc") -- a real,
+   author-placed story_ai NPC. `role` is the same integer AIRole value story_ai_spawn_enemy
+   already takes (packages/simulation/story_ai.h) -- this loader has no dependency on story_ai.h
+   itself (matching the same "flat data in, no simulation-layer type" boundary LevelDoor/
+   LevelNavNode already hold themselves to), so an out-of-range role is validated by the CALLER
+   (server_apply_custom_level), not here. Only ever meaningful in MODE_STORY/MODE_STORY_CAVE --
+   see server_apply_custom_level's own real game-mode gate for why spawning here unconditionally
+   would be unsafe in MODE_QUEUE (repeated per-round loads, no reset, real slot-exhaustion risk). */
+typedef struct {
+    int role;
+    float x, y, z;
+} LevelCharacter;
+
+#define LEVEL_BOXES_MAX_CHARACTERS 16 /* matches STORY_AI_MAX, packages/simulation/story_ai.h */
+
 typedef struct {
     char name[LEVEL_BOXES_MAX_NAME];
     float width, height, depth; /* the editor's own real authored level dimensions -- NOT read
@@ -152,6 +168,8 @@ typedef struct {
     int door_count;
     LevelNavNode nav_nodes[LEVEL_BOXES_MAX_NAV_NODES]; /* S461-01/S464 */
     int nav_node_count;
+    LevelCharacter characters[LEVEL_BOXES_MAX_CHARACTERS]; /* S467 */
+    int character_count;
 } CustomLevelData;
 
 static inline const char *level_boxes_skip_ws(const char *p) {
@@ -535,6 +553,42 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
                     }
                     out->nav_node_count++;
                     ncursor = nobj_end + 1;
+                }
+            }
+        }
+    }
+
+    // Characters (S467, STORY_SYSTEM_NORTHSTAR.md Phase 2) -- same real, small-scanner
+    // convention as spawners above. Absent "characters" key is a real, honest "no authored
+    // story_ai NPCs for this level" state, not an error -- character_count stays 0.
+    out->character_count = 0;
+    const char *ch_arr_key = level_boxes_find_key(buf, end, "characters");
+    if (ch_arr_key) {
+        const char *ch_arr = level_boxes_skip_ws(ch_arr_key);
+        if (*ch_arr == '[') {
+            const char *ch_arr_end = level_boxes_find_array_end(ch_arr, end);
+            if (ch_arr_end) {
+                const char *ccursor = ch_arr + 1;
+                while (ccursor < ch_arr_end && out->character_count < LEVEL_BOXES_MAX_CHARACTERS) {
+                    ccursor = level_boxes_skip_ws(ccursor);
+                    if (ccursor >= ch_arr_end) break;
+                    if (*ccursor == ',') { ccursor++; continue; }
+                    if (*ccursor != '{') { ccursor++; continue; }
+                    const char *cobj_start = ccursor;
+                    const char *cobj_end = strchr(cobj_start, '}');
+                    if (!cobj_end || cobj_end > ch_arr_end) break;
+
+                    LevelCharacter *ch = &out->characters[out->character_count];
+                    memset(ch, 0, sizeof(*ch));
+                    const char *v5;
+                    float role_f = 0.0f;
+                    if ((v5 = level_boxes_find_key(cobj_start, cobj_end, "role"))) level_boxes_parse_number(v5, &role_f);
+                    ch->role = (int)role_f;
+                    if ((v5 = level_boxes_find_key(cobj_start, cobj_end, "x"))) level_boxes_parse_number(v5, &ch->x);
+                    if ((v5 = level_boxes_find_key(cobj_start, cobj_end, "y"))) level_boxes_parse_number(v5, &ch->y);
+                    if ((v5 = level_boxes_find_key(cobj_start, cobj_end, "z"))) level_boxes_parse_number(v5, &ch->z);
+                    out->character_count++;
+                    ccursor = cobj_end + 1;
                 }
             }
         }
