@@ -115,6 +115,15 @@ typedef struct {
        which never joins a hostile squad). */
     int squad_id;
     AISquadRole squad_role;
+
+    /* S461-04 -- real movement-hook + locked-hold + on-end handoff for AI_MODE_SCRIPTED
+       (previously a dead enum value with zero behavior, same class of gap AI_MODE_FLEE was
+       before S461-01). Server-authoritative timing/positioning only -- real client-side clip
+       selection during the hold is a named, not-yet-built follow-up, see
+       docs2/specs/AI_SCRIPTED_ANIMATION_NORTHSTAR.md. wait_until_ms (above) is reused as the
+       "arrived, now holding" timer -- SCRIPTED and PATROL are mutually exclusive per AI. */
+    float scripted_marker_x, scripted_marker_y, scripted_marker_z;
+    unsigned int scripted_hold_ms;
 } AIController;
 
 /* S461-03 -- a real, persistent group of specific AIController slots (by index into the
@@ -151,5 +160,11 @@ void story_ai_seed_voxworld_encounter(ServerState *s);
    squad's id, or -1 if the squad table is full, count is out of range, or any player_id doesn't
    resolve to an active AI. */
 int story_ai_form_squad(const int *player_ids, int count);
+
+/* S461-04 -- sends player_id into AI_MODE_SCRIPTED: walks to (x,y,z), holds there for hold_ms
+   once arrived, then hands back to whatever mode it was in before the trigger (or AI_MODE_PATROL
+   if that would be AI_MODE_SCRIPTED itself, e.g. a second trigger landing before the first
+   resolved). Returns 1 on success, 0 if player_id doesn't resolve to an active AI. */
+int story_ai_trigger_scripted(int player_id, float x, float y, float z, unsigned int hold_ms, unsigned int now_ms);
 
 #endif

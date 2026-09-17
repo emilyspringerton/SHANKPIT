@@ -526,6 +526,55 @@ static void ai_run_search(ServerState *s, AIController *ai, unsigned int now_ms)
     p->in_strafe = sinf(t * 1.3f) * 0.55f;
 }
 
+int story_ai_trigger_scripted(int player_id, float x, float y, float z, unsigned int hold_ms, unsigned int now_ms) {
+    int idx = ai_index_by_player_id(player_id);
+    AIController *ai;
+    if (idx < 0) return 0;
+    ai = &g_story_ai[idx];
+    ai->scripted_marker_x = x;
+    ai->scripted_marker_y = y;
+    ai->scripted_marker_z = z;
+    ai->scripted_hold_ms = hold_ms;
+    ai->wait_until_ms = 0; /* reused as "not yet arrived" sentinel, same field patrol uses */
+    ai_set_mode(ai, AI_MODE_SCRIPTED, now_ms);
+    return 1;
+}
+
+/* S461-04: the movement-hook -> locked-animation -> on-end-handoff chain from the founder's own
+   real-time scripted_sequence breakdown, at the AI/logic layer. What's real here: server-
+   authoritative walk-to-marker (arrival steering, same as every other mode), a real hold timer,
+   and a real handoff back to whatever mode preceded the trigger. What's NOT yet real, named
+   honestly rather than assumed: which animation clip actually PLAYS during the hold -- checked
+   directly, story_ai's bots render through the existing draw_player_3rd/tyler_body path (the
+   same one every other bot uses), not through gband_skel_npc.c's separate, currently-unconnected
+   single-clip demo NPC (apps/lobby/src/main.c's one hardcoded mannequin draw call, fixed
+   position, scene-gated, no link to any story_ai AI at all). A real client-side "SCRIPTED mode
+   selects a specific clip" wire-up is scoped, not built, in docs2/specs/
+   AI_SCRIPTED_ANIMATION_NORTHSTAR.md. */
+static void ai_run_scripted(ServerState *s, AIController *ai, unsigned int now_ms) {
+    PlayerState *p = &s->players[ai->player_id];
+    float dx = ai->scripted_marker_x - p->x;
+    float dz = ai->scripted_marker_z - p->z;
+    float dist = ai_len2(dx, dz);
+
+    if (dist >= 4.0f) {
+        ai_move_towards(ai, p, ai->scripted_marker_x, ai->scripted_marker_z, 0.55f * ai->move_speed_scale, 5.0f, 8.0f);
+        return;
+    }
+
+    p->in_fwd = 0.0f;
+    p->in_strafe = 0.0f;
+    if (ai->wait_until_ms == 0) {
+        ai->wait_until_ms = now_ms + ai->scripted_hold_ms;
+        return;
+    }
+    if (now_ms >= ai->wait_until_ms) {
+        AIMode back_to = (ai->previous_mode == AI_MODE_SCRIPTED) ? AI_MODE_PATROL : ai->previous_mode;
+        ai->wait_until_ms = 0;
+        ai_set_mode(ai, back_to, now_ms);
+    }
+}
+
 static void ai_run_ally_follow(ServerState *s, AIController *ai, unsigned int now_ms) {
     PlayerState *p = &s->players[ai->player_id];
     PlayerState *hero = &s->players[0];
@@ -793,6 +842,11 @@ void story_ai_tick(ServerState *s, unsigned int now_ms) {
         if (!ai->active) continue;
         if (!s->players[ai->player_id].active || s->players[ai->player_id].state == STATE_DEAD) continue;
 
+        /* S461-04: a real locked scripted state -- combat/investigate/flee perception must not
+           interrupt it (the founder's own spec: "forced the NPC into a locked 'scripted state'").
+           ai_run_scripted below owns its own exit via ai_set_mode. */
+        if (ai->mode == AI_MODE_SCRIPTED) continue;
+
         wants_combat = per->visible;
         search_timeout = STORY_AI_SEARCH_MIN_MS + (((unsigned int)ai->player_id * 317U) % STORY_AI_SEARCH_VAR_MS);
 
@@ -854,6 +908,7 @@ void story_ai_tick(ServerState *s, unsigned int now_ms) {
         else if (ai->mode == AI_MODE_ALLY_FOLLOW) ai_run_ally_follow(s, ai, now_ms);
         else if (ai->mode == AI_MODE_COMBAT) ai_run_combat(s, ai, &g_story_perception[i], now_ms);
         else if (ai->mode == AI_MODE_FLEE) ai_run_flee(s, ai, now_ms);
+        else if (ai->mode == AI_MODE_SCRIPTED) ai_run_scripted(s, ai, now_ms);
     }
 
 #if STORY_AI_DEBUG
