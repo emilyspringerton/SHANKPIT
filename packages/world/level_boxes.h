@@ -110,6 +110,26 @@ typedef struct {
         closing of the original "via the nock tools" gap this whole system started from. */
 } LevelDoor;
 
+/* S461-01/S464 -- a real, author-placed waypoint/cover node, same JSON authoring convention as
+   LevelDoor above (founder real-time: "we are going to need a waypoint system in the levels and
+   maps northstar it" / "continue filling in the gaps in our level editor"). Mirrors
+   packages/simulation/ai_nav.h's own AINavNode field-for-field (x/y/z, is_cover, cover_dir,
+   neighbors), so loading one of these into an AINavGraph via ai_nav_add_node/ai_nav_link is a
+   direct field copy, not a translation. neighbors are 0-based indices into THIS SAME nav_nodes
+   array (matching how box_index above indexes into boxes[]), not a persisted node id -- the
+   IDUNA export layer resolves each node's own real id-based neighbor references into array
+   positions before this loader ever sees them (see IDUNA/internal/shankpit.navNodesForExport). */
+#define LEVEL_BOXES_MAX_NAV_NODES 32
+#define LEVEL_BOXES_MAX_NAV_NEIGHBORS 4
+
+typedef struct {
+    float x, y, z;
+    int is_cover;
+    float cover_dir_x, cover_dir_z;
+    int neighbor_count;
+    int neighbors[LEVEL_BOXES_MAX_NAV_NEIGHBORS];
+} LevelNavNode;
+
 typedef struct {
     char name[LEVEL_BOXES_MAX_NAME];
     float width, height, depth; /* the editor's own real authored level dimensions -- NOT read
@@ -130,6 +150,8 @@ typedef struct {
     int spawner_count;
     LevelDoor doors[LEVEL_BOXES_MAX_DOORS]; /* Story System Phase 1 */
     int door_count;
+    LevelNavNode nav_nodes[LEVEL_BOXES_MAX_NAV_NODES]; /* S461-01/S464 */
+    int nav_node_count;
 } CustomLevelData;
 
 static inline const char *level_boxes_skip_ws(const char *p) {
@@ -204,6 +226,28 @@ static inline int level_boxes_parse_bool(const char *p, int *out) {
     if (strncmp(p, "true", 4) == 0) { *out = 1; return 1; }
     if (strncmp(p, "false", 5) == 0) { *out = 0; return 1; }
     return 0;
+}
+
+// level_boxes_parse_int_array scans a `[n, n, n]` bracket (open_bracket points at the `[`) for
+// up to max real integers, same small-bounded-scanner discipline as the rest of this file --
+// used for LevelNavNode's own "neighbors" field. Returns the count actually written (0 if
+// open_bracket doesn't start with '[' or the array is empty).
+static inline int level_boxes_parse_int_array(const char *open_bracket, const char *buf_end, int *out, int max) {
+    if (*open_bracket != '[') return 0;
+    const char *arr_end = level_boxes_find_array_end(open_bracket, buf_end);
+    if (!arr_end) return 0;
+    int count = 0;
+    const char *p = open_bracket + 1;
+    while (p < arr_end && count < max) {
+        p = level_boxes_skip_ws(p);
+        if (p >= arr_end) break;
+        if (*p == ',') { p++; continue; }
+        float f;
+        if (!level_boxes_parse_number(p, &f)) { p++; continue; }
+        out[count++] = (int)f;
+        while (p < arr_end && *p != ',' ) p++;
+    }
+    return count;
 }
 
 // level_boxes_resolve_material finds `name` in out->materials, falling back to
@@ -450,6 +494,47 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
                         out->door_count++;
                     }
                     dcursor = dobj_end + 1;
+                }
+            }
+        }
+    }
+
+    // Nav nodes (S461-01/S464) -- same real, small-scanner convention as doors above. Absent
+    // "nav_nodes" key is a real, honest "no waypoint graph authored for this level" state, not
+    // an error -- nav_node_count stays 0 and ai_nav_find_path/ai_nav_find_cover degrade
+    // gracefully against an empty graph (see ai_nav.h's own doc comments).
+    out->nav_node_count = 0;
+    const char *nn_arr_key = level_boxes_find_key(buf, end, "nav_nodes");
+    if (nn_arr_key) {
+        const char *nn_arr = level_boxes_skip_ws(nn_arr_key);
+        if (*nn_arr == '[') {
+            const char *nn_arr_end = level_boxes_find_array_end(nn_arr, end);
+            if (nn_arr_end) {
+                const char *ncursor = nn_arr + 1;
+                while (ncursor < nn_arr_end && out->nav_node_count < LEVEL_BOXES_MAX_NAV_NODES) {
+                    ncursor = level_boxes_skip_ws(ncursor);
+                    if (ncursor >= nn_arr_end) break;
+                    if (*ncursor == ',') { ncursor++; continue; }
+                    if (*ncursor != '{') { ncursor++; continue; }
+                    const char *nobj_start = ncursor;
+                    const char *nobj_end = strchr(nobj_start, '}');
+                    if (!nobj_end || nobj_end > nn_arr_end) break;
+
+                    LevelNavNode *nn = &out->nav_nodes[out->nav_node_count];
+                    memset(nn, 0, sizeof(*nn));
+                    const char *v4;
+                    if ((v4 = level_boxes_find_key(nobj_start, nobj_end, "x"))) level_boxes_parse_number(v4, &nn->x);
+                    if ((v4 = level_boxes_find_key(nobj_start, nobj_end, "y"))) level_boxes_parse_number(v4, &nn->y);
+                    if ((v4 = level_boxes_find_key(nobj_start, nobj_end, "z"))) level_boxes_parse_number(v4, &nn->z);
+                    if ((v4 = level_boxes_find_key(nobj_start, nobj_end, "is_cover"))) level_boxes_parse_bool(v4, &nn->is_cover);
+                    if ((v4 = level_boxes_find_key(nobj_start, nobj_end, "cover_dir_x"))) level_boxes_parse_number(v4, &nn->cover_dir_x);
+                    if ((v4 = level_boxes_find_key(nobj_start, nobj_end, "cover_dir_z"))) level_boxes_parse_number(v4, &nn->cover_dir_z);
+                    if ((v4 = level_boxes_find_key(nobj_start, nobj_end, "neighbors"))) {
+                        const char *narr = level_boxes_skip_ws(v4);
+                        nn->neighbor_count = level_boxes_parse_int_array(narr, nobj_end, nn->neighbors, LEVEL_BOXES_MAX_NAV_NEIGHBORS);
+                    }
+                    out->nav_node_count++;
+                    ncursor = nobj_end + 1;
                 }
             }
         }

@@ -602,6 +602,25 @@ int story_ai_trigger_scripted(int player_id, float x, float y, float z, unsigned
     return 1;
 }
 
+void story_ai_load_nav_graph(int count, const float *x, const float *y, const float *z,
+                              const int *is_cover, const float *cover_dir_x, const float *cover_dir_z,
+                              const int *neighbor_counts, const int *neighbors_flat) {
+    int i, k;
+    ai_nav_reset(&g_story_nav);
+    if (count > AI_NAV_MAX_NODES) count = AI_NAV_MAX_NODES;
+    for (i = 0; i < count; i++) {
+        ai_nav_add_node(&g_story_nav, x[i], y[i], z[i], is_cover[i], cover_dir_x[i], cover_dir_z[i]);
+    }
+    for (i = 0; i < count; i++) {
+        int nc = neighbor_counts[i];
+        if (nc > STORY_AI_NAV_NEIGHBORS_STRIDE) nc = STORY_AI_NAV_NEIGHBORS_STRIDE;
+        for (k = 0; k < nc; k++) {
+            int j = neighbors_flat[i * STORY_AI_NAV_NEIGHBORS_STRIDE + k];
+            if (j >= 0 && j < count) ai_nav_link(&g_story_nav, i, j);
+        }
+    }
+}
+
 /* S461-04: the movement-hook -> locked-animation -> on-end-handoff chain from the founder's own
    real-time scripted_sequence breakdown, at the AI/logic layer. What's real here: server-
    authoritative walk-to-marker (arrival steering, same as every other mode), a real hold timer,

@@ -187,4 +187,18 @@ int story_ai_form_squad(const int *player_ids, int count);
    resolved). Returns 1 on success, 0 if player_id doesn't resolve to an active AI. */
 int story_ai_trigger_scripted(int player_id, float x, float y, float z, unsigned int hold_ms, unsigned int now_ms);
 
+/* S461-01/S464 -- loads a real, author-placed waypoint/cover graph (NOCK level-editor authored,
+   founder real-time: "we are going to need a waypoint system in the levels and maps northstar
+   it" / "continue filling in the gaps in our level editor"), replacing whatever graph was there
+   before. Flat parallel arrays, not a struct pointer -- story_ai.c/.h has zero dependency on
+   packages/world/level_boxes.h's CustomLevelData by design, same established pattern
+   server_apply_custom_level's own spawner unpacking already uses for
+   phys_set_custom_level_spawners. neighbors_flat is count * STORY_AI_NAV_NEIGHBORS_STRIDE ints,
+   node i's own neighbor list at neighbors_flat[i*STORY_AI_NAV_NEIGHBORS_STRIDE .. +stride) --
+   only the first neighbor_counts[i] of that stride are read. */
+#define STORY_AI_NAV_NEIGHBORS_STRIDE 4
+void story_ai_load_nav_graph(int count, const float *x, const float *y, const float *z,
+                              const int *is_cover, const float *cover_dir_x, const float *cover_dir_z,
+                              const int *neighbor_counts, const int *neighbors_flat);
+
 #endif

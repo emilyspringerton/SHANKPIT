@@ -426,6 +426,34 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
     // Story System Phase 1 -- dlopen this level's own real door scripts now that
     // g_custom_level_box_authored_y is populated (phys_set_custom_level above).
     story_doors_init(lvl);
+
+    // S461-01/S464 -- real, author-placed waypoint/cover graph, if any (empty is a real, honest
+    // "not authored for this level yet" state, not an error). Flat-array unpack, same pattern
+    // the spawner block above already uses for phys_set_custom_level_spawners.
+    {
+        float nn_x[LEVEL_BOXES_MAX_NAV_NODES], nn_y[LEVEL_BOXES_MAX_NAV_NODES], nn_z[LEVEL_BOXES_MAX_NAV_NODES];
+        int nn_is_cover[LEVEL_BOXES_MAX_NAV_NODES];
+        float nn_cover_dir_x[LEVEL_BOXES_MAX_NAV_NODES], nn_cover_dir_z[LEVEL_BOXES_MAX_NAV_NODES];
+        int nn_neighbor_counts[LEVEL_BOXES_MAX_NAV_NODES];
+        int nn_neighbors_flat[LEVEL_BOXES_MAX_NAV_NODES * LEVEL_BOXES_MAX_NAV_NEIGHBORS];
+        for (int ni = 0; ni < lvl->nav_node_count; ni++) {
+            nn_x[ni] = lvl->nav_nodes[ni].x; nn_y[ni] = lvl->nav_nodes[ni].y; nn_z[ni] = lvl->nav_nodes[ni].z;
+            nn_is_cover[ni] = lvl->nav_nodes[ni].is_cover;
+            nn_cover_dir_x[ni] = lvl->nav_nodes[ni].cover_dir_x;
+            nn_cover_dir_z[ni] = lvl->nav_nodes[ni].cover_dir_z;
+            nn_neighbor_counts[ni] = lvl->nav_nodes[ni].neighbor_count;
+            for (int k = 0; k < LEVEL_BOXES_MAX_NAV_NEIGHBORS; k++) {
+                /* LEVEL_BOXES_MAX_NAV_NEIGHBORS and STORY_AI_NAV_NEIGHBORS_STRIDE are both 4,
+                   hand-kept in sync across the level_boxes.h/story_ai.h boundary -- same real
+                   "no shared header, document the invariant" convention SHANKPIT_GRID_CELL_SIZE
+                   already uses across the Go/C/TS boundary. */
+                nn_neighbors_flat[ni * LEVEL_BOXES_MAX_NAV_NEIGHBORS + k] =
+                    (k < lvl->nav_nodes[ni].neighbor_count) ? lvl->nav_nodes[ni].neighbors[k] : -1;
+            }
+        }
+        story_ai_load_nav_graph(lvl->nav_node_count, nn_x, nn_y, nn_z, nn_is_cover,
+                                 nn_cover_dir_x, nn_cover_dir_z, nn_neighbor_counts, nn_neighbors_flat);
+    }
 }
 
 // queue_activate_match -- S459-34, the real MODE_QUEUE match activation. Deliberately much
