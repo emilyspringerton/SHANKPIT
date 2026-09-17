@@ -289,6 +289,17 @@ typedef struct {
        established "0/absent is a real, honest sentinel, not an error" convention elsewhere --
        IDUNA's own real primary keys start at 1, so 0 never collides with a real level id). */
     int next_level_id;
+    /* enclosed (S493, founder real-time: "theres not much difference between having lights on
+       and not having lights - its still basically illuminated in this totally enclosed level").
+       Real, designer-set lighting hint -- 0 (default, every pre-S493 level's own real absent-key
+       JSON) means "outdoor, use the normal day/night lighting model unchanged." 1 means this
+       level has zero real sky exposure -- the consuming client (apps/lobby's own draw_scene) is
+       expected to switch to a real interior lighting preset (RETRO_LIGHTING_INTERIOR_FLAT) that
+       suppresses simulated outdoor sun/moon sky-fill, so real fixture point lights (HPS/IPS)
+       actually dominate. This struct itself has no rendering opinion -- packages/world stays
+       physics.h-independent by design (see this file's own header comment); it's a pure data
+       carrier, same real role next_level_id/is_story_start already play. */
+    int enclosed;
 } CustomLevelData;
 
 static inline const char *level_boxes_skip_ws(const char *p) {
@@ -436,6 +447,12 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
         float nli_f = 0;
         if (level_boxes_parse_number(nli_val, &nli_f)) out->next_level_id = (int)nli_f;
     }
+
+    // enclosed (S493) -- absent key is a real, honest "outdoor, normal lighting" default (0),
+    // matching every pre-S493 level's own real, existing export.
+    out->enclosed = 0;
+    const char *enc_val = level_boxes_find_key(buf, end, "enclosed");
+    if (enc_val) level_boxes_parse_bool(enc_val, &out->enclosed);
 
     // Ground plane fields (S459-08) -- real, sane defaults (enabled, 2 squares) for a
     // hand-written or pre-S459-08 file that omits them, matching this file's own established

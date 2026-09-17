@@ -46,6 +46,7 @@
 #include "../../../packages/render/retro_lighting.h"
 #include "../../../packages/audio/audio.h"
 #include "../../../packages/render/gl_shader.h"
+#include "../../../packages/render/bloom.h"
 #include "../../../packages/render/material_shaders.h"
 #include "../../../packages/goldenband/gband_mesh_rig.h"
 #include "../../../packages/goldenband/gband_skel_npc.h"
@@ -1979,6 +1980,15 @@ static unsigned int g_story_last_level_transition_ms = 0;
 // kept free of any dependency on physics.h (see its own doc comment), so this glue lives on the
 // caller's side, same real boundary apps/server/src/main.c's own --level handler keeps too.
 static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
+    // S493, founder real-time: "theres not much difference between having lights on and not
+    // having lights - its still basically illuminated in this totally enclosed level." Real root
+    // cause: the outdoor day/night lighting model (retro_lighting.c) adds a real, physically-
+    // motivated sun/moon "scattered sky" fill term to every wall face unconditionally -- correct
+    // outdoors, but swamps real per-fixture (HPS/IPS) point-light contrast in a windowless
+    // interior with zero real sky exposure. RETRO_LIGHTING_INTERIOR_FLAT already existed (defined
+    // in retro_lighting.h) but was never actually selected anywhere -- this is that preset's real,
+    // first use: zero sun/moon contribution, real fixtures become the dominant light source.
+    g_world_lighting_preset = lvl->enclosed ? RETRO_LIGHTING_INTERIOR_FLAT : RETRO_LIGHTING_DAY_STATIC;
     float x[LEVEL_BOXES_MAX], y[LEVEL_BOXES_MAX], z[LEVEL_BOXES_MAX];
     float w[LEVEL_BOXES_MAX], h[LEVEL_BOXES_MAX], d[LEVEL_BOXES_MAX];
     float r[LEVEL_BOXES_MAX], g[LEVEL_BOXES_MAX], b[LEVEL_BOXES_MAX];
@@ -7468,6 +7478,11 @@ static void client_apply_scene_id(int scene_id, unsigned int now_ms) {
     if (scene_id < 0) return;
     if (local_state.scene_id != scene_id) {
         local_state.scene_id = scene_id;
+        // S493: g_world_lighting_preset only ever gets set to RETRO_LIGHTING_INTERIOR_FLAT by a
+        // custom level's own real `enclosed` flag (level_boxes_apply_to_physics below) -- reset
+        // it back to the real outdoor default here for every OTHER scene, so leaving an enclosed
+        // level for a built-in outdoor scene (VOXWORLD, etc.) doesn't leave the world stuck dim.
+        if (scene_id != SCENE_CUSTOM_LEVEL) g_world_lighting_preset = RETRO_LIGHTING_DAY_STATIC;
         if (scene_id == SCENE_CUSTOM_LEVEL && net_requested_mode == MODE_QUEUE) {
             client_load_queue_level();
         }
@@ -9271,6 +9286,7 @@ int main(int argc, char* argv[]) {
     ips_light_shader_init();
     hps_light_shader_init();
     light_glow_shader_init();
+    bloom_init(); // S493, real screen-space bloom -- see bloom.h; failure is real, honest, non-fatal (draw_scene checks and renders straight to the backbuffer if this didn't succeed)
     proctex_init();
     proc_tex_create(&g_vehicle_noise_tex, 64, 64);
     proctex_make_noise_rgba(&g_vehicle_noise_tex, 64, 64, g_vehicle_style.seed);
@@ -9976,7 +9992,16 @@ int main(int argc, char* argv[]) {
             blended.x = render_prev_players[render_pid].x + (render_p->x - render_prev_players[render_pid].x) * (float)alpha;
             blended.y = render_prev_players[render_pid].y + (render_p->y - render_prev_players[render_pid].y) * (float)alpha;
             blended.z = render_prev_players[render_pid].z + (render_p->z - render_prev_players[render_pid].z) * (float)alpha;
+            // S493, real screen-space bloom (see bloom.h) -- wraps the ENTIRE existing draw_scene
+            // call unchanged; both bloom_begin_scene/bloom_end_scene_and_composite are real,
+            // honest no-ops if bloom_init failed earlier (old driver/software renderer), so this
+            // degrades to exactly the pre-bloom render-straight-to-backbuffer behavior with zero
+            // extra branching needed at this call site.
+            int bloom_w = 0, bloom_h = 0;
+            SDL_GetWindowSize(win, &bloom_w, &bloom_h);
+            bloom_begin_scene(bloom_w, bloom_h);
             draw_scene(&blended);
+            bloom_end_scene_and_composite(bloom_w, bloom_h);
             SDL_GL_SwapWindow(win);
         }
     }
