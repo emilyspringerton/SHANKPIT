@@ -131,17 +131,48 @@ _spawned_procs = []
 # real, honest fallback is the built-in --deathmatch scene rotation, same as before this existed.
 _training_level_path = None
 
+# _server_log_dir (S480 follow-up, founder real-time report: a real Colab run's very first
+# env.reset() raised "TimeoutError: no live respawn snapshot within timeout" with ZERO other
+# diagnostic output -- the exact same class of bug S459-61 already found and fixed for the two
+# eval bots ("these two bots used to run with stdout/stderr silenced entirely... a real crash...
+# was invisible, indistinguishable in the log from a genuine 0-0 tie"), left unfixed here for the
+# training server itself. Set once at startup by main() to args.output_dir; None (an older/direct
+# caller, e.g. this module's own CLI before main() runs) falls back to a real temp dir rather than
+# erroring.
+_server_log_dir = None
+
 
 def _spawn_server(port):
     """Starts one real bin/shank_server --deathmatch --fast-forward --port <port> subprocess --
     plus --level <path> when a level is currently flagged is_default_queue in NOCK's SHANKPIT
-    level editor (see fetch_default_queue_level's own doc comment for the real gap this closes)."""
+    level editor (see fetch_default_queue_level's own doc comment for the real gap this closes).
+
+    Real, found-live fix: stdout/stderr used to go to subprocess.DEVNULL unconditionally -- if the
+    server binary crashed or failed to start at all (a stale/broken build, a missing shared
+    library, a Colab-specific environment gap), NOTHING about why was ever visible; the caller
+    just eventually got a downstream TimeoutError from _wait_for_alive_snapshot 30 real seconds
+    later with zero context, indistinguishable from a slow-but-working server. Captured to a real
+    log file instead (matching _spawn_frozen_policy_bot's own established log_path fix), and the
+    process is checked for an early exit right after the startup grace period -- a dead server is
+    now a real, immediate, loud RuntimeError naming the log file and printing its own tail,
+    instead of a silent, misleading timeout much later."""
+    log_dir = _server_log_dir or tempfile.gettempdir()
+    log_path = os.path.join(log_dir, f"server_{port}.log")
+    log_f = open(log_path, "w")
     args = [SERVER_BIN, "--deathmatch", "--fast-forward", "--port", str(port)]
     if _training_level_path:
         args += ["--level", _training_level_path]
-    proc = subprocess.Popen(args, cwd=REPO_ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc = subprocess.Popen(args, cwd=REPO_ROOT, stdout=log_f, stderr=subprocess.STDOUT)
     _spawned_procs.append(proc)
     time.sleep(0.5)  # real, minimal startup grace period -- server_net_init binds synchronously
+    if proc.poll() is not None:
+        log_f.close()
+        with open(log_path) as f:
+            tail = f.read()[-4000:]
+        raise RuntimeError(
+            f"shank_server (port {port}) exited immediately with code {proc.returncode} -- "
+            f"see {log_path}. Last output:\n{tail}"
+        )
     return proc
 
 
@@ -542,6 +573,8 @@ def main():
         return 1
 
     os.makedirs(args.output_dir, exist_ok=True)
+    global _server_log_dir
+    _server_log_dir = args.output_dir
     league = LeagueManager(args.league_dir)
 
     prev_checkpoint_paths, prev_member_ids, prev_remote_ids = {}, {}, {}
