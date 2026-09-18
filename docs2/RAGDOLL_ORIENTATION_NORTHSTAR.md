@@ -92,17 +92,60 @@ documented failure mode in real RL research: grotesque, twitchy, alien movement.
 what `HQ-SPEC-SIM-100` §4's own Reward Compiler is FOR — imitation reward (pose/velocity/
 end-effector tracking against a real, human-authored or mocap `.gband` reference clip), not a bare
 task-success reward. "The animator's clip is the spec; physics is the implementation; the policy
-is the compiled artifact" (SIM-100 §1) is the literal answer to this concern. Two real, honest
+is the compiled artifact" (SIM-100 §1) is the literal answer to this concern. Three real, honest
 paths for recovery, genuinely different costs:
 - **Authored blend** (cheap, no ML, ships now): once the ragdoll settles, snap/blend into a
   hand-authored "stand up" `.gband` clip via GOLDENBAND's own real `gseq` stitching (already
   built, already proven — "stitch animations together like James Bond walk turn raise gun shoot").
   Doesn't adapt to HOW the character fell, but looks human because it IS authored human motion.
+- **Synthesized reference clip via fall-and-reverse** (S497, cheap, no ML, no mocap/animator
+  needed to bootstrap it — a real third option, distinct from both of the others). Founder
+  real-time: "fuck it play the death animation backwards - let the robot learn how to just pop
+  back up" → corrected in the very next message once the first cut mis-scoped this as a literal
+  playable animation: "my bro the rag doll doesnt need to stand up if its not rigid body it wont
+  fall over - reversing the death animation was supposed to be the oracle that the RL learns
+  against to be able to stand back up after falling over." The corrected, real design: record a
+  ragdoll's fall (per-tick joint positions, the same point-mass spike this doc already covers),
+  reverse the tick order, and write it out as a real `.gband` file — that clip becomes an
+  imitation-reward TARGET for the Reward Compiler (SIM-100 §4), not a directly-played animation.
+  A trained recovery policy gets REWARDED for tracking this clip's arc, the same way it would get
+  rewarded for tracking a mocap or hand-authored reference — the only thing novel here is that
+  the reference clip itself is synthesized for free from a physics sim instead of captured or
+  hand-keyed. Real, load-bearing limitation, named honestly: this only produces a *reasonable*
+  reference arc (verified end to end in `tools/ragdoll_spike/main.c`'s own write-out — the
+  reversed clip runs from the fall's settled/lying pose at tick 0 up to the original standing
+  rest pose at the final tick, real numbers: joint0 y goes 0.000 → 7.987 across the clip), not a
+  guaranteed-plausible one — it's built from point-mass positions with no orientation state (see
+  this doc's own v1 gap), so it inherits every limitation already named above (poker-straight
+  limbs, no twist). Good enough as a reward-compiler TARGET (which only needs a directionally
+  sane arc to shape training against), not good enough as a directly-playable animation. Also
+  answers the founder's own immediate follow-up ("most importantly we need a roll over
+  animation") for this specific mechanism: a separately-authored roll-over step is NOT needed
+  here, because the reversed clip retraces whatever orientation the character actually fell
+  into, not a fixed assumed "flat on back" starting pose — a roll-over animation would still be
+  a real, separate need for any OTHER recovery path that assumes a fixed starting pose (e.g. an
+  authored blend triggered without knowing the fall orientation).
 - **Trained recovery policy** (the real GOLDENBAND/SIM-100 destination, not built yet — confirmed
   earlier this session only step 1 of SIM-100's own Build Sequence, the `.gband` format itself, is
-  done): adapts to fall direction/state, but needs the full reward-compiler + training-backbone
-  pipeline (SIM-100 §8 steps 3+), which needs real, actuatable, orientation-and-limit-aware joints
-  underneath it FIRST — i.e. this doc's own real prerequisite work, not a shortcut around it.
+  done): adapts to fall direction/state, imitation-trained against a reference clip (either an
+  authored one or one synthesized per the fall-and-reverse path above), but needs the full
+  reward-compiler + training-backbone pipeline (SIM-100 §8 steps 3+), which needs real,
+  actuatable, orientation-and-limit-aware joints underneath it FIRST — i.e. this doc's own real
+  prerequisite work, not a shortcut around it.
+
+### Get-up oracle clip — real, verified artifact (S497)
+
+`tools/ragdoll_spike/main.c` now records every tick of its forward fall simulation and, after the
+sim completes, writes the reversed sequence out as a real `.gband` binary + manifest
+(`tools/ragdoll_spike/output/getup_oracle.gband(.json)`, gitignored — generated, not source).
+Verified against GOLDENBAND's own real reader, not just the writer's own claim: loaded via
+`gb_init`, `gb_verify` reports a matching content hash (PASS), `duration_ticks=192`,
+`num_channels=195` (65 joints × tx/ty/tz, position-only — no rotation channels exist yet, this
+spike has no per-bone orientation state). This is a real, working proof that the "record the fall,
+reverse it" idea produces a loadable `.gband` asset today, not just a design-doc claim — the
+missing piece for a REAL trained recovery policy is everything this doc's own Phased Plan already
+names (swing-axis/orientation joints, then SIM-100 §8 steps 3+ for the actual Reward Compiler and
+training backbone), not the oracle-clip generation step itself.
 
 ## Robotics / CAD (the founder's own direct question, answered here for the record)
 

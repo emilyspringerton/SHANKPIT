@@ -75,11 +75,14 @@
 // real next design (swing-axis constraints derived from rest-pose geometry) -- this spike's own
 // real job (validate hypotheses cheaply before committing to the bigger build) is done here.
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <sys/stat.h>
 
 #include "../../packages/goldenband/gskel.h"
 #include "../../packages/goldenband/gpose.h"
+#include "../../packages/goldenband/sha256.h"
 
 #define MAX_JOINTS GSKEL_MAX_JOINTS
 
@@ -98,6 +101,12 @@
 #define SOLVER_ITERATIONS 8
 #define SIM_SECONDS 3.0f
 #define PRINT_EVERY_N_TICKS 16 // 4x/sec
+
+// TOTAL_TICKS -- must equal (int)(SIM_SECONDS * TICK_HZ); kept as a separate literal (checked
+// against the runtime-computed value at startup, see main()) rather than relying on a float-to-
+// int cast inside an array bound, since that's constant-expression-legal in C but not worth
+// trusting silently if SIM_SECONDS/TICK_HZ ever change independently.
+#define TOTAL_TICKS 192
 
 typedef struct {
     float pos[3];
@@ -162,6 +171,16 @@ int main(void) {
     static BendConstraint bend_constraints[MAX_JOINTS];
     int constraint_count = 0;
     int bend_constraint_count = 0;
+
+    // GET-UP ORACLE recording buffer (S497, founder real-time: "reversing the death animation
+    // was supposed to be the oracle that the RL learns against to be able to stand back up after
+    // falling over"). Every tick's settled joint positions get copied in here; after the forward
+    // fall simulation finishes, the buffer is walked BACKWARD and written out as a real .gband
+    // clip -- see the write-out block after the tick loop for why this is a reference clip for
+    // imitation-reward training, not a literal playable "get up" animation (this spike has no
+    // rigid-body joints, so it never "fell over" in the sense that would make kinematic reverse-
+    // playback alone a usable stand-up motion).
+    static float recorded_pos[TOTAL_TICKS][MAX_JOINTS][3];
 
     // BONE_MASS_PER_UNIT_LENGTH/MIN_JOINT_MASS -- S494, founder real-time: "we are going to need
     // to define masses for objects im sure for rigid body physics." Real, deliberate, simplest
@@ -235,6 +254,11 @@ int main(void) {
     }
 
     int total_ticks = (int)(SIM_SECONDS * TICK_HZ);
+    if (total_ticks != TOTAL_TICKS) {
+        fprintf(stderr, "ragdoll_spike: TOTAL_TICKS (%d) out of sync with SIM_SECONDS*TICK_HZ "
+                         "(%d) -- update the #define\n", TOTAL_TICKS, total_ticks);
+        return 1;
+    }
     for (int tick = 0; tick < total_ticks; tick++) {
         // Verlet integration: implicit velocity via (pos - prev_pos), no separate velocity
         // array needed -- standard PBD/Verlet ragdoll technique, real reason it's the usual
@@ -336,6 +360,11 @@ int main(void) {
             }
         }
 
+        // Record this tick's settled joint positions for the get-up oracle write-out below.
+        for (uint32_t j = 0; j < skel.joint_count; j++) {
+            memcpy(recorded_pos[tick][j], bodies[j].pos, 3 * sizeof(float));
+        }
+
         if (tick % PRINT_EVERY_N_TICKS == 0) {
             // Track min/max/avg Y and the single largest per-tick displacement as a cheap
             // divergence signal -- a healthy settle should show these numbers shrinking toward
@@ -374,5 +403,118 @@ int main(void) {
         printf("  %-24s (%7.3f, %7.3f, %7.3f)\n", bodies[j].name,
                bodies[j].pos[0], bodies[j].pos[1], bodies[j].pos[2]);
     }
+
+    // -----------------------------------------------------------------------------------------
+    // GET-UP ORACLE CLIP write-out (S497). Founder real-time correction to the previous plan:
+    // "my bro the rag doll doesnt need to stand up if its not rigid body it wont fall over -
+    // reversing the death animation was supposed to be the oracle that the RL learns against to
+    // be able to stand back up after falling over." This spike is point-mass PBD, not rigid
+    // body -- there is no orientation state to "fall over" in the first place, so literally
+    // replaying these reversed positions is NOT itself a usable get-up animation. What IS real
+    // and valuable: this recorded-then-reversed trajectory is a legitimate, near-zero-cost
+    // synthetic reference clip -- exactly the shape HQ-SPEC-SIM-100 SS4's Reward Compiler expects
+    // an imitation target to be (a .gband clip to track pose/end-effector position against), just
+    // generated instead of mocapped or hand-animated. A real rigid-body recovery policy (trained
+    // once RAGDOLL_ORIENTATION_NORTHSTAR.md's swing-axis joints exist) would be REWARDED for
+    // matching this oracle's arc, not driven by it directly -- the oracle is a training signal,
+    // not a playable animation. Writing a real .gband file here (not just a diagnostic print)
+    // proves the data pipeline end to end: this spike's own recorded fall really can become a
+    // file GOLDENBAND's existing reader (gb_init/gb_sample) can load today.
+    //
+    // Channels are per-joint translation only (`<joint>.tx/.ty/.tz`, matching format/
+    // GBAND_FORMAT.md's own naming convention) -- this spike has no per-bone orientation state
+    // yet (see the NORTHSTAR's own v1 gap), so a rotation channel group isn't available to emit
+    // honestly. Position-only end-effector tracking is still a real, named component of SIM-100's
+    // imitation reward (SS4), just not the whole of it.
+    {
+        const int oracle_ticks = total_ticks;
+        const int num_channels = (int)skel.joint_count * 3;
+        size_t n_floats = (size_t)oracle_ticks * (size_t)num_channels;
+        float *channel_data = (float *)malloc(n_floats * sizeof(float));
+        if (!channel_data) {
+            fprintf(stderr, "ragdoll_spike: get-up oracle: malloc failed, skipping write-out\n");
+        } else {
+            // Walk the recorded buffer BACKWARD (last simulated tick first) -- this is the
+            // actual "play the fall in reverse" step. tick 0 of the OUTPUT clip is the fall's
+            // final settled (lying-down) pose; the last tick of the OUTPUT clip is the fall's
+            // very first (standing rest-pose) tick.
+            for (int out_tick = 0; out_tick < oracle_ticks; out_tick++) {
+                int src_tick = oracle_ticks - 1 - out_tick;
+                for (uint32_t j = 0; j < skel.joint_count; j++) {
+                    float *dst = &channel_data[(size_t)out_tick * num_channels + j * 3];
+                    memcpy(dst, recorded_pos[src_tick][j], 3 * sizeof(float));
+                }
+            }
+
+            unsigned char content_hash[32];
+            sha256((const uint8_t *)channel_data, n_floats * sizeof(float), content_hash);
+
+            const char *out_dir = "tools/ragdoll_spike/output";
+            mkdir(out_dir, 0755); // ignore EEXIST -- best-effort, matches this spike's throwaway status
+            const char *bin_path = "tools/ragdoll_spike/output/getup_oracle.gband";
+            const char *manifest_path = "tools/ragdoll_spike/output/getup_oracle.gband.json";
+
+            FILE *bf = fopen(bin_path, "wb");
+            if (!bf) {
+                fprintf(stderr, "ragdoll_spike: get-up oracle: failed to open %s for write\n", bin_path);
+            } else {
+                unsigned char header[84];
+                memset(header, 0, sizeof(header));
+                memcpy(header, "GBND", 4);
+                uint32_t version = 1, tick_rate = (uint32_t)TICK_HZ, duration_ticks = (uint32_t)oracle_ticks,
+                         nchan = (uint32_t)num_channels;
+                memcpy(header + 4, &version, 4);
+                memcpy(header + 8, &tick_rate, 4);
+                memcpy(header + 12, &duration_ticks, 4);
+                memcpy(header + 16, &nchan, 4);
+                // skeleton_hash left zeroed -- GBAND_FORMAT.md names this a "forward-compatible
+                // placeholder field today; nothing resolves it to a real skeleton asset yet."
+                memcpy(header + 52, content_hash, 32);
+                fwrite(header, 1, sizeof(header), bf);
+                fwrite(channel_data, sizeof(float), n_floats, bf);
+                fclose(bf);
+                printf("\nwrote get-up oracle clip: %s (%d ticks x %d channels)\n",
+                       bin_path, oracle_ticks, num_channels);
+            }
+
+            FILE *mf = fopen(manifest_path, "w");
+            if (!mf) {
+                fprintf(stderr, "ragdoll_spike: get-up oracle: failed to open %s for write\n", manifest_path);
+            } else {
+                char hash_hex[65];
+                for (int i = 0; i < 32; i++) sprintf(hash_hex + i * 2, "%02x", content_hash[i]);
+                hash_hex[64] = '\0';
+
+                fprintf(mf, "{\n");
+                fprintf(mf, "  \"gband_version\": 1,\n");
+                fprintf(mf, "  \"skeleton_hash\": \"%064x\",\n", 0);
+                fprintf(mf, "  \"content_hash\": \"%s\",\n", hash_hex);
+                fprintf(mf, "  \"tick_rate\": %d,\n", (int)TICK_HZ);
+                fprintf(mf, "  \"duration_ticks\": %d,\n", oracle_ticks);
+                fprintf(mf, "  \"channels\": [");
+                for (uint32_t j = 0; j < skel.joint_count; j++) {
+                    fprintf(mf, "%s\"%s.tx\", \"%s.ty\", \"%s.tz\"", j == 0 ? "" : ", ",
+                            bodies[j].name, bodies[j].name, bodies[j].name);
+                }
+                fprintf(mf, "],\n");
+                fprintf(mf, "  \"authorship\": { \"kind\": \"generative\", \"who\": "
+                             "\"ragdoll_spike (S497): recorded point-mass fall, reversed\" },\n");
+                fprintf(mf, "  \"intent_tags\": [\"get-up\", \"recovery-oracle\", \"synthetic\"],\n");
+                fprintf(mf, "  \"loop_points\": { \"start_tick\": 0, \"end_tick\": %d },\n", oracle_ticks);
+                fprintf(mf, "  \"safety\": { \"max_joint_velocity\": null, \"max_joint_torque\": null },\n");
+                fprintf(mf, "  \"notes\": \"Position-only (no orientation channels yet -- see "
+                             "RAGDOLL_ORIENTATION_NORTHSTAR.md v1 gap). This is a reward-compiler "
+                             "imitation TARGET for a future rigid-body recovery policy, not a "
+                             "directly-playable get-up animation -- this spike has no rigid-body "
+                             "joints, so nothing in it actually 'fell over' in that sense.\"\n");
+                fprintf(mf, "}\n");
+                fclose(mf);
+                printf("wrote get-up oracle manifest: %s\n", manifest_path);
+            }
+
+            free(channel_data);
+        }
+    }
+
     return 0;
 }

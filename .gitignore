@@ -28,6 +28,11 @@ run_integration
 run_stuffing
 /server-go
 /emily-bot
+
+# ragdoll_spike (tools/ragdoll_spike/) is a throwaway CLI, not shippable code -- its compiled
+# binary and generated .gband oracle clips are build artifacts, not source.
+tools/ragdoll_spike/ragdoll_spike
+tools/ragdoll_spike/output/
 a.out
 
 # Go module cache (appears when GOPATH is set to repo root).
