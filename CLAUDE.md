@@ -135,6 +135,28 @@ lens during planning/triage/judgment calls. Use it to spot the general case behi
 ask. It augments judgment, it does not replace doing the work: direct, concrete execution of
 the literal task asked for still happens every time.
 
+## CONSTRUCT File Generation (standing instruction, monorepo Principle 21)
+
+**SHANKPIT auto-generates a CONSTRUCT file on every master push via GitHub Actions** (`release.yml`, lines 165–197). This is a deterministic, plaintext snapshot of all repo source files with clear boundaries — used for offline access, audit trails, and release artifacts.
+
+The CONSTRUCT generation already happens in CI; no manual work needed. See the main `CLAUDE.md`'s "Principle 21: CONSTRUCT Files" section for the full rationale and how other repos implement this pattern. For local verification:
+
+```bash
+# Manual generation (same as CI does):
+OUT="SHANKPIT_CONSTRUCT.txt"
+echo "SHANKPIT BUILD LOCAL CONSTRUCT" > "$OUT"
+FILES=$(find packages apps services docs -type f \
+  \( -name "*.c" -o -name "*.h" -o -name "*.go" -o -name "*.md" -o -name "Makefile" -o -name "*.yml" \) \
+  ! -path "*/.git/*" ! -path "*/vendor/*" ! -path "*/node_modules/*" ! -path "*/build/*" | sort)
+for file in $FILES; do
+  echo "--- FILE START: $file ---" >> "$OUT"
+  cat "$file" >> "$OUT"
+  echo "" >> "$OUT"
+  echo "--- FILE END: $file ---" >> "$OUT"
+  echo "" >> "$OUT"
+done
+```
+
 ## Commit Protocol (standing instruction)
 
 Always commit and push completed work immediately — don't wait to be asked. This is the default for every repo in this monorepo.
