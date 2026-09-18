@@ -57,6 +57,23 @@
 // technique (true rigid-body dynamics with quaternion orientations) than point-mass PBD can reach
 // by adding more constraints of the same kind. That's the real, now sharply-defined Phase 2 --
 // not an incremental extension of what's built here.
+//
+// ITERATION 3 (S495, founder real-time: "we may as well see how far we can push the engine while
+// we are building it"). Tested one more real, cheap hypothesis before committing to full
+// orientation physics: nothing killed HORIZONTAL implied-velocity on ground contact, only
+// vertical -- a grounded joint could slide sideways forever under a constraint correction's own
+// pull. Added GROUND_FRICTION (kills tangential velocity at contact, the standard first-pass
+// friction model). RESULT: real, measurable, but partial -- the Y-flatness is completely
+// unchanged (still every joint at y=0.000 by t=0.75s), but the LATERAL spread tightened
+// substantially (fingertip spread dropped from ~0.6-0.7 units to ~0.3-0.5) -- friction turns a
+// splayed "starfish" into a more compact pile, real progress, but doesn't touch the underlying
+// ceiling. Real, corrected framing reached in the same conversation: lying flat after falling
+// isn't actually the bug (that's genuinely what happens to an unconscious body) -- the real,
+// specific problem is the symmetric, POKER-STRAIGHT shape, since nothing resists a joint
+// straightening toward full extension, only resists over-folding (the S494 bend constraint) or
+// sliding after contact (this iteration). See docs2/RAGDOLL_ORIENTATION_NORTHSTAR.md for the
+// real next design (swing-axis constraints derived from rest-pose geometry) -- this spike's own
+// real job (validate hypotheses cheaply before committing to the bigger build) is done here.
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -299,10 +316,22 @@ int main(void) {
             // constraint chain (confirmed: original version went to NaN within 16 ticks). Also
             // clamping prev_pos.y removes the implied vertical velocity, so a body actually
             // rests instead of springing back through the floor.
+            // GROUND_FRICTION -- S495 test (founder real-time: "we may as well see how far we
+            // can push the engine while we are building it"). Real hypothesis before committing
+            // to full per-bone orientation: nothing above kills HORIZONTAL implied-velocity on
+            // ground contact, only vertical -- a grounded joint can still slide sideways forever
+            // under a constraint correction's own pull, every tick, with nothing to stop it. That
+            // alone could plausibly explain (or meaningfully contribute to) the flat-puddle
+            // spread, cheaper to test directly than to assume. 1.0 = full stop (real kinetic-
+            // friction simplification, same "kill tangential velocity at contact" a first-pass
+            // friction model commonly uses), 0.0 = frictionless (the original, pre-S495 behavior).
+            #define GROUND_FRICTION 1.0f
             for (uint32_t j = 0; j < skel.joint_count; j++) {
                 if (bodies[j].pos[1] < 0.0f) {
                     bodies[j].pos[1] = 0.0f;
                     bodies[j].prev_pos[1] = 0.0f;
+                    bodies[j].prev_pos[0] = bodies[j].pos[0] - (bodies[j].pos[0] - bodies[j].prev_pos[0]) * (1.0f - GROUND_FRICTION);
+                    bodies[j].prev_pos[2] = bodies[j].pos[2] - (bodies[j].pos[2] - bodies[j].prev_pos[2]) * (1.0f - GROUND_FRICTION);
                 }
             }
         }
