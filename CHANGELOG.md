@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-20
+- fix(goldenband): GSEQ_MAX_CHANNELS 256->1024 -- 4 of 5 real NPC kits (mannequin/Stan/Mike/George) were silently failing to load and falling back to Leela; found live while vendoring gband_skel_npc into BIG_O (sess-20260920-1908-24cb3558)
 
 - fix(ci): link packages/reflux/reflux_runtime.c into Linux server gcc build in tests.yml and release.yml — server main.c calls reflux_host_* but the raw gcc command (unlike the Makefile SERVER_SRC) omitted the file, causing undefined-reference link failures (sess-20260920-1908-24cb3558)
 
