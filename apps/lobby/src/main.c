@@ -9218,6 +9218,8 @@ int main(int argc, char* argv[]) {
     for(int i=1; i<argc; i++) {
         if(strcmp(argv[i], "--host") == 0 && i+1<argc) {
             strncpy(SERVER_HOST, argv[++i], 63);
+        } else if(strcmp(argv[i], "--port") == 0 && i+1<argc) {
+            SERVER_PORT = atoi(argv[++i]);
         } else if(strcmp(argv[i], "--level") == 0 && i+1<argc) {
             // A level authored in NOCK's SHANKPIT level editor (EMILY/BACKLOG.md SECTION 459).
             // Real, existing convention this matches exactly: every other scene's own map_geo is
