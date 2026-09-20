@@ -33,7 +33,22 @@
 #include "gband.h"
 #include "gskel.h"
 
-#define GSEQ_MAX_CHANNELS 256      // generous real cap -- a busy multi-joint skeleton's own full channel count
+/* GSEQ_MAX_CHANNELS -- real, live-verified bug fix (2026-09-20, found while vendoring this module
+ * into BIG_O and actually testing the load, not assumed working): the OLD cap of 256 was not
+ * actually "generous" for this repo's own real, currently-loaded assets -- gskel_find_joint's own
+ * GSKEL_MAX_JOINTS is 128, and 7 channels/joint (tx/ty/tz/qx/qy/qz/qw, gband_skel_npc.c's own
+ * real convention) means any skeleton with more than 36 joints already overflows a 256 cap.
+ * Direct, live test against this repo's own real assets (gseq_clip_load, run from apps/lobby's
+ * own working directory, not guessed): mannequin_npc (65 joints, 455 channels), Stan/Mike (43
+ * joints, 301 channels), George (47 joints, 329 channels) ALL fail to load under the old 256 cap
+ * -- only Leela (17 joints, 119 channels) actually succeeds. gband_skel_npc_load_kit's own
+ * real, silent per-kit failure handling meant this was never a crash, just every one of those 4
+ * kits permanently unavailable -- draw_player_skin_mannequin's own real "cycle past any kit that
+ * failed to load" logic then silently converged on Leela as the only real, ever-successful kit,
+ * regardless of the real p->id-based variety it was written to provide. Bumped to comfortably
+ * exceed GSKEL_MAX_JOINTS(128) * 7 = 896 -- real headroom for the largest skeleton this system's
+ * own joint cap could ever produce, not just today's specific 5 real character assets. */
+#define GSEQ_MAX_CHANNELS 1024
 #define GSEQ_CHANNEL_NAME_LEN 48   // GSKEL_NAME_LEN (32) + room for ".qw"/".tz" etc.
 #define GSEQ_MAX_STEPS 16
 
