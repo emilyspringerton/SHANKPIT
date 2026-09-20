@@ -134,7 +134,7 @@ jobs:
           set -euo pipefail
           test -f apps/server/src/main.c
 
-          gcc apps/server/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/world/terrain.c \
+          gcc apps/server/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/world/terrain.c packages/reflux/reflux_runtime.c \
             -o ShankServer_Linux \
             -O2 -static \
             -I. \
