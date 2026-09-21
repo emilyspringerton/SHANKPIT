@@ -811,7 +811,7 @@ static void send_welcome(const struct sockaddr_in *addr, int client_id) {
     }
 }
 
-static int ensure_slot_for_sender(const struct sockaddr_in *sender) {
+static int ensure_slot_for_sender(const struct sockaddr_in *sender, int allow_alloc) {
     int slot = find_slot_by_addr(sender);
     if (slot != -1) {
         slots[slot].last_heard = now_seconds();
@@ -820,6 +820,27 @@ static int ensure_slot_for_sender(const struct sockaddr_in *sender) {
         net_format_addr(sender, addr_buf, sizeof(addr_buf));
         NET_SERVER_LOG("SLOT_REUSE client_id=%d addr=%s", slot, addr_buf);
         return slot;
+    }
+
+    if (!allow_alloc) {
+        // Real, found-live fix: a bare PACKET_USERCMD (or PACKET_DISCONNECT) from a sender with
+        // no existing slot used to fall through to alloc_slot() below just like PACKET_CONNECT
+        // does -- but that path never calls send_welcome(), so it silently created a permanent,
+        // un-welcomed "phantom" slot that occupies a client_id forever without ever becoming a
+        // real, active player (local_state.players[id].active requires welcomed && cmd_seen).
+        // Reproduced live under real CPU contention (a concurrent PPO training process starving
+        // the bot's own tick loop past the server's 5s SLOT_TIMEOUT): the server frees the slot,
+        // but the bot's next already-in-flight UserCmd packet arrives before its own "no packet
+        // in 5s" reconnect check fires, lands here, and used to mint a fresh phantom slot instead
+        // of being dropped -- so the client's real reconnect CONNECT (once it did fire) landed on
+        // a DIFFERENT/new slot than the phantom one still quietly occupying a client_id, and the
+        // RL env's own _wait_for_alive_snapshot() could spin forever never finding itself welcomed.
+        // A stray USERCMD/DISCONNECT with no real CONNECT behind it should just be dropped --
+        // only a real PACKET_CONNECT is allowed to mint a new slot.
+        char addr_buf[64];
+        net_format_addr(sender, addr_buf, sizeof(addr_buf));
+        NET_WARN_LOG("UNKNOWN_SENDER_DROPPED addr=%s", addr_buf);
+        return -1;
     }
 
     int new_slot = alloc_slot(sender);
@@ -1032,7 +1053,7 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
     int client_id = -1;
 
     if (head->type == PACKET_CONNECT || head->type == PACKET_USERCMD || head->type == PACKET_DISCONNECT) {
-        client_id = ensure_slot_for_sender(sender);
+        client_id = ensure_slot_for_sender(sender, head->type == PACKET_CONNECT);
     }
     if (client_id == -1) return;
 
