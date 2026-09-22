@@ -100,19 +100,46 @@ into `packages/reflux/BUILD.bazel`. Verified: a real test (`reflux_mod_test.c`, 
 mod-facing API — round-trip correctly through the existing native host log; `make lobby`/`make
 server` both rebuild clean with it linked in.
 
+## 2d. Phase 2 landed — witness/attention rules, as a standalone primitive (not yet wired into gameplay)
+
+**Real, checked-first finding that corrected this phase's own original plan:** the BACKLOG's phase
+2 entry originally speculated wiring `witness_rules.c` into `story_ai.c`'s own `AIMode`/`AIRole`
+state machine. Reading both confirmed that's a category error — `story_ai.c`'s roster (Rift Hound,
+Shambler Trooper, Guard, ...) is hostile combat AI; BIG_O's witness system is a different NPC
+concept entirely (ambient citizens/The Men reacting to being *witnesses* of an event). There is no
+existing "citizen" NPC slot in `story_ai.c` to attach this to. Corrected plan, landed instead:
+
+`packages/simulation/witness_sim.{h,c}` + PARENA-generated `witness_rules.c` (from new
+`PARENA/stdlib/shankpit/witness_rules.prn`, copied verbatim from `PARENA/stdlib/big_o/
+witness_rules.prn`) — a faithful, renamed port of BIG_O's own `core/sim.{h,c}` (`Sim`/`SimPlayer`/
+`SimNpc` → `WitnessSim`/`WitnessPlayer`/`WitnessNpc`, `sim_*` → `witness_sim_*`). Genuinely
+self-contained: zero dependency on BIG_O's `World`/zombie layer, `reflux_runtime.h`, or anything
+else beyond the pure rules functions — this is the same "prove the primitive in isolation first"
+discipline BIG_O's own NORTHSTAR already used for `npc_archetype.c`/`zombie_values.c`/`lab_sim.c`.
+Covers the full mechanic: witness escalation (UNAWARE→DENIAL→SILENCING/PANIC/ENGAGE, COMPROMISED
+absorbing), per-player Decorum (0..100, OK/SUSPICION/HYSTERIC/CANCELLED bands), costume×zone
+trespass (SUIT/LAB_SMOCK/JANITOR/STREET × PUBLIC/LAB/EXEC/GENERATOR/VAULT), crew attribution (1-3
+players, attributed vs. "seen together"), and hunt resolution (a SILENCING/ENGAGE hunt persists
+through lost line of sight, only ends on a real memory-wipe or target-eliminated event).
+
+**Verified against BIG_O's own canonical scenarios, not just "it compiles."** `witness_sim_test.c`
+replays three of BIG_O's real `scenarios/*.txt` test scripts (`01_lone_witness_denial`,
+`02_five_witness_silencing`, `04_decorum_is_per_player`) as direct C assertions against this port,
+plus a fourth check for the hunt-persists-through-loslost behavior — all pass. Deliberately **not**
+wired into `Makefile`'s `LOBBY_SRC`/`SERVER_SRC` or a `BUILD.bazel` target yet, matching
+`cutscene_effect_mod.c`'s own already-established precedent in this same package: a real, tested,
+not-yet-consumed module gets no build-graph entry until something actually calls it, rather than
+inventing build coverage ahead of real usage. The real consumer is phase 7 (MODE_STORY content
+cutover) — a citizen-NPC spawn/render layer that doesn't exist yet.
+
 ## 3. Not landed this pass — named, phased into `EMILY/BACKLOG.md` SECTION 536
 
 The founder's own follow-up messages during this pass ("the shaders the way the sun and moon look
 the phone in story mode everything", "all the events and messages on the phone") named real,
 additional scope beyond the sky/clock/REFLUX slice above. None of the below is built yet:
 
-1. **Witness/Attention rules** (`core/witness_rules.c`, already PARENA — `PARENA/stdlib/big_o/
-   witness_rules.prn`) — port into SHANKPIT the same way `world_rules.prn` was (§2a): a new
-   `PARENA/stdlib/shankpit/witness_rules.prn` domain, generated into `packages/simulation/`, wired
-   into `story_ai.c`'s own AI-mode state machine as a real mechanic (Heat/Decorum, witness
-   escalation DENIAL→SILENCING→ENGAGE). This is real gameplay logic, not a visual/infra slice like
-   §2 — needs its own scoping pass for how it maps onto `story_ai.c`'s existing `AIMode`/`AIRole`
-   enums rather than BIG_O's own separate `Sim`-based model.
+1. ~~Witness/Attention rules~~ — **landed, see §2d.** As a standalone, tested primitive
+   (`witness_sim.{h,c}`), not yet wired into a live NPC spawn/render layer (that's phase 7).
 2. **Humanness AI-brain extensions** — `core/npc_archetype.c` (citizen/Men vigilance) and
    `core/zombie_values.c` (zombie-specific mood/hunger/decay vocabulary) are currently plain C in
    BIG_O (BIG_O's own NORTHSTAR §9 names this as a real, deliberate gap: "lab equipment numbers are
