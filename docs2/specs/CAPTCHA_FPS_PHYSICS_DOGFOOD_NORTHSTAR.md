@@ -66,12 +66,22 @@ implementation detail to backfill later.
 ## 3. Real, phased plan — smallest real slice first
 
 - **Phase 0 (this doc)** — DONE. Real capability audit, not a plan written on top of assumptions.
-- **Phase 1 — `emit_ts.c` gains real `defstruct` + fixed-size-array support.** The actual
-  compiler work this whole idea is gated on. Scoped narrowly: enough to represent `Vec2`/`Box`/
-  a small fixed-N `PlayerState` array, NOT full dynamic collections or `match`/`loop` yet (a
-  second, smaller compiler pass can follow). Verified the same way every other emitter feature in
-  this monorepo has been: a real `.prn` struct compiled to real TypeScript, executed under
-  `node`, checked bit-for-bit against the same struct's C behavior.
+- **Phase 1 — `emit_llvm.c` gains real `defstruct` + fixed-size-array support** (RETARGETED
+  2026-09-22, see `PARENA/docs/LLVM_BACKEND_NORTHSTAR.md`'s own "WebAssembly: real, live, and
+  free" section — founder real-time: "we can go full wasm with parena we need to dog food that
+  anyways"). Originally scoped against `emit_ts.c`; moved to the LLVM backend because `llc`
+  already registers `wasm32`/`wasm64` as real targets (`make wasm-smoke`, live-verified: a real
+  F64 clamp compiled through PARENA → LLVM IR → `llc -mtriple=wasm32-unknown-unknown` → `wasm-ld`
+  → executed for real in Node's `WebAssembly.instantiate`, zero new compiler code needed for the
+  scalar case) — one compiler investment here reaches native (already proven: AVR, x86_64) AND
+  the browser simultaneously, instead of `emit_ts.c` alone. The actual compiler work this whole
+  idea is gated on is unchanged in kind: enough `defstruct`/array support to represent `Vec2`/
+  `Box`/a small fixed-N `PlayerState` array, NOT full dynamic collections or `match`/`loop` yet (a
+  second, smaller compiler pass can follow). Verify the same way `wasm-smoke` already does: a
+  real `.prn` struct compiled to real LLVM IR, lowered to `wasm32`, executed under `node`, checked
+  bit-for-bit against the same struct's C behavior. `emit_ts.c` itself stays real and correct for
+  its own already-proven lane (DEADWEIGHT's scalar decision logic) — not deprecated, just no
+  longer the load-bearing path for this specific idea.
 - **Phase 2 — port the SMALLEST real physics slice, not all 3427 lines.** Movement + AABB
   collision only (`accelerate`/`apply_friction`/`resolve_collision`) — no weapons, no hit
   detection, no rewind. Enough to prove "a PARENA-authored player can walk around a PARENA-
@@ -97,7 +107,7 @@ implementation detail to backfill later.
 | # | Phase | Status |
 |---|---|---|
 | 0 | This doc | DONE |
-| 1 | `emit_ts.c` defstruct + fixed-array support | NOT STARTED |
+| 1 | `emit_llvm.c` defstruct + fixed-array support (retargeted from emit_ts.c, wasm32/wasm64 proven free via llc) | NOT STARTED |
 | 2 | Movement + AABB collision ported to `.prn`, compiled to TS | NOT STARTED |
 | 3 | Minimal browser renderer + input loop | NOT STARTED |
 | 4 | CAPTCHA product surface (widget + verification API + humanness signal) | NOT STARTED |
