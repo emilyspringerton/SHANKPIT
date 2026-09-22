@@ -1873,11 +1873,13 @@ static const char *LOBBY_LABELS[LOBBY_COUNT] = {
 // lobby_app_binary_path doc comment for the honest current-state path search.
 typedef enum {
     APP_DEADWEIGHT = 0,
+    APP_PITVIPER,
     APP_COUNT
 } AppsAction;
 
 static const char *APPS_LABELS[APP_COUNT] = {
     "DEADWEIGHT",
+    "PITVIPER",
 };
 
 // lobby_page -- 0 = GAMES (the original single page, untouched), 1 = APPS (new).
@@ -2733,6 +2735,17 @@ static void lobby_launch_app(AppsAction app) {
             bundled_name = "dw_gui";
 #endif
             dev_relative_path = "../../DEADWEIGHT/build/dw_gui";
+            break;
+        case APP_PITVIPER:
+            display_name = "PITVIPER";
+#ifdef _WIN32
+            bundled_name = "pitviper.exe";
+#else
+            bundled_name = "pitviper";
+#endif
+            // PITVIPER's own Makefile builds straight to the repo root (`pitviper`, not a
+            // build/ subdir) -- see PITVIPER/Makefile's own BINARY := pitviper.
+            dev_relative_path = "../../PITVIPER/pitviper";
             break;
         default:
             return;
