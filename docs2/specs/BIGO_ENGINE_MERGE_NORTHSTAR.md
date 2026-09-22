@@ -261,6 +261,53 @@ UI, and no input binding (a key to open it) exists yet. That's real, separate cl
 work, not named as its own phase number since it's a natural continuation of this one once a
 render pass is scoped — tracked as a follow-up below.
 
+## 2i. Phase 7a landed — witness/zombie live-event glue (the real answer to phases 2/3/5's "no live entity array" blocker)
+
+Phase 7 (`MODE_STORY` content cutover) is far bigger than any phase landed so far — checked
+directly before starting: `story_ai.c` is 1418 real lines (squads, patrol, nav graph, leash,
+scripted holds, greet), wired into `local_game.h`, `apps/server/src/main.c`, and
+`apps/lobby/src/main.c`, and real NOCK-authored levels already exist in the live level registry
+built against its `AI_ROLE_*` roster (per `SHANKPIT/CLAUDE.md`'s own standing instruction, "levels
+are never story-mode-only" — these are not throwaway test content). A blind, one-shot "replace it
+all" is not a safe move against live, shipped content. Per Principle 19 (investigate, cut a real
+V0, phase the rest), phase 7 is broken into sub-phases; this pass lands the first one.
+
+- **`packages/simulation/witness_live.h`/`witness_live_test.c`** — ported from BIG_O's own
+  `core/witness_live.h` (`bigo_*` → `witness_live_*`, a genuinely BIG_O-branded prefix unlike the
+  `WS_`/`ZONE_` enums phase 2 left alone). Pure glue wiring a zombie's live mood
+  (`zombie_values.h`, phase 3) into `witness_rules.c`'s own pure decision function
+  (`npc_next_state`, phase 2): a HUNTING/FRENZIED zombie is a "loud event," witnessed by every
+  human NPC within `WITNESS_LIVE_DETECTION_RADIUS`. Real finding, checked directly: even BIG_O's
+  own original version deliberately stayed a pure, zero-`ServerNpc`-dependency header — porting it
+  here is exactly the same real amount of "live" as BIG_O itself ever built, not a step behind it.
+  Verified with a faithful, verbatim replay of BIG_O's own 8 real assertions (`witness_live_test.c`)
+  — all pass, zero behavior drift. Standalone primitive, no Makefile/BUILD.bazel entry yet (same
+  "no build-graph entry without a real consumer" discipline as phases 2/3/5), since the actual
+  live population loop that calls it doesn't exist yet — see phase 7b below.
+
+**Real, honest, not landed this pass (named, not built):**
+
+- **Phase 7b — the live NPC population/tick loop.** The actual `ServerNpc`-shaped array this
+  glue's caller needs. Checked directly: SHANKPIT already HAS the right shape for this — it's not
+  a new concept, it's the same "bot occupies a real `PlayerState` slot" convention `story_ai.c`'s
+  own `story_ai_spawn_enemy` already uses (`MAX_CLIENTS`=70 slots, `s->players[i]`), which every
+  connected client already renders/networks for free. Phase 7b is spawning witness-sim citizens
+  and zombie-mood-driven NPCs into that same slot convention and ticking them each server frame —
+  real, buildable, not started this pass.
+- **Phase 7c — a real zone-authoring feature.** Checked directly: `packages/world/level_boxes.h`
+  has NO zone-trigger concept at all today (`ZONE_PUBLIC`/`LAB`/`EXEC`/`GENERATOR`/`VAULT` are a
+  pure enum with nothing in a level that assigns a region to one). Witness-sim's whole social-
+  stealth premise depends on knowing which zone a player is standing in — this is real,
+  non-trivial NOCK level-editor + IDUNA-widget-schema work, a separate scoping pass of its own.
+- **Phase 7d — the actual roster cutover.** Deciding what happens to `story_ai.c`'s existing,
+  already-live `AI_ROLE_*` content (Rift Hound, Shambler Trooper, Guard, the S461/S462/S470 squad/
+  leash/greet systems) and the real NOCK levels built against it — replace, park alongside, or
+  fold in as BIG_O's own "Guard"-class encounters. Explicitly not decided or guessed at here.
+- **Phase 7e — the day/night/lab turn structure itself.** The actual game-loop content (harvest →
+  blend-in → lab) that makes this "BIG_O replaces STORY" rather than just new primitives sitting
+  next to the old mode. Depends on 7a-7d landing enough real, live content to build a turn
+  structure around.
+
 ## 3. Not landed this pass — named, phased into `EMILY/BACKLOG.md` SECTION 536
 
 The founder's own follow-up messages during this pass ("the shaders the way the sun and moon look
@@ -283,10 +330,12 @@ additional scope beyond the sky/clock/REFLUX slice above. None of the below is b
    phone message). Not yet rendered on screen (no SDL2 draw path wired) — see §2h for the real,
    remaining gap.
 6. **`MODE_STORY` content cutover** — the actual replacement of SHANKPIT's existing story-mode
-   content/roster with BIG_O's day/night/lab loop. Blocked on enough of items 1-5 landing first to
-   have real content to cut over to; `story_ai.c`'s existing `AI_ROLE_*` roster (Rift Hound,
-   Shambler Trooper, etc.) is a real, separate asset that a witness-rules integration should
-   account for rather than silently orphan.
+   content/roster with BIG_O's day/night/lab loop. Real, checked finding this pass: this is bigger
+   than every phase 1-6 combined and touches live, shipped NOCK level content, so it is itself
+   broken into sub-phases rather than attempted in one shot — see §2i. **7a landed** (the witness/
+   zombie live-event glue). **7b-7e named, not built**: the live NPC population loop, a real
+   zone-authoring feature (no zone-trigger concept exists in the level editor today), the actual
+   `AI_ROLE_*` roster cutover decision, and the day/night/lab turn structure itself.
 
 ### 3.1 Smaller, named follow-ups to the work already landed in §2
 
