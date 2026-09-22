@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-22
+- BIG_O engine merge phase 4: lab simulation (packages/simulation/lab_sim), verbatim port kept plain C (heavy float/RNG use), verified against a representative subset of BIG_O's own tests (4d5d1c2) (sess-20260920-1908-24cb3558)
 - BIG_O engine merge phase 3: humanness AI-brain extensions (npc_archetype, zombie_values), vigilance/alertness formulas moved to PARENA, verified against BIG_O's own tests (03ad5e3) (sess-20260920-1908-24cb3558)
 - BIG_O engine merge phase 2: witness/attention rules (packages/simulation/witness_sim, PARENA-driven witness_rules), verified against BIG_O's own canonical scenarios (b776d9d) (sess-20260920-1908-24cb3558)
 - BIG_O engine merge phase 1: real day/night+weather clock (PARENA-driven world_rules), weather-aware sky replacing retro_sky's fixed orbit, REFLUX becomes genuinely PARENA-powered (b126690) (sess-20260920-1908-24cb3558)
