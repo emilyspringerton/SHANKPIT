@@ -16,6 +16,8 @@ cc_binary(
         "//packages/goldenband",
         "//packages/render",
         "//packages/simulation",
+        "//packages/simulation:day_night_clock",
+        "//packages/simulation:world_alert_bridge",
         "//packages/ui",
         "//packages/world",
     ],

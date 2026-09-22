@@ -23,6 +23,7 @@ cc_library(
     hdrs = [
         "level_boxes.h",
         "spray_registry.h",
+        "story_doors.h",
         "terrain.h",
         "parena_runtime.h",
         "png_decode.h",

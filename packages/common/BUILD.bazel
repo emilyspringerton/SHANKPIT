@@ -11,6 +11,8 @@ cc_library(
         "config_loader.h",
         "mat4.h",
         "net_sim.h",
+        "pheromone.h",
+        "phone.h",
         "physics.h",
         "protocol.h",
         "shared_movement.h",

@@ -15,24 +15,73 @@ cc_library(
         "day_night_clock.c",
         "world_rules.c",
     ],
-    hdrs = ["day_night_clock.h"],
+    hdrs = [
+        "day_night_clock.h",
+        "parena_runtime.h",  # world_rules.c's own real dependency (minimal Arena/Vec/Bytes runtime)
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# witness_ai.c and its 5 real dependencies -- BIG_O engine merge SECTION 536 phases 2/3/7a/7b/7d
+# ("full phone app parity, costume changes, add The Men" follow-up). Bundled into one cc_library,
+# same "always compiled/linked together, never separately" reasoning packages/goldenband's own
+# BUILD.bazel already established -- the Makefile's own LOBBY_SRC and SERVER_SRC both always list
+# all 6 together. A real, separate target from :story_ai (not folded directly into it) because it
+# has its own real, narrower dep surface (needs //packages/world for level_boxes.h's
+# level_boxes_zone_for_position, :story_ai does not) -- :story_ai depends on this one below instead,
+# matching local_game.h's own real #include "witness_ai.h" (this Bazel build's own previously-
+# missing gap: Bazel never compiled this file at all until this fix, confirmed live via a real
+# `bazel build` -- `fatal error: humanness.h: No such file or directory` compiling story_ai.c,
+# since neither ai_nav.c/humanness.c NOR this whole family were ever wired into this file).
+cc_library(
+    name = "witness_ai",
+    srcs = [
+        "ai_brain_rules.c",
+        "npc_archetype.c",
+        "witness_ai.c",
+        "witness_rules.c",
+        "witness_sim.c",
+        "zombie_values.c",
+    ],
+    hdrs = [
+        "humanness.h",  # npc_archetype.h's own real dependency
+        "npc_archetype.h",
+        "witness_ai.h",
+        "witness_live.h",
+        "witness_sim.h",
+        "zombie_values.h",
+    ],
+    deps = [
+        "//packages/common:common_headers",
+        "//packages/world",  # witness_ai.h's own real level_boxes.h dependency (7c zone sync)
+    ],
     visibility = ["//visibility:public"],
 )
 
 # Real, deliberate two-target split -- NOT a single bundle. The Makefile's own real SERVER_SRC
-# lists ONLY story_ai.c, while LOBBY_SRC lists story_ai.c + cutscene.c + typing_lesson.c. Bundling
-# this whole directory into one cc_library (the packages/goldenband/packages/render precedent)
-# would pull cutscene.c/typing_lesson.c into the server binary, which the real Makefile never
-# does -- an unfaithful migration. cutscene_effect_mod.c/cutscene_effect_mod_test.c are genuinely
-# unreferenced anywhere in the real Makefile, CI workflows, or scripts (grepped for), so they are
-# deliberately excluded here too, matching current real build coverage rather than inventing new.
+# lists ONLY story_ai.c (+ ai_nav.c/humanness.c/the witness_ai family below), while LOBBY_SRC adds
+# cutscene.c + typing_lesson.c on top. Bundling this whole directory into one cc_library (the
+# packages/goldenband/packages/render precedent) would pull cutscene.c/typing_lesson.c into the
+# server binary, which the real Makefile never does -- an unfaithful migration.
+# cutscene_effect_mod.c/cutscene_effect_mod_test.c are genuinely unreferenced anywhere in the real
+# Makefile, CI workflows, or scripts (grepped for), so they are deliberately excluded here too,
+# matching current real build coverage rather than inventing new. ai_nav.c/humanness.c bundled
+# directly into this target's own srcs (not a separate cc_library) since story_ai.c calls straight
+# into both and both LOBBY_SRC/SERVER_SRC always compile all three together -- no real scenario
+# builds one without the other two.
 cc_library(
     name = "story_ai",
-    srcs = ["story_ai.c"],
+    srcs = [
+        "ai_nav.c",
+        "humanness.c",
+        "story_ai.c",
+    ],
     hdrs = [
+        "ai_nav.h",
         "bot_ai.h",
         "brain_weights.h",
         "game_physics.h",
+        "humanness.h",
         "local_game.h",
         "neural_net.h",
         "parena_runtime.h",
@@ -42,6 +91,27 @@ cc_library(
     deps = [
         "//packages/common:common_headers",
         "//packages/reflux",
+        ":witness_ai",  # local_game.h's own real #include "witness_ai.h"
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# world_alerts_mod.c/world_alert_bridge.c -- BIG_O engine merge phase 6 (the phone's real event
+# pipeline). Deliberately its own target, NOT folded into :story_ai or :simulation below -- the
+# Makefile's own LOBBY_SRC lists both, but SERVER_SRC lists neither (client-local only, same
+# "phone.h's own real WARDROBE/STATUS UI has no server-authoritative story yet" scope cut phase
+# 6/7e's own doc comments already name). apps/lobby depends on this directly.
+cc_library(
+    name = "world_alert_bridge",
+    srcs = [
+        "world_alert_bridge.c",
+        "world_alerts_mod.c",
+    ],
+    hdrs = ["world_alert_bridge.h"],
+    deps = [
+        "//packages/common:common_headers",  # phone.h
+        "//packages/reflux",  # REFLUX_ACTION_PHASE_CHANGED/WEATHER_CHANGED
+        ":day_night_clock",
     ],
     visibility = ["//visibility:public"],
 )

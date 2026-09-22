@@ -8,6 +8,7 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(
     name = "render",
     srcs = [
+        "bloom.c",
         "gl_shader.c",
         "proc_tex.c",
         "retro_lighting.c",
@@ -24,6 +25,7 @@ cc_library(
         "sky_weather.c",
     ],
     hdrs = [
+        "bloom.h",
         "gl_shader.h",
         "material_shaders.h",
         "proc_tex.h",
@@ -33,6 +35,9 @@ cc_library(
         "sky_weather.h",
         "sky_weather_cfg.h",
     ],
-    deps = ["//packages/common:common_headers"],
+    deps = [
+        "//packages/common:common_headers",
+        "//packages/simulation:day_night_clock",  # sky_weather.c's own real dependency
+    ],
     visibility = ["//visibility:public"],
 )
