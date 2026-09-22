@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-22
+- feat: PITVIPER added as second Apps-page entry (mirrors DEADWEIGHT's app-launcher case) (sess-20260920-1908-24cb3558)
 
 - New Apps page in the lobby menu -- launches other EINHORN_INDUSTRIAL games (DEADWEIGHT first) as real, unmodified child processes. First concrete step of the SHANKPIT-as-platform pivot (SHANKPIT_OS_NORTHSTAR.md). (sess-20260920-1908-24cb3558)
 
