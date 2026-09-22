@@ -1876,6 +1876,7 @@ typedef enum {
     APP_PITVIPER,
     APP_IDUNA_GAME,
     APP_REDGARDEN,
+    APP_EDITOR_GAME,
     APP_COUNT
 } AppsAction;
 
@@ -1884,6 +1885,7 @@ static const char *APPS_LABELS[APP_COUNT] = {
     "PITVIPER",
     "IDUNA",
     "REDGARDEN",
+    "EDITOR",
 };
 
 // lobby_page -- 0 = GAMES (the original single page, untouched), 1 = APPS (new).
@@ -2779,6 +2781,19 @@ static void lobby_launch_app(AppsAction app) {
             // it still needs a real --ticket/matchmaker connection to actually play (see
             // REDGARDEN_GUI_NORTHSTAR.md), same as running it by hand would.
             dev_relative_path = "../../REDGARDEN/build/red_garden_arena";
+            break;
+        case APP_EDITOR_GAME:
+            display_name = "EDITOR";
+#ifdef _WIN32
+            bundled_name = "editor-game.exe";
+#else
+            bundled_name = "editor-game";
+#endif
+            // EDITOR.GAME/Makefile builds straight to the repo root ("editor-game") -- a real
+            // fork of PARENA's own editor demo (PARENA/examples/editor_main.c +
+            // stdlib/editor/*.prn), unmodified save affordances (F2, hover-reveal Save button),
+            // see EDITOR.GAME/NORTHSTAR.md.
+            dev_relative_path = "../../EDITOR.GAME/editor-game";
             break;
         default:
             return;
