@@ -5,9 +5,23 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 # log, zero cross-repo dependency, per the founder's own explicit "keep all of the code in
 # shankpit". A real, standalone package -- packages/simulation/story_buttons.h and
 # packages/world/story_doors.h both depend on this, neither depends on the other through it.
+# reflux_mod.c is real, PARENA-generated glue (from PARENA/stdlib/reflux/reflux.prn, "do not edit
+# by hand") giving PARENA mods a real reflux-dispatch/reflux-log-size/etc entry point into this
+# same host log -- BIG_O/PARENA engine merge (founder real-time: "parena powered bring in reflux
+# into shankpit"). reflux_runtime.c's own reflux_host_* functions already implemented the exact
+# contract this generated file expects (S485); this was the missing wire-up. Bundled into the same
+# cc_library, same "the mod calls back into the runtime, no real cycle to split" reasoning
+# ECOWAR/packages/reflux/BUILD.bazel already documents for its own identical pairing.
 cc_library(
     name = "reflux",
-    srcs = ["reflux_runtime.c"],
-    hdrs = ["reflux_runtime.h"],
+    srcs = [
+        "reflux_mod.c",
+        "reflux_runtime.c",
+    ],
+    hdrs = [
+        "parena_runtime.h",
+        "reflux_mod_host.h",
+        "reflux_runtime.h",
+    ],
     visibility = ["//visibility:public"],
 )

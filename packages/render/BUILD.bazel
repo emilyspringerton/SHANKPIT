@@ -13,6 +13,15 @@ cc_library(
         "retro_lighting.c",
         "retro_material.c",
         "retro_sky.c",
+        # sky_weather.c -- BIG_O/PARENA engine merge phase 1 (ported in from BIG_O's
+        # bigo_sky.h/bigo_skycfg.h, split into a real .c/.h pair to match this package's own
+        # convention). Upgrades retro_sky's fixed fast-orbit dome with a real weather-aware sky
+        # (clear/overcast/rain/storm, clouds, rain, lightning), driven by
+        # packages/simulation:day_night_clock. retro_sky.c/.h stay in place unchanged --
+        # retro_lighting.c's RETRO_LIGHTING_DYNAMIC preset still reads it for scene ambient
+        # lighting; wiring that to sky_weather's own weather state is a named EMILY/BACKLOG.md
+        # SECTION 536 follow-up, not this pass.
+        "sky_weather.c",
     ],
     hdrs = [
         "gl_shader.h",
@@ -21,6 +30,8 @@ cc_library(
         "retro_lighting.h",
         "retro_material.h",
         "retro_sky.h",
+        "sky_weather.h",
+        "sky_weather_cfg.h",
     ],
     deps = ["//packages/common:common_headers"],
     visibility = ["//visibility:public"],

@@ -43,7 +43,9 @@
 #include "../../../packages/world/spray_registry.h"
 #include "../../../packages/render/proc_tex.h"
 #include "../../../packages/render/retro_sky.h"
+#include "../../../packages/render/sky_weather.h"
 #include "../../../packages/render/retro_lighting.h"
+#include "../../../packages/simulation/day_night_clock.h"
 #include "../../../packages/audio/audio.h"
 #include "../../../packages/render/gl_shader.h"
 #include "../../../packages/render/bloom.h"
@@ -779,6 +781,23 @@ static ProcTexture g_wall_ips_panel_tex = {0};
 // the brick fallback" reasoning g_wall_ips_panel_tex above already established.
 static ProcTexture g_wall_hps_bulb_tex = {0};
 static RetroSky g_retro_sky = {0};
+// g_sky_weather/g_day_night_clock -- BIG_O engine merge, phase 1 (founder real-time: "port the
+// BIG_O tech into the shankpit repo -- all of it the lighting the systems all of it... the shaders
+// the way the sun and moon look"). Real day/night + weather clock (PARENA-driven, world_rules.c)
+// and the weather-aware sky it drives, upgrading retro_sky's old fixed fast-orbit dome with real
+// clear/overcast/rain/storm states, clouds, rain, and lightning. Real, deliberate v0 scope cut:
+// the clock ticks off local wall-clock time (DAY_NIGHT_MINUTES_PER_REAL_SEC below), not yet
+// server-broadcast -- server-authoritative sync is a named, separate follow-up (see
+// EMILY/BACKLOG.md SECTION 536). retro_sky/g_retro_sky stay in place unchanged: retro_lighting.c's
+// RETRO_LIGHTING_DYNAMIC preset still reads retro_sky_eval_fog_rgb/eval_sun_dir for scene ambient
+// lighting -- wiring that to sky_weather's own real weather state is also SECTION 536 follow-up,
+// not this pass, so it's named rather than half-done.
+static SkyWeather g_sky_weather = {0};
+static DayNightClock g_day_night_clock = {0};
+// One real sim-minute per real second by default: a full 1440-minute day cycles in 24 real
+// minutes -- slow enough to actually see weather/lighting settle, fast enough to verify live in a
+// normal play session without waiting.
+#define DAY_NIGHT_MINUTES_PER_REAL_SEC 1.0f
 
 // material_texture_for_name maps a custom level's own real material name (from
 // g_custom_level_material_name, set via phys_set_custom_level_materials) to the matching real
@@ -7887,17 +7906,23 @@ void draw_scene(PlayerState *render_p) {
     }
 
     {
-        float sky_cam_x = (render_p->x + reconcile_x) - cx;
-        float sky_cam_y = (render_p->y + reconcile_y) + cam_y;
-        float sky_cam_z = (render_p->z + reconcile_z) - cz;
-        if (render_p->in_vehicle && render_p->vehicle_type == VEH_HELICOPTER) {
-            sky_cam_x = heli_cam_x;
-            sky_cam_y = heli_cam_y;
-            sky_cam_z = heli_cam_z;
-        }
-        /* draw_sky call here keeps sky rotation-locked to the camera, but camera-centered
-           in world space so the background feels infinitely distant (no translation parallax). */
-        retro_sky_draw(&g_retro_sky, sky_cam_x, sky_cam_y, sky_cam_z, now_ms * 0.001f);
+        /* BIG_O engine merge, phase 1: tick the real day/night + weather clock off wall-clock
+           time, then draw the weather-aware sky (dome/stars/sun/moon/clouds), replacing the old
+           retro_sky_draw fixed fast-orbit dome. sky_weather_draw reads the CURRENT modelview
+           (captured for GOLDENBAND skinning just above, so it's the real camera view matrix at
+           this point) and strips its translation itself -- no explicit cam_x/y/z needed, unlike
+           retro_sky_draw's old signature. */
+        static Uint32 dnc_last_ms = 0;
+        Uint32 dnc_now_ticks = SDL_GetTicks();
+        float dnc_dt_sec = (dnc_last_ms == 0) ? 0.0f : (float)(dnc_now_ticks - dnc_last_ms) * 0.001f;
+        if (dnc_dt_sec > 1.0f) dnc_dt_sec = 1.0f; /* clamp stalls/first-frame spike */
+        dnc_last_ms = dnc_now_ticks;
+        int dnc_minutes = (int)(dnc_dt_sec * DAY_NIGHT_MINUTES_PER_REAL_SEC);
+        if (dnc_minutes > 0) day_night_clock_tick(&g_day_night_clock, dnc_minutes);
+
+        sky_weather_update(&g_sky_weather, (float)day_night_clock_minute_of_day(&g_day_night_clock),
+                            (int)g_day_night_clock.weather, now_ms);
+        sky_weather_draw(&g_sky_weather);
     }
 
     RetroLightingState world_lighting;
@@ -9540,6 +9565,14 @@ int main(int argc, char* argv[]) {
     proctex_make_hps_bulb_rgba(&g_wall_hps_bulb_tex, 128, 128, 0x0951u);
     proctex_upload_to_gl(&g_wall_hps_bulb_tex);
     retro_sky_init(&g_retro_sky);
+    sky_weather_init(&g_sky_weather);
+    {
+        char skw_err[160];
+        if (sky_weather_load_config(&g_sky_weather, "assets/skybox/default.cfg", skw_err, sizeof(skw_err)) < 0) {
+            fprintf(stderr, "sky_weather: %s (using built-in defaults)\n", skw_err);
+        }
+    }
+    day_night_clock_init(&g_day_night_clock, (unsigned int)time(NULL), 8);
     net_init();
 
     local_init_match(1, 0);

@@ -1,5 +1,24 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
+# day_night_clock.c/world_rules.c -- BIG_O/PARENA engine merge phase 1 (founder real-time: "port
+# the BIG_O tech into the shankpit repo -- all of it the lighting the systems all of it"). Real
+# day/night + weather clock; world_rules.c is PARENA-generated (from PARENA/stdlib/shankpit/
+# world_rules.prn, itself copied verbatim from PARENA/stdlib/big_o/world_rules.prn -- the logic is
+# identical, SHANKPIT now owns its own stdlib domain). Deliberate v0 scope cut vs. BIG_O's own
+# World: no zombie population/Sim coupling -- see day_night_clock.h's own header for the real,
+# named reasoning. Currently only pulled into apps/lobby (packages/render:render's sky_weather.c
+# is its one real consumer); server-side tick/broadcast is a named EMILY/BACKLOG.md SECTION 536
+# follow-up, not yet wired.
+cc_library(
+    name = "day_night_clock",
+    srcs = [
+        "day_night_clock.c",
+        "world_rules.c",
+    ],
+    hdrs = ["day_night_clock.h"],
+    visibility = ["//visibility:public"],
+)
+
 # Real, deliberate two-target split -- NOT a single bundle. The Makefile's own real SERVER_SRC
 # lists ONLY story_ai.c, while LOBBY_SRC lists story_ai.c + cutscene.c + typing_lesson.c. Bundling
 # this whole directory into one cc_library (the packages/goldenband/packages/render precedent)
