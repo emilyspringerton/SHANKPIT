@@ -54,6 +54,19 @@
  * player had been looking when the threshold fired). */
 #define REFLUX_ACTION_LOOK_AT 4
 
+/* BIG_O engine merge phase 6 (EMILY/BACKLOG.md SECTION 536) -- real world-clock events, dispatched
+ * by packages/simulation/world_alert_bridge.c on every real day_night_clock (phase 1) phase/
+ * weather transition, matching PARENA/stdlib/shankpit/world_alerts_mod.prn's own expected action-
+ * type numbering (copied verbatim from BIG_O's stdlib/big_o/world_alerts_mod.prn, which reserves
+ * 103/104 for a zombie population SHANKPIT doesn't have -- kept here for numbering parity with
+ * that module even though nothing dispatches them). Payload: PHASE_CHANGED a=old phase b=new
+ * phase c=day number; WEATHER_CHANGED a=old weather b=new weather c=0 (world_alerts_mod's own
+ * zombie-density payload doesn't apply without a zombie population). */
+#define REFLUX_ACTION_PHASE_CHANGED 101
+#define REFLUX_ACTION_WEATHER_CHANGED 102
+#define REFLUX_ACTION_ZOMBIE_SPAWNED 103    /* reserved, not dispatched -- no zombie population */
+#define REFLUX_ACTION_ZOMBIE_HARVESTED 104  /* reserved, not dispatched -- no zombie population */
+
 #define REFLUX_LOG_CAPACITY 256
 
 typedef struct {

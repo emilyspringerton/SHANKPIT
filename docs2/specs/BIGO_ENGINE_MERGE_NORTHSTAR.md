@@ -214,6 +214,53 @@ same finding §2d already made for witness rules). This is the same real blocker
 primitives share: no consumer exists until phase 7 builds a live NPC spawn/tick layer. Deliberately
 not wired into `Makefile`/`BUILD.bazel` yet, same precedent already used throughout.
 
+## 2h. Phase 6 landed — the phone, and a genuinely working event pipeline (not just another standalone primitive)
+
+Founder, twice: *"the phone in story mode everything"*, *"all the events and messages on the
+phone."* This phase goes one step further than phases 2/3/5's own "correct primitive, no live
+consumer yet" pattern — it composes four pieces (three already shipped, one new this pass) into an
+actually-working, tested, end-to-end pipeline, without editing any already-shipped file:
+
+- **`packages/common/phone.h`/`phone_test.c`** — a verbatim port of BIG_O's `bigo_phone.h` (the
+  real smartphone state machine: home grid, Messages/Contacts/Map/Camera/Notes/Lab/Cargo/Skills/
+  Loadout/Wardrobe/Status apps, and the notification system with its real anti-spam rule — max 2
+  banners per 30s, the rest queued and released as a batched summary). `BigoPhone`→`Phone`,
+  `bigo_phone_*`→`phone_*`; the `Bp`/`BP_` prefix on enums/constants is kept (not overtly
+  BIG_O-branded, dozens of call sites, no real value in a purely cosmetic rename). Verified with a
+  faithful, verbatim port of BIG_O's own comprehensive single-file test — passes unchanged.
+- **`PARENA/stdlib/shankpit/world_alerts_mod.prn`** — copied from `stdlib/big_o/
+  world_alerts_mod.prn` (a real REFLUX subscriber: polls the shared action log, decides whether a
+  world event deserves a phone message and which one — nightfall/daybreak/storm/brute-sighted),
+  generated into `packages/simulation/world_alerts_mod.c`.
+- **`REFLUX_ACTION_PHASE_CHANGED`/`WEATHER_CHANGED`/`ZOMBIE_SPAWNED`/`ZOMBIE_HARVESTED`** added to
+  `packages/reflux/reflux_runtime.h` (101-104, matching `world_alerts_mod.prn`'s own expected
+  numbering) — the zombie ones stay reserved-not-dispatched (no zombie population exists), matching
+  that file's own already-established convention for `PROXIMITY_ENTER`/`EXIT`/`LOOK_AT`.
+- **`packages/simulation/world_alert_bridge.{h,c}`** — new this pass, the real glue: on every real
+  tick, detects a `day_night_clock` (phase 1) phase/weather transition, dispatches the matching
+  REFLUX event (phase 1c's PARENA-powered REFLUX), polls the log, asks `world_alerts_mod` whether
+  it deserves a message, and calls `phone_notify` if so. Composes four independently-shipped
+  pieces without modifying any of them — day_night_clock.c, reflux_mod.c, and phone.h are all
+  untouched by this file. **Real, named limitation, not papered over:** the polling cursor uses
+  REFLUX's own PARENA-exposed relative indexing (no total-dispatched counter is exposed at that
+  layer), so it can theoretically drift if 256+ *other* REFLUX events (from unrelated systems —
+  the log is global) land between two of this bridge's own ticks; calling it every real game tick,
+  as intended, makes that practically unreachable for the 1-2 events this bridge itself dispatches,
+  but it's a real, structural property of the current REFLUX polling contract, stated plainly.
+
+**Verified live, end to end, not just per-piece:** `world_alert_bridge_test.c` runs a real
+`DayNightClock` through an actual DAWN→DAY transition and a forced STORM, confirming the message
+genuinely round-trips through the real REFLUX log (not a mock) and lands on the real `Phone`
+struct with the exact message ids `world_alerts_mod`'s own mapping specifies (3 = daybreak, 4 =
+storm) — plus a negative check that a no-op tick raises nothing. All pass.
+
+**Real, honest remaining gap:** none of this is drawn on screen. `phone.h`'s state machine and
+`phone_set_world` (fed by `day_night_clock`'s own minute/day/phase/weather) are real and tested,
+but `apps/lobby/src/main.c` has no 2D text/menu rendering path wired to actually display a phone
+UI, and no input binding (a key to open it) exists yet. That's real, separate client-rendering
+work, not named as its own phase number since it's a natural continuation of this one once a
+render pass is scoped — tracked as a follow-up below.
+
 ## 3. Not landed this pass — named, phased into `EMILY/BACKLOG.md` SECTION 536
 
 The founder's own follow-up messages during this pass ("the shaders the way the sun and moon look
@@ -231,13 +278,10 @@ additional scope beyond the sky/clock/REFLUX slice above. None of the below is b
    `ServerNpc` array, and SHANKPIT has no equivalent live zombie/citizen entity array to dispatch
    against yet. Real blocker for both this and the pheromone consumer: phase 7 needs to build that
    entity layer first.
-5. **The phone: events and messages** (founder: *"the phone in story mode everything"*, *"all the
-   events and messages on the phone"*) — BIG_O's `day/packages/common/bigo_phone.h` +
-   `world_alerts_mod.prn`/`world_alerts.c` (already PARENA — `PARENA/stdlib/big_o/
-   world_alerts_mod.prn`, reacting to REFLUX-logged world events and raising phone message ids).
-   This is a real, standalone UI feature (a phone screen showing a message list) that SHANKPIT has
-   no equivalent of today — needs its own scoping pass (what renders it, HUD toggle, message
-   content) rather than a blind file copy.
+5. ~~The phone: events and messages~~ — **landed, see §2h**: the real state machine, notification
+   system, and a genuinely working event pipeline (day/night clock → REFLUX → alert decision →
+   phone message). Not yet rendered on screen (no SDL2 draw path wired) — see §2h for the real,
+   remaining gap.
 6. **`MODE_STORY` content cutover** — the actual replacement of SHANKPIT's existing story-mode
    content/roster with BIG_O's day/night/lab loop. Blocked on enough of items 1-5 landing first to
    have real content to cut over to; `story_ai.c`'s existing `AI_ROLE_*` roster (Rift Hound,
@@ -256,6 +300,13 @@ additional scope beyond the sky/clock/REFLUX slice above. None of the below is b
 - **BIG_O's own `core/reflux_runtime.c` divergence.** Confirmed real and different from SHANKPIT's
   (`diff` non-empty) — BIG_O's own REFLUX never gets PARENA-powered by this pass; only SHANKPIT's
   does. Out of scope here since BIG_O isn't the target repo for this merge.
+- **Phone rendering.** §2h's phone state machine/notification system is real and tested but not
+  drawn on screen — no 2D text/menu render path in `apps/lobby/src/main.c`, no input binding to
+  open it. Real, separate client-rendering scoping work.
+- **`day_night_clock` server-side ticking.** §2h's `world_alert_bridge` needs a live
+  `DayNightClock`/`Phone` pair to tick against; today only `apps/lobby` has one (client-local, per
+  the day/night sync gap above), so the bridge has nothing to run against in a real multiplayer
+  session yet either.
 
 ## 4. Ownership going forward
 
