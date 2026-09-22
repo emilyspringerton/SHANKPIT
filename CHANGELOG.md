@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-22
+- BIG_O engine merge phase 1: real day/night+weather clock (PARENA-driven world_rules), weather-aware sky replacing retro_sky's fixed orbit, REFLUX becomes genuinely PARENA-powered (b126690) (sess-20260920-1908-24cb3558)
 - Scaled QUEUE bot pool from 40 to 12 (founder real-time); repo unit file also caught up from stale 3 to match deployed reality (04720e9) (sess-20260920-1908-24cb3558)
 - docs: new `docs2/specs/CAPTCHA_FPS_PHYSICS_DOGFOOD_NORTHSTAR.md` (founder real-time: "dog food
   all of the physics for shankpit into parena - the new product is a CAPTCHA that spawns an in
