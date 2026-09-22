@@ -113,7 +113,23 @@ jobs:
           # the next Windows build (gseq_clip_load/gpose_compute_skin_matrices/gsync_*/
           # gband_skel_npc_load_kit all missing). Added to this hand-copy and release.yml's own
           # copy in the same pass.
-          x86_64-w64-mingw32-gcc apps/lobby/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/cutscene.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/render/bloom.c packages/world/terrain.c packages/world/parena_runtime.c packages/world/png_decode_gen.c packages/reflux/reflux_runtime.c packages/audio/audio.c packages/goldenband/gband.c packages/goldenband/gband_mesh_rig.c packages/goldenband/gmesh.c packages/goldenband/gskel.c packages/goldenband/gseq.c packages/goldenband/gpose.c packages/goldenband/gsync.c packages/goldenband/gband_skel_npc.c \
+          # SIXTH real recurrence (2026-09-22, BIG_O engine merge SECTION 536 phases 1/1c/7):
+          # packages/simulation/typing_lesson.c, day_night_clock.c, world_rules.c,
+          # packages/render/sky_weather.c, and packages/reflux/reflux_mod.c were each added to the
+          # Makefile's own LOBBY_SRC (and reflux_mod.c to SERVER_SRC below) across several commits
+          # but never made it into this hand-copy or release.yml's own -- confirmed live via the
+          # real GitHub Actions API job log (run 35764647139) before fixing. A SECOND real, distinct
+          # bug found in the same pass: packages/simulation/parena_runtime.h and
+          # packages/reflux/parena_runtime.h were an accidentally-oversized copy of the full PARENA
+          # runtime (unconditional `#include <SDL2/SDL_ttf.h>`, never actually referenced by
+          # anything in either package -- their only prior consumer, cutscene_effect_mod.c, has no
+          # Makefile entry, so this never got exercised before), and this Windows job's SDL2 mingw
+          # devel kit doesn't ship SDL2_ttf at all. Fixed at the source (both headers replaced with
+          # the same minimal, already-CI-proven Arena/Vec/Bytes-only copy
+          # packages/world/parena_runtime.h already uses for png_decode_gen.c). See release.yml's
+          # own copy of this same fix for the full account. Also adds the missing
+          # -Ipackages/reflux this hand-copy never carried (release.yml's own copy already had it).
+          x86_64-w64-mingw32-gcc apps/lobby/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/cutscene.c packages/simulation/typing_lesson.c packages/simulation/day_night_clock.c packages/simulation/world_rules.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/sky_weather.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/render/bloom.c packages/world/terrain.c packages/world/parena_runtime.c packages/world/png_decode_gen.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c packages/audio/audio.c packages/goldenband/gband.c packages/goldenband/gband_mesh_rig.c packages/goldenband/gmesh.c packages/goldenband/gskel.c packages/goldenband/gseq.c packages/goldenband/gpose.c packages/goldenband/gsync.c packages/goldenband/gband_skel_npc.c \
             -o ShankPit.exe \
             -O2 -static-libgcc \
             -I./sdl2_mingw/include \
@@ -121,6 +137,7 @@ jobs:
             -Ipackages/common \
             -Ipackages/simulation \
             -Ipackages/render \
+            -Ipackages/reflux \
             -Ipackages/world \
             -Ipackages/audio \
             -Ipackages/goldenband \
@@ -134,7 +151,7 @@ jobs:
           set -euo pipefail
           test -f apps/server/src/main.c
 
-          gcc apps/server/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/world/terrain.c packages/reflux/reflux_runtime.c \
+          gcc apps/server/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/world/terrain.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c \
             -o ShankServer_Linux \
             -O2 -static \
             -I. \
