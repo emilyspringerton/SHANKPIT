@@ -45,6 +45,27 @@ Internally, the client also recognizes additional local mode IDs such as `battle
 
 ---
 
+## Apps page (2026-09-22, platform pivot)
+
+The lobby menu now has a second page — a small "APPS >" button next to the title flips from the
+GAMES grid above to an APPS grid listing other EINHORN_INDUSTRIAL games as launchable entries
+(currently just DEADWEIGHT). Selecting one (same double-click-to-activate convention the GAMES
+page already uses) launches that game's own real, unmodified native binary as a child process —
+SHANKPIT never reimplements another game's UI, it just launches it. This is the first concrete
+step of the "SHANKPIT is the platform, other games are apps inside it" pivot — see
+`docs/SHANKPIT_OS_NORTHSTAR.md` for the full scoping.
+
+**Honest current status**: real and working (path resolution + process launch verified via a
+direct standalone harness, real `fork`/`execl` on Linux, `CreateProcess` on the Windows
+cross-build), but the "bundled" binary isn't actually bundled/shipped with a SHANKPIT release
+yet — it falls back to this monorepo's own sibling-repo dev layout
+(`../../DEADWEIGHT/build/dw_gui`, relative to wherever `shank_lobby` itself runs from), which only
+resolves correctly in this monorepo's own local dev checkout. Real packaging (copying DEADWEIGHT's
+binary into a `bundled/` directory next to a release build of `shank_lobby`) is separate,
+not-yet-built follow-up work.
+
+---
+
 ## Current worlds / scenes
 
 SHANKPIT is now a multi-scene game rather than a single arena. The active scene list in the current construct includes:

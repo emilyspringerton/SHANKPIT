@@ -1861,6 +1861,28 @@ static const char *LOBBY_LABELS[LOBBY_COUNT] = {
     "CTFB"
 };
 
+// APPS page -- founder real-time, 2026-09-22 (SHANKPIT_OS_NORTHSTAR.md): "we need the games
+// bundlable into shankpit... all of their interfaces will remain the same... we do it with GFD
+// GUI BATTLEGROUNDS" / "SHANKPIT ADD A SECOND PAGE OF THE MENU FOR APPS". This is the real
+// second page: a separate button grid, same LOBBY_LAYOUT/draw_lobby_buttons/lobby_hit_test the
+// GAMES page already uses, listing other EINHORN_INDUSTRIAL games as launchable entries.
+// "Interfaces remain the same" is taken literally -- an app entry launches that game's own real,
+// unmodified native binary as a child process (lobby_launch_app below), never a reimplementation
+// of its UI inside SHANKPIT. Bundling/distribution (shipping the child binary alongside a real
+// SHANKPIT release) is real, separate, not-yet-built follow-up work -- see this file's own
+// lobby_app_binary_path doc comment for the honest current-state path search.
+typedef enum {
+    APP_DEADWEIGHT = 0,
+    APP_COUNT
+} AppsAction;
+
+static const char *APPS_LABELS[APP_COUNT] = {
+    "DEADWEIGHT",
+};
+
+// lobby_page -- 0 = GAMES (the original single page, untouched), 1 = APPS (new).
+static int lobby_page = 0;
+
 static void lobby_init_labels() {
     for (int i = 0; i < LOBBY_COUNT; i++) {
         snprintf(lobby_labels_mutable[i], sizeof(lobby_labels_mutable[i]), "%s", LOBBY_LABELS[i]);
@@ -2494,7 +2516,13 @@ static void toggle_fullscreen(void) {
     save_display_config();
 }
 
+// lobby_menu_count/_label/_entry_id are page-aware: lobby_page==1 (APPS) is a real, separate,
+// much simpler menu -- no SKINS slot, no server-pushed REFLUX entries (those are a GAMES-page
+// concept), just the real app list plus one trailing "< GAMES" button back to page 0.
 static int lobby_menu_count() {
+    if (lobby_page == 1) {
+        return APP_COUNT + 1;
+    }
     if (ui_use_server && ui_state.entry_count > 0) {
         return ui_state.entry_count + 1;
     }
@@ -2502,8 +2530,13 @@ static int lobby_menu_count() {
 }
 
 static const char *lobby_menu_label(int idx) {
-    int skins_idx = lobby_menu_count() - 1;
-    if (idx == skins_idx) {
+    int last_idx = lobby_menu_count() - 1;
+    if (lobby_page == 1) {
+        if (idx == last_idx) return "< GAMES";
+        if (idx >= 0 && idx < APP_COUNT) return APPS_LABELS[idx];
+        return "";
+    }
+    if (idx == last_idx) {
         return "SKINS";
     }
     if (ui_use_server && idx >= 0 && idx < ui_state.entry_count) {
@@ -2513,8 +2546,11 @@ static const char *lobby_menu_label(int idx) {
 }
 
 static const char *lobby_menu_entry_id(int idx) {
-    int skins_idx = lobby_menu_count() - 1;
-    if (idx == skins_idx) {
+    int last_idx = lobby_menu_count() - 1;
+    if (lobby_page == 1) {
+        return NULL;
+    }
+    if (idx == last_idx) {
         return "menu.skins";
     }
     if (ui_use_server && idx >= 0 && idx < ui_state.entry_count) {
@@ -2644,7 +2680,106 @@ static void setup_lobby_2d() {
     glLoadIdentity();
 }
 
+// app_launch_status -- real, honest, on-screen feedback (never silent) for lobby_launch_app
+// below; drawn next to the page-toggle button whenever non-empty.
+static char app_launch_status[160] = "";
+
+// lobby_app_binary_path -- real path search, documented rather than hand-waved: the intended
+// real distribution shape is `<dir the SHANKPIT binary itself runs from>/bundled/<name>`
+// (nothing populates that directory yet -- real, separate packaging/CI follow-up, not built in
+// this pass) with a fallback to this monorepo's own sibling-repo dev layout
+// (`../DEADWEIGHT/build/dw_gui`) so launching actually works today, in this repo's own real dev
+// environment, rather than only after a packaging step that doesn't exist yet. Returns 1 and
+// fills `out` on success, 0 (out untouched) if nothing was found at either location.
+static int lobby_app_binary_path(const char *bundled_name, const char *dev_relative_path, char *out, size_t out_sz) {
+    char *base = SDL_GetBasePath();
+    if (base) {
+        char candidate[1024];
+        snprintf(candidate, sizeof candidate, "%sbundled/%s", base, bundled_name);
+        FILE *f = fopen(candidate, "rb");
+        if (f) {
+            fclose(f);
+            snprintf(out, out_sz, "%s", candidate);
+            SDL_free(base);
+            return 1;
+        }
+        char dev_candidate[1024];
+        snprintf(dev_candidate, sizeof dev_candidate, "%s%s", base, dev_relative_path);
+        f = fopen(dev_candidate, "rb");
+        if (f) {
+            fclose(f);
+            snprintf(out, out_sz, "%s", dev_candidate);
+            SDL_free(base);
+            return 1;
+        }
+        SDL_free(base);
+    }
+    return 0;
+}
+
+// lobby_launch_app -- "all of their interfaces will remain the same" taken literally: spawns the
+// target game's own real, unmodified native binary as a child process. SHANKPIT never regains
+// control of that window; the two run as independent processes side by side (same real relationship
+// a taskbar has to the apps it launches), matching the founder's own explicit framing that this is
+// bundling/launching, not a UI reimplementation.
+static void lobby_launch_app(AppsAction app) {
+    const char *bundled_name, *dev_relative_path, *display_name;
+    switch (app) {
+        case APP_DEADWEIGHT:
+            display_name = "DEADWEIGHT";
+#ifdef _WIN32
+            bundled_name = "dw_gui.exe";
+#else
+            bundled_name = "dw_gui";
+#endif
+            dev_relative_path = "../../DEADWEIGHT/build/dw_gui";
+            break;
+        default:
+            return;
+    }
+    char path[1024];
+    if (!lobby_app_binary_path(bundled_name, dev_relative_path, path, sizeof path)) {
+        snprintf(app_launch_status, sizeof app_launch_status,
+                 "%s not found (not bundled yet -- see lobby_app_binary_path)", display_name);
+        return;
+    }
+#ifdef _WIN32
+    STARTUPINFOA si; PROCESS_INFORMATION pi;
+    ZeroMemory(&si, sizeof si); si.cb = sizeof si;
+    ZeroMemory(&pi, sizeof pi);
+    if (CreateProcessA(path, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        snprintf(app_launch_status, sizeof app_launch_status, "Launched %s", display_name);
+    } else {
+        snprintf(app_launch_status, sizeof app_launch_status, "Failed to launch %s (CreateProcess error %lu)", display_name, GetLastError());
+    }
+#else
+    pid_t pid = fork();
+    if (pid == 0) {
+        execl(path, path, (char *)NULL);
+        _exit(127); // execl only returns on failure
+    } else if (pid > 0) {
+        snprintf(app_launch_status, sizeof app_launch_status, "Launched %s", display_name);
+    } else {
+        snprintf(app_launch_status, sizeof app_launch_status, "Failed to launch %s (fork failed)", display_name);
+    }
+#endif
+}
+
 static void lobby_start_action(int action) {
+    if (lobby_page == 1) {
+        int back_idx = lobby_menu_count() - 1;
+        if (action == back_idx) {
+            lobby_page = 0;
+            lobby_selection = 0;
+            return;
+        }
+        if (action >= 0 && action < APP_COUNT) {
+            lobby_launch_app((AppsAction)action);
+        }
+        return;
+    }
     if (action == lobby_menu_count() - 1) {
         skin_menu_open = 1;
         skin_menu_selection = clamp_skin_id(g_selected_skin);
@@ -7875,6 +8010,32 @@ static int lobby_hit_test(float mx, float my, int menu_count, const LobbyLayout 
     return -1;
 }
 
+// lobby_page_toggle_rect / _draw / _hit_test -- the real "second page" affordance itself: a
+// small, always-visible button near the title, independent of the main button grid (and its
+// numeric LobbyAction/AppsAction indices, which stay untouched by this) so flipping pages can
+// never collide with grid hit-testing or the grid's own double-click-to-activate/
+// single-click-to-rename timing.
+static void lobby_page_toggle_rect(float *x, float *y, float *w, float *h) {
+    *x = 1040.0f; *y = 24.0f; *w = 200.0f; *h = 44.0f;
+}
+
+static void lobby_page_toggle_draw(void) {
+    float x, y, w, h;
+    lobby_page_toggle_rect(&x, &y, &w, &h);
+    glColor3f(0.2f, 0.6f, 0.6f); // light teal, matching draw_lobby_buttons' own palette
+    glRectf(x, y, x + w, y + h);
+    glColor3f(0.0f, 0.0f, 0.0f);
+    draw_string(lobby_page == 0 ? "APPS >" : "< GAMES", x + 16.0f + 2.0f, y + h * 0.5f - 2.0f, 5);
+    glColor3f(0.98f, 0.98f, 1.0f);
+    draw_string(lobby_page == 0 ? "APPS >" : "< GAMES", x + 16.0f, y + h * 0.5f, 5);
+}
+
+static int lobby_page_toggle_hit_test(float mx, float my) {
+    float x, y, w, h;
+    lobby_page_toggle_rect(&x, &y, &w, &h);
+    return (mx >= x && mx <= x + w && my >= y && my <= y + h);
+}
+
 static int skin_menu_visible_count(void) {
     return 4;
 }
@@ -9548,6 +9709,13 @@ int main(int argc, char* argv[]) {
                         }
                         continue;
                     }
+                    if (lobby_page_toggle_hit_test(mx, my)) {
+                        lobby_page = (lobby_page == 0) ? 1 : 0;
+                        lobby_selection = 0;
+                        ui_last_click_ms = 0;
+                        ui_last_click_index = -1;
+                        continue;
+                    }
 
                     int menu_count = lobby_menu_count();
                     int hit = lobby_hit_test(mx, my, menu_count, &LOBBY_LAYOUT);
@@ -9562,7 +9730,7 @@ int main(int argc, char* argv[]) {
                                 ui_last_click_index = -1;
                             } else if (delta <= 700) {
                                 lobby_selection = hit;
-                                if (hit != lobby_menu_count() - 1) {
+                                if (lobby_page == 0 && hit != lobby_menu_count() - 1) {
                                     lobby_start_edit(hit);
                                 } else {
                                     lobby_start_action(hit);
@@ -9725,7 +9893,12 @@ int main(int argc, char* argv[]) {
              glClear(GL_COLOR_BUFFER_BIT);
              setup_lobby_2d();
              glColor3f(0, 1, 1); // CYAN TEXT
-             draw_string("SHANKPIT", LOBBY_LAYOUT.title_x, LOBBY_LAYOUT.title_y, 12);
+             draw_string(lobby_page == 0 ? "SHANKPIT" : "SHANKPIT / APPS", LOBBY_LAYOUT.title_x, LOBBY_LAYOUT.title_y, 12);
+             lobby_page_toggle_draw();
+             if (app_launch_status[0]) {
+                 glColor3f(0.95f, 0.9f, 0.2f);
+                 draw_string(app_launch_status, 1040.0f, 80.0f, 4);
+             }
              int menu_count = lobby_menu_count();
              draw_lobby_buttons(menu_count, &LOBBY_LAYOUT);
              if (skin_menu_open) {
