@@ -165,6 +165,31 @@ aggression drift direction. All pass (`ai_brain_test.c`). Deliberately not wired
 `Makefile`/`BUILD.bazel` yet, same `cutscene_effect_mod.c` precedent §2d already used — no live
 consumer exists (phase 7).
 
+## 2f. Phase 4 landed — lab simulation, ported verbatim (kept plain C, not PARENA)
+
+`packages/simulation/lab_sim.{h,c}` — a verbatim port of BIG_O's `core/lab_sim.{h,c}` (the
+cloning-facility equipment pipeline: centrifuge, PCR thermocycler, sequencer/bioinformatics
+readout, CRISPR splice bench, repressor/kill-switch install, breeding/genetic drift, embryo
+incubation). No renaming needed — zero BIG_O-specific type names in this module to begin with.
+
+**Deliberately kept plain C, not moved to PARENA**, unlike phase 3's formulas — checked, not
+assumed: this module is saturated with float math (`expf`/`powf` for diminishing-returns/
+exponential-amplification curves) and RNG (Box-Muller sequencer noise, splice-outcome probability
+rolls), none of which fits PARENA's scalar I32/Bool, no-RNG VS0 model. This matches the module's
+own already-documented reasoning ("not currently expected to need mod-author tuning") and is a
+real, different judgment call than phase 3's — not a blanket "everything becomes PARENA" policy.
+
+**Verified with a representative subset of BIG_O's own 17 real tests** (`lab_sim_test.c`, 7
+checks covering every equipment function's real contract at least once) — since this is a
+verbatim, zero-logic-transformation port (unlike phase 3), full re-derivation of all 17 wasn't
+needed to establish confidence the same way it was for the PARENA move. One real, live-found bug
+in this test's own first draft, not the port: a genetic-drift-never-decreases check that bred a
+growing-drift line against a fixed low-drift constant partner every generation, which pulls the
+*average* down even though each individual breeding step's own gain is one-way positive — fixed by
+matching BIG_O's own real test methodology (the partner's drift is set to match the line's current
+drift each generation before breeding). All 7 checks pass. Deliberately not wired into
+`Makefile`/`BUILD.bazel` yet, same precedent §2d/§2e already used — no live consumer (phase 6/7).
+
 ## 3. Not landed this pass — named, phased into `EMILY/BACKLOG.md` SECTION 536
 
 The founder's own follow-up messages during this pass ("the shaders the way the sun and moon look
@@ -174,10 +199,8 @@ additional scope beyond the sky/clock/REFLUX slice above. None of the below is b
 1. ~~Witness/Attention rules~~ — **landed, see §2d.** As a standalone, tested primitive
    (`witness_sim.{h,c}`), not yet wired into a live NPC spawn/render layer (that's phase 7).
 2. ~~Humanness AI-brain extensions~~ — **landed, see §2e.**
-3. **Lab simulation** (`core/lab_sim.c`, 17 tests, plain C) — the cloning-facility equipment
-   pipeline (centrifuge/PCR/sequencer/CRISPR splice/breeding/incubation). Real, headless, already
-   proven in BIG_O; needs a SHANKPIT-side UI (the phone screen, §4) and server wiring, neither of
-   which exist in either repo yet (BIG_O's own NORTHSTAR §9 names the same gap).
+3. ~~Lab simulation~~ — **landed, see §2f.** Still needs a SHANKPIT-side UI (the phone, phase 6)
+   and server wiring, neither of which exist yet.
 4. **Pheromone command tools** (`day/packages/common/bigo_pheromone.h`) + **The Men's dispatch
    loop** (`server_tick_witness`/`server_tick_dispatch` in BIG_O's `apps/server/src/main.c`) — real,
    live-verified in BIG_O, needs porting into `apps/server/src/main.c` alongside a new wire packet
