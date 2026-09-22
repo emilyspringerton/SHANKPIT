@@ -261,7 +261,7 @@ UI, and no input binding (a key to open it) exists yet. That's real, separate cl
 work, not named as its own phase number since it's a natural continuation of this one once a
 render pass is scoped — tracked as a follow-up below.
 
-## 2i. Phase 7a landed — witness/zombie live-event glue (the real answer to phases 2/3/5's "no live entity array" blocker)
+## 2i. Phase 7a+7b landed — witness/zombie live-event glue, and the real live population/tick loop that consumes it
 
 Phase 7 (`MODE_STORY` content cutover) is far bigger than any phase landed so far — checked
 directly before starting: `story_ai.c` is 1418 real lines (squads, patrol, nav graph, leash,
@@ -283,17 +283,44 @@ V0, phase the rest), phase 7 is broken into sub-phases; this pass lands the firs
   Verified with a faithful, verbatim replay of BIG_O's own 8 real assertions (`witness_live_test.c`)
   — all pass, zero behavior drift. Standalone primitive, no Makefile/BUILD.bazel entry yet (same
   "no build-graph entry without a real consumer" discipline as phases 2/3/5), since the actual
-  live population loop that calls it doesn't exist yet — see phase 7b below.
+  live population loop that calls it landed in the same pass — see 7b below.
+- **`packages/simulation/witness_ai.h`/`.c`/`witness_ai_test.c`** (phase 7b) — the real
+  `ServerNpc`-shaped population/tick loop 7a's own header named as its still-open follow-up.
+  Checked directly before writing it: SHANKPIT already has the right shape for this — not a new
+  concept, the same "bot occupies a real `PlayerState` slot" convention `story_ai.c`'s own
+  `story_ai_spawn_enemy` already uses (`MAX_CLIENTS`=70 slots, `s->players[i]`), which every
+  connected client already renders/networks for free. `witness_ai_spawn_citizen`/
+  `witness_ai_spawn_zombie` allocate into that same slot pool (independent of `story_ai.c`'s own
+  `g_story_ai` bookkeeping — the two systems share only the slot pool, nothing else).
+  `witness_ai_tick` composes FOUR already-shipped pieces into one genuinely live pipeline, same
+  "compose, don't just add another standalone primitive" discipline phase 6's own
+  `world_alert_bridge` established: ticks each citizen's `NpcBrain` (phase 3) and writes its real,
+  mood-modulated effective vigilance back into the owned `WitnessSim` (phase 2) npc entry; ticks
+  each zombie's `ZombieState` (phase 3); then runs the actual `witness_live.h` (7a) integration
+  pass — every zombie whose current mood is a loud event gets a real, radius-gated witness count
+  against every live citizen, and each in-range citizen's own witness state updates accordingly.
+  **Verified live, end to end:** `witness_ai_test.c` builds a real `ServerState`, spawns real
+  citizens/zombies into real `PlayerState` slots, and proves the full chain — a DORMANT zombie
+  raises nothing; a forced-HUNTING zombie witnessed by one low-arrogance citizen escalates it to
+  DENIAL; `WITNESS_LIVE_DETECTION_RADIUS` genuinely excludes an out-of-range citizen while
+  including a near one; 5 in-range low-arrogance witnesses escalate the whole group to SILENCING
+  (`witness_rules.c`'s own real `silence_threshold()`); and the vigilance write-back is real, not
+  discarded (asserts the exact citizen-archetype base, 35, distinct from the 40 passed at spawn
+  time). All 6 checks pass. Standalone still — no Makefile/BUILD.bazel entry (no real gameplay
+  trigger spawns these yet, that's 7c/7d/7e).
+
+**Real, deliberate scope cuts in `witness_ai.c`, named plainly in its own header comment, not
+papered over:** no movement/patrol/wander AI (citizens and zombies stand at their spawn point —
+`pheromone.h`'s phase 5 steering primitive is a real, not-yet-wired candidate for a future pass);
+`zombie_tick`'s own `has_target` is always passed 0 (no player-perception/line-of-sight system
+exists yet, so a zombie only reaches HUNTING/FRENZIED via the test/debug
+`witness_ai_force_zombie_mood` hook or a future trigger); no resolution/memory-wipe loop (The
+Men's own dispatch loop — once a citizen escalates to SILENCING/PANIC/ENGAGE it stays there,
+`witness_live_next_state_for_event`'s own real persistence rule, until something calls the
+`resolved=1` path, which nothing does yet).
 
 **Real, honest, not landed this pass (named, not built):**
 
-- **Phase 7b — the live NPC population/tick loop.** The actual `ServerNpc`-shaped array this
-  glue's caller needs. Checked directly: SHANKPIT already HAS the right shape for this — it's not
-  a new concept, it's the same "bot occupies a real `PlayerState` slot" convention `story_ai.c`'s
-  own `story_ai_spawn_enemy` already uses (`MAX_CLIENTS`=70 slots, `s->players[i]`), which every
-  connected client already renders/networks for free. Phase 7b is spawning witness-sim citizens
-  and zombie-mood-driven NPCs into that same slot convention and ticking them each server frame —
-  real, buildable, not started this pass.
 - **Phase 7c — a real zone-authoring feature.** Checked directly: `packages/world/level_boxes.h`
   has NO zone-trigger concept at all today (`ZONE_PUBLIC`/`LAB`/`EXEC`/`GENERATOR`/`VAULT` are a
   pure enum with nothing in a level that assigns a region to one). Witness-sim's whole social-
@@ -332,8 +359,9 @@ additional scope beyond the sky/clock/REFLUX slice above. None of the below is b
 6. **`MODE_STORY` content cutover** — the actual replacement of SHANKPIT's existing story-mode
    content/roster with BIG_O's day/night/lab loop. Real, checked finding this pass: this is bigger
    than every phase 1-6 combined and touches live, shipped NOCK level content, so it is itself
-   broken into sub-phases rather than attempted in one shot — see §2i. **7a landed** (the witness/
-   zombie live-event glue). **7b-7e named, not built**: the live NPC population loop, a real
+   broken into sub-phases rather than attempted in one shot — see §2i. **7a+7b landed** (the
+   witness/zombie live-event glue, and the real live NPC population/tick loop that consumes it —
+   verified end to end against a real `ServerState`). **7c-7e named, not built**: a real
    zone-authoring feature (no zone-trigger concept exists in the level editor today), the actual
    `AI_ROLE_*` roster cutover decision, and the day/night/lab turn structure itself.
 
