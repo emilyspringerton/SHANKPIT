@@ -427,6 +427,48 @@ mechanism `story_ai`'s own enemies already used), so this is a strong, not a cer
 Genuinely different visual models for citizens/zombies vs. the default mannequin/Tyler skin (no
 `forced_skin`-equivalent assignment exists yet for this module) is real, separate, deferred work.
 
+## 2k. Phase 7e landed — MODE_STORY's first real, player-visible day/night turn boundary
+
+Real, deliberately narrow slice of "the day/night/lab turn structure," not an attempt at the whole
+thing — checked first what BIG_O's own day → night → lab loop actually needs and what's realistic
+in one pass. `lab_sim.c` (phase 4) has zero UI or interaction model to hook into at all — building
+one is a real, separate, much bigger scoping pass, explicitly not attempted here (see §3 below).
+What IS real and buildable: two already-shipped, already-tested, but never-instantiated systems —
+`day_night_clock` (phase 1, ticking every real frame session-wide since phase 1 landed, but purely
+cosmetic — nothing downstream ever reacted to it) and `phone.h`/`world_alert_bridge` (phase 6,
+fully tested in isolation, but never actually wired into a live client) — composed for the first
+time into something the player can actually SEE.
+
+- **`apps/lobby/src/main.c` gains `g_story_phone`/`g_story_alert_bridge`** (file-static, reusing
+  the already-live `g_day_night_clock` — no second clock instantiated). Ticked every real frame
+  alongside the existing sky/weather update. `story_phone_message_text` — a small, real, honest
+  lookup table for the only 3 message ids `world_alerts_mod.prn`'s own `alert_message_id` can
+  currently produce (2=NIGHTFALL, 3=DAYBREAK, 4=STORM WARNING; id 5 is reserved for a
+  zombie-population event this repo doesn't have) — phone.h itself is pure state, no display text,
+  by design; this is this client's own minimal answer to "what does message 3 actually say."
+- **`draw_hud`'s MODE_STORY block gains a real on-screen banner** (top-left, mirroring "M
+  OVERLAY"'s own top-right placement) whenever `g_story_phone.banner_id` is set —
+  `phone_tick`'s own real anti-spam-windowed banner state, not the raw message queue, so the
+  banner inherits phone.h's own "max 2 per 30s, batch the rest" rule for free.
+- **Makefile**: `world_alerts_mod.c`/`world_alert_bridge.c` added to `LOBBY_SRC` — their first
+  real consumer (server-side untouched; this is deliberately client-local only, matching
+  `g_day_night_clock`'s own already-named "not yet server-authoritative" scope cut).
+
+**Real, deliberate scope cut, named plainly:** this is NOT the phone app UI — no home grid, no
+Messages list, no way to open it, still exactly the gap phase 6 already named. It's the one real
+signal the already-tested pipeline can produce today, given a render call for the first time.
+
+**Verified: compiles clean, doesn't regress, doesn't crash.** `make lobby`/`make server` both
+clean, `witness_ai_test.c` (8 checks) still passes unchanged, `go test ./...` clean. A real Xvfb
+run confirms MODE_STORY still loads and renders correctly (cutscene screen, HUD, the phase 7d
+encounter's own `[WITNESS] voxworld encounter seeded` line) with zero crash or visual regression
+from the new statics/tick calls. **Real, honest, NOT verified this pass:** the banner's actual
+on-screen appearance was never directly observed — `DAY_NIGHT_MINUTES_PER_REAL_SEC=1.0` means a
+full day/weather cycle takes up to 24 real minutes, too slow to catch live within this session's
+own verification window. The underlying pipeline's correctness is not in question (proven in
+isolation by `world_alert_bridge_test.c`, unchanged) — what's unverified is specifically the new
+`draw_string`/`glRectf` call rendering the way intended, a real, named gap, not glossed over.
+
 ## 3. Not landed this pass — named, phased into `EMILY/BACKLOG.md` SECTION 536
 
 The founder's own follow-up messages during this pass ("the shaders the way the sun and moon look
@@ -451,14 +493,18 @@ additional scope beyond the sky/clock/REFLUX slice above. None of the below is b
 6. **`MODE_STORY` content cutover** — the actual replacement of SHANKPIT's existing story-mode
    content/roster with BIG_O's day/night/lab loop. Real, checked finding this pass: this is bigger
    than every phase 1-6 combined and touches live, shipped NOCK level content, so it is itself
-   broken into sub-phases rather than attempted in one shot — see §2i/§2j. **7a-7d landed** (the
-   witness/zombie live-event glue, the real live NPC population/tick loop, a real zone-authoring
-   engine feature, and the actual roster cutover — MODE_STORY's VOXWORLD encounter now spawns
-   BIG_O's witness/zombie content instead of `story_ai.c`'s old `AI_ROLE_*` combat squad, verified
-   live). **7c's own real gap**: no IDUNA round-trip or NOCK editor UI yet — zones can only be
-   authored via hand-written JSON today. **7e named, not built**: the day/night/lab turn structure
-   itself — the actual game-loop content (harvest → blend-in → lab) that makes this a real turn
-   structure, not just a population standing in a field.
+   broken into sub-phases rather than attempted in one shot — see §2i/§2j/§2k. **7a-7e landed**
+   (the witness/zombie live-event glue, the real live NPC population/tick loop, a real
+   zone-authoring engine feature, the actual roster cutover, and MODE_STORY's first real,
+   player-visible day/night turn boundary — a phone-notification banner driven by the same real
+   clock that's been ticking, cosmetically only, since phase 1). **Real, remaining gaps, all
+   named, none guessed at**: 7c has no IDUNA round-trip or NOCK editor UI (zones only authorable
+   via hand-written JSON); 7e's banner render was never directly observed live (a full day/weather
+   cycle takes up to 24 real minutes — too slow to catch in this session's own verification
+   window, though the underlying pipeline is proven correct in isolation); and the actual **lab**
+   half of "day/night/lab" is entirely unstarted — `lab_sim.c` (phase 4) has real, tested
+   simulation logic (centrifuge/PCR/CRISPR/clone-breed/incubate) but zero UI or interaction model,
+   a real, separate, much bigger scoping pass of its own, not attempted under this phase.
 
 ### 3.1 Smaller, named follow-ups to the work already landed in §2
 

@@ -46,6 +46,8 @@
 #include "../../../packages/render/sky_weather.h"
 #include "../../../packages/render/retro_lighting.h"
 #include "../../../packages/simulation/day_night_clock.h"
+#include "../../../packages/common/phone.h"
+#include "../../../packages/simulation/world_alert_bridge.h"
 #include "../../../packages/audio/audio.h"
 #include "../../../packages/render/gl_shader.h"
 #include "../../../packages/render/bloom.h"
@@ -798,6 +800,38 @@ static DayNightClock g_day_night_clock = {0};
 // minutes -- slow enough to actually see weather/lighting settle, fast enough to verify live in a
 // normal play session without waiting.
 #define DAY_NIGHT_MINUTES_PER_REAL_SEC 1.0f
+
+// g_story_phone/g_story_alert_bridge -- BIG_O engine merge phase 7e (EMILY/BACKLOG.md SECTION
+// 536, "the day/night/lab turn structure"). The first real, live consumer of phone.h (phase 6)
+// and world_alert_bridge (phase 6) -- both shipped fully tested but never actually instantiated
+// anywhere before this. Reuses g_day_night_clock above unmodified (it already ticks every real
+// frame, session-wide, not mode-gated) rather than standing up a second clock. Not reset per
+// MODE_STORY entry, same "one persistent, whole-session instance" convention g_day_night_clock
+// itself already established -- a message from a previous story session staying in the inbox
+// across a restart is a real, honest, harmless v0 property, not a bug.
+//
+// Real, deliberate scope cut: only the on-screen banner below is new. The actual phone APP UI
+// (home grid, Messages list, Contacts/Map/Camera/etc.) still has no render/input path at all --
+// that's real, separate, still-not-attempted work (phase 6's own named gap). This gives MODE_STORY
+// its first real, player-VISIBLE day/night turn boundary (a DAYBREAK/NIGHTFALL/STORM WARNING
+// banner) without building the full phone UI to get there.
+static Phone g_story_phone = {0};
+static WorldAlertBridge g_story_alert_bridge = {0};
+
+// Display text for the small, real, currently-dispatchable set of message ids
+// world_alerts_mod.prn's own alert_message_id can produce (2/3/4 -- 5 is reserved for a zombie-
+// population event this repo doesn't have yet, see reflux_runtime.h's own REFLUX_ACTION_ZOMBIE_*
+// comments). Not phone.h's concern (that header is pure state, no display text) -- this lookup is
+// this client's own real, minimal answer to "what does message id 3 actually say," same role a
+// future real phone-UI content table would play, just narrowed to what a banner needs.
+static const char *story_phone_message_text(int msg_id) {
+    switch (msg_id) {
+        case 2: return "NIGHTFALL";
+        case 3: return "DAYBREAK";
+        case 4: return "STORM WARNING";
+        default: return "NEW MESSAGE";
+    }
+}
 
 // material_texture_for_name maps a custom level's own real material name (from
 // g_custom_level_material_name, set via phys_set_custom_level_materials) to the matching real
@@ -7068,6 +7102,19 @@ void draw_hud(PlayerState *p) {
             draw_string("MISSION FAILED", 520, 682, 7);
         }
         draw_story_boss_hud(&local_state.story_boss);
+
+        /* BIG_O engine merge phase 7e -- MODE_STORY's first real, player-visible day/night turn
+           boundary: a small phone-notification banner (top-left, mirroring M OVERLAY's own
+           top-right placement) whenever g_story_phone has a real, currently-active banner
+           (phone_tick's own anti-spam-windowed banner_id, ticked above). Real, deliberate scope
+           cut: this is NOT the phone app UI (no home grid, no Messages list, no input to open it)
+           -- just the one real signal phase 6's already-tested pipeline can produce today. */
+        if (local_state.story_phase == STORY_PHASE_PLAYING && g_story_phone.banner_id) {
+            glColor4f(0.06f, 0.08f, 0.10f, 0.72f);
+            glRectf(20.0f, 680.0f, 300.0f, 714.0f);
+            glColor3f(0.55f, 0.85f, 1.0f);
+            draw_string(story_phone_message_text(g_story_phone.banner_id), 32.0f, 692.0f, 3.4f);
+        }
         story_hud_done:;
     } else if (local_state.game_mode == MODE_STORY_CAVE) {
         /* CAVE-001 — cutscene/outro phases */
@@ -7923,6 +7970,15 @@ void draw_scene(PlayerState *render_p) {
         sky_weather_update(&g_sky_weather, (float)day_night_clock_minute_of_day(&g_day_night_clock),
                             (int)g_day_night_clock.weather, now_ms);
         sky_weather_draw(&g_sky_weather);
+
+        /* BIG_O engine merge phase 7e -- the same real clock tick above now also drives the real
+           REFLUX -> alert -> phone pipeline (phase 6), giving it its first live consumer.
+           phone_tick manages the anti-spam banner window (phone.h's own real "max 2 banners per
+           30s, batch the rest" rule) -- draw_hud's own MODE_STORY banner below reads
+           g_story_phone.banner_id, not the raw message queue, so it inherits that anti-spam
+           behavior for free. */
+        world_alert_bridge_tick(&g_story_alert_bridge, &g_day_night_clock, &g_story_phone, now_ms);
+        phone_tick(&g_story_phone, now_ms);
     }
 
     RetroLightingState world_lighting;
@@ -9594,6 +9650,8 @@ int main(int argc, char* argv[]) {
         }
     }
     day_night_clock_init(&g_day_night_clock, (unsigned int)time(NULL), 8);
+    phone_init(&g_story_phone);
+    world_alert_bridge_init(&g_story_alert_bridge);
     net_init();
 
     local_init_match(1, 0);
