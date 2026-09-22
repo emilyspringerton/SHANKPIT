@@ -139,7 +139,19 @@ jobs:
           # locally (a real x86_64-w64-mingw32-gcc build against the same SDL2 mingw devel package)
           # before trusting them here, same discipline as every precedent above. Added to this
           # hand-copy and tests.yml's own copy in the same pass.
-          x86_64-w64-mingw32-gcc apps/lobby/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/cutscene.c packages/simulation/typing_lesson.c packages/simulation/day_night_clock.c packages/simulation/world_rules.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/sky_weather.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/render/bloom.c packages/world/terrain.c packages/world/parena_runtime.c packages/world/png_decode_gen.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c packages/audio/audio.c \
+          # SEVENTH real recurrence (2026-09-22, BIG_O engine merge SECTION 536 phase 7d/7e,
+          # "full phone app parity, costume changes, add The Men" follow-up): packages/simulation/
+          # witness_ai.c, witness_sim.c, witness_rules.c, npc_archetype.c, zombie_values.c,
+          # ai_brain_rules.c, world_alerts_mod.c, and world_alert_bridge.c were each added to the
+          # Makefile's own LOBBY_SRC across several commits but never made it into this hand-copy
+          # or tests.yml's own -- confirmed live via the real GitHub Actions API job log (run
+          # 35794065741, `undefined reference to witness_ai_tick/witness_ai_reset/
+          # witness_ai_seed_voxworld_encounter/world_alert_bridge_tick/world_alert_bridge_init`)
+          # before fixing, same discipline as every precedent above. Added to this hand-copy,
+          # tests.yml's own copy, and both files' own Linux server build below (witness_ai.c and
+          # its 5 dependencies only -- the Makefile's own SERVER_SRC never gained world_alerts_mod.c/
+          # world_alert_bridge.c, those are client-local only) in the same pass.
+          x86_64-w64-mingw32-gcc apps/lobby/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/cutscene.c packages/simulation/typing_lesson.c packages/simulation/day_night_clock.c packages/simulation/world_rules.c packages/simulation/witness_ai.c packages/simulation/witness_sim.c packages/simulation/witness_rules.c packages/simulation/npc_archetype.c packages/simulation/zombie_values.c packages/simulation/ai_brain_rules.c packages/simulation/world_alerts_mod.c packages/simulation/world_alert_bridge.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/sky_weather.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/render/bloom.c packages/world/terrain.c packages/world/parena_runtime.c packages/world/png_decode_gen.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c packages/audio/audio.c \
             packages/goldenband/gband_mesh_rig.c packages/goldenband/gband.c packages/goldenband/gskel.c packages/goldenband/gmesh.c packages/goldenband/gseq.c packages/goldenband/gpose.c packages/goldenband/gsync.c packages/goldenband/gband_skel_npc.c \
             -o ShankPit.exe \
             -O2 -static-libgcc \
@@ -162,7 +174,7 @@ jobs:
           set -euo pipefail
           test -f apps/server/src/main.c
 
-          gcc apps/server/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/world/terrain.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c \
+          gcc apps/server/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/witness_ai.c packages/simulation/witness_sim.c packages/simulation/witness_rules.c packages/simulation/npc_archetype.c packages/simulation/zombie_values.c packages/simulation/ai_brain_rules.c packages/world/terrain.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c \
             -o ShankServer_Linux \
             -O2 -static \
             -I. \
