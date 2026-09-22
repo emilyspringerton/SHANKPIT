@@ -1874,12 +1874,14 @@ static const char *LOBBY_LABELS[LOBBY_COUNT] = {
 typedef enum {
     APP_DEADWEIGHT = 0,
     APP_PITVIPER,
+    APP_IDUNA_GAME,
     APP_COUNT
 } AppsAction;
 
 static const char *APPS_LABELS[APP_COUNT] = {
     "DEADWEIGHT",
     "PITVIPER",
+    "IDUNA",
 };
 
 // lobby_page -- 0 = GAMES (the original single page, untouched), 1 = APPS (new).
@@ -2746,6 +2748,20 @@ static void lobby_launch_app(AppsAction app) {
             // PITVIPER's own Makefile builds straight to the repo root (`pitviper`, not a
             // build/ subdir) -- see PITVIPER/Makefile's own BINARY := pitviper.
             dev_relative_path = "../../PITVIPER/pitviper";
+            break;
+        case APP_IDUNA_GAME:
+            display_name = "IDUNA";
+#ifdef _WIN32
+            bundled_name = "idunagame.exe";
+#else
+            bundled_name = "idunagame";
+#endif
+            // IDUNA.GAME/Makefile builds straight to the repo root ("idunagame"), same
+            // convention as PITVIPER's own -- see IDUNA.GAME/Makefile's own BINARY := idunagame.
+            // A real fork of PITVIPER, reskinned to Solarized Light with a text-based IDUNA
+            // honor-code/device-auth prompt (IDUNA.GAME/NORTHSTAR.md) -- launched as its own
+            // separate app, not a mode switch inside PITVIPER itself.
+            dev_relative_path = "../../IDUNA.GAME/idunagame";
             break;
         default:
             return;
