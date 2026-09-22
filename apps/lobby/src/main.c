@@ -833,6 +833,138 @@ static const char *story_phone_message_text(int msg_id) {
     }
 }
 
+/* --- Real phone app UI ("full phone app parity" follow-up, EMILY/BACKLOG.md SECTION 536, founder
+ * real-time, 2026-09-22) --------------------------------------------------------------------
+ * Phase 6's own named gap: phone.h's full state machine (11 apps, notification anti-spam) has
+ * existed since phase 6 with zero render/input path. This gives it one: a real home grid + real
+ * content for 5 of the 11 apps (MESSAGES, CONTACTS, MAP, WARDROBE, STATUS -- the ones with real,
+ * already-live data to show), and a functional-but-generic row list for the other 6 (LAB, CARGO,
+ * SKILLS, LOADOUT, CAMERA, NOTES -- real cursor navigation via phone.h's own bp_rows, but no
+ * gameplay system feeds their state yet, so there's nothing real to label rows with). Honest,
+ * named scope cut, not glossed over. 1280x720 ortho (matches every other HUD draw call in this
+ * file, glOrtho(0,1280,0,720,-1,1) -- origin bottom-left, y increases upward). */
+#define PHONE_PANEL_X0 340.0f
+#define PHONE_PANEL_Y0 140.0f
+#define PHONE_PANEL_X1 940.0f
+#define PHONE_PANEL_Y1 600.0f
+
+static void draw_phone_panel_bg(const char *title) {
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f(0.04f, 0.05f, 0.08f, 0.90f);
+    glRectf(PHONE_PANEL_X0, PHONE_PANEL_Y0, PHONE_PANEL_X1, PHONE_PANEL_Y1);
+    glColor4f(0.22f, 0.50f, 0.70f, 0.9f);
+    glRectf(PHONE_PANEL_X0, PHONE_PANEL_Y1 - 40.0f, PHONE_PANEL_X1, PHONE_PANEL_Y1);
+    glColor3f(0.92f, 0.97f, 1.0f);
+    draw_string(title, PHONE_PANEL_X0 + 20.0f, PHONE_PANEL_Y1 - 30.0f, 3.6f);
+}
+
+static void draw_phone_home_grid(const Phone *p) {
+    draw_phone_panel_bg("SHANKPHONE");
+    const int cols = 3;
+    float cell_w = 190.0f, cell_h = 46.0f;
+    float ox = PHONE_PANEL_X0 + 24.0f, oy = PHONE_PANEL_Y1 - 90.0f;
+    for (int i = 0; i < BP_APP_COUNT; i++) {
+        int col = i % cols, row = i / cols;
+        float x = ox + col * cell_w;
+        float y = oy - row * cell_h;
+        if (i == p->home_cursor) {
+            glColor4f(0.20f, 0.45f, 0.65f, 0.9f);
+            glRectf(x - 6.0f, y - 12.0f, x + cell_w - 24.0f, y + 22.0f);
+            glColor3f(1.0f, 1.0f, 1.0f);
+        } else {
+            glColor3f(0.58f, 0.72f, 0.84f);
+        }
+        draw_string(BP_APP_NAMES[i], x, y, 2.6f);
+        if (i == BP_APP_MESSAGES && p->unread > 0) {
+            glColor3f(1.0f, 0.55f, 0.3f);
+            char buf[8]; snprintf(buf, sizeof(buf), "(%d)", p->unread);
+            draw_string(buf, x + cell_w - 50.0f, y, 2.2f);
+        }
+    }
+    glColor3f(0.4f, 0.5f, 0.6f);
+    draw_string("[ARROWS] MOVE  [ENTER] OPEN  [P] CLOSE", PHONE_PANEL_X0 + 20.0f, PHONE_PANEL_Y0 + 16.0f, 2.0f);
+}
+
+static void draw_phone_app(const Phone *p) {
+    draw_phone_panel_bg(BP_APP_NAMES[p->app]);
+    float row_y = PHONE_PANEL_Y1 - 90.0f;
+    float row_h = 30.0f;
+    float col_x = PHONE_PANEL_X0 + 24.0f;
+
+    if (p->app == BP_APP_MESSAGES) {
+        if (p->message_count == 0) {
+            glColor3f(0.5f, 0.55f, 0.6f);
+            draw_string("NO MESSAGES", col_x, row_y, 2.6f);
+        } else if (p->detail) {
+            glColor3f(0.85f, 0.92f, 0.97f);
+            draw_string(story_phone_message_text(p->messages[p->cursor]), col_x, row_y, 3.0f);
+            glColor3f(0.45f, 0.55f, 0.65f);
+            draw_string("[ENTER] BACK TO LIST", col_x, PHONE_PANEL_Y0 + 40.0f, 2.0f);
+        } else {
+            for (int i = 0; i < p->message_count && i < 12; i++) {
+                float y = row_y - i * row_h;
+                int sel = (i == p->cursor);
+                glColor3f(sel ? 1.0f : 0.6f, sel ? 1.0f : 0.72f, sel ? 1.0f : 0.82f);
+                draw_string(story_phone_message_text(p->messages[i]), col_x, y, 2.4f);
+            }
+        }
+    } else if (p->app == BP_APP_CONTACTS) {
+        for (int i = 0; i < p->contacts_met && i < BP_CONTACTS; i++) {
+            float y = row_y - i * row_h;
+            int sel = (i == p->cursor);
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%s (%s)", BP_CONTACT_HANDLES[i], BP_TRUST_NAMES[p->trust[i]]);
+            glColor3f(sel ? 1.0f : 0.6f, sel ? 1.0f : 0.72f, sel ? 1.0f : 0.82f);
+            draw_string(buf, col_x, y, 2.4f);
+        }
+    } else if (p->app == BP_APP_MAP) {
+        for (int i = 0; i < BP_ZONES; i++) {
+            float y = row_y - i * row_h;
+            int sel = (i == p->cursor), pinned = (i == p->zone_pinned);
+            char buf[48];
+            snprintf(buf, sizeof(buf), "%s%s", BP_ZONE_NAMES[i], pinned ? "  [PINNED]" : "");
+            glColor3f(sel ? 1.0f : (pinned ? 0.9f : 0.6f), sel ? 1.0f : (pinned ? 0.7f : 0.72f), sel ? 1.0f : (pinned ? 0.3f : 0.82f));
+            draw_string(buf, col_x, y, 2.4f);
+        }
+    } else if (p->app == BP_APP_WARDROBE) {
+        for (int i = 0; i < BP_COSTUMES; i++) {
+            float y = row_y - i * row_h;
+            int sel = (i == p->cursor), worn = (i == p->costume);
+            char buf[48];
+            snprintf(buf, sizeof(buf), "%s%s", BP_COSTUME_NAMES[i], worn ? "  [WORN]" : "");
+            glColor3f(sel ? 1.0f : (worn ? 0.55f : 0.6f), sel ? 1.0f : (worn ? 0.95f : 0.72f), sel ? 1.0f : (worn ? 0.55f : 0.82f));
+            draw_string(buf, col_x, y, 2.6f);
+        }
+        char band_buf[64];
+        snprintf(band_buf, sizeof(band_buf), "DECORUM: %s (%d)", witness_sim_band_name(witness_ai_player_decorum_band()), witness_ai_player_decorum());
+        glColor3f(0.5f, 0.6f, 0.7f);
+        draw_string(band_buf, col_x, row_y - BP_COSTUMES * row_h - 20.0f, 2.2f);
+    } else if (p->app == BP_APP_STATUS) {
+        char buf[64];
+        glColor3f(0.7f, 0.85f, 0.92f);
+        snprintf(buf, sizeof(buf), "COSTUME: %s", BP_COSTUME_NAMES[p->costume]);
+        draw_string(buf, col_x, row_y, 2.6f);
+        snprintf(buf, sizeof(buf), "DECORUM: %s (%d)", witness_sim_band_name(witness_ai_player_decorum_band()), witness_ai_player_decorum());
+        draw_string(buf, col_x, row_y - row_h, 2.6f);
+        snprintf(buf, sizeof(buf), "PHOTOS TAKEN: %d", p->photos);
+        draw_string(buf, col_x, row_y - 2 * row_h, 2.6f);
+    } else {
+        int n = bp_rows(p);
+        for (int i = 0; i < n && i < 10; i++) {
+            float y = row_y - i * row_h;
+            int sel = (i == p->cursor);
+            char buf[24];
+            snprintf(buf, sizeof(buf), "-- SLOT %d --", i + 1);
+            glColor3f(sel ? 1.0f : 0.5f, sel ? 1.0f : 0.58f, sel ? 1.0f : 0.66f);
+            draw_string(buf, col_x, y, 2.4f);
+        }
+    }
+
+    glColor3f(0.4f, 0.5f, 0.6f);
+    draw_string("[ARROWS] NAV  [ENTER] SELECT  [BKSP] BACK", PHONE_PANEL_X0 + 20.0f, PHONE_PANEL_Y0 + 16.0f, 2.0f);
+}
+
 // material_texture_for_name maps a custom level's own real material name (from
 // g_custom_level_material_name, set via phys_set_custom_level_materials) to the matching real
 // procedural texture above -- any unrecognized name (a material this native build doesn't have a
@@ -5860,10 +5992,32 @@ static void draw_player_skin_mannequin(PlayerState *p, float draw_pitch, float d
         return;
     }
     int kits[5] = {g_skel_npc_kit_mannequin, g_skel_npc_kit_stan, g_skel_npc_kit_mike, g_skel_npc_kit_leela, g_skel_npc_kit_george};
+
+    /* "add The Men" follow-up (EMILY/BACKLOG.md SECTION 536): a real, distinct visual identity
+     * per witness_ai role, using the 5 kits already imported -- not new hand-authored art (that
+     * gap, named honestly in BIG_O/NORTHSTAR.md S8e item 5, stays open), but a genuine
+     * improvement over the flat round-robin below, which gave citizens/The Men/zombies no visual
+     * distinction at all. Falls through to the original round-robin for anything witness_ai
+     * doesn't manage (story_ai.c's own bots, forced_skin==SKIN_MANNEQUIN for other reasons) so
+     * that existing behavior is completely unchanged there. */
+    int role = witness_ai_role_for_player(p->id);
     int kit_index = -1;
-    for (int i = 0; i < 5; i++) {
-        int candidate = kits[(p->id + i) % 5];
-        if (candidate >= 0) { kit_index = candidate; break; }
+    if (role == WITNESS_AI_ROLE_THE_MEN && kits[4] >= 0) {
+        kit_index = kits[4]; /* george -- a single, consistent "professional" look */
+    } else if (role == WITNESS_AI_ROLE_ZOMBIE && kits[3] >= 0) {
+        kit_index = kits[3]; /* leela -- distinct from both citizens and The Men */
+    } else if (role == WITNESS_AI_ROLE_CITIZEN) {
+        int citizen_kits[2] = { kits[1], kits[2] }; /* stan/mike -- some per-citizen variety */
+        for (int i = 0; i < 2; i++) {
+            int candidate = citizen_kits[(p->id + i) % 2];
+            if (candidate >= 0) { kit_index = candidate; break; }
+        }
+    }
+    if (kit_index < 0) {
+        for (int i = 0; i < 5; i++) {
+            int candidate = kits[(p->id + i) % 5];
+            if (candidate >= 0) { kit_index = candidate; break; }
+        }
     }
     if (kit_index < 0) {
         draw_player_skin_tyler(p, draw_pitch, draw_recoil);
@@ -7114,6 +7268,13 @@ void draw_hud(PlayerState *p) {
             glRectf(20.0f, 680.0f, 300.0f, 714.0f);
             glColor3f(0.55f, 0.85f, 1.0f);
             draw_string(story_phone_message_text(g_story_phone.banner_id), 32.0f, 692.0f, 3.4f);
+        }
+
+        /* "full phone app parity" follow-up: the real phone app UI, drawn last so it sits above
+           everything else in this MODE_STORY HUD block, including the banner above. */
+        if (local_state.story_phase == STORY_PHASE_PLAYING && g_story_phone.open) {
+            if (g_story_phone.app < 0) draw_phone_home_grid(&g_story_phone);
+            else draw_phone_app(&g_story_phone);
         }
         story_hud_done:;
     } else if (local_state.game_mode == MODE_STORY_CAVE) {
@@ -9949,6 +10110,37 @@ int main(int argc, char* argv[]) {
                         }
                         continue;
                     }
+                    /* Real phone app UI input routing ("full phone app parity" follow-up). While
+                       open, the phone owns every keydown -- movement/shoot/etc. are zeroed at the
+                       real per-tick input-collapse point below (same one story cutscenes already
+                       use), and mouse-look is frozen at that same cutscene precedent's own mouse-
+                       motion gate, so nothing about this needs its own new freeze mechanism. */
+                    if (g_story_phone.open) {
+                        if (e.key.keysym.sym == SDLK_UP) phone_input(&g_story_phone, BP_UP, 0);
+                        else if (e.key.keysym.sym == SDLK_DOWN) phone_input(&g_story_phone, BP_DOWN, 0);
+                        else if (e.key.keysym.sym == SDLK_LEFT) phone_input(&g_story_phone, BP_LEFT, 0);
+                        else if (e.key.keysym.sym == SDLK_RIGHT) phone_input(&g_story_phone, BP_RIGHT, 0);
+                        else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) phone_input(&g_story_phone, BP_SELECT, 0);
+                        else if (e.key.keysym.sym == SDLK_BACKSPACE) phone_input(&g_story_phone, BP_BACK, 0);
+                        else if (e.key.keysym.sym == SDLK_p || e.key.keysym.sym == SDLK_ESCAPE) phone_toggle(&g_story_phone);
+                        /* Real, live wiring of WARDROBE's own costume selection into the witness_sim
+                           player slot (packages/simulation/witness_ai.c's own witness_ai_set_player_
+                           costume) -- cheap and idempotent to re-sync every keypress while open. */
+                        witness_ai_set_player_costume(g_story_phone.costume);
+                        continue;
+                    }
+                    if (e.key.keysym.sym == SDLK_p) {
+                        printf("[PHONE] p pressed: game_mode=%d app_state=%d story_phase=%d open_before=%d\n",
+                               local_state.game_mode, app_state, local_state.story_phase, g_story_phone.open);
+                        fflush(stdout);
+                    }
+                    if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
+                        app_state == STATE_GAME_LOCAL &&
+                        local_state.story_phase == STORY_PHASE_PLAYING &&
+                        e.key.keysym.sym == SDLK_p) {
+                        phone_toggle(&g_story_phone);
+                        continue;
+                    }
                     if (g_paused) {
                         if (e.key.keysym.sym == SDLK_ESCAPE) {
                             g_paused = 0;
@@ -10040,7 +10232,7 @@ int main(int argc, char* argv[]) {
                     if (app_state == STATE_GAME_NET && net_spawn_protect_cmds > 0) continue;
                     if (app_state == STATE_GAME_LOCAL &&
                         (local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
-                        local_state.story_phase == STORY_PHASE_CUTSCENE) {
+                        (local_state.story_phase == STORY_PHASE_CUTSCENE || g_story_phone.open)) {
                         continue;
                     }
                     float sens = (current_fov < 50.0f) ? 0.05f : 0.15f; 
@@ -10195,7 +10387,8 @@ int main(int argc, char* argv[]) {
                 if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
                     (local_state.story_phase == STORY_PHASE_CUTSCENE ||
                      local_state.story_phase == STORY_PHASE_COMPLETE ||
-                     local_state.story_phase == STORY_PHASE_FAILED)) {
+                     local_state.story_phase == STORY_PHASE_FAILED ||
+                     g_story_phone.open)) {
                     input_fwd = 0.0f; input_str = 0.0f;
                     input_jump = 0; input_crouch = 0; input_shoot = 0; input_reload = 0; input_use = 0; input_ability = 0;
                 }

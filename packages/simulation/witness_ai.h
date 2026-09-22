@@ -128,4 +128,40 @@ int witness_ai_citizen_vigilance(int player_id);
  * or -1 if player_id doesn't resolve to an active citizen spawned by this module. */
 int witness_ai_citizen_zone(int player_id);
 
+/* --- "full phone app parity, costume changes, add The Men" (EMILY/BACKLOG.md SECTION 536
+ * follow-up, founder real-time, 2026-09-22) -------------------------------------------------- */
+
+/* Same "int with a -1 sentinel" convention as witness_ai_citizen_state/vigilance/zone above. A
+ * caller (main.c's own mannequin-kit selector) needs to tell citizen/The Men/zombie apart to give
+ * each a real, distinct visual identity -- see witness_ai.c's own doc comment on why this reuses
+ * npc_archetype.h's existing NPC_ARCHETYPE_* distinction rather than inventing a new one. */
+#define WITNESS_AI_ROLE_NONE -1
+#define WITNESS_AI_ROLE_CITIZEN 0
+#define WITNESS_AI_ROLE_THE_MEN 1
+#define WITNESS_AI_ROLE_ZOMBIE 2
+int witness_ai_role_for_player(int player_id);
+
+/* Spawns one member of The Men (npc_archetype.h's NPC_ARCHETYPE_THE_MEN -- high base_vigilance,
+ * focused mood bias, already real and tested since phase 3, never actually spawned anywhere until
+ * now) into a free player slot. Same shape/contract as witness_ai_spawn_citizen, sharing that
+ * function's own internal spawn_human helper (witness_ai.c) -- not a duplicate implementation.
+ * Returns the player slot id, or -1. */
+int witness_ai_spawn_the_men(ServerState *s, int zone, int base_vigilance, int arrogance,
+                              float x, float y, float z, unsigned int now_ms);
+
+/* Wires the phone's own real WARDROBE selection (packages/common/phone.h, phase 6) into the
+ * live human player's WitnessSim slot (g_sim.p[0] -- already allocated by witness_ai_reset's own
+ * nplayers=1 call, previously never driven with real data; this is that hook). Idempotent, cheap
+ * to call every frame the phone is open. */
+void witness_ai_set_player_costume(int costume);
+
+/* Real, live readout of the human player's own decorum meter -- witness_ai_tick's own hardcoded
+ * VOXWORLD "lab" trespass circle (witness_ai.c, no LevelZone/JSON authoring exists for this scene
+ * yet, same "hardcoded coordinates" precedent witness_ai_seed_voxworld_encounter's own citizen/
+ * zombie placement already set) calls witness_sim_enter on the player's behalf when they cross
+ * into it, which is what actually moves this number. Raw WitnessPlayer.decorum and its BAND_* per
+ * witness_sim_decorum_band, respectively. */
+int witness_ai_player_decorum(void);
+int witness_ai_player_decorum_band(void);
+
 #endif

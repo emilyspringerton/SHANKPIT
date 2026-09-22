@@ -163,6 +163,75 @@ int main(void) {
         printf("PASS: leaving every authored zone keeps the citizen's last known zone, not a silent reset\n");
     }
 
+    /* "full phone app parity, costume changes, add The Men" follow-up. */
+    {
+        ServerState s;
+        reset_server(&s);
+        witness_ai_reset(7, 0);
+
+        int cid = witness_ai_spawn_citizen(&s, ZONE_PUBLIC, 40, 30, 0.0f, 0.0f, 0.0f, 0);
+        int mid = witness_ai_spawn_the_men(&s, ZONE_PUBLIC, 85, 15, 20.0f, 0.0f, 0.0f, 0);
+        int zid = witness_ai_spawn_zombie(&s, 40.0f, 0.0f, 0.0f, 0);
+        assert(cid > 0 && mid > 0 && zid > 0);
+        assert(mid != cid && mid != zid);
+        assert(witness_ai_role_for_player(cid) == WITNESS_AI_ROLE_CITIZEN);
+        assert(witness_ai_role_for_player(mid) == WITNESS_AI_ROLE_THE_MEN);
+        assert(witness_ai_role_for_player(zid) == WITNESS_AI_ROLE_ZOMBIE);
+        assert(witness_ai_role_for_player(0) == WITNESS_AI_ROLE_NONE); /* the hero itself, never spawned by this module */
+        printf("PASS: witness_ai_spawn_the_men allocates a distinct slot, correctly told apart by role\n");
+    }
+    {
+        /* Correct costume for the hardcoded VOXWORLD "lab" trespass circle (packages/simulation/
+           witness_ai.c's own WITNESS_AI_LAB_ZONE_*, zone_access's real rule: ZONE_LAB needs
+           COS_LAB_SMOCK) + a zero-vigilance witness -> never noticed, decorum untouched. */
+        ServerState s;
+        reset_server(&s);
+        witness_ai_reset(8, 0);
+        witness_ai_spawn_citizen(&s, ZONE_LAB, 0, 10, 0.0f, 0.0f, 0.0f, 0);
+        s.scene_id = SCENE_VOXWORLD;
+        s.players[0].active = 1;
+        s.players[0].x = 110.0f; s.players[0].z = -260.0f; /* inside the lab circle */
+        witness_ai_set_player_costume(COS_LAB_SMOCK);
+        witness_ai_tick(&s, 0);
+        /* decorum_start() (80) + one ambient DA_QUIET_TICK (+1, witness_sim_tick's own real per-
+           tick player upkeep, fired once by this same witness_ai_tick call) -- the trespass check
+           itself never touches it here. */
+        assert(witness_ai_player_decorum() == 81);
+        printf("PASS: correct costume in the lab zone, unnoticed, leaves decorum untouched\n");
+    }
+    {
+        /* Wrong costume for the same lab circle + a max-vigilance witness -> always noticed,
+           real decorum penalty (witness_rules.c: decorum_start 80, DA_WRONG_COSTUME delta -20). */
+        ServerState s;
+        reset_server(&s);
+        witness_ai_reset(9, 0);
+        witness_ai_spawn_citizen(&s, ZONE_LAB, 100, 10, 0.0f, 0.0f, 0.0f, 0);
+        s.scene_id = SCENE_VOXWORLD;
+        s.players[0].active = 1;
+        s.players[0].x = 110.0f; s.players[0].z = -260.0f; /* inside the lab circle */
+        witness_ai_set_player_costume(COS_JANITOR); /* wrong for ZONE_LAB */
+        witness_ai_tick(&s, 0);
+        /* decorum_start() (80) + one ambient DA_QUIET_TICK (+1) - DA_WRONG_COSTUME (-20) = 61. */
+        assert(witness_ai_player_decorum() == 61);
+        assert(witness_ai_player_decorum_band() == BAND_OK); /* 61 is not below suspicion_below(60) */
+        printf("PASS: wrong costume in the lab zone, noticed, applies the real decorum penalty\n");
+    }
+    {
+        /* Standing outside the lab circle entirely: never enters ZONE_LAB, no check fires at all,
+           regardless of costume -- the trespass mechanic is real, not a blanket costume penalty. */
+        ServerState s;
+        reset_server(&s);
+        witness_ai_reset(10, 0);
+        witness_ai_spawn_citizen(&s, ZONE_LAB, 100, 10, 0.0f, 0.0f, 0.0f, 0);
+        s.scene_id = SCENE_VOXWORLD;
+        s.players[0].active = 1;
+        s.players[0].x = 0.0f; s.players[0].z = 0.0f; /* far outside WITNESS_AI_LAB_ZONE_RADIUS */
+        witness_ai_set_player_costume(COS_JANITOR);
+        witness_ai_tick(&s, 0);
+        assert(witness_ai_player_decorum() == 81); /* decorum_start() + one ambient DA_QUIET_TICK only */
+        printf("PASS: outside the lab circle, wrong costume never even triggers a check\n");
+    }
+
     printf("\nALL PASS\n");
     return 0;
 }

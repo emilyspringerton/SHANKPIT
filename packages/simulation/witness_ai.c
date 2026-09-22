@@ -25,6 +25,21 @@ static WitnessAiCitizen g_citizens[WITNESS_AI_MAX_CITIZENS];
 static WitnessAiZombie g_zombies[WITNESS_AI_MAX_ZOMBIES];
 static unsigned int g_last_sim_tick_ms;
 static int g_have_last_sim_tick;
+
+/* Player-zone trespass state ("full phone app parity, costume changes, add The Men" follow-up).
+ * See witness_ai_tick's own VOXWORLD lab-circle block for what drives this. */
+static int g_player_zone;
+static unsigned int g_last_player_zone_check_ms;
+static int g_have_last_player_zone_check;
+
+/* Hardcoded VOXWORLD "lab" trespass circle, deliberately away from every citizen/zombie/The Men
+ * spawn position witness_ai_seed_voxworld_encounter places below (x in roughly -60..60 there) --
+ * same "hardcoded coordinates, no LevelZone/JSON authoring needed" precedent that function's own
+ * doc comment already set. Real, separate follow-up (7c's own named gap): a level-authored
+ * LevelZone would replace this the moment VOXWORLD has real JSON level data to read. */
+#define WITNESS_AI_LAB_ZONE_CX 110.0f
+#define WITNESS_AI_LAB_ZONE_CZ -260.0f
+#define WITNESS_AI_LAB_ZONE_RADIUS 18.0f
 static FILE *g_sim_log; /* witness_sim_tick's own real log sink -- /dev/null on a live server so
                             its per-tick "TICK -> N" line doesn't spam stdout every real second;
                             falls back to stdout if /dev/null can't be opened (never observed on
@@ -73,10 +88,15 @@ void witness_ai_reset(unsigned int seed, unsigned int now_ms) {
     memset(g_citizens, 0, sizeof(g_citizens));
     memset(g_zombies, 0, sizeof(g_zombies));
     g_have_last_sim_tick = 0;
+    g_player_zone = ZONE_PUBLIC; /* matches witness_sim_init's own player-0 default */
+    g_have_last_player_zone_check = 0;
 }
 
-int witness_ai_spawn_citizen(ServerState *s, int zone, int base_vigilance, int arrogance,
-                              float x, float y, float z, unsigned int now_ms) {
+/* Shared by witness_ai_spawn_citizen/witness_ai_spawn_the_men -- identical slot/npc bookkeeping,
+ * differing only in the archetype handed to npc_brain_init. Not exposed; callers use the two
+ * named wrappers below so a role is always explicit at the call site. */
+static int spawn_human(ServerState *s, NpcArchetype archetype, int zone, int base_vigilance,
+                        int arrogance, float x, float y, float z, unsigned int now_ms) {
     if (!s) return -1;
 
     WitnessAiCitizen *c = NULL;
@@ -95,8 +115,43 @@ int witness_ai_spawn_citizen(ServerState *s, int zone, int base_vigilance, int a
     c->active = 1;
     c->player_id = slot;
     c->npc_index = npc_index;
-    npc_brain_init(&c->brain, NPC_ARCHETYPE_CITIZEN, now_ms);
+    npc_brain_init(&c->brain, archetype, now_ms);
     return slot;
+}
+
+int witness_ai_spawn_citizen(ServerState *s, int zone, int base_vigilance, int arrogance,
+                              float x, float y, float z, unsigned int now_ms) {
+    return spawn_human(s, NPC_ARCHETYPE_CITIZEN, zone, base_vigilance, arrogance, x, y, z, now_ms);
+}
+
+int witness_ai_spawn_the_men(ServerState *s, int zone, int base_vigilance, int arrogance,
+                              float x, float y, float z, unsigned int now_ms) {
+    return spawn_human(s, NPC_ARCHETYPE_THE_MEN, zone, base_vigilance, arrogance, x, y, z, now_ms);
+}
+
+int witness_ai_role_for_player(int player_id) {
+    for (int i = 0; i < WITNESS_AI_MAX_CITIZENS; i++) {
+        if (g_citizens[i].active && g_citizens[i].player_id == player_id) {
+            return g_citizens[i].brain.archetype == NPC_ARCHETYPE_THE_MEN
+                       ? WITNESS_AI_ROLE_THE_MEN : WITNESS_AI_ROLE_CITIZEN;
+        }
+    }
+    for (int i = 0; i < WITNESS_AI_MAX_ZOMBIES; i++) {
+        if (g_zombies[i].active && g_zombies[i].player_id == player_id) return WITNESS_AI_ROLE_ZOMBIE;
+    }
+    return WITNESS_AI_ROLE_NONE;
+}
+
+void witness_ai_set_player_costume(int costume) {
+    witness_sim_set_costume(&g_sim, 0, costume);
+}
+
+int witness_ai_player_decorum(void) {
+    return g_sim.p[0].decorum;
+}
+
+int witness_ai_player_decorum_band(void) {
+    return witness_sim_decorum_band(g_sim.p[0].decorum);
 }
 
 int witness_ai_spawn_zombie(ServerState *s, float x, float y, float z, unsigned int now_ms) {
@@ -213,6 +268,25 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
             wn->state = witness_live_next_state_for_event(wn->state, count, wn->arrogance, 0);
         }
     }
+
+    /* Player-zone trespass check ("costume changes" follow-up). Self-throttled to roughly once
+     * per second, matching the ambient sim tick's own cadence above. player_id 0 is always the
+     * hero (story_ai.c's own convention, and witness_sim_init's own nplayers=1 slot). */
+    if (!g_have_last_player_zone_check || now_ms - g_last_player_zone_check_ms >= 1000u) {
+        g_have_last_player_zone_check = 1;
+        g_last_player_zone_check_ms = now_ms;
+        if (s->scene_id == SCENE_VOXWORLD) {
+            PlayerState *hero = &s->players[0];
+            float dx = hero->x - WITNESS_AI_LAB_ZONE_CX;
+            float dz = hero->z - WITNESS_AI_LAB_ZONE_CZ;
+            int in_lab = (dx * dx + dz * dz) <= (WITNESS_AI_LAB_ZONE_RADIUS * WITNESS_AI_LAB_ZONE_RADIUS);
+            int zone = in_lab ? ZONE_LAB : ZONE_PUBLIC;
+            if (zone != g_player_zone) {
+                witness_sim_enter(&g_sim, 0, zone);
+                g_player_zone = zone;
+            }
+        }
+    }
 }
 
 void witness_ai_seed_voxworld_encounter(ServerState *s, unsigned int now_ms) {
@@ -234,5 +308,15 @@ void witness_ai_seed_voxworld_encounter(ServerState *s, unsigned int now_ms) {
     /* Real, honest bootstrap -- see this function's own header doc comment for why. */
     if (z1 > 0) witness_ai_force_zombie_mood(z1, ZOMBIE_MOOD_HUNTING);
 
-    printf("[WITNESS] voxworld encounter seeded: 4 citizens, 2 zombies (1 HUNTING)\n");
+    /* The Men -- "full phone app parity, costume changes, add The Men" follow-up. Stationed near
+     * the hardcoded WITNESS_AI_LAB_ZONE_* trespass circle above (110, -260): a real, in-fiction
+     * reason to be there (guarding the lab), not an arbitrary placement. High base_vigilance (85)
+     * matches npc_archetype.h's own real archetype default; low arrogance (15) since The Men are
+     * professional/focused, not swaggering. Does NOT wire up server_tick_dispatch's own SILENCING
+     * -> resolved dispatch/sanitize loop (BIG_O core/witness_live.h's own real, separate,
+     * still-not-ported follow-up -- see "the men carry pagers" design note, BIG_O/NORTHSTAR.md
+     * S11 item 6) -- this is the archetype/spawn/visual half only. */
+    witness_ai_spawn_the_men(s, ZONE_PUBLIC, 85, 15, cx + 110.0f, 8.0f, cz, now_ms);
+
+    printf("[WITNESS] voxworld encounter seeded: 4 citizens, 2 zombies (1 HUNTING), 1 The Men\n");
 }
