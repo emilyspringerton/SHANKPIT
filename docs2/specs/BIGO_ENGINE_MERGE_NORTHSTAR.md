@@ -132,6 +132,39 @@ not-yet-consumed module gets no build-graph entry until something actually calls
 inventing build coverage ahead of real usage. The real consumer is phase 7 (MODE_STORY content
 cutover) — a citizen-NPC spawn/render layer that doesn't exist yet.
 
+## 2e. Phase 3 landed — humanness AI-brain extensions, with the two decision formulas moved to PARENA
+
+`packages/simulation/npc_archetype.{h,c}` and `packages/simulation/zombie_values.{h,c}` — ported
+in from BIG_O's `core/npc_archetype.c` (citizen/The Men archetype-differentiated vigilance, a thin
+real layer over SHANKPIT's own already-native `humanness.c` — diffed clean against BIG_O's own
+copy except one build-toolchain-only `M_PI` literal that doesn't apply to this repo's Makefile
+build) and `core/zombie_values.c` (zombies' own hunger/aggression/decay vocabulary, a 4-state mood
+arc, deliberately NOT sharing `NpcBrain`'s human mood enum — the founder's own explicit "more
+zombie values and behaving, you know?").
+
+**Per "use parena duh":** the two real, pure scalar decision formulas —
+`npc_brain_effective_vigilance` (base vigilance + mood/fatigue/energy deltas, clamped 0..100) and
+`zombie_effective_alertness` (per-mood baseline + hunger/aggression contribution, clamped 0..100)
+— moved to a new PARENA rules module, `PARENA/stdlib/shankpit/ai_brain_rules.prn`
+(`npc-effective-vigilance`/`zombie-alertness-formula`, generated into `ai_brain_rules.c`), the same
+"designer-tunable decision logic" shape `witness_rules.prn` already holds. **Everything else stays
+host C** — `HumannessState`/`ZombieState` mood ticking, RNG-jittered reaction-delay/lunge-noise
+sampling — matching `humanness_tick_mood`'s own already-established precedent in this exact
+codebase (stateful/time-driven code doesn't move, pure decisions do). A real, found naming
+collision along the way: the PARENA export and the host wrapper both wanted the name
+`zombie_effective_alertness` — resolved by naming the PARENA-side formula
+`zombie_alertness_formula`, keeping the host API's original BIG_O-facing name unchanged.
+
+**Verified against BIG_O's own real test assertions** (`core/npc_archetype_test.c`,
+`core/zombie_values_test.c`), not just "it compiles" — important here specifically because the
+formulas moved through PARENA along the way, a real behavior-preserving risk this checks:
+archetype-differentiated defaults, effective vigilance bounded across 500 fatigue/energy trials,
+STARTLED raising vigilance by exactly +25, TIRED+fatigue lowering it, zombie alertness bounded and
+strictly increasing across the real DORMANT→AGITATED→HUNTING→FRENZIED mood arc, and real hunger/
+aggression drift direction. All pass (`ai_brain_test.c`). Deliberately not wired into
+`Makefile`/`BUILD.bazel` yet, same `cutscene_effect_mod.c` precedent §2d already used — no live
+consumer exists (phase 7).
+
 ## 3. Not landed this pass — named, phased into `EMILY/BACKLOG.md` SECTION 536
 
 The founder's own follow-up messages during this pass ("the shaders the way the sun and moon look
@@ -140,14 +173,7 @@ additional scope beyond the sky/clock/REFLUX slice above. None of the below is b
 
 1. ~~Witness/Attention rules~~ — **landed, see §2d.** As a standalone, tested primitive
    (`witness_sim.{h,c}`), not yet wired into a live NPC spawn/render layer (that's phase 7).
-2. **Humanness AI-brain extensions** — `core/npc_archetype.c` (citizen/Men vigilance) and
-   `core/zombie_values.c` (zombie-specific mood/hunger/decay vocabulary) are currently plain C in
-   BIG_O (BIG_O's own NORTHSTAR §9 names this as a real, deliberate gap: "lab equipment numbers are
-   not currently expected to need mod-author tuning, but that could change" — the same reasoning
-   likely applies here too, worth a real look). Per "use parena duh": these are real candidates for
-   conversion to `.prn` rules modules (matching `witness_rules.prn`'s own discipline) rather than a
-   plain-C port, since they're exactly the kind of designer-tunable decision logic PARENA mods are
-   for in this monorepo. Needs a real per-module judgment call, not a blanket port.
+2. ~~Humanness AI-brain extensions~~ — **landed, see §2e.**
 3. **Lab simulation** (`core/lab_sim.c`, 17 tests, plain C) — the cloning-facility equipment
    pipeline (centrifuge/PCR/sequencer/CRISPR splice/breeding/incubation). Real, headless, already
    proven in BIG_O; needs a SHANKPIT-side UI (the phone screen, §4) and server wiring, neither of
