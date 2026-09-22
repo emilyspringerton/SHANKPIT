@@ -10466,6 +10466,21 @@ int main(int argc, char* argv[]) {
                             p0->vehicle_cooldown = 30;
                         }
                     }
+                    /* "wheelbarrow" -- carry a whole zombie or citizen back to your lab (founder
+                       real-time, 2026-09-22). Story-mode only (witness_ai's own citizens/zombies
+                       only ever exist there) and only when not already in a vehicle -- can't
+                       wheelbarrow someone while riding a horse. Reuses this same debounced E-key
+                       block/vehicle_cooldown, matching every other USE interaction here. */
+                    if (!p0->in_vehicle && !p0->vehicle_cooldown &&
+                        (local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE)) {
+                        if (witness_ai_carried_player_id() >= 0) {
+                            witness_ai_drop_carried();
+                            p0->vehicle_cooldown = 30;
+                        } else {
+                            int picked = witness_ai_try_pickup(&local_state, p0->x, p0->y, p0->z, SDL_GetTicks());
+                            if (picked >= 0) p0->vehicle_cooldown = 30;
+                        }
+                    }
                 }
                 if(local_state.players[0].vehicle_cooldown > 0) local_state.players[0].vehicle_cooldown--;
                 unsigned int now_ms = SDL_GetTicks();

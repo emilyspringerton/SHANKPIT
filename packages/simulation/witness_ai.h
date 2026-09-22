@@ -164,4 +164,35 @@ void witness_ai_set_player_costume(int costume);
 int witness_ai_player_decorum(void);
 int witness_ai_player_decorum_band(void);
 
+/* --- "wheelbarrow" -- carry a whole zombie or citizen back to your lab (founder real-time,
+ * 2026-09-22: "cannon - add wheelbarrow for carrying whole zombies or citizens back to your
+ * lab") ----------------------------------------------------------------------------------------
+ * Real, honest scope cut: no literal wheelbarrow prop/model exists (a new 3D asset, a real,
+ * separate art task) -- "wheelbarrow" is this mechanic's flavor name, the carry itself is the
+ * real feature. Delivery target is the SAME hardcoded VOXWORLD "lab" trespass circle the costume
+ * mechanic already uses (witness_ai.c's own WITNESS_AI_LAB_ZONE_*) -- there is no real lab scene
+ * to walk into yet (BACKLOG's own "the lab" follow-up, still entirely unstarted), so this reuses
+ * the one real, hardcoded "the lab is here" location this engine merge already has rather than
+ * inventing a second one. */
+#define WITNESS_AI_PICKUP_RADIUS 4.0f
+
+/* Finds the nearest active citizen or zombie (spawned by this module) within
+ * WITNESS_AI_PICKUP_RADIUS of (px,py,pz) and marks it carried. No-op (returns -1) if something is
+ * already being carried -- one at a time, matching CTF's own real one-flag-per-team precedent
+ * (local_game.h's own carried_flag_team_id). Returns the picked-up player_id, or -1. */
+int witness_ai_try_pickup(ServerState *s, float px, float py, float pz, unsigned int now_ms);
+
+/* Releases whatever is currently carried in place (no delivery credit -- that only happens by
+ * walking the carried NPC into the lab circle, see witness_ai_tick's own real delivery check).
+ * Safe to call when nothing is carried. */
+void witness_ai_drop_carried(void);
+
+/* The currently-carried player_id, or -1 if nothing is being carried. */
+int witness_ai_carried_player_id(void);
+
+/* Real, live count of specimens delivered to the lab circle so far this session -- the one real
+ * number STATUS/LAB (the phone app UI's own still-generic screens) could show once either grows a
+ * real reason to display it; not wired into either screen yet (honest, named, not this pass). */
+int witness_ai_lab_deliveries(void);
+
 #endif

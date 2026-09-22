@@ -2,6 +2,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 
 #include "npc_archetype.h"
 #include "zombie_values.h"
@@ -47,6 +48,10 @@ static FILE *g_sim_log; /* witness_sim_tick's own real log sink -- /dev/null on 
 
 #define WITNESS_AI_SIM_TICK_INTERVAL_MS 1000u
 
+/* "wheelbarrow" carry state -- see witness_ai.h's own doc comment for the full real/honest scope. */
+static int g_carried_id = -1;
+static int g_lab_deliveries = 0;
+
 static int find_free_player_slot(ServerState *s) {
     for (int i = 1; i < MAX_CLIENTS; i++) {
         if (!s->players[i].active) return i;
@@ -90,6 +95,8 @@ void witness_ai_reset(unsigned int seed, unsigned int now_ms) {
     g_have_last_sim_tick = 0;
     g_player_zone = ZONE_PUBLIC; /* matches witness_sim_init's own player-0 default */
     g_have_last_player_zone_check = 0;
+    g_carried_id = -1;
+    g_lab_deliveries = 0;
 }
 
 /* Shared by witness_ai_spawn_citizen/witness_ai_spawn_the_men -- identical slot/npc bookkeeping,
@@ -152,6 +159,66 @@ int witness_ai_player_decorum(void) {
 
 int witness_ai_player_decorum_band(void) {
     return witness_sim_decorum_band(g_sim.p[0].decorum);
+}
+
+/* Real despawn of one managed citizen/zombie -- same "only touch what I spawned" discipline
+ * story_ai_despawn_all_characters (S480) already established, narrowed to a single slot. Frees
+ * the real PlayerState slot for reuse (find_free_player_slot's own !active check), same as any
+ * other bot leaving the match. */
+static void deactivate_managed_player(ServerState *s, int player_id) {
+    for (int i = 0; i < WITNESS_AI_MAX_CITIZENS; i++) {
+        if (g_citizens[i].active && g_citizens[i].player_id == player_id) {
+            g_citizens[i].active = 0;
+            break;
+        }
+    }
+    for (int i = 0; i < WITNESS_AI_MAX_ZOMBIES; i++) {
+        if (g_zombies[i].active && g_zombies[i].player_id == player_id) {
+            g_zombies[i].active = 0;
+            break;
+        }
+    }
+    if (s && player_id > 0 && player_id < MAX_CLIENTS) s->players[player_id].active = 0;
+}
+
+int witness_ai_try_pickup(ServerState *s, float px, float py, float pz, unsigned int now_ms) {
+    (void)now_ms;
+    if (!s || g_carried_id >= 0) return -1;
+
+    int best_id = -1;
+    float best_d2 = WITNESS_AI_PICKUP_RADIUS * WITNESS_AI_PICKUP_RADIUS;
+    for (int i = 0; i < WITNESS_AI_MAX_CITIZENS; i++) {
+        if (!g_citizens[i].active) continue;
+        PlayerState *cp = &s->players[g_citizens[i].player_id];
+        float dx = cp->x - px, dy = cp->y - py, dz = cp->z - pz;
+        float d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 <= best_d2) { best_d2 = d2; best_id = g_citizens[i].player_id; }
+    }
+    for (int i = 0; i < WITNESS_AI_MAX_ZOMBIES; i++) {
+        if (!g_zombies[i].active) continue;
+        PlayerState *zp = &s->players[g_zombies[i].player_id];
+        float dx = zp->x - px, dy = zp->y - py, dz = zp->z - pz;
+        float d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 <= best_d2) { best_d2 = d2; best_id = g_zombies[i].player_id; }
+    }
+
+    if (best_id >= 0) {
+        g_carried_id = best_id;
+        printf("[WHEELBARROW] picked up player=%d role=%d\n", best_id, witness_ai_role_for_player(best_id));
+    }
+    return best_id;
+}
+
+void witness_ai_drop_carried(void) {
+    g_carried_id = -1;
+}
+
+int witness_ai_carried_player_id(void) {
+    return g_carried_id;
+}
+
+int witness_ai_lab_deliveries(void) {
+    return g_lab_deliveries;
 }
 
 int witness_ai_spawn_zombie(ServerState *s, float x, float y, float z, unsigned int now_ms) {
@@ -284,6 +351,33 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
             if (zone != g_player_zone) {
                 witness_sim_enter(&g_sim, 0, zone);
                 g_player_zone = zone;
+            }
+        }
+    }
+
+    /* "wheelbarrow" carry: trail the carried NPC just behind the hero every tick (same real
+     * "pinned to the carrier" shape CTF's own carried_flag_team_id uses, just position instead of
+     * a UI flag), then check delivery into the same hardcoded lab circle above. Real, deliberate
+     * choice: delivery only checks scene==SCENE_VOXWORLD + the lab circle, same as the zone check
+     * above -- there is no other real "lab" location anywhere yet. */
+    if (g_carried_id > 0 && g_carried_id < MAX_CLIENTS && s->players[g_carried_id].active) {
+        PlayerState *hero = &s->players[0];
+        PlayerState *cargo = &s->players[g_carried_id];
+        float yaw_rad = hero->yaw * 0.0174533f;
+        cargo->x = hero->x - sinf(yaw_rad) * 2.0f;
+        cargo->z = hero->z + cosf(yaw_rad) * 2.0f;
+        cargo->y = hero->y;
+        cargo->vx = cargo->vy = cargo->vz = 0.0f;
+
+        if (s->scene_id == SCENE_VOXWORLD) {
+            float dx = cargo->x - WITNESS_AI_LAB_ZONE_CX;
+            float dz = cargo->z - WITNESS_AI_LAB_ZONE_CZ;
+            if (dx * dx + dz * dz <= WITNESS_AI_LAB_ZONE_RADIUS * WITNESS_AI_LAB_ZONE_RADIUS) {
+                printf("[WHEELBARROW] delivered player=%d to the lab (total=%d)\n",
+                       g_carried_id, g_lab_deliveries + 1);
+                deactivate_managed_player(s, g_carried_id);
+                g_carried_id = -1;
+                g_lab_deliveries++;
             }
         }
     }

@@ -232,6 +232,51 @@ int main(void) {
         printf("PASS: outside the lab circle, wrong costume never even triggers a check\n");
     }
 
+    /* "wheelbarrow" -- carry a whole zombie or citizen back to your lab. */
+    {
+        ServerState s;
+        reset_server(&s);
+        witness_ai_reset(11, 0);
+        s.scene_id = SCENE_VOXWORLD;
+        s.players[0].active = 1;
+        s.players[0].x = 0.0f; s.players[0].y = 0.0f; s.players[0].z = 0.0f; s.players[0].yaw = 0.0f;
+
+        int cid = witness_ai_spawn_citizen(&s, ZONE_PUBLIC, 40, 30, 2.0f, 0.0f, 1.0f, 0);
+        assert(witness_ai_try_pickup(&s, 0.0f, 0.0f, 0.0f, 0) == cid);
+        assert(witness_ai_carried_player_id() == cid);
+        /* Already carrying -- a second pickup attempt is a real no-op, not a swap. */
+        assert(witness_ai_try_pickup(&s, 0.0f, 0.0f, 0.0f, 0) == -1);
+        printf("PASS: witness_ai_try_pickup picks up the nearest citizen, one at a time\n");
+
+        /* Far from the lab circle: tick repositions the cargo but delivers nothing. */
+        witness_ai_tick(&s, 0);
+        assert(witness_ai_carried_player_id() == cid);
+        assert(s.players[cid].active);
+        assert(witness_ai_lab_deliveries() == 0);
+        printf("PASS: carried cargo trails the hero but isn't delivered outside the lab circle\n");
+
+        /* Walk the hero (and cargo) into the lab circle -- real delivery. */
+        s.players[0].x = 110.0f; s.players[0].z = -260.0f;
+        witness_ai_tick(&s, 1000);
+        assert(witness_ai_carried_player_id() == -1);
+        assert(!s.players[cid].active);
+        assert(witness_ai_lab_deliveries() == 1);
+        assert(witness_ai_role_for_player(cid) == WITNESS_AI_ROLE_NONE); /* despawned, no longer managed */
+        printf("PASS: walking carried cargo into the lab circle delivers it for real\n");
+    }
+    {
+        ServerState s;
+        reset_server(&s);
+        witness_ai_reset(12, 0);
+        s.players[0].active = 1;
+        int zid = witness_ai_spawn_zombie(&s, 1.0f, 0.0f, 0.0f, 0);
+        assert(witness_ai_try_pickup(&s, 0.0f, 0.0f, 0.0f, 0) == zid);
+        witness_ai_drop_carried();
+        assert(witness_ai_carried_player_id() == -1);
+        assert(s.players[zid].active); /* dropped, not delivered -- no despawn without the lab circle */
+        printf("PASS: witness_ai_drop_carried releases in place, no delivery credit\n");
+    }
+
     printf("\nALL PASS\n");
     return 0;
 }
