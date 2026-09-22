@@ -9502,6 +9502,27 @@ int main(int argc, char* argv[]) {
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
     SDL_Window *win = SDL_CreateWindow("SHANKPIT", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+    /* Real, found-live bug, not a hypothetical: the comment above (and bloom_init's own doc
+     * comment, packages/render/bloom.c) both assumed a driver with no real MSAA support would
+     * silently grant 0 sample buffers rather than failing SDL_CreateWindow outright -- true for
+     * some software rasterizers, false for this box's own real one (Xvfb + llvmpipe, Mesa 25.2.8,
+     * confirmed via a standalone repro: SDL_CreateWindow returns NULL with "Couldn't find
+     * matching GLX visual" when a 4x-multisample visual is requested and none exists). The
+     * previous code never checked `win` for NULL here -- g_win stayed NULL, SDL_GL_CreateContext
+     * on a NULL window fails too, and every GL call for the rest of the process's life silently
+     * no-ops against no current context: the client ran at ~100% CPU with zero crash and zero
+     * visible output, the worst kind of silent failure (indistinguishable from "still loading"
+     * from the outside). Real fallback: retry once with MSAA off entirely before giving up. */
+    if (!win) {
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
+        win = SDL_CreateWindow("SHANKPIT", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+        if (win) {
+            fprintf(stderr, "INFO: SDL_CreateWindow: no MSAA-capable GLX visual available, retried with MSAA disabled\n");
+        } else {
+            fprintf(stderr, "FATAL: SDL_CreateWindow failed even without MSAA: %s\n", SDL_GetError());
+        }
+    }
     g_win = win;
     /* Real Xbox controller support (2026-08-04, founder: "ensure we have controller mappings for
      * all games") -- same pressure-sensitive-trigger pattern already proven in
