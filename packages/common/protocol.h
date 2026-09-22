@@ -39,6 +39,14 @@
 #define PACKET_DISCONNECT    7
 /* 8, 9 reserved by BEDWARS_SPEC.md (PacketBedEvent, PacketResourcePickup) — not yet implemented */
 #define PACKET_RACING_STATE  10
+/* PACKET_PHEROMONE_THROW -- BIG_O engine merge phase 5 (EMILY/BACKLOG.md SECTION 536), ported in
+ * from BIG_O's own PC_PACKET_PHEROMONE_THROW (day/packages/common/papercraft_protocol.h): client
+ * -> server, a thrown pheromone marker (docs/DESIGN_DIGEST.md §6's "pheromone balls/darts"). Same
+ * "reserved, not yet implemented" precedent as 8/9 above -- see PheromoneThrowPacket below and
+ * packages/common/pheromone.h's own header comment for why: no live zombie/citizen NPC entity
+ * array exists yet for a marker to steer (that's phase 7). Client-side derivation matches BIG_O's
+ * own v0 (sender's own position + camera-forward * a fixed throw distance), not a real projectile. */
+#define PACKET_PHEROMONE_THROW 11
 
 #define VOXEL_CHUNK_SIZE            16
 #define VOXEL_MAX_BLOCKS_PER_CHUNK  1024

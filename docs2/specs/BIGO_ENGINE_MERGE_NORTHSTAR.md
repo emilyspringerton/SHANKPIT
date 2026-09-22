@@ -190,6 +190,30 @@ matching BIG_O's own real test methodology (the partner's drift is set to match 
 drift each generation before breeding). All 7 checks pass. Deliberately not wired into
 `Makefile`/`BUILD.bazel` yet, same precedent §2d/§2e already used — no live consumer (phase 6/7).
 
+## 2g. Phase 5 landed — pheromone command primitive + reserved wire packet (dispatch loop still blocked)
+
+`packages/common/pheromone.h` — a verbatim port of BIG_O's `day/packages/common/bigo_pheromone.h`
+(pure, header-only targeting/steering: marker expiry, slot-claiming with soonest-expiring
+eviction, nearest-marker-within-radius search, overshoot-free step-toward movement), renamed away
+from the `Bigo*` prefix per "first class citizen." Verified with a faithful port of all 8 of
+BIG_O's own real `bigo_pheromone_test.c` checks (`pheromone_test.c`) — all pass.
+
+`PACKET_PHEROMONE_THROW = 11` reserved in `packages/common/protocol.h`, matching that same file's
+own already-established "reserved, not yet implemented" precedent (packets 8/9 for BEDWARS). No
+struct defined for it — checked this repo's own convention first: `protocol.h`'s own
+`RacingTelemetry` comment explicitly warns that a direct struct-cast onto the wire buffer doesn't
+match the real byte layout once the compiler pads for alignment, so packets here are parsed by
+hand at the real call site, not via a cast-a-struct-onto-the-buffer pattern BIG_O's own
+`PcPheromoneThrowPacket` used. The real byte layout gets decided when a real consumer parses it.
+
+**The Men's dispatch loop itself is genuinely not portable yet, not just deferred by choice.**
+BIG_O's `server_tick_witness`/`server_tick_dispatch` (`apps/server/src/main.c`) operate on a live
+`ServerNpc` array with `witness_state` fields — SHANKPIT's own server has no equivalent zombie/
+citizen NPC entity concept at all (`story_ai.c`'s `AIController` is combat-AI, a different thing,
+same finding §2d already made for witness rules). This is the same real blocker phases 2-4's own
+primitives share: no consumer exists until phase 7 builds a live NPC spawn/tick layer. Deliberately
+not wired into `Makefile`/`BUILD.bazel` yet, same precedent already used throughout.
+
 ## 3. Not landed this pass — named, phased into `EMILY/BACKLOG.md` SECTION 536
 
 The founder's own follow-up messages during this pass ("the shaders the way the sun and moon look
@@ -201,10 +225,12 @@ additional scope beyond the sky/clock/REFLUX slice above. None of the below is b
 2. ~~Humanness AI-brain extensions~~ — **landed, see §2e.**
 3. ~~Lab simulation~~ — **landed, see §2f.** Still needs a SHANKPIT-side UI (the phone, phase 6)
    and server wiring, neither of which exist yet.
-4. **Pheromone command tools** (`day/packages/common/bigo_pheromone.h`) + **The Men's dispatch
-   loop** (`server_tick_witness`/`server_tick_dispatch` in BIG_O's `apps/server/src/main.c`) — real,
-   live-verified in BIG_O, needs porting into `apps/server/src/main.c` alongside a new wire packet
-   (matching BIG_O's own `PC_PACKET_PHEROMONE_THROW`) in `packages/common/protocol.h`.
+4. ~~Pheromone command tools~~ — **landed, see §2g**: the pure targeting/steering primitive +
+   the reserved wire packet constant. **The Men's dispatch loop** itself
+   (`server_tick_witness`/`server_tick_dispatch`) is still not ported — it operates on BIG_O's
+   `ServerNpc` array, and SHANKPIT has no equivalent live zombie/citizen entity array to dispatch
+   against yet. Real blocker for both this and the pheromone consumer: phase 7 needs to build that
+   entity layer first.
 5. **The phone: events and messages** (founder: *"the phone in story mode everything"*, *"all the
    events and messages on the phone"*) — BIG_O's `day/packages/common/bigo_phone.h` +
    `world_alerts_mod.prn`/`world_alerts.c` (already PARENA — `PARENA/stdlib/big_o/
