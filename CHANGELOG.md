@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-22
+- BIG_O engine merge phase 7c: zone-authoring engine feature -- LevelZone (level_boxes.h), level_boxes_zone_for_position query, witness_ai_sync_zones live wiring. Native engine side only; IDUNA round-trip + NOCK editor UI named as real, separate follow-up. 15 total checks across level_boxes_zone_test.c + witness_ai_test.c, all pass. (sess-20260920-1908-24cb3558)
 - BIG_O engine merge phase 7b: live witness/zombie population + tick loop (witness_ai.h/.c), composing witness_sim + npc_archetype + zombie_values + witness_live into one real, tested, end-to-end pipeline against real PlayerState slots. All 6 integration checks pass. (sess-20260920-1908-24cb3558)
 - BIG_O engine merge phase 7a: witness/zombie live-event glue (witness_live.h), verbatim BIG_O port, all 8 real assertions replayed and passing. Phase 7 sub-phased 7a-7e after finding story_ai.c's live MODE_STORY roster/level content too large/risky for a one-shot cutover. (sess-20260920-1908-24cb3558)
 - BIG_O engine merge phase 6: the phone (packages/common/phone.h) + a genuinely working event pipeline (day_night_clock -> REFLUX -> world_alerts_mod -> phone), verified live end to end, not just per-piece (ad648a7) (sess-20260920-1908-24cb3558)
