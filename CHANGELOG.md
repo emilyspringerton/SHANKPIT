@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-22
+- fix(lobby): real fallback for a silently-failing MSAA GLX visual request -- SDL_CreateWindow was returning NULL unchecked under Xvfb+llvmpipe (no 4x-MSAA visual available), causing every GL call to silently no-op for the rest of the process's life (100% CPU, zero crash, zero visible output). Found and fixed while validating the BIG_O engine merge with real Xvfb screenshots -- first real headless screenshots of this client to ever show actual content in this sandbox. (sess-20260920-1908-24cb3558)
 - fix(ci): repair Windows/Linux CI build broken since BIG_O merge phase 1 -- CI source-list drift (6th recurrence) + a latent oversized parena_runtime.h (unconditional SDL2_ttf dependency) fixed at the source. Verified with real local mingw cross-compiles before pushing. (sess-20260920-1908-24cb3558)
 - BIG_O engine merge phase 7c: zone-authoring engine feature -- LevelZone (level_boxes.h), level_boxes_zone_for_position query, witness_ai_sync_zones live wiring. Native engine side only; IDUNA round-trip + NOCK editor UI named as real, separate follow-up. 15 total checks across level_boxes_zone_test.c + witness_ai_test.c, all pass. (sess-20260920-1908-24cb3558)
 - BIG_O engine merge phase 7b: live witness/zombie population + tick loop (witness_ai.h/.c), composing witness_sim + npc_archetype + zombie_values + witness_live into one real, tested, end-to-end pipeline against real PlayerState slots. All 6 integration checks pass. (sess-20260920-1908-24cb3558)
