@@ -261,7 +261,7 @@ UI, and no input binding (a key to open it) exists yet. That's real, separate cl
 work, not named as its own phase number since it's a natural continuation of this one once a
 render pass is scoped — tracked as a follow-up below.
 
-## 2i. Phase 7a+7b landed — witness/zombie live-event glue, and the real live population/tick loop that consumes it
+## 2i. Phase 7a-7c landed — witness/zombie live-event glue, the live population/tick loop, and zone authoring (engine side)
 
 Phase 7 (`MODE_STORY` content cutover) is far bigger than any phase landed so far — checked
 directly before starting: `story_ai.c` is 1418 real lines (squads, patrol, nav graph, leash,
@@ -319,13 +319,56 @@ Men's own dispatch loop — once a citizen escalates to SILENCING/PANIC/ENGAGE i
 `witness_live_next_state_for_event`'s own real persistence rule, until something calls the
 `resolved=1` path, which nothing does yet).
 
+**Phase 7c landed — a real zone-authoring engine feature (native side only):**
+
+- **`packages/world/level_boxes.h`'s new `LevelZone`** — a real, author-placed spherical trigger
+  volume (`x,y,z,radius,zone_type`) tagging a region of a level with a `witness_sim.h` zone
+  (`ZONE_PUBLIC`/`LAB`/`EXEC`/`GENERATOR`/`VAULT`, 0-4), added field-for-field in the exact same
+  shape as the already-established `LevelExit` (this loader's own "smallest real thing" precedent
+  — a sphere, not a box, needs no rotation authoring). `CustomLevelData` gained
+  `zones[LEVEL_BOXES_MAX_ZONES]`/`zone_count`, and the JSON parser gained a `"zones"` array block
+  mirroring `level_exits`' own parser exactly — an absent `"zones"` key is a real, honest "none
+  authored" state, `zone_count` stays 0, never an error. Mode-agnostic by design, per
+  `SHANKPIT/CLAUDE.md`'s own standing "levels are never story-mode-only" instruction — nothing
+  about `LevelZone` or its parser is gated to `MODE_STORY`.
+- **`level_boxes_zone_for_position(level, x, y, z)`** — the real query: first authored zone whose
+  sphere contains the point (full 3D distance, unlike `witness_live.h`'s own deliberately flat
+  (x,z) checks — zones need to tell a lab basement apart from a street-level plaza at the same
+  x/z), or -1 if none. Verified: `packages/world/level_boxes_zone_test.c`, 7 checks (parses a real
+  authored zones array; resolves a point inside a zone including exactly on its radius boundary;
+  honestly misses outside every zone; correctly resolves against the SECOND zone, not just index
+  0; a level with no zones parses clean; `NULL` is a safe miss) — all pass.
+- **`packages/simulation/witness_ai.c`'s new `witness_ai_sync_zones(s, level)`** — the real live
+  consumer: for every active citizen, resolves its CURRENT `PlayerState` position against the
+  given level's zones and writes the result into the owned `WitnessSim`'s own npc entry
+  (`WitnessNpc.zone`, same direct-write convention already used for `.vigilance`/`.state`). A
+  citizen outside every authored zone keeps its LAST zone rather than snapping back to
+  `ZONE_PUBLIC` — a real, deliberate choice: an unauthored gap in a level's zone coverage
+  shouldn't read as a meaningful "the player stepped into public" fact. Verified live in
+  `witness_ai_test.c` (now 8 checks): a citizen spawned in `ZONE_PUBLIC` but standing inside an
+  authored LAB volume resolves to `ZONE_LAB` after one sync call, and keeps `ZONE_LAB` after
+  moving outside every zone. Deliberately a separate function from `witness_ai_tick` (level data
+  is per-level, reloaded on level transitions; the tick loop runs every frame regardless of
+  whether a level is even loaded) — see the function's own header doc comment for the full
+  reasoning.
+
 **Real, honest, not landed this pass (named, not built):**
 
-- **Phase 7c — a real zone-authoring feature.** Checked directly: `packages/world/level_boxes.h`
-  has NO zone-trigger concept at all today (`ZONE_PUBLIC`/`LAB`/`EXEC`/`GENERATOR`/`VAULT` are a
-  pure enum with nothing in a level that assigns a region to one). Witness-sim's whole social-
-  stealth premise depends on knowing which zone a player is standing in — this is real,
-  non-trivial NOCK level-editor + IDUNA-widget-schema work, a separate scoping pass of its own.
+- **7c's own real, remaining gap: no IDUNA round-trip, no NOCK editor UI.** This pass is the
+  native-engine half only — `LevelZone` can be parsed from a level's JSON, but nothing lets a
+  designer actually AUTHOR one yet. `IDUNA/internal/shankpit/level_store.go` has no `LevelZone`
+  Go type, no DB migration for a `zones_json` column, no `CreateLevel`/`UpdateLevel` parameter, no
+  export shape, no `MaxLevelZones` constant — the entire `LevelExit`-shaped round-trip
+  (`internal/http/handlers/shankpit_levels.go`, the DB schema, the export path) that would let a
+  level SAVED through IDUNA's API actually carry zones. The NOCK web editor itself (a visual
+  affordance to place/resize a zone sphere in a level, mirroring however exits/spawners are placed
+  today) is real, separate frontend/UX design work on top of that — genuinely out of scope for a
+  backend engine pass to blind-build without design input, named honestly rather than guessed at.
+  Until this lands, a level can only carry zones via hand-written/scripted JSON, not the live NOCK
+  UI at `/admin/nock`.
+- **No live game-loop caller yet.** `witness_ai_sync_zones` has no real call site in
+  `apps/server`/`apps/lobby` — that's 7d/7e's job, once a real MODE_STORY-replacing game loop
+  calls it alongside `witness_ai_tick` each frame.
 - **Phase 7d — the actual roster cutover.** Deciding what happens to `story_ai.c`'s existing,
   already-live `AI_ROLE_*` content (Rift Hound, Shambler Trooper, Guard, the S461/S462/S470 squad/
   leash/greet systems) and the real NOCK levels built against it — replace, park alongside, or
@@ -359,11 +402,13 @@ additional scope beyond the sky/clock/REFLUX slice above. None of the below is b
 6. **`MODE_STORY` content cutover** — the actual replacement of SHANKPIT's existing story-mode
    content/roster with BIG_O's day/night/lab loop. Real, checked finding this pass: this is bigger
    than every phase 1-6 combined and touches live, shipped NOCK level content, so it is itself
-   broken into sub-phases rather than attempted in one shot — see §2i. **7a+7b landed** (the
-   witness/zombie live-event glue, and the real live NPC population/tick loop that consumes it —
-   verified end to end against a real `ServerState`). **7c-7e named, not built**: a real
-   zone-authoring feature (no zone-trigger concept exists in the level editor today), the actual
-   `AI_ROLE_*` roster cutover decision, and the day/night/lab turn structure itself.
+   broken into sub-phases rather than attempted in one shot — see §2i. **7a-7c landed** (the
+   witness/zombie live-event glue, the real live NPC population/tick loop that consumes it, and a
+   real zone-authoring engine feature — native `LevelZone` + query + live `witness_ai` wiring, all
+   verified end to end against a real `ServerState`). **7c's own real gap**: no IDUNA round-trip
+   or NOCK editor UI yet — zones can only be authored via hand-written JSON today. **7d-7e named,
+   not built**: the actual `AI_ROLE_*` roster cutover decision, and the day/night/lab turn
+   structure itself.
 
 ### 3.1 Smaller, named follow-ups to the work already landed in §2
 

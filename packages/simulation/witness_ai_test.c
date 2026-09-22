@@ -1,11 +1,11 @@
-/* witness_ai_test.c -- real, live integration test for witness_ai.c (BIG_O engine merge phase
- * 7b): the real population/tick loop composing witness_sim (phase 2), npc_archetype (phase 3),
- * zombie_values (phase 3), and witness_live (phase 7a) end to end against a real ServerState, not
- * just each piece standalone. Plain assert() harness, same convention as every other test in this
- * merge.
+/* witness_ai_test.c -- real, live integration test for witness_ai.c (BIG_O engine merge phases
+ * 7b/7c): the real population/tick loop composing witness_sim (phase 2), npc_archetype (phase 3),
+ * zombie_values (phase 3), witness_live (phase 7a), and the zone-authoring feature
+ * (level_boxes.h's LevelZone, phase 7c) end to end against a real ServerState, not just each piece
+ * standalone. Plain assert() harness, same convention as every other test in this merge.
  *
  * Build and run:
- *   gcc -Wall -Wextra -O2 -Ipackages/simulation -Ipackages/common \
+ *   gcc -Wall -Wextra -O2 -Ipackages/simulation -Ipackages/common -Ipackages/world \
  *       -o /tmp/witness_ai_test packages/simulation/witness_ai_test.c \
  *       packages/simulation/witness_ai.c packages/simulation/witness_sim.c \
  *       packages/simulation/witness_rules.c packages/simulation/npc_archetype.c \
@@ -126,6 +126,41 @@ int main(void) {
         assert(witness_ai_citizen_vigilance(cid) == 35);
         assert(witness_ai_citizen_state(cid) == WS_UNAWARE); /* sanity: still untouched by any event */
         printf("PASS: npc_archetype's own effective vigilance is live-written into the WitnessSim npc entry\n");
+    }
+
+    /* witness_ai_sync_zones (phase 7c): a citizen's live position resolves against a real,
+       authored CustomLevelData zone volume and gets written into the owned WitnessSim's npc
+       entry -- the real end-to-end proof that level_boxes.h's new LevelZone/
+       level_boxes_zone_for_position actually drives witness_sim's own zone field, not just
+       parses cleanly in isolation. */
+    {
+        ServerState s;
+        reset_server(&s);
+        witness_ai_reset(6, 0);
+
+        const char *json =
+            "{\"name\":\"TEST\",\"width\":40,\"height\":10,\"depth\":40,"
+            "\"ground_plane_enabled\":true,\"ground_plane_squares\":1,\"walls\":[],"
+            "\"zones\":[{\"x\":0,\"y\":0,\"z\":0,\"radius\":5,\"zone_type\":1}]}"; /* ZONE_LAB */
+        CustomLevelData lvl;
+        assert(level_boxes_parse_json(json, &lvl));
+
+        /* Spawned in ZONE_PUBLIC at authoring time, but standing INSIDE the LAB zone volume. */
+        int cid = witness_ai_spawn_citizen(&s, ZONE_PUBLIC, 40, 30, 1.0f, 0.0f, 1.0f, 0);
+        assert(witness_ai_citizen_zone(cid) == ZONE_PUBLIC);
+
+        witness_ai_sync_zones(&s, &lvl);
+        assert(witness_ai_citizen_zone(cid) == ZONE_LAB);
+        printf("PASS: witness_ai_sync_zones resolves a citizen's live position into the authored zone\n");
+
+        /* Moving the citizen's real PlayerState outside every authored zone keeps the LAST known
+           zone rather than snapping back to ZONE_PUBLIC -- a real, deliberate choice (an
+           unauthored gap in zone coverage isn't a meaningful "the player is now in public" fact). */
+        s.players[cid].x = 500.0f;
+        s.players[cid].z = 500.0f;
+        witness_ai_sync_zones(&s, &lvl);
+        assert(witness_ai_citizen_zone(cid) == ZONE_LAB);
+        printf("PASS: leaving every authored zone keeps the citizen's last known zone, not a silent reset\n");
     }
 
     printf("\nALL PASS\n");

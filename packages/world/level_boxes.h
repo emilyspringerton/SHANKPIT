@@ -257,6 +257,30 @@ typedef struct {
 
 #define LEVEL_BOXES_MAX_LEVEL_EXITS 8 /* matches IDUNA/internal/shankpit.MaxLevelExits exactly */
 
+/* BIG_O engine merge phase 7c (EMILY/BACKLOG.md SECTION 536) -- a real, author-placed spherical
+ * trigger volume tagging a region of a level with a witness-sim zone (packages/simulation/
+ * witness_sim.h's own real ZONE_PUBLIC/LAB/EXEC/GENERATOR/VAULT enum, 0-4). Same shape as
+ * LevelExit above (center + radius, the smallest real volume this loader already knows how to
+ * parse), deliberately NOT a box -- a sphere needs no rotation/orientation authoring, matching
+ * this loader's own "smallest real thing" precedent (see this file's own top doc comment).
+ *
+ * This is a pure geometry/data carrier, same role LevelExit/LevelCharacter already play --
+ * packages/world stays physics.h/witness_sim.h-independent by design (zone_type is a bare int
+ * here, not the ZONE_* enum type itself, so this header never has to include witness_sim.h).
+ * level_boxes_zone_for_position (below) is the real query a caller (packages/simulation/
+ * witness_ai.c's own witness_ai_sync_zones) uses to turn a live x/y/z into a zone_type.
+ *
+ * Real, deliberate scope cut, matching SHANKPIT/CLAUDE.md's own standing "levels are never
+ * story-mode-only" instruction: zones are general level geometry, usable in ANY mode, not gated
+ * to MODE_STORY -- nothing about this struct or its parser is story-mode-specific. */
+typedef struct {
+    float x, y, z;
+    float radius;
+    int zone_type;
+} LevelZone;
+
+#define LEVEL_BOXES_MAX_ZONES 16 /* matches IDUNA/internal/shankpit.MaxLevelZones exactly */
+
 typedef struct {
     char name[LEVEL_BOXES_MAX_NAME];
     float width, height, depth; /* the editor's own real authored level dimensions -- NOT read
@@ -285,6 +309,8 @@ typedef struct {
     int character_count;
     LevelExit level_exits[LEVEL_BOXES_MAX_LEVEL_EXITS]; /* S473 */
     int level_exit_count;
+    LevelZone zones[LEVEL_BOXES_MAX_ZONES]; /* BIG_O engine merge phase 7c */
+    int zone_count;
     /* next_level_id (S473) -- 0 is the real "no next level" sentinel (matches this loader's own
        established "0/absent is a real, honest sentinel, not an error" convention elsewhere --
        IDUNA's own real primary keys start at 1, so 0 never collides with a real level id). */
@@ -834,7 +860,66 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
         }
     }
 
+    // Zones (BIG_O engine merge phase 7c) -- same real, small-scanner convention as level exits
+    // above. Absent "zones" key is a real, honest "no authored zones for this level" state, not
+    // an error -- zone_count stays 0, and level_boxes_zone_for_position (below) always returns
+    // -1 for a level with none.
+    out->zone_count = 0;
+    const char *zn_arr_key = level_boxes_find_key(buf, end, "zones");
+    if (zn_arr_key) {
+        const char *zn_arr = level_boxes_skip_ws(zn_arr_key);
+        if (*zn_arr == '[') {
+            const char *zn_arr_end = level_boxes_find_array_end(zn_arr, end);
+            if (zn_arr_end) {
+                const char *zncursor = zn_arr + 1;
+                while (zncursor < zn_arr_end && out->zone_count < LEVEL_BOXES_MAX_ZONES) {
+                    zncursor = level_boxes_skip_ws(zncursor);
+                    if (zncursor >= zn_arr_end) break;
+                    if (*zncursor == ',') { zncursor++; continue; }
+                    if (*zncursor != '{') { zncursor++; continue; }
+                    const char *znobj_start = zncursor;
+                    const char *znobj_end = strchr(znobj_start, '}');
+                    if (!znobj_end || znobj_end > zn_arr_end) break;
+
+                    LevelZone *zn = &out->zones[out->zone_count];
+                    memset(zn, 0, sizeof(*zn));
+                    const char *v7;
+                    if ((v7 = level_boxes_find_key(znobj_start, znobj_end, "x"))) level_boxes_parse_number(v7, &zn->x);
+                    if ((v7 = level_boxes_find_key(znobj_start, znobj_end, "y"))) level_boxes_parse_number(v7, &zn->y);
+                    if ((v7 = level_boxes_find_key(znobj_start, znobj_end, "z"))) level_boxes_parse_number(v7, &zn->z);
+                    if ((v7 = level_boxes_find_key(znobj_start, znobj_end, "radius"))) level_boxes_parse_number(v7, &zn->radius);
+                    if ((v7 = level_boxes_find_key(znobj_start, znobj_end, "zone_type"))) {
+                        float zt_f = 0.0f;
+                        if (level_boxes_parse_number(v7, &zt_f)) zn->zone_type = (int)zt_f;
+                    }
+                    out->zone_count++;
+                    zncursor = znobj_end + 1;
+                }
+            }
+        }
+    }
+
     return 1;
+}
+
+/* level_boxes_zone_for_position -- BIG_O engine merge phase 7c. Returns the zone_type of the
+ * FIRST authored zone volume (in authoring order) whose sphere contains (x,y,z) (flat-Euclidean,
+ * y included -- unlike witness_live.h's own deliberately flat (x,z) checks, since zones are meant
+ * to distinguish e.g. a lab basement from a street-level plaza at the same x/z), or -1 if the
+ * level has no zones at all, or none of them contain this point ("no zone authored here" is a
+ * real, honest, non-fatal outcome -- the caller decides the fallback, matching level_exits'/
+ * spawners' own "absent is honest, not an error" convention throughout this file). Overlapping
+ * zones are a real, deliberate author error this function does not detect or warn about -- first
+ * match wins, same as every other array-scan helper in this file. */
+static inline int level_boxes_zone_for_position(const CustomLevelData *level, float x, float y, float z) {
+    if (!level) return -1;
+    for (int i = 0; i < level->zone_count; i++) {
+        const LevelZone *zn = &level->zones[i];
+        float dx = x - zn->x, dy = y - zn->y, dz = z - zn->z;
+        float r = zn->radius;
+        if (dx * dx + dy * dy + dz * dz <= r * r) return zn->zone_type;
+    }
+    return -1;
 }
 
 // level_boxes_load_from_file reads path and parses it into *out. Returns 1 on success, 0 if the

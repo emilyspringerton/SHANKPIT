@@ -118,6 +118,26 @@ int witness_ai_spawn_zombie(ServerState *s, float x, float y, float z, unsigned 
     return slot;
 }
 
+int witness_ai_citizen_zone(int player_id) {
+    for (int i = 0; i < WITNESS_AI_MAX_CITIZENS; i++) {
+        if (g_citizens[i].active && g_citizens[i].player_id == player_id) {
+            return g_sim.n[g_citizens[i].npc_index].zone;
+        }
+    }
+    return -1;
+}
+
+void witness_ai_sync_zones(ServerState *s, const CustomLevelData *level) {
+    if (!s || !level) return;
+    for (int i = 0; i < WITNESS_AI_MAX_CITIZENS; i++) {
+        WitnessAiCitizen *c = &g_citizens[i];
+        if (!c->active) continue;
+        PlayerState *cp = &s->players[c->player_id];
+        int zt = level_boxes_zone_for_position(level, cp->x, cp->y, cp->z);
+        if (zt >= 0) g_sim.n[c->npc_index].zone = zt; /* -1 (no authored zone here) keeps the last zone */
+    }
+}
+
 void witness_ai_force_zombie_mood(int player_id, int mood) {
     for (int i = 0; i < WITNESS_AI_MAX_ZOMBIES; i++) {
         if (g_zombies[i].active && g_zombies[i].player_id == player_id) {

@@ -37,6 +37,7 @@
  *    not-yet-built follow-up work (see phase 7d in docs2/specs/BIGO_ENGINE_MERGE_NORTHSTAR.md). */
 
 #include "../common/protocol.h"
+#include "../world/level_boxes.h" /* CustomLevelData, level_boxes_zone_for_position -- phase 7c */
 #include "witness_sim.h" /* WITNESS_SIM_MAX_NPCS */
 
 #define WITNESS_AI_MAX_CITIZENS WITNESS_SIM_MAX_NPCS /* bounded by WitnessSim's own npc array */
@@ -68,6 +69,26 @@ int witness_ai_spawn_zombie(ServerState *s, float x, float y, float z, unsigned 
  * owned WitnessSim's own ambient decorum decay to roughly once per second. */
 void witness_ai_tick(ServerState *s, unsigned int now_ms);
 
+/* witness_ai_sync_zones -- BIG_O engine merge phase 7c. Real, live consumer of
+ * level_boxes_zone_for_position (packages/world/level_boxes.h): for every active citizen,
+ * resolves its CURRENT PlayerState position against the given level's own authored zone volumes
+ * and writes the result into the owned WitnessSim's npc entry (WitnessNpc.zone -- public field,
+ * same direct-write convention witness_ai_tick already uses for .vigilance/.state). A citizen
+ * standing outside every authored zone (or `level` is NULL -- no level data loaded, or a level
+ * with no "zones" array at all) keeps its LAST zone rather than being silently reset to
+ * ZONE_PUBLIC -- a real, deliberate choice: an unauthored gap in a level's zone coverage should
+ * not read as a meaningful "the player stepped into public" fact.
+ *
+ * Deliberately a separate function from witness_ai_tick, not folded into it -- level data is
+ * per-level (reloaded on `story_ai_reset`-style level transitions), while witness_ai_tick runs
+ * every real server frame regardless of whether a level is even loaded; keeping them separate
+ * means a caller with no CustomLevelData yet (or a non-story mode with no zones authored) can
+ * still call witness_ai_tick every frame without this function ever needing a NULL-safe no-op
+ * path baked into the hot loop. Real, honest, not wired into any live tick loop yet -- no caller
+ * exists in apps/server or apps/lobby (that's 7d/7e, once a real MODE_STORY-replacing game loop
+ * calls both this and witness_ai_tick together each frame). */
+void witness_ai_sync_zones(ServerState *s, const CustomLevelData *level);
+
 /* Test/debug hook: directly forces a zombie's mood, bypassing the real has_target-gated tick path
  * -- the same real, named boundary this header's own top doc comment already states (no
  * perception system exists yet to earn HUNTING/FRENZIED organically). */
@@ -81,5 +102,9 @@ int witness_ai_citizen_state(int player_id);
  * mood-modulated value, written back by witness_ai_tick -- see witness_ai.c's own doc comment),
  * or -1 if player_id doesn't resolve to an active citizen spawned by this module. */
 int witness_ai_citizen_vigilance(int player_id);
+
+/* Test/debug accessor: the citizen's CURRENT WitnessNpc zone (a ZONE_* value, witness_sim.h),
+ * or -1 if player_id doesn't resolve to an active citizen spawned by this module. */
+int witness_ai_citizen_zone(int player_id);
 
 #endif
