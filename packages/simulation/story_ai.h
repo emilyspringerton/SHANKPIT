@@ -207,7 +207,11 @@ void story_ai_reset(ServerState *s);
 void story_ai_despawn_all_characters(ServerState *s);
 int story_ai_spawn_enemy(ServerState *s, AIRole role, float x, float y, float z);
 void story_ai_tick(ServerState *s, unsigned int now_ms);
-void story_ai_seed_voxworld_encounter(ServerState *s);
+/* story_ai_seed_voxworld_encounter (the old MODE_STORY VOXWORLD combat-squad encounter) was
+   removed in the BIG_O engine merge phase 7d content cutover -- see
+   packages/simulation/witness_ai.h's own witness_ai_seed_voxworld_encounter, its real
+   replacement. story_ai.c's own AI_ROLE_* roster, story_ai_spawn_enemy, and the general
+   LevelCharacter/NOCK-authoring spawn path above are untouched by this and stay fully live. */
 
 /* S461-03 -- groups already-spawned enemies (by the player_id story_ai_spawn_enemy returned)
    into one persistent squad. Assigns member_ai_index[0] as leader immediately. Returns the new

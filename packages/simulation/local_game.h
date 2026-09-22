@@ -6,6 +6,7 @@
 #include "../common/shared_movement.h"
 #include "story_ai.h"
 #include "story_buttons.h"
+#include "witness_ai.h" /* BIG_O engine merge phase 7d -- MODE_STORY content cutover */
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
@@ -1780,6 +1781,10 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
     if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
         local_state.story_phase == STORY_PHASE_PLAYING) {
         story_ai_tick(&local_state, cmd_time);
+        /* BIG_O engine merge phase 7d -- ticks the witness/zombie population
+           witness_ai_seed_voxworld_encounter spawns above. Safe no-op when nothing is spawned
+           (MODE_STORY_CAVE, or any scene other than VOXWORLD). */
+        witness_ai_tick(&local_state, cmd_time);
     }
 
     for(int i=0; i<MAX_CLIENTS; i++) {
@@ -1995,7 +2000,14 @@ void local_init_match(int num_players, int mode) {
     scene_load(local_state.scene_id);
     if (mode == MODE_STORY) {
         story_ai_reset(&local_state);
-        story_ai_seed_voxworld_encounter(&local_state);
+        /* BIG_O engine merge phase 7d, MODE_STORY content cutover ("replace outright" per founder
+           direction) -- witness_ai_seed_voxworld_encounter replaces
+           story_ai_seed_voxworld_encounter as VOXWORLD's real content: ambient citizens + zombies
+           instead of the old AI_ROLE_* combat squad. story_ai_seed_voxworld_encounter itself is
+           dead code now (its only call site) -- see docs2/specs/BIGO_ENGINE_MERGE_NORTHSTAR.md
+           phase 7d for the full account of what is and isn't touched by this cutover. */
+        witness_ai_reset((unsigned int)time(NULL), 0);
+        witness_ai_seed_voxworld_encounter(&local_state, 0);
         StoryBossState *boss = &local_state.story_boss;
         boss->active = 1;
         boss->defeated = 0;

@@ -5,8 +5,8 @@
    real-time direction, 2026-09-17: "we are going to need a waypoint system in the levels and
    maps northstar it" -- explicitly not a polygon navmesh, since SHANKPIT has no wall-collision
    or navmesh-bake pipeline to derive one from, only a ground heightfield in terrain.c). Same
-   authoring convention as story_ai.c's own AIPatrolPoint (see story_ai_seed_voxworld_encounter):
-   hand-placed nodes per scene, not procedurally generated. Full design + per-level authoring
+   authoring convention as story_ai.c's own AIPatrolPoint: hand-placed nodes per scene, not
+   procedurally generated. Full design + per-level authoring
    plan: docs2/specs/AI_WAYPOINT_NAV_NORTHSTAR.md. */
 
 #define AI_NAV_MAX_NODES 32

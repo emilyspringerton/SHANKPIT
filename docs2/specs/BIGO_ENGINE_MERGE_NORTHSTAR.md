@@ -366,17 +366,66 @@ Men's own dispatch loop — once a citizen escalates to SILENCING/PANIC/ENGAGE i
   backend engine pass to blind-build without design input, named honestly rather than guessed at.
   Until this lands, a level can only carry zones via hand-written/scripted JSON, not the live NOCK
   UI at `/admin/nock`.
-- **No live game-loop caller yet.** `witness_ai_sync_zones` has no real call site in
-  `apps/server`/`apps/lobby` — that's 7d/7e's job, once a real MODE_STORY-replacing game loop
-  calls it alongside `witness_ai_tick` each frame.
-- **Phase 7d — the actual roster cutover.** Deciding what happens to `story_ai.c`'s existing,
-  already-live `AI_ROLE_*` content (Rift Hound, Shambler Trooper, Guard, the S461/S462/S470 squad/
-  leash/greet systems) and the real NOCK levels built against it — replace, park alongside, or
-  fold in as BIG_O's own "Guard"-class encounters. Explicitly not decided or guessed at here.
-- **Phase 7e — the day/night/lab turn structure itself.** The actual game-loop content (harvest →
-  blend-in → lab) that makes this "BIG_O replaces STORY" rather than just new primitives sitting
-  next to the old mode. Depends on 7a-7d landing enough real, live content to build a turn
-  structure around.
+- **`witness_ai_sync_zones` still has no live game-loop caller.** Real, still-open gap: needs a
+  real, author-placed `LevelZone` in a level's JSON to have anything to resolve against, and
+  MODE_STORY's VOXWORLD scene doesn't author any yet. Not blocking — `witness_ai_tick` doesn't
+  depend on it (a citizen with no synced zone just keeps `ZONE_PUBLIC`, its spawn-time default).
+
+## 2j. Phase 7d landed — the actual roster cutover, "replace outright" (founder decision)
+
+Founder, asked directly given the real, named risk ("orphans real, already-built level content
+with no migration plan"): **replace outright**. Real, narrowly-scoped execution, checked before
+touching anything — MODE_STORY's VOXWORLD scene has exactly ONE real content-spawn call site
+(`story_ai_seed_voxworld_encounter`, called once from `local_init_match`), completely separate
+from two other systems this cutover does NOT touch:
+
+- **`story_ai.c`'s own `AI_ROLE_*` roster and general `LevelCharacter`/NOCK-authoring spawn path**
+  (`server_apply_custom_level`) — real, general, cross-mode level-editor infrastructure any NOCK
+  level in any mode can still use, per `SHANKPIT/CLAUDE.md`'s own standing "levels are never
+  story-mode-only" instruction. Fully alive, untouched.
+- **The VOXWORLD boss fight** (`StoryBossState`, "BREACH TITAN") — a separate, hand-rolled system
+  with zero relationship to `story_ai.c`'s `AIController` roster. Untouched.
+
+What actually changed:
+
+- **`packages/simulation/witness_ai.h`/`.c` gained `witness_ai_seed_voxworld_encounter`** — the
+  real replacement content: 4 ambient citizens + 2 zombies (one bootstrapped straight into
+  `ZOMBIE_MOOD_HUNTING` via `witness_ai_force_zombie_mood`, a real, honest workaround for
+  `zombie_tick`'s own `has_target=0` scope cut — otherwise nothing would ever be a witnessable
+  event) at the same spatial footprint the old encounter used. Logs
+  `[WITNESS] voxworld encounter seeded: ...` — a real, permanent log line, not a throwaway debug
+  print.
+- **`story_ai_seed_voxworld_encounter` (story_ai.c, 175 lines) deleted outright** — confirmed via
+  grep it had exactly one real call site before removal; its own small `ai_set_patrol` helper was
+  left alone (general AIController infrastructure, not encounter-specific, zero cost sitting
+  unused, real future NOCK-authored patrol content could still call it). `story_ai.h`'s own
+  declaration replaced with a doc comment pointing at the real replacement.
+- **`local_init_match` (local_game.h)** — the one real call site — swapped to
+  `witness_ai_reset`/`witness_ai_seed_voxworld_encounter`.
+- **`witness_ai_tick` wired into both real per-tick loops** (`local_game.h`'s shared tick,
+  `apps/server/src/main.c`'s dedicated-server tick) alongside `story_ai_tick`, same "safe to call
+  unconditionally, real no-op when nothing is spawned" property that call site's own existing
+  comment already established for `story_ai_tick`.
+- **Makefile**: `witness_ai.c`/`witness_sim.c`/`witness_rules.c`/`npc_archetype.c`/
+  `zombie_values.c`/`ai_brain_rules.c` added to both `LOBBY_SRC` and `SERVER_SRC` — witness_ai's
+  own real, first live consumer, closing out phases 2/3/7a/7b's own standing "no build-graph entry
+  without a real consumer" deferral.
+
+**Verified live, not just compiled:** `make lobby`/`make server` both clean; `witness_ai_test.c`
+(8 checks) and `level_boxes_zone_test.c` (7 checks) still pass unchanged; `go test ./...` clean;
+a real Xvfb run of the actual built client entering MODE_STORY shows
+`[WITNESS] voxworld encounter seeded: 4 citizens, 2 zombies (1 HUNTING)` firing in the log at
+exactly the right point (after VOXWORLD terrain init, before the boss spawns), with the boss fight
+and HUD rendering identically to before — real proof this is wired in and the surrounding systems
+are unaffected, not just "it compiled."
+
+**Real, honest, not landed this pass:** no visible confirmation of an actual citizen/zombie model
+on screen (camera-aiming under a scripted Xvfb input session proved impractical to automate in the
+time available) — the population spawns into real `PlayerState` slots at real world positions, and
+every connected client already renders/networks `PlayerState` slots for free (the exact same
+mechanism `story_ai`'s own enemies already used), so this is a strong, not a certain, claim.
+Genuinely different visual models for citizens/zombies vs. the default mannequin/Tyler skin (no
+`forced_skin`-equivalent assignment exists yet for this module) is real, separate, deferred work.
 
 ## 3. Not landed this pass — named, phased into `EMILY/BACKLOG.md` SECTION 536
 
@@ -402,13 +451,14 @@ additional scope beyond the sky/clock/REFLUX slice above. None of the below is b
 6. **`MODE_STORY` content cutover** — the actual replacement of SHANKPIT's existing story-mode
    content/roster with BIG_O's day/night/lab loop. Real, checked finding this pass: this is bigger
    than every phase 1-6 combined and touches live, shipped NOCK level content, so it is itself
-   broken into sub-phases rather than attempted in one shot — see §2i. **7a-7c landed** (the
-   witness/zombie live-event glue, the real live NPC population/tick loop that consumes it, and a
-   real zone-authoring engine feature — native `LevelZone` + query + live `witness_ai` wiring, all
-   verified end to end against a real `ServerState`). **7c's own real gap**: no IDUNA round-trip
-   or NOCK editor UI yet — zones can only be authored via hand-written JSON today. **7d-7e named,
-   not built**: the actual `AI_ROLE_*` roster cutover decision, and the day/night/lab turn
-   structure itself.
+   broken into sub-phases rather than attempted in one shot — see §2i/§2j. **7a-7d landed** (the
+   witness/zombie live-event glue, the real live NPC population/tick loop, a real zone-authoring
+   engine feature, and the actual roster cutover — MODE_STORY's VOXWORLD encounter now spawns
+   BIG_O's witness/zombie content instead of `story_ai.c`'s old `AI_ROLE_*` combat squad, verified
+   live). **7c's own real gap**: no IDUNA round-trip or NOCK editor UI yet — zones can only be
+   authored via hand-written JSON today. **7e named, not built**: the day/night/lab turn structure
+   itself — the actual game-loop content (harvest → blend-in → lab) that makes this a real turn
+   structure, not just a population standing in a field.
 
 ### 3.1 Smaller, named follow-ups to the work already landed in §2
 

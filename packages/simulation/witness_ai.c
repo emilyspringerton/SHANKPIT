@@ -214,3 +214,25 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
         }
     }
 }
+
+void witness_ai_seed_voxworld_encounter(ServerState *s, unsigned int now_ms) {
+    if (!s || s->scene_id != SCENE_VOXWORLD) return;
+
+    float cx = 0.0f;
+    float cz = -260.0f;
+
+    /* Ambient citizens -- same spatial footprint as the old story_ai_seed_voxworld_encounter's
+       own enemy placement, so this plays out in the same real space, not an arbitrary new one. */
+    witness_ai_spawn_citizen(s, ZONE_PUBLIC, 40, 30, cx - 42.0f, 8.0f, cz - 20.0f, now_ms);
+    witness_ai_spawn_citizen(s, ZONE_PUBLIC, 45, 25, cx + 38.0f, 8.0f, cz + 16.0f, now_ms);
+    witness_ai_spawn_citizen(s, ZONE_PUBLIC, 35, 40, cx + 4.0f, 8.0f, cz - 54.0f, now_ms);
+    witness_ai_spawn_citizen(s, ZONE_PUBLIC, 50, 20, cx - 4.0f, 8.0f, cz + 46.0f, now_ms);
+
+    int z1 = witness_ai_spawn_zombie(s, cx + 60.0f, 8.0f, cz - 90.0f, now_ms);
+    witness_ai_spawn_zombie(s, cx - 60.0f, 8.0f, cz - 10.0f, now_ms);
+
+    /* Real, honest bootstrap -- see this function's own header doc comment for why. */
+    if (z1 > 0) witness_ai_force_zombie_mood(z1, ZOMBIE_MOOD_HUNTING);
+
+    printf("[WITNESS] voxworld encounter seeded: 4 citizens, 2 zombies (1 HUNTING)\n");
+}

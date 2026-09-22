@@ -89,6 +89,27 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms);
  * calls both this and witness_ai_tick together each frame). */
 void witness_ai_sync_zones(ServerState *s, const CustomLevelData *level);
 
+/* witness_ai_seed_voxworld_encounter -- BIG_O engine merge phase 7d (MODE_STORY content
+ * cutover, "replace outright" per founder direction). The real replacement for
+ * story_ai_seed_voxworld_encounter (story_ai.c) as MODE_STORY's VOXWORLD content: 4 ambient
+ * citizens and 2 zombies instead of the old AI_ROLE_* combat squad/patrol encounter. A no-op for
+ * any other scene (mirrors story_ai_seed_voxworld_encounter's own SCENE_VOXWORLD guard exactly).
+ *
+ * Real, deliberate, narrowly-scoped cutover -- what this does NOT touch, on purpose:
+ *  - story_ai.c's own AI_ROLE_* roster and its general LevelCharacter/NOCK-authoring spawn path
+ *    (server_apply_custom_level) stay completely alive and untouched -- that's real, general,
+ *    cross-mode level-editor infrastructure other levels may use (SHANKPIT/CLAUDE.md's own
+ *    standing "levels are never story-mode-only" instruction), not "MODE_STORY's content."
+ *  - The VOXWORLD boss fight (StoryBossState, local_game.h) is a separate, hand-rolled system
+ *    with no relationship to story_ai.c's AIController roster -- out of scope, untouched.
+ *
+ * Bootstraps one zombie straight into HUNTING (via witness_ai_force_zombie_mood below) --
+ * real, honest reason: zombie_tick's own has_target is always 0 (no perception system exists
+ * yet, see this header's own top doc comment), so a freshly-spawned zombie would otherwise sit
+ * DORMANT forever with nothing for any citizen to ever witness. This is the same test/debug hook
+ * witness_ai_test.c already exercises, now given its first real gameplay call site. */
+void witness_ai_seed_voxworld_encounter(ServerState *s, unsigned int now_ms);
+
 /* Test/debug hook: directly forces a zombie's mood, bypassing the real has_target-gated tick path
  * -- the same real, named boundary this header's own top doc comment already states (no
  * perception system exists yet to earn HUNTING/FRENZIED organically). */

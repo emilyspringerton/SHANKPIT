@@ -1483,6 +1483,11 @@ int main(int argc, char *argv[]) {
         // single-"hero"-targeted) stay lobby-only for now -- this fix covers the general,
         // NOCK-placeable story_ai NPC system, not that specific single-player boss encounter.
         story_ai_tick(&local_state, now);
+        /* BIG_O engine merge phase 7d -- ticks the witness/zombie population
+           witness_ai_seed_voxworld_encounter (local_init_match) spawns for MODE_STORY's VOXWORLD
+           scene. Same "safe to call unconditionally" property story_ai_tick's own comment above
+           already established -- a real no-op whenever nothing is spawned. */
+        witness_ai_tick(&local_state, now);
         story_check_level_exits(now);
         double now_sec = now_seconds();
         for (int i = 1; i < MAX_CLIENTS; i++) {
