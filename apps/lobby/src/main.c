@@ -1875,6 +1875,7 @@ typedef enum {
     APP_DEADWEIGHT = 0,
     APP_PITVIPER,
     APP_IDUNA_GAME,
+    APP_REDGARDEN,
     APP_COUNT
 } AppsAction;
 
@@ -1882,6 +1883,7 @@ static const char *APPS_LABELS[APP_COUNT] = {
     "DEADWEIGHT",
     "PITVIPER",
     "IDUNA",
+    "REDGARDEN",
 };
 
 // lobby_page -- 0 = GAMES (the original single page, untouched), 1 = APPS (new).
@@ -2762,6 +2764,21 @@ static void lobby_launch_app(AppsAction app) {
             // honor-code/device-auth prompt (IDUNA.GAME/NORTHSTAR.md) -- launched as its own
             // separate app, not a mode switch inside PITVIPER itself.
             dev_relative_path = "../../IDUNA.GAME/idunagame";
+            break;
+        case APP_REDGARDEN:
+            display_name = "REDGARDEN";
+#ifdef _WIN32
+            bundled_name = "red_garden_arena.exe";
+#else
+            bundled_name = "red_garden_arena";
+#endif
+            // REDGARDEN's own scripts/build.sh builds every binary into build/ -- see that
+            // script's own -o "${BUILD_DIR}/red_garden_arena" line. This launches the real
+            // apps/arena client unmodified, same "launch the real binary as a child process,
+            // never reimplement its UI" convention every other app entry here already follows;
+            // it still needs a real --ticket/matchmaker connection to actually play (see
+            // REDGARDEN_GUI_NORTHSTAR.md), same as running it by hand would.
+            dev_relative_path = "../../REDGARDEN/build/red_garden_arena";
             break;
         default:
             return;
