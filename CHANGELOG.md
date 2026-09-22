@@ -1,6 +1,14 @@
 # Changelog
 
 ## 2026-09-22
+- docs: new `docs2/specs/CAPTCHA_FPS_PHYSICS_DOGFOOD_NORTHSTAR.md` (founder real-time: "dog food
+  all of the physics for shankpit into parena - the new product is a CAPTCHA that spawns an in
+  browser fps"). Real capability audit: PARENA's `emit_ts.c` is scalar-only (no defstruct/loop/
+  Vec) vs `physics.h`'s 3427 lines of struct-heavy movement/collision/rewind netcode; no in-
+  browser 3D renderer exists anywhere in this monorepo yet; the bot-vs-human humanness-signal
+  problem is real and unsolved (SHANKPIT's own bots already outplay many humans). 5-phase plan,
+  smallest real slice (compiler defstruct support, then movement+collision only) first.
+  (sess-20260920-1908-24cb3558)
 - feat: PITVIPER added as second Apps-page entry (mirrors DEADWEIGHT's app-launcher case) (sess-20260920-1908-24cb3558)
 - feat: IDUNA (IDUNA.GAME, a real Solarized Light fork of PITVIPER with a text-based honor-code/
   device-auth prompt) added as third Apps-page entry (sess-20260920-1908-24cb3558)
