@@ -51,11 +51,17 @@ them risks real rework.**
    DEADWEIGHT/SLOWBOT_LEAGUE-only, with SHANKPIT's own bespoke handlers becoming the thing
    everything else defers identity to?** Not a detail — this decides where new code goes for
    every future integration.
-4. **BRAWLPIT has no player-facing IDUNA identity integration at all** — checked directly, no
-   `brawlpit_auth`-equivalent handler exists; the only BRAWLPIT-IDUNA surface found is
+4. **BRAWLPIT had no player-facing IDUNA identity integration** — checked directly, no
+   `brawlpit_auth`-equivalent handler existed; the only BRAWLPIT-IDUNA surface was
    agent-auth-gated checkpoint upload (`brawlpit_checkpoints.go`, M2M only, not a player login).
-   "BRAWLPIT can be a menu item" is a real, additional identity-integration project on its own,
-   not just a launcher entry.
+   **Closed 2026-09-22**: `brawlpit` is now a real `internal/games.Registry` entry (`brawlpit.play`,
+   IDUNA commit following Apple #20332) riding the exact same generic guest-register/guest-login/
+   guest-upgrade API DEADWEIGHT and BIG_O already use, plus a public `/play/brawlpit` page (BIG_O
+   got the identical treatment for its own card, 123214231 — both pages now share one reusable
+   `GameSignupPageHandler`, game-parameterized, rather than two copies). Neither game's own native
+   client consumes this yet — that's the real, remaining, separate integration work ("BRAWLPIT can
+   be a menu item" still needs its own C client to actually call this API instead of a browser
+   page standing in for it), not just a launcher entry.
 5. **The EmilyOS affordances guide is real and already has a live precedent elsewhere in this
    monorepo.** `EmilyOS/docs/legacy-archive/gui-v0.1-design-capture.md` — "the game interface IS
    the filesystem UI," directory tiles (EGSHELL/near-white, container semantics) vs. colored
@@ -102,7 +108,8 @@ answer expensive to reverse.
 2. **Turn on SHANKPIT's Google OAuth for real** — a human-only GCP Console step (same gate named
    for `IDUNA_PRO`/`JEWEL`), then decide the DEADWEIGHT/BRAWLPIT identity-unification direction
    named in the audit above (migrate SHANKPIT onto `games.Registry`, or the reverse).
-3. **BRAWLPIT player identity from scratch** — no such thing exists today.
+3. ~~BRAWLPIT player identity from scratch~~ — **closed 2026-09-22**, see the audit item 4 update
+   above. Remaining: wiring BRAWLPIT's own native C client to actually call it.
 4. **The EmilyOS affordance system**, actually built as reusable chrome (palette, tile
    components, intent-declared interaction pattern) — currently only a design doc, applied
    nowhere.
