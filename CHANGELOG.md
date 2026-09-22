@@ -2,6 +2,11 @@
 
 ## 2026-09-22
 - feat: PITVIPER added as second Apps-page entry (mirrors DEADWEIGHT's app-launcher case) (sess-20260920-1908-24cb3558)
+- feat: IDUNA (IDUNA.GAME, a real Solarized Light fork of PITVIPER with a text-based honor-code/
+  device-auth prompt) added as third Apps-page entry (sess-20260920-1908-24cb3558)
+- feat: REDGARDEN added as fourth Apps-page entry, launches build/red_garden_arena unmodified (sess-20260920-1908-24cb3558)
+- feat: EDITOR (EDITOR.GAME, a real standalone fork of PARENA's own editor demo) added as fifth
+  Apps-page entry (sess-20260920-1908-24cb3558)
 
 - New Apps page in the lobby menu -- launches other EINHORN_INDUSTRIAL games (DEADWEIGHT first) as real, unmodified child processes. First concrete step of the SHANKPIT-as-platform pivot (SHANKPIT_OS_NORTHSTAR.md). (sess-20260920-1908-24cb3558)
 
