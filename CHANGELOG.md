@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-09-23
+- docs: add GEMINI.md guidance for Gemini / Antigravity pair programming
+
 ## 2026-09-22
 - BIG_O engine merge phase 7e: MODE_STORY gets its first real, player-visible day/night turn boundary -- a phone-notification banner (DAYBREAK/NIGHTFALL/STORM WARNING) driven by day_night_clock + world_alert_bridge, both real and tested since phases 1/6 but never before instantiated in a live client. Lab (the third leg of 'day/night/lab') remains explicitly unstarted -- lab_sim.c has real simulation logic but zero UI, a separate scoping pass. (sess-20260920-1908-24cb3558)
 - BIG_O engine merge phase 7d: MODE_STORY roster cutover, replace outright (founder decision). VOXWORLD's story encounter now spawns witness_ai's citizens/zombies instead of story_ai.c's old AI_ROLE_* combat squad -- story_ai_seed_voxworld_encounter (175 lines) deleted, witness_ai wired into both real tick loops and the Makefile for the first time. Verified live via Xvfb: '[WITNESS] voxworld encounter seeded' fires correctly, boss fight/HUD unaffected. (sess-20260920-1908-24cb3558)
