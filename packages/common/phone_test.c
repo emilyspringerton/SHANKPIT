@@ -41,6 +41,16 @@ int main(void) {
     p.weapons_owned |= 2; fx = phone_input(&p, BP_SELECT, 0); CHECK(fx.kind == BP_FX_WEAPON_SWITCH && fx.arg == 1);
     /* wardrobe */
     go(&p, BP_APP_WARDROBE); phone_input(&p, BP_DOWN, 0); phone_input(&p, BP_SELECT, 0); CHECK(p.costume == 1);
+    /* cargo: the BIG_O basic food system's own real "use" half -- eating removes the item, shifts
+       the rest down, and hands back a real heal effect derived from food_items.h */
+    phone_init(&p); CHECK(phone_cargo_add(&p, FOOD_CHERRY) && phone_cargo_add(&p, FOOD_KEY) && p.cargo_count == 2);
+    go(&p, BP_APP_CARGO); fx = phone_input(&p, BP_SELECT, 0);
+    CHECK(fx.kind == BP_FX_EAT_FOOD && fx.arg == food_item_heal(FOOD_CHERRY) && p.cargo_count == 1 && p.cargo[0] == FOOD_KEY);
+    fx = phone_input(&p, BP_SELECT, 0);
+    CHECK(fx.kind == BP_FX_EAT_FOOD && fx.arg == food_item_heal(FOOD_KEY) && p.cargo_count == 0);
+    fx = phone_input(&p, BP_SELECT, 0); CHECK(fx.kind == BP_FX_NONE);   /* empty cargo, nothing to eat */
+    { Phone full; phone_init(&full); for (int i = 0; i < BP_INV_SLOTS; i++) CHECK(phone_cargo_add(&full, FOOD_APPLE));
+      CHECK(!phone_cargo_add(&full, FOOD_APPLE) && full.cargo_count == BP_INV_SLOTS); }   /* real, honest cap */
     /* lab: splice needs a sample; consumes exactly one; base/trait choice recorded */
     go(&p, BP_APP_LAB); phone_input(&p, BP_DOWN, 0); phone_input(&p, BP_DOWN, 0);
     phone_input(&p, BP_SELECT, 0); CHECK(p.clone_count == 0);

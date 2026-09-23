@@ -26,6 +26,13 @@
 
 #include <string.h>
 
+/* BIG_O basic food system (EMILY/BACKLOG.md SECTION 536 follow-up, founder real-time,
+ * 2026-09-22): CARGO's own real content + the "use" half of "pickup and use (cargo)". The
+ * pickup half lives in packages/simulation/food_pickup.h -- this header only needs the pure
+ * data table (names/points/heal), same layering every other BIG_O-apps field below already
+ * uses (e.g. BP_COSTUME_NAMES for WARDROBE). */
+#include "food_items.h"
+
 typedef enum {
     BP_APP_MESSAGES = 0, BP_APP_CONTACTS, BP_APP_MAP, BP_APP_CAMERA, BP_APP_NOTES,   /* TYLER spec apps */
     BP_APP_LAB, BP_APP_CARGO, BP_APP_SKILLS, BP_APP_LOADOUT, BP_APP_WARDROBE, BP_APP_STATUS, /* BIG_O apps */
@@ -38,7 +45,10 @@ typedef enum {
     BP_FX_NONE = 0,
     BP_FX_ALLOCATE_TALENT,  /* arg = ability index 0..4 -> PC_PACKET_ALLOCATE_TALENT */
     BP_FX_WEAPON_SWITCH,    /* arg = weapon slot -> PC_PACKET_WEAPON_SWITCH */
-    BP_FX_TAKE_PHOTO        /* host may grab a screenshot; counter already advanced */
+    BP_FX_TAKE_PHOTO,       /* host may grab a screenshot; counter already advanced */
+    BP_FX_EAT_FOOD,         /* arg = heal amount (food_item_heal); item already removed from cargo */
+    BP_FX_SMASH_CAKE        /* FOOD_CAKE specifically -- no heal, item already removed from cargo;
+                                host triggers the real distraction effect (witness_ai_smash_cake) */
 } BpEffectKind;
 
 typedef struct { BpEffectKind kind; int arg; } BpEffect;
@@ -95,6 +105,7 @@ typedef struct {
     char notes[BP_NOTE_LINES][48];
     int samples[3];          /* harvested sample counts per type (fed by the host; 0 until harvesting exists) */
     int clones[BP_CLONES]; int clone_count; int clone_traits[BP_CLONES];
+    int cargo[BP_INV_SLOTS]; int cargo_count;   /* CARGO's own real content -- FoodItemId values */
     int costume;             /* worn costume index */
     int weapons_owned;       /* bitmask, mirrored from server */
     int current_weapon;
@@ -131,7 +142,7 @@ static inline int bp_rows(const Phone *p) {
     case BP_APP_MAP: return BP_ZONES;
     case BP_APP_NOTES: return BP_NOTE_LINES;
     case BP_APP_LAB: return 4;       /* base, trait, SPLICE, clone list */
-    case BP_APP_CARGO: return BP_INV_SLOTS;
+    case BP_APP_CARGO: return p->cargo_count > 0 ? p->cargo_count : 1;
     case BP_APP_SKILLS: return 5;
     case BP_APP_LOADOUT: return 6;
     case BP_APP_WARDROBE: return BP_COSTUMES;
@@ -186,6 +197,17 @@ static inline void phone_toggle(Phone *p) {
 }
 static inline void phone_open_app(Phone *p, int app) { p->open = 1; bp_enter_app(p, app); }
 
+/* Real, live pickup-side entry point: adds one collected food item to CARGO. Capped at
+ * BP_INV_SLOTS, same real "full is full" honesty BP_MAX_MESSAGES's own overflow-shift neighbor
+ * demonstrates elsewhere -- here a full cargo just drops the pickup rather than evicting an
+ * already-held item (food isn't a priority queue the way notifications are). Returns 1 if added,
+ * 0 if cargo was already full. */
+static inline int phone_cargo_add(Phone *p, int item_id) {
+    if (p->cargo_count >= BP_INV_SLOTS) return 0;
+    p->cargo[p->cargo_count++] = item_id;
+    return 1;
+}
+
 /* Feed one abstract input. Returns the effect the host must carry out (BP_FX_NONE mostly). */
 static inline BpEffect phone_input(Phone *p, BpAction a, int unspent_points) {
     BpEffect fx = { BP_FX_NONE, 0 };
@@ -223,6 +245,24 @@ static inline BpEffect phone_input(Phone *p, BpAction a, int unspent_points) {
         break;
     case BP_APP_CAMERA:
         if (a == BP_SELECT) { p->photos++; fx.kind = BP_FX_TAKE_PHOTO; fx.arg = p->photos; }
+        break;
+    case BP_APP_CARGO: /* use the selected food item -- the real "use" half of the pickup-and-use ask */
+        if (a == BP_SELECT && p->cargo_count > 0 && p->cursor < p->cargo_count) {
+            int item = p->cargo[p->cursor];
+            /* FOOD_CAKE is smashed, not eaten -- founder real-time follow-up: "if the cake gets
+               smashed it flies everywhere and causes a big distraction." No heal; the host
+               triggers the real distraction effect instead (see BP_FX_SMASH_CAKE's own doc
+               comment above). */
+            if (item == FOOD_CAKE) {
+                fx.kind = BP_FX_SMASH_CAKE;
+            } else {
+                fx.kind = BP_FX_EAT_FOOD;
+                fx.arg = food_item_heal(item);
+            }
+            for (int i = p->cursor; i < p->cargo_count - 1; i++) p->cargo[i] = p->cargo[i + 1];
+            p->cargo_count--;
+            if (p->cursor >= p->cargo_count && p->cursor > 0) p->cursor--;
+        }
         break;
     case BP_APP_LAB:
         if (p->cursor == 0 && (a == BP_LEFT || a == BP_RIGHT)) p->cursor2 = bp_wrap(p->cursor2 + (a == BP_RIGHT ? 1 : -1), 3);
