@@ -17,6 +17,7 @@ cc_binary(
         "//packages/render",
         "//packages/simulation",
         "//packages/simulation:day_night_clock",
+        "//packages/simulation:food_pickup",
         "//packages/simulation:world_alert_bridge",
         "//packages/ui",
         "//packages/world",

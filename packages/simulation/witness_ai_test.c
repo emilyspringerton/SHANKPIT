@@ -10,7 +10,8 @@
  *       packages/simulation/witness_ai.c packages/simulation/witness_sim.c \
  *       packages/simulation/witness_rules.c packages/simulation/npc_archetype.c \
  *       packages/simulation/zombie_values.c packages/simulation/ai_brain_rules.c \
- *       packages/simulation/humanness.c -lm && /tmp/witness_ai_test
+ *       packages/simulation/humanness.c packages/simulation/giant_bug_values.c \
+ *       packages/simulation/giant_bug_brain.c -lm && /tmp/witness_ai_test
  */
 #include "witness_ai.h"
 #include "witness_sim.h" /* WS_*, ZONE_PUBLIC */
@@ -275,6 +276,66 @@ int main(void) {
         assert(witness_ai_carried_player_id() == -1);
         assert(s.players[zid].active); /* dropped, not delivered -- no despawn without the lab circle */
         printf("PASS: witness_ai_drop_carried releases in place, no delivery credit\n");
+    }
+
+    /* Cake-smash distraction ("if the cake gets smashed it flies everywhere and causes a big
+       distraction and distracts from heavy zombie usage"). */
+    {
+        ServerState s;
+        reset_server(&s);
+        witness_ai_reset(13, 0);
+        int cid = witness_ai_spawn_citizen(&s, ZONE_PUBLIC, 40, 30, 0.0f, 0.0f, 0.0f, 0);
+
+        assert(!witness_ai_distraction_active(0));
+        witness_ai_tick(&s, 0);
+        int vig_before = witness_ai_citizen_vigilance(cid);
+
+        witness_ai_smash_cake(0);
+        assert(witness_ai_distraction_active(0));
+        witness_ai_tick(&s, 0);
+        int vig_during = witness_ai_citizen_vigilance(cid);
+        assert(vig_before > 0 && vig_during < vig_before);
+        printf("PASS: smashing the cake halves live citizen vigilance for real\n");
+
+        assert(!witness_ai_distraction_active(WITNESS_AI_DISTRACTION_MS + 1));
+        printf("PASS: the distraction expires for real after its own real window\n");
+    }
+
+    /* Giant Zombie Bugs ("feral AI units" -- founder real-time, 2026-09-22). Real spawn/role, the
+       real "Men are custodians of the keys" authorization gate, and the real "eat a zombie ->
+       grow stronger/faster" mechanic, all end to end against a live ServerState. */
+    {
+        ServerState s;
+        reset_server(&s);
+        witness_ai_reset(21, 0);
+
+        int bug_id = witness_ai_spawn_giant_bug(&s, 0.0f, 0.0f, 0.0f, 0);
+        assert(bug_id >= 0);
+        assert(witness_ai_role_for_player(bug_id) == WITNESS_AI_ROLE_GIANT_BUG);
+        assert(witness_ai_bug_strength(bug_id) == 1.0f && witness_ai_bug_speed(bug_id) == 1.0f);
+        printf("PASS: giant bug spawns for real with the real 1.0 strength/speed baseline\n");
+
+        /* No Men present -- the key-custodian gate blocks eating even with prey right on top. */
+        int zid = witness_ai_spawn_zombie(&s, 0.0f, 0.0f, 0.0f, 0);
+        assert(zid >= 0);
+        assert(!witness_ai_bug_command_authorized());
+        witness_ai_tick(&s, 0);
+        assert(s.players[zid].active); /* not eaten -- unauthorized */
+        assert(witness_ai_bug_strength(bug_id) == 1.0f); /* no growth without authorization */
+        printf("PASS: giant bug does not eat without a live The Men NPC to hold the key\n");
+
+        /* Spawn a Men NPC -- the key is now held, the bug may hunt. */
+        int men_id = witness_ai_spawn_the_men(&s, ZONE_PUBLIC, 85, 15, 50.0f, 0.0f, 50.0f, 0);
+        assert(men_id >= 0);
+        assert(witness_ai_bug_command_authorized());
+        witness_ai_tick(&s, 0);
+        assert(!s.players[zid].active); /* eaten */
+        /* A fresh-spawn zombie has aggression 0.0 (real baseline, zombie_values.c), so strength
+           only grows when the prey itself had real aggression -- speed always grows since even a
+           DORMANT reaction delay yields a positive speed_proxy (giant_bug_values.c). */
+        assert(witness_ai_bug_strength(bug_id) >= 1.0f && witness_ai_bug_speed(bug_id) > 1.0f);
+        printf("PASS: authorized giant bug eats a nearby zombie and grows real strength/speed (str=%.2f spd=%.2f)\n",
+               witness_ai_bug_strength(bug_id), witness_ai_bug_speed(bug_id));
     }
 
     printf("\nALL PASS\n");

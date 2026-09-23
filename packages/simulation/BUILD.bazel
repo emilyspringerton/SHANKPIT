@@ -37,6 +37,8 @@ cc_library(
     name = "witness_ai",
     srcs = [
         "ai_brain_rules.c",
+        "giant_bug_brain.c",  # PARENA-generated (giant_bug_brain.prn) -- witness_ai.c's own real dep
+        "giant_bug_values.c",  # Giant Zombie Bug value system, both client+server per SERVER_SRC/LOBBY_SRC
         "npc_archetype.c",
         "witness_ai.c",
         "witness_rules.c",
@@ -44,6 +46,7 @@ cc_library(
         "zombie_values.c",
     ],
     hdrs = [
+        "giant_bug_values.h",
         "humanness.h",  # npc_archetype.h's own real dependency
         "npc_archetype.h",
         "witness_ai.h",
@@ -112,6 +115,20 @@ cc_library(
         "//packages/common:common_headers",  # phone.h
         "//packages/reflux",  # REFLUX_ACTION_PHASE_CHANGED/WEATHER_CHANGED
         ":day_night_clock",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# food_pickup.c -- BIG_O food system follow-up ("basic food system pickup and use (cargo)").
+# Client-local only, same real "phone.h's own real WARDROBE/STATUS UI has no server-authoritative
+# story yet" scope cut :world_alert_bridge above already names -- the Makefile's own LOBBY_SRC
+# lists it, SERVER_SRC does not.
+cc_library(
+    name = "food_pickup",
+    srcs = ["food_pickup.c"],
+    hdrs = ["food_pickup.h"],
+    deps = [
+        "//packages/common:common_headers",  # food_items.h
     ],
     visibility = ["//visibility:public"],
 )

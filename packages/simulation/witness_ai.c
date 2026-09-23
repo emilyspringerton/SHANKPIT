@@ -7,6 +7,7 @@
 #include "npc_archetype.h"
 #include "zombie_values.h"
 #include "witness_live.h"
+#include "giant_bug_values.h"
 
 typedef struct {
     int active;
@@ -21,9 +22,22 @@ typedef struct {
     ZombieState zstate;
 } WitnessAiZombie;
 
+/* Giant Zombie Bug -- founder real-time, 2026-09-22: "add giant zombie bugs (feral AI units)."
+ * A genuinely separate entity type from WitnessAiZombie above, not a zombie variant -- its own
+ * GiantBugState (giant_bug_values.h), its own real spawn/tick/role. */
+typedef struct {
+    int active;
+    int player_id;
+    GiantBugState bstate;
+} WitnessAiGiantBug;
+
+#define WITNESS_AI_MAX_GIANT_BUGS 8
+#define WITNESS_AI_BUG_EAT_RADIUS 4.0f
+
 static WitnessSim g_sim;
 static WitnessAiCitizen g_citizens[WITNESS_AI_MAX_CITIZENS];
 static WitnessAiZombie g_zombies[WITNESS_AI_MAX_ZOMBIES];
+static WitnessAiGiantBug g_giant_bugs[WITNESS_AI_MAX_GIANT_BUGS];
 static unsigned int g_last_sim_tick_ms;
 static int g_have_last_sim_tick;
 
@@ -51,6 +65,12 @@ static FILE *g_sim_log; /* witness_sim_tick's own real log sink -- /dev/null on 
 /* "wheelbarrow" carry state -- see witness_ai.h's own doc comment for the full real/honest scope. */
 static int g_carried_id = -1;
 static int g_lab_deliveries = 0;
+
+/* Cake-smash distraction ("if the cake gets smashed it flies everywhere and causes a big
+ * distraction and distracts from heavy zombie usage" -- founder real-time, 2026-09-22). 0 = not
+ * active. See witness_ai_smash_cake and witness_ai_tick's own real vigilance-halving block.
+ * WITNESS_AI_DISTRACTION_MS itself lives in witness_ai.h (public -- callers/tests need it). */
+static unsigned int g_distraction_until_ms = 0;
 
 static int find_free_player_slot(ServerState *s) {
     for (int i = 1; i < MAX_CLIENTS; i++) {
@@ -92,11 +112,29 @@ void witness_ai_reset(unsigned int seed, unsigned int now_ms) {
     witness_sim_init(&g_sim, seed, 1, g_sim_log);
     memset(g_citizens, 0, sizeof(g_citizens));
     memset(g_zombies, 0, sizeof(g_zombies));
+    memset(g_giant_bugs, 0, sizeof(g_giant_bugs));
     g_have_last_sim_tick = 0;
     g_player_zone = ZONE_PUBLIC; /* matches witness_sim_init's own player-0 default */
     g_have_last_player_zone_check = 0;
     g_carried_id = -1;
     g_lab_deliveries = 0;
+    g_distraction_until_ms = 0;
+}
+
+/* Real, live cake-smash distraction: every active citizen/The Men's effective vigilance is halved
+ * (witness_ai_tick's own write-back block below) for WITNESS_AI_DISTRACTION_MS -- lower vigilance
+ * feeds directly into witness_rules.c's own real noticed(vigilance, conspicuous, roll) formula, so
+ * a zombie event happening elsewhere during the window is genuinely less likely to be noticed.
+ * Real, honest scope cut: a flat vigilance debuff on every managed NPC scene-wide, not a
+ * spatial "everyone near the smash looks that way" simulation -- the real, separate, bigger lift
+ * a true distraction-target mechanic would need. */
+void witness_ai_smash_cake(unsigned int now_ms) {
+    g_distraction_until_ms = now_ms + WITNESS_AI_DISTRACTION_MS;
+    printf("[CAKE] smashed -- distraction active for %ums\n", WITNESS_AI_DISTRACTION_MS);
+}
+
+int witness_ai_distraction_active(unsigned int now_ms) {
+    return now_ms < g_distraction_until_ms;
 }
 
 /* Shared by witness_ai_spawn_citizen/witness_ai_spawn_the_men -- identical slot/npc bookkeeping,
@@ -145,6 +183,9 @@ int witness_ai_role_for_player(int player_id) {
     }
     for (int i = 0; i < WITNESS_AI_MAX_ZOMBIES; i++) {
         if (g_zombies[i].active && g_zombies[i].player_id == player_id) return WITNESS_AI_ROLE_ZOMBIE;
+    }
+    for (int i = 0; i < WITNESS_AI_MAX_GIANT_BUGS; i++) {
+        if (g_giant_bugs[i].active && g_giant_bugs[i].player_id == player_id) return WITNESS_AI_ROLE_GIANT_BUG;
     }
     return WITNESS_AI_ROLE_NONE;
 }
@@ -240,6 +281,53 @@ int witness_ai_spawn_zombie(ServerState *s, float x, float y, float z, unsigned 
     return slot;
 }
 
+int witness_ai_spawn_giant_bug(ServerState *s, float x, float y, float z, unsigned int now_ms) {
+    if (!s) return -1;
+
+    WitnessAiGiantBug *bc = NULL;
+    for (int i = 0; i < WITNESS_AI_MAX_GIANT_BUGS; i++) {
+        if (!g_giant_bugs[i].active) { bc = &g_giant_bugs[i]; break; }
+    }
+    if (!bc) return -1;
+
+    int slot = find_free_player_slot(s);
+    if (slot < 0) return -1;
+
+    init_bot_player(s, slot, x, y, z);
+    bc->active = 1;
+    bc->player_id = slot;
+    giant_bug_state_init(&bc->bstate, now_ms);
+    return slot;
+}
+
+/* "men are the custodians of the keys for the giant zombie feral ai bugs" -- founder real-time,
+ * 2026-09-22. Real, honest, bounded scope: a giant bug's own tick loop below only lets it hunt/
+ * eat while at least one live The Men NPC is present to hold the key -- with none active, a
+ * spawned bug just sits DORMANT-equivalent (hunger still drifts, but attack/eat never fires).
+ * The TRAPX Rogue Swarm Doctrine reference is real, named, and deliberately NOT modeled further
+ * here -- that's GTA7's own separate faction-doctrine system, not something to guess at without
+ * checking that repo first; a real, separate follow-up. */
+int witness_ai_bug_command_authorized(void) {
+    for (int i = 0; i < WITNESS_AI_MAX_CITIZENS; i++) {
+        if (g_citizens[i].active && g_citizens[i].brain.archetype == NPC_ARCHETYPE_THE_MEN) return 1;
+    }
+    return 0;
+}
+
+float witness_ai_bug_strength(int player_id) {
+    for (int i = 0; i < WITNESS_AI_MAX_GIANT_BUGS; i++) {
+        if (g_giant_bugs[i].active && g_giant_bugs[i].player_id == player_id) return g_giant_bugs[i].bstate.strength;
+    }
+    return -1.0f;
+}
+
+float witness_ai_bug_speed(int player_id) {
+    for (int i = 0; i < WITNESS_AI_MAX_GIANT_BUGS; i++) {
+        if (g_giant_bugs[i].active && g_giant_bugs[i].player_id == player_id) return g_giant_bugs[i].bstate.speed;
+    }
+    return -1.0f;
+}
+
 int witness_ai_citizen_zone(int player_id) {
     for (int i = 0; i < WITNESS_AI_MAX_CITIZENS; i++) {
         if (g_citizens[i].active && g_citizens[i].player_id == player_id) {
@@ -296,11 +384,14 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
         g_have_last_sim_tick = 1;
     }
 
+    int distracted = witness_ai_distraction_active(now_ms);
     for (int i = 0; i < WITNESS_AI_MAX_CITIZENS; i++) {
         WitnessAiCitizen *c = &g_citizens[i];
         if (!c->active) continue;
         npc_brain_tick(&c->brain, now_ms);
-        g_sim.n[c->npc_index].vigilance = npc_brain_effective_vigilance(&c->brain);
+        int vig = npc_brain_effective_vigilance(&c->brain);
+        if (distracted) vig /= 2; /* cake-smash distraction, see witness_ai_smash_cake's own doc comment */
+        g_sim.n[c->npc_index].vigilance = vig;
     }
 
     for (int i = 0; i < WITNESS_AI_MAX_ZOMBIES; i++) {
@@ -308,6 +399,47 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
         if (!z->active) continue;
         /* has_target=0 -- real, named scope cut, see witness_ai.h's own top doc comment. */
         zombie_tick(&z->zstate, now_ms, 0);
+    }
+
+    /* Giant Zombie Bug tick + real "eat a nearby zombie" consumption -- gated by
+       witness_ai_bug_command_authorized's own real "The Men hold the key" check. */
+    {
+        int live_bugs = 0;
+        for (int i = 0; i < WITNESS_AI_MAX_GIANT_BUGS; i++) if (g_giant_bugs[i].active) live_bugs++;
+        int authorized = witness_ai_bug_command_authorized();
+
+        for (int i = 0; i < WITNESS_AI_MAX_GIANT_BUGS; i++) {
+            WitnessAiGiantBug *bug = &g_giant_bugs[i];
+            if (!bug->active) continue;
+            PlayerState *bp = &s->players[bug->player_id];
+
+            int has_target = 0;
+            int eaten_zi = -1;
+            if (authorized) {
+                for (int zi = 0; zi < WITNESS_AI_MAX_ZOMBIES; zi++) {
+                    WitnessAiZombie *z = &g_zombies[zi];
+                    if (!z->active) continue;
+                    PlayerState *zp = &s->players[z->player_id];
+                    float dx = zp->x - bp->x, dy = zp->y - bp->y, dz = zp->z - bp->z;
+                    if (dx * dx + dy * dy + dz * dz <= WITNESS_AI_BUG_EAT_RADIUS * WITNESS_AI_BUG_EAT_RADIUS) {
+                        has_target = 1;
+                        eaten_zi = zi;
+                        break;
+                    }
+                }
+            }
+
+            giant_bug_tick(&bug->bstate, now_ms, has_target, live_bugs - 1);
+
+            if (eaten_zi >= 0) {
+                WitnessAiZombie *prey = &g_zombies[eaten_zi];
+                giant_bug_eat_zombie(&bug->bstate, &prey->zstate, now_ms);
+                printf("[GIANT BUG] player=%d ate zombie player=%d -- strength=%.2f speed=%.2f\n",
+                       bug->player_id, prey->player_id, bug->bstate.strength, bug->bstate.speed);
+                prey->active = 0;
+                s->players[prey->player_id].active = 0;
+            }
+        }
     }
 
     for (int zi = 0; zi < WITNESS_AI_MAX_ZOMBIES; zi++) {
@@ -412,5 +544,12 @@ void witness_ai_seed_voxworld_encounter(ServerState *s, unsigned int now_ms) {
      * S11 item 6) -- this is the archetype/spawn/visual half only. */
     witness_ai_spawn_the_men(s, ZONE_PUBLIC, 85, 15, cx + 110.0f, 8.0f, cz, now_ms);
 
-    printf("[WITNESS] voxworld encounter seeded: 4 citizens, 2 zombies (1 HUNTING), 1 The Men\n");
+    /* Giant Zombie Bug ("feral AI units" -- founder real-time, 2026-09-22) -- placed well clear
+     * of the lab circle (110,-260 r18), the food-pickup ring (0,-260 r~70), and the Lost and
+     * Found (-150,-260 r12): a real, distinct patch of the same VOXWORLD space, not overlapping
+     * any existing landmark. Stays DORMANT-equivalent (see witness_ai_bug_command_authorized's
+     * own doc comment) until The Men spawned above are active, which they are here. */
+    witness_ai_spawn_giant_bug(s, cx + 150.0f, 8.0f, cz - 150.0f, now_ms);
+
+    printf("[WITNESS] voxworld encounter seeded: 4 citizens, 2 zombies (1 HUNTING), 1 The Men, 1 Giant Zombie Bug\n");
 }

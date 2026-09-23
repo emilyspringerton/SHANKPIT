@@ -48,6 +48,7 @@
 #include "../../../packages/simulation/day_night_clock.h"
 #include "../../../packages/common/phone.h"
 #include "../../../packages/simulation/world_alert_bridge.h"
+#include "../../../packages/simulation/food_pickup.h"
 #include "../../../packages/audio/audio.h"
 #include "../../../packages/render/gl_shader.h"
 #include "../../../packages/render/bloom.h"
@@ -227,12 +228,20 @@ static void gband_draw_skinned(const float *verts6, int vert_count, const Mat4 *
     gl_use_program(0);
 }
 
+/* Giant Zombie Bug ("evil versions of the other ones we already have but BIG" -- founder
+ * real-time, 2026-09-22): skel_npc_draw_skinned's callback signature is fixed by
+ * gband_skel_npc_draw's own function-pointer contract, so there's no per-call color param to
+ * thread through -- this module-level flag is the real, minimal way to swap tint for one draw
+ * call, same "static drives the next callback" convention g_gband_frame_dt_ms already uses. */
+static int g_skel_npc_evil_tint = 0;
+
 static void skel_npc_draw_skinned(const float *verts6, int vert_count, const Mat4 *mvp, const Mat4 *model) {
     (void)model; /* world transform pre-baked into verts6, same contract as gband_draw_skinned */
     static const float base_color[4] = {0.55f, 0.50f, 0.46f, 1.0f}; /* a plain mannequin tan, distinct from Tyler's grey */
+    static const float evil_color[4] = {0.30f, 0.05f, 0.05f, 1.0f}; /* dark venous red -- "evil" reuse of the same kit */
     gl_use_program(g_gband_program); /* same shader as Tyler -- pos+normal in, flat-lit color out */
     gl_uniform_matrix4fv(gl_get_uniform_location(g_gband_program, "u_mvp"), mvp->m);
-    gl_uniform4fv(gl_get_uniform_location(g_gband_program, "u_color"), base_color);
+    gl_uniform4fv(gl_get_uniform_location(g_gband_program, "u_color"), g_skel_npc_evil_tint ? evil_color : base_color);
     gl_dynamic_vbo_draw(&g_skel_npc_vbo, verts6, vert_count, GL_TRIANGLES);
     gl_use_program(0);
 }
@@ -926,6 +935,23 @@ static void draw_phone_app(const Phone *p) {
             snprintf(buf, sizeof(buf), "%s%s", BP_ZONE_NAMES[i], pinned ? "  [PINNED]" : "");
             glColor3f(sel ? 1.0f : (pinned ? 0.9f : 0.6f), sel ? 1.0f : (pinned ? 0.7f : 0.72f), sel ? 1.0f : (pinned ? 0.3f : 0.82f));
             draw_string(buf, col_x, y, 2.4f);
+        }
+    } else if (p->app == BP_APP_CARGO) {
+        /* BIG_O basic food system's own real content -- founder real-time, 2026-09-22. */
+        if (p->cargo_count == 0) {
+            glColor3f(0.5f, 0.55f, 0.6f);
+            draw_string("CARGO EMPTY", col_x, row_y, 2.6f);
+        } else {
+            for (int i = 0; i < p->cargo_count; i++) {
+                float y = row_y - i * row_h;
+                int sel = (i == p->cursor);
+                char buf[48];
+                snprintf(buf, sizeof(buf), "%s (+%d)", food_item_name(p->cargo[i]), food_item_points(p->cargo[i]));
+                glColor3f(sel ? 1.0f : 0.65f, sel ? 1.0f : 0.75f, sel ? 1.0f : 0.55f);
+                draw_string(buf, col_x, y, 2.6f);
+            }
+            glColor3f(0.5f, 0.6f, 0.7f);
+            draw_string("[ENTER] EAT SELECTED", col_x, row_y - p->cargo_count * row_h - 20.0f, 2.2f);
         }
     } else if (p->app == BP_APP_WARDROBE) {
         for (int i = 0; i < BP_COSTUMES; i++) {
@@ -2372,6 +2398,8 @@ static void lobby_check_story_level_exits(unsigned int now_ms) {
 // the existing VOXWORLD intro-cutscene path runs exactly as before.
 static void lobby_start_story_mode(void) {
     local_init_match(1, MODE_STORY);
+    food_pickup_reset();
+    food_pickup_seed_voxworld();
     LevelRegistryEntry entries[LEVEL_REGISTRY_MAX_ENTRIES];
     int count = level_boxes_fetch_registry_list(entries, LEVEL_REGISTRY_MAX_ENTRIES);
     int story_start_id = -1;
@@ -6002,7 +6030,10 @@ static void draw_player_skin_mannequin(PlayerState *p, float draw_pitch, float d
      * that existing behavior is completely unchanged there. */
     int role = witness_ai_role_for_player(p->id);
     int kit_index = -1;
-    if (role == WITNESS_AI_ROLE_THE_MEN && kits[4] >= 0) {
+    if (role == WITNESS_AI_ROLE_GIANT_BUG && kits[3] >= 0) {
+        kit_index = kits[3]; /* leela, same kit as regular zombies -- "evil versions of the ones
+                                 we already have but BIG": no new art, reuse + scale + tint */
+    } else if (role == WITNESS_AI_ROLE_THE_MEN && kits[4] >= 0) {
         kit_index = kits[4]; /* george -- a single, consistent "professional" look */
     } else if (role == WITNESS_AI_ROLE_ZOMBIE && kits[3] >= 0) {
         kit_index = kits[3]; /* leela -- distinct from both citizens and The Men */
@@ -6040,9 +6071,24 @@ static void draw_player_skin_mannequin(PlayerState *p, float draw_pitch, float d
        against a real screenshot the way tyler_body's own fix was. */
     float draw_yaw = norm_yaw_deg(p->yaw);
     float facing_rad = (180.0f - draw_yaw) * 0.0174533f;
+
+    int is_giant_bug = (role == WITNESS_AI_ROLE_GIANT_BUG);
+    g_skel_npc_evil_tint = is_giant_bug;
+    if (is_giant_bug) {
+        /* Scale up in place (about the NPC's own ground position, not the world origin) -- "BIG"
+           per the founder's own ask, real GL, no new mesh. */
+        glPushMatrix();
+        glTranslatef(p->x, p->y, p->z);
+        glScalef(2.5f, 2.5f, 2.5f);
+        glTranslatef(-p->x, -p->y, -p->z);
+    }
     gband_skel_npc_draw(kit_index, p->id, p->x, p->y, p->z, facing_rad, g_gband_frame_dt_ms,
                          p->anim_override,
                          &g_gband_frame_vp, skel_npc_draw_skinned);
+    if (is_giant_bug) {
+        glPopMatrix();
+    }
+    g_skel_npc_evil_tint = 0;
 }
 
 static void draw_player_skin_emiree(PlayerState *p, float draw_pitch, float draw_recoil) {
@@ -8140,6 +8186,18 @@ void draw_scene(PlayerState *render_p) {
            behavior for free. */
         world_alert_bridge_tick(&g_story_alert_bridge, &g_day_night_clock, &g_story_phone, now_ms);
         phone_tick(&g_story_phone, now_ms);
+
+        /* BIG_O basic food system (founder real-time, 2026-09-22): real, live, walk-over pickup
+           -- auto-collects into CARGO, same arcade-original convention food_pickup.h's own doc
+           comment names. Client-local only, same scope cut as everything else in this block. */
+        {
+            PlayerState *hero = &local_state.players[0];
+            int item_id = food_pickup_check(local_state.scene_id, hero->x, hero->y, hero->z, now_ms);
+            if (item_id >= 0) {
+                phone_cargo_add(&g_story_phone, item_id);
+                printf("[FOOD] picked up %s (+%d pts)\n", food_item_name(item_id), food_item_points(item_id));
+            }
+        }
     }
 
     RetroLightingState world_lighting;
@@ -10120,7 +10178,19 @@ int main(int argc, char* argv[]) {
                         else if (e.key.keysym.sym == SDLK_DOWN) phone_input(&g_story_phone, BP_DOWN, 0);
                         else if (e.key.keysym.sym == SDLK_LEFT) phone_input(&g_story_phone, BP_LEFT, 0);
                         else if (e.key.keysym.sym == SDLK_RIGHT) phone_input(&g_story_phone, BP_RIGHT, 0);
-                        else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) phone_input(&g_story_phone, BP_SELECT, 0);
+                        else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) {
+                            BpEffect fx = phone_input(&g_story_phone, BP_SELECT, 0);
+                            /* CARGO's own real "use" effect -- the food system's other half
+                               (food_pickup.h handles the world-side pickup, this is eating it). */
+                            if (fx.kind == BP_FX_EAT_FOOD) {
+                                PlayerState *hero = &local_state.players[0];
+                                hero->health += fx.arg;
+                                if (hero->health > 100) hero->health = 100;
+                                printf("[FOOD] ate for +%d health (now %d)\n", fx.arg, hero->health);
+                            } else if (fx.kind == BP_FX_SMASH_CAKE) {
+                                witness_ai_smash_cake(SDL_GetTicks());
+                            }
+                        }
                         else if (e.key.keysym.sym == SDLK_BACKSPACE) phone_input(&g_story_phone, BP_BACK, 0);
                         else if (e.key.keysym.sym == SDLK_p || e.key.keysym.sym == SDLK_ESCAPE) phone_toggle(&g_story_phone);
                         /* Real, live wiring of WARDROBE's own costume selection into the witness_sim

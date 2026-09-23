@@ -139,6 +139,7 @@ int witness_ai_citizen_zone(int player_id);
 #define WITNESS_AI_ROLE_CITIZEN 0
 #define WITNESS_AI_ROLE_THE_MEN 1
 #define WITNESS_AI_ROLE_ZOMBIE 2
+#define WITNESS_AI_ROLE_GIANT_BUG 3
 int witness_ai_role_for_player(int player_id);
 
 /* Spawns one member of The Men (npc_archetype.h's NPC_ARCHETYPE_THE_MEN -- high base_vigilance,
@@ -194,5 +195,41 @@ int witness_ai_carried_player_id(void);
  * number STATUS/LAB (the phone app UI's own still-generic screens) could show once either grows a
  * real reason to display it; not wired into either screen yet (honest, named, not this pass). */
 int witness_ai_lab_deliveries(void);
+
+/* --- cake-smash distraction (founder real-time, 2026-09-22: "if the cake gets smashed it flies
+ * everywhere and causes a big distraction and distracts from heavy zombie usage") -------------
+ * Halves every active citizen/The Men's effective vigilance for WITNESS_AI_DISTRACTION_MS, which
+ * feeds directly into witness_rules.c's own real noticed() formula -- a zombie event elsewhere
+ * during the window is genuinely less likely to be noticed. Triggered by CARGO smashing FOOD_CAKE
+ * specifically (phone.h's own BP_FX_SMASH_CAKE), not eaten like the other 16 food items. */
+#define WITNESS_AI_DISTRACTION_MS 8000u
+void witness_ai_smash_cake(unsigned int now_ms);
+
+/* Real, live accessor: is a distraction currently active? Test/debug + a future HUD readout. */
+int witness_ai_distraction_active(unsigned int now_ms);
+
+/* --- Giant Zombie Bugs (founder real-time, 2026-09-22: "add giant zombie bugs (feral AI units)
+ * they need a totally unique value system vector based deliberately non human 64 layer hand
+ * written llm" -> "use parena" -> "if they eat a strong zombie they get stronger if they eat a
+ * fast zombie they get faster" -> "men are the custodians of the keys for the giant zombie feral
+ * ai bugs"). See giant_bug_values.h's own doc comment for the full account -- a genuinely
+ * separate entity type from the regular zombies above, its own PARENA-computed value network
+ * (PARENA/stdlib/shankpit/giant_bug_brain.prn), real eat-to-grow mechanic, and a real
+ * authorization gate (witness_ai_bug_command_authorized) requiring a live The Men NPC. ------- */
+
+/* Spawns one Giant Zombie Bug into a free player slot with a fresh GiantBugState (real 1.0
+ * strength/speed baseline). Same shape/contract as witness_ai_spawn_zombie. Returns the player
+ * slot id, or -1. */
+int witness_ai_spawn_giant_bug(ServerState *s, float x, float y, float z, unsigned int now_ms);
+
+/* "The Men are the custodians of the keys" -- true only while at least one live The Men NPC is
+ * active. witness_ai_tick's own real per-tick loop gates giant-bug hunting/eating on this. */
+int witness_ai_bug_command_authorized(void);
+
+/* Test/debug accessors: the current, real, live strength/speed of the giant bug at this
+ * player_id (grows permanently from giant_bug_eat_zombie), or -1.0f if player_id doesn't resolve
+ * to an active giant bug spawned by this module. */
+float witness_ai_bug_strength(int player_id);
+float witness_ai_bug_speed(int player_id);
 
 #endif

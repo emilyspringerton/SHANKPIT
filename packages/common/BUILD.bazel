@@ -9,6 +9,7 @@ cc_library(
     hdrs = [
         "block_map.h",
         "config_loader.h",
+        "food_items.h",  # BIG_O food system follow-up -- phone.h's own real #include "food_items.h"
         "mat4.h",
         "net_sim.h",
         "pheromone.h",
