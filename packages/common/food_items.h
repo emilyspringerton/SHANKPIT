@@ -23,9 +23,15 @@
  * add birthday parties - add weddings." Real, honest scope cut: this is the food item only (a
  * real, immediate, bounded add on top of the original 16). The actual party/wedding EVENT system
  * (world triggers, NPC choreography, a player role) is a genuinely separate, much bigger, unscoped
- * ask -- logged, not built here, see EMILY/BACKLOG.md SECTION 536's own queued-asks entry. */
+ * ask -- logged, not built here, see EMILY/BACKLOG.md SECTION 536's own queued-asks entry.
+ *
+ * FOOD_MINESTRONE (item 18) -- founder real-time, 2026-09-24: "add ministrone to shankpit and
+ * bigo" (minestrone), same session as TYLER's new character The Auditor, whose signature dish
+ * this is (TYLER/characters/the_auditor.md SIV/SVI). Same pattern as FOOD_CAKE: bump the count,
+ * add the enum/name/points entry, no special-case interaction (it's eaten normally, not smashed
+ * like the cake). */
 
-#define FOOD_ITEM_COUNT 17
+#define FOOD_ITEM_COUNT 18
 
 typedef enum {
     FOOD_CHERRY = 0,
@@ -44,19 +50,20 @@ typedef enum {
     FOOD_ENERGY_BAR,
     FOOD_RATION_PACK,
     FOOD_SYNTH_MEAT,
-    FOOD_CAKE
+    FOOD_CAKE,
+    FOOD_MINESTRONE
 } FoodItemId;
 
 static const char *const FOOD_ITEM_NAMES[FOOD_ITEM_COUNT] = {
     "CHERRY", "STRAWBERRY", "PRETZEL", "ORANGE", "APPLE", "PEAR", "BANANA", "MELON",
     "GALAXIAN", "BELL", "KEY", "COFFEE", "DONUT", "ENERGY BAR", "RATION PACK", "SYNTH-MEAT",
-    "BIRTHDAY CAKE"
+    "BIRTHDAY CAKE", "MINESTRONE"
 };
 
 static const int FOOD_ITEM_POINTS[FOOD_ITEM_COUNT] = {
     100, 200, 300, 500, 700, 1000, 1500, 2000,
     3000, 4000, 5000, 100, 250, 750, 1250, 2500,
-    1800
+    1800, 1600
 };
 
 /* Real, derived, not hardcoded per-item -- see this header's own top doc comment for why. */

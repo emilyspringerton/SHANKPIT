@@ -52,7 +52,8 @@ void food_pickup_seed_voxworld(void) {
         {cx - 40.0f, cz - 40.0f}, {cx + 40.0f, cz - 40.0f},
         {cx - 20.0f, cz - 60.0f}, {cx + 20.0f, cz - 60.0f},
         {cx, cz + 70.0f},         {cx, cz - 70.0f},
-        {cx, cz}                  /* BIRTHDAY CAKE -- center of the gathering, real and deliberate */
+        {cx, cz},                 /* BIRTHDAY CAKE -- center of the gathering, real and deliberate */
+        {cx, cz + 15.0f}          /* MINESTRONE -- right next to the cake, same community table */
     };
 
     for (int i = 0; i < FOOD_ITEM_COUNT; i++) {

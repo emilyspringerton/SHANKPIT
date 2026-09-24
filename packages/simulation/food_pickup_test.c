@@ -85,7 +85,7 @@ int main(void) {
     {
         /* Real data-table sanity: 16 distinct names, points escalate with real arcade shape,
            and food_item_heal derives a real 5..50 range from points, not a second hand table. */
-        assert(FOOD_ITEM_COUNT == 17); /* 16 original + FOOD_CAKE, founder real-time follow-up */
+        assert(FOOD_ITEM_COUNT == 18); /* 16 original + FOOD_CAKE + FOOD_MINESTRONE */
         for (int i = 0; i < FOOD_ITEM_COUNT; i++) {
             for (int j = i + 1; j < FOOD_ITEM_COUNT; j++) {
                 assert(strcmp(FOOD_ITEM_NAMES[i], FOOD_ITEM_NAMES[j]) != 0);

@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-09-24
+- New food item: MINESTRONE (18th, `packages/common/food_items.h`) -- founder real-time: "add ministrone to shankpit and bigo," same session as TYLER's new character The Auditor, whose signature dish this is. Same pattern as FOOD_CAKE (item 17): bump `FOOD_ITEM_COUNT` 17->18, add the enum/name/points entry (1600 points, heal 16), no special-case interaction -- eaten normally like every item except CAKE. New pickup spot in `food_pickup_seed_voxworld()` (`packages/simulation/food_pickup.c`), right next to the cake at the community table. `food_pickup_test.c` (18 distinct items, all heals in range) and `phone_test.c` re-verified passing; `shank_lobby` rebuilds clean. (sess-20260923-1030-4a526255)
+
 ## 2026-09-23
 - docs: add GEMINI.md guidance for Gemini / Antigravity pair programming
 
