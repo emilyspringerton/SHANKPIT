@@ -1,6 +1,25 @@
 #include "witness_sim.h"
 
+#include <stdarg.h>
 #include <string.h>
+
+/* s->out is documented (witness_sim.h) as an optional "deterministic event log sink" -- every
+ * SIM_LOG(s, ...) call in this file assumed it was always non-NULL, but the live dedicated
+ * server (apps/server/src/main.c) calls witness_ai_tick every tick without ever calling
+ * witness_ai_reset first (the only place that sets WitnessSim.out, via witness_ai.c's own
+ * g_sim_log), so on that path s->out is NULL from zero-init and the very next tick-boundary
+ * fprintf segfaulted the whole server (found live, 2026-09-24: shankpit-server.service and
+ * shankpit-zombie.service both crash-looped on this exact NULL deref inside witness_sim_tick).
+ * SIM_LOG below makes "no sink configured" the safe no-op witness_ai_tick's own doc comment
+ * already claims it is, instead of adding call-site guards to ~20 fprintf sites individually. */
+static void sim_log(FILE *out, const char *fmt, ...) {
+    if (!out) return;
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(out, fmt, ap);
+    va_end(ap);
+}
+#define SIM_LOG(s, ...) sim_log((s)->out, __VA_ARGS__)
 
 /* Prototypes for the PARENA-generated decision functions (witness_rules.c, do-not-edit-by-hand --
  * see that file's own header). No shared .h between generated units in this codebase
@@ -60,10 +79,10 @@ static void apply_decorum(WitnessSim *s, int pl, int action, const char *why) {
     WitnessPlayer *p = &s->p[pl];
     int before = p->decorum;
     p->decorum = decorum_after(before, action);
-    if (p->decorum != before) fprintf(s->out, "  decorum p%d %d -> %d (%s)\n", pl, before, p->decorum, why);
+    if (p->decorum != before) SIM_LOG(s, "  decorum p%d %d -> %d (%s)\n", pl, before, p->decorum, why);
     if (decorum_band(p->decorum) == BAND_CANCELLED && !p->cancelled) {
         p->cancelled = 1;
-        fprintf(s->out, "  p%d CANCELLED\n", pl);
+        SIM_LOG(s, "  p%d CANCELLED\n", pl);
     }
 }
 
@@ -84,7 +103,7 @@ int witness_sim_enter(WitnessSim *s, int pl, int zone) {
     if (!valid_player(s, pl) || zone < 0 || zone > 4) return -1;
     WitnessPlayer *p = &s->p[pl];
     p->zone = zone;
-    fprintf(s->out, "EVENT tick=%d enter p%d %s costume=%s\n", s->tick, pl, witness_sim_zone_name(zone), witness_sim_costume_name(p->costume));
+    SIM_LOG(s, "EVENT tick=%d enter p%d %s costume=%s\n", s->tick, pl, witness_sim_zone_name(zone), witness_sim_costume_name(p->costume));
     return witness_sim_observe(s, pl);
 }
 
@@ -95,7 +114,7 @@ int witness_sim_observe(WitnessSim *s, int pl) {
     int cons = conspicuousness(allowed, p->gear);
     if (cons == 0) return 0;
     int seen = anyone_notices(s, p->zone, cons);
-    fprintf(s->out, "  observe p%d allowed=%d gear=%d noticed_by=%d\n", pl, allowed, p->gear, seen);
+    SIM_LOG(s, "  observe p%d allowed=%d gear=%d noticed_by=%d\n", pl, allowed, p->gear, seen);
     if (seen > 0) apply_decorum(s, pl, allowed ? DA_CARRY_GEAR : DA_WRONG_COSTUME, allowed ? "carrying field gear" : "wrong costume for zone");
     return seen;
 }
@@ -106,9 +125,9 @@ int witness_sim_set_token(WitnessSim *s, int pl, int t) { if (!valid_player(s, p
 
 int witness_sim_say_apocalypse(WitnessSim *s, int pl) {
     if (!valid_player(s, pl)) return -1;
-    fprintf(s->out, "EVENT tick=%d say-apocalypse p%d zone=%s\n", s->tick, pl, witness_sim_zone_name(s->p[pl].zone));
+    SIM_LOG(s, "EVENT tick=%d say-apocalypse p%d zone=%s\n", s->tick, pl, witness_sim_zone_name(s->p[pl].zone));
     int seen = anyone_notices(s, s->p[pl].zone, conspicuousness(0, 0)); /* overt speech: treated as conspicuous */
-    fprintf(s->out, "  noticed_by=%d\n", seen);
+    SIM_LOG(s, "  noticed_by=%d\n", seen);
     if (seen > 0) apply_decorum(s, pl, DA_SAY_APOCALYPSE, "spoke of the apocalypse");
     return seen;
 }
@@ -117,7 +136,7 @@ int witness_sim_talk(WitnessSim *s, int pl) {
     if (!valid_player(s, pl)) return -1;
     int listeners = 0;
     for (int i = 0; i < s->nnpcs; i++) if (s->n[i].zone == s->p[pl].zone && !s->n[i].accomplice) listeners++;
-    fprintf(s->out, "EVENT tick=%d small-talk p%d listeners=%d\n", s->tick, pl, listeners);
+    SIM_LOG(s, "EVENT tick=%d small-talk p%d listeners=%d\n", s->tick, pl, listeners);
     if (listeners > 0) apply_decorum(s, pl, DA_SMALL_TALK, "blended in");
     return listeners;
 }
@@ -130,22 +149,22 @@ int witness_sim_release(WitnessSim *s, int pl, int tier) {
     for (int i = 0; i < s->nnpcs; i++) if (s->n[i].zone == z) { total++; if (s->n[i].accomplice) acc++; }
     int count = effective_witnesses(total, acc);
     s->event_id++;
-    fprintf(s->out, "EVENT #%d tick=%d release p%d tier=%d zone=%s witnesses=%d accomplices=%d together=%d\n",
+    SIM_LOG(s, "EVENT #%d tick=%d release p%d tier=%d zone=%s witnesses=%d accomplices=%d together=%d\n",
             s->event_id, s->tick, pl, tier, witness_sim_zone_name(z), count, acc, together);
     int silencing = 0;
     for (int i = 0; i < s->nnpcs; i++) {
         WitnessNpc *n = &s->n[i];
         if (n->zone != z || n->accomplice) continue;
         int prev = n->state, nx = npc_next_state(prev, count, n->arrogance, 0, 1, 0);
-        if (!is_legal_transition(prev, nx)) { fprintf(s->out, "  BUG illegal transition npc %d %d->%d\n", i, prev, nx); return -2; }
+        if (!is_legal_transition(prev, nx)) { SIM_LOG(s, "  BUG illegal transition npc %d %d->%d\n", i, prev, nx); return -2; }
         n->state = nx; n->witnessed_event = s->event_id;
-        fprintf(s->out, "  npc%d %s -> %s\n", i, witness_sim_ws_name(prev), witness_sim_ws_name(nx));
+        SIM_LOG(s, "  npc%d %s -> %s\n", i, witness_sim_ws_name(prev), witness_sim_ws_name(nx));
         if (nx == WS_SILENCING) silencing++;
-        if (nx == WS_ENGAGE) fprintf(s->out, "  npc%d engages: %s\n", i, engage_outcome(n->arrogance, tier) == 1 ? "citizen annihilated" : "zombie destroyed");
+        if (nx == WS_ENGAGE) SIM_LOG(s, "  npc%d engages: %s\n", i, engage_outcome(n->arrogance, tier) == 1 ? "citizen annihilated" : "zombie destroyed");
     }
     if (silencing > 0) {
         int mask = silence_target_mask(pl, together, crew_mask ? crew_mask : 1 << pl);
-        fprintf(s->out, "  SILENCING pack hunts mask=%d (%d witnesses)\n", mask, silencing);
+        SIM_LOG(s, "  SILENCING pack hunts mask=%d (%d witnesses)\n", mask, silencing);
         for (int i = 0; i < s->nplayers; i++) if (mask & (1 << i)) {
             s->p[i].hunted = 1;
             apply_decorum(s, i, DA_ATTRIBUTED_EVENT, "attributed witnessed event");
@@ -157,11 +176,11 @@ int witness_sim_release(WitnessSim *s, int pl, int tier) {
 int witness_sim_force_witness(WitnessSim *s, int npc, int pl) {
     if (!valid_player(s, pl) || npc < 0 || npc >= s->nnpcs) return -1;
     WitnessNpc *n = &s->n[npc];
-    if (n->zone != s->p[pl].zone) { fprintf(s->out, "  force npc%d refused: different zone\n", npc); return -1; }
+    if (n->zone != s->p[pl].zone) { SIM_LOG(s, "  force npc%d refused: different zone\n", npc); return -1; }
     int prev = n->state, nx = npc_next_state(prev, 1, n->arrogance, 1, 1, 0);
     if (!is_legal_transition(prev, nx)) return -2;
     n->state = nx; n->accomplice = (nx == WS_COMPROMISED);
-    fprintf(s->out, "EVENT tick=%d force-witness npc%d by p%d: %s -> %s (accomplice=%d)\n", s->tick, npc, pl, witness_sim_ws_name(prev), witness_sim_ws_name(nx), n->accomplice);
+    SIM_LOG(s, "EVENT tick=%d force-witness npc%d by p%d: %s -> %s (accomplice=%d)\n", s->tick, npc, pl, witness_sim_ws_name(prev), witness_sim_ws_name(nx), n->accomplice);
     return 0;
 }
 
@@ -173,33 +192,33 @@ static int resolve_hunters(WitnessSim *s, int zone, int resolved, const char *wh
         int prev = n->state;
         if (prev != WS_SILENCING && prev != WS_ENGAGE) continue;
         int nx = npc_next_state(prev, 0, n->arrogance, 0, 1, resolved);
-        if (!is_legal_transition(prev, nx)) { fprintf(s->out, "  BUG illegal transition npc %d %d->%d\n", i, prev, nx); return -2; }
+        if (!is_legal_transition(prev, nx)) { SIM_LOG(s, "  BUG illegal transition npc %d %d->%d\n", i, prev, nx); return -2; }
         n->state = nx; changed++;
-        fprintf(s->out, "  npc%d %s -> %s (%s)\n", i, witness_sim_ws_name(prev), witness_sim_ws_name(nx), why);
+        SIM_LOG(s, "  npc%d %s -> %s (%s)\n", i, witness_sim_ws_name(prev), witness_sim_ws_name(nx), why);
     }
     return changed;
 }
 
 int witness_sim_los_lost(WitnessSim *s) {
-    fprintf(s->out, "EVENT tick=%d los-lost\n", s->tick);
+    SIM_LOG(s, "EVENT tick=%d los-lost\n", s->tick);
     for (int i = 0; i < s->nnpcs; i++) {
         WitnessNpc *n = &s->n[i];
         if (n->accomplice) continue;
         int prev = n->state, nx = npc_next_state(prev, 0, n->arrogance, 0, 1, 0);
-        if (nx != prev) { n->state = nx; fprintf(s->out, "  npc%d %s -> %s (no witnesses in sight)\n", i, witness_sim_ws_name(prev), witness_sim_ws_name(nx)); }
-        else if (prev == WS_SILENCING || prev == WS_ENGAGE) fprintf(s->out, "  npc%d stays %s (hunt persists)\n", i, witness_sim_ws_name(prev));
+        if (nx != prev) { n->state = nx; SIM_LOG(s, "  npc%d %s -> %s (no witnesses in sight)\n", i, witness_sim_ws_name(prev), witness_sim_ws_name(nx)); }
+        else if (prev == WS_SILENCING || prev == WS_ENGAGE) SIM_LOG(s, "  npc%d stays %s (hunt persists)\n", i, witness_sim_ws_name(prev));
     }
     return 0;
 }
 
 int witness_sim_memory_wipe(WitnessSim *s, int zone) {
-    fprintf(s->out, "EVENT tick=%d memory-wipe zone=%s\n", s->tick, zone < 0 ? "all" : witness_sim_zone_name(zone));
+    SIM_LOG(s, "EVENT tick=%d memory-wipe zone=%s\n", s->tick, zone < 0 ? "all" : witness_sim_zone_name(zone));
     return resolve_hunters(s, zone, 1, "memory methylation wipe");
 }
 
 int witness_sim_eliminate(WitnessSim *s, int pl) {
     if (pl < 0 || pl >= s->nplayers) return -1;
-    fprintf(s->out, "EVENT tick=%d target-eliminated p%d\n", s->tick, pl);
+    SIM_LOG(s, "EVENT tick=%d target-eliminated p%d\n", s->tick, pl);
     s->p[pl].hunted = 0;
     return resolve_hunters(s, -1, 2, "target eliminated");
 }
@@ -209,7 +228,7 @@ void witness_sim_tick(WitnessSim *s, int n) {
         s->tick++;
         for (int i = 0; i < s->nplayers; i++) if (valid_player(s, i)) apply_decorum(s, i, DA_QUIET_TICK, "quiet tick");
     }
-    fprintf(s->out, "TICK -> %d\n", s->tick);
+    SIM_LOG(s, "TICK -> %d\n", s->tick);
 }
 
 void witness_sim_print_state(const WitnessSim *s, FILE *out) {

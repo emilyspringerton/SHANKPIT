@@ -1,6 +1,30 @@
 # Changelog
 
 ## 2026-09-24
+- fix(sim): **root-caused and fixed the SHANKPIT queue crash loop** named as an open item earlier
+  today. Reproduced live under gdb (`gdb --batch -ex run -ex "bt full" --args ./bin/shank_server
+  --deathmatch`): SIGSEGV in `__vfprintf_internal`, `s=0x0`, called from `witness_ai_tick ->
+  witness_sim_tick`. Root cause: `witness_sim.c`'s ~20 `fprintf(s->out, ...)` debug/event-log
+  calls all assumed `WitnessSim.out` was always a valid `FILE*`, but the only place that ever
+  sets it (`witness_ai_reset`, via `witness_ai.c`'s `g_sim_log`) is never called anywhere in
+  either `apps/server/src/main.c` or `apps/lobby/src/main.c` -- only `witness_sim_test.c` calls
+  it (always with `stdout`). The dedicated server calls `witness_ai_tick` unconditionally every
+  tick (wired in during the BIG_O engine merge, 2026-09-20) with a 1s internal timer gate on
+  `witness_sim_tick`, whose own doc comment claims "a real no-op whenever nothing is spawned" --
+  true for the witness/zombie population logic, false for this one unconditional log line, which
+  crashed the very first time the 1s gate opened on ANY mode/level, story or not. Fix: added a
+  `sim_log()` helper + `SIM_LOG` macro that no-ops on a NULL sink instead of dereferencing it,
+  replaced all 23 `fprintf(s->out, ...)` call sites (mechanical, `witness_sim.c` only --
+  `witness_sim_print_state`'s own separate `FILE *out` param is untouched, it was never the
+  problem). This makes the existing "safe no-op" doc comment actually true rather than adding new
+  behavior -- `g_sim`'s other fields are already harmlessly zero (`nplayers=0`) on this path, so
+  witness AI simply stays inert outside `MODE_STORY`+VOXWORLD as designed, it just no longer
+  crashes getting there. Verified: `make server` clean, `./bin/shank_server --deathmatch` and
+  `--port 6971 --level var/zombie/nextown_zombies.json` both ran 8s directly (previously ~1s to
+  SEGV every time), then the real `shankpit-server.service` + `shankpit-zombie.service` +
+  `shankpit-bot-pool.service` (8 bots) all restarted and held stable 30+s with zero crashes and
+  all 8 bots actually connecting (previously 100% "failed to connect" once the server started
+  dying). Closes `EMILY/BACKLOG.md` SECTION 541's open item.
 - feat(lobby): new **ZOMBIES** entry on the APPS page (`apps/lobby/src/main.c`, `AppsAction`/
   `APPS_LABELS`) -- founder real-time: "add a new button to shankpit menu (in apps) to join the
   shankpit zombie zerver game." Not a separate binary like the other five app entries: `lobby_launch_app`
