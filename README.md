@@ -48,12 +48,17 @@ Internally, the client also recognizes additional local mode IDs such as `battle
 ## Apps page (2026-09-22, platform pivot)
 
 The lobby menu now has a second page — a small "APPS >" button next to the title flips from the
-GAMES grid above to an APPS grid listing other EINHORN_INDUSTRIAL games as launchable entries
-(currently just DEADWEIGHT). Selecting one (same double-click-to-activate convention the GAMES
-page already uses) launches that game's own real, unmodified native binary as a child process —
-SHANKPIT never reimplements another game's UI, it just launches it. This is the first concrete
-step of the "SHANKPIT is the platform, other games are apps inside it" pivot — see
-`docs/SHANKPIT_OS_NORTHSTAR.md` for the full scoping.
+GAMES grid above to an APPS grid listing other EINHORN_INDUSTRIAL games as launchable entries:
+DEADWEIGHT, PITVIPER, IDUNA (IDUNA.GAME), REDGARDEN, EDITOR (EDITOR.GAME), and ZOMBIES. Selecting
+one (same double-click-to-activate convention the GAMES page already uses) launches that game's
+own real, unmodified native binary as a child process — SHANKPIT never reimplements another
+game's UI, it just launches it. ZOMBIES is the one exception: it isn't a separate game, it's this
+same `shank_lobby` client self-relaunched (`/proc/self/exe` on Linux, `GetModuleFileNameA` on the
+Windows cross-build) with `--host 127.0.0.1 --port 6971` so it lands pointed at the zombie
+sandbox server (`shankpit-zombie.service`) instead of the default queue port 6969 — you still
+click Join from the fresh lobby it opens, same as launching REDGARDEN still needs its own
+ticket/matchmaker step. This is the first concrete step of the "SHANKPIT is the platform, other
+games are apps inside it" pivot — see `docs/SHANKPIT_OS_NORTHSTAR.md` for the full scoping.
 
 **Honest current status**: real and working (path resolution + process launch verified via a
 direct standalone harness, real `fork`/`execl` on Linux, `CreateProcess` on the Windows

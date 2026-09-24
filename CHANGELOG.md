@@ -1,6 +1,32 @@
 # Changelog
 
 ## 2026-09-24
+- feat(lobby): new **ZOMBIES** entry on the APPS page (`apps/lobby/src/main.c`, `AppsAction`/
+  `APPS_LABELS`) -- founder real-time: "add a new button to shankpit menu (in apps) to join the
+  shankpit zombie zerver game." Not a separate binary like the other five app entries: `lobby_launch_app`
+  now special-cases `APP_ZOMBIES` to self-relaunch `shank_lobby` (`/proc/self/exe` on Linux,
+  `GetModuleFileNameA`+`CreateProcessA` on the Windows cross-build) with `--host 127.0.0.1 --port
+  6971`, landing in a fresh lobby already pointed at the zombie sandbox server
+  (`shankpit-zombie.service`) instead of the default queue port 6969 -- Join still needs a click
+  from there, same "still needs its own further step" precedent REDGARDEN's own app entry already
+  set. `make lobby` builds clean, no new warnings. README's Apps page section updated (was stale
+  at "currently just DEADWEIGHT" even before this).
+- ops(queue): founder real-time "check on shankpit matchmaking, reduce the queue bot pool to 8" --
+  while checking, found the real problem wasn't the bot pool: `shankpit-server.service` (the live
+  queue server, UDP :6969) is in an active SIGSEGV crash-restart loop, dying ~1s after every
+  restart (deterministic: 3x `[BUGGY] spawned`, `[STADIUM] terrain initialized`, then SEGV --
+  restart counter climbing continuously, e.g. 63->70 across two minutes of observation).
+  `shankpit-zombie.service` (same `shank_server` binary, different port/level) shows the identical
+  signature and had already hit systemd's "start request repeated too quickly" and gone
+  permanently `failed` -- same underlying bug, not level-specific. `shankpit-bot-pool.service` had
+  already exited cleanly (status 0, not a crash) after every one of its 12 bots logged "failed to
+  connect to 127.0.0.1:6969" for ~10s straight, a sane reaction to the server being unreachable,
+  not a bot-pool bug. Root cause not yet isolated (no debugger session run, no commit bisect done
+  this pass) -- flagged to the founder rather than guessed at blind. The requested bot-pool size
+  change (12->8) went in anyway (`ops/systemd/shankpit-bot-pool.service` ExecStart + Description,
+  redeployed to `~/.config/systemd/user/` + `daemon-reload`) but the service was deliberately left
+  stopped rather than started, since starting it now would just repeat the same
+  failed-to-connect flood against a server that can't hold a connection yet.
 - New food item: MINESTRONE (18th, `packages/common/food_items.h`) -- founder real-time: "add ministrone to shankpit and bigo," same session as TYLER's new character The Auditor, whose signature dish this is. Same pattern as FOOD_CAKE (item 17): bump `FOOD_ITEM_COUNT` 17->18, add the enum/name/points entry (1600 points, heal 16), no special-case interaction -- eaten normally like every item except CAKE. New pickup spot in `food_pickup_seed_voxworld()` (`packages/simulation/food_pickup.c`), right next to the cake at the community table. `food_pickup_test.c` (18 distinct items, all heals in range) and `phone_test.c` re-verified passing; `shank_lobby` rebuilds clean. (sess-20260923-1030-4a526255)
 
 ## 2026-09-23

@@ -2088,6 +2088,7 @@ typedef enum {
     APP_IDUNA_GAME,
     APP_REDGARDEN,
     APP_EDITOR_GAME,
+    APP_ZOMBIES,
     APP_COUNT
 } AppsAction;
 
@@ -2097,6 +2098,7 @@ static const char *APPS_LABELS[APP_COUNT] = {
     "IDUNA",
     "REDGARDEN",
     "EDITOR",
+    "ZOMBIES",
 };
 
 // lobby_page -- 0 = GAMES (the original single page, untouched), 1 = APPS (new).
@@ -2944,6 +2946,44 @@ static int lobby_app_binary_path(const char *bundled_name, const char *dev_relat
 // a taskbar has to the apps it launches), matching the founder's own explicit framing that this is
 // bundling/launching, not a UI reimplementation.
 static void lobby_launch_app(AppsAction app) {
+    // ZOMBIES isn't a separate game -- it's this same client, self-relaunched pointed at the
+    // zombie sandbox server (shankpit-zombie.service, UDP :6971, real/nextown zombie level)
+    // instead of the default queue port 6969. No other app entry needs custom argv (they all
+    // just launch a bare sibling binary), so this is handled as its own branch rather than
+    // extending the shared bundled_name/dev_relative_path lookup below, which has no notion of
+    // "launch myself with different flags."
+    if (app == APP_ZOMBIES) {
+#ifdef _WIN32
+        char self_path[MAX_PATH];
+        if (!GetModuleFileNameA(NULL, self_path, MAX_PATH)) {
+            snprintf(app_launch_status, sizeof app_launch_status, "Failed to launch ZOMBIES (GetModuleFileName error)");
+            return;
+        }
+        char cmdline[MAX_PATH + 64];
+        snprintf(cmdline, sizeof cmdline, "\"%s\" --host 127.0.0.1 --port 6971", self_path);
+        STARTUPINFOA si; PROCESS_INFORMATION pi;
+        ZeroMemory(&si, sizeof si); si.cb = sizeof si;
+        ZeroMemory(&pi, sizeof pi);
+        if (CreateProcessA(NULL, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+            snprintf(app_launch_status, sizeof app_launch_status, "Launched ZOMBIES");
+        } else {
+            snprintf(app_launch_status, sizeof app_launch_status, "Failed to launch ZOMBIES (CreateProcess error %lu)", GetLastError());
+        }
+#else
+        pid_t pid = fork();
+        if (pid == 0) {
+            execl("/proc/self/exe", "shankpit-zombies", "--host", "127.0.0.1", "--port", "6971", (char *)NULL);
+            _exit(127); // execl only returns on failure
+        } else if (pid > 0) {
+            snprintf(app_launch_status, sizeof app_launch_status, "Launched ZOMBIES");
+        } else {
+            snprintf(app_launch_status, sizeof app_launch_status, "Failed to launch ZOMBIES (fork failed)");
+        }
+#endif
+        return;
+    }
     const char *bundled_name, *dev_relative_path, *display_name;
     switch (app) {
         case APP_DEADWEIGHT:

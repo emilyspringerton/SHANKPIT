@@ -1,11 +1,11 @@
 [Unit]
-Description=SHANKPIT QUEUE bot pool (S459-34, scaled 2026-09-22 founder real-time "up the bots in the queue match from 4 to 40", then same day "scale SHANKPIT queue bot pool down to 12") -- 12 real packet-level bots
+Description=SHANKPIT QUEUE bot pool (S459-34, scaled 2026-09-22 founder real-time "up the bots in the queue match from 4 to 40", then same day "scale SHANKPIT queue bot pool down to 12", then 2026-09-24 founder real-time "reduce the queue bot pool to 8") -- 8 real packet-level bots
 After=network.target
 
 [Service]
 Type=simple
 WorkingDirectory=/home/fatbaby/SHANKPIT
-ExecStart=/home/fatbaby/SHANKPIT/ops/shankpit-bot-pool.sh 127.0.0.1 6969 12
+ExecStart=/home/fatbaby/SHANKPIT/ops/shankpit-bot-pool.sh 127.0.0.1 6969 8
 Restart=on-failure
 RestartSec=5
 
