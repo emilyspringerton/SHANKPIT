@@ -8873,6 +8873,11 @@ void net_init() {
     ioctlsocket(sock, FIONBIO, &mode);
     #else
     int flags = fcntl(sock, F_GETFL, 0); fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+    // lobby_launch_app() below fork()+execl()s sibling apps (DEADWEIGHT, PITVIPER, IDUNA.GAME,
+    // REDGARDEN, EDITOR.GAME) as unmodified child processes with no fd cleanup of its own; without
+    // FD_CLOEXEC this UDP socket -- SHANKPIT's own live game-server connection -- would otherwise
+    // leak into every one of those children on exec.
+    fcntl(sock, F_SETFD, FD_CLOEXEC);
     #endif
 }
 
