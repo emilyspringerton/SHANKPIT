@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-25
+- fix(ci): EDITOR.GAME's gen/editor_full.c is git-ignored/local-only -- generate it in the CI step (cat gen/editor_stdlib_gen.c examples/editor_main.c) instead of assuming it exists, found via a genuinely fresh git clone re-test (sess-20260923-1030-4a526255)
 - fix(ci): eighth recurrence of the CI hand-copied server source-list drift -- day_night_clock.c/world_rules.c missing from Build Linux Server in both release.yml and tests.yml, broke every push since the day/night sync commit (0782136) (sess-20260923-1030-4a526255)
 - ci: release.yml now builds + bundles all 5 SHANKPIT OS apps (DEADWEIGHT/PITVIPER/IDUNA.GAME/REDGARDEN/EDITOR.GAME) for Windows into ShankPit_Client's bundled/ dir -- the lobby's APPS page buttons actually work now (sess-20260923-1030-4a526255)
 - feat(sim): server-authoritative day/night sync -- closes EMILY/BACKLOG.md SECTION 536's own
