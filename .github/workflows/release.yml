@@ -289,7 +289,16 @@ jobs:
 
           echo "== EDITOR.GAME editor-game.exe =="
           ( cd os_apps/EDITOR.GAME
-            test -f gen/editor_full.c
+            test -f gen/editor_stdlib_gen.c
+            # gen/editor_full.c is real, git-ignored, LOCAL-only (EDITOR.GAME/.gitignore:
+            # /gen/editor_full.c) -- a fresh checkout never has it. This exact `cat` is
+            # EDITOR.GAME's own Makefile rule (`gen/editor_full.c: gen/editor_stdlib_gen.c
+            # examples/editor_main.c`) reproduced here since `make` itself isn't invoked. Found
+            # live (2026-09-25, GitHub Actions API job log, run 36106838376): this step failed
+            # silently on a bare `test -f gen/editor_full.c` -- a prior local dry run here had
+            # missed this because it reused an already-generated copy already sitting on this
+            # sandbox's own disk from an earlier `make` run, not a true fresh-checkout repro.
+            cat gen/editor_stdlib_gen.c examples/editor_main.c > gen/editor_full.c
             PRNFMT_RENAME="-Darena_init=pf_arena_init -Darena_alloc=pf_arena_alloc -Darena_strdup=pf_arena_strdup -Darena_free_all=pf_arena_free_all"
             x86_64-w64-mingw32-gcc -std=c99 -Wall -Wextra -pedantic $PRNFMT_RENAME -I"$SDLW/include" -c src/arena.c -o /tmp/eg_pf_arena.o
             x86_64-w64-mingw32-gcc -std=c99 -Wall -Wextra -pedantic $PRNFMT_RENAME -I"$SDLW/include" -c src/fmt.c -o /tmp/eg_pf_fmt.o
