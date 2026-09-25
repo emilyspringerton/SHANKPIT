@@ -462,6 +462,44 @@ static AISquadRole ai_squad_role_for_position(int pos) {
     }
 }
 
+/* story_ai_seed_voxworld_robots -- brings back the S470 wandering-robot ambient encounter
+   (AI_ROLE_WANDERING_BOT / AI_MODE_GREET) alongside the BIG_O-merge citizen/zombie roster
+   (witness_ai_seed_voxworld_encounter) rather than restoring the deleted combat-squad encounter
+   they replaced. Placed in VOXWORLD's northeast quadrant, clear of witness_ai's citizen/zombie/
+   Men/lab/food-pickup footprint (all south of cz=-260) so the two systems never overlap. Five
+   robots, one per real GOLDENBAND kit (George/Leela/Mike/Stan + mannequin), each on a small
+   patrol loop so AI_MODE_GREET's wave-then-dance still fires when the player walks up. */
+void story_ai_seed_voxworld_robots(ServerState *s, unsigned int now_ms) {
+    static const float bots[5][2] = {
+        { -30.0f,  40.0f },
+        {  10.0f,  55.0f },
+        {  45.0f,  30.0f },
+        {   0.0f,  15.0f },
+        { -50.0f,  15.0f }
+    };
+    int i;
+    (void)now_ms;
+    if (!s || s->scene_id != SCENE_VOXWORLD) return;
+
+    for (i = 0; i < 5; i++) {
+        float x = bots[i][0];
+        float z = bots[i][1];
+        int pid = story_ai_spawn_enemy(s, AI_ROLE_WANDERING_BOT, x, 8.0f, z);
+        if (pid < 0) continue;
+        story_ai_add_patrol_point(pid, x - 8.0f, 8.0f, z, 2000, 0);
+        story_ai_add_patrol_point(pid, x + 8.0f, 8.0f, z + 6.0f, 2000, 0);
+        story_ai_add_patrol_point(pid, x, 8.0f, z - 6.0f, 2000, 0);
+    }
+    printf("[STORY_AI] voxworld robots seeded: 5 wandering bots\n");
+}
+
+int story_ai_add_patrol_point(int player_id, float x, float y, float z, unsigned int wait_ms, int hint) {
+    int idx = ai_index_by_player_id(player_id);
+    if (idx < 0) return 0;
+    ai_set_patrol(&g_story_ai[idx], g_story_ai[idx].patrol_count, x, y, z, wait_ms, hint);
+    return 1;
+}
+
 int story_ai_form_squad(const int *player_ids, int count) {
     int slot = -1;
     int i;

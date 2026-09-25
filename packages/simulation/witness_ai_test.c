@@ -20,6 +20,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 static void reset_server(ServerState *s) {
     memset(s, 0, sizeof(*s));
@@ -336,6 +337,133 @@ int main(void) {
         assert(witness_ai_bug_strength(bug_id) >= 1.0f && witness_ai_bug_speed(bug_id) > 1.0f);
         printf("PASS: authorized giant bug eats a nearby zombie and grows real strength/speed (str=%.2f spd=%.2f)\n",
                witness_ai_bug_strength(bug_id), witness_ai_bug_speed(bug_id));
+    }
+
+    /* Zombie perception/chase/melee + citizen flee (founder real-time, 2026-09-25: "visceral
+       agency zombie fighting citizens reacting"). Real, live proof against a ServerState with a
+       real hero at player 0 -- previously untestable since has_target was hardcoded to 0. */
+    {
+        ServerState s;
+        reset_server(&s);
+        witness_ai_reset(7, 0);
+
+        PlayerState *hero = &s.players[0];
+        hero->active = 1;
+        hero->state = STATE_ALIVE;
+        hero->health = 100;
+        hero->x = 0.0f; hero->y = 0.0f; hero->z = 0.0f;
+
+        /* Out of perception range -- a DORMANT zombie should not move at all. */
+        int zid = witness_ai_spawn_zombie(&s, 0.0f, 0.0f, -(WITNESS_AI_ZOMBIE_PERCEPTION_RADIUS + 10.0f), 0);
+        assert(zid > 0);
+        witness_ai_tick(&s, 0);
+        assert(s.players[zid].in_fwd == 0.0f);
+        printf("PASS: a zombie outside WITNESS_AI_ZOMBIE_PERCEPTION_RADIUS never has_target/moves\n");
+
+        /* Force it HUNTING and bring it into range -- it should now turn to face the hero and
+           actually push forward, via the exact same p->yaw/p->in_fwd fields story_ai.c's own bots
+           already move through. */
+        s.players[zid].x = 0.0f; s.players[zid].z = -10.0f;
+        witness_ai_force_zombie_mood(zid, ZOMBIE_MOOD_HUNTING);
+        witness_ai_tick(&s, 1000);
+        assert(s.players[zid].in_fwd > 0.0f);
+        printf("PASS: a HUNTING zombie within perception range chases (in_fwd > 0, faces the hero)\n");
+
+        /* Walk it into melee range and confirm a real, cooldown-gated hit lands on the hero. */
+        s.players[zid].x = 0.0f; s.players[zid].z = -1.0f; /* well inside WITNESS_AI_ZOMBIE_MELEE_RANGE */
+        int hp_before = hero->health;
+        witness_ai_tick(&s, 2000);
+        assert(hero->health < hp_before);
+        printf("PASS: a HUNTING zombie in melee range deals real damage to the hero (hp %d -> %d)\n",
+               hp_before, hero->health);
+
+        /* Cooldown: an immediate second tick must NOT land a second hit. */
+        int hp_after_first_hit = hero->health;
+        witness_ai_tick(&s, 2050);
+        assert(hero->health == hp_after_first_hit);
+        printf("PASS: WITNESS_AI_ZOMBIE_ATTACK_COOLDOWN_MS genuinely gates repeat melee hits\n");
+
+        /* Killing the hero (health to 0) enters STATE_DEAD and fails the story. */
+        hero->health = WITNESS_AI_ZOMBIE_MELEE_DAMAGE;
+        s.game_mode = MODE_STORY;
+        witness_ai_tick(&s, 2050 + WITNESS_AI_ZOMBIE_ATTACK_COOLDOWN_MS);
+        assert(hero->state == STATE_DEAD);
+        assert(s.story_phase == STORY_PHASE_FAILED);
+        printf("PASS: a zombie melee kill enters STATE_DEAD and fails MODE_STORY, same as the boss\n");
+    }
+    {
+        ServerState s;
+        reset_server(&s);
+        witness_ai_reset(9, 0);
+
+        PlayerState *hero = &s.players[0];
+        hero->active = 1;
+        hero->state = STATE_ALIVE;
+        hero->health = 100;
+        hero->x = 500.0f; hero->y = 0.0f; hero->z = 500.0f; /* far away -- not this test's concern */
+
+        int cid = witness_ai_spawn_citizen(&s, ZONE_PUBLIC, 40, 30, 0.0f, 0.0f, 0.0f, 0);
+        int zid = witness_ai_spawn_zombie(&s, 0.0f, 0.0f, -5.0f, 0);
+        assert(cid > 0 && zid > 0);
+
+        witness_ai_tick(&s, 0);
+        assert(s.players[cid].in_fwd == 0.0f);
+        printf("PASS: a citizen near a DORMANT zombie does not flee\n");
+
+        witness_ai_force_zombie_mood(zid, ZOMBIE_MOOD_FRENZIED);
+        witness_ai_tick(&s, 1000);
+        assert(s.players[cid].in_fwd > 0.0f);
+        /* Fleeing yaw should point away from the zombie (citizen at z=0, zombie at z=-5 -- away is
+           +z, i.e. atan2(0, +something) == 0 degrees). */
+        assert(fabsf(s.players[cid].yaw) < 1.0f);
+        printf("PASS: a citizen within WITNESS_AI_CITIZEN_FLEE_RADIUS of a FRENZIED zombie flees "
+               "directly away from it (in_fwd=%.2f yaw=%.1f)\n", s.players[cid].in_fwd, s.players[cid].yaw);
+
+        /* Move the zombie out of flee range -- the citizen should stop fleeing. */
+        s.players[zid].x = 0.0f; s.players[zid].z = -(WITNESS_AI_CITIZEN_FLEE_RADIUS + 20.0f);
+        witness_ai_tick(&s, 2000);
+        assert(s.players[cid].in_fwd == 0.0f);
+        printf("PASS: a citizen stops fleeing once the zombie leaves WITNESS_AI_CITIZEN_FLEE_RADIUS\n");
+    }
+
+    /* The Men's dispatch/resolution loop (2026-09-25 follow-up): closes "no resolution/
+       memory-wipe loop" for real -- a SILENCING citizen previously stayed there forever. */
+    {
+        ServerState s;
+        reset_server(&s);
+        witness_ai_reset(11, 0);
+
+        /* Same real 5-witness SILENCING scenario the earlier test block already proves, all
+           parked at the origin so a single memory-wipe resolves the whole cluster at once. */
+        int ids[5];
+        for (int i = 0; i < 5; i++) {
+            ids[i] = witness_ai_spawn_citizen(&s, ZONE_PUBLIC, 40, 30, 0.0f, 0.0f, 0.0f, 0);
+            assert(ids[i] > 0);
+        }
+        int zid = witness_ai_spawn_zombie(&s, 0.0f, 0.0f, 0.0f, 0);
+        witness_ai_force_zombie_mood(zid, ZOMBIE_MOOD_HUNTING);
+        witness_ai_tick(&s, 100);
+        for (int i = 0; i < 5; i++) assert(witness_ai_citizen_state(ids[i]) == WS_SILENCING);
+
+        /* The Men NPC spawns well outside WITNESS_LIVE_DISPATCH_ARRIVAL_RADIUS -- one tick should
+           only walk it closer, never resolve anything yet. */
+        int men_id = witness_ai_spawn_the_men(&s, ZONE_PUBLIC, 85, 15, 0.0f, 0.0f, -50.0f, 0);
+        assert(men_id > 0);
+        witness_ai_tick(&s, 200);
+        assert(s.players[men_id].in_fwd > 0.0f);
+        for (int i = 0; i < 5; i++) assert(witness_ai_citizen_state(ids[i]) == WS_SILENCING);
+        printf("PASS: The Men walk toward a SILENCING cluster before arriving (in_fwd > 0, no early resolve)\n");
+
+        /* Place The Men right on top of the cluster (inside WITNESS_LIVE_DISPATCH_ARRIVAL_RADIUS)
+           -- the next tick should resolve every SILENCING/ENGAGE citizen in that same zone back
+           down via the real witness_sim_memory_wipe path. */
+        s.players[men_id].x = 0.0f; s.players[men_id].z = 0.0f;
+        witness_ai_tick(&s, 300);
+        for (int i = 0; i < 5; i++) {
+            assert(witness_ai_citizen_state(ids[i]) != WS_SILENCING);
+        }
+        assert(s.players[men_id].in_fwd == 0.0f);
+        printf("PASS: The Men arriving resolves every SILENCING citizen in the zone via memory_wipe\n");
     }
 
     printf("\nALL PASS\n");

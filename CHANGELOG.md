@@ -1,6 +1,40 @@
 # Changelog
 
 ## 2026-09-25
+- feat(story): The Men's dispatch/resolution loop -- closes witness_ai.h's last remaining "no
+  resolution/memory-wipe loop" scope cut. Each live The Men NPC now hunts the nearest SILENCING/
+  ENGAGE citizen in its scene within WITNESS_AI_MEN_RESPONSE_RADIUS, walks to it via the same
+  generic movement pipeline every other witness_ai NPC uses, and on arrival
+  (WITNESS_LIVE_DISPATCH_ARRIVAL_RADIUS) resolves every hunting citizen in that zone via the
+  already-existing, already-tested witness_sim_memory_wipe (real and correct since phase 2, just
+  never given a live caller before now). witness_ai_test.c grew 30 -> 33 checks, all pass, zero
+  drift. See docs2/specs/BIGO_ENGINE_MERGE_NORTHSTAR.md §2m.
+- feat(story): real zombie perception/chase/melee + citizen flee reactions in VOXWORLD ("visceral
+  agency," founder real-time) -- `witness_ai_tick` now computes real has_target for zombie_tick
+  (flat radius, `WITNESS_AI_ZOMBIE_PERCEPTION_RADIUS`), a HUNTING/FRENZIED zombie chases the hero
+  via the same p->yaw/p->in_fwd pipeline story_ai.c's bots already use, melees on contact
+  (cooldown-gated real damage, kills the hero into STATE_DEAD/STORY_PHASE_FAILED same as the boss),
+  and stays a real permanent corpse on death (no respawn, matching MODE_STORY's existing
+  i>0-never-respawns convention). Citizens within `WITNESS_AI_CITIZEN_FLEE_RADIUS` of a hunting
+  zombie now physically flee away from it, layered on top of (not replacing) witness_sim's own
+  DENIAL/PANIC/SILENCING narrative escalation. Closes witness_ai.h's own long-standing "no
+  movement/patrol/wander AI" and "has_target always 0" scope cuts for zombies/citizens
+  specifically (The Men/Giant Zombie Bugs untouched). `witness_ai_test.c` grew 8 -> 30 checks, all
+  pass, zero drift in the pre-existing 22. See docs2/specs/BIGO_ENGINE_MERGE_NORTHSTAR.md §2l for
+  the full account, including why this reimplements phys_enter_death_state's essential fields
+  directly rather than calling it (physics.h's non-static functions collide at link time when
+  included from a second translation unit -- confirmed live).
+- feat(story): VOXWORLD story mode now spawns the S470 wandering robots (AI_ROLE_WANDERING_BOT,
+  wave-then-dance AI_MODE_GREET) alongside the BIG_O-merge citizen/zombie roster instead of one
+  replacing the other -- new `story_ai_seed_voxworld_robots` (story_ai.c/.h, plus a new public
+  `story_ai_add_patrol_point` helper) spawns 5 bots on small patrol loops in a northeast-quadrant
+  footprint clear of `witness_ai_seed_voxworld_encounter`'s own citizens/zombies/The Men/lab/food-
+  pickup placements (all south of cz=-260). Both are called from `local_init_match`
+  (packages/simulation/local_game.h) for MODE_STORY. `story_ai_seed_voxworld_encounter` (the old
+  combat-squad encounter both systems replaced) stays deleted -- this restores the robots without
+  reverting the BIG_O zombie/witness cutover. Founder real-time: "add the robots and stuff back to
+  SHANKPIT story mode transition all the new BIG_O zombie stuff in too add it all into SHANKPIT
+  VOXWORLD story." Verified via `make server` (clean build, no new warnings).
 - fix(ci): EDITOR.GAME's gen/editor_full.c is git-ignored/local-only -- generate it in the CI step (cat gen/editor_stdlib_gen.c examples/editor_main.c) instead of assuming it exists, found via a genuinely fresh git clone re-test (sess-20260923-1030-4a526255)
 - fix(ci): eighth recurrence of the CI hand-copied server source-list drift -- day_night_clock.c/world_rules.c missing from Build Linux Server in both release.yml and tests.yml, broke every push since the day/night sync commit (0782136) (sess-20260923-1030-4a526255)
 - ci: release.yml now builds + bundles all 5 SHANKPIT OS apps (DEADWEIGHT/PITVIPER/IDUNA.GAME/REDGARDEN/EDITOR.GAME) for Windows into ShankPit_Client's bundled/ dir -- the lobby's APPS page buttons actually work now (sess-20260923-1030-4a526255)
