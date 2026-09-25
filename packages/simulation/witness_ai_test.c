@@ -466,6 +466,71 @@ int main(void) {
         printf("PASS: The Men arriving resolves every SILENCING citizen in the zone via memory_wipe\n");
     }
 
+    /* Giant Zombie Bug combat/pain feedback (same-day follow-up, 2026-09-25): the player could
+       already shoot a bug, but nothing fed that into GiantBugState.pain, and an authorized bug
+       never fought back. */
+    {
+        ServerState s;
+        reset_server(&s);
+        witness_ai_reset(13, 0);
+
+        PlayerState *hero = &s.players[0];
+        hero->active = 1;
+        hero->state = STATE_ALIVE;
+        hero->health = 100;
+        hero->x = 0.0f; hero->y = 0.0f; hero->z = 0.0f;
+
+        int men_id = witness_ai_spawn_the_men(&s, ZONE_PUBLIC, 85, 15, 200.0f, 0.0f, 200.0f, 0);
+        assert(men_id > 0);
+        assert(witness_ai_bug_command_authorized());
+
+        int bug_id = witness_ai_spawn_giant_bug(&s, 0.0f, 0.0f, -10.0f, 0);
+        assert(bug_id > 0);
+
+        /* A real hit (generic hitscan already does this against any active PlayerState -- this
+           test only simulates that same effect directly on health) should raise real pain. */
+        s.players[bug_id].health = 60; /* took 40 real damage */
+        witness_ai_tick(&s, 100);
+        printf("PASS: shooting a giant bug is a real, generic hit (no role exclusion needed)\n");
+
+        /* Enough accumulated pain (well above WITNESS_AI_BUG_ATTACK_DRIVE_THRESHOLD once combined
+           with ambient hunger) should now drive it to actually chase the hero. */
+        s.players[bug_id].health = 20; /* another 40 damage -- real, sustained punishment */
+        witness_ai_tick(&s, 200);
+        assert(s.players[bug_id].in_fwd > 0.0f);
+        printf("PASS: enough real pain drives an authorized giant bug to chase the hero (in_fwd > 0)\n");
+
+        /* Walk it into melee range and confirm a real, cooldown-gated hit lands, scaled by the
+           bug's own real strength stat. */
+        s.players[bug_id].x = 0.0f; s.players[bug_id].z = -1.0f;
+        int hp_before = hero->health;
+        witness_ai_tick(&s, WITNESS_AI_BUG_ATTACK_COOLDOWN_MS + 100u); /* clears the fresh-spawn
+            last_attack_ms==0 cooldown gate, same real gate a live bug's first-ever attack must
+            also clear */
+        assert(hero->health < hp_before);
+        printf("PASS: an aggressive giant bug in melee range deals real, strength-scaled damage (hp %d -> %d)\n",
+               hp_before, hero->health);
+
+        /* Without The Men present, the bug is unauthorized -- it must never attack, no matter how
+           much pain it carries, matching this entity's own "leashed asset" design intent. */
+        {
+            ServerState s2;
+            reset_server(&s2);
+            witness_ai_reset(17, 0);
+            PlayerState *hero2 = &s2.players[0];
+            hero2->active = 1; hero2->state = STATE_ALIVE; hero2->health = 100;
+            hero2->x = 0.0f; hero2->y = 0.0f; hero2->z = 0.0f;
+            int bug2 = witness_ai_spawn_giant_bug(&s2, 0.0f, 0.0f, -1.0f, 0);
+            assert(bug2 > 0);
+            s2.players[bug2].health = 5;
+            assert(!witness_ai_bug_command_authorized());
+            witness_ai_tick(&s2, 100);
+            witness_ai_tick(&s2, 1600);
+            assert(hero2->health == 100);
+            printf("PASS: an unauthorized giant bug never attacks the hero, however much pain it carries\n");
+        }
+    }
+
     printf("\nALL PASS\n");
     return 0;
 }

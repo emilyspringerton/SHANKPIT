@@ -30,6 +30,8 @@ typedef struct {
     int active;
     int player_id;
     GiantBugState bstate;
+    int last_health;             /* combat/pain feedback, see witness_ai.h's own doc comment */
+    unsigned int last_attack_ms;
 } WitnessAiGiantBug;
 
 #define WITNESS_AI_MAX_GIANT_BUGS 8
@@ -99,6 +101,65 @@ static void init_bot_player(ServerState *s, int slot, float x, float y, float z)
     p->yaw = 180.0f;
     p->pitch = 0.0f;
     p->carried_flag_team_id = -1;
+}
+
+/* witness_ai_hero_melee_hit -- shared shield-then-health hero damage + on-death entry, used by
+ * both zombie and Giant Zombie Bug melee (2026-09-25 follow-up: real reuse instead of copy-pasting
+ * the same block a second time for the bug). Same shield-then-health order story_boss_tick's own
+ * attack block (local_game.h) already uses. away_x/away_z is the real direction to fling the
+ * corpse on death (attacker-to-hero vector, same convention that call site already established).
+ *
+ * Deliberately NOT a call to physics.h's own phys_enter_death_state: that header defines its
+ * functions non-static, so a second translation unit including it collides at link time
+ * (confirmed live: `make server` failed with "multiple definition of phys_rand_f/accelerate/..."
+ * against apps/server/src/main.c's own copy). This reimplements phys_enter_death_state's essential
+ * fields directly instead, minus the attacker-reward bookkeeping (there is no attacker PlayerState
+ * here, same as that call site's own NULL-attacker boss-kill case). Respawn delay 2000ms matches
+ * mode_respawn_delay_ms's own real MODE_STORY/default value (local_game.h, private to that
+ * translation unit) -- the hero is player 0, so local_game.h's own "i>0 dead players never
+ * respawn" MODE_STORY convention doesn't zero this back out the way it would for a zombie/citizen/
+ * bug. */
+static void witness_ai_hero_melee_hit(ServerState *s, PlayerState *hero_p, int damage,
+                                       float away_x, float away_z, unsigned int now_ms) {
+    hero_p->shield_regen_timer = SHIELD_REGEN_DELAY;
+    if (hero_p->shield > 0) {
+        if (hero_p->shield >= damage) { hero_p->shield -= damage; damage = 0; }
+        else { damage -= hero_p->shield; hero_p->shield = 0; }
+    }
+    hero_p->health -= damage;
+    hero_p->hit_feedback = 12;
+    if (hero_p->health > 0) return;
+
+    hero_p->health = 0;
+    hero_p->state = STATE_DEAD;
+    hero_p->in_shoot = 0;
+    hero_p->in_reload = 0;
+    hero_p->in_use = 0;
+    hero_p->in_jump = 0;
+    hero_p->in_ability = 0;
+    hero_p->is_shooting = 0;
+    hero_p->dash_timer = 0;
+    hero_p->death_time_ms = now_ms;
+    hero_p->death_duration_ms = 2000u;
+    hero_p->respawn_time = now_ms + 2000u;
+    {
+        float away_len = sqrtf(away_x * away_x + away_z * away_z);
+        if (away_len > 0.0001f) {
+            hero_p->death_dir_x = away_x / away_len;
+            hero_p->death_dir_z = away_z / away_len;
+        } else {
+            hero_p->death_dir_x = 0.0f;
+            hero_p->death_dir_z = 1.0f;
+        }
+    }
+    hero_p->vx = hero_p->death_dir_x * 0.35f;
+    hero_p->vz = hero_p->death_dir_z * 0.35f;
+    hero_p->vy = 0.14f;
+    if (s->game_mode == MODE_STORY || s->game_mode == MODE_STORY_CAVE) {
+        s->story_phase = STORY_PHASE_FAILED;
+        s->story_phase_start_ms = now_ms;
+        s->match_over = 1;
+    }
 }
 
 void witness_ai_reset(unsigned int seed, unsigned int now_ms) {
@@ -298,6 +359,8 @@ int witness_ai_spawn_giant_bug(ServerState *s, float x, float y, float z, unsign
     init_bot_player(s, slot, x, y, z);
     bc->active = 1;
     bc->player_id = slot;
+    bc->last_health = 100; /* matches init_bot_player's own real health baseline */
+    bc->last_attack_ms = 0;
     giant_bug_state_init(&bc->bstate, now_ms);
     return slot;
 }
@@ -440,58 +503,7 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
             now_ms - z->last_attack_ms >= WITNESS_AI_ZOMBIE_ATTACK_COOLDOWN_MS) {
             z->last_attack_ms = now_ms;
             zombie_get_agitated(&z->zstate, now_ms); /* landing a hit is a real stimulus */
-            int damage = WITNESS_AI_ZOMBIE_MELEE_DAMAGE;
-            hero_p->shield_regen_timer = SHIELD_REGEN_DELAY;
-            if (hero_p->shield > 0) {
-                if (hero_p->shield >= damage) { hero_p->shield -= damage; damage = 0; }
-                else { damage -= hero_p->shield; hero_p->shield = 0; }
-            }
-            hero_p->health -= damage;
-            hero_p->hit_feedback = 12;
-            if (hero_p->health <= 0) {
-                /* Minimal, direct death entry -- deliberately NOT a call to physics.h's own
-                   phys_enter_death_state: that header defines its functions non-static, so a
-                   second translation unit including it collides at link time (confirmed: `make
-                   server` failed with "multiple definition of phys_rand_f/accelerate/..." against
-                   apps/server/src/main.c's own copy). Same essential state story_boss_tick's own
-                   attack block (local_game.h) already sets on hero death, minus the
-                   attacker-reward bookkeeping (attacker is NULL here, same as that call site's own
-                   NULL-attacker boss-kill case). Respawn delay 2000ms matches
-                   mode_respawn_delay_ms's own real MODE_STORY/default value (local_game.h,
-                   private to that translation unit) -- the hero is player 0, so local_game.h's
-                   own "i>0 dead players never respawn" MODE_STORY convention doesn't zero this
-                   back out the way it would for a zombie/citizen. */
-                hero_p->health = 0;
-                hero_p->state = STATE_DEAD;
-                hero_p->in_shoot = 0;
-                hero_p->in_reload = 0;
-                hero_p->in_use = 0;
-                hero_p->in_jump = 0;
-                hero_p->in_ability = 0;
-                hero_p->is_shooting = 0;
-                hero_p->dash_timer = 0;
-                hero_p->death_time_ms = now_ms;
-                hero_p->death_duration_ms = 2000u;
-                hero_p->respawn_time = now_ms + 2000u;
-                {
-                    float away_len = sqrtf(hdx * hdx + hdz * hdz);
-                    if (away_len > 0.0001f) {
-                        hero_p->death_dir_x = hdx / away_len;
-                        hero_p->death_dir_z = hdz / away_len;
-                    } else {
-                        hero_p->death_dir_x = 0.0f;
-                        hero_p->death_dir_z = 1.0f;
-                    }
-                }
-                hero_p->vx = hero_p->death_dir_x * 0.35f;
-                hero_p->vz = hero_p->death_dir_z * 0.35f;
-                hero_p->vy = 0.14f;
-                if (s->game_mode == MODE_STORY || s->game_mode == MODE_STORY_CAVE) {
-                    s->story_phase = STORY_PHASE_FAILED;
-                    s->story_phase_start_ms = now_ms;
-                    s->match_over = 1;
-                }
-            }
+            witness_ai_hero_melee_hit(s, hero_p, WITNESS_AI_ZOMBIE_MELEE_DAMAGE, hdx, hdz, now_ms);
         }
     }
 
@@ -539,6 +551,20 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
             WitnessAiGiantBug *bug = &g_giant_bugs[i];
             if (!bug->active) continue;
             PlayerState *bp = &s->players[bug->player_id];
+            if (bp->state == STATE_DEAD) { bp->in_fwd = 0.0f; continue; } /* real, permanent kill --
+                same "corpse stays, no respawn" convention as zombies/citizens above. */
+
+            /* Real pain feedback: the player could already shoot a bug (generic hitscan, no role
+               exclusion), but nothing ever fed that damage into GiantBugState.pain before this --
+               giant_bug_attack_drive/flee_drive had a real input that never moved. No precise
+               damage-source hook exists yet, so this is a real, honest proxy: any health drop
+               since last tick becomes pain, same 0..1 scale every other bstate field uses. */
+            if (bp->health < bug->last_health) {
+                float hurt = (float)(bug->last_health - bp->health) / 100.0f;
+                bug->bstate.pain += hurt;
+                if (bug->bstate.pain > 1.0f) bug->bstate.pain = 1.0f;
+            }
+            bug->last_health = bp->health;
 
             int has_target = 0;
             int eaten_zi = -1;
@@ -565,6 +591,40 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
                        bug->player_id, prey->player_id, bug->bstate.strength, bug->bstate.speed);
                 prey->active = 0;
                 s->players[prey->player_id].active = 0;
+            }
+
+            /* Real chase/flee/melee against the hero, PARENA-decided (giant_bug_attack_drive/
+               flee_drive), gated by the SAME "The Men hold the key" authorization the eat mechanic
+               already uses -- an unauthorized bug stays DORMANT-equivalent for combat too, matching
+               this entity's own "leashed asset" design intent rather than inventing a new rule. */
+            bp->in_fwd = 0.0f;
+            if (authorized && hero_live && bp->scene_id == hero_p->scene_id) {
+                float bdx = hero_p->x - bp->x, bdz = hero_p->z - bp->z;
+                float bdist = sqrtf(bdx * bdx + bdz * bdz);
+                int flee_drive = giant_bug_flee_drive(&bug->bstate);
+                int attack_drive = giant_bug_attack_drive(&bug->bstate);
+
+                if (bdist <= WITNESS_AI_BUG_PERCEPTION_RADIUS &&
+                    flee_drive >= WITNESS_AI_BUG_FLEE_DRIVE_THRESHOLD && flee_drive > attack_drive) {
+                    bp->yaw = atan2f(-bdx, -bdz) * (180.0f / 3.14159f); /* directly away */
+                    bp->in_fwd = 0.8f;
+                } else if (bdist <= WITNESS_AI_BUG_PERCEPTION_RADIUS &&
+                           attack_drive >= WITNESS_AI_BUG_ATTACK_DRIVE_THRESHOLD) {
+                    if (bdist > WITNESS_AI_BUG_MELEE_RANGE) {
+                        bp->yaw = atan2f(bdx, bdz) * (180.0f / 3.14159f);
+                        /* speed grows permanently from eating zombies (giant_bug_eat_zombie) --
+                           a real, live reward for the "if they eat a fast zombie they get faster"
+                           founder ask, now visible in how hard this bug is to outrun. */
+                        bp->in_fwd = 0.6f + 0.1f * (bug->bstate.speed - 1.0f);
+                        if (bp->in_fwd > 1.0f) bp->in_fwd = 1.0f;
+                    } else if (now_ms - bug->last_attack_ms >= WITNESS_AI_BUG_ATTACK_COOLDOWN_MS) {
+                        bug->last_attack_ms = now_ms;
+                        /* strength grows permanently the same way -- a bug that has eaten hits
+                           harder, a real, live payoff for the same mechanic. */
+                        int damage = (int)((float)WITNESS_AI_BUG_BASE_MELEE_DAMAGE * bug->bstate.strength);
+                        witness_ai_hero_melee_hit(s, hero_p, damage, bdx, bdz, now_ms);
+                    }
+                }
             }
         }
     }

@@ -24,10 +24,11 @@
  *
  * Real, deliberate scope cuts, named plainly, not papered over:
  *  - ~~No movement/patrol/wander AI~~ -- **closed 2026-09-25** for zombies (real flat-radius
- *    perception + chase + melee) and citizens (real flee-from-a-hunting-zombie reaction), see this
- *    header's own "Zombie perception/pursuit/melee + citizen flee reactions" section below. The
- *    Men and Giant Zombie Bugs keep their own existing, separate, still-standing-at-spawn scope --
- *    not touched by this pass.
+ *    perception + chase + melee), citizens (real flee-from-a-hunting-zombie reaction), The Men
+ *    (real dispatch/resolution chase), and Giant Zombie Bugs (real attack_drive/flee_drive-driven
+ *    chase/melee/flee) -- see this header's own "Zombie perception/pursuit/melee + citizen flee
+ *    reactions", "The Men's dispatch/resolution loop", and "Giant Zombie Bug combat + pain
+ *    feedback" sections below for each.
  *  - ~~zombie_tick's own `has_target` is always passed 0~~ -- **closed 2026-09-25**: a zombie now
  *    genuinely perceives the hero within WITNESS_AI_ZOMBIE_PERCEPTION_RADIUS (flat (x,z), no real
  *    line-of-sight system exists yet -- same honest boundary this file's zone/witness radius
@@ -221,8 +222,9 @@ int witness_ai_distraction_active(unsigned int now_ms);
  * "add more affordances from the big_o spec bring the game to life in shankpit as a v_0 just
  * like the most awesome visceral agency zombie fighting citizens reacting all the things") -----
  * This closes witness_ai.h's own top-doc-comment "has_target is always passed 0" and "no movement/
- * patrol/wander AI" scope cuts, for zombies and citizens specifically (The Men/Giant Zombie Bugs
- * keep their own existing, separate scope). A zombie now genuinely perceives the hero (flat (x,z)
+ * patrol/wander AI" scope cuts, for zombies and citizens specifically (The Men's own dispatch loop
+ * and Giant Zombie Bug combat are each their own separate section below, same day). A zombie now
+ * genuinely perceives the hero (flat (x,z)
  * radius, no line-of-sight system exists yet -- same honest boundary this file's own zone/witness
  * radius checks already accept), chases via the SAME generic accelerate()/collision pipeline
  * story_ai.c's own bots already move through (sets p->yaw/p->in_fwd, local_game.h's per-player
@@ -252,6 +254,38 @@ int witness_ai_distraction_active(unsigned int now_ms);
  * invisible in the one real, live seeded encounter that exists -- same "make it real, not just
  * theoretically wired" bar the rest of this pass holds itself to. */
 #define WITNESS_AI_MEN_RESPONSE_RADIUS 220.0f
+
+/* Giant Zombie Bug combat + pain feedback (same-day follow-up, 2026-09-25) -- closes a real,
+ * previously-unnamed gap: the player could already SHOOT a giant bug (generic hitscan, no role
+ * exclusion, same as every other witness_ai NPC), but nothing ever fed that damage back into
+ * GiantBugState.pain, so giant_bug_attack_drive/flee_drive/swarm_drive (real, PARENA-computed,
+ * live since this entity type was added) never had a real input to react to, and a bug never
+ * fought back or fled -- it just sat there being shot. witness_ai_tick now tracks each bug's last
+ * observed health, feeds any drop into pain (a real, if approximate, "how hurt am I" proxy -- no
+ * more precise damage-source hook exists yet), and drives real chase+melee (attack_drive) or real
+ * retreat (flee_drive) against the hero, gated by the SAME witness_ai_bug_command_authorized "The
+ * Men hold the key" check the eat-a-zombie mechanic already uses -- an unauthorized bug (no live
+ * The Men NPC) stays DORMANT-equivalent for combat too, matching this whole entity's own existing
+ * "leashed asset" design intent, not a new rule invented for this. */
+#define WITNESS_AI_BUG_PERCEPTION_RADIUS 40.0f
+#define WITNESS_AI_BUG_MELEE_RANGE 3.5f
+#define WITNESS_AI_BUG_ATTACK_COOLDOWN_MS 1400u
+#define WITNESS_AI_BUG_BASE_MELEE_DAMAGE 18
+/* Thresholds checked empirically against the real PARENA-generated network (giant_bug_brain.c is
+ * do-not-edit-by-hand, no formula to read directly) -- only hunger (ambient, giant_bug_tick) and
+ * pain (new, this pass) are actually driven by anything in this file; heat_scent/ground_vibration/
+ * hive_signal/light_aversion stay real, honest, always-0.0 dead fields (no heat/hive/light system
+ * exists anywhere in this engine to feed them). Probed range with only those two live: a fresh
+ * spawn (hunger 0.3, pain 0) reads attack=4/flee=0; hunger+pain both maxed at 1.0 tops out at
+ * attack=32/flee=16. 12/6 sits inside that real reachable range -- roughly "the bug has taken
+ * real, sustained damage" before it turns aggressive, not a hair-trigger. Named honestly: flee
+ * never actually wins the priority check under hunger+pain alone (attack_drive dominates
+ * flee_drive at every probed point) -- light_aversion is what would make flee competitive, and
+ * nothing feeds it yet. The flee branch is real, live code, just not reachable from these two
+ * sensors alone -- a future light/exposure system is the real, separate follow-up that would
+ * change that, not a bug in this logic. */
+#define WITNESS_AI_BUG_ATTACK_DRIVE_THRESHOLD 12
+#define WITNESS_AI_BUG_FLEE_DRIVE_THRESHOLD 6
 
 /* --- Giant Zombie Bugs (founder real-time, 2026-09-22: "add giant zombie bugs (feral AI units)
  * they need a totally unique value system vector based deliberately non human 64 layer hand

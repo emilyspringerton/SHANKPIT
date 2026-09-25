@@ -1,6 +1,17 @@
 # Changelog
 
 ## 2026-09-25
+- feat(story): Giant Zombie Bug pain feedback + real attack/flee combat -- the player could already
+  shoot a bug (generic hitscan, no role exclusion) but nothing fed that into GiantBugState.pain, so
+  giant_bug_attack_drive/flee_drive (real, PARENA-computed, live since this entity existed) never
+  had a real input. witness_ai_tick now tracks each bug's health drop into real pain, and an
+  authorized bug (same "The Men hold the key" gate the eat-a-zombie mechanic already uses) chases
+  and melees the hero (damage/speed scaled by the bug's own permanently-grown strength/speed
+  stats) or flees, based on its own real decision outputs. Thresholds checked empirically against
+  the real PARENA network rather than guessed. Factored the zombie-melee/hero-death block into a
+  shared witness_ai_hero_melee_hit helper, reused by both zombies and the bug instead of a second
+  copy-paste. witness_ai_test.c grew 33 -> 37 checks, all pass, zero drift. See
+  docs2/specs/BIGO_ENGINE_MERGE_NORTHSTAR.md §2n.
 - feat(story): The Men's dispatch/resolution loop -- closes witness_ai.h's last remaining "no
   resolution/memory-wipe loop" scope cut. Each live The Men NPC now hunts the nearest SILENCING/
   ENGAGE citizen in its scene within WITNESS_AI_MEN_RESPONSE_RADIUS, walks to it via the same
