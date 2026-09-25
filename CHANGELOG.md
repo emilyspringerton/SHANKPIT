@@ -1,6 +1,17 @@
 # Changelog
 
 ## 2026-09-25
+- feat(story): VOXWORLD story mode now spawns the S470 wandering robots (AI_ROLE_WANDERING_BOT,
+  wave-then-dance AI_MODE_GREET) alongside the BIG_O-merge citizen/zombie roster instead of one
+  replacing the other -- new `story_ai_seed_voxworld_robots` (story_ai.c/.h, plus a new public
+  `story_ai_add_patrol_point` helper) spawns 5 bots on small patrol loops in a northeast-quadrant
+  footprint clear of `witness_ai_seed_voxworld_encounter`'s own citizens/zombies/The Men/lab/food-
+  pickup placements (all south of cz=-260). Both are called from `local_init_match`
+  (packages/simulation/local_game.h) for MODE_STORY. `story_ai_seed_voxworld_encounter` (the old
+  combat-squad encounter both systems replaced) stays deleted -- this restores the robots without
+  reverting the BIG_O zombie/witness cutover. Founder real-time: "add the robots and stuff back to
+  SHANKPIT story mode transition all the new BIG_O zombie stuff in too add it all into SHANKPIT
+  VOXWORLD story." Verified via `make server` (clean build, no new warnings).
 - fix(ci): EDITOR.GAME's gen/editor_full.c is git-ignored/local-only -- generate it in the CI step (cat gen/editor_stdlib_gen.c examples/editor_main.c) instead of assuming it exists, found via a genuinely fresh git clone re-test (sess-20260923-1030-4a526255)
 - fix(ci): eighth recurrence of the CI hand-copied server source-list drift -- day_night_clock.c/world_rules.c missing from Build Linux Server in both release.yml and tests.yml, broke every push since the day/night sync commit (0782136) (sess-20260923-1030-4a526255)
 - ci: release.yml now builds + bundles all 5 SHANKPIT OS apps (DEADWEIGHT/PITVIPER/IDUNA.GAME/REDGARDEN/EDITOR.GAME) for Windows into ShankPit_Client's bundled/ dir -- the lobby's APPS page buttons actually work now (sess-20260923-1030-4a526255)

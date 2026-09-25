@@ -2038,11 +2038,21 @@ void local_init_match(int num_players, int mode) {
         /* BIG_O engine merge phase 7d, MODE_STORY content cutover ("replace outright" per founder
            direction) -- witness_ai_seed_voxworld_encounter replaces
            story_ai_seed_voxworld_encounter as VOXWORLD's real content: ambient citizens + zombies
-           instead of the old AI_ROLE_* combat squad. story_ai_seed_voxworld_encounter itself is
-           dead code now (its only call site) -- see docs2/specs/BIGO_ENGINE_MERGE_NORTHSTAR.md
-           phase 7d for the full account of what is and isn't touched by this cutover. */
+           instead of the old AI_ROLE_* combat squad. story_ai_seed_voxworld_encounter itself stays
+           dead code (its only call site) -- see docs2/specs/BIGO_ENGINE_MERGE_NORTHSTAR.md phase
+           7d for the full account of what is and isn't touched by this cutover.
+
+           Founder real-time (2026-09-25): "add the robots and stuff back to SHANKPIT story mode
+           transition all the new BIG_O zombie stuff in too add it all into SHANKPIT VOXWORLD
+           story" -- both rosters now coexist rather than one replacing the other:
+           story_ai_seed_voxworld_robots (the S470 wandering AI_ROLE_WANDERING_BOT ambient
+           encounter, its northeast-quadrant footprint clear of witness_ai's own placements below)
+           alongside witness_ai_seed_voxworld_encounter (BIG_O's citizens/zombies/The Men/Giant
+           Zombie Bug). Neither call was ever meant to be exclusive with the other -- only with
+           the deleted combat-squad encounter both replaced in turn. */
         witness_ai_reset((unsigned int)time(NULL), 0);
         witness_ai_seed_voxworld_encounter(&local_state, 0);
+        story_ai_seed_voxworld_robots(&local_state, 0);
         StoryBossState *boss = &local_state.story_boss;
         boss->active = 1;
         boss->defeated = 0;

@@ -213,6 +213,19 @@ void story_ai_tick(ServerState *s, unsigned int now_ms);
    replacement. story_ai.c's own AI_ROLE_* roster, story_ai_spawn_enemy, and the general
    LevelCharacter/NOCK-authoring spawn path above are untouched by this and stay fully live. */
 
+/* story_ai_add_patrol_point -- appends one waypoint to the given AI's (by player_id, as returned
+   from story_ai_spawn_enemy) patrol loop. Returns 1 on success, 0 if player_id doesn't resolve.
+   Exposes ai_set_patrol (story_ai.c-private) to callers seeding encounters from outside this
+   file, same pattern story_ai_trigger_scripted already establishes for player_id-addressed AI. */
+int story_ai_add_patrol_point(int player_id, float x, float y, float z, unsigned int wait_ms, int hint);
+
+/* story_ai_seed_voxworld_robots -- founder real-time (2026-09-25): bring the S470 wandering
+   robots (AI_ROLE_WANDERING_BOT, wave-then-dance AI_MODE_GREET) back into VOXWORLD alongside the
+   BIG_O-merge citizen/zombie roster, rather than restoring the deleted combat-squad encounter
+   either replaced. Real, no-op outside SCENE_VOXWORLD -- see story_ai.c for the exact placement
+   and why it doesn't overlap witness_ai_seed_voxworld_encounter's own footprint. */
+void story_ai_seed_voxworld_robots(ServerState *s, unsigned int now_ms);
+
 /* S461-03 -- groups already-spawned enemies (by the player_id story_ai_spawn_enemy returned)
    into one persistent squad. Assigns member_ai_index[0] as leader immediately. Returns the new
    squad's id, or -1 if the squad table is full, count is out of range, or any player_id doesn't
