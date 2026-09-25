@@ -34,12 +34,16 @@
  *    checks already accept). witness_ai_force_zombie_mood is still real and still useful (an
  *    instant, deterministic bootstrap for tests/scripted encounter beats), just no longer the ONLY
  *    way a zombie ever reaches HUNTING/FRENZIED.
- *  - No resolution/memory-wipe loop. Once a citizen's witness state escalates (SILENCING/PANIC/
- *    ENGAGE), witness_live_next_state_for_event's own persistence rule means it stays there until
- *    something calls the resolved=1 path -- that's The Men's own dispatch loop, real, separate,
- *    not-yet-built follow-up work (see phase 7d in docs2/specs/BIGO_ENGINE_MERGE_NORTHSTAR.md).
- *    Citizen flee (new, 2026-09-25) is a real, separate reaction layered on top of this, not a
- *    replacement for it. */
+ *  - ~~No resolution/memory-wipe loop~~ -- **closed 2026-09-25**: a live The Men NPC now hunts
+ *    down and walks to the nearest SILENCING/ENGAGE citizen (WITNESS_AI_MEN_RESPONSE_RADIUS) and
+ *    resolves every hunting citizen in that same zone on arrival via the real, already-tested
+ *    witness_sim_memory_wipe (see this header's own "The Men's dispatch/resolution loop" section
+ *    below, and docs2/specs/BIGO_ENGINE_MERGE_NORTHSTAR.md §2m). PANIC is a real WS_* state
+ *    witness_rules.c can still reach that this dispatch loop does NOT resolve (only SILENCING/
+ *    ENGAGE, matching resolve_hunters' own real, unchanged scope) -- a citizen stuck at PANIC
+ *    stays there, a real, separate, still-open gap.
+ *    Citizen flee (also 2026-09-25) is a real, separate reaction layered on top of this state
+ *    machine, not a replacement for it. */
 
 #include "../common/protocol.h"
 #include "../world/level_boxes.h" /* CustomLevelData, level_boxes_zone_for_position -- phase 7c */
@@ -232,6 +236,22 @@ int witness_ai_distraction_active(unsigned int now_ms);
 #define WITNESS_AI_ZOMBIE_ATTACK_COOLDOWN_MS 1100u
 #define WITNESS_AI_ZOMBIE_MELEE_DAMAGE 14
 #define WITNESS_AI_CITIZEN_FLEE_RADIUS 30.0f
+
+/* The Men's dispatch/resolution loop (2026-09-25 follow-up, same pass) -- closes this header's own
+ * long-standing "no resolution/memory-wipe loop" scope cut. A live The Men NPC now hunts down and
+ * walks to the nearest SILENCING/ENGAGE citizen in its own scene within
+ * WITNESS_AI_MEN_RESPONSE_RADIUS, and on arrival (WITNESS_LIVE_DISPATCH_ARRIVAL_RADIUS,
+ * witness_live.h -- a real, previously-unused constant) resolves every hunting citizen in that
+ * SAME zone via witness_sim_memory_wipe (witness_sim.c, phase 2, real and tested since before this
+ * file existed, just never given a live caller before now). See witness_ai.c's own doc comment on
+ * the dispatch loop itself for the full account. */
+/* 220.0f, not a tight "nearby only" radius -- checked against the real seeded VOXWORLD encounter
+ * (witness_ai_seed_voxworld_encounter): The Men are stationed guarding the lab circle at
+ * (cx+110,cz), while the 4 ambient citizens sit ~75-155 units away at the encounter's own
+ * spatial footprint. A tighter, "more realistic" radius would make this whole mechanic
+ * invisible in the one real, live seeded encounter that exists -- same "make it real, not just
+ * theoretically wired" bar the rest of this pass holds itself to. */
+#define WITNESS_AI_MEN_RESPONSE_RADIUS 220.0f
 
 /* --- Giant Zombie Bugs (founder real-time, 2026-09-22: "add giant zombie bugs (feral AI units)
  * they need a totally unique value system vector based deliberately non human 64 layer hand

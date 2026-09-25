@@ -365,13 +365,49 @@ doesn't flee; a citizen near a FRENZIED zombie flees away from it; the citizen s
 the zombie leaves flee range) — all pass, zero drift in the 22 pre-existing checks.
 
 **Real, honest, not landed this pass:** The Men and Giant Zombie Bugs keep their own existing,
-separate, still-standing-at-spawn scope (not extended by this pass). No zombie-to-zombie/zombie-
-to-citizen combat (only hero-vs-zombie). No player-facing on-screen "zombie hit you" feedback
-beyond the existing generic `hit_feedback` field — a real client-render question, out of scope for
-this engine-side pass. No line-of-sight/occlusion for zombie perception (flat radius only, matches
-every other real/live radius check already in this file). This is still a V0 slice of "visceral
-agency," not the full BIG_O day/night/lab loop — the lab itself (`lab_sim.c`) remains entirely
-unstarted on the UI/interaction side, see §3.
+separate, still-standing-at-spawn scope (not extended by this pass — see §2m immediately below for
+The Men's own follow-up, landed the same day). No zombie-to-zombie/zombie-to-citizen combat (only
+hero-vs-zombie). No player-facing on-screen "zombie hit you" feedback beyond the existing generic
+`hit_feedback` field — a real client-render question, out of scope for this engine-side pass. No
+line-of-sight/occlusion for zombie perception (flat radius only, matches every other real/live
+radius check already in this file). This is still a V0 slice of "visceral agency," not the full
+BIG_O day/night/lab loop — the lab itself (`lab_sim.c`) remains entirely unstarted on the UI/
+interaction side, see §3.
+
+## 2m. Phase 7g landed — The Men's dispatch/resolution loop (same day follow-up)
+
+Closes phase 7b's own header doc comment's last remaining named scope cut: "no resolution/
+memory-wipe loop... that's The Men's own dispatch loop, real, separate, not-yet-built follow-up
+work." Real, checked-first finding: `witness_sim_memory_wipe(s, zone)` already existed, already
+real and tested (phase 2, `witness_sim.c`), and already correctly resolves every SILENCING/ENGAGE
+NPC in a zone back down via the real `resolved=1` path — it had simply never been given a live
+caller. Same for `witness_live.h`'s own `WITNESS_LIVE_DISPATCH_ARRIVAL_RADIUS` constant, defined
+since phase 7a, never read anywhere until now.
+
+- Each live "The Men" NPC (tracked in the same `g_citizens[]` pool as ordinary citizens,
+  distinguished by `NpcArchetype`) now hunts the nearest SILENCING/ENGAGE citizen in its own scene
+  within `WITNESS_AI_MEN_RESPONSE_RADIUS` and walks to it via the same generic accelerate()
+  pipeline every other NPC in this file uses.
+- On arrival (`WITNESS_LIVE_DISPATCH_ARRIVAL_RADIUS`), resolves **every** SILENCING/ENGAGE citizen
+  in that same zone with one `witness_sim_memory_wipe` call — matching `resolve_hunters`'s own
+  real "cleanup crew sweeps a whole zone, not one person at a time" shape (it takes a zone, not a
+  single npc index).
+- `WITNESS_AI_MEN_RESPONSE_RADIUS` is deliberately wide (220.0f), checked directly against the real
+  seeded VOXWORLD encounter's own spatial footprint (The Men guard the lab circle at (cx+110,cz);
+  the 4 ambient citizens sit ~75-155 units away) — a tighter "more realistic" radius would make
+  this whole mechanic invisible in the one real, live encounter that exists, the same "make it
+  real, not just theoretically wired" bar the rest of this pass holds itself to.
+
+**Verified live:** `witness_ai_test.c` grew 30 → 33 checks (The Men walk toward a SILENCING
+cluster without resolving early; arriving resolves the whole cluster via the real memory-wipe
+path) — all pass, zero drift in the pre-existing 30. `make server` clean, no new warnings.
+
+**Real, honest, not landed this pass:** no visual/animation tell for the resolution itself (no
+"The Men spray something" effect — `[THE MEN] resolved N hunting NPC(s)` is a real, permanent log
+line, not a throwaway print, but there is still no on-screen player-facing feedback). Giant Zombie
+Bugs are untouched — they still stand at spawn except for their own existing eat-a-nearby-zombie
+mechanic. The Men still take no damage and cannot be killed by zombies (a real, separate combat
+question for a future pass).
 
 **Phase 7c landed — a real zone-authoring engine feature (native side only):**
 

@@ -1,6 +1,14 @@
 # Changelog
 
 ## 2026-09-25
+- feat(story): The Men's dispatch/resolution loop -- closes witness_ai.h's last remaining "no
+  resolution/memory-wipe loop" scope cut. Each live The Men NPC now hunts the nearest SILENCING/
+  ENGAGE citizen in its scene within WITNESS_AI_MEN_RESPONSE_RADIUS, walks to it via the same
+  generic movement pipeline every other witness_ai NPC uses, and on arrival
+  (WITNESS_LIVE_DISPATCH_ARRIVAL_RADIUS) resolves every hunting citizen in that zone via the
+  already-existing, already-tested witness_sim_memory_wipe (real and correct since phase 2, just
+  never given a live caller before now). witness_ai_test.c grew 30 -> 33 checks, all pass, zero
+  drift. See docs2/specs/BIGO_ENGINE_MERGE_NORTHSTAR.md §2m.
 - feat(story): real zombie perception/chase/melee + citizen flee reactions in VOXWORLD ("visceral
   agency," founder real-time) -- `witness_ai_tick` now computes real has_target for zombie_tick
   (flat radius, `WITNESS_AI_ZOMBIE_PERCEPTION_RADIUS`), a HUNTING/FRENZIED zombie chases the hero

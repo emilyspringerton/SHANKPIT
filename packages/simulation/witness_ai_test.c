@@ -426,6 +426,46 @@ int main(void) {
         printf("PASS: a citizen stops fleeing once the zombie leaves WITNESS_AI_CITIZEN_FLEE_RADIUS\n");
     }
 
+    /* The Men's dispatch/resolution loop (2026-09-25 follow-up): closes "no resolution/
+       memory-wipe loop" for real -- a SILENCING citizen previously stayed there forever. */
+    {
+        ServerState s;
+        reset_server(&s);
+        witness_ai_reset(11, 0);
+
+        /* Same real 5-witness SILENCING scenario the earlier test block already proves, all
+           parked at the origin so a single memory-wipe resolves the whole cluster at once. */
+        int ids[5];
+        for (int i = 0; i < 5; i++) {
+            ids[i] = witness_ai_spawn_citizen(&s, ZONE_PUBLIC, 40, 30, 0.0f, 0.0f, 0.0f, 0);
+            assert(ids[i] > 0);
+        }
+        int zid = witness_ai_spawn_zombie(&s, 0.0f, 0.0f, 0.0f, 0);
+        witness_ai_force_zombie_mood(zid, ZOMBIE_MOOD_HUNTING);
+        witness_ai_tick(&s, 100);
+        for (int i = 0; i < 5; i++) assert(witness_ai_citizen_state(ids[i]) == WS_SILENCING);
+
+        /* The Men NPC spawns well outside WITNESS_LIVE_DISPATCH_ARRIVAL_RADIUS -- one tick should
+           only walk it closer, never resolve anything yet. */
+        int men_id = witness_ai_spawn_the_men(&s, ZONE_PUBLIC, 85, 15, 0.0f, 0.0f, -50.0f, 0);
+        assert(men_id > 0);
+        witness_ai_tick(&s, 200);
+        assert(s.players[men_id].in_fwd > 0.0f);
+        for (int i = 0; i < 5; i++) assert(witness_ai_citizen_state(ids[i]) == WS_SILENCING);
+        printf("PASS: The Men walk toward a SILENCING cluster before arriving (in_fwd > 0, no early resolve)\n");
+
+        /* Place The Men right on top of the cluster (inside WITNESS_LIVE_DISPATCH_ARRIVAL_RADIUS)
+           -- the next tick should resolve every SILENCING/ENGAGE citizen in that same zone back
+           down via the real witness_sim_memory_wipe path. */
+        s.players[men_id].x = 0.0f; s.players[men_id].z = 0.0f;
+        witness_ai_tick(&s, 300);
+        for (int i = 0; i < 5; i++) {
+            assert(witness_ai_citizen_state(ids[i]) != WS_SILENCING);
+        }
+        assert(s.players[men_id].in_fwd == 0.0f);
+        printf("PASS: The Men arriving resolves every SILENCING citizen in the zone via memory_wipe\n");
+    }
+
     printf("\nALL PASS\n");
     return 0;
 }

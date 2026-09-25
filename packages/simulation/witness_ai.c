@@ -595,6 +595,62 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
         }
     }
 
+    /* The Men's dispatch/resolution loop -- closes witness_ai.h's own long-standing "no
+     * resolution/memory-wipe loop" scope cut. Founder real-time (2026-09-25 follow-up to "add more
+     * affordances... citizens reacting all the things"): a citizen escalated to SILENCING/ENGAGE
+     * by the loop above previously stayed there FOREVER (witness_live_next_state_for_event's own
+     * documented persistence rule) -- nothing in this engine ever called the real resolved=1 path
+     * that witness_sim_memory_wipe already implements (phase 2, witness_sim.c, real and tested
+     * since before this file existed, just never given a live caller). Each live "The Men" NPC
+     * (spawn_human's NPC_ARCHETYPE_THE_MEN, tracked in the same g_citizens[] pool as ordinary
+     * citizens) now hunts down the nearest SILENCING/ENGAGE citizen in its own scene within
+     * WITNESS_AI_MEN_RESPONSE_RADIUS, walks to it via the same generic accelerate() pipeline every
+     * other NPC in this file now uses, and once within WITNESS_LIVE_DISPATCH_ARRIVAL_RADIUS
+     * (witness_live.h's own real, previously-unused constant) resolves EVERY hunting citizen in
+     * that same zone with one witness_sim_memory_wipe call -- matching witness_sim.c's own real
+     * "cleanup crew sweeps a whole zone, not one person at a time" shape (resolve_hunters takes a
+     * zone, not an npc index). Idle when nothing needs cleaning up (in_fwd forced to 0), same
+     * "stand guard" default the rest of this file's NPCs already fall back to. */
+    for (int mi = 0; mi < WITNESS_AI_MAX_CITIZENS; mi++) {
+        WitnessAiCitizen *man = &g_citizens[mi];
+        if (!man->active || man->brain.archetype != NPC_ARCHETYPE_THE_MEN) continue;
+        PlayerState *mp = &s->players[man->player_id];
+        if (mp->state == STATE_DEAD) { mp->in_fwd = 0.0f; continue; }
+
+        int target_ci = -1;
+        float best_d2 = WITNESS_AI_MEN_RESPONSE_RADIUS * WITNESS_AI_MEN_RESPONSE_RADIUS;
+        float target_dx = 0.0f, target_dz = 0.0f, target_dist = 0.0f;
+        for (int ci = 0; ci < WITNESS_AI_MAX_CITIZENS; ci++) {
+            WitnessAiCitizen *c = &g_citizens[ci];
+            if (!c->active || c->brain.archetype == NPC_ARCHETYPE_THE_MEN) continue;
+            int wstate = g_sim.n[c->npc_index].state;
+            if (wstate != WS_SILENCING && wstate != WS_ENGAGE) continue;
+            PlayerState *cp = &s->players[c->player_id];
+            if (cp->state == STATE_DEAD || cp->scene_id != mp->scene_id) continue;
+            float dx = cp->x - mp->x, dz = cp->z - mp->z;
+            float d2 = dx * dx + dz * dz;
+            if (d2 <= best_d2) {
+                best_d2 = d2; target_ci = ci; target_dx = dx; target_dz = dz;
+                target_dist = sqrtf(d2);
+            }
+        }
+
+        if (target_ci < 0) { mp->in_fwd = 0.0f; continue; }
+
+        if (target_dist <= WITNESS_LIVE_DISPATCH_ARRIVAL_RADIUS) {
+            mp->in_fwd = 0.0f;
+            int zone = g_sim.n[g_citizens[target_ci].npc_index].zone;
+            int resolved_count = witness_sim_memory_wipe(&g_sim, zone);
+            if (resolved_count > 0) {
+                printf("[THE MEN] player=%d resolved %d hunting NPC(s) in zone=%s\n",
+                       man->player_id, resolved_count, witness_sim_zone_name(zone));
+            }
+        } else {
+            mp->yaw = atan2f(target_dx, target_dz) * (180.0f / 3.14159f);
+            mp->in_fwd = 0.75f;
+        }
+    }
+
     /* Player-zone trespass check ("costume changes" follow-up). Self-throttled to roughly once
      * per second, matching the ambient sim tick's own cadence above. player_id 0 is always the
      * hero (story_ai.c's own convention, and witness_sim_init's own nplayers=1 slot). */
