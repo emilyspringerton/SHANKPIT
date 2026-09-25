@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-25
+- fix(ci): eighth recurrence of the CI hand-copied server source-list drift -- day_night_clock.c/world_rules.c missing from Build Linux Server in both release.yml and tests.yml, broke every push since the day/night sync commit (0782136) (sess-20260923-1030-4a526255)
 - ci: release.yml now builds + bundles all 5 SHANKPIT OS apps (DEADWEIGHT/PITVIPER/IDUNA.GAME/REDGARDEN/EDITOR.GAME) for Windows into ShankPit_Client's bundled/ dir -- the lobby's APPS page buttons actually work now (sess-20260923-1030-4a526255)
 - feat(sim): server-authoritative day/night sync -- closes EMILY/BACKLOG.md SECTION 536's own
   named follow-up ("Phase 1's clock currently ticks off client-local wall-clock time in
