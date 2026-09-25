@@ -154,7 +154,12 @@ jobs:
           set -euo pipefail
           test -f apps/server/src/main.c
 
-          gcc apps/server/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/witness_ai.c packages/simulation/witness_sim.c packages/simulation/witness_rules.c packages/simulation/npc_archetype.c packages/simulation/zombie_values.c packages/simulation/ai_brain_rules.c packages/simulation/giant_bug_values.c packages/simulation/giant_bug_brain.c packages/world/terrain.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c \
+          # Same day_night_clock.c/world_rules.c gap as release.yml's own identically-named step
+          # (2026-09-25, confirmed live via the real GitHub Actions API job log, run 36076944183)
+          # -- this file's own Windows Client step above already has both, only this Linux Server
+          # step was missed, same "fix both hand-copies in the same pass" lesson this workflow's
+          # own history (see comments above the Windows Client step) already established.
+          gcc apps/server/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/day_night_clock.c packages/simulation/world_rules.c packages/simulation/witness_ai.c packages/simulation/witness_sim.c packages/simulation/witness_rules.c packages/simulation/npc_archetype.c packages/simulation/zombie_values.c packages/simulation/ai_brain_rules.c packages/simulation/giant_bug_values.c packages/simulation/giant_bug_brain.c packages/world/terrain.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c \
             -o ShankServer_Linux \
             -O2 -static \
             -I. \

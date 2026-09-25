@@ -317,7 +317,14 @@ jobs:
           set -euo pipefail
           test -f apps/server/src/main.c
 
-          gcc apps/server/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/witness_ai.c packages/simulation/witness_sim.c packages/simulation/witness_rules.c packages/simulation/npc_archetype.c packages/simulation/zombie_values.c packages/simulation/ai_brain_rules.c packages/simulation/giant_bug_values.c packages/simulation/giant_bug_brain.c packages/world/terrain.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c \
+          # EIGHTH real recurrence of this exact drift class (2026-09-25, confirmed live via the
+          # real GitHub Actions API job log, run 36076944183: `undefined reference to
+          # day_night_clock_tick/day_night_clock_init`): packages/simulation/day_night_clock.c and
+          # world_rules.c were added to the Makefile's own SERVER_SRC (S543 addendum,
+          # "server-authoritative day/night sync", SHANKPIT 0782136) but never made it into this
+          # hand-copy or tests.yml's own -- same standing lesson as the seven precedents above this
+          # step's own history doesn't yet document (this repeats them, not a new class of bug).
+          gcc apps/server/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/day_night_clock.c packages/simulation/world_rules.c packages/simulation/witness_ai.c packages/simulation/witness_sim.c packages/simulation/witness_rules.c packages/simulation/npc_archetype.c packages/simulation/zombie_values.c packages/simulation/ai_brain_rules.c packages/simulation/giant_bug_values.c packages/simulation/giant_bug_brain.c packages/world/terrain.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c \
             -o ShankServer_Linux \
             -O2 -static \
             -I. \
