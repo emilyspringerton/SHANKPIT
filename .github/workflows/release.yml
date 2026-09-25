@@ -47,7 +47,13 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # 1.22, not go-version-file (this repo's own go.mod only needs 1.21) -- two of the five
+          # SHANKPIT OS apps below (PITVIPER, IDUNA.GAME) declare `go 1.22` in their own go.mod. A
+          # newer SDK always builds an older-declared module fine, so this satisfies both; pinning
+          # to this repo's own older go-version-file would leave those two builds depending on
+          # GOTOOLCHAIN=auto silently fetching a newer SDK at build time instead of this step
+          # already having the right one.
+          go-version: '1.22'
 
       - name: Go Tests
         shell: bash
@@ -72,6 +78,21 @@ jobs:
             https://github.com/libsdl-org/SDL/releases/download/release-2.30.10/SDL2-devel-2.30.10-mingw.tar.gz
           tar xzf SDL2-devel-2.30.10-mingw.tar.gz
           mv SDL2-2.30.10/x86_64-w64-mingw32 ./sdl2_mingw
+
+          # SDL2_ttf mingw devel kit, merged into the same sdl2_mingw tree (2026-09-25, founder
+          # real-time: "the shankpit os apps dont work - can we get it building with the CICD
+          # binaries for all the apps even tho we dont have the signing set up yet"). Three of the
+          # five SHANKPIT OS apps (PITVIPER, IDUNA.GAME, EDITOR.GAME) link SDL2_ttf, which the
+          # base SDL2 devel kit above doesn't include -- confirmed live via a real local
+          # x86_64-w64-mingw32-gcc/go cross-build of all five apps before trusting this here, same
+          # discipline as every other fix in this workflow file.
+          rm -rf SDL2_ttf-2.22.0 SDL2_ttf-devel-2.22.0-mingw.tar.gz || true
+          wget -q --retry-connrefused --tries=3 \
+            https://github.com/libsdl-org/SDL_ttf/releases/download/release-2.22.0/SDL2_ttf-devel-2.22.0-mingw.tar.gz
+          tar xzf SDL2_ttf-devel-2.22.0-mingw.tar.gz
+          cp -r SDL2_ttf-2.22.0/x86_64-w64-mingw32/include/SDL2/* sdl2_mingw/include/SDL2/
+          cp SDL2_ttf-2.22.0/x86_64-w64-mingw32/lib/*.a sdl2_mingw/lib/
+          cp SDL2_ttf-2.22.0/x86_64-w64-mingw32/bin/*.dll sdl2_mingw/bin/
 
       - name: Build Windows Client
         shell: bash
@@ -168,6 +189,128 @@ jobs:
             -lmingw32 -lSDL2main -lSDL2 \
             -lopengl32 -lglu32 -lws2_32 -lwinmm -lgdi32 -lm
 
+      # SHANKPIT OS apps (2026-09-25, founder real-time: "the shankpit os apps dont work - can we
+      # get it building with the CICD binaries for all the apps even tho we dont have the signing
+      # set up yet"). apps/lobby/src/main.c's own lobby_launch_app spawns each of these as a real,
+      # unmodified child process at "<the running exe's own dir>/bundled/<name>.exe"
+      # (lobby_app_binary_path) -- that real path search has existed since S537, but this workflow
+      # never actually built or bundled any of these five binaries into a release, so every "app"
+      # button in the lobby's APPS page failed with "<name> not found (not bundled yet)". These are
+      # five separate, real, public sibling repos (github.com/emilyspringerton/<name>), not part of
+      # this checkout -- checked out here by name, same as any other public-repo cross-repo
+      # checkout. No code signing here on purpose (not set up yet, per the founder's own framing --
+      # these binaries will trigger an "unknown publisher" OS warning on first run, a real, known,
+      # separate follow-up, not a blocker for getting them built and launchable at all).
+      - name: Checkout SHANKPIT OS Apps
+        uses: actions/checkout@v4
+        with:
+          repository: emilyspringerton/DEADWEIGHT
+          path: os_apps/DEADWEIGHT
+      - uses: actions/checkout@v4
+        with:
+          repository: emilyspringerton/PITVIPER
+          path: os_apps/PITVIPER
+      - uses: actions/checkout@v4
+        with:
+          repository: emilyspringerton/IDUNA.GAME
+          path: os_apps/IDUNA.GAME
+      - uses: actions/checkout@v4
+        with:
+          repository: emilyspringerton/REDGARDEN
+          path: os_apps/REDGARDEN
+      - uses: actions/checkout@v4
+        with:
+          repository: emilyspringerton/EDITOR.GAME
+          path: os_apps/EDITOR.GAME
+
+      - name: Build SHANKPIT OS Apps (Windows)
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDLW="$(pwd)/sdl2_mingw"
+          mkdir -p bundled
+
+          echo "== DEADWEIGHT dw_gui.exe =="
+          ( cd os_apps/DEADWEIGHT
+            test -f apps/gui/main.c
+            x86_64-w64-mingw32-gcc -std=c99 -Wall -Wextra -Werror -Icore -Icore/runtime -DPARENA_NO_GRAPHICS "-DDW_VERSION=\"ci\"" \
+              -include card_rules.h -O2 -I"$SDLW/include" -I"$SDLW/include/SDL2" \
+              apps/gui/main.c apps/gui/fx.c apps/gui/sfx.c core/client.c core/policy.c core/protocol.c core/card_rules.c core/fx_rules.c core/card_text.c core/iduna.c core/http.c \
+              -o dw_gui.exe -L"$SDLW/lib" -lmingw32 -lSDL2 -lws2_32 -lbcrypt -mwindows )
+          cp os_apps/DEADWEIGHT/dw_gui.exe bundled/
+
+          echo "== PITVIPER pitviper.exe =="
+          ( cd os_apps/PITVIPER
+            test -f cmd/pitviper/main.go
+            CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc \
+              CGO_CFLAGS="-I$SDLW/include" CGO_LDFLAGS="-L$SDLW/lib" \
+              GOWORK=off go build -o pitviper.exe ./cmd/pitviper )
+          cp os_apps/PITVIPER/pitviper.exe bundled/
+
+          echo "== IDUNA.GAME idunagame.exe =="
+          ( cd os_apps/IDUNA.GAME
+            test -f cmd/idunagame/main.go
+            CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc \
+              CGO_CFLAGS="-I$SDLW/include" CGO_LDFLAGS="-L$SDLW/lib" \
+              GOWORK=off go build -o idunagame.exe ./cmd/idunagame )
+          cp os_apps/IDUNA.GAME/idunagame.exe bundled/
+
+          echo "== REDGARDEN red_garden_arena.exe =="
+          ( cd os_apps/REDGARDEN
+            test -f apps/arena/src/main.c
+            x86_64-w64-mingw32-gcc -std=c99 -D_DEFAULT_SOURCE -O2 -I./packages -I"$SDLW/include" \
+              -include ./packages/simulation/bloodflower_mod_host.h \
+              -include ./packages/simulation/tree_passive_mod_host.h \
+              -include ./packages/simulation/build_template_mod_host.h \
+              -include ./packages/simulation/item_curriculum_mod_host.h \
+              -include ./packages/simulation/duck_smoke_bomb_mod_host.h \
+              -include ./packages/simulation/abraham_fireball_mod_host.h \
+              -include ./packages/simulation/bacon_puck_intangible_speed_mod_host.h \
+              ./apps/arena/src/main.c \
+              ./packages/simulation/arena_game.c \
+              ./packages/simulation/arena_replay.c \
+              ./packages/simulation/arena_ai_bridge.c \
+              ./packages/simulation/bloodflower_mod.c \
+              ./packages/simulation/tree_passive_mod.c \
+              ./packages/simulation/build_template_mod.c \
+              ./packages/simulation/item_curriculum_mod.c \
+              ./packages/simulation/duck_smoke_bomb_mod.c \
+              ./packages/simulation/abraham_fireball_mod.c \
+              ./packages/simulation/bacon_puck_intangible_speed_mod.c \
+              ./packages/common/mlp_infer.c \
+              ./packages/goldenband/gband.c \
+              ./packages/goldenband/gband_rig.c \
+              ./packages/goldenband/gskel.c \
+              ./packages/goldenband/gmesh.c \
+              ./packages/goldenband/gband_mesh_rig.c \
+              -o red_garden_arena.exe \
+              -L"$SDLW/lib" -lmingw32 -lSDL2main -lSDL2 -lopengl32 -lws2_32 -lm )
+          cp os_apps/REDGARDEN/red_garden_arena.exe bundled/
+
+          echo "== EDITOR.GAME editor-game.exe =="
+          ( cd os_apps/EDITOR.GAME
+            test -f gen/editor_full.c
+            PRNFMT_RENAME="-Darena_init=pf_arena_init -Darena_alloc=pf_arena_alloc -Darena_strdup=pf_arena_strdup -Darena_free_all=pf_arena_free_all"
+            x86_64-w64-mingw32-gcc -std=c99 -Wall -Wextra -pedantic $PRNFMT_RENAME -I"$SDLW/include" -c src/arena.c -o /tmp/eg_pf_arena.o
+            x86_64-w64-mingw32-gcc -std=c99 -Wall -Wextra -pedantic $PRNFMT_RENAME -I"$SDLW/include" -c src/fmt.c -o /tmp/eg_pf_fmt.o
+            x86_64-w64-mingw32-gcc -std=c99 -Wall -Wextra -pedantic $PRNFMT_RENAME -Iruntime -Isrc -I"$SDLW/include" -c runtime/prnfmt_bridge.c -o /tmp/eg_pf_bridge.o
+            x86_64-w64-mingw32-gcc -std=c99 -Wall -Wextra -pedantic -Iruntime -I"$SDLW/include" \
+              gen/editor_full.c runtime/parena_runtime.c /tmp/eg_pf_bridge.o /tmp/eg_pf_arena.o /tmp/eg_pf_fmt.o \
+              -o editor-game.exe -L"$SDLW/lib" -lmingw32 -lSDL2main -lSDL2 -lSDL2_ttf -lm
+            rm -f /tmp/eg_pf_arena.o /tmp/eg_pf_fmt.o /tmp/eg_pf_bridge.o )
+          cp os_apps/EDITOR.GAME/editor-game.exe bundled/
+
+          # DLL dependencies confirmed via objdump against a real local build of all five --
+          # SDL2.dll for all five, SDL2_ttf.dll for PITVIPER/IDUNA.GAME/EDITOR.GAME specifically
+          # (dw_gui/red_garden_arena don't link it). Copied into bundled/ itself (not just the
+          # Client zip's own top level, which already gets SDL2.dll below) since a child process's
+          # own DLL search order checks its own directory first -- don't depend on the parent's
+          # working directory happening to also be searched.
+          cp "$SDLW/bin/SDL2.dll" bundled/
+          cp "$SDLW/bin/SDL2_ttf.dll" bundled/
+
+          ls -la bundled/
+
       - name: Build Linux Server
         shell: bash
         run: |
@@ -261,6 +404,10 @@ jobs:
           # never links packages/goldenband at all (confirmed directly against its own gcc build
           # command above), so it has no real use for these assets.
           cp -r assets ShankPit_Client/
+          # SHANKPIT OS apps (2026-09-25) -- lobby_app_binary_path (apps/lobby/src/main.c) looks
+          # for each app at "<the running exe's own dir>/bundled/<name>.exe" first; this is the
+          # first release that actually populates it, so the lobby's APPS page buttons work.
+          cp -r bundled ShankPit_Client/
           printf '%s\n' "start ShankPit.exe" > ShankPit_Client/PLAY.bat
           zip -r "ShankPit_Client_${BUILD}.zip" ShankPit_Client
 

@@ -60,14 +60,21 @@ click Join from the fresh lobby it opens, same as launching REDGARDEN still need
 ticket/matchmaker step. This is the first concrete step of the "SHANKPIT is the platform, other
 games are apps inside it" pivot — see `docs/SHANKPIT_OS_NORTHSTAR.md` for the full scoping.
 
-**Honest current status**: real and working (path resolution + process launch verified via a
-direct standalone harness, real `fork`/`execl` on Linux, `CreateProcess` on the Windows
-cross-build), but the "bundled" binary isn't actually bundled/shipped with a SHANKPIT release
-yet — it falls back to this monorepo's own sibling-repo dev layout
-(`../../DEADWEIGHT/build/dw_gui`, relative to wherever `shank_lobby` itself runs from), which only
-resolves correctly in this monorepo's own local dev checkout. Real packaging (copying DEADWEIGHT's
-binary into a `bundled/` directory next to a release build of `shank_lobby`) is separate,
-not-yet-built follow-up work.
+**Honest current status (2026-09-25): real and working, including the CI-shipped binaries.**
+Founder real-time: "the shankpit os apps dont work - can we get it building with the CICD
+binaries for all the apps even tho we dont have the signing set up yet." `release.yml` now
+checks out all five sibling app repos (DEADWEIGHT, PITVIPER, IDUNA.GAME, REDGARDEN, EDITOR.GAME —
+all real, public, separate repos), cross-compiles each for Windows, and ships them in
+`ShankPit_Client_*.zip`'s own `bundled/` directory — the exact real path
+`lobby_app_binary_path` already looked for. Verified for real: a byte-identical local dry run of
+the workflow's own embedded build script (same commands, same directory layout, same SDL2/
+SDL2_ttf mingw devel kit CI downloads) produced all five working Windows `.exe`s clean. The dev
+sibling-repo fallback path (`../../DEADWEIGHT/build/dw_gui` etc.) is untouched and still works for
+a local monorepo checkout — the CI-bundled path is checked first now, same
+`lobby_app_binary_path` logic as before, just no longer finding nothing. **Known, accepted,
+separate gap, named on purpose (not the scope of this fix)**: none of these binaries are
+code-signed — Windows SmartScreen/macOS Gatekeeper will show an "unknown publisher" warning on
+first run. Real, separate follow-up.
 
 ---
 
