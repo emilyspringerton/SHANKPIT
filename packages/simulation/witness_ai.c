@@ -20,6 +20,7 @@ typedef struct {
     int active;
     int player_id;
     ZombieState zstate;
+    unsigned int last_attack_ms; /* zombie perception/melee, see witness_ai.h's own doc comment */
 } WitnessAiZombie;
 
 /* Giant Zombie Bug -- founder real-time, 2026-09-22: "add giant zombie bugs (feral AI units)."
@@ -277,6 +278,7 @@ int witness_ai_spawn_zombie(ServerState *s, float x, float y, float z, unsigned 
     init_bot_player(s, slot, x, y, z);
     zc->active = 1;
     zc->player_id = slot;
+    zc->last_attack_ms = 0;
     zombie_state_init(&zc->zstate, now_ms);
     return slot;
 }
@@ -394,11 +396,136 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
         g_sim.n[c->npc_index].vigilance = vig;
     }
 
+    PlayerState *hero_p = &s->players[0];
+    int hero_live = hero_p->active && hero_p->state != STATE_DEAD;
+
     for (int i = 0; i < WITNESS_AI_MAX_ZOMBIES; i++) {
         WitnessAiZombie *z = &g_zombies[i];
         if (!z->active) continue;
-        /* has_target=0 -- real, named scope cut, see witness_ai.h's own top doc comment. */
-        zombie_tick(&z->zstate, now_ms, 0);
+        PlayerState *zp = &s->players[z->player_id];
+        if (zp->state == STATE_DEAD) { zp->in_fwd = 0.0f; continue; } /* corpse stays put, see
+            local_game.h's own MODE_STORY "i>0 dead players never respawn" convention -- a killed
+            zombie is a real, permanent kill, not a respawn-timer no-op. */
+
+        /* Real perception: flat (x,z) radius against the hero, same honest "no line-of-sight
+           system yet" boundary the rest of this file's zone/witness radius checks already accept.
+           Closes witness_ai.h's own top-doc-comment "has_target is always 0" scope cut. */
+        int has_target = 0;
+        float hdx = 0.0f, hdz = 0.0f, hdist = 0.0f;
+        if (hero_live && zp->scene_id == hero_p->scene_id) {
+            hdx = hero_p->x - zp->x;
+            hdz = hero_p->z - zp->z;
+            hdist = sqrtf(hdx * hdx + hdz * hdz);
+            has_target = hdist <= WITNESS_AI_ZOMBIE_PERCEPTION_RADIUS;
+        }
+        zombie_tick(&z->zstate, now_ms, has_target);
+
+        /* Chase via the SAME generic accelerate() pipeline story_ai.c's own bots already move
+           through -- local_game.h's per-player loop applies p->in_fwd/p->yaw for any active i>0
+           player in MODE_STORY, no separate movement system needed here. */
+        if (has_target && (z->zstate.mood == ZOMBIE_MOOD_HUNTING || z->zstate.mood == ZOMBIE_MOOD_FRENZIED) &&
+            hdist > WITNESS_AI_ZOMBIE_MELEE_RANGE) {
+            zp->yaw = atan2f(hdx, hdz) * (180.0f / 3.14159f);
+            zp->in_fwd = (z->zstate.mood == ZOMBIE_MOOD_FRENZIED) ? 1.0f : 0.7f;
+        } else {
+            zp->in_fwd = 0.0f;
+        }
+
+        /* Melee: real, direct hero damage on contact, same shield-then-health order and
+           STORY_PHASE_FAILED-on-death handling story_boss_tick's own attack block already
+           establishes -- a zombie is a real, second source of lethal threat in VOXWORLD now, not
+           just a background prop. */
+        if (has_target && (z->zstate.mood == ZOMBIE_MOOD_HUNTING || z->zstate.mood == ZOMBIE_MOOD_FRENZIED) &&
+            hdist <= WITNESS_AI_ZOMBIE_MELEE_RANGE &&
+            now_ms - z->last_attack_ms >= WITNESS_AI_ZOMBIE_ATTACK_COOLDOWN_MS) {
+            z->last_attack_ms = now_ms;
+            zombie_get_agitated(&z->zstate, now_ms); /* landing a hit is a real stimulus */
+            int damage = WITNESS_AI_ZOMBIE_MELEE_DAMAGE;
+            hero_p->shield_regen_timer = SHIELD_REGEN_DELAY;
+            if (hero_p->shield > 0) {
+                if (hero_p->shield >= damage) { hero_p->shield -= damage; damage = 0; }
+                else { damage -= hero_p->shield; hero_p->shield = 0; }
+            }
+            hero_p->health -= damage;
+            hero_p->hit_feedback = 12;
+            if (hero_p->health <= 0) {
+                /* Minimal, direct death entry -- deliberately NOT a call to physics.h's own
+                   phys_enter_death_state: that header defines its functions non-static, so a
+                   second translation unit including it collides at link time (confirmed: `make
+                   server` failed with "multiple definition of phys_rand_f/accelerate/..." against
+                   apps/server/src/main.c's own copy). Same essential state story_boss_tick's own
+                   attack block (local_game.h) already sets on hero death, minus the
+                   attacker-reward bookkeeping (attacker is NULL here, same as that call site's own
+                   NULL-attacker boss-kill case). Respawn delay 2000ms matches
+                   mode_respawn_delay_ms's own real MODE_STORY/default value (local_game.h,
+                   private to that translation unit) -- the hero is player 0, so local_game.h's
+                   own "i>0 dead players never respawn" MODE_STORY convention doesn't zero this
+                   back out the way it would for a zombie/citizen. */
+                hero_p->health = 0;
+                hero_p->state = STATE_DEAD;
+                hero_p->in_shoot = 0;
+                hero_p->in_reload = 0;
+                hero_p->in_use = 0;
+                hero_p->in_jump = 0;
+                hero_p->in_ability = 0;
+                hero_p->is_shooting = 0;
+                hero_p->dash_timer = 0;
+                hero_p->death_time_ms = now_ms;
+                hero_p->death_duration_ms = 2000u;
+                hero_p->respawn_time = now_ms + 2000u;
+                {
+                    float away_len = sqrtf(hdx * hdx + hdz * hdz);
+                    if (away_len > 0.0001f) {
+                        hero_p->death_dir_x = hdx / away_len;
+                        hero_p->death_dir_z = hdz / away_len;
+                    } else {
+                        hero_p->death_dir_x = 0.0f;
+                        hero_p->death_dir_z = 1.0f;
+                    }
+                }
+                hero_p->vx = hero_p->death_dir_x * 0.35f;
+                hero_p->vz = hero_p->death_dir_z * 0.35f;
+                hero_p->vy = 0.14f;
+                if (s->game_mode == MODE_STORY || s->game_mode == MODE_STORY_CAVE) {
+                    s->story_phase = STORY_PHASE_FAILED;
+                    s->story_phase_start_ms = now_ms;
+                    s->match_over = 1;
+                }
+            }
+        }
+    }
+
+    /* Citizen flee: runs away from the nearest HUNTING/FRENZIED zombie within
+       WITNESS_AI_CITIZEN_FLEE_RADIUS, independent of (and faster-reacting than) the witness_sim
+       state-machine escalation below -- that state machine drives the narrative, this drives what
+       the player actually sees the citizen's body do. Closes this file's own "no movement/wander
+       AI" scope cut for citizens. */
+    for (int i = 0; i < WITNESS_AI_MAX_CITIZENS; i++) {
+        WitnessAiCitizen *c = &g_citizens[i];
+        if (!c->active) continue;
+        PlayerState *cp = &s->players[c->player_id];
+        if (cp->state == STATE_DEAD) { cp->in_fwd = 0.0f; continue; }
+
+        float best_d2 = WITNESS_AI_CITIZEN_FLEE_RADIUS * WITNESS_AI_CITIZEN_FLEE_RADIUS;
+        float away_dx = 0.0f, away_dz = 0.0f;
+        int fleeing = 0;
+        for (int zi = 0; zi < WITNESS_AI_MAX_ZOMBIES; zi++) {
+            WitnessAiZombie *z = &g_zombies[zi];
+            if (!z->active) continue;
+            if (z->zstate.mood != ZOMBIE_MOOD_HUNTING && z->zstate.mood != ZOMBIE_MOOD_FRENZIED) continue;
+            PlayerState *zp = &s->players[z->player_id];
+            if (zp->state == STATE_DEAD || zp->scene_id != cp->scene_id) continue;
+            float dx = cp->x - zp->x, dz = cp->z - zp->z;
+            float d2 = dx * dx + dz * dz;
+            if (d2 <= best_d2) { best_d2 = d2; away_dx = dx; away_dz = dz; fleeing = 1; }
+        }
+
+        if (fleeing) {
+            cp->yaw = atan2f(away_dx, away_dz) * (180.0f / 3.14159f);
+            cp->in_fwd = 0.85f;
+        } else {
+            cp->in_fwd = 0.0f;
+        }
     }
 
     /* Giant Zombie Bug tick + real "eat a nearby zombie" consumption -- gated by

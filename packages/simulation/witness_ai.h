@@ -23,18 +23,23 @@
  * shared s->players[] slot pool).
  *
  * Real, deliberate scope cuts, named plainly, not papered over:
- *  - No movement/patrol/wander AI. Citizens and zombies stand at their spawn position. Real,
- *    separate follow-up (could reuse story_ai.c's own nav-graph/pheromone.h, phase 5's own
- *    steering primitive -- pheromone.h's real first live consumer is a further follow-up, not
- *    this pass).
- *  - zombie_tick's own `has_target` is always passed 0 here -- no player-perception/line-of-sight
- *    system exists yet to organically drive a zombie into HUNTING/FRENZIED. A zombie only reaches
- *    those states via witness_ai_force_zombie_mood (test/debug + a future trigger hook), same
- *    honest boundary zombie_values.h's own header already draws around zombie_effective_alertness.
+ *  - ~~No movement/patrol/wander AI~~ -- **closed 2026-09-25** for zombies (real flat-radius
+ *    perception + chase + melee) and citizens (real flee-from-a-hunting-zombie reaction), see this
+ *    header's own "Zombie perception/pursuit/melee + citizen flee reactions" section below. The
+ *    Men and Giant Zombie Bugs keep their own existing, separate, still-standing-at-spawn scope --
+ *    not touched by this pass.
+ *  - ~~zombie_tick's own `has_target` is always passed 0~~ -- **closed 2026-09-25**: a zombie now
+ *    genuinely perceives the hero within WITNESS_AI_ZOMBIE_PERCEPTION_RADIUS (flat (x,z), no real
+ *    line-of-sight system exists yet -- same honest boundary this file's zone/witness radius
+ *    checks already accept). witness_ai_force_zombie_mood is still real and still useful (an
+ *    instant, deterministic bootstrap for tests/scripted encounter beats), just no longer the ONLY
+ *    way a zombie ever reaches HUNTING/FRENZIED.
  *  - No resolution/memory-wipe loop. Once a citizen's witness state escalates (SILENCING/PANIC/
  *    ENGAGE), witness_live_next_state_for_event's own persistence rule means it stays there until
  *    something calls the resolved=1 path -- that's The Men's own dispatch loop, real, separate,
- *    not-yet-built follow-up work (see phase 7d in docs2/specs/BIGO_ENGINE_MERGE_NORTHSTAR.md). */
+ *    not-yet-built follow-up work (see phase 7d in docs2/specs/BIGO_ENGINE_MERGE_NORTHSTAR.md).
+ *    Citizen flee (new, 2026-09-25) is a real, separate reaction layered on top of this, not a
+ *    replacement for it. */
 
 #include "../common/protocol.h"
 #include "../world/level_boxes.h" /* CustomLevelData, level_boxes_zone_for_position -- phase 7c */
@@ -207,6 +212,26 @@ void witness_ai_smash_cake(unsigned int now_ms);
 
 /* Real, live accessor: is a distraction currently active? Test/debug + a future HUD readout. */
 int witness_ai_distraction_active(unsigned int now_ms);
+
+/* --- Zombie perception/pursuit/melee + citizen flee reactions (founder real-time, 2026-09-25:
+ * "add more affordances from the big_o spec bring the game to life in shankpit as a v_0 just
+ * like the most awesome visceral agency zombie fighting citizens reacting all the things") -----
+ * This closes witness_ai.h's own top-doc-comment "has_target is always passed 0" and "no movement/
+ * patrol/wander AI" scope cuts, for zombies and citizens specifically (The Men/Giant Zombie Bugs
+ * keep their own existing, separate scope). A zombie now genuinely perceives the hero (flat (x,z)
+ * radius, no line-of-sight system exists yet -- same honest boundary this file's own zone/witness
+ * radius checks already accept), chases via the SAME generic accelerate()/collision pipeline
+ * story_ai.c's own bots already move through (sets p->yaw/p->in_fwd, local_game.h's per-player
+ * loop does the rest for any i>0 active player in MODE_STORY), and melees the hero on contact.
+ * A citizen within WITNESS_AI_CITIZEN_FLEE_RADIUS of a HUNTING/FRENZIED zombie runs directly away
+ * from it, the same movement pipeline, independent of (and faster-reacting than) the witness_sim
+ * state-machine escalation above -- that state machine still drives the narrative (DENIAL/PANIC/
+ * SILENCING), this drives what the player actually SEES the citizen's body do. */
+#define WITNESS_AI_ZOMBIE_PERCEPTION_RADIUS 45.0f
+#define WITNESS_AI_ZOMBIE_MELEE_RANGE 3.0f
+#define WITNESS_AI_ZOMBIE_ATTACK_COOLDOWN_MS 1100u
+#define WITNESS_AI_ZOMBIE_MELEE_DAMAGE 14
+#define WITNESS_AI_CITIZEN_FLEE_RADIUS 30.0f
 
 /* --- Giant Zombie Bugs (founder real-time, 2026-09-22: "add giant zombie bugs (feral AI units)
  * they need a totally unique value system vector based deliberately non human 64 layer hand

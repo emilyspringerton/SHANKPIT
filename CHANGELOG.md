@@ -1,6 +1,21 @@
 # Changelog
 
 ## 2026-09-25
+- feat(story): real zombie perception/chase/melee + citizen flee reactions in VOXWORLD ("visceral
+  agency," founder real-time) -- `witness_ai_tick` now computes real has_target for zombie_tick
+  (flat radius, `WITNESS_AI_ZOMBIE_PERCEPTION_RADIUS`), a HUNTING/FRENZIED zombie chases the hero
+  via the same p->yaw/p->in_fwd pipeline story_ai.c's bots already use, melees on contact
+  (cooldown-gated real damage, kills the hero into STATE_DEAD/STORY_PHASE_FAILED same as the boss),
+  and stays a real permanent corpse on death (no respawn, matching MODE_STORY's existing
+  i>0-never-respawns convention). Citizens within `WITNESS_AI_CITIZEN_FLEE_RADIUS` of a hunting
+  zombie now physically flee away from it, layered on top of (not replacing) witness_sim's own
+  DENIAL/PANIC/SILENCING narrative escalation. Closes witness_ai.h's own long-standing "no
+  movement/patrol/wander AI" and "has_target always 0" scope cuts for zombies/citizens
+  specifically (The Men/Giant Zombie Bugs untouched). `witness_ai_test.c` grew 8 -> 30 checks, all
+  pass, zero drift in the pre-existing 22. See docs2/specs/BIGO_ENGINE_MERGE_NORTHSTAR.md §2l for
+  the full account, including why this reimplements phys_enter_death_state's essential fields
+  directly rather than calling it (physics.h's non-static functions collide at link time when
+  included from a second translation unit -- confirmed live).
 - feat(story): VOXWORLD story mode now spawns the S470 wandering robots (AI_ROLE_WANDERING_BOT,
   wave-then-dance AI_MODE_GREET) alongside the BIG_O-merge citizen/zombie roster instead of one
   replacing the other -- new `story_ai_seed_voxworld_robots` (story_ai.c/.h, plus a new public

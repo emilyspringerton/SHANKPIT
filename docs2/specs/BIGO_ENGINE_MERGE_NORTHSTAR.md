@@ -311,14 +311,67 @@ V0, phase the rest), phase 7 is broken into sub-phases; this pass lands the firs
   trigger spawns these yet, that's 7c/7d/7e).
 
 **Real, deliberate scope cuts in `witness_ai.c`, named plainly in its own header comment, not
-papered over:** no movement/patrol/wander AI (citizens and zombies stand at their spawn point —
-`pheromone.h`'s phase 5 steering primitive is a real, not-yet-wired candidate for a future pass);
-`zombie_tick`'s own `has_target` is always passed 0 (no player-perception/line-of-sight system
-exists yet, so a zombie only reaches HUNTING/FRENZIED via the test/debug
-`witness_ai_force_zombie_mood` hook or a future trigger); no resolution/memory-wipe loop (The
-Men's own dispatch loop — once a citizen escalates to SILENCING/PANIC/ENGAGE it stays there,
-`witness_live_next_state_for_event`'s own real persistence rule, until something calls the
-`resolved=1` path, which nothing does yet).
+papered over:** ~~no movement/patrol/wander AI~~ and ~~`zombie_tick`'s own `has_target` always
+0~~ — **both closed 2026-09-25, see §2l below** (real zombie perception/chase/melee + citizen
+flee). No resolution/memory-wipe loop still stands (The Men's own dispatch loop — once a citizen
+escalates to SILENCING/PANIC/ENGAGE it stays there, `witness_live_next_state_for_event`'s own real
+persistence rule, until something calls the `resolved=1` path, which nothing does yet).
+
+## 2l. Phase 7f landed — zombie perception/chase/melee + citizen flee ("visceral agency," founder real-time 2026-09-25)
+
+Founder real-time: *"add more affordances from the big_o spec bring the game to life in shankpit
+as a v_0 just like the most awesome visceral agency zombie fighting citizens reacting all the
+things finish making big_o real in shankpit story mode."* Real, checked-first finding: the player
+could already SHOOT and kill any witness_ai-spawned citizen/zombie — `local_game.h`'s own
+`apply_projectile_damage`/hitscan loop is generic across every active `PlayerState`, no
+story_ai/witness_ai role exclusion anywhere — so "zombie fighting" from the player's side needed no
+new code. What was actually missing, and what this phase closes:
+
+- **Real zombie perception.** `witness_ai_tick` computes a real flat-`(x,z)` distance to the hero
+  every tick and passes the real result as `zombie_tick`'s `has_target`, replacing the hardcoded
+  `0`. `WITNESS_AI_ZOMBIE_PERCEPTION_RADIUS` (45.0f). No line-of-sight system exists yet — same
+  honest boundary this file's existing zone/witness radius checks already accept.
+- **Real chase.** A HUNTING/FRENZIED zombie in range sets its own `PlayerState.yaw`/`.in_fwd`
+  toward the hero — the exact same fields/pipeline `story_ai.c`'s own bots already move through
+  (`local_game.h`'s per-player loop applies `accelerate()`/friction/collision to any active `i>0`
+  player in `MODE_STORY`). No new movement system, no direct position writes.
+- **Real melee.** In `WITNESS_AI_ZOMBIE_MELEE_RANGE` (3.0f), a cooldown-gated
+  (`WITNESS_AI_ZOMBIE_ATTACK_COOLDOWN_MS`, 1100ms) hit applies real shield-then-health damage
+  (`WITNESS_AI_ZOMBIE_MELEE_DAMAGE`, 14) to the hero, same shield-then-health order
+  `story_boss_tick`'s own attack block (`local_game.h`) already uses. Landing a hit also calls
+  `zombie_get_agitated` — a real stimulus, matching `zombie_values.h`'s own documented contract.
+  Killing the hero enters `STATE_DEAD` and sets `STORY_PHASE_FAILED`, a minimal, direct
+  reimplementation of `phys_enter_death_state`'s essential fields (NOT a call to it — `physics.h`
+  defines its functions non-`static`, so a second translation unit including it collides at link
+  time with `apps/server/src/main.c`'s own copy; confirmed live, `make server` failed with
+  "multiple definition of phys_rand_f/accelerate/..." before this was caught).
+- **Killed zombies stay dead.** `local_game.h`'s own existing MODE_STORY convention (any `i>0`
+  dead player's `respawn_time` is zeroed every tick, no bot ever auto-respawns in story mode)
+  already covers this for free — `witness_ai_tick`'s zombie loop just skips ticking/moving a
+  `STATE_DEAD` zombie (`in_fwd` forced to 0), so a killed zombie is a real, permanent corpse, same
+  "dead body stays" convention `story_ai_tick` already established for its own roster.
+- **Real citizen flee.** Any citizen within `WITNESS_AI_CITIZEN_FLEE_RADIUS` (30.0f) of a
+  HUNTING/FRENZIED zombie sets its own yaw/in_fwd to run directly away, through the identical
+  movement pipeline — independent of (and faster-reacting than) `witness_sim`'s own DENIAL/PANIC/
+  SILENCING state-machine escalation above it, which still drives the narrative layer; this drives
+  what the player actually sees the citizen's body do. A dead citizen stops fleeing (`in_fwd`
+  forced to 0), same corpse convention as zombies.
+
+**Verified live, not just compiled:** `make server` clean, zero new warnings. `witness_ai_test.c`
+grew from 8 checks to 30 (real end-to-end proof: a zombie outside perception range never moves; a
+HUNTING zombie in range chases; melee lands real damage; the attack cooldown genuinely gates
+repeat hits; a melee kill enters `STATE_DEAD`/`STORY_PHASE_FAILED`; a citizen near a DORMANT zombie
+doesn't flee; a citizen near a FRENZIED zombie flees away from it; the citizen stops fleeing once
+the zombie leaves flee range) — all pass, zero drift in the 22 pre-existing checks.
+
+**Real, honest, not landed this pass:** The Men and Giant Zombie Bugs keep their own existing,
+separate, still-standing-at-spawn scope (not extended by this pass). No zombie-to-zombie/zombie-
+to-citizen combat (only hero-vs-zombie). No player-facing on-screen "zombie hit you" feedback
+beyond the existing generic `hit_feedback` field — a real client-render question, out of scope for
+this engine-side pass. No line-of-sight/occlusion for zombie perception (flat radius only, matches
+every other real/live radius check already in this file). This is still a V0 slice of "visceral
+agency," not the full BIG_O day/night/lab loop — the lab itself (`lab_sim.c`) remains entirely
+unstarted on the UI/interaction side, see §3.
 
 **Phase 7c landed — a real zone-authoring engine feature (native side only):**
 
