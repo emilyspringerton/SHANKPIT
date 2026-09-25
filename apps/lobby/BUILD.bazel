@@ -8,6 +8,8 @@ cc_binary(
     name = "shank_lobby",
     srcs = [
         "src/main.c",
+        "src/editor_widget_bridge.c",
+        "src/editor_widget_bridge.h",
         "src/player_model.h",
     ],
     deps = [
@@ -21,6 +23,13 @@ cc_binary(
         "//packages/simulation:world_alert_bridge",
         "//packages/ui",
         "//packages/world",
+        # EDITOR.GAME's own real PARENA-editor widget (2026-09-25) -- a sibling-checkout local
+        # bzlmod module, see MODULE.bazel's own local_path_override and
+        # src/editor_widget_bridge.c's own header comment. Deeply integrated in-process
+        # (editor_widget_bridge.c links straight against this) instead of the fork()+execl()'d
+        # separate binary every OTHER lobby app entry (DEADWEIGHT/PITVIPER/IDUNA.GAME/
+        # REDGARDEN) still uses.
+        "@editor_game//:editor_widget",
     ],
     linkopts = [
         "-lSDL2",

@@ -27,6 +27,7 @@
 #include <GL/glu.h>
 
 #include "player_model.h"
+#include "editor_widget_bridge.h"
 #include "../../../packages/ui/turtle_text.h"
 #define UI_BRIDGE_DECL static
 #include "../../../packages/ui/ui_bridge.h"
@@ -3041,18 +3042,16 @@ static void lobby_launch_app(AppsAction app) {
             dev_relative_path = "../../REDGARDEN/build/red_garden_arena";
             break;
         case APP_EDITOR_GAME:
-            display_name = "EDITOR";
-#ifdef _WIN32
-            bundled_name = "editor-game.exe";
-#else
-            bundled_name = "editor-game";
-#endif
-            // EDITOR.GAME/Makefile builds straight to the repo root ("editor-game") -- a real
-            // fork of PARENA's own editor demo (PARENA/examples/editor_main.c +
-            // stdlib/editor/*.prn), unmodified save affordances (F2, hover-reveal Save button),
-            // see EDITOR.GAME/NORTHSTAR.md.
-            dev_relative_path = "../../EDITOR.GAME/editor-game";
-            break;
+            // Deeply integrated as an in-process widget (2026-09-25, founder real-time: "the
+            // editor app fails to launch -- instead of having it launch it should pop a widget
+            // up on the screen that is open while the os screen is open ... dont spawn a
+            // separate process deeply integrate it as a widget"), NOT the fork()+execl() every
+            // other app entry above still uses -- see editor_widget_bridge.h for the real
+            // compositor this now opens instead. Never falls through to the generic
+            // bundled_name/dev_relative_path/fork lookup below.
+            editor_widget_overlay_open();
+            snprintf(app_launch_status, sizeof app_launch_status, "EDITOR");
+            return;
         default:
             return;
     }
@@ -9998,7 +9997,21 @@ int main(int argc, char* argv[]) {
             }
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED && app_state != STATE_LOBBY) SDL_SetRelativeMouseMode(SDL_TRUE);
             if (e.type == SDL_MOUSEBUTTONDOWN && app_state != STATE_LOBBY) SDL_SetRelativeMouseMode(SDL_TRUE);
-            
+
+            /* Editor widget panel -- checked FIRST, before any of lobby's own STATE_LOBBY
+             * event handling below, same real "modal overlay gets first refusal on every
+             * event" precedent skin_menu_open/ui_edit_index>=0 already establish just below.
+             * Only ONE SDL_PollEvent pump exists in this whole process (this one) -- see
+             * editor_widget_bridge.h's own header comment for why the widget's own hidden
+             * window never runs a competing one. Consumed keyboard/text events, or a mouse
+             * event landing inside the panel's own on-screen rect, are swallowed here; a
+             * mouse event outside the panel falls through so the top menu stays clickable
+             * (the founder's own "both screens the notes will stay open" ask). */
+            if (app_state == STATE_LOBBY && editor_widget_overlay_is_open()
+                && editor_widget_overlay_handle_sdl_event(&e)) {
+                continue;
+            }
+
             if (app_state == STATE_LOBBY) {
                 if (e.type == SDL_TEXTINPUT && ui_edit_index >= 0) {
                     size_t len = strlen(e.text.text);
@@ -10421,6 +10434,14 @@ int main(int argc, char* argv[]) {
              }
              if (spray_select_open) {
                  draw_spray_select_overlay();
+             }
+             if (editor_widget_overlay_is_open()) {
+                 /* Ticks the widget's own frame (render + pixel capture + periodic
+                  * auto-save) and draws it as a plain textured GL quad panel, in this
+                  * SAME window/GL context -- see editor_widget_bridge.h's own header
+                  * comment for the full reasoning. frame_time is this loop's own
+                  * already-computed real elapsed seconds for the frame just started. */
+                 editor_widget_overlay_tick_and_draw(frame_time);
              }
 
              glColor3f(0.4f, 0.6f, 0.7f);

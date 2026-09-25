@@ -1,6 +1,24 @@
 # Changelog
 
 ## 2026-09-25
+- feat(lobby): EDITOR app is now a deeply-integrated in-process widget instead of a fork()+
+  execl()'d separate binary (founder real-time: "the editor app fails to launch -- instead of
+  having it launch it should pop a widget up on the screen that is open while the os screen is
+  open ... dont spawn a separate process deeply integrate it as a widget on the screen the notes
+  auto save"). New `apps/lobby/src/editor_widget_bridge.{c,h}` compose EDITOR.GAME's own real
+  `editor_widget_*` API (its own hidden SDL2 window/renderer, never shown, never a second on-
+  screen window) into lobby's single OpenGL scene: renders the widget's frame, reads it back as
+  a plain RGBA buffer, uploads it as a GL texture, and draws it as a fixed-rect panel alongside
+  the existing top menu/buttons (same real overlay pattern draw_skin_chooser_overlay/
+  draw_level_select_overlay already use) -- both stay open and interactive at once. Mouse events
+  outside the panel's own rect still reach the top menu; keyboard/text is captured exclusively
+  by the panel while open. Consumed via a new bzlmod `local_path_override` in `MODULE.bazel` onto
+  `../EDITOR.GAME` (that repo's own new `MODULE.bazel`/`BUILD.bazel` expose the widget as a
+  `cc_library`). Real, honest, NOT verified: no `bazel` binary and no display exist in the
+  sandbox this was built in -- the underlying widget API was compiled and run successfully via
+  EDITOR.GAME's own plain Makefile + a real headless (Xvfb) smoke test, but this repo's own
+  Bazel wiring and the GL texture panel's actual on-screen appearance were not. Build and eyeball
+  it on a real machine before calling this finished.
 - fix(ci): EDITOR.GAME's gen/editor_full.c is git-ignored/local-only -- generate it in the CI step (cat gen/editor_stdlib_gen.c examples/editor_main.c) instead of assuming it exists, found via a genuinely fresh git clone re-test (sess-20260923-1030-4a526255)
 - fix(ci): eighth recurrence of the CI hand-copied server source-list drift -- day_night_clock.c/world_rules.c missing from Build Linux Server in both release.yml and tests.yml, broke every push since the day/night sync commit (0782136) (sess-20260923-1030-4a526255)
 - ci: release.yml now builds + bundles all 5 SHANKPIT OS apps (DEADWEIGHT/PITVIPER/IDUNA.GAME/REDGARDEN/EDITOR.GAME) for Windows into ShankPit_Client's bundled/ dir -- the lobby's APPS page buttons actually work now (sess-20260923-1030-4a526255)
