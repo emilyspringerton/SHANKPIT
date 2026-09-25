@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-09-25
+- feat(sim): server-authoritative day/night sync -- closes EMILY/BACKLOG.md SECTION 536's own
+  named follow-up ("Phase 1's clock currently ticks off client-local wall-clock time in
+  apps/lobby; not yet ticked server-side nor broadcast in a snapshot packet, so two clients would
+  see two different times of day"). `local_state.story_clock` (new `DayNightClock` field on
+  `ServerState`, `packages/common/protocol.h`) is now the one real clock for MODE_STORY/
+  MODE_STORY_CAVE: `local_init_match` seeds it fresh per match, `local_game.h`'s `local_update`
+  advances it for a local (non-networked) match, and a new `apps/server/src/main.c` per-tick block
+  advances + broadcasts it (`PACKET_WORLD_CLOCK`/`NetWorldClock`, a real, separate packet that
+  never touches `server_broadcast`'s own snapshot buffer at all) for a genuine networked story
+  session -- not yet live-deployed anywhere (`shankpit-server.service` runs `--deathmatch` only).
+  Every other mode (deathmatch etc., which draws the same weather-aware sky purely as a visual)
+  keeps ticking its own client-local fallback exactly as before -- zero behavior change for the
+  actually-live mode, confirmed via a real scratch integration harness (not committed, ASan/UBSan
+  clean): `server_broadcast_world_clock()` is a genuine no-op for MODE_DEATHMATCH, sends the real,
+  correct packet for MODE_STORY.
+  **Real bug found and fixed along the way**: the clock's own original tick math
+  (`(int)(dt_sec * DAY_NIGHT_MINUTES_PER_REAL_SEC)`) truncated to 0 on every normal-framerate call
+  (a single ~16ms frame is 0.016 real seconds, always below the 1.0 needed for even one whole
+  minute at the 1:1 rate this repo uses) -- this clock had likely never actually advanced in real
+  gameplay at all via this mechanism, in any mode, since it first landed. Fixed in all three tick
+  sites (the pre-existing lobby fallback, the new `local_update` path, the new server path) by
+  carrying the fractional remainder forward instead of discarding it every call; the live harness
+  confirms ~5 real seconds of realistic 16ms ticks now correctly advances the clock ~5 sim minutes.
+  `make server`/`make lobby` and `bazel build //...` (minus the pre-existing, unrelated
+  `serverctl`/ncurses gap) both clean. No live service restarted or redeployed -- see
+  `EMILY/BACKLOG.md` for the deploy step, a real, human-supervised decision, same discipline every
+  other live-service change in this monorepo follows.
+
 ## 2026-09-24
 - fix(sim): **root-caused and fixed the SHANKPIT queue crash loop** named as an open item earlier
   today. Reproduced live under gdb (`gdb --batch -ex run -ex "bt full" --args ./bin/shank_server

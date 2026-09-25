@@ -1331,6 +1331,30 @@ void server_broadcast() {
     }
 }
 
+/* server_broadcast_world_clock -- EMILY/BACKLOG.md SECTION 536 follow-up ("server-authoritative
+ * day/night sync"). Real, separate packet from server_broadcast's own PACKET_SNAPSHOT on purpose
+ * -- does not touch that function's buffer sizing/count bytes/entity serialization at all, zero
+ * risk to the live deathmatch snapshot path. MODE_STORY/MODE_STORY_CAVE only; every other mode
+ * returns immediately, sending nothing. Not yet live-deployed anywhere (see this repo's own
+ * CLAUDE.md: shankpit-server.service runs --deathmatch only), but real, complete, and ready the
+ * moment a dedicated --story server is. */
+void server_broadcast_world_clock(void) {
+    if (local_state.game_mode != MODE_STORY && local_state.game_mode != MODE_STORY_CAVE) return;
+    NetWorldClock wc;
+    memset(&wc, 0, sizeof(wc));
+    wc.hdr.type = PACKET_WORLD_CLOCK;
+    wc.hdr.client_id = 0;
+    wc.hdr.timestamp = get_server_time();
+    wc.minutes = local_state.story_clock.minutes;
+    wc.start_minute = local_state.story_clock.start_minute;
+    wc.weather = (unsigned char)local_state.story_clock.weather;
+    wc.weather_ends = local_state.story_clock.weather_ends;
+    for (int i = 1; i < MAX_CLIENTS; i++) {
+        if (!slots[i].active || !slots[i].welcomed) continue;
+        sendto(sock, &wc, sizeof(wc), 0, (struct sockaddr*)&slots[i].addr, sizeof(struct sockaddr_in));
+    }
+}
+
 int main(int argc, char *argv[]) {
     int server_port = 6969;
     for (int i = 1; i < argc; i++) {
@@ -1699,6 +1723,29 @@ int main(int argc, char *argv[]) {
         // and before the snapshot broadcast, so a door's new state is reflected in the very
         // snapshot this tick sends out.
         story_doors_tick(local_state.players, MAX_CLIENTS);
+
+        /* EMILY/BACKLOG.md SECTION 536 follow-up ("server-authoritative day/night sync") -- the
+         * real dedicated-server half: advances the SAME local_state.story_clock local_init_match
+         * seeds and local_game.h's local_update advances for a local match, so a genuine networked
+         * MODE_STORY/MODE_STORY_CAVE session (not yet live-deployed anywhere -- shankpit-
+         * server.service runs --deathmatch only, see this repo's own CLAUDE.md) has a real,
+         * server-authoritative clock ready the moment one is. Every other mode: zero cost, zero
+         * behavior change -- this whole block is skipped outright. */
+        if (local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) {
+            static unsigned int dnc_last_ms = 0;
+            static float dnc_accum_minutes = 0.0f; /* real, found-live bug fix -- see
+                local_game.h's own local_update doc comment for the full account (a bare
+                (int)-cast truncated to 0 on every normal-cadence call). */
+            float dnc_dt_sec = (dnc_last_ms == 0 || now < dnc_last_ms) ? 0.0f : (float)(now - dnc_last_ms) * 0.001f;
+            if (dnc_dt_sec > 1.0f) dnc_dt_sec = 1.0f;
+            dnc_last_ms = now;
+            dnc_accum_minutes += dnc_dt_sec * DAY_NIGHT_MINUTES_PER_REAL_SEC;
+            int dnc_minutes = (int)dnc_accum_minutes;
+            if (dnc_minutes > 0) {
+                day_night_clock_tick(&local_state.story_clock, dnc_minutes);
+                dnc_accum_minutes -= (float)dnc_minutes;
+            }
+        }
         if (server_team_mode_enabled(local_state.game_mode)) {
             for (int i = 0; i < MAX_CLIENTS; i++) {
                 PlayerState *pp = &local_state.players[i];
@@ -1719,6 +1766,7 @@ int main(int argc, char *argv[]) {
         recorder_write_frame(tick, now);
         if ((tick % SERVER_SNAPSHOT_INTERVAL_TICKS) == 0) {
             server_broadcast();
+            server_broadcast_world_clock();
         }
         net_server_emit_summary(now);
 

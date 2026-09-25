@@ -14,6 +14,14 @@
  * weather that the sky/lighting renderer needs, standing alone so it has no dependency on a
  * player/Sim model that doesn't exist in SHANKPIT's own server shape. */
 
+/* One real sim-minute per real second by default: a full 1440-minute day cycles in 24 real
+ * minutes -- slow enough to actually see weather/lighting settle, fast enough to verify live in a
+ * normal play session without waiting. Shared here (not duplicated per-binary) since both
+ * apps/server's own real per-tick advance and apps/lobby's own local-match advance must agree on
+ * the same real-time-to-sim-time rate for a networked story session to ever make sense (EMILY/
+ * BACKLOG.md SECTION 536 follow-up: "server-authoritative day/night sync"). */
+#define DAY_NIGHT_MINUTES_PER_REAL_SEC 1.0f
+
 typedef enum { DNC_DAWN = 0, DNC_DAY, DNC_DUSK, DNC_NIGHT } DncPhase;
 typedef enum { DNC_CLEAR = 0, DNC_OVERCAST, DNC_RAIN, DNC_STORM } DncWeather;
 

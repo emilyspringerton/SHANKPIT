@@ -18,5 +18,12 @@ cc_library(
         "protocol.h",
         "shared_movement.h",
     ],
+    # protocol.h now #includes day_night_clock.h directly (ServerState.story_clock, EMILY/
+    # BACKLOG.md SECTION 536 follow-up "server-authoritative day/night sync") -- every consumer of
+    # protocol.h needs that header available in its own sandboxed compile, hence this dep even
+    # though most consumers never call day_night_clock_tick/init themselves (only apps/lobby and
+    # apps/server actually do -- they already depend on :day_night_clock directly for the .c
+    # implementation/link step; this dep exists purely so the header resolves everywhere else).
+    deps = ["//packages/simulation:day_night_clock"],
     visibility = ["//visibility:public"],
 )

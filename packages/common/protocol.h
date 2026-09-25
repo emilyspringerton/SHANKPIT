@@ -8,6 +8,9 @@
 #include <ws2tcpip.h>
 #endif
 
+#include "../simulation/day_night_clock.h" /* DayNightClock -- ServerState.story_clock below,
+    EMILY/BACKLOG.md SECTION 536 follow-up ("server-authoritative day/night sync") */
+
 #define MAX_CLIENTS 70
 #define MAX_WEAPONS 8
 #define MAX_PROJECTILES 1024
@@ -47,6 +50,16 @@
  * array exists yet for a marker to steer (that's phase 7). Client-side derivation matches BIG_O's
  * own v0 (sender's own position + camera-forward * a fixed throw distance), not a real projectile. */
 #define PACKET_PHEROMONE_THROW 11
+
+/* PACKET_WORLD_CLOCK -- EMILY/BACKLOG.md SECTION 536 follow-up ("server-authoritative day/night
+ * sync"), server -> client, MODE_STORY/MODE_STORY_CAVE only. A real, whole-state snapshot of
+ * local_state.story_clock (not a delta), broadcast alongside PACKET_SNAPSHOT so a genuine
+ * networked story client renders the SAME sky/weather every other connected client sees, instead
+ * of ticking its own independent, silently-drifting local clock. Every other mode never sends
+ * this at all -- a real, deliberate v0 cut named in this thread's own doc comments rather than
+ * broadcasting a clock nobody's gameplay depends on. See NetWorldClock below (defined after
+ * NetHeader). */
+#define PACKET_WORLD_CLOCK 12
 
 #define VOXEL_CHUNK_SIZE            16
 #define VOXEL_MAX_BLOCKS_PER_CHUNK  1024
@@ -113,6 +126,19 @@ typedef struct {
     unsigned char entity_count; 
     unsigned char scene_id;
 } NetHeader;
+
+/* NetWorldClock -- see PACKET_WORLD_CLOCK's own doc comment above. A real, protocol-owned mirror
+ * of DayNightClock's own broadcastable fields (everything except `rng`, which is a server-
+ * internal weather-scheduling detail a client never needs) -- deliberately a separate type from
+ * DayNightClock itself so the wire format doesn't leak the internal simulation struct across the
+ * network boundary, same judgment this file's other Net* structs already make. */
+typedef struct {
+    NetHeader hdr;
+    int minutes;
+    int start_minute;
+    unsigned char weather;
+    int weather_ends;
+} NetWorldClock;
 
 typedef struct {
     unsigned int sequence;
@@ -624,6 +650,11 @@ typedef struct {
     StoryEnemy story_swarm[STORY_MAX_SWARM_ENEMIES];
     MechanismReading mechanism;   /* TYLER archive mechanism — frequency reader */
     unsigned int cave_endure_until_ms; /* CAVE-001: endurance win condition timestamp */
+    DayNightClock story_clock; /* EMILY/BACKLOG.md SECTION 536 follow-up ("server-authoritative
+        day/night sync") -- authoritative for MODE_STORY/MODE_STORY_CAVE only (local_init_match
+        seeds it, apps/server's own per-tick loop and local_game.h's local_update both advance
+        it); every other mode ticks its own client-local fallback instead, see apps/lobby's own
+        render-loop doc comment near its real use. */
     CtfMatchState ctf;
     struct sockaddr_in clients[MAX_CLIENTS];
     ClientMeta client_meta[MAX_CLIENTS];

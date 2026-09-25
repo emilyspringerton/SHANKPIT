@@ -15,6 +15,7 @@ cc_binary(
     deps = [
         "//packages/common:common_headers",
         "//packages/simulation:story_ai",
+        "//packages/simulation:day_night_clock",
         "//packages/world",
     ],
     linkopts = ["-lm"],

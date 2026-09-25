@@ -1661,6 +1661,31 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
     PlayerState *p0 = &local_state.players[0];
     const float dt = SHANKPIT_NET_FIXED_DT;
     if (local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) {
+        /* EMILY/BACKLOG.md SECTION 536 follow-up ("server-authoritative day/night sync"): this IS
+         * the authoritative tick for a local (non-networked) story match -- same real-time-to-sim-
+         * minutes rate (DAY_NIGHT_MINUTES_PER_REAL_SEC) the old client-local render-loop tick used,
+         * just moved into the real authoritative update path instead of the renderer. A stale
+         * `last_ms` from a previous match (reset via local_init_match) produces at most one
+         * clamped ~1-second-equivalent tick, same harmless-first-frame precedent the original
+         * render-loop code already accepted. */
+        static unsigned int dnc_last_ms = 0;
+        static float dnc_accum_minutes = 0.0f; /* real, found-live bug (2026-09-25): a bare
+            (int)(dt_sec * DAY_NIGHT_MINUTES_PER_REAL_SEC) truncates to 0 on every normal-
+            framerate call (a single ~16ms frame is 0.016 real seconds, always < the 1.0 needed
+            for even one whole minute at a 1:1 rate) -- this clock has likely never actually
+            advanced in real gameplay via this exact mechanism. Fixed by carrying the fractional
+            remainder forward instead of discarding it each call, same real fix applied to
+            apps/lobby's own fallback tick and apps/server's own dedicated-server tick below. */
+        float dnc_dt_sec = (dnc_last_ms == 0 || cmd_time < dnc_last_ms) ? 0.0f : (float)(cmd_time - dnc_last_ms) * 0.001f;
+        if (dnc_dt_sec > 1.0f) dnc_dt_sec = 1.0f;
+        dnc_last_ms = cmd_time;
+        dnc_accum_minutes += dnc_dt_sec * DAY_NIGHT_MINUTES_PER_REAL_SEC;
+        int dnc_minutes = (int)dnc_accum_minutes;
+        if (dnc_minutes > 0) {
+            day_night_clock_tick(&local_state.story_clock, dnc_minutes);
+            dnc_accum_minutes -= (float)dnc_minutes;
+        }
+
         if (local_state.story_phase == STORY_PHASE_CUTSCENE ||
             local_state.story_phase == STORY_PHASE_OUTRO) {
             /* Lock all player inputs during cutscene/outro */
@@ -1944,6 +1969,16 @@ void local_init_match(int num_players, int mode) {
        own doc comment above for why STORY_PHASE_CUTSCENE would otherwise never end there. */
     local_state.story_phase = (!g_shankpit_is_server && (mode == MODE_STORY || mode == MODE_STORY_CAVE)) ? STORY_PHASE_CUTSCENE : STORY_PHASE_PLAYING;
     local_state.story_phase_start_ms = 0;
+    /* EMILY/BACKLOG.md SECTION 536 follow-up ("server-authoritative day/night sync"): a real,
+     * fresh clock seeded per match for MODE_STORY/MODE_STORY_CAVE only -- every other mode leaves
+     * story_clock zeroed (from the memset above) and never reads it authoritatively, see
+     * apps/lobby's own render-loop doc comment for the real per-mode fallback story. Reset per
+     * entry is a deliberate change from an earlier "one persistent, whole-session instance"
+     * exception this clock used to be -- now consistent with every other ServerState field this
+     * function already resets (story_phase, story_boss, story_rift, ...). */
+    if (mode == MODE_STORY || mode == MODE_STORY_CAVE) {
+        day_night_clock_init(&local_state.story_clock, (unsigned int)time(NULL), 8);
+    }
     story_clear_swarm();
 
     if (mode == MODE_TDMB || mode == MODE_HEADED_BOT) {

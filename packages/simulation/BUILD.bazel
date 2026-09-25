@@ -6,9 +6,9 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 # world_rules.prn, itself copied verbatim from PARENA/stdlib/big_o/world_rules.prn -- the logic is
 # identical, SHANKPIT now owns its own stdlib domain). Deliberate v0 scope cut vs. BIG_O's own
 # World: no zombie population/Sim coupling -- see day_night_clock.h's own header for the real,
-# named reasoning. Currently only pulled into apps/lobby (packages/render:render's sky_weather.c
-# is its one real consumer); server-side tick/broadcast is a named EMILY/BACKLOG.md SECTION 536
-# follow-up, not yet wired.
+# named reasoning. Server-authoritative for MODE_STORY/MODE_STORY_CAVE as of the EMILY/BACKLOG.md
+# SECTION 536 follow-up ("server-authoritative day/night sync"): apps/server now ticks and
+# broadcasts it (PACKET_WORLD_CLOCK) too, not just apps/lobby's own local-match/fallback tick.
 cc_library(
     name = "day_night_clock",
     srcs = [

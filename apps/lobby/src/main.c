@@ -792,32 +792,37 @@ static ProcTexture g_wall_ips_panel_tex = {0};
 // the brick fallback" reasoning g_wall_ips_panel_tex above already established.
 static ProcTexture g_wall_hps_bulb_tex = {0};
 static RetroSky g_retro_sky = {0};
-// g_sky_weather/g_day_night_clock -- BIG_O engine merge, phase 1 (founder real-time: "port the
-// BIG_O tech into the shankpit repo -- all of it the lighting the systems all of it... the shaders
-// the way the sun and moon look"). Real day/night + weather clock (PARENA-driven, world_rules.c)
-// and the weather-aware sky it drives, upgrading retro_sky's old fixed fast-orbit dome with real
-// clear/overcast/rain/storm states, clouds, rain, and lightning. Real, deliberate v0 scope cut:
-// the clock ticks off local wall-clock time (DAY_NIGHT_MINUTES_PER_REAL_SEC below), not yet
-// server-broadcast -- server-authoritative sync is a named, separate follow-up (see
-// EMILY/BACKLOG.md SECTION 536). retro_sky/g_retro_sky stay in place unchanged: retro_lighting.c's
+// g_sky_weather/local_state.story_clock -- BIG_O engine merge, phase 1 (founder real-time: "port
+// the BIG_O tech into the shankpit repo -- all of it the lighting the systems all of it... the
+// shaders the way the sun and moon look"). Real day/night + weather clock (PARENA-driven,
+// world_rules.c) and the weather-aware sky it drives, upgrading retro_sky's old fixed fast-orbit
+// dome with real clear/overcast/rain/storm states, clouds, rain, and lightning. Server-
+// authoritative for MODE_STORY/MODE_STORY_CAVE as of the SECTION 536 follow-up named below
+// (local_init_match seeds it fresh per match, same as every other ServerState field it resets --
+// a real, deliberate change from this clock's own earlier "one persistent, whole-session
+// instance" exception); every other mode (deathmatch etc., which draws this same sky purely as a
+// visual) keeps ticking it off local wall-clock time exactly as before, see the render block's own
+// doc comment near DAY_NIGHT_MINUTES_PER_REAL_SEC's real use for the honest "why not every mode"
+// account. retro_sky/g_retro_sky stay in place unchanged: retro_lighting.c's
 // RETRO_LIGHTING_DYNAMIC preset still reads retro_sky_eval_fog_rgb/eval_sun_dir for scene ambient
 // lighting -- wiring that to sky_weather's own real weather state is also SECTION 536 follow-up,
 // not this pass, so it's named rather than half-done.
 static SkyWeather g_sky_weather = {0};
-static DayNightClock g_day_night_clock = {0};
-// One real sim-minute per real second by default: a full 1440-minute day cycles in 24 real
-// minutes -- slow enough to actually see weather/lighting settle, fast enough to verify live in a
-// normal play session without waiting.
-#define DAY_NIGHT_MINUTES_PER_REAL_SEC 1.0f
+// EMILY/BACKLOG.md SECTION 536 follow-up ("server-authoritative day/night sync"): the clock
+// itself now lives in local_state.story_clock (ServerState, packages/common/protocol.h) instead
+// of a separate client-local static -- see local_init_match (init), local_update (real-tick
+// advance for local matches), and the PACKET_WORLD_CLOCK receive case below (real-tick advance
+// for a genuine networked story client) for where it's actually written.
+// DAY_NIGHT_MINUTES_PER_REAL_SEC now lives in day_night_clock.h -- shared with apps/server.
 
 // g_story_phone/g_story_alert_bridge -- BIG_O engine merge phase 7e (EMILY/BACKLOG.md SECTION
 // 536, "the day/night/lab turn structure"). The first real, live consumer of phone.h (phase 6)
 // and world_alert_bridge (phase 6) -- both shipped fully tested but never actually instantiated
-// anywhere before this. Reuses g_day_night_clock above unmodified (it already ticks every real
-// frame, session-wide, not mode-gated) rather than standing up a second clock. Not reset per
-// MODE_STORY entry, same "one persistent, whole-session instance" convention g_day_night_clock
-// itself already established -- a message from a previous story session staying in the inbox
-// across a restart is a real, honest, harmless v0 property, not a bug.
+// anywhere before this. Reuses local_state.story_clock above rather than standing up a second
+// clock. Unlike story_clock itself, g_story_phone/g_story_alert_bridge stay real, persistent,
+// session-wide client statics, NOT reset per MODE_STORY entry (unchanged from this comment's own
+// original claim) -- a message from a previous story session staying in the inbox across a
+// restart is a real, honest, harmless v0 property, not a bug.
 //
 // Real, deliberate scope cut: only the on-screen banner below is new. The actual phone APP UI
 // (home grid, Messages list, Contacts/Map/Camera/etc.) still has no render/input path at all --
@@ -8200,22 +8205,42 @@ void draw_scene(PlayerState *render_p) {
     }
 
     {
-        /* BIG_O engine merge, phase 1: tick the real day/night + weather clock off wall-clock
-           time, then draw the weather-aware sky (dome/stars/sun/moon/clouds), replacing the old
-           retro_sky_draw fixed fast-orbit dome. sky_weather_draw reads the CURRENT modelview
-           (captured for GOLDENBAND skinning just above, so it's the real camera view matrix at
-           this point) and strips its translation itself -- no explicit cam_x/y/z needed, unlike
-           retro_sky_draw's old signature. */
-        static Uint32 dnc_last_ms = 0;
-        Uint32 dnc_now_ticks = SDL_GetTicks();
-        float dnc_dt_sec = (dnc_last_ms == 0) ? 0.0f : (float)(dnc_now_ticks - dnc_last_ms) * 0.001f;
-        if (dnc_dt_sec > 1.0f) dnc_dt_sec = 1.0f; /* clamp stalls/first-frame spike */
-        dnc_last_ms = dnc_now_ticks;
-        int dnc_minutes = (int)(dnc_dt_sec * DAY_NIGHT_MINUTES_PER_REAL_SEC);
-        if (dnc_minutes > 0) day_night_clock_tick(&g_day_night_clock, dnc_minutes);
+        /* BIG_O engine merge, phase 1, EMILY/BACKLOG.md SECTION 536 follow-up ("server-
+           authoritative day/night sync"): local_state.story_clock is now the one real clock --
+           local_init_match seeds it, local_update advances it server-authoritatively for a
+           MODE_STORY/MODE_STORY_CAVE local match, and the PACKET_WORLD_CLOCK receive case below
+           applies it for a genuine networked story client. This render block's own job shrinks to
+           a real, honest fallback: for every OTHER mode (deathmatch etc., which also draws this
+           same weather-aware sky as a visual, with no BIG_O witness/attention system riding on
+           it), nothing server-side ever ticks story_clock, so it still ticks off local wall-clock
+           time here, exactly as it always has -- zero behavior change for the actually-live
+           modes. sky_weather_draw reads the CURRENT modelview (captured for GOLDENBAND skinning
+           just above, so it's the real camera view matrix at this point) and strips its
+           translation itself -- no explicit cam_x/y/z needed, unlike retro_sky_draw's old
+           signature. */
+        int dnc_server_driven = (local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE);
+        if (!dnc_server_driven) {
+            static Uint32 dnc_last_ms = 0;
+            static float dnc_accum_minutes = 0.0f; /* real, found-live bug fix (2026-09-25): a bare
+                (int)-cast here truncated to 0 on every normal ~60fps frame (0.016 real seconds is
+                always < the 1.0 needed for even one whole minute at a 1:1 rate) -- this clock has
+                likely never actually advanced in real gameplay via this exact mechanism. Fixed by
+                carrying the fractional remainder forward instead of discarding it each frame, same
+                real fix applied to local_game.h's local_update and apps/server's own tick. */
+            Uint32 dnc_now_ticks = SDL_GetTicks();
+            float dnc_dt_sec = (dnc_last_ms == 0) ? 0.0f : (float)(dnc_now_ticks - dnc_last_ms) * 0.001f;
+            if (dnc_dt_sec > 1.0f) dnc_dt_sec = 1.0f; /* clamp stalls/first-frame spike */
+            dnc_last_ms = dnc_now_ticks;
+            dnc_accum_minutes += dnc_dt_sec * DAY_NIGHT_MINUTES_PER_REAL_SEC;
+            int dnc_minutes = (int)dnc_accum_minutes;
+            if (dnc_minutes > 0) {
+                day_night_clock_tick(&local_state.story_clock, dnc_minutes);
+                dnc_accum_minutes -= (float)dnc_minutes;
+            }
+        }
 
-        sky_weather_update(&g_sky_weather, (float)day_night_clock_minute_of_day(&g_day_night_clock),
-                            (int)g_day_night_clock.weather, now_ms);
+        sky_weather_update(&g_sky_weather, (float)day_night_clock_minute_of_day(&local_state.story_clock),
+                            (int)local_state.story_clock.weather, now_ms);
         sky_weather_draw(&g_sky_weather);
 
         /* BIG_O engine merge phase 7e -- the same real clock tick above now also drives the real
@@ -8224,7 +8249,7 @@ void draw_scene(PlayerState *render_p) {
            30s, batch the rest" rule) -- draw_hud's own MODE_STORY banner below reads
            g_story_phone.banner_id, not the raw message queue, so it inherits that anti-spam
            behavior for free. */
-        world_alert_bridge_tick(&g_story_alert_bridge, &g_day_night_clock, &g_story_phone, now_ms);
+        world_alert_bridge_tick(&g_story_alert_bridge, &local_state.story_clock, &g_story_phone, now_ms);
         phone_tick(&g_story_phone, now_ms);
 
         /* BIG_O basic food system (founder real-time, 2026-09-22): real, live, walk-over pickup
@@ -9722,6 +9747,18 @@ void net_tick() {
                 NET_CLIENT_LOG("SCENE_CHANGE scene=%d mode=%d spawn=(%.1f,%.1f,%.1f)",
                                new_scene, local_state.game_mode, sx, sy, sz);
             }
+        } else if (head->type == PACKET_WORLD_CLOCK && len >= (int)sizeof(NetWorldClock)) {
+            /* EMILY/BACKLOG.md SECTION 536 follow-up ("server-authoritative day/night sync") --
+               a genuine networked MODE_STORY/MODE_STORY_CAVE client applies the real, whole-state
+               clock the dedicated server broadcasts here, instead of ever ticking its own; the
+               render loop's own local wall-clock fallback only fires when nothing authoritative
+               is driving story_clock, which this packet's mere arrival satisfies. */
+            NetWorldClock wc;
+            memcpy(&wc, buffer, sizeof(wc));
+            local_state.story_clock.minutes = wc.minutes;
+            local_state.story_clock.start_minute = wc.start_minute;
+            local_state.story_clock.weather = (DncWeather)wc.weather;
+            local_state.story_clock.weather_ends = wc.weather_ends;
         } else {
             unsigned int now_ms = SDL_GetTicks();
             if (net_should_log_every(&net_diag.last_invalid_packet_log_ms, 1000, now_ms)) {
@@ -9908,7 +9945,7 @@ int main(int argc, char* argv[]) {
             fprintf(stderr, "sky_weather: %s (using built-in defaults)\n", skw_err);
         }
     }
-    day_night_clock_init(&g_day_night_clock, (unsigned int)time(NULL), 8);
+    day_night_clock_init(&local_state.story_clock, (unsigned int)time(NULL), 8);
     phone_init(&g_story_phone);
     world_alert_bridge_init(&g_story_alert_bridge);
     net_init();

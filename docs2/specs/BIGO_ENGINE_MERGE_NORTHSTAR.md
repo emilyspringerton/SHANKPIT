@@ -70,8 +70,9 @@ it header-only-inline; `retro_sky.c`'s own convention is a real compiled unit, m
 Upgrades `retro_sky`'s fixed fast-orbit dome with a real, config-file-driven, 4-weather-state sky:
 day/golden/dawn/twilight/night palettes, clouds, rain streaks, lightning bolts, screen-space night/
 storm grading. Wired into `apps/lobby/src/main.c`: initialized alongside the existing
-`retro_sky_init` call, ticked off wall-clock time (`DAY_NIGHT_MINUTES_PER_REAL_SEC = 1.0`, a real,
-named v0 choice — **server-authoritative broadcast is not yet built**, see §5.1), and drawn in
+`retro_sky_init` call, ticked off wall-clock time for every mode except MODE_STORY/MODE_STORY_CAVE
+(`DAY_NIGHT_MINUTES_PER_REAL_SEC = 1.0` — **server-authoritative for story mode as of 2026-09-25,
+see §3.1**), and drawn in
 place of the old `retro_sky_draw` call — it reads the current OpenGL modelview matrix directly
 (captured for GOLDENBAND skinning immediately above the call site) and strips its own translation,
 so it no longer needs the explicit `cam_x/y/z` SHANKPIT's old call site computed by hand.
@@ -508,10 +509,18 @@ additional scope beyond the sky/clock/REFLUX slice above. None of the below is b
 
 ### 3.1 Smaller, named follow-ups to the work already landed in §2
 
-- **Server-authoritative day/night sync.** §2a's clock currently ticks off client-local wall-clock
-  time in `apps/lobby`; it is not yet ticked server-side (`apps/server/src/main.c`) nor broadcast
-  in a snapshot packet, so two clients would see two different times of day. Real, honest v0
-  limit, matching BIG_O's own repeated "named, not silently promised as more" convention.
+- ~~**Server-authoritative day/night sync.**~~ **Closed 2026-09-25** (EMILY/BACKLOG.md SECTION
+  536 follow-up). `local_state.story_clock` (a new `DayNightClock` field on `ServerState`) is now
+  the one real clock for MODE_STORY/MODE_STORY_CAVE: `local_init_match` seeds it, `local_game.h`'s
+  `local_update` advances it for a local match, and a new `apps/server/src/main.c` tick block
+  advances + broadcasts it (`PACKET_WORLD_CLOCK`) for a genuine networked story session -- not yet
+  live-deployed anywhere (`shankpit-server.service` runs `--deathmatch` only). Every other mode
+  keeps its own client-local fallback tick, zero behavior change, confirmed via a real scratch
+  harness. **Real bug found and fixed along the way**: the clock's own original tick math
+  truncated to 0 on every normal-framerate call (0.016 real seconds is always below the 1.0
+  needed for one whole minute at this repo's 1:1 rate) -- this clock had likely never actually
+  advanced in real gameplay at all before this fix, in any mode. See `CHANGELOG.md` 2026-09-25
+  for the full account.
 - **`retro_lighting.c` weather integration.** §2b's sky visuals are real and weather-aware, but
   `RETRO_LIGHTING_DYNAMIC`'s scene ambient/sun/moon/fog still reads the OLD `retro_sky_eval_*`
   functions, unaware of weather. A storm currently darkens the sky dome but not the walls.
