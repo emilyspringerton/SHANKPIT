@@ -121,13 +121,22 @@ static void init_bot_player(ServerState *s, int slot, float x, float y, float z)
  * bug. */
 static void witness_ai_hero_melee_hit(ServerState *s, PlayerState *hero_p, int damage,
                                        float away_x, float away_z, unsigned int now_ms) {
+    /* Real, damage-scaled hit ring -- matches katana_apply_damage's own real "defender knows it
+       was hit" floor (physics.h, >= 15) rather than a flat, severity-blind value: a light zombie
+       bite and a full-strength Giant Zombie Bug lunge should not look identical on screen. Capped
+       at 30, the same real "kill/high dmg" ceiling draw_hud's own hit-ring code (apps/lobby/src/
+       main.c) already treats as its red-double-ring tier (>=25). */
+    int raw_damage = damage;
     hero_p->shield_regen_timer = SHIELD_REGEN_DELAY;
     if (hero_p->shield > 0) {
         if (hero_p->shield >= damage) { hero_p->shield -= damage; damage = 0; }
         else { damage -= hero_p->shield; hero_p->shield = 0; }
     }
     hero_p->health -= damage;
-    hero_p->hit_feedback = 12;
+    {
+        int fb = raw_damage < 15 ? 15 : (raw_damage > 30 ? 30 : raw_damage);
+        hero_p->hit_feedback = fb;
+    }
     if (hero_p->health > 0) return;
 
     hero_p->health = 0;

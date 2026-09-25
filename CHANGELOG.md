@@ -1,6 +1,13 @@
 # Changelog
 
 ## 2026-09-25
+- fix(story): zombie/Giant Zombie Bug melee now scales the hero's hit_feedback with real damage
+  dealt (floor 15, matching katana_apply_damage's own "defender knows it was hit" convention; cap
+  30, so a strong bug lunge genuinely triggers draw_hud's existing red kill-tier double ring) --
+  previously a flat 12 for every hit regardless of severity, below even the existing melee floor.
+  draw_hud's own hit-ring rendering was already free/generic, no new client code needed. Two
+  witness_ai_test.c checks strengthened with explicit hit_feedback assertions. See
+  docs2/specs/BIGO_ENGINE_MERGE_NORTHSTAR.md §2o.
 - feat(story): Giant Zombie Bug pain feedback + real attack/flee combat -- the player could already
   shoot a bug (generic hitscan, no role exclusion) but nothing fed that into GiantBugState.pain, so
   giant_bug_attack_drive/flee_drive (real, PARENA-computed, live since this entity existed) never

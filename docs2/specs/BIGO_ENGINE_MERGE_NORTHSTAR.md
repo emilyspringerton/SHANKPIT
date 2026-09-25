@@ -453,8 +453,26 @@ server` clean, no new warnings.
 
 **Real, honest, not landed this pass:** no light/exposure system to make `flee_drive` ever
 realistically win (see above). No bug-vs-zombie/bug-vs-citizen combat (only bug-vs-hero). Bugs
-still cannot damage or be commanded to attack The Men. No on-screen player-facing "a bug hit you"
-feedback beyond the existing generic `hit_feedback` field.
+still cannot damage or be commanded to attack The Men. On-screen feedback beyond the generic
+`hit_feedback` field itself was closed the same day, see §2o immediately below.
+
+## 2o. Phase 7i landed — damage-scaled hit feedback (same day, small follow-up)
+
+Real, checked-first finding: `draw_hud`'s own real hit-ring code (`apps/lobby/src/main.c`) already
+renders a green ring for any `hit_feedback > 0` and a red double ring (the "kill/high damage" tier)
+for `hit_feedback >= 25` — this was already free, no new client code needed for zombie/bug melee to
+show up on screen. What WAS wrong: `witness_ai_hero_melee_hit` (§2l/§2n) set a flat `hit_feedback =
+12` for every hit regardless of actual damage — a light zombie bite and a grown Giant Zombie Bug's
+full-strength lunge looked visually identical, and 12 sat even below `katana_apply_damage`'s own
+real "defender knows it was hit" floor of 15 (`physics.h`).
+
+Fixed to scale with the real, pre-shield damage dealt: floored at 15 (matching that existing
+melee-hit convention) and capped at 30 (`draw_hud`'s own real >=25 red-ring threshold sits inside
+that range, so a strong enough bug lunge now genuinely triggers the double ring). `witness_ai_test.
+c` now asserts the exact scaled value for both a zombie bite (14 dmg → floors to 15) and a
+fresh-spawn bug's base lunge (18 dmg → passes through unchanged) — 37 checks unchanged in count,
+2 strengthened with real hit_feedback assertions instead of just health-drop checks. `make server`
+clean, no new warnings.
 
 **Phase 7c landed — a real zone-authoring engine feature (native side only):**
 

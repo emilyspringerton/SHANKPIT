@@ -374,8 +374,12 @@ int main(void) {
         int hp_before = hero->health;
         witness_ai_tick(&s, 2000);
         assert(hero->health < hp_before);
-        printf("PASS: a HUNTING zombie in melee range deals real damage to the hero (hp %d -> %d)\n",
-               hp_before, hero->health);
+        /* Damage-scaled hit ring (draw_hud's own real hit-ring convention, apps/lobby/src/main.c)
+           -- a floor of 15, same real "defender knows it was hit" floor katana_apply_damage
+           already uses, not the old flat 12 that predated this scaling. */
+        assert(hero->hit_feedback == 15); /* WITNESS_AI_ZOMBIE_MELEE_DAMAGE (14) floors to 15 */
+        printf("PASS: a HUNTING zombie in melee range deals real damage to the hero (hp %d -> %d, hit_feedback=%d)\n",
+               hp_before, hero->health, hero->hit_feedback);
 
         /* Cooldown: an immediate second tick must NOT land a second hit. */
         int hp_after_first_hit = hero->health;
@@ -508,8 +512,11 @@ int main(void) {
             last_attack_ms==0 cooldown gate, same real gate a live bug's first-ever attack must
             also clear */
         assert(hero->health < hp_before);
-        printf("PASS: an aggressive giant bug in melee range deals real, strength-scaled damage (hp %d -> %d)\n",
-               hp_before, hero->health);
+        /* Fresh-spawn bug, strength still at its 1.0 baseline -- base damage (18) passes through
+           the hit-ring scaling unchanged (between the 15 floor and the 30 cap). */
+        assert(hero->hit_feedback == WITNESS_AI_BUG_BASE_MELEE_DAMAGE);
+        printf("PASS: an aggressive giant bug in melee range deals real, strength-scaled damage (hp %d -> %d, hit_feedback=%d)\n",
+               hp_before, hero->health, hero->hit_feedback);
 
         /* Without The Men present, the bug is unauthorized -- it must never attack, no matter how
            much pain it carries, matching this entity's own "leashed asset" design intent. */
