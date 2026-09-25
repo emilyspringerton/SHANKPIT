@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-25
+- fix(render): bloom_end_scene_and_composite left GL_TEXTURE_2D enabled bound to the near-black bloom blur target, blacking out the lobby menu after any 3D mode via GL_MODULATE; fixed at the source and defensively in setup_lobby_2d(). (sess-20260923-1030-4a526255)
 - feat(story): The Men's dispatch/resolution loop -- closes witness_ai.h's last remaining "no
   resolution/memory-wipe loop" scope cut. Each live The Men NPC now hunts the nearest SILENCING/
   ENGAGE citizen in its scene within WITNESS_AI_MEN_RESPONSE_RADIUS, walks to it via the same
