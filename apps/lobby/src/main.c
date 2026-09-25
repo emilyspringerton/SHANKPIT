@@ -2901,6 +2901,13 @@ static void lobby_apply_ui_state() {
 
 static void setup_lobby_2d() {
     glDisable(GL_DEPTH_TEST);
+    // Defense in depth alongside bloom_end_scene_and_composite's own fix (found live,
+    // 2026-09-25): this is the one authoritative "entering the 2D lobby" reset every return-to-
+    // menu path already calls, so it's the right place to also guarantee no leftover 3D texture
+    // state (bloom's post-process quads, or anything else that might someday leave GL_TEXTURE_2D
+    // enabled) can turn the menu's own untextured quads/text black via GL_MODULATE.
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glDisable(GL_TEXTURE_2D);
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
     gluOrtho2D(0, 1280, 0, 720);

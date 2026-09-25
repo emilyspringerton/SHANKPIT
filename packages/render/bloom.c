@@ -278,4 +278,11 @@ void bloom_end_scene_and_composite(int width, int height) {
     glMatrixMode(GL_PROJECTION); glPopMatrix();
     glMatrixMode(GL_MODELVIEW); glPopMatrix();
     glEnable(GL_DEPTH_TEST);
+    // This function's own composite quads turn texturing on (line ~254) and leave it bound to
+    // g_blur_tex_b (the bloom blur target -- near-black for most scenes) -- unlike depth test,
+    // that never got turned back off. Anything drawn next with GL_MODULATE and no texcoords of
+    // its own (the lobby's 2D menu quads/text, once the player returns from any 3D mode) samples
+    // that leftover dark texture and renders black regardless of glColor. Found live, 2026-09-25.
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glDisable(GL_TEXTURE_2D);
 }
