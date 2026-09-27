@@ -25,7 +25,7 @@ EMILY_BOT_BIN := $(BIN_DIR)/emily-bot
 EA_DIR       := dist/ea
 
 # ---- Targets ----
-.PHONY: all lobby server serverctl clean setup print go-server ea ea-windows emily-bot
+.PHONY: all lobby server serverctl clean setup print go-server ea ea-windows emily-bot rigid-ragdoll test-physics
 
 all: $(LOBBY_BIN) $(SERVER_BIN)
 
@@ -48,6 +48,20 @@ server: $(SERVER_BIN)
 $(SERVER_BIN): $(SERVER_SRC) | $(BIN_DIR)
 	@echo "🔨 Building Game Server..."
 	$(CC) $(CFLAGS) $(INCLUDES) $(SERVER_SRC) -o $@ $(LIBS_M)
+
+# ---- RIGID BODY PHYSICS (GOLDEN BAND grb, vendored in packages/goldenband) ----
+# Founder real-time 2026-09-27: "upgrade shankpit ... to formal rigid body physics".
+PHYSICS_SRC := packages/simulation/rigid_ragdoll.c packages/goldenband/grb.c packages/goldenband/gskel.c packages/goldenband/gpose.c
+
+rigid-ragdoll: $(BIN_DIR)/rigid_ragdoll
+
+$(BIN_DIR)/rigid_ragdoll: tools/rigid_ragdoll/main.c $(PHYSICS_SRC) | $(BIN_DIR)
+	$(CC) $(CFLAGS) -Wextra $(INCLUDES) $^ -o $@ $(LIBS_M)
+
+# Headless physics tests (run from the repo root -- they load assets/goldenband/*.gskel).
+test-physics: | $(BIN_DIR)
+	$(CC) $(CFLAGS) -Wextra $(INCLUDES) packages/simulation/rigid_ragdoll_test.c $(PHYSICS_SRC) -o $(BIN_DIR)/rigid_ragdoll_test $(LIBS_M)
+	./$(BIN_DIR)/rigid_ragdoll_test
 
 # ---- SERVER CONTROL (OPTIONAL, LOCAL ONLY) ----
 serverctl: $(SERVERCTL_BIN)

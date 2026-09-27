@@ -490,6 +490,35 @@ target.health -= damage
 - **AR**: Continuous fire with 0.04 spread
 - **Sniper**: No spread, high damage, low ROF
 
+### 3b. Rigid Body Physics (GOLDEN BAND `grb`, 2026-09-27)
+
+Player movement above is still the tuned arcade controller -- unchanged. Alongside it the repo now
+vendors GOLDEN BAND's formal rigid body engine (`packages/goldenband/grb.{h,c}`: 6-DOF bodies with
+quaternion orientation and real inertia, XPBD hinge/ball joints with limits, effort-limited
+servos, ground contact with Coulomb friction), plus its datasheet-robot loader (`grobot`) and RL
+reward compiler (`grl`) -- see the GOLDENBAND repo's README for those.
+
+**Rigid-body ragdoll** (`packages/simulation/rigid_ragdoll.{h,c}`): the multiplayer mannequin
+skeleton as 17 rigid capsules with real human segment masses (Winter/Dempster fractions of a
+70 kg body), ball joints with swing/twist limits and one-way knee/elbow hinges. It replaces the
+point-mass `tools/ragdoll_spike` (which could only ever lie poker-straight -- no orientation
+state). A 2.5 m/s chest shove falls, crumples (knees/elbows flexed, none hyperextended) and
+settles in ~2 s with no ground penetration; ~0.5 ms per ragdoll per 64 Hz tick.
+
+```bash
+make test-physics                  # headless: falls, settles, stays in limits, bit-identical rerun (also in CI)
+make rigid-ragdoll && ./bin/rigid_ragdoll [push_m_per_s] [seconds]
+# -> tools/rigid_ragdoll/output/ragdoll_fall.gband + getup_oracle.gband (reversed fall; a get-up
+#    imitation target), with real .qx/.qy/.qz/.qw channels for all 65 joints -- plays through
+#    the existing gseq/skeleton path unchanged
+```
+
+**Honest status:** a tested library + tool, **not yet wired into live gameplay** (no ragdoll on
+death in the lobby/server yet, no network replication of ragdoll bodies). Ground-plane contact
+only -- limbs don't collide with each other or with level walls. The new Bazel targets
+(`//packages/goldenband:grb_physics`, `//packages/simulation:rigid_ragdoll`) are untested
+(Bazel couldn't be fetched in the authoring sandbox); the Makefile path is the tested one.
+
 ### 4. Local Game Simulation (`packages/simulation/local_game.h`)
 
 **Purpose**: Single-player/bot match logic (referenced but not shown in files)
