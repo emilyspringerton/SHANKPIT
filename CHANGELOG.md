@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-09-27
+- feat(render): real weather fog -- the weather profiles' `fog` value (plus fog.base, the night boost and new
+  dawn radiation fog) now drives world fog, not just the sky tint. Density -> meteorological visibility in
+  world units (`fog.visibility_scale` / density, floored at `fog.min_visibility`), GL_EXP2 at the Koschmieder
+  2%-contrast density (1.978 / V) over the whole world pass; the GOLDENBAND skinned-mesh and SHADER_STANDARD
+  specular shaders fog identically via the new `SKYW_GLSL_FOG` helper. Fog colour goes from horizon haze to
+  neutral Mie grey as it thickens (bright by day, dark at night, warm at sunrise, lit by lightning); the sky
+  dome, clouds, stars and sun halo wash out into it and the clear colour matches it. The old per-vertex retro
+  haze follows the weather colour and steps aside so terrain isn't fogged twice. Story cave excluded (underground).
+  New config keys `fog.visibility_scale`/`fog.min_visibility`/`fog.dawn` (documented in
+  assets/skybox/default.cfg); new `packages/render/sky_weather_fog_test.c` (passes). Verified live with
+  headless Xvfb screenshots (arena + VOXWORLD, clear/rain/storm/dawn/heavy fog). README updated.
+
 ## 2026-09-25
 - fix(render): bloom_end_scene_and_composite left GL_TEXTURE_2D enabled bound to the near-black bloom blur target, blacking out the lobby menu after any 3D mode via GL_MODULATE; fixed at the source and defensively in setup_lobby_2d(). (sess-20260923-1030-4a526255)
 - feat(story): The Men's dispatch/resolution loop -- closes witness_ai.h's last remaining "no

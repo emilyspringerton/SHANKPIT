@@ -130,8 +130,30 @@ void sky_weather_update(SkyWeather *s, float minute, int weather, unsigned int n
     for (int i = 0; i < 3; i++) s->light[i] *= lit * s->tint[i];
     { float ni[3] = { 0.10f, 0.13f, 0.26f }; float nt = s->night; for (int i = 0; i < 3; i++) s->light[i] = sw_mix(s->light[i], ni[i] * (1.0f - 0.4f * s->cover), nt * 0.8f); }
 
-    for (int i = 0; i < 3; i++) { s->fog[i] = s->hor[i]; s->clear[i] = s->hor[i]; }
-    s->fog_density = cf->fog_base + 0.0016f * s->night + s->fogadd;
+    /* --- fog: the weather's fog density becomes a real visibility the world is fogged against --- */
+    float dawn = skw_dawn_fog_weight(minute, s->rain, s->storm);
+    s->fog_density = cf->fog_base + 0.0016f * s->night + s->fogadd + cf->fog_dawn * dawn;
+    s->visibility = skw_fog_visibility(cf, s->fog_density);
+    s->fog_world_density = skw_fog_exp2_density(s->visibility);
+    s->fog_wash = skw_fog_wash(s->visibility);
+    {
+        /* Thin haze takes the horizon colour. Real fog is Mie scattering -- droplets scatter every
+         * wavelength about equally -- so as it thickens it goes neutral: bright milky grey by day,
+         * near-black blue-grey at night, dimmed further by storm darkness. Low sun lights it warm
+         * (the golden sunrise-fog look), and a lightning strike lights the whole fog bank up. */
+        float wash = s->fog_wash;
+        float daylight = sw_smooth(-0.15f, 0.35f, e);
+        float level = sw_mix(0.055f, 0.74f, daylight) * (1.0f - 0.55f * s->dark);
+        float neutral[3] = { level * 0.97f, level * 0.99f, level * 1.03f };
+        float warm = s->glow_amt * (0.10f + 0.25f * wash);
+        for (int i = 0; i < 3; i++) {
+            float c = sw_mix(s->hor[i], neutral[i], wash * 0.85f);
+            c += s->glow[i] * warm;
+            c += 0.55f * s->flash * (0.3f + 0.7f * wash);
+            s->fog[i] = sw_clamp(c, 0, 1);
+            s->clear[i] = sw_mix(s->hor[i], s->fog[i], wash);
+        }
+    }
 
     /* lightning: storms only. Deterministic-ish schedule off the frame clock. */
     if (s->flash > 0) s->flash = sw_clamp(s->flash - dt * 3.2f, 0, 1);
@@ -175,6 +197,12 @@ void sky_weather_draw(SkyWeather *s) {
                 float g = powf(sw_clamp(dot, 0, 1), 5.0f) * s->glow_amt * (1.0f - 0.6f * t) + powf(sw_clamp(dot, 0, 1), 60.0f) * s->glow_amt * 0.5f;
                 for (int q = 0; q < 3; q++) c[q] = sw_clamp(c[q] + s->glow[q] * g * 0.85f, 0, 1);
                 if (y < 0) for (int q = 0; q < 3; q++) c[q] = sw_mix(c[q], s->hor[q] * 0.75f, sw_clamp(-y * 2.5f, 0, 1));  /* ground-side haze */
+                {   /* fog: the horizon always sits at infinite distance, so it goes fully to fog colour as soon
+                       as there is any real fog; thick fog swallows the whole dome */
+                    float hz = sw_smooth(5000.0f, 900.0f, s->visibility);
+                    float k = sw_clamp(s->fog_wash + (1.0f - s->fog_wash) * hz * powf(1.0f - t, 4.0f), 0, 1);
+                    for (int q = 0; q < 3; q++) c[q] = sw_mix(c[q], s->fog[q], k);
+                }
                 glColor3f(c[0], c[1], c[2]); glVertex3f(d[0] * SKYW_R, d[1] * SKYW_R, d[2] * SKYW_R);
             }
         }
@@ -183,6 +211,7 @@ void sky_weather_draw(SkyWeather *s) {
 
     /* --- stars: fade in with darkness, hidden by cloud, twinkle --- */
     float star_a = sw_clamp(s->night * 1.25f - 0.10f, 0, 1) * (1.0f - sw_clamp(s->cover * 1.3f, 0, 1)) * s->cfg.star_brightness;
+    star_a *= 1.0f - s->fog_wash;
     int nstars = (int)s->cfg.star_count;
     if (star_a > 0.01f) {
         glEnable(GL_POINT_SMOOTH);
@@ -208,7 +237,9 @@ void sky_weather_draw(SkyWeather *s) {
         const float *d = body ? s->moon : s->sun;
         float vis = body ? sw_smooth(-0.05f, -0.25f, s->sun_e) : sw_smooth(-0.14f, 0.02f, s->sun_e);
         vis *= 1.0f - 0.92f * sw_clamp(s->cover * 1.05f, 0, 1);
-        if (vis < 0.01f || d[1] < -0.12f) continue;
+        /* in fog the halo is scattered away first; the disc itself survives longer as a pale, sharp-edged coin */
+        float halo_vis = vis * (1.0f - 0.95f * s->fog_wash), disc_vis = vis * (1.0f - 0.55f * s->fog_wash);
+        if (disc_vis < 0.01f || d[1] < -0.12f) continue;
         float right[3] = { up[1] * d[2] - up[2] * d[1], up[2] * d[0] - up[0] * d[2], up[0] * d[1] - up[1] * d[0] };
         float rl = sqrtf(right[0] * right[0] + right[1] * right[1] + right[2] * right[2]); for (int q = 0; q < 3; q++) right[q] /= rl;
         float u2[3] = { d[1] * right[2] - d[2] * right[1], d[2] * right[0] - d[0] * right[2], d[0] * right[1] - d[1] * right[0] };
@@ -216,7 +247,7 @@ void sky_weather_draw(SkyWeather *s) {
         float c0 = body ? 0.62f : 1.0f, c1 = body ? 0.72f : (0.82f + 0.15f * sw_smooth(0.05f, 0.4f, s->sun_e)), c2 = body ? 1.0f : (0.55f + 0.4f * sw_smooth(0.0f, 0.5f, s->sun_e));
         glBlendFunc(GL_SRC_ALPHA, GL_ONE);
         for (int layer = 0; layer < 2; layer++) {
-            float sz = layer ? sz_halo * 0.42f : sz_halo, al = (layer ? 0.55f : 0.42f) * vis;
+            float sz = layer ? sz_halo * 0.42f : sz_halo, al = (layer ? 0.55f : 0.42f) * halo_vis;
             glColor4f(c0, c1, c2, al);
             glBegin(GL_QUADS);
             for (int q = 0; q < 4; q++) {
@@ -228,7 +259,8 @@ void sky_weather_draw(SkyWeather *s) {
         }
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glDisable(GL_TEXTURE_2D);
-        glColor4f(body ? 0.93f : 1.0f, body ? 0.95f : 0.96f, body ? 1.0f : 0.86f, vis);
+        {   float fw = s->fog_wash * 0.6f;   /* fog bleaches the sun's colour toward white */
+            glColor4f(sw_mix(body ? 0.93f : 1.0f, 1.0f, fw), sw_mix(body ? 0.95f : 0.96f, 0.98f, fw), sw_mix(body ? 1.0f : 0.86f, 0.96f, fw), disc_vis); }
         glBegin(GL_TRIANGLE_FAN);
         glVertex3f(d[0] * SKYW_R * 0.94f, d[1] * SKYW_R * 0.94f, d[2] * SKYW_R * 0.94f);
         for (int q = 0; q <= 24; q++) {
@@ -260,8 +292,9 @@ void sky_weather_draw(SkyWeather *s) {
         float cr = s->light[0] + rim * 0.55f, cg = s->light[1] + rim * 0.25f, cb = s->light[2] + rim * 0.05f;
         float haze = sw_clamp(1.0f - el * 2.2f, 0, 1) * 0.35f;   /* low clouds melt into the horizon colour */
         cr = sw_mix(cr, s->hor[0], haze); cg = sw_mix(cg, s->hor[1], haze); cb = sw_mix(cb, s->hor[2], haze);
+        { float fk = s->fog_wash; cr = sw_mix(cr, s->fog[0], fk); cg = sw_mix(cg, s->fog[1], fk); cb = sw_mix(cb, s->fog[2], fk); }
         float flip = (i & 1) ? -1.f : 1.f;
-        glColor4f(sw_clamp(cr, 0, 1), sw_clamp(cg, 0, 1), sw_clamp(cb, 0, 1), appear * thick * (0.55f + 0.4f * s->cover));
+        glColor4f(sw_clamp(cr, 0, 1), sw_clamp(cg, 0, 1), sw_clamp(cb, 0, 1), appear * thick * (0.55f + 0.4f * s->cover) * (1.0f - 0.9f * s->fog_wash));
         glBegin(GL_QUADS);
         for (int q = 0; q < 4; q++) {
             float qx = (q == 0 || q == 3) ? -1.f : 1.f, qy = (q < 2) ? -1.f : 1.f;
@@ -278,9 +311,10 @@ void sky_weather_draw(SkyWeather *s) {
 
 void sky_weather_fog_on(const SkyWeather *s) {
     float c[4] = { s->fog[0], s->fog[1], s->fog[2], 1 };
-    glEnable(GL_FOG); glFogi(GL_FOG_MODE, GL_EXP2); glFogfv(GL_FOG_COLOR, c); glFogf(GL_FOG_DENSITY, s->fog_density);
+    glEnable(GL_FOG); glFogi(GL_FOG_MODE, GL_EXP2); glFogfv(GL_FOG_COLOR, c); glFogf(GL_FOG_DENSITY, s->fog_world_density);
+    glHint(GL_FOG_HINT, GL_NICEST);   /* per-pixel where the driver offers it: big ground quads fade smoothly */
 }
-void sky_weather_fog_off(void) { glDisable(GL_FOG); }
+void sky_weather_fog_off(void) { glDisable(GL_FOG); glFogf(GL_FOG_DENSITY, 0.0f); }
 
 void sky_weather_draw_precip(SkyWeather *s, float cx, float cy, float cz, unsigned int now_ms) {
     if (!s->ready) return;

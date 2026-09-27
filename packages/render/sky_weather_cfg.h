@@ -15,6 +15,7 @@
 #ifndef SKY_WEATHER_CFG_H
 #define SKY_WEATHER_CFG_H
 #include <ctype.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,6 +41,9 @@ typedef struct {
     float cloud_count, cloud_scale, cloud_speed; /* <= SKYW_CLOUDS; puff size multiplier; drift multiplier */
     float horizon_curve;                /* gradient exponent: lower = the horizon colour climbs higher */
     float fog_base;                     /* fog density with clear air */
+    float fog_visibility_scale;         /* world fog: meteorological visibility (world units) = this / total sky fog density */
+    float fog_min_visibility;           /* world fog: visibility floor in world units (the thickest pea soup allowed) */
+    float fog_dawn;                     /* extra fog density at dawn (radiation fog), burns off as the sun climbs */
     float smoothing;                    /* weather transition rate, 1/s (default 0.6) */
     SkwWeatherProfile weather[4];
 } SkyWeatherConfig;
@@ -57,6 +61,7 @@ static inline void sky_weather_cfg_defaults(SkyWeatherConfig *c) {
     c->star_count = 320; c->star_brightness = 1.0f;
     c->cloud_count = 44; c->cloud_scale = 1.0f; c->cloud_speed = 1.0f;
     c->horizon_curve = 0.50f; c->fog_base = 0.0020f; c->smoothing = 0.6f;
+    c->fog_visibility_scale = 6.5f; c->fog_min_visibility = 40.0f; c->fog_dawn = 0.0040f;
     static const struct { float cover, rain, storm, dark, grey, fog; float tint[3]; } W[4] = {
         { 0.24f, 0.00f, 0.00f, 0.00f, 0.06f, 0.0001f, { 1.00f, 1.00f, 1.00f } },
         { 0.88f, 0.00f, 0.00f, 0.24f, 0.80f, 0.0009f, { 0.90f, 0.92f, 0.96f } },
@@ -85,6 +90,7 @@ static inline int skw_keys(SkyWeatherConfig *c, SkwKey *out, int max) {
     K("stars.count", c->star_count, 1); K("stars.brightness", c->star_brightness, 1);
     K("clouds.count", c->cloud_count, 1); K("clouds.scale", c->cloud_scale, 1); K("clouds.speed", c->cloud_speed, 1);
     K("horizon.curve", c->horizon_curve, 1); K("fog.base", c->fog_base, 1); K("weather.smoothing", c->smoothing, 1);
+    K("fog.visibility_scale", c->fog_visibility_scale, 1); K("fog.min_visibility", c->fog_min_visibility, 1); K("fog.dawn", c->fog_dawn, 1);
     static const char *const WN[4] = { "clear", "overcast", "rain", "storm" };
     static char names[4][7][40];
     for (int i = 0; i < 4; i++) {
@@ -151,6 +157,47 @@ static inline void sky_weather_cfg_sanitize(SkyWeatherConfig *c, int max_stars, 
     skw_clamp1(&c->fog_base, 0, 0.05f);                  skw_clamp1(&c->smoothing, 0.05f, 10);
     skw_clamp1(&c->sun_tilt, -0.9f, 0.9f);               skw_clamp1(&c->star_brightness, 0, 3);
     skw_clamp1(&c->cloud_speed, 0, 20);
+    skw_clamp1(&c->fog_visibility_scale, 0.5f, 100); skw_clamp1(&c->fog_min_visibility, 5, 5000);
+    skw_clamp1(&c->fog_dawn, 0, 0.05f);
+}
+
+/* ---- World fog model (pure math, no GL, so it is unit-tested) ------------------------------------
+ * The weather's fog is no longer sky-only: every profile's `fog` density (plus fog.base, the night
+ * boost and dawn radiation fog) becomes a real meteorological visibility V in world units, and the
+ * world is fogged against it. Koschmieder: a black object vanishes (contrast 2%) at V, so with GL's
+ * EXP2 fog, exp(-(d*V)^2) = 0.02 -> d = sqrt(-ln 0.02) / V = 1.978 / V. */
+#define SKW_FOG_KOSCHMIEDER_EXP2 1.9779f
+
+/* Radiation fog: forms in the still cold air before sunrise and burns off by mid-morning. Returns 0..1
+ * for minute-of-day (peak around 05:30-07:00). Rain/storm scrub it (the air is already mixed). */
+static inline float skw_dawn_fog_weight(float minute, float rain, float storm) {
+    float rise = (minute - 240.0f) / 90.0f, fall = (540.0f - minute) / 150.0f;   /* 04:00 -> 05:30 up, 06:30 -> 09:00 down */
+    float w = rise < fall ? rise : fall; if (w < 0) w = 0; if (w > 1) w = 1;
+    w = w * w * (3 - 2 * w);
+    float scrub = rain > storm ? rain : storm; if (scrub > 1) scrub = 1;
+    return w * (1.0f - scrub);
+}
+
+/* Total fog density (sky units) -> visibility in world units, floored at fog.min_visibility. */
+static inline float skw_fog_visibility(const SkyWeatherConfig *c, float sky_density) {
+    if (sky_density < 1e-6f) sky_density = 1e-6f;
+    float v = c->fog_visibility_scale / sky_density;
+    if (v < c->fog_min_visibility) v = c->fog_min_visibility;
+    return v;
+}
+
+/* EXP2 density per world unit for GL_FOG / gl_Fog.density. */
+static inline float skw_fog_exp2_density(float visibility) { return SKW_FOG_KOSCHMIEDER_EXP2 / (visibility > 1.0f ? visibility : 1.0f); }
+
+/* Fraction of light surviving `dist` world units of fog (1 = clear, 0 = fully fogged). */
+static inline float skw_fog_transmittance(float visibility, float dist) {
+    float d = skw_fog_exp2_density(visibility) * dist; return expf(-d * d);
+}
+
+/* 0..1 "how foggy does it look" for the sky: 0 above ~2.4k units of visibility, 1 below ~300. */
+static inline float skw_fog_wash(float visibility) {
+    float t = (2400.0f - visibility) / (2400.0f - 300.0f); if (t < 0) t = 0; if (t > 1) t = 1;
+    return t * t * (3 - 2 * t);
 }
 
 /* Load a file (parse into a copy of *c; only replace *c if the whole file is valid). Returns keys applied, or -1 with `err`. */

@@ -49,6 +49,11 @@ typedef struct {
     /* derived each update */
     float sun[3], moon[3], sun_e;  /* sun direction, moon direction, sun elevation (-1..1) */
     float zen[3], hor[3], glow[3], glow_amt, light[3], clear[3], fog[3], fog_density, night;
+    /* world fog (see sky_weather_cfg.h's fog model): fog_density above is in sky units; these are the real,
+     * world-space values the scene is fogged with. */
+    float visibility;              /* meteorological visibility, world units */
+    float fog_world_density;       /* GL_EXP2 density per world unit */
+    float fog_wash;                /* 0..1: how much the sky itself is swallowed by fog */
 } SkyWeather;
 
 void sky_weather_init(SkyWeather *s);
@@ -63,8 +68,18 @@ int sky_weather_load_config(SkyWeather *s, const char *path, char *err, size_t e
 void sky_weather_update(SkyWeather *s, float minute, int weather, unsigned int now_ms);
 void sky_weather_draw(SkyWeather *s);
 
+/* Real world fog: GL_EXP2 in world units, coloured to match the sky, so everything drawn between
+ * these two calls fades out by `visibility`. Also sets the gl_Fog state that GLSL shaders read
+ * (SKYW_GLSL_FOG below); fog_off zeroes the density so those shaders stop fogging too. */
 void sky_weather_fog_on(const SkyWeather *s);
 void sky_weather_fog_off(void);
+
+/* GLSL 1.20 fragment-shader helper: fraction of colour surviving the current gl_Fog (1 = unfogged).
+ * Uses 1/gl_FragCoord.w (= eye depth under a perspective projection), the same distance GL's own
+ * fixed-function fog uses, so shader-drawn meshes fade identically to the rest of the world. */
+#define SKYW_GLSL_FOG \
+    "float skyw_fog() { float d = gl_Fog.density / gl_FragCoord.w; return clamp(exp(-d * d), 0.0, 1.0); }\n"
+
 
 /* Rain streaks around the camera (world space) and the storm's lightning bolt. Call after the
  * world, before the HUD. */
