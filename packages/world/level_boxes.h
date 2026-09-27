@@ -225,6 +225,9 @@ typedef struct {
    would be unsafe in MODE_QUEUE (repeated per-round loads, no reset, real slot-exhaustion risk). */
 typedef struct {
     int role;
+    int kit; /* S492 -- AIKit value (packages/simulation/story_ai.h); 0 = AI_KIT_AUTO, absent
+                from an older level's JSON parses as 0 too (level_boxes_parse_number's own
+                default), so every pre-S492 level keeps its exact current round-robin look. */
     float x, y, z;
 } LevelCharacter;
 
@@ -812,6 +815,9 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
                     float role_f = 0.0f;
                     if ((v5 = level_boxes_find_key(cobj_start, cobj_end, "role"))) level_boxes_parse_number(v5, &role_f);
                     ch->role = (int)role_f;
+                    float kit_f = 0.0f;
+                    if ((v5 = level_boxes_find_key(cobj_start, cobj_end, "kit"))) level_boxes_parse_number(v5, &kit_f);
+                    ch->kit = (int)kit_f;
                     if ((v5 = level_boxes_find_key(cobj_start, cobj_end, "x"))) level_boxes_parse_number(v5, &ch->x);
                     if ((v5 = level_boxes_find_key(cobj_start, cobj_end, "y"))) level_boxes_parse_number(v5, &ch->y);
                     if ((v5 = level_boxes_find_key(cobj_start, cobj_end, "z"))) level_boxes_parse_number(v5, &ch->z);

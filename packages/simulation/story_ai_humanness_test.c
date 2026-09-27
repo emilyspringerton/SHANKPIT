@@ -43,7 +43,7 @@ int main(void) {
     s.players[0].z = 0.0f;
 
     story_ai_reset(&s);
-    int slot = story_ai_spawn_enemy(&s, AI_ROLE_RIFT_HOUND, 5.0f, 0.0f, 5.0f);
+    int slot = story_ai_spawn_enemy(&s, AI_ROLE_RIFT_HOUND, AI_KIT_AUTO, 5.0f, 0.0f, 5.0f);
     assert(slot > 0);
     printf("PASS: story_ai_spawn_enemy spawns a real enemy at slot %d\n", slot);
 

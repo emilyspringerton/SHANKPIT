@@ -528,7 +528,12 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
             NET_SERVER_LOG("CUSTOM_LEVEL_CHARACTER_SKIPPED reason=invalid_role role=%d", lc->role);
             continue;
         }
-        story_ai_spawn_enemy(&local_state, (AIRole)lc->role, lc->x, lc->y, lc->z);
+        // S492: an out-of-range authored kit falls back to AI_KIT_AUTO rather than skipping the
+        // whole character -- same "a stale/bad reference mustn't break the level" convention
+        // Door/NavNode cross-references already follow, just for a cosmetic field instead of a
+        // structural one, so it earns a fallback instead of a skip.
+        int kit = (lc->kit >= AI_KIT_AUTO && lc->kit <= AI_KIT_GEORGE) ? lc->kit : AI_KIT_AUTO;
+        story_ai_spawn_enemy(&local_state, (AIRole)lc->role, kit, lc->x, lc->y, lc->z);
     }
     if (lvl->character_count > 0) {
         NET_SERVER_LOG("CUSTOM_LEVEL_CHARACTERS_SPAWNED count=%d", lvl->character_count);
@@ -1238,6 +1243,7 @@ void server_broadcast() {
             np.hit_feedback = (unsigned char)p->hit_feedback;
             np.storm_charges = (unsigned char)p->storm_charges;
             np.anim_override = (unsigned char)p->anim_override;
+            np.forced_kit = (unsigned char)p->forced_kit;
             np.kills = (unsigned short)(p->kills < 0 ? 0 : p->kills);
             np.deaths = (unsigned short)(p->deaths < 0 ? 0 : p->deaths);
             unsigned int death_elapsed = 0;

@@ -2409,7 +2409,8 @@ static void lobby_apply_story_level(const CustomLevelData *lvl) {
     for (int ci = 0; ci < lvl->character_count; ci++) {
         const LevelCharacter *lc = &lvl->characters[ci];
         if (lc->role < AI_ROLE_RIFT_HOUND || lc->role > AI_ROLE_WANDERING_BOT) continue; // S492, mirrors apps/server's own identical fix
-        story_ai_spawn_enemy(&local_state, (AIRole)lc->role, lc->x, lc->y, lc->z);
+        int kit = (lc->kit >= AI_KIT_AUTO && lc->kit <= AI_KIT_GEORGE) ? lc->kit : AI_KIT_AUTO; // S492, mirrors apps/server's own identical fallback
+        story_ai_spawn_enemy(&local_state, (AIRole)lc->role, kit, lc->x, lc->y, lc->z);
     }
 
     float nn_x[LEVEL_BOXES_MAX_NAV_NODES], nn_y[LEVEL_BOXES_MAX_NAV_NODES], nn_z[LEVEL_BOXES_MAX_NAV_NODES];
@@ -6178,7 +6179,14 @@ static void draw_player_skin_mannequin(PlayerState *p, float draw_pitch, float d
      * that existing behavior is completely unchanged there. */
     int role = witness_ai_role_for_player(p->id);
     int kit_index = -1;
-    if (role == WITNESS_AI_ROLE_GIANT_BUG && kits[3] >= 0) {
+    /* S492: an explicit NOCK-authored kit choice (PlayerState.forced_kit, see its own doc comment
+     * in packages/common/protocol.h) wins over both the witness_ai role table below and the
+     * connection-order round-robin -- a designer's real choice outranks either heuristic.
+     * forced_kit is 1-indexed (0 = AI_KIT_AUTO, meaning "no author choice, fall through to the
+     * existing behavior below unchanged"); kits[] is 0-indexed. */
+    if (p->forced_kit >= 1 && p->forced_kit <= 5 && kits[p->forced_kit - 1] >= 0) {
+        kit_index = kits[p->forced_kit - 1];
+    } else if (role == WITNESS_AI_ROLE_GIANT_BUG && kits[3] >= 0) {
         kit_index = kits[3]; /* leela, same kit as regular zombies -- "evil versions of the ones
                                  we already have but BIG": no new art, reuse + scale + tint */
     } else if (role == WITNESS_AI_ROLE_THE_MEN && kits[4] >= 0) {
@@ -9494,6 +9502,7 @@ void net_process_snapshot(char *buffer, int len) {
         p->storm_charges = np->storm_charges;
         p->hit_feedback = np->hit_feedback;
         p->anim_override = np->anim_override;
+        p->forced_kit = np->forced_kit;
         if (net_prev_kills[id] >= 0 && (int)np->kills > net_prev_kills[id]) {
             char kill_msg[CHAT_LINE_MAX];
             const char *tag = (id == my_client_id) ? "[you]" : "[bot]";

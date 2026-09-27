@@ -69,6 +69,22 @@ typedef enum {
     AI_ROLE_WANDERING_BOT
 } AIRole;
 
+/* AIKit (S492) -- a NOCK-authored character's chosen visual model, completely decoupled from
+   AIRole (behavior) above -- the same "role picks the brain, kit picks the body" split
+   PlayerState.forced_kit's own doc comment (packages/common/protocol.h) describes. AI_KIT_AUTO
+   preserves the pre-S492 behavior exactly: draw_player_skin_mannequin's own connection-order
+   round-robin / witness_ai role-based pick, unchanged for any character that doesn't opt in.
+   Kept in sync BY HAND with internal/shankpit.AIKit* (IDUNA) and apps/lobby/src/main.c's own
+   kits[5] array order -- same manual cross-boundary sync AIRole's own values already require. */
+typedef enum {
+    AI_KIT_AUTO = 0,
+    AI_KIT_MANNEQUIN,
+    AI_KIT_STAN,
+    AI_KIT_MIKE,
+    AI_KIT_LEELA,
+    AI_KIT_GEORGE
+} AIKit;
+
 typedef struct {
     float x, y, z;
     unsigned int wait_ms;
@@ -205,7 +221,9 @@ void story_ai_reset(ServerState *s);
 // self-heals within one tick regardless) or g_story_nav (reloaded unconditionally by
 // story_ai_load_nav_graph right after this runs at every real call site, mode-agnostic already).
 void story_ai_despawn_all_characters(ServerState *s);
-int story_ai_spawn_enemy(ServerState *s, AIRole role, float x, float y, float z);
+// kit: AI_KIT_AUTO or an explicit AIKit (S492) -- sets the spawned PlayerState's own forced_kit
+// once, unchanged for the rest of that NPC's life (see forced_kit's own doc comment).
+int story_ai_spawn_enemy(ServerState *s, AIRole role, int kit, float x, float y, float z);
 void story_ai_tick(ServerState *s, unsigned int now_ms);
 /* story_ai_seed_voxworld_encounter (the old MODE_STORY VOXWORLD combat-squad encounter) was
    removed in the BIG_O engine merge phase 7d content cutover -- see

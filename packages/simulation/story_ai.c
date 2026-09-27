@@ -373,7 +373,7 @@ void story_ai_despawn_all_characters(ServerState *s) {
     }
 }
 
-int story_ai_spawn_enemy(ServerState *s, AIRole role, float x, float y, float z) {
+int story_ai_spawn_enemy(ServerState *s, AIRole role, int kit, float x, float y, float z) {
     int slot = -1;
     int i;
     AIController *ai = NULL;
@@ -406,6 +406,7 @@ int story_ai_spawn_enemy(ServerState *s, AIRole role, float x, float y, float z)
     p->yaw = 180.0f;
     p->pitch = 0.0f;
     p->carried_flag_team_id = -1;
+    p->forced_kit = kit;
 
     ai->active = 1;
     ai->player_id = slot;
@@ -484,7 +485,7 @@ void story_ai_seed_voxworld_robots(ServerState *s, unsigned int now_ms) {
     for (i = 0; i < 5; i++) {
         float x = bots[i][0];
         float z = bots[i][1];
-        int pid = story_ai_spawn_enemy(s, AI_ROLE_WANDERING_BOT, x, 8.0f, z);
+        int pid = story_ai_spawn_enemy(s, AI_ROLE_WANDERING_BOT, AI_KIT_AUTO, x, 8.0f, z);
         if (pid < 0) continue;
         story_ai_add_patrol_point(pid, x - 8.0f, 8.0f, z, 2000, 0);
         story_ai_add_patrol_point(pid, x + 8.0f, 8.0f, z + 6.0f, 2000, 0);

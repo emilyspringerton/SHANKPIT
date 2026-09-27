@@ -187,7 +187,14 @@ class NetPlayer(ctypes.LittleEndianStructure):
         # and by reproducing end to end: server + 1 heuristic bot + a real second client hung
         # exactly like this until this fix landed, then resolved immediately.
         ("anim_override", ctypes.c_uint8),
-        ("_pad4", ctypes.c_uint8 * 3),  # trailing padding to round 85 -> 88 (struct's own 4-byte float/uint alignment)
+        # forced_kit -- S492, real wire counterpart to PlayerState.forced_kit (protocol.h's own
+        # doc comment has the full "role picks the brain, kit picks the body" story). Landed in
+        # what was previously _pad4's own first byte, verified via the same real C offsetof/
+        # sizeof probe technique this file's own module doc comment establishes: offsetof(anim_
+        # override)=84, offsetof(forced_kit)=85, sizeof(NetPlayer) stays 88 -- no wire-size growth
+        # at all, unlike every prior field addition documented above.
+        ("forced_kit", ctypes.c_uint8),
+        ("_pad4", ctypes.c_uint8 * 2),  # trailing padding to round 86 -> 88 (struct's own 4-byte float/uint alignment)
     ]
 assert ctypes.sizeof(NetPlayer) == 88, ctypes.sizeof(NetPlayer)
 

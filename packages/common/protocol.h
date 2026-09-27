@@ -275,6 +275,9 @@ typedef struct {
     // "negligible against this protocol's own real measured sizes" reasoning vx/vy/vz's own
     // comment above already gives.
     unsigned char anim_override;
+    // forced_kit -- wire counterpart to PlayerState's own field of the same name (S492). Same
+    // real 1 byte/player/snapshot cost as anim_override above; 0 = auto, 1..5 = an explicit kit.
+    unsigned char forced_kit;
 } NetPlayer;
 
 typedef struct {
@@ -407,6 +410,15 @@ typedef struct {
        manual cross-module sync gband_skel_npc.c's own GBAND_SKEL_NPC_MOVE_EPSILON comment
        already documents (no shared header between story_ai.c and gband_skel_npc.h by design). */
     int anim_override;
+    /* forced_kit -- S492's own real, named "deeper gap" closed: a NOCK-authored LevelCharacter's
+       chosen robot model, set once at story_ai_spawn_enemy() and never touched again (unlike
+       anim_override above, which is a real per-tick value) -- distinct from AIRole (behavior).
+       0 = auto (the existing connection-order round-robin / witness_ai role-based pick in
+       draw_player_skin_mannequin), 1..5 = an explicit MANNEQUIN/STAN/MIKE/LEELA/GEORGE choice,
+       kept in sync BY HAND with internal/shankpit.AIKit* (IDUNA) and this same file's own
+       draw_player_skin_mannequin kits[5] array order -- same class of manual cross-boundary sync
+       AIRole's own comment above already accepts. */
+    int forced_kit;
 } PlayerState;
 
 typedef struct {
