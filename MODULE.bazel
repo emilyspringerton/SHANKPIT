@@ -24,3 +24,19 @@ module(
 )
 
 bazel_dep(name = "rules_cc", version = "0.2.17")
+
+# editor_game -- EDITOR.GAME's own real PARENA-editor widget code, consumed as a sibling-
+# checkout local module (2026-09-25, founder real-time: "deeply integrate it as a widget on
+# the screen" -- apps/lobby's own src/editor_widget_bridge.c links against EDITOR.GAME's
+# editor_widget_* API instead of fork()+execl()'ing its own separate binary, see that bridge
+# file's own header comment). local_path_override is the standard bzlmod way to depend on a
+# sibling repo checkout without publishing/vendoring it -- EDITOR.GAME/MODULE.bazel +
+# EDITOR.GAME/BUILD.bazel (this same session) are what make it resolvable as a real module.
+# Real, honest, NOT verified: no `bazel` binary exists in the sandbox this was written in, so
+# this cross-repo resolution itself was never actually run -- build it on a real machine
+# before trusting it.
+bazel_dep(name = "editor_game", version = "0.0.0")
+local_path_override(
+    module_name = "editor_game",
+    path = "../EDITOR.GAME",
+)

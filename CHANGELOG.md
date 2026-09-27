@@ -74,6 +74,31 @@
   reverting the BIG_O zombie/witness cutover. Founder real-time: "add the robots and stuff back to
   SHANKPIT story mode transition all the new BIG_O zombie stuff in too add it all into SHANKPIT
   VOXWORLD story." Verified via `make server` (clean build, no new warnings).
+- Merged abandoned EDITOR.GAME in-process widget branch (claude/epic-franklin-683eoh, had an open
+  GitHub PR #310 that was never merged) (sess-20260923-1030-4a526255): feat(lobby): EDITOR app is
+  now a deeply-integrated in-process widget instead of a fork()+execl()'d separate binary (founder
+  real-time: "the editor app fails to launch -- instead of having it launch it should pop a widget
+  up on the screen that is open while the os screen is open ... dont spawn a separate process
+  deeply integrate it as a widget on the screen the notes auto save"). New
+  `apps/lobby/src/editor_widget_bridge.{c,h}` compose EDITOR.GAME's own real `editor_widget_*` API
+  (its own hidden SDL2 window/renderer, never shown, never a second on-screen window) into lobby's
+  single OpenGL scene: renders the widget's frame, reads it back as a plain RGBA buffer, uploads it
+  as a GL texture, and draws it as a fixed-rect panel alongside the existing top menu/buttons (same
+  real overlay pattern draw_skin_chooser_overlay/draw_level_select_overlay already use) -- both
+  stay open and interactive at once. Mouse events outside the panel's own rect still reach the top
+  menu; keyboard/text is captured exclusively by the panel while open. Consumed via a new bzlmod
+  `local_path_override` in `MODULE.bazel` onto `../EDITOR.GAME` (that repo's own new
+  `MODULE.bazel`/`BUILD.bazel` expose the widget as a `cc_library`). Originally landed with no
+  `bazel` binary/display available to verify the Bazel wiring or on-screen appearance, and with a
+  real, confirmed `make lobby` LINK REGRESSION (editor_widget_bridge.c was never added to
+  LOBBY_SRC) -- both fixed in the same-day follow-up commit that actually completed this merge:
+  new Makefile object-file rules compile EDITOR.GAME's `gen/editor_full.c` + `runtime/
+  parena_runtime.c` with a `-D` symbol rename (same technique EDITOR.GAME's own Makefile already
+  uses for `src/arena.c`, since its `arena_init`/etc. collide by name with SHANKPIT's own already-
+  linked, deliberately-minimal `packages/world/parena_runtime.c`), `-lSDL2_ttf` added to the lobby
+  link, and `.github/workflows/tests.yml` now checks out `../EDITOR.GAME` for the main build job
+  (release.yml's own separate OS-apps-bundling checkout at `os_apps/EDITOR.GAME` was already real
+  and untouched). `make lobby` builds and links clean; verified live via headless Xvfb.
 - fix(ci): EDITOR.GAME's gen/editor_full.c is git-ignored/local-only -- generate it in the CI step (cat gen/editor_stdlib_gen.c examples/editor_main.c) instead of assuming it exists, found via a genuinely fresh git clone re-test (sess-20260923-1030-4a526255)
 - fix(ci): eighth recurrence of the CI hand-copied server source-list drift -- day_night_clock.c/world_rules.c missing from Build Linux Server in both release.yml and tests.yml, broke every push since the day/night sync commit (0782136) (sess-20260923-1030-4a526255)
 - ci: release.yml now builds + bundles all 5 SHANKPIT OS apps (DEADWEIGHT/PITVIPER/IDUNA.GAME/REDGARDEN/EDITOR.GAME) for Windows into ShankPit_Client's bundled/ dir -- the lobby's APPS page buttons actually work now (sess-20260923-1030-4a526255)
