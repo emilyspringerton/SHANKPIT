@@ -2,8 +2,10 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 
 cc_library(
     name = "audio",
-    srcs = ["audio.c"],
-    hdrs = ["audio.h"],
+    srcs = ["audio.c", "audio_chain.c", "audio_dsp_gen.c"],
+    hdrs = ["audio.h", "audio_chain.h", "audio_dsp_gen.h"],
+    copts = ["-Wno-unused-parameter"],
+    linkopts = ["-lm"],
     deps = ["//packages/common:common_headers"],
     visibility = ["//visibility:public"],
 )

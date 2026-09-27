@@ -12,7 +12,7 @@ LIBS_GL  := -lSDL2 -lGL -lGLU -lm
 LIBS_M   := -lm
 
 # ---- Sources ----
-LOBBY_SRC    := apps/lobby/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/cutscene.c packages/simulation/typing_lesson.c packages/simulation/day_night_clock.c packages/simulation/world_rules.c packages/simulation/witness_ai.c packages/simulation/witness_sim.c packages/simulation/witness_rules.c packages/simulation/npc_archetype.c packages/simulation/zombie_values.c packages/simulation/ai_brain_rules.c packages/simulation/world_alerts_mod.c packages/simulation/world_alert_bridge.c packages/simulation/food_pickup.c packages/simulation/giant_bug_values.c packages/simulation/giant_bug_brain.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/sky_weather.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/render/bloom.c packages/world/terrain.c packages/world/parena_runtime.c packages/world/png_decode_gen.c packages/audio/audio.c packages/goldenband/gband.c packages/goldenband/gskel.c packages/goldenband/gmesh.c packages/goldenband/gband_mesh_rig.c packages/goldenband/gseq.c packages/goldenband/gpose.c packages/goldenband/gsync.c packages/goldenband/gband_skel_npc.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c
+LOBBY_SRC    := apps/lobby/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/cutscene.c packages/simulation/typing_lesson.c packages/simulation/day_night_clock.c packages/simulation/world_rules.c packages/simulation/witness_ai.c packages/simulation/witness_sim.c packages/simulation/witness_rules.c packages/simulation/npc_archetype.c packages/simulation/zombie_values.c packages/simulation/ai_brain_rules.c packages/simulation/world_alerts_mod.c packages/simulation/world_alert_bridge.c packages/simulation/food_pickup.c packages/simulation/giant_bug_values.c packages/simulation/giant_bug_brain.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/sky_weather.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/render/bloom.c packages/world/terrain.c packages/world/parena_runtime.c packages/world/png_decode_gen.c packages/audio/audio.c packages/audio/audio_chain.c packages/audio/audio_dsp_gen.c packages/goldenband/gband.c packages/goldenband/gskel.c packages/goldenband/gmesh.c packages/goldenband/gband_mesh_rig.c packages/goldenband/gseq.c packages/goldenband/gpose.c packages/goldenband/gsync.c packages/goldenband/gband_skel_npc.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c
 SERVER_SRC   := apps/server/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/day_night_clock.c packages/simulation/world_rules.c packages/simulation/witness_ai.c packages/simulation/witness_sim.c packages/simulation/witness_rules.c packages/simulation/npc_archetype.c packages/simulation/zombie_values.c packages/simulation/ai_brain_rules.c packages/simulation/giant_bug_values.c packages/simulation/giant_bug_brain.c packages/world/terrain.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c
 SERVERCTL_SRC:= apps/server/serverctl.c
 
@@ -25,7 +25,7 @@ EMILY_BOT_BIN := $(BIN_DIR)/emily-bot
 EA_DIR       := dist/ea
 
 # ---- Targets ----
-.PHONY: all lobby server serverctl clean setup print go-server ea ea-windows emily-bot rigid-ragdoll test-physics
+.PHONY: all lobby server serverctl clean setup print go-server ea ea-windows emily-bot rigid-ragdoll test-physics test-audio-chain
 
 all: $(LOBBY_BIN) $(SERVER_BIN)
 
@@ -128,3 +128,11 @@ print:
 	@echo "SERVER_BIN=$(SERVER_BIN)"
 	@echo "GO_SERVER_BIN=$(GO_SERVER_BIN)"
 	@echo "EA_DIR=$(EA_DIR)"
+
+# test-audio-chain -- NOCK filter chains in the engine (2026-09-27): packages/audio/audio_chain.c
+# over PARENA-generated audio_dsp_gen.c must reproduce IDUNA NOCK's TypeScript render bit-for-bit
+# (tests/audio/nock_chain_vectors.txt). No SDL needed.
+test-audio-chain:
+	$(CC) -std=c99 -O2 -Wall -Wextra -pedantic -Werror -Wno-unused-parameter tests/audio/test_audio_chain.c \
+		packages/audio/audio_chain.c packages/audio/audio_dsp_gen.c -o /tmp/test_audio_chain -lm
+	/tmp/test_audio_chain tests/audio/nock_chain_vectors.txt

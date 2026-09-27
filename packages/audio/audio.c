@@ -1,4 +1,5 @@
 #include "audio.h"
+#include "audio_chain.h"
 #include <SDL2/SDL.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,6 +36,10 @@ static SoundBuf       g_snd[MAX_SOUNDS];
 static Voice          g_voices[MAX_MIX];
 static SDL_AudioDeviceID g_dev;
 static SDL_mutex     *g_mutex;
+static AudioChain     g_chain;        /* NOCK master chain (PARENA DSP), see audio_set_master_chain */
+static int            g_chain_on;
+#define CHAIN_MAX_FRAMES 8192
+static float          g_mixf[CHAIN_MAX_FRAMES * NUM_CHANNELS];
 
 /* ── PCM synthesis helpers ───────────────────────────────────────────────── */
 
@@ -131,6 +136,23 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
     memset(out, 0, len);
 
     SDL_LockMutex(g_mutex);
+    if (g_chain_on && frames <= CHAIN_MAX_FRAMES) {
+        /* NOCK master chain: mix in float, run the PARENA chain, convert once at the end. */
+        memset(g_mixf, 0, sizeof(float) * (size_t)frames * NUM_CHANNELS);
+        for (int ch = 0; ch < MAX_MIX; ch++) {
+            Voice *v = &g_voices[ch];
+            if (!v->active || !v->snd || !v->snd->buf) continue;
+            for (int i = 0; i < frames && v->pos < v->snd->len; i++, v->pos++) {
+                g_mixf[i * 2]     += v->snd->buf[v->pos * 2]     / 32767.0f * v->lgain;
+                g_mixf[i * 2 + 1] += v->snd->buf[v->pos * 2 + 1] / 32767.0f * v->rgain;
+            }
+            if (v->pos >= v->snd->len) v->active = 0;
+        }
+        audio_chain_process(&g_chain, g_mixf, frames, NUM_CHANNELS);
+        for (int i = 0; i < frames * NUM_CHANNELS; i++) out[i] = (int16_t)(fclampf(g_mixf[i], -1.0f, 1.0f) * 32767.0f);
+        SDL_UnlockMutex(g_mutex);
+        return;
+    }
     for (int ch = 0; ch < MAX_MIX; ch++) {
         Voice *v = &g_voices[ch];
         if (!v->active || !v->snd || !v->snd->buf) continue;
@@ -269,6 +291,14 @@ void audio_init(void) {
         g_snd[6 + n] = synth_tone(PENTATONIC_HZ[n], 0.10f, 0.38f, 22.0f);
     }
 
+    {
+        const char *chain = getenv("SHANKPIT_SOUND_CHAIN");
+        if (chain && *chain) {
+            if (audio_set_master_chain(chain)) SDL_Log("[audio] NOCK master chain '%s' live", chain);
+            else SDL_Log("[audio] NOCK master chain '%s' could not be loaded; playing dry", chain);
+        }
+    }
+
     SDL_PauseAudioDevice(g_dev, 0); /* start playback */
     SDL_Log("[audio] initialized: %d Hz stereo, %d sound buffers", SAMPLE_RATE, MAX_SOUNDS);
 }
@@ -310,4 +340,23 @@ void audio_play_footstep(float sx, float sy, float sz,
     spatial_gains(sx, sy, sz, lx, ly, lz, lyaw, &lgain, &rgain);
     /* Footsteps are quieter than weapons */
     play_sound(6 + note, lgain * 0.35f, rgain * 0.35f);
+}
+
+int audio_set_master_chain(const char *name) {
+    if (!g_mutex) return 0;
+    if (!name) {
+        SDL_LockMutex(g_mutex);
+        g_chain_on = 0;
+        SDL_UnlockMutex(g_mutex);
+        return 1;
+    }
+    const char *base = getenv("SHANKPIT_SOUND_CHAIN_URL");
+    AudioChain c;
+    /* fetch outside the lock: it's a network call */
+    if (!audio_chain_fetch(base && *base ? base : "https://okemily.com/api/v1/nock-sound-filters", name, SAMPLE_RATE, &c)) return 0;
+    SDL_LockMutex(g_mutex);
+    g_chain = c;
+    g_chain_on = 1;
+    SDL_UnlockMutex(g_mutex);
+    return 1;
 }

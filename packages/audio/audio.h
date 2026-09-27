@@ -33,4 +33,10 @@ void audio_play_footstep(float sx, float sy, float sz,
                          float lx, float ly, float lz,
                          float lyaw, int step_index);
 
+/* NOCK master chain (2026-09-27): run a filter chain authored in IDUNA's NOCK "Sounds" tab over
+ * the whole engine mix. audio_init() loads SHANKPIT_SOUND_CHAIN=<name> automatically from
+ * SHANKPIT_SOUND_CHAIN_URL (default https://okemily.com/api/v1/nock-sound-filters). Returns 1
+ * if the chain was fetched and is now live; passing NULL removes the chain. See audio_chain.h. */
+int audio_set_master_chain(const char *name);
+
 #endif /* AUDIO_H */
