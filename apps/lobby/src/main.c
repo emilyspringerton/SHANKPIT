@@ -116,11 +116,12 @@ static const char *g_gband_fs_src =
     "#version 120\n"
     "uniform vec4 u_color;\n"
     "varying vec3 v_normal;\n"
+    SKYW_GLSL_FOG /* weather fog: skinned characters fade into it exactly like the fixed-function world */
     "void main() {\n"
     "    vec3 light_dir = normalize(vec3(0.4, 0.8, 0.3));\n"
     "    float ndotl = max(dot(normalize(v_normal), light_dir), 0.0);\n"
     "    float lit = 0.35 + 0.65 * ndotl;\n" /* ambient floor + diffuse, matches other skins' flat-shaded look */
-    "    gl_FragColor = vec4(u_color.rgb * lit, u_color.a);\n"
+    "    gl_FragColor = vec4(mix(gl_Fog.color.rgb, u_color.rgb * lit, skyw_fog()), u_color.a);\n"
     "}\n";
 
 static void gband_shader_and_mesh_init(void) {
@@ -8217,6 +8218,11 @@ static void draw_pause_overlay(void) {
 void draw_scene(PlayerState *render_p) {
     if (vs0_art_direction_enabled) glClearColor(0.18f, 0.25f, 0.36f, 1.0f);
     else glClearColor(0.02f, 0.02f, 0.05f, 1.0f);
+    /* Weather fog: whatever the sky dome doesn't cover (straight down, off the map edge) must be the
+       fog colour too, or the fog bank has a hard dark hole under it. Last frame's value -- the sky
+       eases, so one frame of lag is invisible. */
+    if (g_sky_weather.ready && render_p->scene_id != SCENE_STORY_CAVE)
+        glClearColor(g_sky_weather.clear[0], g_sky_weather.clear[1], g_sky_weather.clear[2], 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); glLoadIdentity();
     local_state.scene_id = render_p->scene_id;
     phys_set_scene(render_p->scene_id);
@@ -8379,7 +8385,26 @@ void draw_scene(PlayerState *render_p) {
     RetroLightingState world_lighting;
     retro_lighting_eval(now_ms * 0.001f, g_world_lighting_preset, &world_lighting);
     retro_tune_world_fog(&world_lighting, local_state.scene_id);
-    
+
+    /* Weather fog (founder real-time, 2026-09-27: "make the weather effects cause actual realistic
+       fog if there is fog in the weather"). The weather profile's fog (plus night and dawn radiation
+       fog, see sky_weather_cfg.h's fog model) is now a real visibility distance the whole world pass
+       is fogged against -- GL_EXP2 in world units, so every fixed-function draw (terrain, map
+       brushes, voxels, props, players, vehicles) and the GOLDENBAND skinned-mesh shader fade out
+       together, into the same colour the sky washes to. The old per-vertex retro haze would fog
+       terrain a second time on top of that, so its colour follows the weather and its range is
+       pushed out of the way. Outdoor-only: the story cave is underground, so it keeps its own
+       fixed retro haze and no weather fog. */
+    int weather_fog = g_sky_weather.ready && render_p->scene_id != SCENE_STORY_CAVE;
+    if (weather_fog) {
+        world_lighting.fog_r = g_sky_weather.fog[0];
+        world_lighting.fog_g = g_sky_weather.fog[1];
+        world_lighting.fog_b = g_sky_weather.fog[2];
+        world_lighting.fog_near = 1.0e8f;
+        world_lighting.fog_far = 2.0e8f;
+        sky_weather_fog_on(&g_sky_weather);
+    }
+
     draw_grid();
     /* S459-97's own original static demo call (one frozen mannequin at a fixed spawn position)
        is removed as of S466's follow-up -- superseded by real draws: every active story_ai NPC
@@ -8429,6 +8454,7 @@ void draw_scene(PlayerState *render_p) {
         draw_player_3rd(p);
         draw_flashlight_beam(p); /* other players' own beam cones are now visible too, not just yours */
     }
+    if (weather_fog) sky_weather_fog_off(); /* world pass ends here -- overlays, first-person weapon and HUD stay crisp */
     overlay_begin_frame(&g_overlay);
     overlay_collect_items(render_p, now_ms);
     overlay_render(&g_overlay, render_p);

@@ -103,6 +103,13 @@ Key traits in the current renderer include:
 - **retro sky and retro lighting systems**
 - **procedural texture hooks**
 - **distance fog / haze tuning per scene**
+- **weather-driven fog** (`packages/render/sky_weather.c`, 2026-09-27): each weather profile's fog in
+  `assets/skybox/default.cfg` becomes a real visibility distance (clear noon ~3000 world units, rain ~850,
+  storm ~540, plus dawn radiation fog that burns off by mid-morning). The whole world pass -- fixed-function
+  geometry and the GOLDENBAND skinned-mesh shader -- fades out by that distance into the same colour the sky
+  washes to; the sun shows as a pale disc through thick fog. Verified with headless Xvfb screenshots of the
+  default arena and VOXWORLD. Limits: fog is uniform (no ground-hugging height fog, no directional sun glare),
+  emissive light panels/glow billboards are not fogged, and the story cave is left on its own fixed haze.
 - **terrain shading from sampled normals**
 - **“neon brutalist” block rendering**
 - stylized accent elements like hot pink trails and cyan grid motifs

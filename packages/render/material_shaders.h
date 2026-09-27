@@ -29,6 +29,7 @@
 // draw_flashlight_beam (S459-14) already proved -- genuinely reused, not reinvented a third time.
 
 #include "gl_shader.h"
+#include "sky_weather.h" /* SKYW_GLSL_FOG: highlights fade into weather fog with the surface under them */
 #include <math.h>
 #include <string.h>
 
@@ -68,13 +69,14 @@ static const char *g_material_shader_fs_src =
     "uniform float u_shininess;\n"
     "varying vec3 v_normal;\n"
     "varying vec3 v_world_pos;\n"
+    SKYW_GLSL_FOG
     "void main() {\n"
     "    vec3 n = normalize(v_normal);\n"
     "    vec3 v = normalize(u_cam_pos - v_world_pos);\n"
     "    vec3 l = normalize(u_light_dir);\n"
     "    vec3 h = normalize(l + v);\n"
     "    float spec = pow(max(dot(n, h), 0.0), u_shininess) * u_specular;\n"
-    "    gl_FragColor = vec4(1.0, 0.97, 0.9, spec);\n"
+    "    gl_FragColor = vec4(1.0, 0.97, 0.9, spec * skyw_fog());\n"
     "}\n";
 
 static inline void material_shader_init(void) {
