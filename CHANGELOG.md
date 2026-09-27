@@ -20,6 +20,25 @@
 
 ## 2026-09-25
 - fix(render): bloom_end_scene_and_composite left GL_TEXTURE_2D enabled bound to the near-black bloom blur target, blacking out the lobby menu after any 3D mode via GL_MODULATE; fixed at the source and defensively in setup_lobby_2d(). (sess-20260923-1030-4a526255)
+- Merged abandoned Giant Zombie Bug combat branch (claude/sweet-hamilton-yii3h9, pushed but never opened as a PR) (sess-20260923-1030-4a526255):
+  - fix(story): zombie/Giant Zombie Bug melee now scales the hero's hit_feedback with real damage
+    dealt (floor 15, matching katana_apply_damage's own "defender knows it was hit" convention; cap
+    30, so a strong bug lunge genuinely triggers draw_hud's existing red kill-tier double ring) --
+    previously a flat 12 for every hit regardless of severity, below even the existing melee floor.
+    draw_hud's own hit-ring rendering was already free/generic, no new client code needed. Two
+    witness_ai_test.c checks strengthened with explicit hit_feedback assertions. See
+    docs2/specs/BIGO_ENGINE_MERGE_NORTHSTAR.md §2o.
+  - feat(story): Giant Zombie Bug pain feedback + real attack/flee combat -- the player could already
+    shoot a bug (generic hitscan, no role exclusion) but nothing fed that into GiantBugState.pain, so
+    giant_bug_attack_drive/flee_drive (real, PARENA-computed, live since this entity existed) never
+    had a real input. witness_ai_tick now tracks each bug's health drop into real pain, and an
+    authorized bug (same "The Men hold the key" gate the eat-a-zombie mechanic already uses) chases
+    and melees the hero (damage/speed scaled by the bug's own permanently-grown strength/speed
+    stats) or flees, based on its own real decision outputs. Thresholds checked empirically against
+    the real PARENA network rather than guessed. Factored the zombie-melee/hero-death block into a
+    shared witness_ai_hero_melee_hit helper, reused by both zombies and the bug instead of a second
+    copy-paste. witness_ai_test.c grew 33 -> 37 checks, all pass, zero drift. See
+    docs2/specs/BIGO_ENGINE_MERGE_NORTHSTAR.md §2n.
 - feat(story): The Men's dispatch/resolution loop -- closes witness_ai.h's last remaining "no
   resolution/memory-wipe loop" scope cut. Each live The Men NPC now hunts the nearest SILENCING/
   ENGAGE citizen in its scene within WITNESS_AI_MEN_RESPONSE_RADIUS, walks to it via the same

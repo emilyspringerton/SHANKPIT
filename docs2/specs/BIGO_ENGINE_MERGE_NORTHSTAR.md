@@ -405,9 +405,74 @@ path) — all pass, zero drift in the pre-existing 30. `make server` clean, no n
 **Real, honest, not landed this pass:** no visual/animation tell for the resolution itself (no
 "The Men spray something" effect — `[THE MEN] resolved N hunting NPC(s)` is a real, permanent log
 line, not a throwaway print, but there is still no on-screen player-facing feedback). Giant Zombie
-Bugs are untouched — they still stand at spawn except for their own existing eat-a-nearby-zombie
-mechanic. The Men still take no damage and cannot be killed by zombies (a real, separate combat
-question for a future pass).
+Bugs were untouched by this pass (own real combat follow-up landed same day, see §2n). The Men
+still take no damage and cannot be killed by zombies (a real, separate combat question for a
+future pass).
+
+## 2n. Phase 7h landed — Giant Zombie Bug pain feedback + real attack_drive/flee_drive combat (same day)
+
+Real, checked-first finding: the player could already shoot a Giant Zombie Bug (generic hitscan,
+no role exclusion, same as every other witness_ai NPC) — but nothing ever fed that damage back
+into `GiantBugState.pain`, so `giant_bug_attack_drive`/`giant_bug_flee_drive` (real, PARENA-
+computed decision outputs, live since this entity type was added) had a real input that never
+moved, and a bug never fought back or fled. It just sat there being shot, forever passive.
+
+- `witness_ai_tick` now tracks each bug's last-observed health and feeds any drop into
+  `bstate.pain` (0..1, same scale every other alien-sense field uses) — a real, honest proxy;
+  no more precise damage-source hook exists anywhere in this engine yet.
+- An **authorized** bug (`witness_ai_bug_command_authorized` — the SAME "The Men hold the key"
+  gate the eat-a-zombie mechanic already uses, not a new rule) within
+  `WITNESS_AI_BUG_PERCEPTION_RADIUS` compares its own real `attack_drive`/`flee_drive` and either
+  chases+melees the hero (same generic movement pipeline, same
+  `witness_ai_hero_melee_hit`/`STATE_DEAD`/`STORY_PHASE_FAILED` handling as zombies — factored out
+  of the zombie block into a shared static helper this same pass, not copy-pasted a second time)
+  or runs directly away. Melee damage and chase speed both scale with the bug's own real,
+  permanently-grown `strength`/`speed` stats (`giant_bug_eat_zombie`'s own existing "eat a strong/
+  fast zombie, get stronger/faster" mechanic) — a real, now-visible payoff for that mechanic that
+  previously had no combat outlet at all.
+- An **unauthorized** bug (no live The Men NPC) never attacks, however much pain or hunger it
+  carries — matches this whole entity's own existing "leashed asset" design intent rather than
+  inventing a new rule.
+- **Thresholds checked empirically, not guessed**, against the real PARENA-generated network
+  (`giant_bug_brain.c` is do-not-edit-by-hand, no formula to read directly): only hunger (ambient)
+  and pain (new, this pass) are actually driven by anything in this engine — `heat_scent`/
+  `ground_vibration`/`hive_signal`/`light_aversion` stay real, honest, always-0.0 dead fields (no
+  heat/hive/light system exists anywhere to feed them). Probed range with only hunger+pain live: a
+  fresh spawn reads `attack≈4/flee≈0`; both maxed tops out at `attack≈32/flee≈16`.
+  `WITNESS_AI_BUG_ATTACK_DRIVE_THRESHOLD`=12/`WITNESS_AI_BUG_FLEE_DRIVE_THRESHOLD`=6 sit inside
+  that real reachable range. **Named honestly, not hidden**: `flee_drive` never actually wins the
+  priority check under hunger+pain alone (`attack_drive` dominates at every probed point) — the
+  flee branch is real, live code, just not reachable from these two sensors alone.
+  `light_aversion` is what would make flee competitive; nothing feeds it yet, a real, separate
+  follow-up (a light/exposure system), not a bug in this logic.
+
+**Verified live:** `witness_ai_test.c` grew 33 → 37 checks (a real hit raises pain; enough
+accumulated pain drives an authorized bug to chase; melee in range deals real strength-scaled
+damage; an unauthorized bug never attacks however hurt it is) — all pass, zero drift. `make
+server` clean, no new warnings.
+
+**Real, honest, not landed this pass:** no light/exposure system to make `flee_drive` ever
+realistically win (see above). No bug-vs-zombie/bug-vs-citizen combat (only bug-vs-hero). Bugs
+still cannot damage or be commanded to attack The Men. On-screen feedback beyond the generic
+`hit_feedback` field itself was closed the same day, see §2o immediately below.
+
+## 2o. Phase 7i landed — damage-scaled hit feedback (same day, small follow-up)
+
+Real, checked-first finding: `draw_hud`'s own real hit-ring code (`apps/lobby/src/main.c`) already
+renders a green ring for any `hit_feedback > 0` and a red double ring (the "kill/high damage" tier)
+for `hit_feedback >= 25` — this was already free, no new client code needed for zombie/bug melee to
+show up on screen. What WAS wrong: `witness_ai_hero_melee_hit` (§2l/§2n) set a flat `hit_feedback =
+12` for every hit regardless of actual damage — a light zombie bite and a grown Giant Zombie Bug's
+full-strength lunge looked visually identical, and 12 sat even below `katana_apply_damage`'s own
+real "defender knows it was hit" floor of 15 (`physics.h`).
+
+Fixed to scale with the real, pre-shield damage dealt: floored at 15 (matching that existing
+melee-hit convention) and capped at 30 (`draw_hud`'s own real >=25 red-ring threshold sits inside
+that range, so a strong enough bug lunge now genuinely triggers the double ring). `witness_ai_test.
+c` now asserts the exact scaled value for both a zombie bite (14 dmg → floors to 15) and a
+fresh-spawn bug's base lunge (18 dmg → passes through unchanged) — 37 checks unchanged in count,
+2 strengthened with real hit_feedback assertions instead of just health-drop checks. `make server`
+clean, no new warnings.
 
 **Phase 7c landed — a real zone-authoring engine feature (native side only):**
 
