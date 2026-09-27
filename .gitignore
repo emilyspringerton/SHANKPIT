@@ -33,6 +33,8 @@ run_stuffing
 # binary and generated .gband oracle clips are build artifacts, not source.
 tools/ragdoll_spike/ragdoll_spike
 tools/ragdoll_spike/output/
+# rigid_ragdoll's generated fall/get-up-oracle clips are build artifacts too.
+tools/rigid_ragdoll/output/
 a.out
 
 # Go module cache (appears when GOPATH is set to repo root).

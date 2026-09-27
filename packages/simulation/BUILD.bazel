@@ -153,3 +153,16 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
 )
+
+# rigid_ragdoll -- rigid-body mannequin ragdoll on GOLDEN BAND grb physics (2026-09-27). Needs the
+# skeleton loader + FK from :goldenband and the solver from :grb_physics. Test: `make test-physics`.
+cc_library(
+    name = "rigid_ragdoll",
+    srcs = ["rigid_ragdoll.c"],
+    hdrs = ["rigid_ragdoll.h"],
+    deps = [
+        "//packages/goldenband",
+        "//packages/goldenband:grb_physics",
+    ],
+    visibility = ["//visibility:public"],
+)

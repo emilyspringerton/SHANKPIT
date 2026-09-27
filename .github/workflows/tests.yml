@@ -50,6 +50,14 @@ jobs:
           set -euo pipefail
           go test ./...
 
+      - name: Physics Tests (GOLDEN BAND grb rigid-body ragdoll)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Headless, gcc + libm only: the real mannequin skeleton as 17 rigid bodies must fall,
+          # settle, stay inside its joint limits, and rerun bit-identically.
+          make test-physics
+
       - name: Install Dependencies
         shell: bash
         run: |

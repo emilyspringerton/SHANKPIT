@@ -30,3 +30,27 @@ cc_library(
     deps = ["//packages/common:common_headers"],
     visibility = ["//visibility:public"],
 )
+
+# GOLDEN BAND rigid body physics + datasheet robots + reward compiler (founder real-time
+# 2026-09-27: "upgrade shankpit ... to formal rigid body physics"), vendored verbatim from the
+# GOLDENBAND repo's src/. A separate target from :goldenband because nothing in the lobby/server
+# link line needs it yet -- consumers (packages/simulation:rigid_ragdoll, tools/rigid_ragdoll)
+# depend on it explicitly.
+cc_library(
+    name = "grb_physics",
+    srcs = [
+        "gband.c",
+        "grb.c",
+        "grl.c",
+        "grobot.c",
+    ],
+    hdrs = [
+        "gband.h",
+        "grb.h",
+        "grl.h",
+        "grobot.h",
+        "sha256.h",
+    ],
+    linkopts = ["-lm"],
+    visibility = ["//visibility:public"],
+)

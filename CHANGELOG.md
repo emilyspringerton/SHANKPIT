@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-09-27
+- feat(physics): vendored GOLDEN BAND's formal rigid body engine (packages/goldenband/grb, grobot, grl -- XPBD 6-DOF bodies, jointed limits, effort-limited servos, datasheet robots, RL reward compiler) and built a real rigid-body ragdoll on it (packages/simulation/rigid_ragdoll): the multiplayer mannequin as 17 capsules with Winter/Dempster segment masses, ball joints with swing/twist limits, one-way knee/elbow hinges -- RAGDOLL_ORIENTATION_NORTHSTAR's "v1: real per-bone orientation state + twist limits". tools/rigid_ragdoll writes the fall and a reversed get-up oracle with real quaternion channels for all 65 joints and a real skeleton_hash; `make test-physics` (new CI step) asserts it falls, settles, holds limits and reruns bit-identically. Not wired into live gameplay yet. README updated (SAGA). Founder real-time: "upgrade shankpit and nock to formal rigid body physics" (sess-20260927-1025-5b0d7c3e)
+
 ## 2026-09-25
 - fix(render): bloom_end_scene_and_composite left GL_TEXTURE_2D enabled bound to the near-black bloom blur target, blacking out the lobby menu after any 3D mode via GL_MODULATE; fixed at the source and defensively in setup_lobby_2d(). (sess-20260923-1030-4a526255)
 - feat(story): The Men's dispatch/resolution loop -- closes witness_ai.h's last remaining "no

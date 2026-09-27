@@ -14,6 +14,41 @@ cad in? do we need to model actual real world component capabilities?" → "but 
 falls over theres no way its going to look human like when they get up its going to be horiffic
 and synthetic probably i dunno id like to see where this takes us."
 
+## Status update, 2026-09-27 — v1 (rigid bodies + swing/twist limits) is BUILT
+
+Founder real-time: "upgrade shankpit and nock to formal rigid body physics we need to get
+goldenband rigged up with real robot data from industrial data sheets" + "and the rl animations
+pipeline". The Phased Plan below jumped straight to phase 2 ("v1: real per-bone orientation state
++ twist limits") instead of the v0 plane-projection approximation, because the real general
+solution now exists as reusable kit:
+
+- **GOLDEN BAND `grb`** (GOLDENBAND repo `src/grb.{h,c}`, vendored at
+  `packages/goldenband/grb.{h,c}`): XPBD rigid bodies (Müller et al. 2020), quaternion
+  orientation, real inertia tensors, ball joints with swing-cone + twist limits, hinges with
+  limits, ground contact with Coulomb friction; checked against closed-form physics (pendulum
+  period, momentum conservation, Coulomb slide, restitution) and deterministic.
+- **`packages/simulation/rigid_ragdoll.{h,c}`**: the real `mannequin_npc.gskel` as 17 rigid
+  capsules, masses from Winter's body-segment table (after Dempster) for a 70 kg body — not the
+  spike's bone-length guesses. One-way knee/elbow hinges (flexion 0..~140°, no hyperextension),
+  swing/twist-limited hips/shoulders/spine/neck/wrists/ankles.
+- **Result** (`make test-physics`, in CI): a 2.5 m/s chest shove falls, crumples and settles in
+  ~2 s; knees/elbows settle flexed, none hyperextended; limits hold within 0.2 mrad once settled
+  (≤ 2.3° transient mid-impact at 24 substeps); no ground penetration; bit-identical reruns. The
+  "poker-straight starfish" failure mode this doc was written about is gone by construction.
+- **Get-up oracle v1** (`tools/rigid_ragdoll`): the S497 fall-and-reverse clip now carries real
+  per-joint quaternion channels for all 65 joints (+ pelvis translation) and a real
+  `skeleton_hash`, and plays back through `gseq` unchanged. It is still an imitation TARGET, not a
+  playable get-up animation.
+
+Still open, named honestly: limb-vs-limb and limb-vs-level collision (grb v0 has ground planes
+only); wiring into live gameplay (ragdoll on death, network replication); a trained get-up policy.
+For the last one the reward compiler + trainer now exist too (GOLDENBAND `grl` + `gbtrain`,
+proven on a datasheet UR5e arm: 0.28 → 0.90 held-out return), but only for fixed-base robots —
+a floating-base, contact-rich balance/get-up policy is the next, harder step (SIM-100 §8 step 5).
+Robotics: real industrial robot data (UR3e/UR5e/UR10e, from Universal Robots' own published
+masses/inertias/kinematics/joint limits) is loaded into the same physics — see GOLDENBAND
+`format/GROBOT_FORMAT.md`. That answers this doc's robotics section with numbers, not just a plan.
+
 ## What the spikes already proved (S484/S494/S495, real, live-verified, not assumed)
 
 Three real iterations of `tools/ragdoll_spike/main.c` (throwaway, not wired into gameplay), each
