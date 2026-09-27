@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-27
+
+- Merged abandoned texture-loading-through-shaders branch (cached shader VBO for static terrain); fixed a g_ground_tex declaration-order bug introduced by the merge (sess-20260923-1030-4a526255)
+
+
 ## 2026-09-25
 - fix(render): bloom_end_scene_and_composite left GL_TEXTURE_2D enabled bound to the near-black bloom blur target, blacking out the lobby menu after any 3D mode via GL_MODULATE; fixed at the source and defensively in setup_lobby_2d(). (sess-20260923-1030-4a526255)
 - feat(story): The Men's dispatch/resolution loop -- closes witness_ai.h's last remaining "no
