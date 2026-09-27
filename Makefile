@@ -12,7 +12,7 @@ LIBS_GL  := -lSDL2 -lGL -lGLU -lm
 LIBS_M   := -lm
 
 # ---- Sources ----
-LOBBY_SRC    := apps/lobby/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/cutscene.c packages/simulation/typing_lesson.c packages/simulation/day_night_clock.c packages/simulation/world_rules.c packages/simulation/witness_ai.c packages/simulation/witness_sim.c packages/simulation/witness_rules.c packages/simulation/npc_archetype.c packages/simulation/zombie_values.c packages/simulation/ai_brain_rules.c packages/simulation/world_alerts_mod.c packages/simulation/world_alert_bridge.c packages/simulation/food_pickup.c packages/simulation/giant_bug_values.c packages/simulation/giant_bug_brain.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/sky_weather.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/render/bloom.c packages/world/terrain.c packages/world/parena_runtime.c packages/world/png_decode_gen.c packages/audio/audio.c packages/audio/audio_chain.c packages/audio/audio_dsp_gen.c packages/goldenband/gband.c packages/goldenband/gskel.c packages/goldenband/gmesh.c packages/goldenband/gband_mesh_rig.c packages/goldenband/gseq.c packages/goldenband/gpose.c packages/goldenband/gsync.c packages/goldenband/gband_skel_npc.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c
+LOBBY_SRC    := apps/lobby/src/main.c apps/lobby/src/editor_widget_bridge.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/cutscene.c packages/simulation/typing_lesson.c packages/simulation/day_night_clock.c packages/simulation/world_rules.c packages/simulation/witness_ai.c packages/simulation/witness_sim.c packages/simulation/witness_rules.c packages/simulation/npc_archetype.c packages/simulation/zombie_values.c packages/simulation/ai_brain_rules.c packages/simulation/world_alerts_mod.c packages/simulation/world_alert_bridge.c packages/simulation/food_pickup.c packages/simulation/giant_bug_values.c packages/simulation/giant_bug_brain.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/sky_weather.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/render/bloom.c packages/world/terrain.c packages/world/parena_runtime.c packages/world/png_decode_gen.c packages/audio/audio.c packages/audio/audio_chain.c packages/audio/audio_dsp_gen.c packages/goldenband/gband.c packages/goldenband/gskel.c packages/goldenband/gmesh.c packages/goldenband/gband_mesh_rig.c packages/goldenband/gseq.c packages/goldenband/gpose.c packages/goldenband/gsync.c packages/goldenband/gband_skel_npc.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c
 SERVER_SRC   := apps/server/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/day_night_clock.c packages/simulation/world_rules.c packages/simulation/witness_ai.c packages/simulation/witness_sim.c packages/simulation/witness_rules.c packages/simulation/npc_archetype.c packages/simulation/zombie_values.c packages/simulation/ai_brain_rules.c packages/simulation/giant_bug_values.c packages/simulation/giant_bug_brain.c packages/world/terrain.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c
 SERVERCTL_SRC:= apps/server/serverctl.c
 
@@ -35,12 +35,82 @@ $(BIN_DIR):
 
 setup: $(BIN_DIR)
 
+# ---- EDITOR.GAME in-process widget (S559, 2026-09-27) ----
+# Founder real-time: "the editor app fails to launch -- instead of having it launch it should pop
+# a widget up on the screen ... deeply integrate it as a widget on the screen the notes auto
+# save." apps/lobby/src/editor_widget_bridge.c links against EDITOR.GAME's own real
+# editor_widget_* API, consumed as a sibling checkout (../EDITOR.GAME -- same path MODULE.bazel's
+# own local_path_override already assumes). Same 5-file build EDITOR.GAME's own plain Makefile
+# uses to produce its standalone `editor-game` binary, just linked into shank_lobby instead:
+# gen/editor_full.c (the generated PARENA stdlib + examples/editor_main.c, concatenated -- see
+# EDITOR.GAME/Makefile's own identical rule) and runtime/parena_runtime.c define/call the plain
+# arena_init/arena_alloc/arena_strdup/arena_free_all names, which would otherwise collide at link
+# time with SHANKPIT's own already-linked, deliberately-minimal packages/world/parena_runtime.c
+# (same 4 names, real but different, narrower implementation) -- both files are compiled here with
+# a matching -D rename so ONLY this pair's calls/definitions move to edg_arena_*, leaving
+# SHANKPIT's own copy completely untouched. src/arena.c/src/fmt.c/runtime/prnfmt_bridge.c are
+# EDITOR.GAME's own SEPARATE compiler-internal bump allocator, already renamed to pf_arena_* by
+# EDITOR.GAME's own PRNFMT_RENAME convention (unrelated to the edg_arena_* rename above -- two
+# different collisions, two different renames, matching EDITOR.GAME's own Makefile/BUILD.bazel
+# precedent exactly).
+EDITOR_GAME_DIR    := ../EDITOR.GAME
+# vec_i32_at -- PARENA's C emitter generates this Vec<i32> helper as a plain global (not static)
+# in every translation unit that uses Vec<i32>; packages/world/png_decode_gen.c (SHANKPIT's own
+# PARENA-generated code, already in LOBBY_SRC) happens to generate one too, so it collides the
+# same way arena_init did -- confirmed via `nm -g` on both object files, exactly one overlap.
+EDITOR_GAME_RENAME := -Darena_init=edg_arena_init -Darena_alloc=edg_arena_alloc -Darena_strdup=edg_arena_strdup -Darena_free_all=edg_arena_free_all -Dvec_i32_at=edg_vec_i32_at
+EDITOR_GAME_PRNFMT := -Darena_init=pf_arena_init -Darena_alloc=pf_arena_alloc -Darena_strdup=pf_arena_strdup -Darena_free_all=pf_arena_free_all
+EDITOR_GAME_OBJS   := $(BIN_DIR)/editor_full.o $(BIN_DIR)/editor_runtime.o $(BIN_DIR)/editor_pf_arena.o $(BIN_DIR)/editor_pf_fmt.o $(BIN_DIR)/editor_pf_bridge.o
+
+$(EDITOR_GAME_DIR)/gen/editor_full.c: $(EDITOR_GAME_DIR)/gen/editor_stdlib_gen.c $(EDITOR_GAME_DIR)/examples/editor_main.c
+	cat $(EDITOR_GAME_DIR)/gen/editor_stdlib_gen.c $(EDITOR_GAME_DIR)/examples/editor_main.c > $@
+
+$(BIN_DIR)/editor_full.o: $(EDITOR_GAME_DIR)/gen/editor_full.c | $(BIN_DIR)
+	$(CC) -std=c99 -w -DEDITOR_WIDGET_TEST_BUILD $(EDITOR_GAME_RENAME) -I$(EDITOR_GAME_DIR)/runtime -c $< -o $@
+
+$(BIN_DIR)/editor_runtime.o: $(EDITOR_GAME_DIR)/runtime/parena_runtime.c | $(BIN_DIR)
+	$(CC) -std=c99 -w $(EDITOR_GAME_RENAME) -I$(EDITOR_GAME_DIR)/runtime -c $< -o $@
+
+$(BIN_DIR)/editor_pf_arena.o: $(EDITOR_GAME_DIR)/src/arena.c | $(BIN_DIR)
+	$(CC) -std=c99 -w $(EDITOR_GAME_PRNFMT) -c $< -o $@
+
+$(BIN_DIR)/editor_pf_fmt.o: $(EDITOR_GAME_DIR)/src/fmt.c | $(BIN_DIR)
+	$(CC) -std=c99 -w $(EDITOR_GAME_PRNFMT) -c $< -o $@
+
+$(BIN_DIR)/editor_pf_bridge.o: $(EDITOR_GAME_DIR)/runtime/prnfmt_bridge.c | $(BIN_DIR)
+	$(CC) -std=c99 -w $(EDITOR_GAME_PRNFMT) -I$(EDITOR_GAME_DIR)/runtime -I$(EDITOR_GAME_DIR)/src -c $< -o $@
+
+# Windows (mingw) variants of the same 5 objects, for ea-windows below -- separate output
+# filenames (.win.o) so a native `make lobby` and `make ea-windows` in the same tree never clobber
+# each other's objects. Verified for real: EDITOR.GAME's own runtime/parena_runtime.c and
+# generated stdlib code cross-compile under x86_64-w64-mingw32-gcc with no source changes at all
+# (checked directly, not assumed -- the only NEW cross-build requirement is SDL2_ttf's own mingw
+# devel kit, same one PITVIPER/IDUNA.GAME/EDITOR.GAME's own standalone Windows builds already need,
+# per SDL2_MINGW_PREFIX below).
+MINGW_CC := x86_64-w64-mingw32-gcc
+EDITOR_GAME_OBJS_WIN := $(BIN_DIR)/editor_full.win.o $(BIN_DIR)/editor_runtime.win.o $(BIN_DIR)/editor_pf_arena.win.o $(BIN_DIR)/editor_pf_fmt.win.o $(BIN_DIR)/editor_pf_bridge.win.o
+
+$(BIN_DIR)/editor_full.win.o: $(EDITOR_GAME_DIR)/gen/editor_full.c | $(BIN_DIR)
+	$(MINGW_CC) -std=c99 -w -DEDITOR_WIDGET_TEST_BUILD $(EDITOR_GAME_RENAME) -I$(EDITOR_GAME_DIR)/runtime -I$(SDL2_MINGW_PREFIX)/include -c $< -o $@
+
+$(BIN_DIR)/editor_runtime.win.o: $(EDITOR_GAME_DIR)/runtime/parena_runtime.c | $(BIN_DIR)
+	$(MINGW_CC) -std=c99 -w $(EDITOR_GAME_RENAME) -I$(EDITOR_GAME_DIR)/runtime -I$(SDL2_MINGW_PREFIX)/include -c $< -o $@
+
+$(BIN_DIR)/editor_pf_arena.win.o: $(EDITOR_GAME_DIR)/src/arena.c | $(BIN_DIR)
+	$(MINGW_CC) -std=c99 -w $(EDITOR_GAME_PRNFMT) -c $< -o $@
+
+$(BIN_DIR)/editor_pf_fmt.win.o: $(EDITOR_GAME_DIR)/src/fmt.c | $(BIN_DIR)
+	$(MINGW_CC) -std=c99 -w $(EDITOR_GAME_PRNFMT) -c $< -o $@
+
+$(BIN_DIR)/editor_pf_bridge.win.o: $(EDITOR_GAME_DIR)/runtime/prnfmt_bridge.c | $(BIN_DIR)
+	$(MINGW_CC) -std=c99 -w $(EDITOR_GAME_PRNFMT) -I$(EDITOR_GAME_DIR)/runtime -I$(EDITOR_GAME_DIR)/src -I$(SDL2_MINGW_PREFIX)/include -c $< -o $@
+
 # ---- CLIENT / LOBBY ----
 lobby: $(LOBBY_BIN)
 
-$(LOBBY_BIN): $(LOBBY_SRC) | $(BIN_DIR)
+$(LOBBY_BIN): $(LOBBY_SRC) $(EDITOR_GAME_OBJS) | $(BIN_DIR)
 	@echo "🔨 Building Lobby Client..."
-	$(CC) $(CFLAGS) $(INCLUDES) $(LOBBY_SRC) -o $@ $(LIBS_GL)
+	$(CC) $(CFLAGS) $(INCLUDES) $(LOBBY_SRC) $(EDITOR_GAME_OBJS) -o $@ $(LIBS_GL) -lSDL2_ttf
 
 # ---- GAME SERVER ----
 server: $(SERVER_BIN)
@@ -104,13 +174,17 @@ ea: $(LOBBY_BIN) $(GO_SERVER_BIN)
 # like SDL_GetError undefined, since the .o members are a different COFF machine type entirely).
 # SDL2_MINGW_PREFIX is overridable for a box with its dev kit somewhere else.
 SDL2_MINGW_PREFIX ?= /tmp/sdl2_mingw
-ea-windows: $(BIN_DIR)
+ea-windows: $(BIN_DIR) $(EDITOR_GAME_OBJS_WIN)
 	@echo "🪟 Cross-compiling Go server for Windows..."
 	GOWORK=off GOOS=windows GOARCH=amd64 go build -o $(BIN_DIR)/shank_go_server.exe ./apps2/server-go/
 	@echo "🔨 Cross-compiling C client for Windows (requires x86_64-w64-mingw32-gcc)..."
-	x86_64-w64-mingw32-gcc $(CFLAGS) $(INCLUDES) -I$(SDL2_MINGW_PREFIX)/include $(LOBBY_SRC) \
+	# -lSDL2_ttf (S559, EDITOR.GAME in-process widget) needs SDL2_ttf's own mingw devel kit merged
+	# into $(SDL2_MINGW_PREFIX) -- same one PITVIPER/IDUNA.GAME/EDITOR.GAME's own standalone
+	# Windows builds already fetch (see .github/workflows/release.yml's own "Install Dependencies"
+	# step); the base SDL2 mingw devel kit alone does not ship it.
+	x86_64-w64-mingw32-gcc $(CFLAGS) $(INCLUDES) -I$(SDL2_MINGW_PREFIX)/include $(LOBBY_SRC) $(EDITOR_GAME_OBJS_WIN) \
 		-o $(BIN_DIR)/shank_lobby.exe \
-		-L$(SDL2_MINGW_PREFIX)/lib -lSDL2 -lopengl32 -lglu32 -lm -static-libgcc \
+		-L$(SDL2_MINGW_PREFIX)/lib -lSDL2 -lSDL2_ttf -lopengl32 -lglu32 -lm -static-libgcc \
 		-lws2_32 -ldinput8 -ldxguid -ldxerr8 -luser32 -lgdi32 -lwinmm -limm32 -lole32 -loleaut32 -lshell32 -lsetupapi -lversion -luuid
 	@echo "📦 Packaging EA build (Windows)..."
 	@mkdir -p dist/ea-windows

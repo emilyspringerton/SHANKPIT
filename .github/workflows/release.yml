@@ -30,6 +30,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # S559 (2026-09-27): EDITOR.GAME in-process widget -- apps/lobby/src/editor_widget_bridge.c
+      # (in LOBBY_SRC as of this same session) links against EDITOR.GAME's own real editor_widget_*
+      # API. This is a SEPARATE, early checkout from "Checkout SHANKPIT OS Apps" below (which
+      # checks EDITOR.GAME out again, later, at os_apps/EDITOR.GAME, to build its own separate
+      # standalone editor-game.exe for OS-app bundling) -- deliberately not reordered/reused
+      # across the two, to keep this fix isolated from that already-tested, working bundling step.
+      - name: Checkout EDITOR.GAME (in-process widget dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: emilyspringerton/EDITOR.GAME
+          path: EDITOR.GAME
+
       - name: Normalize merged layout
         shell: bash
         run: |
@@ -99,6 +111,27 @@ jobs:
         run: |
           set -euo pipefail
           test -f apps/lobby/src/main.c
+
+          # EDITOR.GAME in-process widget (S559, 2026-09-27) -- editor_widget_bridge.c below calls
+          # EDITOR.GAME's own real editor_widget_* API. gen/editor_full.c is real, git-ignored,
+          # LOCAL-only (same as EDITOR.GAME's own Makefile rule) -- generate it here the same way,
+          # from the sibling checkout above. runtime/parena_runtime.c and gen/editor_full.c both
+          # define/call the plain arena_init/arena_alloc/arena_strdup/arena_free_all/vec_i32_at
+          # names, which collide at link time with SHANKPIT's own already-linked, deliberately-
+          # minimal packages/world/parena_runtime.c (real but different implementation) --
+          # renamed to edg_* here so only this pair moves, matching the Makefile's own
+          # EDITOR_GAME_RENAME exactly (see Makefile's own header comment for the full story).
+          # src/arena.c/src/fmt.c/runtime/prnfmt_bridge.c are EDITOR.GAME's own separate
+          # compiler-internal bump allocator, renamed to pf_arena_* by EDITOR.GAME's own
+          # PRNFMT_RENAME convention (a different, unrelated collision/rename).
+          cat EDITOR.GAME/gen/editor_stdlib_gen.c EDITOR.GAME/examples/editor_main.c > EDITOR.GAME/gen/editor_full.c
+          EDG_RENAME="-Darena_init=edg_arena_init -Darena_alloc=edg_arena_alloc -Darena_strdup=edg_arena_strdup -Darena_free_all=edg_arena_free_all -Dvec_i32_at=edg_vec_i32_at"
+          PF_RENAME="-Darena_init=pf_arena_init -Darena_alloc=pf_arena_alloc -Darena_strdup=pf_arena_strdup -Darena_free_all=pf_arena_free_all"
+          x86_64-w64-mingw32-gcc -std=c99 -w -DEDITOR_WIDGET_TEST_BUILD $EDG_RENAME -IEDITOR.GAME/runtime -I./sdl2_mingw/include -c EDITOR.GAME/gen/editor_full.c -o /tmp/editor_full.o
+          x86_64-w64-mingw32-gcc -std=c99 -w $EDG_RENAME -IEDITOR.GAME/runtime -I./sdl2_mingw/include -c EDITOR.GAME/runtime/parena_runtime.c -o /tmp/editor_runtime.o
+          x86_64-w64-mingw32-gcc -std=c99 -w $PF_RENAME -c EDITOR.GAME/src/arena.c -o /tmp/editor_pf_arena.o
+          x86_64-w64-mingw32-gcc -std=c99 -w $PF_RENAME -c EDITOR.GAME/src/fmt.c -o /tmp/editor_pf_fmt.o
+          x86_64-w64-mingw32-gcc -std=c99 -w $PF_RENAME -IEDITOR.GAME/runtime -IEDITOR.GAME/src -I./sdl2_mingw/include -c EDITOR.GAME/runtime/prnfmt_bridge.c -o /tmp/editor_pf_bridge.o
 
           # Real, live-found CI bug (2026-09-10, "shankpit main repo should be cutting auto
           # releases" -- confirmed via the real job log, fetched directly from the GitHub API:
@@ -172,8 +205,9 @@ jobs:
           # tests.yml's own copy, and both files' own Linux server build below (witness_ai.c and
           # its 5 dependencies only -- the Makefile's own SERVER_SRC never gained world_alerts_mod.c/
           # world_alert_bridge.c, those are client-local only) in the same pass.
-          x86_64-w64-mingw32-gcc apps/lobby/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/cutscene.c packages/simulation/typing_lesson.c packages/simulation/day_night_clock.c packages/simulation/world_rules.c packages/simulation/witness_ai.c packages/simulation/witness_sim.c packages/simulation/witness_rules.c packages/simulation/npc_archetype.c packages/simulation/zombie_values.c packages/simulation/ai_brain_rules.c packages/simulation/world_alerts_mod.c packages/simulation/world_alert_bridge.c packages/simulation/food_pickup.c packages/simulation/giant_bug_values.c packages/simulation/giant_bug_brain.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/sky_weather.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/render/bloom.c packages/world/terrain.c packages/world/parena_runtime.c packages/world/png_decode_gen.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c packages/audio/audio.c packages/audio/audio_chain.c packages/audio/audio_dsp_gen.c \
+          x86_64-w64-mingw32-gcc apps/lobby/src/main.c apps/lobby/src/editor_widget_bridge.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/cutscene.c packages/simulation/typing_lesson.c packages/simulation/day_night_clock.c packages/simulation/world_rules.c packages/simulation/witness_ai.c packages/simulation/witness_sim.c packages/simulation/witness_rules.c packages/simulation/npc_archetype.c packages/simulation/zombie_values.c packages/simulation/ai_brain_rules.c packages/simulation/world_alerts_mod.c packages/simulation/world_alert_bridge.c packages/simulation/food_pickup.c packages/simulation/giant_bug_values.c packages/simulation/giant_bug_brain.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/sky_weather.c packages/render/retro_lighting.c packages/render/gl_shader.c packages/render/bloom.c packages/world/terrain.c packages/world/parena_runtime.c packages/world/png_decode_gen.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c packages/audio/audio.c packages/audio/audio_chain.c packages/audio/audio_dsp_gen.c \
             packages/goldenband/gband_mesh_rig.c packages/goldenband/gband.c packages/goldenband/gskel.c packages/goldenband/gmesh.c packages/goldenband/gseq.c packages/goldenband/gpose.c packages/goldenband/gsync.c packages/goldenband/gband_skel_npc.c \
+            /tmp/editor_full.o /tmp/editor_runtime.o /tmp/editor_pf_arena.o /tmp/editor_pf_fmt.o /tmp/editor_pf_bridge.o \
             -o ShankPit.exe \
             -O2 -static-libgcc \
             -I./sdl2_mingw/include \
@@ -186,7 +220,7 @@ jobs:
             -Ipackages/audio \
             -Ipackages/goldenband \
             -L./sdl2_mingw/lib \
-            -lmingw32 -lSDL2main -lSDL2 \
+            -lmingw32 -lSDL2main -lSDL2 -lSDL2_ttf \
             -lopengl32 -lglu32 -lws2_32 -lwinmm -lgdi32 -lm
 
       # SHANKPIT OS apps (2026-09-25, founder real-time: "the shankpit os apps dont work - can we
