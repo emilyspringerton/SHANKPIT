@@ -26,6 +26,13 @@ At a high level, SHANKPIT currently includes:
 - bot support for local team modes and online cold-start scenarios
 - a growing retro rendering stack with procedural textures, sky, fog, and stylized lighting
 - persistent skin selection
+- **sound engineering primitives from PARENA** (2026-09-27): `packages/audio/audio_dsp_gen.c` is C compiled
+  from PARENA `stdlib/audio` (biquads, compressor/expander/de-esser/limiter, BS.1770 loudness, plus DJ
+  mixer/deck/MPC-sampler curves); `audio_chain.c` runs filter chains authored in IDUNA's NOCK Sounds tab.
+  Set `SHANKPIT_SOUND_CHAIN=<name>` to run a NOCK chain over the whole engine mix (fetched from
+  `SHANKPIT_SOUND_CHAIN_URL`, default `https://okemily.com/api/v1/nock-sound-filters`). `make
+  test-audio-chain` proves the C runner matches NOCK's TypeScript render bit-for-bit. Not yet
+  played-through in a live session with a real chain on the production IDUNA.
 - test coverage for protocol and gameplay regressions. :contentReference[oaicite:2]{index=2} :contentReference[oaicite:3]{index=3} :contentReference[oaicite:4]{index=4}
 
 ---

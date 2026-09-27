@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-09-27
+- feat(audio): sound engineering primitives from PARENA (founder real-time: "nock and shankpit engine need sound engineering primatives ... pass filters around"). `packages/audio/audio_dsp_gen.{c,h}` generated from PARENA `stdlib/audio/{dsp,mixer4,deck,sampler}.prn` (`scripts/gen_audio_dsp.sh`); `audio_chain.{c,h}` parses/runs IDUNA NOCK filter chains (biquad/compressor/expander/de-esser/limiter/gain; realtime normalize needs a measured LUFS) and fetches them by name from IDUNA's public `/api/v1/nock-sound-filters/<name>`; `audio.c` runs an optional master chain (`SHANKPIT_SOUND_CHAIN`) over the SDL mix -- with no chain set the mixer path is byte-for-byte the old one. `make test-audio-chain` (new CI step): C runner == NOCK TypeScript runner, max |diff| 0 over 24,000 samples in 512-frame blocks. Added to Makefile, tests.yml and release.yml source lists (mingw compile checked) and packages/audio/BUILD.bazel. (sess-20260927-1020-014j5hnh)
+
 ## 2026-09-25
 - fix(render): bloom_end_scene_and_composite left GL_TEXTURE_2D enabled bound to the near-black bloom blur target, blacking out the lobby menu after any 3D mode via GL_MODULATE; fixed at the source and defensively in setup_lobby_2d(). (sess-20260923-1030-4a526255)
 - feat(story): The Men's dispatch/resolution loop -- closes witness_ai.h's last remaining "no
