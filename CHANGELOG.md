@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-09-28
+- Scale SHANKPIT queue bot pool 8 -> 4 (founder real-time, box-wide memory pressure that was OOM-looping iduna.service; live unit + repo copy both updated, memory freed 352Mi->2.8Gi, swap 495Mi full->266Mi used, iduna stable since) (sess-20260923-1030-4a526255)
 
 - Added real UX screenshot testing (founder real-time: 'shankpit levels is down its just a blank screen can we add some ux screenshot testing') -- scripts/ux_screenshot_test.sh / make ux-screenshot-test boots shank_lobby under headless Xvfb, opens the real LEVELS overlay via a synthetic XTEST Enter keypress (no xdotool needed), and fails if either screen is suspiciously close to solid black. Verified live: both pass against the current binary, real screenshots saved. Investigated the reported bug directly -- could not reproduce a blank LEVELS screen against current HEAD; the live IDUNA admin server (a related, same-named surface) had gone stale since before this session's own risky 6-branch abandoned-branch merge sweep and has been rebuilt+redeployed (see IDUNA's own changelog). (sess-20260923-1030-4a526255)
 
