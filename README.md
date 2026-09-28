@@ -87,6 +87,25 @@ first run. Real, separate follow-up.
 
 ---
 
+## Real UX screenshot testing for shank_lobby (2026-09-28)
+
+Founder real-time: "shankpit levels is down its just a blank screen can we add some ux screenshot
+testing." `scripts/ux_screenshot_test.sh` (`make ux-screenshot-test`) boots the real lobby binary
+under headless Xvfb, sends a real synthetic Enter keypress via the X server's own XTEST extension
+(`python3-xlib` — `xdotool` isn't assumed installed) to open the real `LOBBY_LEVEL_SELECT`
+("LEVELS") overlay (it's the first, default-selected menu tile, so Enter alone opens it — no mouse
+coordinates needed), screenshots both the boot screen and the overlay, and fails if either is
+suspiciously close to solid black. That's the real, live symptom this repo has hit before (see
+this file's own SDL_CreateWindow/MSAA note elsewhere in the CHANGELOG) and the one just reported —
+not a pixel-diff, a real "did anything actually render" sanity check. Verified live just now: both
+screens pass against the current `bin/shank_lobby`, real screenshots saved for review.
+
+A companion surface with the same name — the `/admin/nock` web admin tool's own "SHANKPIT Levels"
+tab — lives in `IDUNA`, not here; see that repo's own `frontend/nock/scripts/ux_screenshot_test.mjs`
+and `docs/NOCK_NORTHSTAR.md`.
+
+---
+
 ## Current worlds / scenes
 
 SHANKPIT is now a multi-scene game rather than a single arena. The active scene list in the current construct includes:

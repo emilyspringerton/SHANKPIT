@@ -25,7 +25,7 @@ EMILY_BOT_BIN := $(BIN_DIR)/emily-bot
 EA_DIR       := dist/ea
 
 # ---- Targets ----
-.PHONY: all lobby server serverctl clean setup print go-server ea ea-windows emily-bot rigid-ragdoll test-physics test-audio-chain
+.PHONY: all lobby server serverctl clean setup print go-server ea ea-windows emily-bot rigid-ragdoll test-physics test-audio-chain ux-screenshot-test
 
 all: $(LOBBY_BIN) $(SERVER_BIN)
 
@@ -132,6 +132,13 @@ $(BIN_DIR)/rigid_ragdoll: tools/rigid_ragdoll/main.c $(PHYSICS_SRC) | $(BIN_DIR)
 test-physics: | $(BIN_DIR)
 	$(CC) $(CFLAGS) -Wextra $(INCLUDES) packages/simulation/rigid_ragdoll_test.c $(PHYSICS_SRC) -o $(BIN_DIR)/rigid_ragdoll_test $(LIBS_M)
 	./$(BIN_DIR)/rigid_ragdoll_test
+
+# Real, live UX regression test -- boots the real lobby binary under headless Xvfb, opens the
+# real LEVELS overlay via a synthetic XTEST Enter keypress, fails if either screen renders
+# suspiciously close to solid black (the blank-screen symptom this was written to catch). Needs
+# lobby already built (make lobby); needs Xvfb/ImageMagick/python3-xlib installed.
+ux-screenshot-test: lobby
+	./scripts/ux_screenshot_test.sh
 
 # ---- SERVER CONTROL (OPTIONAL, LOCAL ONLY) ----
 serverctl: $(SERVERCTL_BIN)
