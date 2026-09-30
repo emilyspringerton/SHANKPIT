@@ -22,6 +22,7 @@
 #include "../../../packages/common/shared_movement.h"
 #include "../../../packages/common/net_sim.h"
 #include "../../../packages/simulation/local_game.h"
+#include "../../../packages/simulation/tyler_coldopen.h"
 #include "../../../packages/world/level_boxes.h"
 #include "../../../packages/world/story_doors.h"
 #include "../../../packages/simulation/story_buttons.h"
@@ -410,6 +411,12 @@ static int g_story_level_exit_count = 0;
 static int g_story_next_level_id = 0; /* 0 = none, matches CustomLevelData's own sentinel */
 static unsigned int g_story_last_level_transition_ms = 0; /* real debounce -- see its own use below */
 
+/* S536, TYLER VALHANNA cold open (episodes/vh01_valhanna_coldopen.md) -- real, deliberate reset
+ * on every level load, same convention g_story_level_exit_count above already uses, so a level
+ * swap away from TYLER_VALHANNA_ICELAND_1986 never leaves a stale coordinator ticking. */
+static TylerColdOpenState g_tyler_coldopen;
+static void tyler_apply_phase_override(const char *level_name, unsigned int now_ms); /* fwd decl -- defined below, called from both server_apply_custom_level and story_force_level_transition */
+
 // server_apply_custom_level -- the real box/material extraction + phys_set_custom_level* apply
 // sequence, factored out of main()'s own real --level CLI handling (below) so S459-38's own real
 // QUEUE-level-loading logic (queue_activate_match, right below) can share it instead of
@@ -514,6 +521,12 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
     } else {
         story_ai_despawn_all_characters(&local_state);
     }
+    /* S536, TYLER VALHANNA -- real, deliberate reset every level load (same convention as
+     * g_story_level_exit_count above): a level swap away from TYLER_VALHANNA_ICELAND_1986 must
+     * never leave the coordinator still ticking against stale player slots. */
+    g_tyler_coldopen.active = 0;
+    int tyler_coldopen_slots[2] = { -1, -1 };
+    int tyler_coldopen_slot_count = 0;
     for (int ci = 0; ci < lvl->character_count; ci++) {
         const LevelCharacter *lc = &lvl->characters[ci];
         // S492, real, found-live gap: this range check (and its Go-side mirror,
@@ -533,10 +546,22 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
         // Door/NavNode cross-references already follow, just for a cosmetic field instead of a
         // structural one, so it earns a fallback instead of a skip.
         int kit = (lc->kit >= AI_KIT_AUTO && lc->kit <= AI_KIT_GEORGE) ? lc->kit : AI_KIT_AUTO;
-        story_ai_spawn_enemy(&local_state, (AIRole)lc->role, kit, lc->x, lc->y, lc->z);
+        int spawned_id = story_ai_spawn_enemy(&local_state, (AIRole)lc->role, kit, lc->x, lc->y, lc->z);
+        /* S536: TYLER_VALHANNA_ICELAND_1986 authors exactly two characters, Tyler first then Hana
+         * (cmd/nock_gen_tyler_levels/main.go) -- capture whichever real player slots they actually
+         * landed in, in authored order, same "author order is actor identity" convention this
+         * level's own JSON already establishes. Harmless on every other level: tyler_coldopen_
+         * slots is only ever read below, gated on MODE_TYLER. */
+        if (local_state.game_mode == MODE_TYLER && spawned_id > 0 && tyler_coldopen_slot_count < 2) {
+            tyler_coldopen_slots[tyler_coldopen_slot_count++] = spawned_id;
+        }
     }
     if (lvl->character_count > 0) {
         NET_SERVER_LOG("CUSTOM_LEVEL_CHARACTERS_SPAWNED count=%d", lvl->character_count);
+    }
+    if (local_state.game_mode == MODE_TYLER && tyler_coldopen_slot_count == 2) {
+        tyler_coldopen_start(&g_tyler_coldopen, tyler_coldopen_slots[0], tyler_coldopen_slots[1], get_server_time());
+        NET_SERVER_LOG("TYLER_COLDOPEN_STARTED tyler_slot=%d hana_slot=%d", tyler_coldopen_slots[0], tyler_coldopen_slots[1]);
     }
 
     // S473/S477, STORY_LEVEL_SEQUENCING_NORTHSTAR.md -- real, unconditional capture (not
@@ -549,6 +574,13 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
     g_story_level_exit_count = lvl->level_exit_count < STORY_LEVEL_EXIT_MAX ? lvl->level_exit_count : STORY_LEVEL_EXIT_MAX;
     for (int ei = 0; ei < g_story_level_exit_count; ei++) g_story_level_exits[ei] = lvl->level_exits[ei];
     g_story_next_level_id = lvl->next_level_id;
+
+    /* S536: covers MODE_TYLER's initial load (a fresh connect / --level arg into
+     * TYLER_VALHANNA_ICELAND_1986, before any respawn has run) -- redundant-but-harmless during a
+     * mid-game story_force_level_transition, which re-applies this same override itself right
+     * after ITS OWN phys_respawn loop runs (phys_respawn unconditionally resets state to
+     * STATE_ALIVE, which would otherwise silently undo a spectator override applied only here). */
+    tyler_apply_phase_override(lvl->name, get_server_time());
 }
 
 // story_check_level_exits -- S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1 real, live level
@@ -572,6 +604,93 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
 // improving on) server_advance_queue_round's own existing "the whole server moves together on a
 // level change" precedent.
 #define STORY_LEVEL_TRANSITION_DEBOUNCE_MS 3000U
+
+/* tyler_apply_phase_override -- S536, TYLER VALHANNA. MODE_TYLER's two phases (wisp in Iceland,
+ * Duck in CONSTRUCT, see packages/common/protocol.h's own MODE_TYLER doc comment) share one game
+ * mode number -- this is the one real place that actually changes what a real (non-bot) player IS
+ * once the level itself has changed, keyed on the just-loaded level's own name rather than a
+ * separate phase enum, since the level name is already real, unique, authoritative data
+ * (cmd/nock_gen_tyler_levels/main.go names them exactly "TYLER_VALHANNA_ICELAND_1986"/
+ * "CONSTRUCT") -- no new state to keep in sync. Deliberately only touches REAL, non-bot players
+ * (Tyler/Hana are is_bot AI_ROLE_STORY_ALLY NPCs, already handled by the ordinary character-spawn
+ * path above; this function would be a harmless no-op against them anyway since neither branch
+ * applies to a bot in any other mode, but the is_bot check makes the intent explicit). */
+static void tyler_apply_phase_override(const char *level_name, unsigned int now_ms) {
+    if (local_state.game_mode != MODE_TYLER) return;
+    int is_construct = (strcmp(level_name, "CONSTRUCT") == 0);
+    for (int pi = 0; pi < MAX_CLIENTS; pi++) {
+        PlayerState *p = &local_state.players[pi];
+        if (!p->active || p->is_bot) continue;
+        if (is_construct) {
+            /* The Duck -- third-person, SHANKPIT physics, Leela kit (packages/simulation/
+             * story_ai.h's own AIKit enum -- AI_KIT_LEELA). apps/lobby/src/main.c's own
+             * draw_player_3rd gains a matching MODE_TYLER branch so a forced_kit this player sets
+             * on itself (not just story_ai-spawned bots) actually renders. */
+            p->state = STATE_ALIVE;
+            p->forced_kit = AI_KIT_LEELA;
+        } else {
+            /* The wisp -- real STATE_SPECTATOR free-fly (packages/common/protocol.h,
+             * packages/simulation/local_game.h's update_entity), no forced skin at all (nothing
+             * should render a body for a camera-only orb). */
+            p->state = STATE_SPECTATOR;
+            p->forced_kit = AI_KIT_AUTO;
+        }
+    }
+    (void)now_ms;
+}
+
+/* story_force_level_transition -- S536, TYLER VALHANNA's own new, real "exit" primitive
+ * (episodes/vh01_valhanna_coldopen.md: "the exit needs to be a new primitive... scriptable...
+ * call it when tyler is done feeding the paper back in and hits the button"). Factored straight
+ * out of story_check_level_exits' own real, already-proven transition body (S473/S477/S491) --
+ * every real line below (fetch export, apply, respawn everyone, target-spawner override, debounce
+ * + log) is byte-identical to what a proximity exit already does, just callable directly instead
+ * of gated behind a radius check. This is the genuinely new part: a scripted-sequence coordinator
+ * (packages/simulation/tyler_coldopen.c) can now fire a real level transition the instant its own
+ * final beat completes, with no LevelExit volume authored at all -- exactly the "spawn but no
+ * exit until the scripted event fires" shape the cold open needs, since a non-colliding
+ * STATE_SPECTATOR wisp has no reliable way to "walk into" a trigger volume to begin with. Returns
+ * 1 on a real, successful transition, 0 on a fetch failure (still debounced either way, matching
+ * story_check_level_exits' own existing failure-debounce behavior). */
+static int story_force_level_transition(int next_id, int target_spawner_id, unsigned int now_ms) {
+    if (next_id <= 0) return 0;
+    if (now_ms - g_story_last_level_transition_ms < STORY_LEVEL_TRANSITION_DEBOUNCE_MS) return 0;
+
+    CustomLevelData lvl;
+    if (!level_boxes_fetch_export(next_id, &lvl)) {
+        NET_SERVER_LOG("STORY_LEVEL_TRANSITION_FAILED next_level_id=%d -- export fetch failed", next_id);
+        /* Real debounce even on failure -- an unreachable next level must not be hammered with a
+           real curl fetch every single tick this keeps getting called. */
+        g_story_last_level_transition_ms = now_ms;
+        return 0;
+    }
+    server_apply_custom_level(&lvl);
+    for (int pi = 0; pi < MAX_CLIENTS; pi++) {
+        PlayerState *p = &local_state.players[pi];
+        if (!p->active) continue;
+        p->scene_id = g_server_match_scene;
+        phys_respawn(p, now_ms);
+        // S491, founder real-time -- GTA-style building interiors: "how can i specify which
+        // spawner the exit leads to for the seamless experience of exiting the building." A real,
+        // surgical override: phys_respawn already did its full normal reset (health/state/ammo/
+        // team-or-FFA spawn selection); if the caller named a specific target spawner AND it
+        // still exists in the destination level, just overwrite the resulting position with that
+        // exact spot. A stale/missing target (custom_level_pick_spawner_by_id returns 0) is a
+        // real, honest, non-fatal miss -- the normal spawn position phys_respawn already computed
+        // stands, never a crash or silent mis-teleport.
+        if (target_spawner_id > 0) {
+            float tx, ty, tz;
+            if (custom_level_pick_spawner_by_id(target_spawner_id, &tx, &ty, &tz)) {
+                p->x = tx; p->y = ty; p->z = tz;
+            }
+        }
+    }
+    tyler_apply_phase_override(lvl.name, now_ms);
+    g_story_last_level_transition_ms = now_ms;
+    NET_SERVER_LOG("STORY_LEVEL_TRANSITION next_level_id=%d name=%s target_spawner_id=%d", next_id, lvl.name, target_spawner_id);
+    return 1;
+}
+
 static void story_check_level_exits(unsigned int now_ms) {
     if (g_story_level_exit_count <= 0 || g_story_next_level_id <= 0) return;
     if (now_ms - g_story_last_level_transition_ms < STORY_LEVEL_TRANSITION_DEBOUNCE_MS) return;
@@ -593,39 +712,7 @@ static void story_check_level_exits(unsigned int now_ms) {
         }
     }
     if (!triggered) return;
-
-    int next_id = g_story_next_level_id;
-    CustomLevelData lvl;
-    if (!level_boxes_fetch_export(next_id, &lvl)) {
-        NET_SERVER_LOG("STORY_LEVEL_TRANSITION_FAILED next_level_id=%d -- export fetch failed", next_id);
-        /* Real debounce even on failure -- an unreachable next level must not be hammered with a
-           real curl fetch every single tick a player stands in the exit volume. */
-        g_story_last_level_transition_ms = now_ms;
-        return;
-    }
-    server_apply_custom_level(&lvl);
-    for (int pi = 0; pi < MAX_CLIENTS; pi++) {
-        PlayerState *p = &local_state.players[pi];
-        if (!p->active) continue;
-        p->scene_id = g_server_match_scene;
-        phys_respawn(p, now_ms);
-        // S491, founder real-time -- GTA-style building interiors: "how can i specify which
-        // spawner the exit leads to for the seamless experience of exiting the building." A real,
-        // surgical override: phys_respawn already did its full normal reset (health/state/ammo/
-        // team-or-FFA spawn selection); if the exit that fired this transition named a specific
-        // target spawner AND it still exists in the destination level, just overwrite the
-        // resulting position with that exact spot. A stale/missing target (custom_level_pick_
-        // spawner_by_id returns 0) is a real, honest, non-fatal miss -- the normal spawn position
-        // phys_respawn already computed stands, never a crash or silent mis-teleport.
-        if (triggered_target_spawner_id > 0) {
-            float tx, ty, tz;
-            if (custom_level_pick_spawner_by_id(triggered_target_spawner_id, &tx, &ty, &tz)) {
-                p->x = tx; p->y = ty; p->z = tz;
-            }
-        }
-    }
-    g_story_last_level_transition_ms = now_ms;
-    NET_SERVER_LOG("STORY_LEVEL_TRANSITION next_level_id=%d name=%s target_spawner_id=%d", next_id, lvl.name, triggered_target_spawner_id);
+    story_force_level_transition(g_story_next_level_id, triggered_target_spawner_id, now_ms);
 }
 
 // queue_activate_match -- S459-34, the real MODE_QUEUE match activation. Deliberately much
@@ -985,6 +1072,11 @@ int parse_server_mode(int argc, char **argv) {
             mode = MODE_STORY;
         } else if (strcmp(argv[i], "--story-cave") == 0) {
             mode = MODE_STORY_CAVE;
+        } else if (strcmp(argv[i], "--tyler") == 0) {
+            /* S536, TYLER VALHANNA -- same real gap --story's own comment above already named
+             * and closed for MODE_STORY: without a flag, MODE_TYLER is real in the enum but
+             * unreachable on the dedicated server. */
+            mode = MODE_TYLER;
         }
     }
     return mode;
@@ -1519,6 +1611,14 @@ int main(int argc, char *argv[]) {
            already established -- a real no-op whenever nothing is spawned. */
         witness_ai_tick(&local_state, now);
         story_check_level_exits(now);
+        /* S536, TYLER VALHANNA -- same "safe to call unconditionally" property story_ai_tick's
+         * own comment above already established: tyler_coldopen_tick no-ops the instant
+         * g_tyler_coldopen.active is 0 (every mode/level except MODE_TYLER's own
+         * TYLER_VALHANNA_ICELAND_1986, right after it loads). g_story_next_level_id is already
+         * real and current (captured unconditionally by server_apply_custom_level above) --
+         * exactly CONSTRUCT's own id, since that level's own next_level_id was authored against
+         * it (cmd/nock_gen_tyler_levels/main.go). */
+        tyler_coldopen_tick(&g_tyler_coldopen, now, g_story_next_level_id, story_force_level_transition);
         double now_sec = now_seconds();
         for (int i = 1; i < MAX_CLIENTS; i++) {
             if (slots[i].active && now_sec - slots[i].last_heard > 5.0) {

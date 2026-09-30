@@ -14,8 +14,13 @@
 // --- TUNING ---
 #define GRAVITY_FLOAT 0.025f 
 #define GRAVITY_DROP 0.075f  
-#define JUMP_FORCE 0.95f     
-#define MAX_SPEED 0.95f      
+#define JUMP_FORCE 0.95f
+#define MAX_SPEED 0.95f
+/* FLY_SPEED -- STATE_SPECTATOR's own real vertical fly-control rate (S536, TYLER VALHANNA's
+ * "wisp"), packages/simulation/local_game.h's update_entity. Same order of magnitude as
+ * MAX_SPEED -- a spectator that drifted noticeably slower vertically than it moves horizontally
+ * would feel wrong, not a deliberate design choice. */
+#define FLY_SPEED 0.95f
 // FRICTION/STOP_SPEED -- S478a, founder real-time: "how hard would it be to increase the
 // friction some at the edges of blocks by default so its a little easier to stick to platforms?
 // right now the physics are so slippery it can be unreasonably hard to parkour." Doubled from the

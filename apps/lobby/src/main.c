@@ -40,6 +40,8 @@
 #include "../../../packages/simulation/cutscene.h"
 #include "../../../packages/simulation/typing_lesson.h"
 #include "../../../packages/simulation/local_game.h"
+#include "../../../packages/simulation/tyler_coldopen.h"
+#include "../../../packages/reflux/reflux_mod_host.h"
 #include "../../../packages/world/level_boxes.h"
 #include "../../../packages/world/spray_registry.h"
 #include "../../../packages/render/proc_tex.h"
@@ -6553,6 +6555,15 @@ void draw_player_3rd(PlayerState *p) {
                imported mannequin instead of cloning whatever skin the human player happens to
                have selected. The hero (index 0, is_bot==0) keeps their own chosen skin. */
             forced_skin = SKIN_MANNEQUIN;
+        } else if (local_state.game_mode == MODE_TYLER && !p->is_bot && p->forced_kit != AI_KIT_AUTO) {
+            /* S536, TYLER VALHANNA's Duck phase (CONSTRUCT level) -- the REAL, human-controlled
+             * player forced into the Leela kit (server-side, tyler_apply_phase_override,
+             * apps/server/src/main.c), same SKIN_MANNEQUIN dispatch path story_ai's own bots use,
+             * just not gated to is_bot here: this is the one place in the engine a real player's
+             * own forced_kit (not just a spawned NPC's) is honored, per S492's own doc comment
+             * naming that as the natural generalization, not yet implemented until now. Tyler and
+             * Hana (is_bot AI_ROLE_STORY_ALLY NPCs) already hit the branch above, unaffected. */
+            forced_skin = SKIN_MANNEQUIN;
         }
         int draw_skin = (forced_skin >= 0) ? forced_skin : clamp_skin_id(g_selected_skin);
         const CharacterDefinition *def = character_definition_for_skin(draw_skin);
@@ -7363,6 +7374,72 @@ void draw_hud(PlayerState *p) {
         }
     }
 
+
+    /* S536, TYLER VALHANNA -- subtitle box anchored bottom-left, deliberately small (not full
+     * screen, per the founder's own "have that show up on an actual computer screen that is a
+     * monitor... not cover the full screen" ask) -- polls this PROCESS's own REFLUX log for the
+     * latest REFLUX_ACTION_TYLER_BEAT and looks the matching line up in g_tyler_coldopen_beats,
+     * the same array packages/simulation/tyler_coldopen.c's own coordinator uses to author the
+     * beats in the first place (one real, shared source of truth, not a duplicated text table).
+     * Real, honest, named limitation: this only ever finds anything in LOCAL single-player mode,
+     * where apps/lobby IS the process ticking tyler_coldopen_tick and dispatching into its own
+     * in-memory RefluxLog. Against a dedicated apps/server process, that dispatch happens in a
+     * completely separate process's own memory (REFLUX has no wire-protocol packet at all, see
+     * packages/reflux/reflux_runtime.c's own doc comment) -- a real, separate, not-yet-built
+     * follow-up (a PACKET_TYLER_BEAT broadcast), not silently broken, just not reachable from this
+     * client over a real network connection yet. */
+    if (local_state.game_mode == MODE_TYLER) {
+        int log_n = reflux_log_size();
+        int latest_beat = -1;
+        for (int li = log_n - 1; li >= 0 && li >= log_n - 32; li--) {
+            if (reflux_action_type_at(li) == REFLUX_ACTION_TYLER_BEAT) { latest_beat = reflux_action_a_at(li); break; }
+        }
+        if (latest_beat >= 0 && latest_beat < g_tyler_coldopen_beat_count) {
+            glColor4f(0.02f, 0.05f, 0.03f, 0.72f);
+            glBegin(GL_QUADS);
+            glVertex2f(40, 60); glVertex2f(560, 60); glVertex2f(560, 150); glVertex2f(40, 150);
+            glEnd();
+            glColor3f(0.20f, 0.95f, 0.35f); /* ECS phosphor green, matching ecs_screen_glow.prn */
+            draw_string("ECS TERMINAL", 52, 132, 2);
+            glColor3f(0.85f, 0.98f, 0.88f);
+            /* Manual two-line wrap -- no draw_wrapped_string helper exists in this file, checked
+             * directly rather than assumed. Splits at the first real word boundary at/after the
+             * halfway character, same simple, honest approach as this file's own other small,
+             * single-purpose text formatting (draw_string itself has no wrapping at all). */
+            {
+                const char *full = g_tyler_coldopen_beats[latest_beat].subtitle;
+                int len = (int)strlen(full);
+                int split = len / 2;
+                while (split < len && full[split] != ' ') split++;
+                char line1[TYLER_COLDOPEN_SUBTITLE_LEN], line2[TYLER_COLDOPEN_SUBTITLE_LEN];
+                int l1 = split < len ? split : len;
+                if (l1 >= (int)sizeof(line1)) l1 = (int)sizeof(line1) - 1;
+                memcpy(line1, full, l1); line1[l1] = '\0';
+                snprintf(line2, sizeof(line2), "%s", (split < len) ? full + split + 1 : "");
+                draw_string(line1, 52, 112, 2);
+                draw_string(line2, 52, 92, 2);
+            }
+        }
+        /* Wisp particle effect -- STATE_SPECTATOR (the wisp phase, ICELAND level) only. A real,
+         * first particle-style effect in this engine (checked directly before writing this: no
+         * particle system exists anywhere in packages/render), not a port of something SHANKPIT
+         * already had -- a deliberately small, honest v0: a handful of world-anchored-looking but
+         * actually screen-space, slowly-orbiting glow points around the crosshair, cheap immediate-
+         * mode GL_POINTS, no new asset/shader needed. */
+        if (p->state == STATE_SPECTATOR) {
+            glPointSize(6.0f);
+            glBegin(GL_POINTS);
+            for (int wi = 0; wi < 6; wi++) {
+                float ang = (float)now_ms * 0.0016f + wi * 1.047f; /* 2*pi/6 apart */
+                float wx = 640.0f + cosf(ang) * 34.0f;
+                float wy = 360.0f + sinf(ang) * 34.0f;
+                float glow = 0.55f + 0.45f * sinf((float)now_ms * 0.004f + wi);
+                glColor4f(0.55f * glow, 0.85f * glow, 1.0f * glow, 0.8f);
+                glVertex2f(wx, wy);
+            }
+            glEnd();
+        }
+    }
 
     if (local_state.game_mode == MODE_TDMB || local_state.game_mode == MODE_TDMO) {
         char score_buf[96];
@@ -8268,6 +8345,20 @@ void draw_scene(PlayerState *render_p) {
             glRotatef(-cam_yaw, 0, 1, 0);
             glTranslatef(-heli_cam_x, -heli_cam_y, -heli_cam_z);
         }
+    } else if (local_state.game_mode == MODE_TYLER && render_p->forced_kit == AI_KIT_LEELA) {
+        /* S536, TYLER VALHANNA's Duck phase (CONSTRUCT level) -- a real spherical orbit camera,
+         * the same formula PAPERCRAFT's own apps/client/src/main.c already proved (cam_dist *
+         * cos/sin(pitch) around the player, pitch purely client-local mouse-look, never touching
+         * the player's own server-authoritative yaw/facing) -- ported into THIS engine's existing
+         * cx/cz/cam_y third-person mechanism (already live for vehicles/death-cam above) rather
+         * than a second, parallel camera path. Every other mode's camera math is completely
+         * unchanged by this branch. */
+        #define TYLER_DUCK_CAM_DIST 6.0f
+        float rad = -cam_yaw * 0.01745f;
+        float prad = cam_pitch * 0.01745f;
+        cx = sinf(rad) * TYLER_DUCK_CAM_DIST * cosf(prad);
+        cz = cosf(rad) * TYLER_DUCK_CAM_DIST * cosf(prad);
+        cam_y = 1.0f + TYLER_DUCK_CAM_DIST * sinf(prad);
     } else {
         float follow_yaw = cam_yaw;
         float cam_z_off = cam_buggy ? 26.0f : (render_p->in_vehicle ? 10.0f : lerpf(0.0f, 8.5f, death_cam_blend));

@@ -83,6 +83,17 @@ typedef struct {
 
 #define STATE_ALIVE 0
 #define STATE_DEAD  1
+/* STATE_SPECTATOR -- defined since before this comment existed but, checked directly, never
+ * actually read by any collision/gravity/render code anywhere in this file's own consumers
+ * (packages/common/physics.h, packages/simulation/local_game.h) -- a real, honest gap, not a
+ * working feature nobody happened to use. Made real for TYLER VALHANNA's cold open (S536, "you
+ * are a floating orb like a wisp... no collision... flies through walls"): phys_tick_player
+ * (physics.h) now skips AABB collision and gravity entirely when p->state==STATE_SPECTATOR,
+ * and local_update/server_tick (local_game.h / apps/server/src/main.c) drive full 3D free-fly
+ * movement (pitch-aware forward vector, not the ground-locked yaw-only vector every other state
+ * uses) instead of the usual accelerate()+gravity path. This is a genuinely reusable engine
+ * capability now, not a TYLER-only hack -- any future spectator/observer/ghost-camera need in
+ * any mode gets it for free. */
 #define STATE_SPECTATOR 2
 
 #define WPN_KNIFE 0
@@ -531,7 +542,19 @@ typedef struct {
  * rl_bot_pool.py precedent (a standing pool of real UDP clients queuing through the same real
  * matchmaker packets humans use) more literally than BRAWLPIT's own ORDINARY matchmaker bot-fill
  * (which is actually the same in-process-puppet pattern TDMO already uses here). */
-typedef enum { MODE_DEATHMATCH=0, MODE_TDM=1, MODE_SURVIVAL=2, MODE_CTF=3, MODE_ODDBALL=4, MODE_LOCAL=98, MODE_NET=99, MODE_EVOLUTION=100, MODE_TDMB=101, MODE_TDMO=102, MODE_CTFB=103, MODE_CTFO=104, MODE_STORY=105, MODE_HEADED_BOT=106, MODE_STORY_CAVE=107, MODE_QUEUE=108 } GameMode;
+/* MODE_TYLER=109 -- TYLER VALHANNA cold open (episodes/vh01_valhanna_coldopen.md), founder
+ * real-time: "bring it to life with the shankpit engine... write a new game mode called TYLER...
+ * this is a demo for BIG_O" (S536 BIG_O<->SHANKPIT engine merge track, docs2/specs/
+ * BIGO_ENGINE_MERGE_NORTHSTAR.md). Two real, distinct phases sharing one game mode number (the
+ * level transition between them is what actually changes what the player controls, not the mode
+ * itself -- same "mode stays constant, level/state changes" shape MODE_STORY already uses across
+ * VOXWORLD vs MODE_STORY_CAVE's own separate mode number, except here both phases deliberately
+ * share MODE_TYLER since neither is a combat encounter needing its own bot-fill/scoring rules):
+ * phase 1 (level tyler_1986_iceland) -- the player is a spectator-state "wisp" (see
+ * STATE_SPECTATOR below) watching an AI_MODE_SCRIPTED Tyler+Hana sequence; phase 2 (level
+ * construct) -- the player controls the Duck (gband_skel_npc "Leela" kit) in third person. See
+ * packages/simulation/tyler_coldopen.h for the scripted-sequence coordinator. */
+typedef enum { MODE_DEATHMATCH=0, MODE_TDM=1, MODE_SURVIVAL=2, MODE_CTF=3, MODE_ODDBALL=4, MODE_LOCAL=98, MODE_NET=99, MODE_EVOLUTION=100, MODE_TDMB=101, MODE_TDMO=102, MODE_CTFB=103, MODE_CTFO=104, MODE_STORY=105, MODE_HEADED_BOT=106, MODE_STORY_CAVE=107, MODE_QUEUE=108, MODE_TYLER=109 } GameMode;
 typedef enum {
     STORY_PHASE_CUTSCENE = 0,    /* intro cutscene (TYLER episode — Tyler arrives) */
     STORY_PHASE_PLAYING = 1,

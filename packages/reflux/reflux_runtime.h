@@ -54,6 +54,16 @@
  * player had been looking when the threshold fired). */
 #define REFLUX_ACTION_LOOK_AT 4
 
+/* TYLER VALHANNA cold open (S536, episodes/vh01_valhanna_coldopen.md), packages/simulation/
+ * tyler_coldopen.c -- dispatched once per scripted-sequence beat transition (Tyler/Hana wake,
+ * Tyler reaches the printer, Hana pleads, Tyler feeds the paper back in, Tyler hits the button,
+ * ...). This is the real "script it in with REFLUX" mechanism: the coordinator that drives
+ * story_ai_trigger_scripted never knows or cares who's listening, and the client-side subtitle
+ * renderer (apps/lobby/src/main.c) never knows or cares who dispatched it -- same dispatcher-
+ * never-knows-the-subscriber shape REFLUX_ACTION_BUTTON_PRESSED already established. Payload:
+ * a = beat id (see TylerBeat enum, tyler_coldopen.h), b/c unused (0). */
+#define REFLUX_ACTION_TYLER_BEAT 5
+
 /* BIG_O engine merge phase 6 (EMILY/BACKLOG.md SECTION 536) -- real world-clock events, dispatched
  * by packages/simulation/world_alert_bridge.c on every real day_night_clock (phase 1) phase/
  * weather transition, matching PARENA/stdlib/shankpit/world_alerts_mod.prn's own expected action-

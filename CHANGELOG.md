@@ -1,5 +1,39 @@
 # Changelog
 
+## 2026-09-30
+
+- MODE_TYLER (S536 sub-pass, Apple #21441): TYLER VALHANNA's cold open (`TYLER/episodes/
+  vh01_valhanna_coldopen.md`) as a real, live-verified SHANKPIT game mode -- a demo for BIG_O's
+  own day(FPS)/night(third-person) dual register. New `MODE_TYLER=109`; `STATE_SPECTATOR` made
+  real for the first time (a genuine no-clip free-fly wisp -- defined for years, never actually
+  read by any collision/gravity code, checked directly). New `packages/simulation/
+  tyler_coldopen.{h,c}`: an 8-beat Half-Life `scripted_sequence`-style coordinator driving the
+  already-built `story_ai_trigger_scripted`/`AI_MODE_SCRIPTED`, dispatching the new
+  `REFLUX_ACTION_TYLER_BEAT` plus the existing `REFLUX_ACTION_BUTTON_PRESSED` on Tyler's own
+  scripted button-press beat. New scriptable "exit" primitive, `story_force_level_transition`
+  (factored out of `story_check_level_exits`' own already-proven transition body), called directly
+  by the coordinator instead of requiring a `LevelExit` trigger volume -- "spawn but no exit" is
+  the literal absence of one. Two real levels created live in IDUNA's own NOCK registry
+  (`TYLER_VALHANNA_ICELAND_1986` id 24, `CONSTRUCT` id 23, chained via `next_level_id`) through a
+  new one-shot loader, `IDUNA/cmd/nock_gen_tyler_levels`. Two real PARENA-generated procedural
+  textures (`PARENA/stdlib/shankpit/textures/institutional_tile.prn`/`ecs_screen_glow.prn`)
+  compiled through the real, already-existing procgen pipeline via a new one-shot loader,
+  `IDUNA/cmd/nock_gen_textures` (bypasses `texture-generate`'s Vertex AI requirement). Third-person
+  Duck camera (`AI_KIT_LEELA` mannequin kit -- the real, existing two-legged/no-arm rig) ports
+  PAPERCRAFT's own real orbit-camera formula (`PAPERCRAFT/apps/client/src/main.c`) into this
+  engine's existing `cx`/`cz`/`cam_y` third-person mechanism, not a second camera path.
+  `make server`/`make lobby` both build clean, zero new warnings. **Live-verified end to end,
+  server-side**: a real running dedicated server (`--tyler` flag) logs the full sequence --
+  `MODE_SELECTED mode=109` -> `TYLER_COLDOPEN_STARTED` -> all 8 beats' real hold timers ->
+  `STORY_LEVEL_TRANSITION next_level_id=23 name=CONSTRUCT` firing against the live IDUNA registry.
+  Real, honest, not landed this pass (all named in `docs2/specs/TYLER_VALHANNA_MODE_NORTHSTAR.md`):
+  rigid body is a forward-compatible marker only (the real XPBD backend already exists,
+  `packages/simulation/rigid_ragdoll.{h,c}`, S527); subtitle rendering + the coordinator itself
+  only reach LOCAL single-player mode (REFLUX has no wire-protocol packet); the screen/button
+  props are found by hardcoded world position, not name/material lookup; no client rendering was
+  visually verified (no GL driver in this sandbox). Golden doc registered
+  (`golden-docs-index.md`), `GOLDEN_DOCS` resynced.
+
 ## 2026-09-28
 - Scale SHANKPIT queue bot pool 8 -> 4 (founder real-time, box-wide memory pressure that was OOM-looping iduna.service; live unit + repo copy both updated, memory freed 352Mi->2.8Gi, swap 495Mi full->266Mi used, iduna stable since) (sess-20260923-1030-4a526255)
 

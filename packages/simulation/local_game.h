@@ -1482,6 +1482,28 @@ void update_entity(PlayerState *p, float dt, void *server_context, unsigned int 
         return;
     }
 
+    if (p->state == STATE_SPECTATOR) {
+        /* Real, honest v0 free-fly (S536, TYLER VALHANNA's "wisp" -- packages/common/protocol.h's
+         * own doc comment on STATE_SPECTATOR). No gravity, no collision -- p->vx/p->vz were
+         * already set by this tick's own accelerate() call (same caller convention every other
+         * state uses), so this branch's only real job is: integrate them with zero drag from a
+         * wall that no longer exists for this player, and add vertical fly control. Deliberately
+         * NOT pitch-driven (p->pitch is a real wire field but, checked directly, no UserCmd-apply
+         * site anywhere in this codebase actually copies it in from the client -- a real, separate,
+         * pre-existing gap, not something to silently fix as a side effect here): BTN_JUMP/
+         * crouching give real, simple up/down control instead, the same convention a spectator/
+         * noclip mode in most engines already uses. */
+        p->x += p->vx;
+        p->z += p->vz;
+        if (p->in_jump) p->y += FLY_SPEED;
+        else if (p->crouching) p->y -= FLY_SPEED;
+        p->vy = 0.0f;
+        p->on_ground = 0;
+        if (p->recoil_anim > 0.0f) p->recoil_anim -= 0.1f;
+        if (p->recoil_anim < 0.0f) p->recoil_anim = 0.0f;
+        return;
+    }
+
     if (cmd_time < p->stunned_until_ms) {
         p->in_fwd = 0.0f;
         p->in_strafe = 0.0f;
