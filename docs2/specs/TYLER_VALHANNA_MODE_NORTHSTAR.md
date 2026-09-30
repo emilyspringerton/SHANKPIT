@@ -132,6 +132,44 @@ level-transition mechanism).
   mode-specific clip choice — Tyler/Hana play whatever `gband_skel_npc`'s existing idle/walk
   switching already does, not a bespoke "read printout"/"plead" gesture.
 
+## Engine-merge continuation — third_person becomes a real, mode-agnostic capability
+
+Founder real-time, same session: *"WE NEED TO MERGE THE 2 ENGINES THIS IS LIKE BUILDING HALF LIFE
+1 AND 2 AT THE SAME TIME ITS READY TO MERGE IT ALL IN"* → *"THIS IS A DEMO FOR BIG_O"* → (next
+session) *"continue to merge the 2 engines."* The pass above proved the tech (PAPERCRAFT's real
+orbit camera works inside SHANKPIT's own pre-existing `cx`/`cz`/`cam_y` mechanism) but shipped it as
+a demo-shaped hack: the camera branch was gated on `local_state.game_mode == MODE_TYLER &&
+render_p->forced_kit == AI_KIT_LEELA` — two unrelated concerns (which game mode is running, which
+skin a player wears) standing in for the one real thing that should gate a camera choice: does
+*this player* want third person.
+
+**What changed this pass**: a new, standalone, wire-synced `PlayerState.third_person` /
+`NetPlayer.third_person` field (`packages/common/protocol.h`), following `forced_kit`'s own exact
+established pattern (server sets it, `apps/server/src/main.c`'s snapshot loop serializes it,
+`apps/lobby/src/main.c` deserializes it into the local mirror). The camera branch in
+`apps/lobby/src/main.c` now keys on `render_p->third_person` alone — mode-agnostic, skin-agnostic.
+`tyler_apply_phase_override` is still the only real caller (the Duck phase sets `third_person=1`
+alongside, not instead of, `forced_kit=AI_KIT_LEELA`; the wisp phase sets both to 0/off) — that
+hasn't changed behaviorally. What changed is that this is no longer MODE_TYLER's own private hack:
+any future mode (the real target being `MODE_STORY`'s not-yet-built night/social-stealth register,
+per `BIGO_ENGINE_MERGE_NORTHSTAR.md`) can now request third person for a real player by setting one
+field, with no new camera branch to write.
+
+**Verified**: `make server`/`make lobby` both build clean, zero new warnings. Re-ran the exact same
+live end-to-end smoke test (`--tyler --port 16969 --level examples/tyler-valhanna/
+tyler_1986_iceland.json`, non-conflicting port so as not to touch the live `:6969`/`:6971`
+services) — identical log sequence (`MODE_SELECTED mode=109` → `CUSTOM_LEVEL_CHARACTERS_SPAWNED
+count=2` → `TYLER_COLDOPEN_STARTED` → `STORY_LEVEL_TRANSITION next_level_id=23 name=CONSTRUCT`),
+zero behavior drift from the generalization.
+
+**Real, honest, not landed this pass**: `MODE_STORY` itself does not yet set `third_person` for
+anyone — there is no "night phase" gameplay concept built yet (`lab_sim.c` still has zero UI/
+interaction model, per `BIGO_ENGINE_MERGE_NORTHSTAR.md` §3). This pass makes the flag real and
+ready, it does not invent a second consumer speculatively. No aiming/hitscan adjustment was made
+for a hypothetical third-person combat mode — every live combat mode still defaults `third_person`
+to 0 via the same zero-initialization `forced_kit` already relied on, so "combat still works in
+regular SHANKPIT modes" holds exactly as before, unchanged.
+
 ## Related
 
 - `TYLER/episodes/vh01_valhanna_coldopen.md` — the real script this mode stages.

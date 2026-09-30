@@ -628,12 +628,17 @@ static void tyler_apply_phase_override(const char *level_name, unsigned int now_
              * on itself (not just story_ai-spawned bots) actually renders. */
             p->state = STATE_ALIVE;
             p->forced_kit = AI_KIT_LEELA;
+            /* third_person is a real, separate flag from forced_kit as of this pass (see
+             * PlayerState's own doc comment, protocol.h) -- the Duck phase sets both together,
+             * but the camera itself now keys off this field alone, not the skin choice. */
+            p->third_person = 1;
         } else {
             /* The wisp -- real STATE_SPECTATOR free-fly (packages/common/protocol.h,
              * packages/simulation/local_game.h's update_entity), no forced skin at all (nothing
-             * should render a body for a camera-only orb). */
+             * should render a body for a camera-only orb), and no third-person camera either. */
             p->state = STATE_SPECTATOR;
             p->forced_kit = AI_KIT_AUTO;
+            p->third_person = 0;
         }
     }
     (void)now_ms;
@@ -1336,6 +1341,7 @@ void server_broadcast() {
             np.storm_charges = (unsigned char)p->storm_charges;
             np.anim_override = (unsigned char)p->anim_override;
             np.forced_kit = (unsigned char)p->forced_kit;
+            np.third_person = (unsigned char)(p->third_person ? 1 : 0);
             np.kills = (unsigned short)(p->kills < 0 ? 0 : p->kills);
             np.deaths = (unsigned short)(p->deaths < 0 ? 0 : p->deaths);
             unsigned int death_elapsed = 0;

@@ -8345,20 +8345,25 @@ void draw_scene(PlayerState *render_p) {
             glRotatef(-cam_yaw, 0, 1, 0);
             glTranslatef(-heli_cam_x, -heli_cam_y, -heli_cam_z);
         }
-    } else if (local_state.game_mode == MODE_TYLER && render_p->forced_kit == AI_KIT_LEELA) {
-        /* S536, TYLER VALHANNA's Duck phase (CONSTRUCT level) -- a real spherical orbit camera,
-         * the same formula PAPERCRAFT's own apps/client/src/main.c already proved (cam_dist *
-         * cos/sin(pitch) around the player, pitch purely client-local mouse-look, never touching
-         * the player's own server-authoritative yaw/facing) -- ported into THIS engine's existing
-         * cx/cz/cam_y third-person mechanism (already live for vehicles/death-cam above) rather
-         * than a second, parallel camera path. Every other mode's camera math is completely
-         * unchanged by this branch. */
-        #define TYLER_DUCK_CAM_DIST 6.0f
+    } else if (render_p->third_person) {
+        /* S536, engine-merge continuation past the MODE_TYLER demo pass -- a real spherical orbit
+         * camera, the same formula PAPERCRAFT's own apps/client/src/main.c already proved
+         * (cam_dist * cos/sin(pitch) around the player, pitch purely client-local mouse-look,
+         * never touching the player's own server-authoritative yaw/facing) -- ported into THIS
+         * engine's existing cx/cz/cam_y third-person mechanism (already live for vehicles/
+         * death-cam above) rather than a second, parallel camera path. Originally gated on
+         * "MODE_TYLER && forced_kit==AI_KIT_LEELA" (a demo-shaped hack conflating game mode AND
+         * character skin with camera choice); now keyed on PlayerState.third_person alone -- a
+         * real, mode-agnostic, skin-agnostic engine capability any mode can set (see that field's
+         * own doc comment, protocol.h, for the real target consumer: MODE_STORY's not-yet-built
+         * night/social-stealth register). Every other mode's camera math is completely unchanged
+         * by this branch -- it fires only for a player this flag was explicitly set on. */
+        #define THIRD_PERSON_CAM_DIST 6.0f
         float rad = -cam_yaw * 0.01745f;
         float prad = cam_pitch * 0.01745f;
-        cx = sinf(rad) * TYLER_DUCK_CAM_DIST * cosf(prad);
-        cz = cosf(rad) * TYLER_DUCK_CAM_DIST * cosf(prad);
-        cam_y = 1.0f + TYLER_DUCK_CAM_DIST * sinf(prad);
+        cx = sinf(rad) * THIRD_PERSON_CAM_DIST * cosf(prad);
+        cz = cosf(rad) * THIRD_PERSON_CAM_DIST * cosf(prad);
+        cam_y = 1.0f + THIRD_PERSON_CAM_DIST * sinf(prad);
     } else {
         float follow_yaw = cam_yaw;
         float cam_z_off = cam_buggy ? 26.0f : (render_p->in_vehicle ? 10.0f : lerpf(0.0f, 8.5f, death_cam_blend));
@@ -9619,6 +9624,7 @@ void net_process_snapshot(char *buffer, int len) {
         p->hit_feedback = np->hit_feedback;
         p->anim_override = np->anim_override;
         p->forced_kit = np->forced_kit;
+        p->third_person = np->third_person;
         if (net_prev_kills[id] >= 0 && (int)np->kills > net_prev_kills[id]) {
             char kill_msg[CHAT_LINE_MAX];
             const char *tag = (id == my_client_id) ? "[you]" : "[bot]";

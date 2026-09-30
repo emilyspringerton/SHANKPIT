@@ -33,6 +33,18 @@
   props are found by hardcoded world position, not name/material lookup; no client rendering was
   visually verified (no GL driver in this sandbox). Golden doc registered
   (`golden-docs-index.md`), `GOLDEN_DOCS` resynced.
+- S536 engine-merge continuation (Apple #21444): generalized MODE_TYLER's third-person camera from
+  a demo-shaped hack (`MODE_TYLER && forced_kit==AI_KIT_LEELA`) into a real, standalone,
+  wire-synced `PlayerState.third_person`/`NetPlayer.third_person` field (`packages/common/
+  protocol.h`), following `forced_kit`'s own established server-sets/serialize/deserialize pattern.
+  `apps/lobby/src/main.c`'s camera branch now keys on `render_p->third_person` alone --
+  mode-agnostic, skin-agnostic -- so any future mode (the real target: `MODE_STORY`'s not-yet-built
+  night/social-stealth register) can request third person for a real player with one field, no new
+  camera branch. `tyler_apply_phase_override` is still the only real caller this pass, unchanged
+  behaviorally. `make server`/`make lobby` both clean, zero new warnings; re-ran the live
+  end-to-end MODE_TYLER smoke test on a non-conflicting port (`--port 16969`, so as not to touch
+  the live `:6969`/`:6971` services) -- identical log sequence, zero drift. See
+  `docs2/specs/TYLER_VALHANNA_MODE_NORTHSTAR.md`'s own new "Engine-merge continuation" section.
 
 ## 2026-09-28
 - Scale SHANKPIT queue bot pool 8 -> 4 (founder real-time, box-wide memory pressure that was OOM-looping iduna.service; live unit + repo copy both updated, memory freed 352Mi->2.8Gi, swap 495Mi full->266Mi used, iduna stable since) (sess-20260923-1030-4a526255)

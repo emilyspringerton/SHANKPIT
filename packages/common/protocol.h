@@ -289,6 +289,15 @@ typedef struct {
     // forced_kit -- wire counterpart to PlayerState's own field of the same name (S492). Same
     // real 1 byte/player/snapshot cost as anim_override above; 0 = auto, 1..5 = an explicit kit.
     unsigned char forced_kit;
+    // third_person -- wire counterpart to PlayerState's own field of the same name (S536, engine
+    // merge continuation). Same real 1 byte/player/snapshot cost as forced_kit above. Deliberately
+    // a SEPARATE flag from forced_kit, not folded into it -- MODE_TYLER's own Duck phase was the
+    // first real caller and originally gated the camera directly on "forced_kit==AI_KIT_LEELA",
+    // but camera perspective and character skin are two independent concerns (a future mode could
+    // want third-person on the player's own default skin, or a forced skin viewed in first person)
+    // -- see draw_scene's own camera-selection block in apps/lobby/src/main.c for the real,
+    // generalized consumer.
+    unsigned char third_person;
 } NetPlayer;
 
 typedef struct {
@@ -430,6 +439,21 @@ typedef struct {
        draw_player_skin_mannequin kits[5] array order -- same class of manual cross-boundary sync
        AIRole's own comment above already accepts. */
     int forced_kit;
+    /* third_person -- S536, the BIG_O<->SHANKPIT/PAPERCRAFT engine-merge track's own continuation
+       past the MODE_TYLER demo pass. That pass proved PAPERCRAFT's real orbit-camera formula
+       (PAPERCRAFT/apps/client/src/main.c) ported cleanly into this engine's pre-existing cx/cz/
+       cam_y third-person mechanism (already live for vehicles/death-cam), but gated the whole
+       thing on "MODE_TYLER && forced_kit==AI_KIT_LEELA" -- a demo-shaped hack, not a real engine
+       capability, since it hard-coded BOTH a specific game mode AND a specific character skin as
+       the trigger for a genuinely mode-agnostic, skin-agnostic camera choice. This field is the
+       fix: a real, standalone, server-authoritative third-person toggle any mode can set on any
+       player independent of forced_kit, matching forced_kit's own "0 = auto/off" convention (0 =
+       first person, 1 = third person). tyler_apply_phase_override (apps/server/src/main.c) is
+       still the only real caller this pass (the Duck phase sets it alongside, not instead of,
+       forced_kit=AI_KIT_LEELA) -- the real target consumer is MODE_STORY's own not-yet-built
+       night/social-stealth register (BIGO_ENGINE_MERGE_NORTHSTAR.md's own "night" phase), which can
+       now set this flag directly whenever it lands, without needing a third camera branch. */
+    int third_person;
 } PlayerState;
 
 typedef struct {
