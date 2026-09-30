@@ -570,6 +570,12 @@ only -- limbs don't collide with each other or with level walls. The new Bazel t
 - **S Key**: Smart mode (31 neural network bots)
 - **N Key**: Network multiplayer
 
+*(This list predates most of the real `GameMode` enum in `packages/common/protocol.h` and is kept
+here as historical UI-binding documentation, not a current mode inventory -- see that enum for the
+real, current list, which now runs through `MODE_TYLER=109`: TYLER VALHANNA's cold open
+(`docs2/specs/TYLER_VALHANNA_MODE_NORTHSTAR.md`), a scripted-sequence + third-person demo for the
+S536 BIG_O engine-merge track, reachable via `--tyler` on the dedicated server.)*
+
 ### 5. Training Interface (`apps/training/headless.c`)
 
 **Purpose**: Headless simulation for reinforcement learning
