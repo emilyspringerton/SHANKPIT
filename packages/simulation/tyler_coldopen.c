@@ -2,6 +2,18 @@
 #include "tyler_coldopen.h"
 #include "story_ai.h"
 #include "../reflux/reflux_runtime.h"
+#include "tyler_voice_clips.h"
+
+/* From PARENA stdlib/tyler/voice_mod.prn (generated, tyler_voice_mod.c). */
+int on_tyler_voice_stretched_hold_ms(int, int, int);
+#define TYLER_VOICE_PAD_MS 500
+
+/* Beat hold actually used: the authored hold_ms, stretched when the Piper-rendered line for this
+ * beat (tyler_voice_clips.h) would otherwise be cut off by the next beat. */
+static unsigned int tyler_effective_hold(int beat_index, const TylerBeat *beat) {
+    return (unsigned int)on_tyler_voice_stretched_hold_ms((int)g_tyler_voice_clip_ms[beat_index],
+                                                          (int)beat->hold_ms, TYLER_VOICE_PAD_MS);
+}
 
 /* Marker positions match TYLER_VALHANNA_ICELAND_1986's own authored props exactly (see
  * cmd/nock_gen_tyler_levels/main.go, IDUNA): printer box at (4, 0.5, -4), ecs_screen box at
@@ -56,7 +68,8 @@ void tyler_coldopen_tick(TylerColdOpenState *st, unsigned int now_ms, int next_l
     const TylerBeat *beat = &g_tyler_coldopen_beats[st->current_beat];
 
     if (!st->beat_triggered) {
-        tyler_coldopen_trigger_actor(st, beat->actor, beat->x, beat->y, beat->z, beat->hold_ms, now_ms);
+        tyler_coldopen_trigger_actor(st, beat->actor, beat->x, beat->y, beat->z,
+                                     tyler_effective_hold(st->current_beat, beat), now_ms);
         /* REFLUX_ACTION_TYLER_BEAT -- the real "script it in with REFLUX" dispatch, once per
          * beat transition. Payload a = beat index; apps/lobby/src/main.c's subtitle renderer
          * polls this same log independently, with zero reference back to this file, matching
@@ -75,7 +88,7 @@ void tyler_coldopen_tick(TylerColdOpenState *st, unsigned int now_ms, int next_l
         st->beat_started_ms = now_ms;
     }
 
-    if (now_ms - st->beat_started_ms < beat->hold_ms) return;
+    if (now_ms - st->beat_started_ms < tyler_effective_hold(st->current_beat, beat)) return;
 
     if (beat->fires_button) {
         /* The new, scriptable "exit" primitive (S536) -- called directly the instant this final
