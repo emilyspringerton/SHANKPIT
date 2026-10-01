@@ -90,6 +90,46 @@ typedef struct {
 extern const TylerVoiceLine g_tyler_voice_lines[TYLER_VOICE_MAX_LINES];
 extern const int g_tyler_voice_line_count;
 
+/* ---- Beat view + voice edge-driver (SDL-free; shared by the server's wire packet and the lobby) ----
+ * A TylerBeatView is the WHOLE playback-relevant state at one instant: which beat is running and how
+ * far into it we are. The coordinator's beat clock is the authority, and it drifts from the table's
+ * cumulative holds (each beat costs ~2 extra ticks: an advance tick, then a trigger tick), so a
+ * client can never derive the beat from one start timestamp -- it must be told. The same struct is
+ * built locally (tyler_coldopen_get_view on the lobby's own coordinator) or received over the wire
+ * (PACKET_TYLER_BEAT), and the driver below turns a stream of them into playback commands. */
+typedef struct {
+    int beat;                    /* running beat index, -1 = nothing started yet */
+    unsigned int beat_elapsed_ms; /* ms since that beat's trigger tick */
+    int done;                    /* 1 once the cold open has exited */
+    int tyler_slot, hana_slot;   /* player slots the speakers' positions come from */
+} TylerBeatView;
+
+/* Fills *out for now_ms. Reports the PREVIOUS beat while the next one has not triggered yet (the
+ * advance tick -> trigger tick gap), so elapsed is never measured against a stale beat_started_ms. */
+void tyler_coldopen_get_view(const TylerColdOpenState *st, unsigned int now_ms, TylerBeatView *out);
+
+typedef struct {
+    int line_index;              /* index into g_tyler_voice_lines */
+    unsigned int seek_ms;        /* start this far into the clip (late join / lost-packet recovery) */
+    int speaker_slot;            /* player slot whose position the voice comes from */
+} TylerVoiceCmd;
+
+typedef struct {
+    int last_beat;               /* beat of the previous step, -1 = none */
+    unsigned int started_mask;   /* lines of last_beat already started or deliberately skipped */
+} TylerVoiceDriver;
+
+void tyler_voice_driver_reset(TylerVoiceDriver *d);
+
+/* One step of the edge-driver: call with every fresh view (every frame locally, every packet over the
+ * wire). Writes up to `max` start commands to out[] and returns how many; *stop_all = 1 when anything
+ * still playing must be cut (the beat jumped by more than one, went backwards, or the cold open
+ * ended). Idempotent: a repeated view for the same beat never retriggers a line, a line that is already
+ * over when first seen (late joiner) is marked started and never replays, and a line first seen
+ * mid-clip is started with the matching seek. The scheduling decisions (pending/playing/over, seek)
+ * come from PARENA tyler/voice-mod. */
+int tyler_voice_driver_step(TylerVoiceDriver *d, const TylerBeatView *v, TylerVoiceCmd *out, int max, int *stop_all);
+
 /* tyler_coldopen_start -- call once, right after this level's two AI_ROLE_STORY_ALLY characters
  * have been spawned (server_apply_custom_level's own existing character-spawn pass already does
  * this via story_ai_spawn_enemy for any NOCK-authored character; tyler_slot/hana_slot are

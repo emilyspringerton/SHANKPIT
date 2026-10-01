@@ -299,12 +299,107 @@ static void test_t2_assets_and_timeline(void) {
     }
 }
 
+/* T1: the voice edge-driver on the REAL coordinator (simulated 16 ms clock): each voiced line starts
+ * exactly once, on its beat's dispatch tick (+ its offset), with ~no seek; the silent beat starts
+ * nothing; the only stop_all of a clean run is the final "done". */
+static void test_t1_driver_on_real_coordinator(void) {
+    TylerColdOpenState st; CustomLevelData lvl; int ty, ha;
+    memset(&lvl, 0, sizeof lvl);
+    if (!setup_local_tyler(&st, &lvl, &ty, &ha)) { CHECK(0, "T1 setup failed"); return; }
+    TylerVoiceDriver drv; tyler_voice_driver_reset(&drv);
+    typedef struct { unsigned int t; int line; unsigned int seek; int slot; } Start;
+    Start starts[32]; int ns = 0, stop_alls = 0, stop_before_done = 0;
+    unsigned int beat_t[TYLER_COLDOPEN_MAX_BEATS + 1] = {0}; int nb = 0, cursor = 0;
+    unsigned int now = 1; g_exit_at = 0;
+    for (int t = 0; t < 4000; t++) {
+        now += 16;
+        tyler_coldopen_tick(&st, now, 23, stub_exit);
+        for (int n = reflux_host_log_size(); cursor < n; cursor++)
+            if (reflux_host_action_type_at(cursor) == REFLUX_ACTION_TYLER_BEAT && nb < TYLER_COLDOPEN_MAX_BEATS) beat_t[nb++] = now;
+        TylerBeatView v; tyler_coldopen_get_view(&st, now, &v);
+        TylerVoiceCmd cmds[4]; int sa = 0;
+        int n = tyler_voice_driver_step(&drv, &v, cmds, 4, &sa);
+        if (sa) { stop_alls++; if (!st.done) stop_before_done++; }
+        for (int i = 0; i < n && ns < 32; i++) { starts[ns].t = now; starts[ns].line = cmds[i].line_index; starts[ns].seek = cmds[i].seek_ms; starts[ns].slot = cmds[i].speaker_slot; ns++; }
+        if (st.done && t > 0 && stop_alls) break;
+    }
+    CHECK(nb == TYLER_COLDOPEN_MAX_BEATS, "T1 coordinator dispatched %d beats", nb);
+    CHECK(ns == g_tyler_voice_line_count, "T1 driver started %d lines (table has %d: 7 voiced beats, beat 0 has two, beat 6 silent)", ns, g_tyler_voice_line_count);
+    for (int i = 0; i < ns; i++) {
+        const TylerVoiceLine *L = &g_tyler_voice_lines[starts[i].line];
+        long delta = (long)starts[i].t - (long)beat_t[L->beat] - (long)L->offset_ms;
+        CHECK(delta >= 0 && delta <= 16 && starts[i].seek <= 16, "T1 line %d (beat %d, offset %u) started at %u = dispatch %u + offset + %ld ms (seek %u)", starts[i].line, L->beat, L->offset_ms, starts[i].t, beat_t[L->beat], delta, starts[i].seek);
+        int want_slot = (L->speaker == TYLER_ACTOR_TYLER) ? ty : ha;
+        CHECK(starts[i].slot == want_slot, "T1 line %d is voiced from slot %d (%s)", starts[i].line, starts[i].slot, L->speaker == TYLER_ACTOR_TYLER ? "Tyler" : "Hana");
+    }
+    int started_beat6 = 0; for (int i = 0; i < ns; i++) if (g_tyler_voice_lines[starts[i].line].beat == 6) started_beat6++;
+    CHECK(started_beat6 == 0, "T1 the silent action beat (6) started no voice");
+    CHECK(stop_before_done == 0 && stop_alls == 1, "T1 exactly one stop_all in a clean run, on done (got %d, %d before done)", stop_alls, stop_before_done);
+}
+
+/* T4: late join, duplicate packets, lost packets -- every field of a wire-fed view is untrusted-ish. */
+static void test_t4_driver_edge_cases(void) {
+    TylerVoiceDriver d; TylerVoiceCmd c[4]; int sa; int n;
+    /* line indices: 0 b0 Tyler, 1 b0 Hana, 2 b1, 3 b2, 4 b3, 5 b4, 6 b5, 7 b7 */
+    tyler_voice_driver_reset(&d);
+    TylerBeatView lv = { 4, 2000, 0, 1, 2 };
+    n = tyler_voice_driver_step(&d, &lv, c, 4, &sa);
+    CHECK(n == 1 && c[0].line_index == 5 && c[0].seek_ms == 2000 && c[0].speaker_slot == 1 && !sa, "T4 late join 2000 ms into beat 4: Tyler's line starts seeked to 2000 ms (n=%d seek=%u)", n, n ? c[0].seek_ms : 0);
+    tyler_voice_driver_reset(&d); lv = (TylerBeatView){ 4, 5900, 0, 1, 2 };
+    n = tyler_voice_driver_step(&d, &lv, c, 4, &sa);
+    CHECK(n == 0, "T4 late join after beat 4's clip already ended starts nothing (n=%d)", n);
+    tyler_voice_driver_reset(&d); lv = (TylerBeatView){ 0, 3000, 0, 1, 2 };
+    n = tyler_voice_driver_step(&d, &lv, c, 4, &sa);
+    CHECK(n == 1 && c[0].line_index == 1 && c[0].seek_ms == 395 && c[0].speaker_slot == 2, "T4 join 3000 ms into beat 0: Tyler's line is over, Hana's starts seeked 395 ms");
+    /* the same view repeated (snapshot cadence) never retriggers */
+    tyler_voice_driver_reset(&d); lv = (TylerBeatView){ 2, 100, 0, 1, 2 };
+    n = tyler_voice_driver_step(&d, &lv, c, 4, &sa);
+    CHECK(n == 1 && c[0].line_index == 3, "T4 beat 2 starts its line once");
+    lv.beat_elapsed_ms = 132;
+    n = tyler_voice_driver_step(&d, &lv, c, 4, &sa);
+    CHECK(n == 0 && !sa, "T4 a repeated packet for the same beat never retriggers");
+    lv.beat_elapsed_ms = 4300;   /* still mid-line near its end: nothing new either */
+    n = tyler_voice_driver_step(&d, &lv, c, 4, &sa);
+    CHECK(n == 0 && !sa, "T4 a late repeat inside the same beat does not replay the line");
+    /* lost packets: a jump 2 -> 4 cuts the old audio and starts beat 4's line */
+    lv = (TylerBeatView){ 4, 40, 0, 1, 2 };
+    n = tyler_voice_driver_step(&d, &lv, c, 4, &sa);
+    CHECK(sa == 1 && n == 1 && c[0].line_index == 5 && c[0].seek_ms == 40, "T4 beat jump 2->4 (lost packets): stop_all + start beat 4 seeked 40");
+    /* the ordinary +1 step does NOT cut (lines end >= 470 ms before the next beat) */
+    lv = (TylerBeatView){ 5, 20, 0, 1, 2 };
+    n = tyler_voice_driver_step(&d, &lv, c, 4, &sa);
+    CHECK(sa == 0 && n == 1 && c[0].line_index == 6, "T4 beat 4->5 is a normal step: no stop_all, Hana's line starts");
+    /* done: one stop_all, then silence on repeats */
+    lv = (TylerBeatView){ 7, 2500, 1, 1, 2 };
+    n = tyler_voice_driver_step(&d, &lv, c, 4, &sa);
+    CHECK(sa == 1 && n == 0, "T4 done view cuts what is playing");
+    n = tyler_voice_driver_step(&d, &lv, c, 4, &sa);
+    CHECK(sa == 0 && n == 0, "T4 a repeated done view is quiet");
+    /* a restarted run (server reset on a new first human): beat 0 again after done plays from the top */
+    lv = (TylerBeatView){ 0, 20, 0, 1, 2 };
+    n = tyler_voice_driver_step(&d, &lv, c, 4, &sa);
+    CHECK(n == 1 && c[0].line_index == 0 && c[0].seek_ms == 20, "T4 a restart after done plays beat 0 again");
+    /* garbage views are harmless: out-of-range beat, idle (-1) */
+    tyler_voice_driver_reset(&d);
+    lv = (TylerBeatView){ 99, 0, 0, 1, 2 }; n = tyler_voice_driver_step(&d, &lv, c, 4, &sa);
+    CHECK(n == 0 && !sa, "T4 an out-of-range beat starts nothing and cuts nothing");
+    lv = (TylerBeatView){ -1, 0, 0, 1, 2 }; n = tyler_voice_driver_step(&d, &lv, c, 4, &sa);
+    CHECK(n == 0 && !sa, "T4 an idle (-1) view starts nothing");
+    /* max=0 never writes out[] */
+    lv = (TylerBeatView){ 1, 10, 0, 1, 2 }; n = tyler_voice_driver_step(&d, &lv, c, 0, &sa);
+    CHECK(n == 0, "T4 max=0 returns 0");
+    n = tyler_voice_driver_step(&d, &lv, c, 4, &sa);
+    CHECK(n == 1 && c[0].line_index == 2, "T4 ...and the line it could not emit is still emitted next step (not lost)");
+}
+
 int main(void) {
     srand(7);
     test_t6_actors_walk();
     test_t6b_other_modes_unchanged();
     test_t6c_walks_toward_marker();
     test_t2_assets_and_timeline();
+    test_t1_driver_on_real_coordinator();
+    test_t4_driver_edge_cases();
     printf("%s: %d passed, %d failed\n", g_fail ? "FAILED" : "ALL PASS", g_pass, g_fail);
     return g_fail != 0;
 }

@@ -15,6 +15,10 @@ static unsigned int tyler_effective_hold(int beat_index, const TylerBeat *beat) 
                                                           (int)beat->hold_ms, TYLER_VOICE_PAD_MS);
 }
 
+/* From PARENA stdlib/tyler/voice_mod.prn (playback decisions). */
+int on_tyler_voice_line_state(int, int, int);
+int on_tyler_voice_seek_ms(int, int);
+
 /* Marker positions match TYLER_VALHANNA_ICELAND_1986's own authored props exactly (see
  * cmd/nock_gen_tyler_levels/main.go, IDUNA): printer box at (4, 0.5, -4), ecs_screen box at
  * (6, 1.2, -6), tyler_exit_button box at (4, 0.9, -3.3), spawn/thermoses at (0, 1, 4). Beats
@@ -119,4 +123,57 @@ void tyler_coldopen_tick(TylerColdOpenState *st, unsigned int now_ms, int next_l
 
     st->current_beat++;
     st->beat_triggered = 0;
+}
+
+void tyler_coldopen_get_view(const TylerColdOpenState *st, unsigned int now_ms, TylerBeatView *out) {
+    out->tyler_slot = st->tyler_slot;
+    out->hana_slot = st->hana_slot;
+    out->done = st->done;
+    out->beat = -1;
+    out->beat_elapsed_ms = 0;
+    if (!st->active) return;
+    /* Between the advance tick (current_beat++, beat_triggered = 0) and the next tick's trigger the
+     * NEW beat has not started yet: keep reporting the previous beat, whose beat_started_ms is still
+     * the live one. Before the very first trigger there is no beat. */
+    if (st->beat_triggered) out->beat = st->current_beat;
+    else if (st->current_beat > 0) out->beat = st->current_beat - 1;
+    else return;
+    out->beat_elapsed_ms = (now_ms >= st->beat_started_ms) ? now_ms - st->beat_started_ms : 0;
+}
+
+void tyler_voice_driver_reset(TylerVoiceDriver *d) {
+    d->last_beat = -1;
+    d->started_mask = 0;
+}
+
+int tyler_voice_driver_step(TylerVoiceDriver *d, const TylerBeatView *v, TylerVoiceCmd *out, int max, int *stop_all) {
+    int n = 0, i;
+    *stop_all = 0;
+    if (v->beat < 0 || v->beat >= g_tyler_coldopen_beat_count || v->done) {
+        if (d->last_beat >= 0) *stop_all = 1;        /* the cold open ended (or was reset): cut what is playing */
+        d->last_beat = -1;                            /* repeated "done" views then stay quiet */
+        d->started_mask = 0;
+        return 0;
+    }
+    if (v->beat != d->last_beat) {
+        /* A jump of more than one beat (lost packets / a restarted run) cuts whatever is still
+         * playing; the ordinary +1 step does not (lines end >= 470 ms before the next beat). */
+        if (d->last_beat >= 0 && v->beat != d->last_beat + 1) *stop_all = 1;
+        d->last_beat = v->beat;
+        d->started_mask = 0;
+    }
+    for (i = 0; i < g_tyler_voice_line_count && n < max; i++) {
+        const TylerVoiceLine *L = &g_tyler_voice_lines[i];
+        int state;
+        if (L->beat != v->beat || (d->started_mask & (1u << i))) continue;
+        state = on_tyler_voice_line_state((int)v->beat_elapsed_ms, (int)L->offset_ms, (int)L->dur_ms);
+        if (state == 0) continue;                     /* pending */
+        d->started_mask |= (1u << i);                 /* mark even when over: a late joiner must never replay it */
+        if (state == 2) continue;
+        out[n].line_index = i;
+        out[n].seek_ms = (unsigned int)on_tyler_voice_seek_ms((int)v->beat_elapsed_ms, (int)L->offset_ms);
+        out[n].speaker_slot = (L->speaker == TYLER_ACTOR_TYLER) ? v->tyler_slot : v->hana_slot;
+        n++;
+    }
+    return n;
 }
