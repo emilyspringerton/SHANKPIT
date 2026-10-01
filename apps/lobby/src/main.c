@@ -720,9 +720,16 @@ int g_bullet_hole_prefetched = 0;
 
 static int g_paused = 0;
 static int g_pause_sel = 0;
-#define PAUSE_RESUME 0
-#define PAUSE_QUIT   1
-#define PAUSE_ITEMS  2
+#define PAUSE_RESUME     0
+#define PAUSE_HOLES      1
+#define PAUSE_FULLSCREEN 2
+#define PAUSE_QUIT       3
+#define PAUSE_ITEMS      4
+/* g_opt_bullet_holes -- founder real-time, 2026-10-01: "always ensure all features have menu items".
+   The per-gun bullet-hole decals (draw_bullet_holes) are a real, always-on rendering feature; this
+   is their pause-menu toggle (default ON), persisted in shankpit_display.cfg line 2. Tracking
+   (bullet_holes_observe) keeps running while hidden so toggling back on shows the live wall state. */
+static int g_opt_bullet_holes = 1;
 
 enum { SKIN_MENU_BACK = -1 };
 
@@ -2824,7 +2831,7 @@ static void bullet_holes_observe(int scene_id) {
 // is the intended composite (see PARENA/stdlib/shankpit/textures/bullet_hole_*.prn). Depth writes
 // are off and a polygon offset keeps holes from z-fighting the wall.
 static void draw_bullet_holes(int scene_id) {
-    if (g_bullet_holes.count == 0) return;
+    if (!g_opt_bullet_holes || g_bullet_holes.count == 0) return;
     glPushAttrib(GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_POLYGON_BIT);
     glEnable(GL_TEXTURE_2D);
     glEnable(GL_BLEND);
@@ -2935,19 +2942,20 @@ static const char *DISPLAY_CONFIG_PATH = "shankpit_display.cfg";
 static void save_display_config(void) {
     FILE *f = fopen(DISPLAY_CONFIG_PATH, "w");
     if (!f) return;
-    fprintf(f, "%d\n", g_fullscreen);
+    fprintf(f, "%d\n%d\n", g_fullscreen, g_opt_bullet_holes);
     fclose(f);
 }
 
 static void load_display_config(void) {
     FILE *f = fopen(DISPLAY_CONFIG_PATH, "r");
     if (!f) return;
-    int fs = 0;
+    int fs = 0, holes = 1;
     if (fscanf(f, "%d", &fs) == 1 && fs) {
         g_fullscreen = 1;
         SDL_SetWindowFullscreen(g_win, SDL_WINDOW_FULLSCREEN_DESKTOP);
         SDL_GetWindowSize(g_win, &g_win_w, &g_win_h);
     }
+    if (fscanf(f, "%d", &holes) == 1) g_opt_bullet_holes = holes ? 1 : 0; /* old 1-line cfg -> stays ON */
     fclose(f);
 }
 
@@ -8389,24 +8397,29 @@ static void draw_pause_overlay(void) {
     glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glColor4f(0.0f, 0.0f, 0.0f, 0.72f);
     glBegin(GL_QUADS);
-    glVertex2f(390, 200); glVertex2f(890, 200); glVertex2f(890, 520); glVertex2f(390, 520);
+    glVertex2f(220, 100); glVertex2f(1060, 100); glVertex2f(1060, 540); glVertex2f(220, 540);
     glEnd();
     glDisable(GL_BLEND);
     glColor3f(0.0f, 1.0f, 1.0f);
-    draw_string("PAUSED", 552, 450, 12);
-    const char *items[PAUSE_ITEMS] = { "RESUME", "QUIT TO LOBBY" };
+    draw_string("PAUSED", 427, 478, 12);
+    const char *items[PAUSE_ITEMS] = {
+        "RESUME",
+        g_opt_bullet_holes ? "BULLET HOLES: ON" : "BULLET HOLES: OFF",
+        g_fullscreen ? "FULLSCREEN: ON" : "FULLSCREEN: OFF",
+        "QUIT TO LOBBY"
+    };
     for (int i = 0; i < PAUSE_ITEMS; i++) {
-        float y = 360.0f - (float)i * 72.0f;
+        float y = 360.0f - (float)i * 54.0f;
         if (i == g_pause_sel) {
             glColor3f(1.0f, 1.0f, 0.0f);
-            draw_string(">", 420, y, 7);
+            draw_string(">", 300, y, 6);
         } else {
             glColor3f(0.65f, 0.65f, 0.65f);
         }
-        draw_string(items[i], 450, y, 7);
+        draw_string(items[i], 330, y, 6);
     }
     glColor3f(0.38f, 0.38f, 0.38f);
-    draw_string("ESC: RESUME    ENTER: SELECT", 430, 222, 4);
+    draw_string("ESC: RESUME   ENTER: SELECT", 320, 122, 4);
     glEnable(GL_DEPTH_TEST);
     glMatrixMode(GL_PROJECTION); glPopMatrix();
     glMatrixMode(GL_MODELVIEW); glPopMatrix();
@@ -10677,6 +10690,11 @@ int main(int argc, char* argv[]) {
                             if (g_pause_sel == PAUSE_RESUME) {
                                 g_paused = 0;
                                 SDL_SetRelativeMouseMode(SDL_TRUE);
+                            } else if (g_pause_sel == PAUSE_HOLES) {
+                                g_opt_bullet_holes = !g_opt_bullet_holes;
+                                save_display_config();
+                            } else if (g_pause_sel == PAUSE_FULLSCREEN) {
+                                toggle_fullscreen();
                             } else if (g_pause_sel == PAUSE_QUIT) {
                                 g_paused = 0;
                                 if (app_state == STATE_GAME_NET) net_shutdown();
