@@ -22,6 +22,58 @@ int g_shankpit_is_server = 0;
 #include "../../packages/simulation/tyler_coldopen.h"
 #include "../../packages/reflux/reflux_runtime.h"
 #include "../../packages/world/level_boxes.h"
+#include "../../packages/simulation/tyler_voice_lines.h"   /* GENERATED: g_tyler_voice_clip_ms, subtitles */
+#include <stdint.h>
+
+
+/* ---- compact SHA-256 (FIPS 180-4), just enough to verify assets/tyler_vo/MANIFEST.sha256 ---- */
+typedef struct { uint32_t h[8]; uint8_t buf[64]; uint64_t len; size_t fill; } Sha256;
+static const uint32_t K256[64] = {
+ 0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+ 0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+ 0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+ 0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2 };
+#define ROR(x, n) (((x) >> (n)) | ((x) << (32 - (n))))
+static void sha_block(Sha256 *c, const uint8_t *p) {
+    uint32_t w[64], a, b, cc, d, e, f, g, h, t1, t2; int i;
+    for (i = 0; i < 16; i++) w[i] = (uint32_t)p[4*i] << 24 | (uint32_t)p[4*i+1] << 16 | (uint32_t)p[4*i+2] << 8 | p[4*i+3];
+    for (i = 16; i < 64; i++) { uint32_t s0 = ROR(w[i-15], 7) ^ ROR(w[i-15], 18) ^ (w[i-15] >> 3), s1 = ROR(w[i-2], 17) ^ ROR(w[i-2], 19) ^ (w[i-2] >> 10); w[i] = w[i-16] + s0 + w[i-7] + s1; }
+    a = c->h[0]; b = c->h[1]; cc = c->h[2]; d = c->h[3]; e = c->h[4]; f = c->h[5]; g = c->h[6]; h = c->h[7];
+    for (i = 0; i < 64; i++) {
+        t1 = h + (ROR(e, 6) ^ ROR(e, 11) ^ ROR(e, 25)) + ((e & f) ^ (~e & g)) + K256[i] + w[i];
+        t2 = (ROR(a, 2) ^ ROR(a, 13) ^ ROR(a, 22)) + ((a & b) ^ (a & cc) ^ (b & cc));
+        h = g; g = f; f = e; e = d + t1; d = cc; cc = b; b = a; a = t1 + t2;
+    }
+    c->h[0] += a; c->h[1] += b; c->h[2] += cc; c->h[3] += d; c->h[4] += e; c->h[5] += f; c->h[6] += g; c->h[7] += h;
+}
+static void sha_init(Sha256 *c) { static const uint32_t i0[8] = {0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19}; memcpy(c->h, i0, sizeof i0); c->len = 0; c->fill = 0; }
+static void sha_update(Sha256 *c, const uint8_t *d, size_t n) {
+    c->len += n;
+    while (n) { size_t k = 64 - c->fill; if (k > n) k = n; memcpy(c->buf + c->fill, d, k); c->fill += k; d += k; n -= k; if (c->fill == 64) { sha_block(c, c->buf); c->fill = 0; } }
+}
+static void sha_final(Sha256 *c, char out_hex[65]) {
+    uint64_t bits = c->len * 8; uint8_t pad = 0x80; sha_update(c, &pad, 1); pad = 0; while (c->fill != 56) sha_update(c, &pad, 1);
+    uint8_t lb[8]; for (int i = 0; i < 8; i++) lb[i] = (uint8_t)(bits >> (56 - 8 * i)); sha_update(c, lb, 8);
+    for (int i = 0; i < 8; i++) snprintf(out_hex + 8 * i, 9, "%08x", c->h[i]);
+}
+
+/* A committed clip: whole file bytes + the decoded facts the engine's loader will check. */
+typedef struct { uint8_t *bytes; long size; int rate, channels, bits; long samples; } WavInfo;
+static int wav_read(const char *path, WavInfo *w) {
+    memset(w, 0, sizeof *w);
+    FILE *f = fopen(path, "rb"); if (!f) return 0;
+    fseek(f, 0, SEEK_END); w->size = ftell(f); fseek(f, 0, SEEK_SET);
+    w->bytes = (uint8_t *)malloc((size_t)w->size);
+    if (!w->bytes || fread(w->bytes, 1, (size_t)w->size, f) != (size_t)w->size) { fclose(f); return 0; }
+    fclose(f);
+    if (w->size < 44 || memcmp(w->bytes, "RIFF", 4) || memcmp(w->bytes + 8, "WAVEfmt ", 8)) return 0;
+    w->channels = w->bytes[22] | w->bytes[23] << 8;
+    w->rate = w->bytes[24] | w->bytes[25] << 8 | w->bytes[26] << 16;
+    w->bits = w->bytes[34] | w->bytes[35] << 8;
+    if (memcmp(w->bytes + 36, "data", 4)) return 0;
+    w->samples = (long)(w->bytes[40] | w->bytes[41] << 8 | w->bytes[42] << 16 | (uint32_t)w->bytes[43] << 24) / 2;
+    return 1;
+}
 
 static int g_fail = 0, g_pass = 0;
 #define CHECK(c, ...) do { if (!(c)) { printf("FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); g_fail++; } else { g_pass++; } } while (0)
@@ -171,11 +223,88 @@ static void test_t6c_walks_toward_marker(void) {
     CHECK(fz < -0.9f, "T6c actor faces -Z toward its marker (forward=(%.2f,%.2f))", fx, fz);
 }
 
+
+/* T2: the committed assets, the generated lines table and the coordinator's real timeline agree. */
+static void test_t2_assets_and_timeline(void) {
+    /* manifest: sha256 + bytes + duration of every committed clip */
+    FILE *mf = fopen("assets/tyler_vo/MANIFEST.sha256", "r");
+    CHECK(mf != NULL, "T2 assets/tyler_vo/MANIFEST.sha256 exists");
+    int manifest_rows = 0;
+    char ln[512];
+    while (mf && fgets(ln, sizeof ln, mf)) {
+        if (ln[0] == '#' || ln[0] == '\n') continue;
+        char sha[80], name[128]; long bytes, dur;
+        if (sscanf(ln, "%64s %ld %ld %127s", sha, &bytes, &dur, name) != 4) { CHECK(0, "T2 bad manifest line: %s", ln); continue; }
+        char path[256]; snprintf(path, sizeof path, "assets/tyler_vo/%s", name);
+        WavInfo w;
+        if (!wav_read(path, &w)) { CHECK(0, "T2 %s unreadable / not a canonical WAV", path); continue; }
+        Sha256 c; char hex[65]; sha_init(&c); sha_update(&c, w.bytes, (size_t)w.size); sha_final(&c, hex);
+        CHECK(strcmp(hex, sha) == 0, "T2 %s sha256 matches the manifest (clip was not re-rendered behind the table's back)", name);
+        CHECK(w.size == bytes, "T2 %s is %ld bytes (manifest %ld)", name, w.size, bytes);
+        CHECK(w.rate == 22050 && w.channels == 1 && w.bits == 16, "T2 %s is 22050 Hz mono PCM16 (%d Hz, %d ch, %d bit)", name, w.rate, w.channels, w.bits);
+        long ms = (w.samples * 1000L + 11025L) / 22050L;
+        CHECK(labs(ms - dur) <= 1, "T2 %s decodes to %ld ms, manifest says %ld ms", name, ms, dur);
+        free(w.bytes); manifest_rows++;
+    }
+    if (mf) fclose(mf);
+    CHECK(manifest_rows == g_tyler_voice_line_count, "T2 manifest lists %d clips, the lines table has %d", manifest_rows, g_tyler_voice_line_count);
+
+    /* every table row: file on disk, duration matches within 1 ms, per-beat end == the generated clip_ms */
+    unsigned int beat_end[TYLER_COLDOPEN_MAX_BEATS] = {0};
+    for (int i = 0; i < g_tyler_voice_line_count; i++) {
+        const TylerVoiceLine *L = &g_tyler_voice_lines[i];
+        WavInfo w;
+        int ok = wav_read(L->file, &w);
+        CHECK(ok, "T2 line %d: %s readable", i, L->file);
+        if (ok) {
+            long ms = (w.samples * 1000L + 11025L) / 22050L;
+            CHECK(labs(ms - (long)L->dur_ms) <= 1, "T2 line %d: %s is %ld ms on disk vs %u ms in the table", i, L->file, ms, L->dur_ms);
+            free(w.bytes);
+        }
+        CHECK(L->beat >= 0 && L->beat < TYLER_COLDOPEN_MAX_BEATS && (L->speaker == TYLER_ACTOR_TYLER || L->speaker == TYLER_ACTOR_HANA), "T2 line %d has a sane beat/speaker", i);
+        if (L->offset_ms + L->dur_ms > beat_end[L->beat]) beat_end[L->beat] = L->offset_ms + L->dur_ms;
+    }
+    for (int b = 0; b < TYLER_COLDOPEN_MAX_BEATS; b++)
+        CHECK(beat_end[b] == g_tyler_voice_clip_ms[b], "T2 beat %d: max(offset+dur) %u == g_tyler_voice_clip_ms %u", b, beat_end[b], g_tyler_voice_clip_ms[b]);
+    CHECK(g_tyler_voice_clip_ms[6] == 0, "T2 beat 6 is the silent action beat");
+
+    /* subtitles and VO share one source: the sentence beat 0's HUD box used to omit is now there */
+    CHECK(strstr(g_tyler_coldopen_beats[0].subtitle, "Compte les sorties") != NULL, "T2 beat 0 subtitle carries Hana's second sentence (it was spoken but never subtitled)");
+    CHECK(strstr(g_tyler_coldopen_beats[0].subtitle, "[EN:") != NULL, "T2 beat 0 subtitle keeps the [EN: ...] gloss");
+    for (int b = 0; b < TYLER_COLDOPEN_MAX_BEATS; b++) {
+        const char *sub = g_tyler_coldopen_beats[b].subtitle;
+        int ascii = 1; for (const char *p = sub; *p; p++) if ((unsigned char)*p >= 128) ascii = 0;
+        CHECK(sub[0] != '\0' && ascii && strlen(sub) < TYLER_COLDOPEN_SUBTITLE_LEN, "T2 beat %d subtitle is non-empty ASCII and fits (%zu chars)", b, strlen(sub));
+    }
+
+    /* the REAL coordinator on a simulated 16 ms clock: every voiced line ends well before the next beat */
+    TylerColdOpenState st; CustomLevelData lvl; int ty, ha;
+    memset(&lvl, 0, sizeof lvl);
+    if (!setup_local_tyler(&st, &lvl, &ty, &ha)) { CHECK(0, "T2 setup failed"); return; }
+    unsigned int beat_t[TYLER_COLDOPEN_MAX_BEATS + 1] = {0}; int nb = 0, cursor = 0;
+    unsigned int now = 1; g_exit_at = 0;
+    for (int t = 0; t < 4000 && !st.done; t++) {
+        now += 16;
+        tyler_coldopen_tick(&st, now, 23, stub_exit);
+        for (int n = reflux_host_log_size(); cursor < n; cursor++)
+            if (reflux_host_action_type_at(cursor) == REFLUX_ACTION_TYLER_BEAT && nb < TYLER_COLDOPEN_MAX_BEATS) beat_t[nb++] = now;
+    }
+    CHECK(nb == TYLER_COLDOPEN_MAX_BEATS && st.done, "T2 coordinator dispatched %d beats and exited (done=%d)", nb, st.done);
+    beat_t[TYLER_COLDOPEN_MAX_BEATS] = g_exit_at;
+    for (int i = 0; i < g_tyler_voice_line_count; i++) {
+        const TylerVoiceLine *L = &g_tyler_voice_lines[i];
+        long end = (long)beat_t[L->beat] + (long)L->offset_ms + (long)L->dur_ms;
+        long slack = (long)beat_t[L->beat + 1] - end;
+        CHECK(slack >= 470, "T2 line %d (beat %d) ends %ld ms before the next beat starts (hold pad is 500)", i, L->beat, slack);
+    }
+}
+
 int main(void) {
     srand(7);
     test_t6_actors_walk();
     test_t6b_other_modes_unchanged();
     test_t6c_walks_toward_marker();
+    test_t2_assets_and_timeline();
     printf("%s: %d passed, %d failed\n", g_fail ? "FAILED" : "ALL PASS", g_pass, g_fail);
     return g_fail != 0;
 }

@@ -71,6 +71,25 @@ typedef struct {
 extern const TylerBeat g_tyler_coldopen_beats[TYLER_COLDOPEN_MAX_BEATS];
 extern const int g_tyler_coldopen_beat_count;
 
+/* ---- Voiced lines (MODE_TYLER voice, founder real-time 2026-10-01: "VALHANNA voices via TTS") ----
+ * One entry per spoken line: which beat, who speaks, when inside the beat it starts, how long the
+ * committed clip is, and the cwd-relative path of that clip. GENERATED -- the table (and the HUD
+ * subtitle strings in g_tyler_coldopen_beats) come from tyler_voice_lines.h, written by
+ * TYLER/tts/render_vh01.py from one TSV, so the subtitles can never contradict the voice. The clips
+ * are Piper renders (a labeled stopgap generator) committed under assets/tyler_vo/ -- Piper is not
+ * deterministic, so they are never rendered in CI. SDL-free: compiled into server and lobby alike
+ * (the server needs only the durations, to stretch beat holds; the lobby plays the files). */
+#define TYLER_VOICE_MAX_LINES 16
+typedef struct {
+    int beat;
+    TylerActor speaker;       /* TYLER_ACTOR_TYLER or TYLER_ACTOR_HANA */
+    unsigned int offset_ms;   /* start inside the beat (beat 0's second line waits for the first + a 300 ms gap) */
+    unsigned int dur_ms;      /* length of the committed clip */
+    const char *file;         /* assets/tyler_vo/vh01_b<beat>_<actor>.wav, 22050 Hz mono PCM16 */
+} TylerVoiceLine;
+extern const TylerVoiceLine g_tyler_voice_lines[TYLER_VOICE_MAX_LINES];
+extern const int g_tyler_voice_line_count;
+
 /* tyler_coldopen_start -- call once, right after this level's two AI_ROLE_STORY_ALLY characters
  * have been spawned (server_apply_custom_level's own existing character-spawn pass already does
  * this via story_ai_spawn_enemy for any NOCK-authored character; tyler_slot/hana_slot are
