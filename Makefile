@@ -225,3 +225,7 @@ test-audio-chain:
 	$(CC) -std=c99 -O2 -Wall -Wextra -pedantic -Werror -Wno-unused-parameter tests/audio/test_audio_chain.c \
 		packages/audio/audio_chain.c packages/audio/audio_dsp_gen.c -o /tmp/test_audio_chain -lm
 	/tmp/test_audio_chain tests/audio/nock_chain_vectors.txt
+
+# Per-package build fragments (parallel-work convention, 2026-10-01): each work package adds its own
+# mk/<pkg>.mk with its own test targets instead of editing this file.
+-include mk/*.mk
