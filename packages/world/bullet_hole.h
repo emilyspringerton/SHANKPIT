@@ -141,6 +141,27 @@ static inline void bullet_hole_add(BulletHoleBuf *b, int slot, int scene_id,
 
 static inline void bullet_hole_clear(BulletHoleBuf *b) { b->count = 0; b->next = 0; }
 
+/* bullet_hole_remove_in_box -- destructible brick (packages/world/brick_fracture.h): a wall cell that
+ * has been destroyed takes the decals on its surface with it, instead of leaving them floating in
+ * the hole. Tombstones matching holes (scene_id = -2, which draw_bullet_holes' scene filter skips)
+ * rather than compacting the ring. cx/cy/cz = cell centre, hw/hh/hd = cell HALF extents. */
+static inline int bullet_hole_remove_in_box(BulletHoleBuf *b, float cx, float cy, float cz,
+                                            float hw, float hh, float hd) {
+    const float margin = 0.15f;
+    int removed = 0;
+    for (int i = 0; i < b->count; i++) {
+        BulletHole *h = &b->holes[i];
+        if (h->scene_id < 0) continue;
+        if (h->x >= cx - hw - margin && h->x <= cx + hw + margin &&
+            h->y >= cy - hh - margin && h->y <= cy + hh + margin &&
+            h->z >= cz - hd - margin && h->z <= cz + hd + margin) {
+            h->scene_id = -2;
+            removed++;
+        }
+    }
+    return removed;
+}
+
 /* Decode PNG bytes into a malloc'd RGBA buffer (caller frees). Returns 0 on failure. */
 static inline int bullet_hole_decode_rgba(const unsigned char *data, long n, unsigned char **rgba, int *w, int *h) {
     if (n <= 0) return 0;

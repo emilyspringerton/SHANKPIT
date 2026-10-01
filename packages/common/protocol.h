@@ -61,6 +61,16 @@
  * NetHeader). */
 #define PACKET_WORLD_CLOCK 12
 
+/* PACKET_BRICK_STATE -- destructible brick (packages/world/brick_fracture.h; founder real-time,
+ * 2026-10-01: "i want brick to be destructable"). Server -> client. Carries up to
+ * NET_BRICK_MAX_ENTRIES entries of "brick cell (parent box index, cell key) now has hp H". Entries
+ * are absolute and idempotent -- applying one twice, late, or out of order cannot desync anything --
+ * so the server sends each change a few times and cycles the whole damaged set in the background
+ * (a late joiner or a dropped datagram heals itself) with no acknowledgement traffic. The client
+ * validates every field (a packet is untrusted input) and never applies damage itself on a network
+ * match: it only mirrors this. Custom-level (NOCK) maps only; any other scene sends nothing. */
+#define PACKET_BRICK_STATE 13
+
 #define VOXEL_CHUNK_SIZE            16
 #define VOXEL_MAX_BLOCKS_PER_CHUNK  1024
 #define VOXEL_BLOCK_STONE           1
@@ -150,6 +160,24 @@ typedef struct {
     unsigned char weather;
     int weather_ends;
 } NetWorldClock;
+
+/* NetBrickState -- see PACKET_BRICK_STATE's own doc comment above. key_lo/key_hi are the two halves
+ * of the 30-bit cell key (ix | iy<<10 | iz<<20) so the entry has no padding or endianness trap. */
+#define NET_BRICK_MAX_ENTRIES 40
+typedef struct {
+    unsigned short parent;
+    unsigned short key_lo;
+    unsigned short key_hi;
+    unsigned char hp;
+    unsigned char pad;
+} NetBrickEntry;
+
+typedef struct {
+    NetHeader hdr;
+    unsigned char count;
+    unsigned char pad[3];
+    NetBrickEntry e[NET_BRICK_MAX_ENTRIES];
+} NetBrickState;
 
 typedef struct {
     unsigned int sequence;

@@ -1588,6 +1588,9 @@ static void apply_projectile_damage(PlayerState *owner, PlayerState *target, int
  * Point-damage weapons (hitscan storm-charge sniper shot) never set
  * splash_radius, so they never reach this path -- see update_projectiles(). */
 static void explode_splash(float ex, float ey, float ez, unsigned char scene_id, int owner_id, int damage, float splash_radius, unsigned int now_ms) {
+    /* Destructible brick (packages/simulation/brick_world.h): a blast carves the map as well as
+       hurting players. NULL unless a host installed the hooks, so every other build is unchanged. */
+    if (g_phys_map_blast_hook) g_phys_map_blast_hook((int)scene_id, ex, ey, ez, splash_radius, damage, WPN_MISSILE);
     PlayerState *owner = NULL;
     if (owner_id >= 0 && owner_id < MAX_CLIENTS && local_state.players[owner_id].active) {
         owner = &local_state.players[owner_id];
@@ -1628,7 +1631,15 @@ static void update_projectiles(unsigned int now_ms) {
             } else {
                 p->x = hit_x; p->y = hit_y; p->z = hit_z;
                 if (p->splash_radius > 0.0f) {
+                    /* hand the struck face's normal to the map-damage hook so a blast carves INTO the
+                       wall rather than centring on its surface (reset right after: a proximity
+                       detonation has no surface) */
+                    g_phys_blast_normal[0] = nx; g_phys_blast_normal[1] = ny; g_phys_blast_normal[2] = nz;
                     explode_splash(p->x, p->y, p->z, p->scene_id, p->owner_id, p->damage, p->splash_radius, now_ms);
+                    g_phys_blast_normal[0] = g_phys_blast_normal[1] = g_phys_blast_normal[2] = 0.0f;
+                } else if (g_phys_map_surface_hook) {
+                    /* a point-damage projectile (the storm-charged sniper round) striking the map */
+                    g_phys_map_surface_hook((int)p->scene_id, hit_x, hit_y, hit_z, nx, ny, nz, p->damage, WPN_SNIPER);
                 }
                 p->active = 0;
             }
@@ -1979,6 +1990,7 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
 }
 
 void local_init_match(int num_players, int mode) {
+    if (g_local_match_reset_hook) g_local_match_reset_hook();
     memset(&local_state, 0, sizeof(ServerState));
     memset(tdmb_last_kills, 0, sizeof(tdmb_last_kills));
     local_state.game_mode = mode;

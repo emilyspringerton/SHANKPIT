@@ -26,6 +26,7 @@
 #include "../../../packages/world/level_boxes.h"
 #include "../../../packages/world/story_doors.h"
 #include "../../../packages/simulation/story_buttons.h"
+#include "../../../packages/simulation/brick_world.h"
 
 /* cutscene handshake globals — defined in lobby/main.c for the client;
    server sim uses local_game.h but never renders cutscenes, so stub to 0. */
@@ -447,6 +448,7 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
     }
     phys_set_custom_level_materials(mat_names, mat_shaders, mat_specular, mat_shininess, mat_friction, lvl->material_count);
     phys_set_custom_level(x, y, z, w, h, d, r, g, b, material_idx, lvl->count, lvl->ground_plane_enabled, lvl->ground_plane_squares);
+    brick_world_init_from_level(lvl); // destructible brick: pick the carvable boxes, install the weapon/blast hooks
 
     // S459-58: real, author-placed spawn points, team/FFA-aware.
     float sp_x[LEVEL_BOXES_MAX_SPAWNERS], sp_y[LEVEL_BOXES_MAX_SPAWNERS], sp_z[LEVEL_BOXES_MAX_SPAWNERS];
@@ -1459,6 +1461,29 @@ void server_broadcast_world_clock(void) {
     }
 }
 
+/* server_broadcast_brick_state -- destructible brick (packages/simulation/brick_world.h), see
+ * PACKET_BRICK_STATE in protocol.h. Sends this tick's brick-cell changes, scheduled repeats and a
+ * slice of the rotating refresh to every welcomed client; sends nothing when no level with
+ * destructible brick is loaded or nothing is due. Separate packet from the snapshot on purpose, same
+ * reason server_broadcast_world_clock is: zero risk to the live snapshot path. */
+void server_broadcast_brick_state(void) {
+    if (!brick_world_is_active()) return;
+    NetBrickState pkt;
+    memset(&pkt, 0, sizeof(pkt));
+    unsigned int now_ms = get_server_time();
+    int n = brick_world_net_collect(pkt.e, NET_BRICK_MAX_ENTRIES, now_ms);
+    if (n <= 0) return;
+    pkt.hdr.type = PACKET_BRICK_STATE;
+    pkt.hdr.client_id = 0;
+    pkt.hdr.timestamp = now_ms;
+    pkt.count = (unsigned char)n;
+    int len = (int)(sizeof(NetHeader) + 4 + (size_t)n * sizeof(NetBrickEntry));
+    for (int i = 1; i < MAX_CLIENTS; i++) {
+        if (!slots[i].active || !slots[i].welcomed) continue;
+        sendto(sock, (const char *)&pkt, len, 0, (struct sockaddr*)&slots[i].addr, sizeof(struct sockaddr_in));
+    }
+}
+
 int main(int argc, char *argv[]) {
     int server_port = 6969;
     for (int i = 1; i < argc; i++) {
@@ -1879,6 +1904,7 @@ int main(int argc, char *argv[]) {
         if ((tick % SERVER_SNAPSHOT_INTERVAL_TICKS) == 0) {
             server_broadcast();
             server_broadcast_world_clock();
+            server_broadcast_brick_state();
         }
         net_server_emit_summary(now);
 

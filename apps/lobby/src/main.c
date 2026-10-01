@@ -45,6 +45,8 @@
 #include "../../../packages/world/level_boxes.h"
 #include "../../../packages/world/spray_registry.h"
 #include "../../../packages/world/bullet_hole.h"
+#include "../../../packages/world/brick_debris.h"
+#include "../../../packages/simulation/brick_world.h"
 #include "../../../packages/render/proc_tex.h"
 #include "../../../packages/render/retro_sky.h"
 #include "../../../packages/render/sky_weather.h"
@@ -722,14 +724,20 @@ static int g_paused = 0;
 static int g_pause_sel = 0;
 #define PAUSE_RESUME     0
 #define PAUSE_HOLES      1
-#define PAUSE_FULLSCREEN 2
-#define PAUSE_QUIT       3
-#define PAUSE_ITEMS      4
+#define PAUSE_DEBRIS     2
+#define PAUSE_FULLSCREEN 3
+#define PAUSE_QUIT       4
+#define PAUSE_ITEMS      5
 /* g_opt_bullet_holes -- founder real-time, 2026-10-01: "always ensure all features have menu items".
    The per-gun bullet-hole decals (draw_bullet_holes) are a real, always-on rendering feature; this
    is their pause-menu toggle (default ON), persisted in shankpit_display.cfg line 2. Tracking
    (bullet_holes_observe) keeps running while hidden so toggling back on shows the live wall state. */
 static int g_opt_bullet_holes = 1;
+/* g_opt_brick_debris -- the cosmetic half of destructible brick (flakes thrown from a cracking /
+   gone wall cell, packages/world/brick_debris.h). The destruction itself is a core rule and always
+   on; this only toggles the particles. Pause menu, persisted in shankpit_display.cfg line 3. */
+static int g_opt_brick_debris = 1;
+static BrickDebrisPool g_brick_debris;
 
 enum { SKIN_MENU_BACK = -1 };
 
@@ -1719,6 +1727,7 @@ static void reset_client_render_state_for_net() {
     g_spray_decal_next = 0;
     bullet_hole_clear(&g_bullet_holes);
     memset(g_bullet_hole_track, 0, sizeof(g_bullet_hole_track));
+    brick_debris_clear(&g_brick_debris);
 }
 
 static void client_apply_spawn_transition_sync(PlayerState *p, const NetPlayer *np, const char *reason_tag) {
@@ -2380,6 +2389,8 @@ static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
     }
     phys_set_custom_level_materials(mat_names, mat_shaders, mat_specular, mat_shininess, mat_friction, lvl->material_count);
     phys_set_custom_level(x, y, z, w, h, d, r, g, b, material_idx, lvl->count, lvl->ground_plane_enabled, lvl->ground_plane_squares);
+    brick_world_init_from_level(lvl); // destructible brick: pick the carvable boxes, install the weapon/blast hooks
+    brick_debris_clear(&g_brick_debris);
 
     // S459-58: real, author-placed spawn points, team/FFA-aware.
     float sp_x[LEVEL_BOXES_MAX_SPAWNERS], sp_y[LEVEL_BOXES_MAX_SPAWNERS], sp_z[LEVEL_BOXES_MAX_SPAWNERS];
@@ -2942,20 +2953,21 @@ static const char *DISPLAY_CONFIG_PATH = "shankpit_display.cfg";
 static void save_display_config(void) {
     FILE *f = fopen(DISPLAY_CONFIG_PATH, "w");
     if (!f) return;
-    fprintf(f, "%d\n%d\n", g_fullscreen, g_opt_bullet_holes);
+    fprintf(f, "%d\n%d\n%d\n", g_fullscreen, g_opt_bullet_holes, g_opt_brick_debris);
     fclose(f);
 }
 
 static void load_display_config(void) {
     FILE *f = fopen(DISPLAY_CONFIG_PATH, "r");
     if (!f) return;
-    int fs = 0, holes = 1;
+    int fs = 0, holes = 1, debris = 1;
     if (fscanf(f, "%d", &fs) == 1 && fs) {
         g_fullscreen = 1;
         SDL_SetWindowFullscreen(g_win, SDL_WINDOW_FULLSCREEN_DESKTOP);
         SDL_GetWindowSize(g_win, &g_win_w, &g_win_h);
     }
     if (fscanf(f, "%d", &holes) == 1) g_opt_bullet_holes = holes ? 1 : 0; /* old 1-line cfg -> stays ON */
+    if (fscanf(f, "%d", &debris) == 1) g_opt_brick_debris = debris ? 1 : 0;
     fclose(f);
 }
 
@@ -3564,6 +3576,14 @@ void draw_map(const RetroLightingState *lighting) {
 
     for(int i=1; i<map_count; i++) {
         Box b = map_geo[i];
+        /* Destructible brick (packages/world/brick_fracture.h): a carved authored box is replaced by
+           fracture pieces appended after the authored slots. The hidden original is not drawn; a
+           piece is drawn like any box but with the texture phase of its parent (uv offset) so the
+           brick courses line up across piece seams, and without the per-box outline/accent lines
+           (those would trace the arbitrary piece boundaries across the wall face). */
+        const int is_custom_scene = (phys_scene_id == SCENE_CUSTOM_LEVEL && i < CUSTOM_LEVEL_SLOT_CAP);
+        if (is_custom_scene && g_custom_level_hidden[i]) continue;
+        const int is_fracture_piece = (is_custom_scene && i > g_custom_level_authored);
         /* SHADER_IPS_LIGHT/SHADER_HPS_LIGHT (founder real-time, 2026-09-14): a light fixture
            material shouldn't be darkened by day/night lighting or ground AO the way an ordinary
            wall correctly is -- it's meant to look self-lit. Checked once per box, used below to
@@ -3573,7 +3593,7 @@ void draw_map(const RetroLightingState *lighting) {
            at the same call site draw_material_specular_box already uses. */
         int is_ips_light = 0;
         int is_hps_light = 0;
-        if (phys_scene_id == SCENE_CUSTOM_LEVEL && i < CUSTOM_LEVEL_MAX_BOXES + 1) {
+        if (phys_scene_id == SCENE_CUSTOM_LEVEL && i < CUSTOM_LEVEL_SLOT_CAP) {
             int box_mat_idx = g_custom_level_material_idx[i];
             if (box_mat_idx >= 0 && box_mat_idx < g_custom_level_material_count) {
                 is_ips_light = (strcmp(g_custom_level_material_shader[box_mat_idx], SHADER_IPS_LIGHT) == 0);
@@ -3718,49 +3738,56 @@ void draw_map(const RetroLightingState *lighting) {
            (g_custom_level_material_idx, set via phys_set_custom_level) -- every other scene's own
            hand-authored geometry keeps its real, existing, unconditional brick look unchanged. */
         GLuint box_tex = g_wall_brick_tex.tex_id;
-        if (phys_scene_id == SCENE_CUSTOM_LEVEL && i < CUSTOM_LEVEL_MAX_BOXES + 1) {
+        if (phys_scene_id == SCENE_CUSTOM_LEVEL && i < CUSTOM_LEVEL_SLOT_CAP) {
             int mi = g_custom_level_material_idx[i];
             if (mi >= 0 && mi < g_custom_level_material_count) box_tex = material_texture_for_name(g_custom_level_material_name[mi]);
         }
         glBindTexture(GL_TEXTURE_2D, box_tex);
         const float wall_uv_density = 0.6f;
         const float uw = b.w * wall_uv_density, uh = b.h * wall_uv_density, ud = b.d * wall_uv_density;
+        /* texture-phase offset of a fracture piece within its parent (0 for every ordinary box):
+           u/v are +x/+z on top and bottom, +x/+y on front and rear, +z/+y on left and right, so
+           uw/uh/ud (the x/y/z extents) each take their own axis' offset wherever they appear. */
+        const float ou = is_fracture_piece ? g_custom_level_uv_off[i][0] * wall_uv_density : 0.0f;
+        const float ov = is_fracture_piece ? g_custom_level_uv_off[i][1] * wall_uv_density : 0.0f;
+        const float ow = is_fracture_piece ? g_custom_level_uv_off[i][2] * wall_uv_density : 0.0f;
 
         glBegin(GL_QUADS);
         glColor3f(top_r, top_g, top_b);
-        glTexCoord2f(-0.5f*uw,  0.5f*ud); glVertex3f(-0.5,0.5,0.5);
-        glTexCoord2f( 0.5f*uw,  0.5f*ud); glVertex3f(0.5,0.5,0.5);
-        glTexCoord2f( 0.5f*uw, -0.5f*ud); glVertex3f(0.5,0.5,-0.5);
-        glTexCoord2f(-0.5f*uw, -0.5f*ud); glVertex3f(-0.5,0.5,-0.5);
+        glTexCoord2f(-0.5f*uw + ou,  0.5f*ud + ow); glVertex3f(-0.5,0.5,0.5);
+        glTexCoord2f( 0.5f*uw + ou,  0.5f*ud + ow); glVertex3f(0.5,0.5,0.5);
+        glTexCoord2f( 0.5f*uw + ou, -0.5f*ud + ow); glVertex3f(0.5,0.5,-0.5);
+        glTexCoord2f(-0.5f*uw + ou, -0.5f*ud + ow); glVertex3f(-0.5,0.5,-0.5);
         glColor3f(bot_r, bot_g, bot_b);
-        glTexCoord2f(-0.5f*uw,  0.5f*ud); glVertex3f(-0.5,-0.5,0.5);
-        glTexCoord2f( 0.5f*uw,  0.5f*ud); glVertex3f(0.5,-0.5,0.5);
-        glTexCoord2f( 0.5f*uw, -0.5f*ud); glVertex3f(0.5,-0.5,-0.5);
-        glTexCoord2f(-0.5f*uw, -0.5f*ud); glVertex3f(-0.5,-0.5,-0.5);
+        glTexCoord2f(-0.5f*uw + ou,  0.5f*ud + ow); glVertex3f(-0.5,-0.5,0.5);
+        glTexCoord2f( 0.5f*uw + ou,  0.5f*ud + ow); glVertex3f(0.5,-0.5,0.5);
+        glTexCoord2f( 0.5f*uw + ou, -0.5f*ud + ow); glVertex3f(0.5,-0.5,-0.5);
+        glTexCoord2f(-0.5f*uw + ou, -0.5f*ud + ow); glVertex3f(-0.5,-0.5,-0.5);
         glColor3f(front_r, front_g, front_b);
-        glTexCoord2f(-0.5f*uw, -0.5f*uh); glVertex3f(-0.5,-0.5,0.5);
-        glTexCoord2f( 0.5f*uw, -0.5f*uh); glVertex3f(0.5,-0.5,0.5);
-        glTexCoord2f( 0.5f*uw,  0.5f*uh); glVertex3f(0.5,0.5,0.5);
-        glTexCoord2f(-0.5f*uw,  0.5f*uh); glVertex3f(-0.5,0.5,0.5);
+        glTexCoord2f(-0.5f*uw + ou, -0.5f*uh + ov); glVertex3f(-0.5,-0.5,0.5);
+        glTexCoord2f( 0.5f*uw + ou, -0.5f*uh + ov); glVertex3f(0.5,-0.5,0.5);
+        glTexCoord2f( 0.5f*uw + ou,  0.5f*uh + ov); glVertex3f(0.5,0.5,0.5);
+        glTexCoord2f(-0.5f*uw + ou,  0.5f*uh + ov); glVertex3f(-0.5,0.5,0.5);
         glColor3f(rear_r, rear_g, rear_b);
-        glTexCoord2f(-0.5f*uw, -0.5f*uh); glVertex3f(-0.5,-0.5,-0.5);
-        glTexCoord2f( 0.5f*uw, -0.5f*uh); glVertex3f(0.5,-0.5,-0.5);
-        glTexCoord2f( 0.5f*uw,  0.5f*uh); glVertex3f(0.5,0.5,-0.5);
-        glTexCoord2f(-0.5f*uw,  0.5f*uh); glVertex3f(-0.5,0.5,-0.5);
+        glTexCoord2f(-0.5f*uw + ou, -0.5f*uh + ov); glVertex3f(-0.5,-0.5,-0.5);
+        glTexCoord2f( 0.5f*uw + ou, -0.5f*uh + ov); glVertex3f(0.5,-0.5,-0.5);
+        glTexCoord2f( 0.5f*uw + ou,  0.5f*uh + ov); glVertex3f(0.5,0.5,-0.5);
+        glTexCoord2f(-0.5f*uw + ou,  0.5f*uh + ov); glVertex3f(-0.5,0.5,-0.5);
         glColor3f(left_r, left_g, left_b);
-        glTexCoord2f(-0.5f*ud, -0.5f*uh); glVertex3f(-0.5,-0.5,-0.5);
-        glTexCoord2f( 0.5f*ud, -0.5f*uh); glVertex3f(-0.5,-0.5,0.5);
-        glTexCoord2f( 0.5f*ud,  0.5f*uh); glVertex3f(-0.5,0.5,0.5);
-        glTexCoord2f(-0.5f*ud,  0.5f*uh); glVertex3f(-0.5,0.5,-0.5);
+        glTexCoord2f(-0.5f*ud + ow, -0.5f*uh + ov); glVertex3f(-0.5,-0.5,-0.5);
+        glTexCoord2f( 0.5f*ud + ow, -0.5f*uh + ov); glVertex3f(-0.5,-0.5,0.5);
+        glTexCoord2f( 0.5f*ud + ow,  0.5f*uh + ov); glVertex3f(-0.5,0.5,0.5);
+        glTexCoord2f(-0.5f*ud + ow,  0.5f*uh + ov); glVertex3f(-0.5,0.5,-0.5);
         glColor3f(right_r, right_g, right_b);
-        glTexCoord2f( 0.5f*ud, -0.5f*uh); glVertex3f(0.5,-0.5,0.5);
-        glTexCoord2f(-0.5f*ud, -0.5f*uh); glVertex3f(0.5,-0.5,-0.5);
-        glTexCoord2f(-0.5f*ud,  0.5f*uh); glVertex3f(0.5,0.5,-0.5);
-        glTexCoord2f( 0.5f*ud,  0.5f*uh); glVertex3f(0.5,0.5,0.5);
+        glTexCoord2f( 0.5f*ud + ow, -0.5f*uh + ov); glVertex3f(0.5,-0.5,0.5);
+        glTexCoord2f(-0.5f*ud + ow, -0.5f*uh + ov); glVertex3f(0.5,-0.5,-0.5);
+        glTexCoord2f(-0.5f*ud + ow,  0.5f*uh + ov); glVertex3f(0.5,0.5,-0.5);
+        glTexCoord2f( 0.5f*ud + ow,  0.5f*uh + ov); glVertex3f(0.5,0.5,0.5);
         glEnd();
         glBindTexture(GL_TEXTURE_2D, 0);
         glDisable(GL_TEXTURE_2D);
 
+        if (!is_fracture_piece) {
         glLineWidth(1.2f);
         glColor3f(rear_r * 0.76f, rear_g * 0.80f, rear_b * 0.84f);
         glBegin(GL_LINE_LOOP);
@@ -3783,10 +3810,10 @@ void draw_map(const RetroLightingState *lighting) {
             glVertex3f(0.5f, 0.12f, 0.51f);
             glEnd();
         }
-
+        }
         glPopMatrix();
 
-        if (material_pass_active && i < CUSTOM_LEVEL_MAX_BOXES + 1) {
+        if (material_pass_active && i < CUSTOM_LEVEL_SLOT_CAP) {
             int mi = g_custom_level_material_idx[i];
             if (mi >= 0 && mi < g_custom_level_material_count) {
                 if (is_ips_light) {
@@ -8390,6 +8417,63 @@ static void draw_disconnect_overlay(void) {
     glMatrixMode(GL_MODELVIEW); glPopMatrix();
 }
 
+/* brick_world_frame -- once per rendered frame: tell the brick world whether this process is the
+   authority (everything except a networked client), then consume the cell events it produced --
+   debris for the particles, decal cleanup for walls that are no longer there -- and step the
+   particles. Cosmetic only; the geometry itself was already committed when the damage happened. */
+static void brick_world_frame(void) {
+    static unsigned int last_ms = 0;
+    unsigned int now = SDL_GetTicks();
+    float dt = last_ms ? (float)(now - last_ms) * 0.001f : 0.016f;
+    last_ms = now;
+    brick_world_set_authority(app_state != STATE_GAME_NET);
+    BfEvent ev[64];
+    int n = brick_world_drain_events(ev, 64);
+    for (int i = 0; i < n; i++) {
+        if (g_opt_brick_debris && ev[i].debris > 0) {
+            unsigned int seed = (unsigned int)ev[i].parent * 7919u + (unsigned int)ev[i].state * 131u +
+                                (unsigned int)(int)(ev[i].x * 8.0f) * 31u + (unsigned int)(int)(ev[i].z * 8.0f) * 17u +
+                                (unsigned int)(int)(ev[i].y * 8.0f);
+            brick_debris_spawn(&g_brick_debris, ev[i].x, ev[i].y, ev[i].z, ev[i].cw, ev[i].ch, ev[i].cd, ev[i].debris, seed);
+        }
+        if (ev[i].state == BF_STATE_GONE)
+            bullet_hole_remove_in_box(&g_bullet_holes, ev[i].x, ev[i].y, ev[i].z, ev[i].cw * 0.5f, ev[i].ch * 0.5f, ev[i].cd * 0.5f);
+    }
+    brick_debris_update(&g_brick_debris, dt);
+}
+
+/* draw_brick_debris -- the thrown flakes: flat shaded slabs in brick colour (no texture, no GL
+   state left changed). */
+static void draw_brick_debris(void) {
+    if (!g_opt_brick_debris || brick_debris_active_count(&g_brick_debris) == 0) return;
+    glPushAttrib(GL_ENABLE_BIT | GL_CURRENT_BIT);
+    glDisable(GL_TEXTURE_2D);
+    for (int i = 0; i < BRICK_DEBRIS_MAX; i++) {
+        const BrickDebris *b = &g_brick_debris.d[i];
+        if (!b->active) continue;
+        float fade = b->life < 0.4f ? b->life / 0.4f : 1.0f;
+        float r = 0.62f * b->shade * fade, g = 0.36f * b->shade * fade, bl = 0.28f * b->shade * fade;
+        glPushMatrix();
+        glTranslatef(b->x, b->y, b->z);
+        glRotatef(b->rx, 1.0f, 0.0f, 0.0f); glRotatef(b->ry, 0.0f, 1.0f, 0.0f); glRotatef(b->rz, 0.0f, 0.0f, 1.0f);
+        glScalef(b->sx, b->sy, b->sz);
+        glBegin(GL_QUADS);
+        glColor3f(r * 1.12f, g * 1.12f, bl * 1.12f);
+        glVertex3f(-0.5f, 0.5f, 0.5f); glVertex3f(0.5f, 0.5f, 0.5f); glVertex3f(0.5f, 0.5f, -0.5f); glVertex3f(-0.5f, 0.5f, -0.5f);
+        glColor3f(r * 0.7f, g * 0.7f, bl * 0.7f);
+        glVertex3f(-0.5f, -0.5f, 0.5f); glVertex3f(0.5f, -0.5f, 0.5f); glVertex3f(0.5f, -0.5f, -0.5f); glVertex3f(-0.5f, -0.5f, -0.5f);
+        glColor3f(r, g, bl);
+        glVertex3f(-0.5f, -0.5f, 0.5f); glVertex3f(0.5f, -0.5f, 0.5f); glVertex3f(0.5f, 0.5f, 0.5f); glVertex3f(-0.5f, 0.5f, 0.5f);
+        glVertex3f(-0.5f, -0.5f, -0.5f); glVertex3f(0.5f, -0.5f, -0.5f); glVertex3f(0.5f, 0.5f, -0.5f); glVertex3f(-0.5f, 0.5f, -0.5f);
+        glColor3f(r * 0.85f, g * 0.85f, bl * 0.85f);
+        glVertex3f(-0.5f, -0.5f, -0.5f); glVertex3f(-0.5f, -0.5f, 0.5f); glVertex3f(-0.5f, 0.5f, 0.5f); glVertex3f(-0.5f, 0.5f, -0.5f);
+        glVertex3f(0.5f, -0.5f, 0.5f); glVertex3f(0.5f, -0.5f, -0.5f); glVertex3f(0.5f, 0.5f, -0.5f); glVertex3f(0.5f, 0.5f, 0.5f);
+        glEnd();
+        glPopMatrix();
+    }
+    glPopAttrib();
+}
+
 static void draw_pause_overlay(void) {
     glDisable(GL_DEPTH_TEST);
     glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
@@ -8397,7 +8481,7 @@ static void draw_pause_overlay(void) {
     glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glColor4f(0.0f, 0.0f, 0.0f, 0.72f);
     glBegin(GL_QUADS);
-    glVertex2f(220, 100); glVertex2f(1060, 100); glVertex2f(1060, 540); glVertex2f(220, 540);
+    glVertex2f(220, 80); glVertex2f(1060, 80); glVertex2f(1060, 540); glVertex2f(220, 540);
     glEnd();
     glDisable(GL_BLEND);
     glColor3f(0.0f, 1.0f, 1.0f);
@@ -8405,11 +8489,12 @@ static void draw_pause_overlay(void) {
     const char *items[PAUSE_ITEMS] = {
         "RESUME",
         g_opt_bullet_holes ? "BULLET HOLES: ON" : "BULLET HOLES: OFF",
+        g_opt_brick_debris ? "BRICK DEBRIS: ON" : "BRICK DEBRIS: OFF",
         g_fullscreen ? "FULLSCREEN: ON" : "FULLSCREEN: OFF",
         "QUIT TO LOBBY"
     };
     for (int i = 0; i < PAUSE_ITEMS; i++) {
-        float y = 360.0f - (float)i * 54.0f;
+        float y = 370.0f - (float)i * 50.0f;
         if (i == g_pause_sel) {
             glColor3f(1.0f, 1.0f, 0.0f);
             draw_string(">", 300, y, 6);
@@ -8419,7 +8504,7 @@ static void draw_pause_overlay(void) {
         draw_string(items[i], 330, y, 6);
     }
     glColor3f(0.38f, 0.38f, 0.38f);
-    draw_string("ESC: RESUME   ENTER: SELECT", 320, 122, 4);
+    draw_string("ESC: RESUME   ENTER: SELECT", 320, 100, 4);
     glEnable(GL_DEPTH_TEST);
     glMatrixMode(GL_PROJECTION); glPopMatrix();
     glMatrixMode(GL_MODELVIEW); glPopMatrix();
@@ -8647,9 +8732,11 @@ void draw_scene(PlayerState *render_p) {
     draw_voxworld_bushes();
     draw_map(&world_lighting);
     draw_flashlight_beam(render_p);
+    brick_world_frame();
     bullet_holes_observe(render_p->scene_id);
     draw_spray_decals(render_p->scene_id);
     draw_bullet_holes(render_p->scene_id);
+    draw_brick_debris();
     draw_voxel_chunks(&world_lighting);
     draw_team_map_markers(local_state.scene_id, local_state.game_mode);
     draw_garage_vehicle_pads();
@@ -10122,6 +10209,9 @@ void net_tick() {
                 NET_CLIENT_LOG("SCENE_CHANGE scene=%d mode=%d spawn=(%.1f,%.1f,%.1f)",
                                new_scene, local_state.game_mode, sx, sy, sz);
             }
+        } else if (head->type == PACKET_BRICK_STATE) {
+            /* destructible brick: mirror the server's authoritative cell state (validated inside) */
+            brick_world_net_apply(buffer, len);
         } else if (head->type == PACKET_WORLD_CLOCK && len >= (int)sizeof(NetWorldClock)) {
             /* EMILY/BACKLOG.md SECTION 536 follow-up ("server-authoritative day/night sync") --
                a genuine networked MODE_STORY/MODE_STORY_CAVE client applies the real, whole-state
@@ -10692,6 +10782,10 @@ int main(int argc, char* argv[]) {
                                 SDL_SetRelativeMouseMode(SDL_TRUE);
                             } else if (g_pause_sel == PAUSE_HOLES) {
                                 g_opt_bullet_holes = !g_opt_bullet_holes;
+                                save_display_config();
+                            } else if (g_pause_sel == PAUSE_DEBRIS) {
+                                g_opt_brick_debris = !g_opt_brick_debris;
+                                if (!g_opt_brick_debris) brick_debris_clear(&g_brick_debris);
                                 save_display_config();
                             } else if (g_pause_sel == PAUSE_FULLSCREEN) {
                                 toggle_fullscreen();

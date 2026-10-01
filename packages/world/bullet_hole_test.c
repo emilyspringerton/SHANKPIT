@@ -93,6 +93,19 @@ int main(void) {
     assert(dark[3] > dark[0] && dark[0] > dark[1] && dark[1] > dark[2]);
     for (int s = 0; s < BULLET_HOLE_SLOTS; s++) free(px[s]);
 
+    /* destructible brick: decals on a destroyed cell are removed, others stay */
+    {
+        static BulletHoleBuf buf;
+        bullet_hole_clear(&buf);
+        bullet_hole_add(&buf, 0, 9, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f, -1.0f);   /* inside the cell */
+        bullet_hole_add(&buf, 1, 9, 2.9f, 1.0f, 0.0f, 0.0f, 0.0f, -1.0f);   /* inside, near the edge */
+        bullet_hole_add(&buf, 1, 9, 6.0f, 1.0f, 0.0f, 0.0f, 0.0f, -1.0f);   /* a different cell */
+        /* cell centre (1.5,1.5,0) half extents 1.5: spans x 0..3 */
+        assert(bullet_hole_remove_in_box(&buf, 1.5f, 1.5f, 0.0f, 1.5f, 1.5f, 1.5f) == 2);
+        assert(buf.holes[0].scene_id < 0 && buf.holes[1].scene_id < 0 && buf.holes[2].scene_id == 9);
+        assert(bullet_hole_remove_in_box(&buf, 1.5f, 1.5f, 0.0f, 1.5f, 1.5f, 1.5f) == 0);   /* idempotent */
+    }
+
     printf("bullet_hole_test: all checks passed (marked pixels: magnum=%ld ar=%ld shotgun=%ld sniper=%ld)\n",
            dark[0], dark[1], dark[2], dark[3]);
     return 0;

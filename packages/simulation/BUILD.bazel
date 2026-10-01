@@ -76,6 +76,7 @@ cc_library(
     name = "story_ai",
     srcs = [
         "ai_nav.c",
+        "brick_mod.c",  # PARENA-generated (scripts/gen_brick_mod.sh): destructible brick decisions, lobby + server both
         "humanness.c",
         "story_ai.c",
     ],
@@ -83,6 +84,7 @@ cc_library(
         "ai_nav.h",
         "bot_ai.h",
         "brain_weights.h",
+        "brick_world.h",  # destructible brick glue, header-only, included by both app mains
         "game_physics.h",
         "humanness.h",
         "local_game.h",

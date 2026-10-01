@@ -84,6 +84,18 @@ jobs:
           set -euo pipefail
           make test-bullet-hole
 
+      # Destructible brick (founder real-time 2026-10-01: "i want brick to be destructable"): the
+      # cell/fracture engine and the real-engine integration test under ASan+UBSan, then a real
+      # bin/shank_server on a private port with real packet clients (a shooter destroys a brick
+      # cell; a late joiner learns of it from the background refresh).
+      - name: Destructible brick (engine, integration, real-server end to end)
+        shell: bash
+        run: |
+          set -euo pipefail
+          make test-brick
+          python3 -m pip install --quiet numpy
+          make brick-e2e
+
       - name: Install Dependencies
         shell: bash
         run: |

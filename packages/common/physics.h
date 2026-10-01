@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <string.h>
 #include "protocol.h"
 #include "../world/terrain.h"
 
@@ -273,15 +274,28 @@ static int map_count = 0;
 // buffer index 1, leaving index 0 a real, deliberate, always-zeroed dummy box that the shared
 // skip-index-0 loops were already going to skip anyway -- so this file's own +1-sized buffers
 // need one extra slot of headroom over the real LEVEL_BOXES_MAX box count.
-static Box g_custom_level_geo[CUSTOM_LEVEL_MAX_BOXES + 1];
-static float g_custom_level_r[CUSTOM_LEVEL_MAX_BOXES + 1];
-static float g_custom_level_g[CUSTOM_LEVEL_MAX_BOXES + 1];
-static float g_custom_level_b[CUSTOM_LEVEL_MAX_BOXES + 1];
+// CUSTOM_LEVEL_FRACTURE_SLOTS -- destructible brick (packages/world/brick_fracture.h, founder
+// real-time 2026-10-01: "i want brick to be destructable"). When a brick box is carved, the
+// surviving volume is re-expressed as a handful of ordinary boxes appended AFTER the authored
+// ones in these same arrays, and the authored box is hidden -- so every consumer of map_geo
+// (movement, hitscan, projectiles, lighting, material shaders) sees real geometry with a real hole
+// in it and needs no change at all. The authored boxes keep slots 1..CUSTOM_LEVEL_MAX_BOXES; the
+// pieces live above them; CUSTOM_LEVEL_SLOT_CAP is the real size of every slot-indexed array.
+#define CUSTOM_LEVEL_FRACTURE_SLOTS 900
+#define CUSTOM_LEVEL_SLOT_CAP (CUSTOM_LEVEL_MAX_BOXES + 1 + CUSTOM_LEVEL_FRACTURE_SLOTS)
+static Box g_custom_level_geo[CUSTOM_LEVEL_SLOT_CAP];
+static float g_custom_level_r[CUSTOM_LEVEL_SLOT_CAP];
+static float g_custom_level_g[CUSTOM_LEVEL_SLOT_CAP];
+static float g_custom_level_b[CUSTOM_LEVEL_SLOT_CAP];
 static int g_custom_level_count = 0;
+static Box g_custom_level_orig_geo[CUSTOM_LEVEL_MAX_BOXES + 1]; // authored geometry as loaded (fracture reset)
+static int g_custom_level_authored = 0;                         // authored box count n (slots 1..n)
+static float g_custom_level_uv_off[CUSTOM_LEVEL_SLOT_CAP][3];   // texture-phase offset of a fracture piece (world units)
+static unsigned char g_custom_level_hidden[CUSTOM_LEVEL_SLOT_CAP]; // 1 = authored box replaced by pieces: not drawn
 // Story System Phase 1 (docs/STORY_SYSTEM_NORTHSTAR.md Part 2): the real, authored y of each
 // custom-level box, independent of any open/closed offset a door script has temporarily applied
 // to g_custom_level_geo[slot].y -- see phys_set_custom_level_box_y/phys_custom_level_box_pos.
-static float g_custom_level_box_authored_y[CUSTOM_LEVEL_MAX_BOXES + 1];
+static float g_custom_level_box_authored_y[CUSTOM_LEVEL_SLOT_CAP];
 
 // S459-16, founder real-time: "i think it makes sense to abstract into material first so it
 // cleanly translates into papercraft ... we will want materials for concrete and wood ... this
@@ -294,7 +308,7 @@ static float g_custom_level_box_authored_y[CUSTOM_LEVEL_MAX_BOXES + 1];
 // dependency on the JSON-parsing loader" boundary -- the two constants are kept equal by hand.
 #define CUSTOM_LEVEL_MAX_MATERIALS 16
 #define CUSTOM_LEVEL_MATERIAL_NAME_LEN 32
-static int g_custom_level_material_idx[CUSTOM_LEVEL_MAX_BOXES + 1];
+static int g_custom_level_material_idx[CUSTOM_LEVEL_SLOT_CAP];
 static char g_custom_level_material_name[CUSTOM_LEVEL_MAX_MATERIALS][CUSTOM_LEVEL_MATERIAL_NAME_LEN];
 // g_custom_level_material_shader -- founder real-time, 2026-09-14: "can we design a material for
 // an IPS light its going to need a special shader build it in." level_boxes.h already parsed each
@@ -406,6 +420,10 @@ static inline void phys_set_custom_level(const float *x, const float *y, const f
             ? material_idx[i] : 0;
     }
     g_custom_level_count = n + 1;
+    g_custom_level_authored = n;
+    memcpy(g_custom_level_orig_geo, g_custom_level_geo, sizeof(Box) * (size_t)(n + 1));
+    memset(g_custom_level_uv_off, 0, sizeof(g_custom_level_uv_off));
+    memset(g_custom_level_hidden, 0, sizeof(g_custom_level_hidden));
     g_custom_level_ground_plane_enabled = ground_plane_enabled;
     g_custom_level_ground_plane_squares = ground_plane_squares > 0 ? ground_plane_squares : 1;
 }
@@ -441,6 +459,83 @@ static inline int phys_custom_level_box_pos(int box_index, float *x, float *y, f
     *z = g_custom_level_geo[slot].z;
     return 1;
 }
+
+// ---- Destructible brick: fracture-piece slot API (packages/world/brick_fracture.h) ----------------
+// phys_custom_level_fracture_begin -- every authored box back to its loaded geometry, the piece tail
+// dropped. Call before re-adding the current set of pieces (the decomposition is a pure function of
+// the cell state, so a full rebuild is both simple and deterministic).
+static inline void phys_custom_level_fracture_begin(void) {
+    int n = g_custom_level_authored;
+    if (n <= 0) return;
+    // Only the boxes a previous commit hid are restored -- door boxes (which move) are never
+    // fracture parents, and must keep whatever open/closed offset their script last applied.
+    for (int i = 1; i <= n; i++) {
+        if (!g_custom_level_hidden[i]) continue;
+        g_custom_level_geo[i] = g_custom_level_orig_geo[i];
+        g_custom_level_box_authored_y[i] = g_custom_level_orig_geo[i].y;
+        g_custom_level_hidden[i] = 0;
+    }
+    for (int i = n + 1; i < g_custom_level_count; i++) g_custom_level_hidden[i] = 0;
+    g_custom_level_count = n + 1;
+}
+
+// phys_custom_level_hide_authored -- the authored box (0-based box_index) is replaced by pieces:
+// relocated far out of range (same real technique door boxes use -- zeroing the extents would
+// break resolve_collision's w/h/d > 0 assumption) and flagged so the renderer skips it.
+static inline void phys_custom_level_hide_authored(int box_index) {
+    if (box_index < 0 || box_index >= g_custom_level_authored) return;
+    int slot = box_index + 1;
+    g_custom_level_geo[slot].y = g_custom_level_orig_geo[slot].y - 100000.0f;
+    g_custom_level_hidden[slot] = 1;
+}
+
+// phys_custom_level_add_piece -- one fracture piece (centre x,y,z; full extents w,h,d), inheriting
+// colour and material from its authored parent. Returns the slot, or -1 when the slots are full.
+static inline int phys_custom_level_add_piece(int parent_box_index, float x, float y, float z,
+                                               float w, float h, float d, const float uvo[3]) {
+    if (parent_box_index < 0 || parent_box_index >= g_custom_level_authored) return -1;
+    if (g_custom_level_count >= CUSTOM_LEVEL_SLOT_CAP) return -1;
+    int slot = g_custom_level_count++;
+    int ps = parent_box_index + 1;
+    g_custom_level_geo[slot].x = x; g_custom_level_geo[slot].y = y; g_custom_level_geo[slot].z = z;
+    g_custom_level_geo[slot].w = w; g_custom_level_geo[slot].h = h; g_custom_level_geo[slot].d = d;
+    g_custom_level_box_authored_y[slot] = y;
+    g_custom_level_r[slot] = g_custom_level_r[ps];
+    g_custom_level_g[slot] = g_custom_level_g[ps];
+    g_custom_level_b[slot] = g_custom_level_b[ps];
+    g_custom_level_material_idx[slot] = g_custom_level_material_idx[ps];
+    g_custom_level_uv_off[slot][0] = uvo ? uvo[0] : 0.0f;
+    g_custom_level_uv_off[slot][1] = uvo ? uvo[1] : 0.0f;
+    g_custom_level_uv_off[slot][2] = uvo ? uvo[2] : 0.0f;
+    g_custom_level_hidden[slot] = 0;
+    return slot;
+}
+
+// ---- Map-damage hooks (destructible brick) --------------------------------------------------------
+// physics.h resolves a shot/blast against PLAYERS; what a shot does to the MAP is owned by whoever
+// installs these (packages/simulation/brick_world.h). Each is NULL by default = old behaviour
+// exactly. Called from update_weapons (hitscan, once per trigger pull, with the UNSPREAD aim
+// direction -- the hook owns pellet spread so the server stays the single authority) and from
+// local_game.h's explosion / projectile-impact code.
+typedef void (*PhysMapHitscanHook)(int scene_id, float ox, float oy, float oz, float dx, float dy, float dz, int weapon);
+typedef void (*PhysMapBlastHook)(int scene_id, float x, float y, float z, float radius, int damage, int weapon);
+typedef void (*PhysMapSurfaceHook)(int scene_id, float hx, float hy, float hz, float nx, float ny, float nz, int damage, int weapon);
+static PhysMapHitscanHook g_phys_map_hitscan_hook = NULL;
+static PhysMapBlastHook g_phys_map_blast_hook = NULL;
+static PhysMapSurfaceHook g_phys_map_surface_hook = NULL;
+/* g_phys_blast_normal -- outward normal of the surface a splash projectile just struck, valid only for
+   the duration of that explode_splash call (zero for a proximity detonation); lets the map-damage
+   hook centre the blast inside the wall instead of on its face. */
+static float g_phys_blast_normal[3] = { 0.0f, 0.0f, 0.0f };
+static inline void phys_set_map_damage_hooks(PhysMapHitscanHook hs, PhysMapBlastHook bl, PhysMapSurfaceHook sf) {
+    g_phys_map_hitscan_hook = hs; g_phys_map_blast_hook = bl; g_phys_map_surface_hook = sf;
+}
+/* g_local_match_reset_hook -- called at the top of every local_init_match (packages/simulation/
+   local_game.h) so world state that lives outside ServerState (destructible brick,
+   packages/simulation/brick_world.h) is reset with the match instead of leaking a previous round's
+   craters into the next. Declared here (not in local_game.h) so brick_world.h can install it from
+   any translation unit that has physics.h. NULL = nothing to reset. */
+static void (*g_local_match_reset_hook)(void) = NULL;
 
 // phys_set_custom_level_materials loads the level's own small material-shading table (S459-16) --
 // call this BEFORE phys_set_custom_level so material_idx values passed to that call can already be
@@ -1473,6 +1568,12 @@ static inline void phys_set_scene(int scene_id) {
         map_count = (int)(sizeof(map_geo_stadium) / sizeof(Box));
         g_scene_terrain.active = 0;
     }
+}
+
+// phys_custom_level_fracture_commit -- call after a fracture rebuild: map_count is a snapshot taken
+// by phys_set_scene, so if the custom level is the active scene it must be refreshed here.
+static inline void phys_custom_level_fracture_commit(void) {
+    if (map_geo == g_custom_level_geo) map_count = g_custom_level_count;
 }
 
 static inline TerrainHeightfield* scene_active_terrain(void) {
@@ -3382,6 +3483,7 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
 
             float r = -p->yaw * 0.0174533f; float rp = p->pitch * 0.0174533f;
             float dx = sinf(r) * cosf(rp); float dy = sinf(rp); float dz = -cosf(r) * cosf(rp);
+            if (g_phys_map_hitscan_hook) g_phys_map_hitscan_hook(p->scene_id, p->x, p->y + EYE_HEIGHT, p->z, dx, dy, dz, w);
             if (WPN_STATS[w].spr > 0) {
                 dx += phys_rand_f() * WPN_STATS[w].spr;
                 dy += phys_rand_f() * WPN_STATS[w].spr;

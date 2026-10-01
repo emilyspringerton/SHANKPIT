@@ -27,6 +27,8 @@ cc_library(
         "terrain.h",
         "parena_runtime.h",
         "png_decode.h",
+        "brick_debris.h",
+        "brick_fracture.h",
         "bullet_hole.h",
         "bullet_hole_gen.h",
     ],
