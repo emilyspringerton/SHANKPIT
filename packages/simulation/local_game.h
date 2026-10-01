@@ -1836,6 +1836,12 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
         }
     }
 
+    /* MODE_TYLER (TYLER VALHANNA cold open, local single-player): the two scripted actors are
+       story_ai NPCs, so they need the same story_ai_tick the story modes get. Only the story_ai
+       tick -- not witness_ai_tick (VOXWORLD's citizens/zombies, nothing seeded here). */
+    if (local_state.game_mode == MODE_TYLER && local_state.story_phase == STORY_PHASE_PLAYING) {
+        story_ai_tick(&local_state, cmd_time);
+    }
     if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
         local_state.story_phase == STORY_PHASE_PLAYING) {
         story_ai_tick(&local_state, cmd_time);
@@ -1849,7 +1855,8 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
         PlayerState *p = &local_state.players[i];
         if (!p->active) continue;
         if (p->state == STATE_DEAD) {
-            if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) && i > 0) {
+            if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE ||
+                 local_state.game_mode == MODE_TYLER) && i > 0) {
                 p->respawn_time = 0;
                 continue;
             }
@@ -1895,7 +1902,8 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
             continue;
         }
         if (i > 0 && p->active && p->state != STATE_DEAD) {
-            if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
+            if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE ||
+                 local_state.game_mode == MODE_TYLER) &&
                 local_state.story_phase == STORY_PHASE_PLAYING) {
                 if (!p->in_vehicle) {
                     MoveIntent bot_move_intent = {
@@ -2033,6 +2041,13 @@ void local_init_match(int num_players, int mode) {
         local_state.scene_id = SCENE_STORY_CAVE;
         local_state.cave_endure_until_ms = 0;
         printf("[CAVE] starting CAVE-001 endurance encounter\n");
+    } else if (mode == MODE_TYLER) {
+        /* TYLER VALHANNA cold open: one real player (the wisp) plus the two scripted NPCs the
+           level's own Characters spawn. No bot-fill, no scoring. scene_id is a placeholder --
+           the caller (apps/lobby lobby_start_tyler_mode) loads the real Iceland level on top. */
+        num_players = 1;
+        local_state.scene_id = SCENE_GARAGE_OSAKA;
+        printf("[TYLER] starting VALHANNA cold open (MODE_TYLER)\n");
     } else {
         local_state.scene_id = SCENE_GARAGE_OSAKA;
     }
@@ -2100,6 +2115,10 @@ void local_init_match(int num_players, int mode) {
         boss->last_attack_ms = 0;
         boss->hurt_flash_until_ms = 0;
         printf("[STORY] boss spawned at %.1f/%.1f/%.1f hp=%.1f\n", boss->x, boss->y, boss->z, boss->max_health);
+    }
+    if (mode == MODE_TYLER) {
+        story_ai_reset(&local_state); /* clean g_story_ai table; the level load spawns Tyler+Hana */
+        local_state.story_boss.active = 0;
     }
     if (mode == MODE_STORY_CAVE) {
         story_ai_reset(&local_state);

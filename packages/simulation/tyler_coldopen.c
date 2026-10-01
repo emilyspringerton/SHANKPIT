@@ -50,14 +50,24 @@ void tyler_coldopen_start(TylerColdOpenState *st, int tyler_slot, int hana_slot,
     (void)now_ms;
 }
 
+/* How long a triggered actor stays in the locked AI_MODE_SCRIPTED state, counted from ARRIVAL at
+ * its marker. Deliberately far longer than the whole cold open (~33 s): a beat names only the
+ * actor(s) that move in it, and an actor a beat does NOT name must keep standing exactly where its
+ * last beat left it -- if its scripted state lapsed it would revert to its role's ordinary behavior
+ * (a story ally keeps its distance from the hero and opens fire on whatever it can see, which in
+ * MODE_TYLER is the wisp the player is flying). The next beat that names the actor simply replaces
+ * the state, and a level change despawns it, so the long hold never outlives the sequence. */
+#define TYLER_SCRIPTED_LOCK_MS 600000U
+
 static void tyler_coldopen_trigger_actor(const TylerColdOpenState *st, TylerActor actor,
                                          float x, float y, float z, unsigned int hold_ms,
                                          unsigned int now_ms) {
+    (void)hold_ms; /* the beat's own length is the coordinator's clock (tyler_effective_hold), not the actor's lock */
     if (actor == TYLER_ACTOR_TYLER || actor == TYLER_ACTOR_BOTH) {
-        story_ai_trigger_scripted(st->tyler_slot, x, y, z, hold_ms, now_ms);
+        story_ai_trigger_scripted(st->tyler_slot, x, y, z, TYLER_SCRIPTED_LOCK_MS, now_ms);
     }
     if (actor == TYLER_ACTOR_HANA || actor == TYLER_ACTOR_BOTH) {
-        story_ai_trigger_scripted(st->hana_slot, x, y, z, hold_ms, now_ms);
+        story_ai_trigger_scripted(st->hana_slot, x, y, z, TYLER_SCRIPTED_LOCK_MS, now_ms);
     }
 }
 

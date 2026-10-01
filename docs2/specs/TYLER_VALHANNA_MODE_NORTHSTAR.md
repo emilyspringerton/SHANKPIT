@@ -156,7 +156,7 @@ per `BIGO_ENGINE_MERGE_NORTHSTAR.md`) can now request third person for a real pl
 field, with no new camera branch to write.
 
 **Verified**: `make server`/`make lobby` both build clean, zero new warnings. Re-ran the exact same
-live end-to-end smoke test (`--tyler --port 16969 --level examples/tyler-valhanna/
+live end-to-end smoke test (`--tyler --port 16969 --level assets/tyler_levels/
 tyler_1986_iceland.json`, non-conflicting port so as not to touch the live `:6969`/`:6971`
 services) — identical log sequence (`MODE_SELECTED mode=109` → `CUSTOM_LEVEL_CHARACTERS_SPAWNED
 count=2` → `TYLER_COLDOPEN_STARTED` → `STORY_LEVEL_TRANSITION next_level_id=23 name=CONSTRUCT`),

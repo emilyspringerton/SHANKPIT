@@ -60,7 +60,18 @@ static AINavGraph g_story_nav; /* S461-01 -- real, hand-authored waypoint/cover 
 static AISquad g_story_squads[STORY_AI_SQUAD_MAX]; /* S461-03 -- real squad leader system */
 
 static float ai_len2(float x, float z) { return sqrtf(x * x + z * z); }
-static float ai_angle_to(float dx, float dz) { return atan2f(dx, dz) * (180.0f / 3.14159265f); }
+/* Yaw (degrees) that makes an entity FACE/MOVE toward (dx, dz) in the simulation's own yaw
+ * convention -- the one shared_movement.h's shankpit_yaw_basis_from_deg and physics.h's hitscan /
+ * melee code both use: forward = (-sin(yaw), -cos(yaw)), so yaw 0 looks down -Z.
+ *
+ * This used to be atan2f(dx, dz), i.e. forward = (+sin, +cos) -- exactly 180 degrees opposite. Every
+ * story_ai NPC therefore walked, turned and aimed directly AWAY from whatever it was steering at
+ * (found 2026-10-01 by MODE_TYLER's tests/tyler/test_tyler_vo.c: a scripted actor sent to z=-30
+ * walked to z=+50 and pinned itself against the far wall; perception's FOV test compared two
+ * values in the same wrong convention so it never noticed). Nothing in story_ai.c turns a yaw back
+ * into a vector except through the sim's movement basis and physics.h, so this is the one place the
+ * convention lives. */
+static float ai_angle_to(float dx, float dz) { return atan2f(-dx, -dz) * (180.0f / 3.14159265f); }
 
 static float ai_clamp(float v, float lo, float hi) {
     if (v < lo) return lo;
@@ -1116,7 +1127,12 @@ void story_ai_tick(ServerState *s, unsigned int now_ms) {
     int i;
     int attackers = 0;
     if (!s) return;
-    if (s->game_mode != MODE_STORY || s->story_phase != STORY_PHASE_PLAYING) return;
+    /* MODE_TYLER (TYLER VALHANNA cold open) drives its two AI_MODE_SCRIPTED actors through this
+       same tick: before this gate accepted it, story_ai_tick was a silent no-op in MODE_TYLER, so
+       Tyler and Hana never got any movement input on the server OR locally (verified by
+       tests/tyler/test_tyler_vo.c, T6). Deliberately an explicit allow-list entry, not a blanket
+       "any mode" -- QUEUE/deathmatch levels that author characters keep their existing behavior. */
+    if ((s->game_mode != MODE_STORY && s->game_mode != MODE_TYLER) || s->story_phase != STORY_PHASE_PLAYING) return;
 
     memset(&g_story_bb, 0, sizeof(g_story_bb));
 
