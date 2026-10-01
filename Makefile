@@ -16,6 +16,19 @@ LOBBY_SRC    := apps/lobby/src/main.c apps/lobby/src/editor_widget_bridge.c pack
 SERVER_SRC   := apps/server/src/main.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/tyler_coldopen.c packages/simulation/tyler_voice_mod.c packages/simulation/day_night_clock.c packages/simulation/world_rules.c packages/simulation/witness_ai.c packages/simulation/witness_sim.c packages/simulation/witness_rules.c packages/simulation/npc_archetype.c packages/simulation/zombie_values.c packages/simulation/ai_brain_rules.c packages/simulation/giant_bug_values.c packages/simulation/giant_bug_brain.c packages/world/terrain.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c
 SERVERCTL_SRC:= apps/server/serverctl.c
 
+# ---- Source-list export for CI ----
+# CI (.github/workflows/{tests,release}.yml) compiles the Windows lobby and the Linux server with
+# raw gcc/mingw lines instead of `make` (different libs/flags). Those lines used to carry a
+# hand-copied copy of LOBBY_SRC/SERVER_SRC and drifted NINE times -- including a 3-day red release
+# pipeline (2026-09-28..10-01) -- so they now expand these two targets instead:
+#   gcc $(make -s print-server-src) ...        x86_64-w64-mingw32-gcc $(make -s print-lobby-src) ...
+# A new packages/*.c added to LOBBY_SRC/SERVER_SRC above is now picked up by CI automatically.
+.PHONY: print-lobby-src print-server-src
+print-lobby-src:
+	@echo $(LOBBY_SRC)
+print-server-src:
+	@echo $(SERVER_SRC)
+
 # ---- Outputs ----
 LOBBY_BIN    := $(BIN_DIR)/shank_lobby
 SERVER_BIN   := $(BIN_DIR)/shank_server
