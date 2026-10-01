@@ -269,7 +269,7 @@ jobs:
             test -f apps/gui/main.c
             x86_64-w64-mingw32-gcc -std=c99 -Wall -Wextra -Werror -Icore -Icore/runtime -DPARENA_NO_GRAPHICS "-DDW_VERSION=\"ci\"" \
               -include card_rules.h -O2 -I"$SDLW/include" -I"$SDLW/include/SDL2" \
-              apps/gui/main.c apps/gui/fx.c apps/gui/sfx.c core/client.c core/policy.c core/protocol.c core/card_rules.c core/fx_rules.c core/card_text.c core/iduna.c core/http.c core/account_rules.c \
+              apps/gui/main.c apps/gui/fx.c apps/gui/sfx.c core/client.c core/policy.c core/protocol.c core/card_rules.c core/fx_rules.c core/card_text.c core/iduna.c core/http.c core/account_rules.c core/runtime/parena_runtime.c \
               -o dw_gui.exe -L"$SDLW/lib" -lmingw32 -lSDL2 -lws2_32 -lbcrypt -mwindows )
           cp os_apps/DEADWEIGHT/dw_gui.exe bundled/
 
