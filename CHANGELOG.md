@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-01
+
+- Per-gun bullet-hole decals (founder real-time: "shooting a wall causes a bullet hole, different per gun ... like half life ... using the nock tools parena texture generator and database"). Each gun's hole is a PARENA program (`PARENA/stdlib/shankpit/textures/bullet_hole_{magnum,ar,shotgun,sniper}.prn`) rendered by NOCK and stored as `bullet-hole-<gun>` rows in IDUNA's `nock_textures`; the client fetches the live NOCK image (IDUNA `GET /api/v1/nock-textures/by-name/<name>/image`) and falls back to the checked-in export (`packages/world/bullet_hole_gen.h`, regenerate with `scripts/gen_bullet_holes.sh`). New `packages/world/bullet_hole.h` (shot detection from per-player ammo drops -- works for local prediction and networked snapshots with no new wire field; shotgun = 8 spread rays; 256-hole ring buffer, per-hole random rotation/size), `apps/lobby` traces each shot into the map (`trace_map`) and draws multiply-blended quads. `make test-bullet-hole` (headless). Live-verified under Xvfb: four visibly different holes per gun. Honest limits: map geometry only (a shot that hits a player also marks the wall behind), no per-material variation, live fetch needs the IDUNA route deployed (embedded export used until then). Vendored `parena_runtime.h` gained `bytes_slice_impl`; `png_decode_gen.c` regenerated for paletted PNGs.
+
 ## 2026-09-30
 
 - MODE_TYLER (S536 sub-pass, Apple #21441): TYLER VALHANNA's cold open (`TYLER/episodes/

@@ -77,9 +77,12 @@ typedef struct {
     int color_type;
     int interlace;
     int idat_total;
+    int plte_pos;
+    int trns_pos;
+    int trns_len;
     int ok;
 } PngHeader;
-static inline __attribute__((unused)) PngHeader PngHeader_new(int width, int height, int bit_depth, int color_type, int interlace, int idat_total, int ok) {
+static inline __attribute__((unused)) PngHeader PngHeader_new(int width, int height, int bit_depth, int color_type, int interlace, int idat_total, int plte_pos, int trns_pos, int trns_len, int ok) {
     PngHeader v;
     v.width = width;
     v.height = height;
@@ -87,6 +90,9 @@ static inline __attribute__((unused)) PngHeader PngHeader_new(int width, int hei
     v.color_type = color_type;
     v.interlace = interlace;
     v.idat_total = idat_total;
+    v.plte_pos = plte_pos;
+    v.trns_pos = trns_pos;
+    v.trns_len = trns_len;
     v.ok = ok;
     return v;
 }
@@ -112,6 +118,7 @@ int bytes_get(Bytes, int);
 void bytes_set_(Bytes, int, int);
 Bytes bytes_from_string(char *, Arena *);
 char * bytes_to_string_lossy(Bytes, Arena *);
+Bytes bytes_slice(Bytes, int, int, Arena *);
 BitStep read_bit(Bytes, int);
 BitStep read_bits(Bytes, int, int);
 int vec_i32_at(Vec *, int);
@@ -166,6 +173,10 @@ Bytes bytes_from_string(char * s __attribute__((unused)), Arena *dest __attribut
 
 char * bytes_to_string_lossy(Bytes b __attribute__((unused)), Arena *dest __attribute__((unused))) {
     return (bytes_to_string_lossy_impl(b, dest));
+}
+
+Bytes bytes_slice(Bytes b __attribute__((unused)), int start __attribute__((unused)), int end __attribute__((unused)), Arena *dest __attribute__((unused))) {
+    return (bytes_slice_impl(b, start, end, dest));
 }
 
 BitStep read_bit(Bytes data __attribute__((unused)), int bitpos __attribute__((unused))) {
@@ -742,15 +753,18 @@ PngHeader png_scan_header(Bytes data __attribute__((unused))) {
     int color_type = 0;
     int interlace = 0;
     int idat_total = 0;
+    int plte_pos = 0;
+    int trns_pos = 0;
+    int trns_len = 0;
     int saw_ihdr = 0;
     while (1) {
         if ((pos >= bytes_len(data))) {
-        __loop_result_19 = PngHeader_new(width, height, bit_depth, color_type, interlace, idat_total, saw_ihdr);
+        __loop_result_19 = PngHeader_new(width, height, bit_depth, color_type, interlace, idat_total, plte_pos, trns_pos, trns_len, saw_ihdr);
         break;
         } else {
         int clen __attribute__((unused)) = read_u32_be(data, pos);
         if (chunk_is(data, (pos + 4), 73, 69, 78, 68)) {
-        __loop_result_19 = PngHeader_new(width, height, bit_depth, color_type, interlace, idat_total, saw_ihdr);
+        __loop_result_19 = PngHeader_new(width, height, bit_depth, color_type, interlace, idat_total, plte_pos, trns_pos, trns_len, saw_ihdr);
         break;
         } else {
         if (chunk_is(data, (pos + 4), 73, 72, 68, 82)) {
@@ -762,7 +776,10 @@ PngHeader png_scan_header(Bytes data __attribute__((unused))) {
         int __recur_tmp_4 = bytes_get(data, (dpos + 9));
         int __recur_tmp_5 = bytes_get(data, (dpos + 12));
         int __recur_tmp_6 = idat_total;
-        int __recur_tmp_7 = 1;
+        int __recur_tmp_7 = plte_pos;
+        int __recur_tmp_8 = trns_pos;
+        int __recur_tmp_9 = trns_len;
+        int __recur_tmp_10 = 1;
         pos = __recur_tmp_0;
         width = __recur_tmp_1;
         height = __recur_tmp_2;
@@ -770,7 +787,10 @@ PngHeader png_scan_header(Bytes data __attribute__((unused))) {
         color_type = __recur_tmp_4;
         interlace = __recur_tmp_5;
         idat_total = __recur_tmp_6;
-        saw_ihdr = __recur_tmp_7;
+        plte_pos = __recur_tmp_7;
+        trns_pos = __recur_tmp_8;
+        trns_len = __recur_tmp_9;
+        saw_ihdr = __recur_tmp_10;
         continue;
         } else {
         if (chunk_is(data, (pos + 4), 73, 68, 65, 84)) {
@@ -781,7 +801,10 @@ PngHeader png_scan_header(Bytes data __attribute__((unused))) {
         int __recur_tmp_4 = color_type;
         int __recur_tmp_5 = interlace;
         int __recur_tmp_6 = (idat_total + clen);
-        int __recur_tmp_7 = saw_ihdr;
+        int __recur_tmp_7 = plte_pos;
+        int __recur_tmp_8 = trns_pos;
+        int __recur_tmp_9 = trns_len;
+        int __recur_tmp_10 = saw_ihdr;
         pos = __recur_tmp_0;
         width = __recur_tmp_1;
         height = __recur_tmp_2;
@@ -789,7 +812,60 @@ PngHeader png_scan_header(Bytes data __attribute__((unused))) {
         color_type = __recur_tmp_4;
         interlace = __recur_tmp_5;
         idat_total = __recur_tmp_6;
-        saw_ihdr = __recur_tmp_7;
+        plte_pos = __recur_tmp_7;
+        trns_pos = __recur_tmp_8;
+        trns_len = __recur_tmp_9;
+        saw_ihdr = __recur_tmp_10;
+        continue;
+        } else {
+        if (chunk_is(data, (pos + 4), 80, 76, 84, 69)) {
+        int __recur_tmp_0 = (pos + (12 + clen));
+        int __recur_tmp_1 = width;
+        int __recur_tmp_2 = height;
+        int __recur_tmp_3 = bit_depth;
+        int __recur_tmp_4 = color_type;
+        int __recur_tmp_5 = interlace;
+        int __recur_tmp_6 = idat_total;
+        int __recur_tmp_7 = (pos + 8);
+        int __recur_tmp_8 = trns_pos;
+        int __recur_tmp_9 = trns_len;
+        int __recur_tmp_10 = saw_ihdr;
+        pos = __recur_tmp_0;
+        width = __recur_tmp_1;
+        height = __recur_tmp_2;
+        bit_depth = __recur_tmp_3;
+        color_type = __recur_tmp_4;
+        interlace = __recur_tmp_5;
+        idat_total = __recur_tmp_6;
+        plte_pos = __recur_tmp_7;
+        trns_pos = __recur_tmp_8;
+        trns_len = __recur_tmp_9;
+        saw_ihdr = __recur_tmp_10;
+        continue;
+        } else {
+        if (chunk_is(data, (pos + 4), 116, 82, 78, 83)) {
+        int __recur_tmp_0 = (pos + (12 + clen));
+        int __recur_tmp_1 = width;
+        int __recur_tmp_2 = height;
+        int __recur_tmp_3 = bit_depth;
+        int __recur_tmp_4 = color_type;
+        int __recur_tmp_5 = interlace;
+        int __recur_tmp_6 = idat_total;
+        int __recur_tmp_7 = plte_pos;
+        int __recur_tmp_8 = (pos + 8);
+        int __recur_tmp_9 = clen;
+        int __recur_tmp_10 = saw_ihdr;
+        pos = __recur_tmp_0;
+        width = __recur_tmp_1;
+        height = __recur_tmp_2;
+        bit_depth = __recur_tmp_3;
+        color_type = __recur_tmp_4;
+        interlace = __recur_tmp_5;
+        idat_total = __recur_tmp_6;
+        plte_pos = __recur_tmp_7;
+        trns_pos = __recur_tmp_8;
+        trns_len = __recur_tmp_9;
+        saw_ihdr = __recur_tmp_10;
         continue;
         } else {
         int __recur_tmp_0 = (pos + (12 + clen));
@@ -799,7 +875,10 @@ PngHeader png_scan_header(Bytes data __attribute__((unused))) {
         int __recur_tmp_4 = color_type;
         int __recur_tmp_5 = interlace;
         int __recur_tmp_6 = idat_total;
-        int __recur_tmp_7 = saw_ihdr;
+        int __recur_tmp_7 = plte_pos;
+        int __recur_tmp_8 = trns_pos;
+        int __recur_tmp_9 = trns_len;
+        int __recur_tmp_10 = saw_ihdr;
         pos = __recur_tmp_0;
         width = __recur_tmp_1;
         height = __recur_tmp_2;
@@ -807,8 +886,13 @@ PngHeader png_scan_header(Bytes data __attribute__((unused))) {
         color_type = __recur_tmp_4;
         interlace = __recur_tmp_5;
         idat_total = __recur_tmp_6;
-        saw_ihdr = __recur_tmp_7;
+        plte_pos = __recur_tmp_7;
+        trns_pos = __recur_tmp_8;
+        trns_len = __recur_tmp_9;
+        saw_ihdr = __recur_tmp_10;
         continue;
+        }
+        }
         }
         }
         }
@@ -960,12 +1044,12 @@ PngImage png_decode(Bytes data __attribute__((unused)), Arena *dest __attribute_
     return PngImage_new(0, 0, bytes_alloc(0, dest), 0);
     } else {
     int color_type __attribute__((unused)) = (hdr).color_type;
-    if ((!(((color_type == 2) || (color_type == 6))))) {
+    if ((!(((color_type == 2) || ((color_type == 3) || (color_type == 6)))))) {
     return PngImage_new(0, 0, bytes_alloc(0, dest), 0);
     } else {
     int width __attribute__((unused)) = (hdr).width;
     int height __attribute__((unused)) = (hdr).height;
-    int bpp __attribute__((unused)) = ((color_type == 6) ? 4 : 3);
+    int bpp __attribute__((unused)) = ((color_type == 6) ? 4 : ((color_type == 3) ? 1 : 3));
     Bytes idat __attribute__((unused)) = png_copy_idat(data, (hdr).idat_total, dest);
     int deflate_len __attribute__((unused)) = (bytes_len(idat) - 6);
     Bytes deflate_payload __attribute__((unused)) = png_strip_zlib_wrapper(idat, deflate_len, dest);
@@ -979,14 +1063,18 @@ PngImage png_decode(Bytes data __attribute__((unused)), Arena *dest __attribute_
     } else {
     Bytes recon __attribute__((unused)) = png_defilter(raw, width, height, bpp, dest);
     Bytes rgba __attribute__((unused)) = bytes_alloc((width * (height * 4)), dest);
+    int plte_pos __attribute__((unused)) = (hdr).plte_pos;
+    int trns_pos __attribute__((unused)) = (hdr).trns_pos;
+    int trns_len __attribute__((unused)) = (hdr).trns_len;
     void * __let_val_4 __attribute__((unused));
     int i = 0;
     while (1) {
         if ((i < (width * height))) {
-        int rb __attribute__((unused)) = bytes_get(recon, (i * bpp));
-        int gb __attribute__((unused)) = bytes_get(recon, ((i * bpp) + 1));
-        int bb __attribute__((unused)) = bytes_get(recon, ((i * bpp) + 2));
-        int ab __attribute__((unused)) = ((bpp == 4) ? bytes_get(recon, ((i * bpp) + 3)) : 255);
+        int idx __attribute__((unused)) = ((bpp == 1) ? bytes_get(recon, i) : 0);
+        int rb __attribute__((unused)) = ((bpp == 1) ? bytes_get(data, (plte_pos + (idx * 3))) : bytes_get(recon, (i * bpp)));
+        int gb __attribute__((unused)) = ((bpp == 1) ? bytes_get(data, (plte_pos + ((idx * 3) + 1))) : bytes_get(recon, ((i * bpp) + 1)));
+        int bb __attribute__((unused)) = ((bpp == 1) ? bytes_get(data, (plte_pos + ((idx * 3) + 2))) : bytes_get(recon, ((i * bpp) + 2)));
+        int ab __attribute__((unused)) = ((bpp == 4) ? bytes_get(recon, ((i * bpp) + 3)) : (((bpp == 1) && ((trns_pos > 0) && (idx < trns_len))) ? bytes_get(data, (trns_pos + idx)) : 255));
         (void)(bytes_set_(rgba, (i * 4), rb));
         (void)(bytes_set_(rgba, ((i * 4) + 1), gb));
         (void)(bytes_set_(rgba, ((i * 4) + 2), bb));

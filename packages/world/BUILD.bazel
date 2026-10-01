@@ -27,6 +27,8 @@ cc_library(
         "terrain.h",
         "parena_runtime.h",
         "png_decode.h",
+        "bullet_hole.h",
+        "bullet_hole_gen.h",
     ],
     # spray_registry.h's own real S459-33 texture decode/upload needs packages/render's
     # ProcTexture (proc_tex.h) -- only ever referenced by apps/lobby's own draw code, never by

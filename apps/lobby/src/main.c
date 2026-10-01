@@ -44,6 +44,7 @@
 #include "../../../packages/reflux/reflux_mod_host.h"
 #include "../../../packages/world/level_boxes.h"
 #include "../../../packages/world/spray_registry.h"
+#include "../../../packages/world/bullet_hole.h"
 #include "../../../packages/render/proc_tex.h"
 #include "../../../packages/render/retro_sky.h"
 #include "../../../packages/render/sky_weather.h"
@@ -707,6 +708,15 @@ static GLuint spray_tex_for_id(int spray_id, float *out_aspect) {
     return 0;
 }
 int g_spray_decal_next = 0;
+
+// Bullet holes (founder real-time, 2026-10-01: "shooting a wall causes a bullet hole, different per
+// gun ... like half life"). Engine-side logic lives in packages/world/bullet_hole.h; the per-gun
+// artwork is authored in PARENA and stored in NOCK's texture library (bullet-hole-<gun>).
+BulletHoleBuf g_bullet_holes;
+BulletHoleTrack g_bullet_hole_track[MAX_CLIENTS];
+ProcTexture g_bullet_hole_tex[BULLET_HOLE_SLOTS];
+int g_bullet_hole_tex_state[BULLET_HOLE_SLOTS]; /* 0=unset 1=ready 2=failed */
+int g_bullet_hole_prefetched = 0;
 
 static int g_paused = 0;
 static int g_pause_sel = 0;
@@ -1700,6 +1710,8 @@ static void reset_client_render_state_for_net() {
     // identity can change.
     g_spray_decal_count = 0;
     g_spray_decal_next = 0;
+    bullet_hole_clear(&g_bullet_holes);
+    memset(g_bullet_hole_track, 0, sizeof(g_bullet_hole_track));
 }
 
 static void client_apply_spawn_transition_sync(PlayerState *p, const NetPlayer *np, const char *reason_tag) {
@@ -2741,6 +2753,114 @@ static void draw_spray_decals(int scene_id) {
             glEnd();
         }
     }
+}
+
+// bullet_hole_upload_rgba -- turns decoded RGBA into a GL texture for a slot (replacing any prior one).
+static void bullet_hole_upload_rgba(int slot, unsigned char *rgba, int w, int h) {
+    if (g_bullet_hole_tex_state[slot] == 1) proc_tex_destroy(&g_bullet_hole_tex[slot]);
+    if (!proc_tex_create(&g_bullet_hole_tex[slot], w, h)) { g_bullet_hole_tex_state[slot] = 2; return; }
+    memcpy(g_bullet_hole_tex[slot].pixels, rgba, (size_t)w * (size_t)h * 4u);
+    proc_tex_upload(&g_bullet_hole_tex[slot]);
+    g_bullet_hole_tex_state[slot] = 1;
+}
+
+// bullet_hole_tex_for_slot -- lazy-decodes the checked-in NOCK export (instant, offline) the first
+// time a slot is drawn; 0 if it can't decode (never garbage -- the hole just isn't drawn).
+static GLuint bullet_hole_tex_for_slot(int slot) {
+    if (slot < 0 || slot >= BULLET_HOLE_SLOTS) return 0;
+    if (g_bullet_hole_tex_state[slot] == 0) {
+        unsigned char *rgba = NULL; int w = 0, h = 0;
+        if (bullet_hole_decode_embedded(slot, &rgba, &w, &h)) { bullet_hole_upload_rgba(slot, rgba, w, h); free(rgba); }
+        else g_bullet_hole_tex_state[slot] = 2;
+    }
+    return g_bullet_hole_tex_state[slot] == 1 ? g_bullet_hole_tex[slot].tex_id : 0;
+}
+
+// client_prefetch_bullet_holes -- once per process, at scene entry (same off-gameplay checkpoint
+// client_prefetch_default_spray uses, because the fetch is a blocking curl): pull each gun's
+// current texture from NOCK's library via IDUNA; keep the embedded export on any failure.
+static void client_prefetch_bullet_holes(void) {
+    if (g_bullet_hole_prefetched) return;
+    g_bullet_hole_prefetched = 1;
+    for (int slot = 0; slot < BULLET_HOLE_SLOTS; slot++) {
+        unsigned char *rgba = NULL; int w = 0, h = 0;
+        if (bullet_hole_fetch_live(slot, &rgba, &w, &h)) { bullet_hole_upload_rgba(slot, rgba, w, h); free(rgba); }
+    }
+}
+
+// bullet_holes_observe -- once per rendered frame: for every active player in the scene, detect
+// shots (ammo drop on an unchanged weapon) and trace each shot's ray(s) into the map, leaving a
+// per-gun hole where it lands. The local player aims with the live cam_yaw/cam_pitch (same fix
+// spray_place_decal documents -- p->yaw/pitch lag the crosshair); others use their synced angles.
+static void bullet_holes_observe(int scene_id) {
+    int ref_id = (my_client_id >= 0 && my_client_id < MAX_CLIENTS) ? my_client_id : 0;
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        PlayerState *p = &local_state.players[i];
+        if (!p->active || p->state == STATE_DEAD || p->scene_id != scene_id) { g_bullet_hole_track[i].valid = 0; continue; }
+        int w = p->current_weapon;
+        if (w < 0 || w >= MAX_WEAPONS) continue;
+        int shots = bullet_hole_shots_fired(&g_bullet_hole_track[i], w, p->ammo[w]);
+        int slot = bullet_hole_slot_for_weapon(w);
+        if (shots <= 0 || slot < 0) continue;
+        float yaw = (i == ref_id) ? cam_yaw : p->yaw, pitch = (i == ref_id) ? cam_pitch : p->pitch;
+        float ry = -yaw * 0.0174533f, rp = pitch * 0.0174533f;
+        float bx = sinf(ry) * cosf(rp), by = sinf(rp), bz = -cosf(ry) * cosf(rp);
+        float ex = p->x, ey = p->y + (p->crouching ? 2.5f : EYE_HEIGHT), ez = p->z;
+        int rays = bullet_hole_rays_for_weapon(w) * shots;
+        for (int r = 0; r < rays; r++) {
+            float dx = bx, dy = by, dz = bz;
+            bullet_hole_spread_dir(&g_bullet_holes, w, &dx, &dy, &dz);
+            float hx, hy, hz, nx, ny, nz;
+            if (trace_map(ex, ey, ez, ex + dx * BULLET_HOLE_RANGE, ey + dy * BULLET_HOLE_RANGE, ez + dz * BULLET_HOLE_RANGE,
+                          &hx, &hy, &hz, &nx, &ny, &nz))
+                bullet_hole_add(&g_bullet_holes, slot, scene_id, hx, hy, hz, nx, ny, nz);
+        }
+    }
+}
+
+// draw_bullet_holes -- each hole is a small quad on the hit surface, MULTIPLY-blended
+// (glBlendFunc(GL_DST_COLOR, GL_ZERO)) so the decal's pure-white background vanishes on any wall
+// and only the darkened hole/scorch/cracks show -- the NOCK pipeline has no alpha channel, so this
+// is the intended composite (see PARENA/stdlib/shankpit/textures/bullet_hole_*.prn). Depth writes
+// are off and a polygon offset keeps holes from z-fighting the wall.
+static void draw_bullet_holes(int scene_id) {
+    if (g_bullet_holes.count == 0) return;
+    glPushAttrib(GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_POLYGON_BIT);
+    glEnable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_DST_COLOR, GL_ZERO);
+    glDepthMask(GL_FALSE);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(-2.0f, -2.0f);
+    glColor3f(1.0f, 1.0f, 1.0f);
+    for (int i = 0; i < g_bullet_holes.count; i++) {
+        BulletHole *d = &g_bullet_holes.holes[i];
+        if (d->scene_id != scene_id) continue;
+        GLuint tex = bullet_hole_tex_for_slot(d->slot);
+        if (!tex) continue;
+        float upx = 0.0f, upy = 1.0f, upz = 0.0f;
+        if (fabsf(d->ny) > 0.98f) { upx = 0.0f; upy = 0.0f; upz = 1.0f; }
+        float rx = d->ny * upz - d->nz * upy, ry = d->nz * upx - d->nx * upz, rz = d->nx * upy - d->ny * upx;
+        float rl = sqrtf(rx * rx + ry * ry + rz * rz);
+        if (rl < 0.0001f) continue;
+        rx /= rl; ry /= rl; rz /= rl;
+        float ux = ry * d->nz - rz * d->ny, uy = rz * d->nx - rx * d->nz, uz = rx * d->ny - ry * d->nx;
+        /* per-hole in-plane rotation so repeated hits from one gun don't look stamped */
+        float cr = cosf(d->rot), sr = sinf(d->rot);
+        float ax = rx * cr + ux * sr, ay = ry * cr + uy * sr, az = rz * cr + uz * sr;
+        float bx = -rx * sr + ux * cr, by = -ry * sr + uy * cr, bz = -rz * sr + uz * cr;
+        float hs = d->half;
+        float ox = d->x + d->nx * 0.02f, oy = d->y + d->ny * 0.02f, oz = d->z + d->nz * 0.02f;
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glBegin(GL_QUADS);
+        glTexCoord2f(0.0f, 1.0f); glVertex3f(ox - ax * hs - bx * hs, oy - ay * hs - by * hs, oz - az * hs - bz * hs);
+        glTexCoord2f(1.0f, 1.0f); glVertex3f(ox + ax * hs - bx * hs, oy + ay * hs - by * hs, oz + az * hs - bz * hs);
+        glTexCoord2f(1.0f, 0.0f); glVertex3f(ox + ax * hs + bx * hs, oy + ay * hs + by * hs, oz + az * hs + bz * hs);
+        glTexCoord2f(0.0f, 0.0f); glVertex3f(ox - ax * hs + bx * hs, oy - ay * hs + by * hs, oz - az * hs + bz * hs);
+        glEnd();
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glPopAttrib();
 }
 
 static int clamp_skin_id(int skin_id) {
@@ -8188,6 +8308,7 @@ static void client_apply_scene_id(int scene_id, unsigned int now_ms) {
         if (scene_id == SCENE_CUSTOM_LEVEL && net_requested_mode == MODE_QUEUE) {
             client_load_queue_level();
         }
+        client_prefetch_bullet_holes(); // founder 2026-10-01 -- same off-gameplay checkpoint, once per process
         client_prefetch_default_spray(); // S459-74 -- real, off-input-path resolve, every scene entry (cheap no-op once resolved)
         phys_set_scene(scene_id);
         travel_overlay_until_ms = now_ms + 500;
@@ -8513,7 +8634,9 @@ void draw_scene(PlayerState *render_p) {
     draw_voxworld_bushes();
     draw_map(&world_lighting);
     draw_flashlight_beam(render_p);
+    bullet_holes_observe(render_p->scene_id);
     draw_spray_decals(render_p->scene_id);
+    draw_bullet_holes(render_p->scene_id);
     draw_voxel_chunks(&world_lighting);
     draw_team_map_markers(local_state.scene_id, local_state.game_mode);
     draw_garage_vehicle_pads();

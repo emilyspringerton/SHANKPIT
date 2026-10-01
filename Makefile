@@ -25,7 +25,7 @@ EMILY_BOT_BIN := $(BIN_DIR)/emily-bot
 EA_DIR       := dist/ea
 
 # ---- Targets ----
-.PHONY: all lobby server serverctl clean setup print go-server ea ea-windows emily-bot rigid-ragdoll test-physics test-audio-chain ux-screenshot-test
+.PHONY: test-bullet-hole all lobby server serverctl clean setup print go-server ea ea-windows emily-bot rigid-ragdoll test-physics test-audio-chain ux-screenshot-test
 
 all: $(LOBBY_BIN) $(SERVER_BIN)
 
@@ -209,6 +209,14 @@ print:
 	@echo "SERVER_BIN=$(SERVER_BIN)"
 	@echo "GO_SERVER_BIN=$(GO_SERVER_BIN)"
 	@echo "EA_DIR=$(EA_DIR)"
+
+# test-bullet-hole -- per-gun bullet-hole decals (2026-10-01): shot detection, slot/size/ray mapping,
+# ring buffer, and that the 4 NOCK-exported PNGs (PARENA-authored, ImageMagick-paletted) decode through
+# PARENA's own png_decode. No SDL/GL needed.
+test-bullet-hole:
+	$(CC) -std=c99 -O2 -Wall -Wextra -Ipackages/world -o /tmp/bullet_hole_test packages/world/bullet_hole_test.c \
+		packages/world/png_decode_gen.c packages/world/parena_runtime.c -lm
+	/tmp/bullet_hole_test
 
 # test-audio-chain -- NOCK filter chains in the engine (2026-09-27): packages/audio/audio_chain.c
 # over PARENA-generated audio_dsp_gen.c must reproduce IDUNA NOCK's TypeScript render bit-for-bit

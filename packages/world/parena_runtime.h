@@ -138,6 +138,26 @@ static inline void bytes_set_impl(Bytes b, int idx, int value) {
     b.data[idx] = (unsigned char)value;
 }
 
+/* bytes_slice_impl -- real, additive extension to bytes.prn's own v0 (that file's own doc
+ * comment explicitly names "No slicing/concat/comparison operations yet -- real, separate,
+ * additive follow-up if a real caller needs them" -- crypto/mldsa.prn is that real caller,
+ * EMILY/BACKLOG.md SECTION 536 follow-up, BIG_O/NORTHSTAR.md §29: ML-DSA keygen produces a real,
+ * matched pubkey+seckey pair from ONE underlying call -- see this file's own mldsa_keygen_impl
+ * below -- and a `#target` inline-c body can only return one plain scalar/String/Bytes value
+ * (pty.prn's own 2026-08-26 rewrite established this same real rule for String; it applies
+ * identically to Bytes), so splitting the real, single concatenated output into two real halves
+ * has to happen in ordinary PARENA code, which needs a real slice primitive to do it with). Same
+ * real, honest out-of-bounds discipline bytes_get_impl/bytes_set_impl already establish: a
+ * request outside [0, b.len] clamps rather than reading/writing out of bounds, never aborts. */
+static inline Bytes bytes_slice_impl(Bytes b, int start, int end, Arena *dest) {
+    if (start < 0) start = 0;
+    if (end > b.len) end = b.len;
+    int n = end > start ? end - start : 0;
+    Bytes out = bytes_alloc_impl(dest, n);
+    if (n > 0) memcpy(out.data, b.data + start, (size_t)n);
+    return out;
+}
+
 static inline Bytes bytes_from_string_impl(Arena *dest, const char *s) {
     size_t len = strlen(s);
     Bytes b = bytes_alloc_impl(dest, (int)len);
