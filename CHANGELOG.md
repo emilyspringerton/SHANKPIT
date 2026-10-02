@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-02
+- Restored procedural SCENE_CITY (LEVELS menu 'CITY (BUILT-IN)', --city); fixed third-person camera (was in front of the player), wall-clipped orbit camera, aim bridging, V toggle in local matches (sess-20260923-1030-4a526255)
 - Destructible concrete, wood and glass boxes (was brick-only; per-kind HP/resist from PARENA); new SHADER_GLASS transparent pass with PARENA-programmable cyan tint (on-glass-tint); IDUNA accepts shader 'glass' (sess-20260923-1030-4a526255)
 - release: bundle SDL2_ttf.dll in ShankPit_Client/Debug Windows zips (f19b896); verified in v0.146.0 asset (sess-20260923-1030-4a526255)
 - ZOMBIES sandbox: menu tile replaces FIND CTF (MODE_ZOMBIES=110, --zombies flag); day/night population lifecycle (citizens/zombies/the men), 5 birds from tick one (BIG_O avian_values ported), wall-aware steering for every AI mover, zombies claw brick walls (brick_world_ai_wall_hit), UAL mannequin + zombie_* clips for citizens/men/zombies, rigid-body ragdoll corpses (ragdoll_pool now linked into the lobby), skinned-draw scale hook; zombies repository client (level_boxes collection fetch, snapshot collection=zombies); make test-witness-ai-zombies + brick claw test. (sess-20260923-1030-4a526255)
