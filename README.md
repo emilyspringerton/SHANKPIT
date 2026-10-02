@@ -482,6 +482,27 @@ registry's levels at bake time only (the ZOMBIES default is baked, later zombies
 QUEUE clients now learn the level the server is on (`PACKET_QUEUE_LEVEL`, 1 Hz) and reload geometry when it
 changes at a round boundary (`make test-queue-level`); previously a client kept the first level it fetched.
 
+## Enemy outlines, shield effects, shield packs (2026-10-02)
+
+- **Enemy outline (#538):** zombies, The Men, giant bugs and (in multiplayer rounds) other players you are not teamed
+  with get a glowing inverted-hull outline from a GLSL shader -- yellow normally, pulsing red while they are in
+  combat (shooting, just hit, zombie mid-attack; held 1.5 s so it does not flicker). Skinned mannequin bodies only: the
+  old box-body skins have no outline. Because the queue mannequin itself is yellow, the yellow outline reads best
+  against dark ground.
+- **Shield hit effect (#539):** when a player's shield drops, a hex-lattice energy bubble (fresnel rim, ripple ring and a
+  white-hot spot on the side the nearest other player is on) flashes around them; you get a blue screen-edge flash
+  and a zap when it is you. Detection is client-side from the replicated shield value.
+- **Shield break (#540):** shield reaching zero bursts the bubble (cracking lattice, expanding fade), throws ~56 blue
+  shards, and plays a synthesized snare + crash cymbal (`audio_play_shield`, no sample files).
+- **Shield packs (#541):** in QUEUE, a dying player has a 25% chance to drop a pack; walking onto one refills your
+  shield to full (only if it is below full). Shields still do not regenerate. The server alone rolls and grants
+  (`packages/simulation/shield_packs.h`, `make test-shield-packs`) and sends the whole set as `PACKET_SHIELD_PACKS`.
+  **Needs the new server binary** -- an old server sends no packs and clients simply show none.
+- Verified: shield + outline shaders compile and render under Xvfb/llvmpipe (screenshots of the hex bubble and of the
+  real mannequin with yellow/red outline); the pack rules and wire format are unit-tested. Not yet seen in a live
+  queue match (no GPU session, no running bot pool here) -- the live feel (bubble size, hit direction guess, sound
+  levels) is untuned.
+
 ## Controls (Player + Vehicles)
 
 ### Core movement & combat

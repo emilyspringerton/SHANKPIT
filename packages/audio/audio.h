@@ -33,6 +33,11 @@ void audio_play_footstep(float sx, float sy, float sz,
                          float lx, float ly, float lz,
                          float lyaw, int step_index);
 
+/* Shield sounds, synthesized in the same bank (cards #539-541): kind 0 = shield hit zap, 1 = shield break
+ * (snare + crash cymbal), 2 = shield pack pickup chime. Same listener conventions as audio_play_weapon. */
+void audio_play_shield(int kind, float sx, float sy, float sz,
+                       float lx, float ly, float lz, float lyaw);
+
 /* NOCK master chain (2026-09-27): run a filter chain authored in IDUNA's NOCK "Sounds" tab over
  * the whole engine mix. audio_init() loads SHANKPIT_SOUND_CHAIN=<name> automatically from
  * SHANKPIT_SOUND_CHAIN_URL (default https://okemily.com/api/v1/nock-sound-filters). Returns 1

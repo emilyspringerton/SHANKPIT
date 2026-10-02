@@ -12,7 +12,7 @@
 #define NUM_CHANNELS   2        /* stereo */
 #define BUFFER_FRAMES  512
 
-#define MAX_SOUNDS     12       /* 0-5 weapons, 6-10 footstep pentatonic notes */
+#define MAX_SOUNDS     14       /* 0-5 weapons, 6-10 footstep pentatonic notes, 11-13 shield hit/break/pickup (#539-541) */
 #define MAX_MIX        16       /* simultaneous voices */
 
 /* ── Internal types ─────────────────────────────────────────────────────── */
@@ -223,6 +223,57 @@ static void play_sound(int snd_id, float lgain, float rgain) {
 /* 0=WPN_KNIFE 1=WPN_MAGNUM 2=WPN_AR 3=WPN_SHOTGUN 4=WPN_SNIPER 5=WPN_KATANA */
 /* 6-10 = pentatonic footstep notes (C4 D4 E4 G4 A4) */
 
+/* Cymbal/crash: noise pushed through a double first-difference (a cheap high-pass, so only the fizz is left)
+ * plus six inharmonic partials below Nyquist (11025 Hz at the 22050 Hz device rate), long exponential decay. */
+static SoundBuf synth_cymbal(float dur, float amp) {
+    int n = (int)(SAMPLE_RATE * dur);
+    SoundBuf b = buf_alloc(n);
+    static const float PARTIAL_HZ[6] = { 3140.0f, 4217.0f, 5333.0f, 6491.0f, 7757.0f, 9319.0f };
+    float ph[6] = {0};
+    uint32_t rng = 0x5EEDBEEFu;
+    float n1 = 0.0f, n2 = 0.0f;
+    for (int i = 0; i < n; i++) {
+        rng = rng * 1664525u + 1013904223u;
+        float noise = (float)(int32_t)rng / 2147483648.0f;
+        float hp = noise - 2.0f * n1 + n2;      /* second difference */
+        n2 = n1; n1 = noise;
+        float t = (float)i / n;
+        float env = amp * expf(-t * 5.5f);
+        float tones = 0.0f;
+        for (int k = 0; k < 6; k++) {
+            tones += sinf(ph[k]) * 0.07f;
+            ph[k] += (PARTIAL_HZ[k] / SAMPLE_RATE) * 6.2831853f;
+            if (ph[k] > 6.2831853f) ph[k] -= 6.2831853f;
+        }
+        float s = (hp * 0.28f + tones) * env;
+        if (i < 24) s *= (float)i / 24.0f;      /* soft attack, no click */
+        buf_write(&b, i, s, s);
+    }
+    return b;
+}
+
+/* Rising three-note chime (shield pack pickup): E5, A5, E6, each ringing ~0.3 s, 70 ms apart. */
+static SoundBuf synth_chime(float amp) {
+    static const float NOTE_HZ[3] = { 659.25f, 880.0f, 1318.51f };
+    int n = (int)(SAMPLE_RATE * 0.50f);
+    SoundBuf b = buf_alloc(n);
+    for (int k = 0; k < 3; k++) {
+        int start = (int)(SAMPLE_RATE * 0.07f * k);
+        float dp = (NOTE_HZ[k] / SAMPLE_RATE) * 6.2831853f, phase = 0.0f;
+        for (int i = start; i < n; i++) {
+            float t = (float)(i - start) / (float)(n - start);
+            float env = amp * expf(-t * 7.0f);
+            if (i - start < 24) env *= (float)(i - start) / 24.0f;
+            float s = sinf(phase) * env + sinf(phase * 2.0f) * env * 0.25f;
+            phase += dp;
+            if (phase > 6.2831853f) phase -= 6.2831853f;
+            float l = b.buf[i * 2] / 32767.0f;
+            buf_write(&b, i, l + s, l + s);
+        }
+    }
+    return b;
+}
+
 static const float PENTATONIC_HZ[5] = { 261.63f, 293.66f, 329.63f, 392.00f, 440.00f };
 
 /* ── Public API ─────────────────────────────────────────────────────────── */
@@ -291,6 +342,25 @@ void audio_init(void) {
         g_snd[6 + n] = synth_tone(PENTATONIC_HZ[n], 0.10f, 0.38f, 22.0f);
     }
 
+    /* 11: shield hit -- a short downward electric zap + a crackle of noise */
+    {
+        SoundBuf zap = synth_kick(1500.0f, 380.0f, 0.10f, 0.50f);
+        SoundBuf crk = synth_noise(0.06f, 0.30f, 45.0f);
+        g_snd[11] = synth_layer(&zap, &crk);
+        free(zap.buf); free(crk.buf);
+    }
+    /* 12: shield break -- snare (noise crack + 190 Hz body) over a crash cymbal, ~0.8 s */
+    {
+        SoundBuf crack = synth_noise(0.20f, 0.50f, 13.0f);
+        SoundBuf body  = synth_tone(190.0f, 0.14f, 0.45f, 20.0f);
+        SoundBuf snare = synth_layer(&crack, &body);
+        SoundBuf crash = synth_cymbal(0.80f, 0.60f);
+        g_snd[12] = synth_layer(&snare, &crash);
+        free(crack.buf); free(body.buf); free(snare.buf); free(crash.buf);
+    }
+    /* 13: shield pack pickup -- rising chime */
+    g_snd[13] = synth_chime(0.42f);
+
     {
         const char *chain = getenv("SHANKPIT_SOUND_CHAIN");
         if (chain && *chain) {
@@ -340,6 +410,16 @@ void audio_play_footstep(float sx, float sy, float sz,
     spatial_gains(sx, sy, sz, lx, ly, lz, lyaw, &lgain, &rgain);
     /* Footsteps are quieter than weapons */
     play_sound(6 + note, lgain * 0.35f, rgain * 0.35f);
+}
+
+/* Shield sounds (cards #539-541): kind 0 = hit zap, 1 = break (snare + cymbal), 2 = pack pickup chime. */
+void audio_play_shield(int kind, float sx, float sy, float sz,
+                       float lx, float ly, float lz, float lyaw) {
+    if (!g_dev || !g_mutex) return;
+    if (kind < 0 || kind > 2) return;
+    float lgain, rgain;
+    spatial_gains(sx, sy, sz, lx, ly, lz, lyaw, &lgain, &rgain);
+    play_sound(11 + kind, lgain, rgain);
 }
 
 int audio_set_master_chain(const char *name) {

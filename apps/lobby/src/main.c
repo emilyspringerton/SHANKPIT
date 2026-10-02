@@ -69,6 +69,7 @@
 #include "../../../packages/simulation/food_pickup.h"
 #include "../../../packages/simulation/lab_station_host.h"
 #include "../../../packages/simulation/gun_items.h"
+#include "../../../packages/simulation/shield_packs.h"
 #include "../../../packages/audio/audio.h"
 #include "../../../packages/render/gl_shader.h"
 #include "../../../packages/render/bloom.h"
@@ -260,6 +261,40 @@ static void gband_draw_skinned(const float *verts6, int vert_count, const Mat4 *
     gl_use_program(0);
 }
 
+/* --- ENEMY OUTLINE (kanban #538; founder real-time: "use a shader to add an outline around enemies make them
+ * yellow but when they are in combat have the outlines turn red") ---
+ * Inverted-hull outline: before the real skinned draw, the same mesh is drawn once more with every vertex pushed
+ * out along its normal and a flat colour, depth WRITES off. The normal draw that follows then covers everything
+ * except the thin rim that sticks out past the silhouette, so only the outer edge is left coloured -- and it does
+ * not depend on the mesh's triangle winding the way a front-face-cull hull would. g_outline_mode drives the next
+ * skel_npc_draw_skinned call, same "static drives the next callback" convention as g_skel_npc_evil_tint. */
+static GLuint g_outline_program = 0;
+static int g_outline_mode = 0; /* 0 off, 1 yellow (enemy), 2 red (enemy in combat) */
+#define OUTLINE_WIDTH 0.14f    /* world units; the mannequin is ~6.5 tall */
+
+static const char *g_outline_vs_src =
+    "#version 120\n"
+    "attribute vec3 a_pos;\n"
+    "attribute vec3 a_normal;\n"
+    "uniform mat4 u_mvp;\n"
+    "uniform float u_width;\n"
+    "void main() {\n"
+    "    float l = length(a_normal);\n"
+    "    vec3 n = (l > 0.0001) ? a_normal / l : vec3(0.0);\n"
+    "    gl_Position = u_mvp * vec4(a_pos + n * u_width, 1.0);\n"
+    "}\n";
+static const char *g_outline_fs_src =
+    "#version 120\n"
+    "uniform vec4 u_color;\n"
+    "void main() { gl_FragColor = u_color; }\n";
+
+static void outline_shader_init(void) {
+    GLuint vs = gl_compile_shader(GL_VERTEX_SHADER, g_outline_vs_src);
+    GLuint fs = gl_compile_shader(GL_FRAGMENT_SHADER, g_outline_fs_src);
+    g_outline_program = (vs && fs) ? gl_link_program(vs, fs) : 0;
+    if (!g_outline_program) SDL_Log("#538: outline shader failed to link -- enemies draw without an outline");
+}
+
 /* Giant Zombie Bug ("evil versions of the other ones we already have but BIG" -- founder
  * real-time, 2026-09-22): skel_npc_draw_skinned's callback signature is fixed by
  * gband_skel_npc_draw's own function-pointer contract, so there's no per-call color param to
@@ -283,6 +318,25 @@ static void skel_npc_draw_skinned(const float *verts6, int vert_count, const Mat
         {0.95f, 0.80f, 0.10f, 1.0f} };                            /* queue players: yellow mannequin (#501) */
     (void)evil_color; (void)base_color;
     int tint = (g_skel_npc_evil_tint >= 0 && g_skel_npc_evil_tint < 10) ? g_skel_npc_evil_tint : 0;
+    if (g_outline_mode && g_outline_program) {
+        /* hull pass first (see the ENEMY OUTLINE comment): yellow, or red with a quick pulse while in combat */
+        float t = (float)SDL_GetTicks() * 0.001f;
+        float pulse = 0.8f + 0.2f * sinf(t * 14.0f);
+        const float yellow[4] = {1.0f, 0.85f, 0.05f, 1.0f};
+        const float red[4] = {1.0f, 0.10f * pulse, 0.08f * pulse, 1.0f};
+        GLboolean cull = glIsEnabled(GL_CULL_FACE);
+        glDisable(GL_CULL_FACE);
+        glDepthMask(GL_FALSE);
+        gl_use_program(g_outline_program);
+        gl_uniform_matrix4fv(gl_get_uniform_location(g_outline_program, "u_mvp"), mvp->m);
+        gl_uniform1f(gl_get_uniform_location(g_outline_program, "u_width"), OUTLINE_WIDTH * (g_outline_mode == 2 ? 1.25f : 1.0f));
+        gl_uniform4fv(gl_get_uniform_location(g_outline_program, "u_color"), g_outline_mode == 2 ? red : yellow);
+        gl_dynamic_vbo_draw(&g_skel_npc_vbo, verts6, vert_count, GL_TRIANGLES);
+        glDepthMask(GL_TRUE);
+        if (cull) glEnable(GL_CULL_FACE);
+    }
+    gl_use_program(g_gband_program);
+    gl_uniform_matrix4fv(gl_get_uniform_location(g_gband_program, "u_mvp"), mvp->m);
     gl_uniform4fv(gl_get_uniform_location(g_gband_program, "u_color"), role_color[tint]);
     gl_dynamic_vbo_draw(&g_skel_npc_vbo, verts6, vert_count, GL_TRIANGLES);
     gl_use_program(0);
@@ -1876,6 +1930,7 @@ static void reset_client_render_state_for_net() {
     // identity can change.
     g_spray_decal_count = 0;
     g_spray_decal_next = 0;
+    shield_packs_reset();          /* #541: a fresh connection starts with no packs; the server re-sends the live set */
     bullet_hole_clear(&g_bullet_holes);
     memset(g_bullet_hole_track, 0, sizeof(g_bullet_hole_track));
     brick_debris_clear(&g_brick_debris);
@@ -7413,6 +7468,33 @@ static int rd_draw_corpse(PlayerState *p) {
     return 1;
 }
 
+/* outline_mode_for -- #538. 0 = no outline, 1 = enemy (yellow), 2 = enemy in combat (red).
+ * Enemies: the hostile witness_ai roles (zombies, The Men, giant bugs) and any other player in a multiplayer
+ * round -- minus your own teammates. Citizens and birds are not enemies. "In combat" = shooting, just took a hit,
+ * a zombie mid-attack, or recoiling; held for 1.5 s after the last sign so the colour does not flicker per tick. */
+static unsigned int g_combat_until_ms[MAX_CLIENTS];
+static int outline_mode_for(const PlayerState *p, int role) {
+    if (!p || p->id < 0 || p->id >= MAX_CLIENTS) return 0;
+    if (p->id == my_client_id) return 0;
+    int hostile_ai = (role == WITNESS_AI_ROLE_ZOMBIE || role == WITNESS_AI_ROLE_THE_MEN || role == WITNESS_AI_ROLE_GIANT_BUG);
+    int rival_player = 0;
+    if (role == WITNESS_AI_ROLE_NONE) {
+        int mp = (local_state.game_mode == MODE_QUEUE || local_state.game_mode == MODE_DEATHMATCH || local_state.game_mode == MODE_TDM ||
+                  local_state.game_mode == MODE_TDMB || local_state.game_mode == MODE_TDMO || local_state.game_mode == MODE_CTF ||
+                  local_state.game_mode == MODE_CTFB || local_state.game_mode == MODE_CTFO || local_state.game_mode == MODE_ODDBALL);
+        rival_player = mp;
+        if (mp && my_client_id >= 0 && my_client_id < MAX_CLIENTS) {
+            const PlayerState *me = &local_state.players[my_client_id];
+            if (team_id_is_valid(p->team_id) && p->team_id == me->team_id) rival_player = 0;
+        }
+    }
+    if (!hostile_ai && !rival_player) return 0;
+    unsigned int now = SDL_GetTicks();
+    int fighting = p->is_shooting > 0 || p->hit_feedback > 0 || p->recoil_anim > 0.05f || (role == WITNESS_AI_ROLE_ZOMBIE && p->anim_override == 1);
+    if (fighting) g_combat_until_ms[p->id] = now + 1500u;
+    return (g_combat_until_ms[p->id] > now) ? 2 : 1;
+}
+
 static void draw_player_skin_mannequin(PlayerState *p, float draw_pitch, float draw_recoil) {
     if (!g_skel_npc_ready) {
         draw_player_skin_tyler(p, draw_pitch, draw_recoil);
@@ -7489,9 +7571,11 @@ static void draw_player_skin_mannequin(PlayerState *p, float draw_pitch, float d
     /* The skinned draw bakes the world transform into the vertices (vp only), so GL matrix calls
        around it do nothing -- gband_skel_npc_set_scale is the real scale hook. */
     gband_skel_npc_set_scale(MANNEQUIN_DRAW_SCALE * (is_giant_bug ? 2.5f : is_bird ? 0.3f : 1.0f));
+    g_outline_mode = outline_mode_for(p, role); /* #538: yellow enemy outline, red while it is fighting */
     gband_skel_npc_draw(kit_index, p->id, p->x, p->y, p->z, facing_rad, g_gband_frame_dt_ms,
                          p->anim_override,
                          &g_gband_frame_vp, skel_npc_draw_skinned);
+    g_outline_mode = 0;
     gband_skel_npc_set_scale(1.0f);
     g_skel_npc_evil_tint = 0;
 }
@@ -8855,6 +8939,437 @@ static void draw_chat_pane(unsigned int now_ms) {
     }
 }
 
+/* ===== SHIELD FX (kanban #539 shield-hit shader, #540 shatter + sound, #541 shield packs) =====
+ * Founder real-time: "use a shader to show shield damage, add a fancy nice looking blue shield effect and a shatter
+ * with particle effects and a snare or a symbol or something sound effect when the shield breaks; add a 25% chance
+ * for players to drop a shield pack when they die in queue it refills your shield to full".
+ *
+ * Detection is client-side from the replicated PlayerState.shield: a drop while alive is a hit (bubble ripple at the
+ * side the likely attacker is on), a drop to zero is a break (bubble bursts, shards, snare + cymbal), a rise to full
+ * right after a pack vanished next to the player is a pack pickup. Nothing here changes gameplay -- the server owns the
+ * shield value and the packs (packages/simulation/shield_packs.h, PACKET_SHIELD_PACKS). */
+
+typedef struct {
+    int prev_shield;          /* -1 = no sample yet */
+    int prev_alive;
+    unsigned int hit_ms;      /* last shield loss */
+    unsigned int zap_ms;      /* last zap sound, rate limit */
+    float hit_strength;       /* 0.5..1 */
+    float hx, hy, hz;         /* unit direction the hit came from */
+    unsigned int break_ms;    /* shield reached zero */
+    unsigned int refill_ms;   /* pack pickup */
+} ShieldFx;
+static ShieldFx g_sfx[MAX_CLIENTS];
+
+#define SHIELD_HIT_MS 900u
+#define SHIELD_BREAK_MS 650u
+#define SHIELD_REFILL_MS 800u
+#define SHIELD_BUBBLE_CY 3.2f   /* bubble centre above the feet; the player is ~6.5 tall */
+#define SHIELD_BUBBLE_RX 2.7f
+#define SHIELD_BUBBLE_RY 3.7f
+#define SHIELD_LAT 14
+#define SHIELD_LON 24
+
+static unsigned int g_shield_hud_hit_ms = 0, g_shield_hud_break_ms = 0, g_shield_hud_refill_ms = 0;
+/* where the last shield pack vanished (a pickup, as far as the client can tell) */
+static float g_pack_gone_x, g_pack_gone_y, g_pack_gone_z;
+static unsigned int g_pack_gone_ms = 0;
+
+static GLuint g_shield_program = 0;
+static DynamicVBO g_shield_vbo;
+static int g_shield_ready = 0;
+
+static const char *g_shield_vs_src =
+    "#version 120\n"
+    "attribute vec3 a_pos;\n"
+    "attribute vec3 a_normal;\n" /* the unit direction on the bubble, used as the pattern coordinate */
+    "uniform mat4 u_mvp;\n"
+    "varying vec3 v_dir;\n"
+    "varying vec3 v_wpos;\n"
+    "void main() {\n"
+    "    v_dir = a_normal;\n"
+    "    v_wpos = a_pos;\n"
+    "    gl_Position = u_mvp * vec4(a_pos, 1.0);\n"
+    "}\n";
+
+/* Hex-cell energy shield: fresnel rim, a hexagonal lattice that lights up where the hit landed, an expanding ripple
+ * ring from the impact, a white-hot spot at the impact, flicker when the shield is nearly gone, and on a break the
+ * lattice goes to bright cracks while the whole thing fades out. Additive. */
+static const char *g_shield_fs_src =
+    "#version 120\n"
+    "uniform vec3 u_eye;\n"
+    "uniform vec3 u_hitdir;\n"
+    "uniform float u_time;\n"
+    "uniform float u_hit;\n"    /* 0..1 fade * strength */
+    "uniform float u_age;\n"    /* seconds since the hit */
+    "uniform float u_flicker;\n"/* 0..1, nearly-empty shield */
+    "uniform float u_break;\n"  /* 0 = intact .. 1 = gone */
+    "varying vec3 v_dir;\n"
+    "varying vec3 v_wpos;\n"
+    "float hexd(vec2 p) { p = abs(p); return max(dot(p, vec2(0.5, 0.8660254)), p.x); }\n"
+    "float hexedge(vec2 uv) {\n"
+    "    vec2 r = vec2(1.0, 1.7320508); vec2 h = r * 0.5;\n"
+    "    vec2 a = mod(uv, r) - h; vec2 b = mod(uv - h, r) - h;\n"
+    "    vec2 gv = (dot(a, a) < dot(b, b)) ? a : b;\n"
+    "    return smoothstep(0.36, 0.5, hexd(gv));\n"
+    "}\n"
+    "void main() {\n"
+    "    vec3 n = normalize(v_dir);\n"
+    "    vec3 v = normalize(u_eye - v_wpos);\n"
+    "    float fres = pow(1.0 - abs(dot(n, v)), 2.2);\n"
+    "    vec2 uv = vec2(atan(n.z, n.x) * 2.4, n.y * 5.8);\n"
+    "    float edge = hexedge(uv);\n"
+    "    float ang = acos(clamp(dot(n, normalize(u_hitdir)), -1.0, 1.0));\n"
+    "    float ring = exp(-pow((ang - u_age * 4.2) * 5.5, 2.0));\n"
+    "    float spot = smoothstep(0.95, 0.0, ang);\n"
+    "    float shimmer = 0.5 + 0.5 * sin(u_time * 6.0 + n.y * 9.0 + n.x * 5.0);\n"
+    "    float a = 0.10 + 0.55 * fres + edge * (0.22 + 0.9 * ring + 0.25 * shimmer) + spot * 0.55 + ring * 0.35;\n"
+    "    a += u_break * edge * 1.1;\n"                                /* the lattice shows as cracks while it bursts */
+    "    a *= u_hit * (1.0 - 0.65 * u_flicker * step(0.5, fract(sin(u_time * 61.0) * 43758.5)));\n"
+    "    a *= (1.0 - u_break) * (1.0 - u_break);\n"
+    "    vec3 deep = vec3(0.10, 0.42, 1.00);\n"
+    "    vec3 hot = vec3(0.80, 0.95, 1.00);\n"
+    "    float mixv = clamp(spot * 0.9 + ring * 0.7 + edge * 0.35 + u_break * 0.5, 0.0, 1.0);\n"
+    "    gl_FragColor = vec4(mix(deep, hot, mixv), clamp(a, 0.0, 1.0));\n"
+    "}\n";
+
+static void shield_fx_init(void) {
+    GLuint vs = gl_compile_shader(GL_VERTEX_SHADER, g_shield_vs_src);
+    GLuint fs = gl_compile_shader(GL_FRAGMENT_SHADER, g_shield_fs_src);
+    g_shield_program = (vs && fs) ? gl_link_program(vs, fs) : 0;
+    if (!g_shield_program || !gl_dynamic_vbo_init(&g_shield_vbo, SHIELD_LAT * SHIELD_LON * 6)) {
+        SDL_Log("#539: shield shader/VBO failed -- no shield effect (shards and sound still play)");
+        g_shield_program = 0;
+        return;
+    }
+    g_shield_ready = 1;
+}
+
+/* ---- shard particles (#540) ---- */
+typedef struct {
+    float x, y, z, vx, vy, vz;
+    float age, life, size, spin;
+    float ax, ay, az, bx, by, bz; /* two perpendicular unit vectors spanning the shard's plane */
+    float hot;                    /* 0 blue .. 1 white */
+} Shard;
+#define SHARD_MAX 384
+static Shard g_shards[SHARD_MAX];
+static unsigned int g_shard_last_ms = 0;
+static unsigned int g_fx_rng = 0x9E3779B9u;
+
+static float fx_rand(void) {
+    g_fx_rng ^= g_fx_rng << 13; g_fx_rng ^= g_fx_rng >> 17; g_fx_rng ^= g_fx_rng << 5;
+    return (float)(g_fx_rng & 0xFFFFFF) / 16777216.0f;
+}
+static void fx_rand_unit(float *x, float *y, float *z) {
+    float vx, vy, vz, l2;
+    do { vx = fx_rand() * 2.0f - 1.0f; vy = fx_rand() * 2.0f - 1.0f; vz = fx_rand() * 2.0f - 1.0f; l2 = vx * vx + vy * vy + vz * vz; } while (l2 > 1.0f || l2 < 0.0001f);
+    float inv = 1.0f / sqrtf(l2);
+    *x = vx * inv; *y = vy * inv; *z = vz * inv;
+}
+
+static void shard_spawn(float x, float y, float z, float dx, float dy, float dz, float speed, float life, float size, float hot) {
+    for (int i = 0; i < SHARD_MAX; i++) {
+        Shard *s = &g_shards[i];
+        if (s->life > 0.0f && s->age < s->life) continue;
+        memset(s, 0, sizeof *s);
+        s->x = x; s->y = y; s->z = z;
+        s->vx = dx * speed; s->vy = dy * speed; s->vz = dz * speed;
+        s->life = life; s->size = size; s->hot = hot; s->spin = fx_rand() * 6.2831853f;
+        float rx, ry, rz;
+        fx_rand_unit(&rx, &ry, &rz);
+        s->ax = rx; s->ay = ry; s->az = rz;
+        float px, py, pz;
+        fx_rand_unit(&px, &py, &pz);
+        float d = px * rx + py * ry + pz * rz;                 /* Gram-Schmidt: b perpendicular to a */
+        float bx = px - d * rx, by = py - d * ry, bz = pz - d * rz;
+        float bl = sqrtf(bx * bx + by * by + bz * bz);
+        if (bl < 0.0001f) { bx = -ry; by = rx; bz = 0.0f; bl = sqrtf(bx * bx + by * by); if (bl < 0.0001f) bl = 1.0f; }
+        s->bx = bx / bl; s->by = by / bl; s->bz = bz / bl;
+        return;
+    }
+}
+
+static void shield_spawn_shatter(float cx, float cy, float cz) {
+    for (int i = 0; i < 56; i++) {
+        float dx, dy, dz;
+        fx_rand_unit(&dx, &dy, &dz);
+        shard_spawn(cx + dx * SHIELD_BUBBLE_RX * 0.9f, cy + dy * SHIELD_BUBBLE_RY * 0.9f, cz + dz * SHIELD_BUBBLE_RX * 0.9f,
+                    dx, dy + 0.25f, dz, 7.0f + fx_rand() * 14.0f, 0.7f + fx_rand() * 0.7f, 0.22f + fx_rand() * 0.45f, fx_rand() < 0.3f ? 1.0f : fx_rand() * 0.5f);
+    }
+}
+static void shield_spawn_sparks(float x, float y, float z, float dx, float dy, float dz) {
+    for (int i = 0; i < 7; i++) {
+        float rx, ry, rz;
+        fx_rand_unit(&rx, &ry, &rz);
+        shard_spawn(x, y, z, dx + rx * 0.7f, dy + ry * 0.7f, dz + rz * 0.7f, 5.0f + fx_rand() * 7.0f, 0.25f + fx_rand() * 0.3f, 0.10f + fx_rand() * 0.12f, 0.8f);
+    }
+}
+
+static void shard_step_and_draw(unsigned int now_ms) {
+    float dt = (g_shard_last_ms != 0 && now_ms > g_shard_last_ms) ? (float)(now_ms - g_shard_last_ms) * 0.001f : 0.0f;
+    if (dt > 0.05f) dt = 0.05f;
+    g_shard_last_ms = now_ms;
+    int any = 0;
+    for (int i = 0; i < SHARD_MAX; i++) {
+        Shard *s = &g_shards[i];
+        if (!(s->life > 0.0f && s->age < s->life)) continue;
+        s->age += dt;
+        s->vy -= 24.0f * dt;
+        float drag = 1.0f - 1.6f * dt;
+        s->vx *= drag; s->vz *= drag;
+        s->x += s->vx * dt; s->y += s->vy * dt; s->z += s->vz * dt;
+        if (s->age < s->life) any = 1;
+    }
+    if (!any) return;
+    glDisable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    glDepthMask(GL_FALSE);
+    glBegin(GL_TRIANGLES);
+    for (int i = 0; i < SHARD_MAX; i++) {
+        const Shard *s = &g_shards[i];
+        if (!(s->life > 0.0f && s->age < s->life)) continue;
+        float k = 1.0f - s->age / s->life;
+        float th = s->spin + s->age * 9.0f, c = cosf(th), sn = sinf(th);
+        float ux = s->ax * c + s->bx * sn, uy = s->ay * c + s->by * sn, uz = s->az * c + s->bz * sn;
+        float wx = -s->ax * sn + s->bx * c, wy = -s->ay * sn + s->by * c, wz = -s->az * sn + s->bz * c;
+        float sz = s->size;
+        glColor4f(0.30f + 0.65f * s->hot, 0.62f + 0.35f * s->hot, 1.0f, k * 0.95f);
+        glVertex3f(s->x + ux * sz, s->y + uy * sz, s->z + uz * sz);
+        glVertex3f(s->x + (-0.5f * ux + 0.87f * wx) * sz, s->y + (-0.5f * uy + 0.87f * wy) * sz, s->z + (-0.5f * uz + 0.87f * wz) * sz);
+        glVertex3f(s->x + (-0.5f * ux - 0.87f * wx) * sz, s->y + (-0.5f * uy - 0.87f * wy) * sz, s->z + (-0.5f * uz - 0.87f * wz) * sz);
+    }
+    glEnd();
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+}
+
+/* ---- detection (#539/#540/#541) ---- */
+static void shield_listener(const PlayerState *render_p, float *lx, float *ly, float *lz, float *lyaw) {
+    *lx = render_p->x; *ly = render_p->y; *lz = render_p->z; *lyaw = cam_yaw * 0.0174533f;
+}
+
+static void shield_fx_observe(PlayerState *render_p, unsigned int now_ms) {
+    float lx, ly, lz, lyaw;
+    shield_listener(render_p, &lx, &ly, &lz, &lyaw);
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        PlayerState *p = &local_state.players[i];
+        ShieldFx *f = &g_sfx[i];
+        if (!p->active || p->scene_id != render_p->scene_id) { f->prev_shield = -1; f->prev_alive = 0; continue; }
+        int alive = (p->state != STATE_DEAD && p->state != STATE_SPECTATOR);
+        int cur = p->shield;
+        int mine = (p->id == render_p->id);
+        if (f->prev_shield >= 0 && f->prev_alive && alive && cur != f->prev_shield) {
+            float cx = p->x, cy = p->y + SHIELD_BUBBLE_CY, cz = p->z;
+            if (cur < f->prev_shield) {
+                /* shield damage: aim the ripple at the nearest other living player (the likely attacker) */
+                float bd2 = 1e30f, hx = 0.0f, hy = 0.15f, hz = -1.0f;
+                for (int j = 0; j < MAX_CLIENTS; j++) {
+                    const PlayerState *q = &local_state.players[j];
+                    if (j == i || !q->active || q->state == STATE_DEAD || q->scene_id != p->scene_id) continue;
+                    float dx = q->x - p->x, dz = q->z - p->z, d2 = dx * dx + dz * dz;
+                    if (d2 < bd2 && d2 > 0.0001f) { bd2 = d2; float inv = 1.0f / sqrtf(d2); hx = dx * inv; hz = dz * inv; hy = 0.15f; }
+                }
+                float drop = (float)(f->prev_shield - cur);
+                f->hit_ms = now_ms;
+                f->hit_strength = fminf(1.0f, 0.5f + drop / 60.0f);
+                f->hx = hx; f->hy = hy; f->hz = hz;
+                shield_spawn_sparks(cx + hx * SHIELD_BUBBLE_RX, cy + hy * SHIELD_BUBBLE_RY, cz + hz * SHIELD_BUBBLE_RX, hx, hy, hz);
+                if (now_ms - f->zap_ms > 110u) { audio_play_shield(0, cx, cy, cz, lx, ly, lz, lyaw); f->zap_ms = now_ms; }
+                if (mine) g_shield_hud_hit_ms = now_ms;
+                if (cur <= 0) {
+                    f->break_ms = now_ms;
+                    shield_spawn_shatter(cx, cy, cz);
+                    audio_play_shield(1, cx, cy, cz, lx, ly, lz, lyaw);
+                    if (mine) g_shield_hud_break_ms = now_ms;
+                }
+            } else if (cur >= 100 && g_pack_gone_ms != 0 && now_ms - g_pack_gone_ms < 1500u) {
+                /* shield filled right after a pack vanished beside this player: a pickup */
+                float dx = g_pack_gone_x - p->x, dz = g_pack_gone_z - p->z;
+                if (dx * dx + dz * dz < 8.0f * 8.0f) {
+                    f->refill_ms = now_ms;
+                    audio_play_shield(2, cx, cy, cz, lx, ly, lz, lyaw);
+                    if (mine) g_shield_hud_refill_ms = now_ms;
+                    for (int k = 0; k < 18; k++) {
+                        float a = fx_rand() * 6.2831853f;
+                        shard_spawn(p->x + cosf(a) * 1.8f, p->y + 0.3f, p->z + sinf(a) * 1.8f, cosf(a) * 0.25f, 1.0f, sinf(a) * 0.25f,
+                                    5.0f + fx_rand() * 6.0f, 0.6f + fx_rand() * 0.4f, 0.14f + fx_rand() * 0.14f, 0.6f);
+                    }
+                }
+            }
+        }
+        f->prev_shield = cur;
+        f->prev_alive = alive;
+    }
+}
+
+/* ---- drawing ---- */
+static int shield_bubble_verts(float *out, float cx, float cy, float cz, float rx, float ry) {
+    int n = 0;
+    for (int i = 0; i < SHIELD_LAT; i++) {
+        float t0 = (float)i / SHIELD_LAT * 3.14159265f, t1 = (float)(i + 1) / SHIELD_LAT * 3.14159265f;
+        for (int j = 0; j < SHIELD_LON; j++) {
+            float p0 = (float)j / SHIELD_LON * 6.2831853f, p1 = (float)(j + 1) / SHIELD_LON * 6.2831853f;
+            float d[4][3] = {
+                { sinf(t0) * cosf(p0), cosf(t0), sinf(t0) * sinf(p0) }, { sinf(t1) * cosf(p0), cosf(t1), sinf(t1) * sinf(p0) },
+                { sinf(t1) * cosf(p1), cosf(t1), sinf(t1) * sinf(p1) }, { sinf(t0) * cosf(p1), cosf(t0), sinf(t0) * sinf(p1) } };
+            static const int tri[6] = {0, 1, 2, 0, 2, 3};
+            for (int k = 0; k < 6; k++) {
+                const float *dir = d[tri[k]];
+                out[n * 6 + 0] = cx + dir[0] * rx; out[n * 6 + 1] = cy + dir[1] * ry; out[n * 6 + 2] = cz + dir[2] * rx;
+                out[n * 6 + 3] = dir[0]; out[n * 6 + 4] = dir[1]; out[n * 6 + 5] = dir[2];
+                n++;
+            }
+        }
+    }
+    return n;
+}
+
+static void draw_shield_bubbles(PlayerState *render_p, unsigned int now_ms) {
+    if (!g_shield_ready) return;
+    static float verts[SHIELD_LAT * SHIELD_LON * 6 * 6];
+    int state_set = 0;
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        const PlayerState *p = &local_state.players[i];
+        const ShieldFx *f = &g_sfx[i];
+        if (!p->active || p->scene_id != render_p->scene_id) continue;
+        if (p->id == render_p->id && !render_p->third_person && !g_cam_override.active) continue; /* never wrap the first-person camera */
+        unsigned int hit_age = f->hit_ms ? now_ms - f->hit_ms : 0xFFFFFFFFu;
+        unsigned int brk_age = f->break_ms ? now_ms - f->break_ms : 0xFFFFFFFFu;
+        int breaking = brk_age < SHIELD_BREAK_MS;
+        if (hit_age >= SHIELD_HIT_MS && !breaking) continue;
+        float fade = 0.0f, age_s = 0.0f;
+        if (hit_age < SHIELD_HIT_MS) {
+            float k = 1.0f - (float)hit_age / (float)SHIELD_HIT_MS;
+            fade = k * k * f->hit_strength; age_s = (float)hit_age * 0.001f;
+        }
+        float brk = 0.0f, grow = 1.0f;
+        if (breaking) {
+            brk = (float)brk_age / (float)SHIELD_BREAK_MS;
+            fade = fmaxf(fade, 1.0f);       /* a burst is always full brightness, then fades via u_break */
+            grow = 1.0f + 0.35f * brk;
+        }
+        if (!state_set) {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+            glDepthMask(GL_FALSE);
+            glDisable(GL_CULL_FACE);
+            gl_use_program(g_shield_program);
+            gl_uniform_matrix4fv(gl_get_uniform_location(g_shield_program, "u_mvp"), g_gband_frame_vp.m);
+            state_set = 1;
+        }
+        int nv = shield_bubble_verts(verts, p->x, p->y + SHIELD_BUBBLE_CY, p->z, SHIELD_BUBBLE_RX * grow, SHIELD_BUBBLE_RY * grow);
+        const float hd[3] = { f->hx, f->hy, f->hz };
+        float eye[3] = { render_p->x, render_p->y + EYE_HEIGHT, render_p->z };
+        gl_uniform3fv(gl_get_uniform_location(g_shield_program, "u_eye"), eye);
+        gl_uniform3fv(gl_get_uniform_location(g_shield_program, "u_hitdir"), hd);
+        gl_uniform1f(gl_get_uniform_location(g_shield_program, "u_time"), (float)now_ms * 0.001f);
+        gl_uniform1f(gl_get_uniform_location(g_shield_program, "u_hit"), fade);
+        gl_uniform1f(gl_get_uniform_location(g_shield_program, "u_age"), age_s);
+        gl_uniform1f(gl_get_uniform_location(g_shield_program, "u_flicker"), (p->shield > 0 && p->shield < 25) ? 1.0f : 0.0f);
+        gl_uniform1f(gl_get_uniform_location(g_shield_program, "u_break"), brk);
+        gl_dynamic_vbo_draw(&g_shield_vbo, verts, nv, GL_TRIANGLES);
+    }
+    if (state_set) {
+        gl_use_program(0);
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+    }
+}
+
+/* Shield packs lying in the world (#541): a spinning blue crystal over a pulsing ground ring with a faint beacon so it
+ * can be spotted down a street. Same additive, shader-free immediate-mode style as draw_gun_items. */
+static void draw_shield_packs(unsigned int now_ms) {
+    if (shield_packs_active_count() == 0) return;
+    float t = (float)now_ms * 0.001f;
+    glDisable(GL_TEXTURE_2D);
+    for (int i = 0; i < SHIELD_PACK_MAX; i++) {
+        const ShieldPack *sp = shield_packs_get(i);
+        if (!sp || !sp->active) continue;
+        float bob = 0.35f * sinf(t * 2.4f + (float)i);
+        glPushMatrix();
+        glTranslatef(sp->x, sp->y + 2.4f + bob, sp->z);
+        glRotatef(t * 80.0f, 0.0f, 1.0f, 0.0f);
+        const float hw = 1.1f, up = 1.7f, dn = 1.2f;
+        glBegin(GL_TRIANGLES);
+        for (int f = 0; f < 4; f++) {
+            float a0 = f * 1.5707963f, a1 = (f + 1) * 1.5707963f;
+            float x0 = cosf(a0) * hw, z0 = sinf(a0) * hw, x1 = cosf(a1) * hw, z1 = sinf(a1) * hw;
+            float shade = 0.65f + 0.35f * (float)(f & 1);
+            glColor3f(0.15f * shade, 0.55f * shade, 1.0f * shade);
+            glVertex3f(0, up, 0); glVertex3f(x0, 0, z0); glVertex3f(x1, 0, z1);
+            glColor3f(0.08f * shade, 0.30f * shade, 0.80f * shade);
+            glVertex3f(0, -dn, 0); glVertex3f(x1, 0, z1); glVertex3f(x0, 0, z0);
+        }
+        glEnd();
+        glColor3f(0.85f, 0.95f, 1.0f);
+        glLineWidth(2.0f);
+        glBegin(GL_LINE_LOOP);
+        for (int f = 0; f < 4; f++) glVertex3f(cosf(f * 1.5707963f) * hw, 0, sinf(f * 1.5707963f) * hw);
+        glEnd();
+        glBegin(GL_LINES);
+        for (int f = 0; f < 4; f++) {
+            float x = cosf(f * 1.5707963f) * hw, z = sinf(f * 1.5707963f) * hw;
+            glVertex3f(0, up, 0); glVertex3f(x, 0, z); glVertex3f(0, -dn, 0); glVertex3f(x, 0, z);
+        }
+        glEnd();
+        glPopMatrix();
+
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+        glDepthMask(GL_FALSE);
+        float pulse = 0.5f + 0.5f * sinf(t * 3.0f + (float)i);
+        glLineWidth(2.0f);
+        glColor4f(0.25f, 0.65f, 1.0f, 0.35f + 0.45f * pulse);
+        glBegin(GL_LINE_LOOP);                       /* pickup-reach ring on the ground */
+        for (int k = 0; k < 40; k++) { float a = k * 6.2831853f / 40.0f; glVertex3f(sp->x + cosf(a) * SHIELD_PACK_RADIUS, sp->y + 0.15f, sp->z + sinf(a) * SHIELD_PACK_RADIUS); }
+        glEnd();
+        glBegin(GL_QUADS);                           /* beacon: two crossed planes fading upward */
+        for (int pl = 0; pl < 2; pl++) {
+            float dx = pl ? 0.0f : 0.45f, dz = pl ? 0.45f : 0.0f;
+            glColor4f(0.25f, 0.65f, 1.0f, 0.30f);
+            glVertex3f(sp->x - dx, sp->y, sp->z - dz); glVertex3f(sp->x + dx, sp->y, sp->z + dz);
+            glColor4f(0.25f, 0.65f, 1.0f, 0.0f);
+            glVertex3f(sp->x + dx, sp->y + 22.0f, sp->z + dz); glVertex3f(sp->x - dx, sp->y + 22.0f, sp->z - dz);
+        }
+        glEnd();
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+    }
+}
+
+/* Own-screen feedback (HUD ortho 1280x720): blue edge vignette on a hit, a stronger one plus a white flash on a break,
+ * a soft cyan pulse on a pack pickup. */
+static void draw_shield_hud_flash(unsigned int now_ms) {
+    float hit = 0.0f, brk = 0.0f, ref = 0.0f;
+    if (g_shield_hud_hit_ms && now_ms - g_shield_hud_hit_ms < 380u) hit = 1.0f - (float)(now_ms - g_shield_hud_hit_ms) / 380.0f;
+    if (g_shield_hud_break_ms && now_ms - g_shield_hud_break_ms < 700u) brk = 1.0f - (float)(now_ms - g_shield_hud_break_ms) / 700.0f;
+    if (g_shield_hud_refill_ms && now_ms - g_shield_hud_refill_ms < 600u) ref = 1.0f - (float)(now_ms - g_shield_hud_refill_ms) / 600.0f;
+    if (hit <= 0.0f && brk <= 0.0f && ref <= 0.0f) return;
+    float edge = 150.0f + 130.0f * brk;
+    float a = fminf(0.65f, 0.40f * hit + 0.55f * brk + 0.30f * ref);
+    float r = ref > 0.0f && brk <= 0.0f ? 0.3f : 0.15f, g = ref > 0.0f && brk <= 0.0f ? 0.95f : 0.50f;
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    glBegin(GL_QUADS);
+    /* left, right, bottom, top bands: opaque at the screen edge, clear toward the middle */
+    glColor4f(r, g, 1, a); glVertex2f(0, 0); glVertex2f(0, 720);
+    glColor4f(r, g, 1, 0); glVertex2f(edge, 720); glVertex2f(edge, 0);
+    glColor4f(r, g, 1, a); glVertex2f(1280, 720); glVertex2f(1280, 0);
+    glColor4f(r, g, 1, 0); glVertex2f(1280 - edge, 0); glVertex2f(1280 - edge, 720);
+    glColor4f(r, g, 1, a); glVertex2f(0, 0); glVertex2f(1280, 0);
+    glColor4f(r, g, 1, 0); glVertex2f(1280, edge); glVertex2f(0, edge);
+    glColor4f(r, g, 1, a); glVertex2f(1280, 720); glVertex2f(0, 720);
+    glColor4f(r, g, 1, 0); glVertex2f(0, 720 - edge); glVertex2f(1280, 720 - edge);
+    glEnd();
+    if (brk > 0.55f) { /* the burst itself: a quick white-blue wash */
+        glColor4f(0.7f, 0.9f, 1.0f, (brk - 0.55f) * 0.9f);
+        glRectf(0, 0, 1280, 720);
+    }
+    glDisable(GL_BLEND);
+}
+
 void draw_hud(PlayerState *p) {
     /* Pre-existing broken build, found live (S170-110): the MODE_STORY branch below calls
        draw_tyler_cutscene()/cutscene_tick() with a `now_ms` that was never declared anywhere in
@@ -8870,6 +9385,7 @@ void draw_hud(PlayerState *p) {
     if (current_fov < 50.0f) { glBegin(GL_LINES); glVertex2f(0, 360); glVertex2f(1280, 360); glVertex2f(640, 0); glVertex2f(640, 720); glEnd(); } 
     else { glLineWidth(vs0_art_direction_enabled ? 1.4f : 2.0f); glBegin(GL_LINES); glVertex2f(632, 360); glVertex2f(648, 360); glVertex2f(640, 352); glVertex2f(640, 368); glEnd(); }
     
+    draw_shield_hud_flash(now_ms);
     // --- HIT INDICATORS ---
     if (p->hit_feedback > 0) {
         if (p->hit_feedback >= 25) glColor3f(1.0f, 0.0f, 0.0f); // RED (Kill/High Dmg)
@@ -10485,6 +11001,10 @@ void draw_scene(PlayerState *render_p) {
         draw_player_3rd(p);
         draw_flashlight_beam(p); /* other players' own beam cones are now visible too, not just yours */
     }
+    shield_fx_observe(render_p, now_ms);   /* #539-541: detect shield hits/breaks/pickups, then draw the effects over the players */
+    draw_shield_packs(now_ms);
+    draw_shield_bubbles(render_p, now_ms);
+    shard_step_and_draw(now_ms);
     if (weather_fog) sky_weather_fog_off(); /* world pass ends here -- overlays, first-person weapon and HUD stay crisp */
     if (g_world_only_pass) return;           /* broadcast tiles / program feed: just the world */
     overlay_begin_frame(&g_overlay);
@@ -11936,6 +12456,31 @@ void net_tick() {
                 ql.level_id >= 0 && ql.level_id != g_queue_level_id) {
                 client_load_queue_level_id(ql.level_id);
             }
+        } else if (head->type == PACKET_SHIELD_PACKS && len >= (int)offsetof(NetShieldPacks, p)) {
+            /* #541: the server's whole set of shield packs (untrusted input: count clamped to what the datagram holds) */
+            NetShieldPacks sp;
+            memset(&sp, 0, sizeof(sp));
+            int cp = len < (int)sizeof(sp) ? len : (int)sizeof(sp);
+            memcpy(&sp, buffer, (size_t)cp);
+            int n = sp.count;
+            int held = (cp - (int)offsetof(NetShieldPacks, p)) / (int)sizeof(NetShieldPack);
+            if (n > held) n = held;
+            if (n > NET_SHIELD_PACK_MAX) n = NET_SHIELD_PACK_MAX;
+            if (n < 0) n = 0;
+            float xyz[NET_SHIELD_PACK_MAX * 3];
+            for (int k = 0; k < n; k++) { xyz[k * 3] = sp.p[k].x; xyz[k * 3 + 1] = sp.p[k].y; xyz[k * 3 + 2] = sp.p[k].z; }
+            /* remember where a pack vanished: that is what tells the shield FX a refill was a pickup, not a round reset */
+            for (int k = 0; k < SHIELD_PACK_MAX; k++) {
+                const ShieldPack *old = shield_packs_get(k);
+                if (!old || !old->active) continue;
+                int still = 0;
+                for (int m = 0; m < n; m++) {
+                    float dx = xyz[m * 3] - old->x, dy = xyz[m * 3 + 1] - old->y, dz = xyz[m * 3 + 2] - old->z;
+                    if (dx * dx + dy * dy + dz * dz < 0.01f) { still = 1; break; }
+                }
+                if (!still) { g_pack_gone_x = old->x; g_pack_gone_y = old->y; g_pack_gone_z = old->z; g_pack_gone_ms = SDL_GetTicks(); }
+            }
+            shield_packs_set_all(xyz, n);
         } else if (head->type == PACKET_BRICK_STATE) {
             /* destructible brick: mirror the server's authoritative cell state (validated inside) */
             brick_world_net_apply(buffer, len);
@@ -12121,6 +12666,8 @@ int main(int argc, char* argv[]) {
     }
     gband_shader_and_mesh_init();
     flashlight_shader_init();
+    outline_shader_init();
+    shield_fx_init();
     litbox_shader_init();
     hammer_model_start();
     broadcast_load_rig();
