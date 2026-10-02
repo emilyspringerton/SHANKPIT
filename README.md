@@ -322,6 +322,33 @@ Two world-reacts-to-your-weapon systems, both in the lobby/server build and both
   900-piece geometry budget per level (a damage that would exceed it is refused, never half-applied); damage
   resets with each match.
 
+## Broadcast cameras, director and native stream (2026-10-02)
+
+For esports: **F3** (or pause menu -> BROADCAST CAMERAS) puts you behind a camera rig. The *program* camera fills the
+screen as a clean world view with a red LIVE tally; the other cameras run live in **multiview** tiles along the bottom
+(program red, next-up green; **F5** toggles). A rig is any mix of fixed tripods, follow-cams, orbiters and drones, each run
+by a simulated **operator** -- it lags the action by a human reaction time (rookie 700 ms, veteran 120 ms), leads a moving
+subject, zooms tighter on distant action and shakes a little -- and an **auto director** that scores every player
+(close to an enemy, moving fast, just got a kill, shooting, low health), holds each shot a minimum time and only cuts to a
+clearly better one. **F4** hands the cuts to a human (`[` `]` pick the camera, `,` `.` pick who to watch). All of those
+decisions are a PARENA mod (`PARENA/stdlib/shankpit/camera_rules.prn`, hand-derived tests, `make regen-camera-rules`).
+The rig is a JSON file -- `shankpit_camrig.json`, loaded at startup, saved when broadcast turns off, round-trips exactly,
+bad files are rejected -- the scene collection of a native stream. `make test-camera-rig`.
+
+**Native stream (the OBS replacement):** **F2** (or pause menu -> STREAM OUT) pipes the *clean* program feed (no HUD, no
+tiles) out as raw video into an encoder: `rtmp://...` goes out as FLV (set `SHANKPIT_STREAM_URL` or put it on the first
+line of `shankpit_stream.cfg`), anything else is a file (default `shankpit_stream_out.mp4`). Targets are whitelisted before
+they ever touch a shell. **The encoder is ffmpeg -- a labeled STOPGAP** (replacement PARENA H.264 encoder + RTMP muxer are
+logged in `EMILY/BACKLOG.md`); `SHANKPIT_STREAM_SINK_CMD` swaps in any program that reads raw rgb24 on stdin.
+`make test-stream-out` runs headless with no ffmpeg.
+
+Verified live: headless Xvfb screenshots of the real lobby (`--city`) in broadcast mode -- follow cam, orbit cam, three
+multiview tiles, manual camera switching -- and a 1280x720 stream of 88 whole frames captured to a raw file through the
+real capture path, one frame decoded: clean program view, right way up. Honest limits: **ffmpeg is not installed on this
+machine, so the actual encode/RTMP path (the ffmpeg command line) has not been run** -- only its construction and the
+capture-and-pipe are tested; the stream carries no audio; it runs at the window's size; the director does not check line of
+sight; cameras are not yet editable inside the game (edit `shankpit_camrig.json`, or NOCK later).
+
 ## Hammer (weapon 8, key 8) -- the demolition tool (2026-10-02)
 
 A heavy melee tool built for destructible brick. A swing hurts a player in reach (70 damage, no headshot bonus: two

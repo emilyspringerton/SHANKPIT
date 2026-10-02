@@ -51,6 +51,7 @@
 #include "../../../packages/simulation/buggy_rules_host.h"
 #include "../../../packages/render/held_model.h"
 #include "../../../packages/render/camera_rig.h"
+#include "../../../packages/render/stream_out.h"
 #include "../../../packages/render/proc_tex.h"
 #include "../../../packages/render/retro_sky.h"
 #include "../../../packages/render/sky_weather.h"
@@ -820,10 +821,11 @@ static int g_pause_sel = 0;
 #define PAUSE_DEBRIS     2
 #define PAUSE_AMBIENT    3
 #define PAUSE_BROADCAST  4
-#define PAUSE_FULLSCREEN 5
-#define PAUSE_SNAPSHOT   6
-#define PAUSE_QUIT       7
-#define PAUSE_ITEMS      8
+#define PAUSE_STREAM     5
+#define PAUSE_FULLSCREEN 6
+#define PAUSE_SNAPSHOT   7
+#define PAUSE_QUIT       8
+#define PAUSE_ITEMS      9
 /* g_opt_bullet_holes -- founder real-time, 2026-10-01: "always ensure all features have menu items".
    The per-gun bullet-hole decals (draw_bullet_holes) are a real, always-on rendering feature; this
    is their pause-menu toggle (default ON), persisted in shankpit_display.cfg line 2. Tracking
@@ -850,6 +852,9 @@ static const char *CAMRIG_FILE = "shankpit_camrig.json";
 typedef struct { int active; float eye[3], aim[3]; } CamOverride;
 static CamOverride g_cam_override;
 static int g_world_only_pass = 0;
+static StreamOut g_stream;               /* native stream out (stream_out.h): the program feed -> encoder */
+static int g_stream_on = 0;
+static char g_stream_msg[96] = "";
 static int g_opt_ambient_level = 3;
 static void apply_ambient_level(void) {
     g_opt_ambient_level = ambient_clamp(g_opt_ambient_level);
@@ -9084,7 +9089,7 @@ static void draw_pause_overlay(void) {
     glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glColor4f(0.0f, 0.0f, 0.0f, 0.72f);
     glBegin(GL_QUADS);
-    glVertex2f(220, 80); glVertex2f(1060, 80); glVertex2f(1060, 540); glVertex2f(220, 540);
+    glVertex2f(220, 56); glVertex2f(1060, 56); glVertex2f(1060, 540); glVertex2f(220, 540);
     glEnd();
     glDisable(GL_BLEND);
     glColor3f(0.0f, 1.0f, 1.0f);
@@ -9102,22 +9107,23 @@ static void draw_pause_overlay(void) {
         g_opt_brick_debris ? "BRICK DEBRIS: ON" : "BRICK DEBRIS: OFF",
         ambient_label,
         g_broadcast_on ? (g_camrig.auto_cut ? "BROADCAST CAMERAS: AUTO" : "BROADCAST CAMERAS: MANUAL") : "BROADCAST CAMERAS: OFF",
+        g_stream_on ? "STREAM OUT: LIVE" : (g_stream_msg[0] ? g_stream_msg : "STREAM OUT: OFF"),
         g_fullscreen ? "FULLSCREEN: ON" : "FULLSCREEN: OFF",
         lobby_snapshot_label(),
         "QUIT TO LOBBY"
     };
     for (int i = 0; i < PAUSE_ITEMS; i++) {
-        float y = 370.0f - (float)i * 36.0f;
+        float y = 392.0f - (float)i * 32.0f;   /* nine items at size 4: the menu grew from 6 items at size 6 */
         if (i == g_pause_sel) {
             glColor3f(1.0f, 1.0f, 0.0f);
-            draw_string(">", 300, y, 6);
+            draw_string(">", 296, y, 4);
         } else {
             glColor3f(0.65f, 0.65f, 0.65f);
         }
-        draw_string(items[i], 330, y, 6);
+        draw_string(items[i], 330, y, 4);
     }
     glColor3f(0.38f, 0.38f, 0.38f);
-    draw_string("ESC: RESUME   ENTER: SELECT   LEFT/RIGHT: AMBIENT", 320, 100, 4);
+    draw_string("ESC: RESUME   ENTER: SELECT   LEFT/RIGHT: AMBIENT", 300, 92, 3);
     glEnable(GL_DEPTH_TEST);
     glMatrixMode(GL_PROJECTION); glPopMatrix();
     glMatrixMode(GL_MODELVIEW); glPopMatrix();
@@ -9156,10 +9162,43 @@ static void broadcast_save_rig(void) {
     fclose(f);
 }
 
+/* stream_set -- start/stop the native stream of the program feed (card #458). Target: SHANKPIT_STREAM_URL, else the first
+   line of shankpit_stream.cfg, else shankpit_stream_out.mp4. Encoder: ffmpeg (a STOPGAP, see stream_out.h) unless
+   SHANKPIT_STREAM_SINK_CMD names another program that reads raw rgb24 on stdin. Needs the broadcast view (it IS the
+   program feed), so turning the stream on turns broadcast on too. */
+static void broadcast_set(int on);
+static void stream_set(int on) {
+    if (on == g_stream_on) return;
+    if (!on) {
+        int rc = stream_out_close(&g_stream);
+        SDL_Log("stream: stopped after %lu frame(s), encoder exit %d", g_stream.frames, rc);
+        g_stream_on = 0; g_stream_msg[0] = '\0';
+        return;
+    }
+    const char *sink = getenv("SHANKPIT_STREAM_SINK_CMD");
+    char target[256] = "shankpit_stream_out.mp4";
+    const char *env_url = getenv("SHANKPIT_STREAM_URL");
+    if (env_url && env_url[0]) snprintf(target, sizeof(target), "%s", env_url);
+    else {
+        FILE *f = fopen("shankpit_stream.cfg", "r");
+        if (f) { char line[256]; if (fgets(line, sizeof(line), f)) { line[strcspn(line, "\r\n")] = '\0'; if (line[0]) snprintf(target, sizeof(target), "%s", line); } fclose(f); }
+    }
+    if (!(sink && sink[0]) && !stream_out_ffmpeg_available()) { snprintf(g_stream_msg, sizeof(g_stream_msg), "STREAM NEEDS FFMPEG (NOT FOUND)"); SDL_Log("stream: ffmpeg not found"); return; }
+    int w = g_vp_w & ~1, h = g_vp_h & ~1;
+    if (!stream_out_open(&g_stream, w, h, 30, target, sink)) {
+        snprintf(g_stream_msg, sizeof(g_stream_msg), "STREAM REFUSED: BAD TARGET OR SIZE");
+        SDL_Log("stream: could not open (target '%s')", target);
+        return;
+    }
+    broadcast_set(1);
+    g_stream_on = 1; g_stream_msg[0] = '\0';
+    SDL_Log("stream: started %dx%d -> %s%s", w, h, (sink && sink[0]) ? "custom sink" : target, "");
+}
+
 static void broadcast_set(int on) {
     if (on == g_broadcast_on) return;
     g_broadcast_on = on;
-    if (!on) broadcast_save_rig();
+    if (!on) { stream_set(0); broadcast_save_rig(); }
     else { g_camrig.director_subject = -1; g_camrig.next_think_ms = 0; }
 }
 
@@ -9231,6 +9270,25 @@ static void broadcast_frame(PlayerState *render_p) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     CamView v;
     if (camrig_view(&g_camrig, g_camrig.program, now, &v)) broadcast_render_view(render_p, &v, 0, 0, VIRTUAL_W, VIRTUAL_H);
+    /* native stream: the CLEAN program feed -- read back before the multiview tiles and overlay are drawn over it */
+    if (g_stream_on && stream_out_due(&g_stream, now)) {
+        if (g_vp_w < g_stream.w || g_vp_h < g_stream.h) {
+            snprintf(g_stream_msg, sizeof(g_stream_msg), "STREAM PAUSED: WINDOW SMALLER THAN STREAM");   /* resized down mid-stream */
+        } else {
+            static unsigned char *px = NULL; static size_t px_cap = 0;
+            size_t need = (size_t)g_stream.w * (size_t)g_stream.h * 3u;
+            if (px_cap < need) { free(px); px = (unsigned char *)malloc(need); px_cap = px ? need : 0; }
+            if (px) {
+                glPixelStorei(GL_PACK_ALIGNMENT, 1);
+                glReadPixels(g_vp_x, g_vp_y, g_stream.w, g_stream.h, GL_RGB, GL_UNSIGNED_BYTE, px);
+                if (!stream_out_push(&g_stream, px, now)) {
+                    snprintf(g_stream_msg, sizeof(g_stream_msg), "STREAM ENCODER STOPPED");
+                    SDL_Log("stream: encoder went away after %lu frame(s)", g_stream.frames);
+                    stream_set(0);
+                } else g_stream_msg[0] = '\0';
+            }
+        }
+    }
 
     /* tiles: every other camera, live */
     int tiles[CAMRIG_MAX], nt = 0;
@@ -9267,7 +9325,15 @@ static void broadcast_frame(PlayerState *render_p) {
     glColor3f(1, 1, 1);
     draw_string(line, 190, VIRTUAL_H - 42, 3);
     glColor3f(0.7f, 0.7f, 0.7f);
-    draw_string("F3 EXIT   F4 AUTO/MANUAL   F5 MULTIVIEW   [ ] CAMERA   , . SUBJECT", 24, VIRTUAL_H - 70, 2);
+    draw_string("F3 EXIT   F4 AUTO/MANUAL   F5 MULTIVIEW   F2 STREAM   [ ] CAMERA   , . SUBJECT", 24, VIRTUAL_H - 70, 2);
+    if (g_stream_on) {
+        char sl[96]; snprintf(sl, sizeof(sl), "STREAMING %dx%d  %lu FRAMES", g_stream.w, g_stream.h, g_stream.frames);
+        glColor3f(1.0f, 0.3f, 0.3f);
+        draw_string(sl, 24, VIRTUAL_H - 96, 2);
+    } else if (g_stream_msg[0]) {
+        glColor3f(1.0f, 0.8f, 0.2f);
+        draw_string(g_stream_msg, 24, VIRTUAL_H - 96, 2);
+    }
     glEnable(GL_DEPTH_TEST);
     glMatrixMode(GL_PROJECTION); glPopMatrix();
     glMatrixMode(GL_MODELVIEW); glPopMatrix();
@@ -11583,6 +11649,8 @@ int main(int argc, char* argv[]) {
                                 if (!g_broadcast_on) { broadcast_set(1); g_camrig.auto_cut = 1; }
                                 else if (g_camrig.auto_cut) g_camrig.auto_cut = 0;
                                 else broadcast_set(0);
+                            } else if (g_pause_sel == PAUSE_STREAM) {
+                                stream_set(!g_stream_on);
                             } else if (g_pause_sel == PAUSE_FULLSCREEN) {
                                 toggle_fullscreen();
                             } else if (g_pause_sel == PAUSE_SNAPSHOT) {
@@ -11645,6 +11713,8 @@ int main(int argc, char* argv[]) {
                         g_paused = 1;
                         g_pause_sel = 0;
                         SDL_SetRelativeMouseMode(SDL_FALSE);
+                    } else if (e.key.keysym.sym == SDLK_F2) {
+                        stream_set(!g_stream_on);
                     } else if (e.key.keysym.sym == SDLK_F3) {
                         broadcast_set(!g_broadcast_on);
                     } else if (e.key.keysym.sym == SDLK_F4 && g_broadcast_on) {

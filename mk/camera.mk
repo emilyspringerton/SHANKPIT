@@ -6,11 +6,16 @@
 PARENA_DIR ?= ../PARENA
 CAMERA_PRN := $(PARENA_DIR)/stdlib/shankpit/camera_rules.prn
 
-.PHONY: test-camera-rig regen-camera-rules check-camera-rules
+.PHONY: test-camera-rig test-stream-out regen-camera-rules check-camera-rules
 test-camera-rig:
 	gcc -std=gnu99 -Wall -Wextra -g -fsanitize=address,undefined $(INCLUDES) packages/render/camera_rig_test.c \
 		packages/render/camera_rules.c packages/world/parena_runtime.c -o /tmp/shankpit_camera_rig_test -lm
 	/tmp/shankpit_camera_rig_test
+
+test-stream-out:
+	gcc -std=gnu99 -Wall -Wextra -g -fsanitize=address,undefined $(INCLUDES) packages/render/stream_out_test.c \
+		-o /tmp/shankpit_stream_out_test
+	/tmp/shankpit_stream_out_test
 
 regen-camera-rules:
 	@test -x $(PARENA_DIR)/parena || $(MAKE) -C $(PARENA_DIR) build >/dev/null
