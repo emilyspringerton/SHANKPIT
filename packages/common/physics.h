@@ -3404,6 +3404,45 @@ static inline void buggy_sample_wheel_heights(const BuggyState *b, float heights
     }
 }
 
+/* buggy_move_xz_blocked -- horizontal move of a buggy against the scene's map_geo boxes. The buggy
+   had NO wall collision at all (it drove straight through every box; only on-foot players went through
+   resolve_collision), and at BUGGY_TOP_SPEED a single tick covers ~6 units, more than a thin wall, so
+   the move is substepped. A box blocks when its top is above the wheels' step height and its bottom
+   is below the chassis roof; the buggy is pushed out along the shallower axis and loses that
+   velocity component (a wall hit scrubs speed). Shared sim: server and local play both run this via
+   simulate_buggy_state, so multiplayer is authoritative. Walls carved by brick destruction are just
+   map_geo boxes too, so a blasted hole is drivable. */
+#define BUGGY_COLLIDE_R 2.0f
+#define BUGGY_STEP_HEIGHT 0.6f
+#define BUGGY_BODY_HEIGHT 3.0f
+static inline void buggy_move_xz_blocked(BuggyState *b, float dx, float dz) {
+    float dist = sqrtf(dx * dx + dz * dz);
+    int steps = (int)(dist / 1.0f) + 1;
+    if (steps > 16) steps = 16;
+    float sx = dx / (float)steps, sz = dz / (float)steps;
+    for (int s = 0; s < steps; s++) {
+        b->x += sx; b->z += sz;
+        float bottom = b->y - (BUGGY_WHEEL_RADIUS + BUGGY_CHASSIS_CLEARANCE);
+        float top = bottom + BUGGY_BODY_HEIGHT;
+        for (int i = 1; i < map_count; i++) {
+            Box bx = map_geo[i];
+            if (bx.w <= 0.0f || bx.d <= 0.0f || bx.h <= 0.0f) continue;
+            if (bx.y + bx.h / 2 <= bottom + BUGGY_STEP_HEIGHT) continue;
+            if (bx.y - bx.h / 2 >= top) continue;
+            float ox = (BUGGY_COLLIDE_R + bx.w / 2) - fabsf(b->x - bx.x);
+            float oz = (BUGGY_COLLIDE_R + bx.d / 2) - fabsf(b->z - bx.z);
+            if (ox <= 0.0f || oz <= 0.0f) continue;
+            if (ox < oz) {
+                b->x += (b->x > bx.x) ? ox : -ox;
+                b->vx = 0.0f;
+            } else {
+                b->z += (b->z > bx.z) ? oz : -oz;
+                b->vz = 0.0f;
+            }
+        }
+    }
+}
+
 static inline void simulate_buggy_state(BuggyState *b, float throttle, float steer, float dt, int apply_input) {
     if (!b || !b->active) return;
 
@@ -3483,9 +3522,8 @@ static inline void simulate_buggy_state(BuggyState *b, float throttle, float ste
     b->vz = new_fwd_z * forward_speed + new_right_z * lateral_speed;
 
     if (!b->grounded) b->vy -= BUGGY_GRAVITY * dt_scale;
-    b->x += b->vx;
     b->y += b->vy;
-    b->z += b->vz;
+    buggy_move_xz_blocked(b, b->vx, b->vz);
 
     float heights[4];
     buggy_sample_wheel_heights(b, heights);

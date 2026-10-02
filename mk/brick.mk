@@ -39,6 +39,13 @@ test-third-person:
 		-o /tmp/shankpit_third_person_test -lm
 	/tmp/shankpit_third_person_test
 
+.PHONY: test-buggy-wall
+test-buggy-wall:
+	gcc -std=gnu99 -Wall -g -fsanitize=address,undefined $(INCLUDES) \
+		packages/common/buggy_wall_test.c packages/world/terrain.c \
+		-o /tmp/shankpit_buggy_wall_test -lm
+	/tmp/shankpit_buggy_wall_test
+
 .PHONY: test-glass-render
 test-glass-render:
 	gcc -std=gnu99 -Wall -g $(INCLUDES) packages/render/glass_render_test.c packages/render/gl_shader.c \
