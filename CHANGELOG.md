@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-02
+- levels: every NOCK level baked into the binary (baked_levels_gen.h, make bake-levels), top-level SETTINGS page with LIVE LEVELS toggle (cards #479, #480); README documents SURVIVAL/CUSTOMIZE/SETTINGS/queue level tracking (sess-20260923-1030-4a526255)
 - survival: new SURVIVAL game mode (waves of hunting zombies on the built-in SCENE_CITY, wave HUD, --survival flag) + CUSTOMIZE submenu holding SKINS/SPRAYS (cards #482, #488) (sess-20260923-1030-4a526255)
 - zombies: MODE_ZOMBIES zombies always hunt the hero (no radius gate) and spawn near the hero hidden behind buildings, day/dawn pops 2/3 (card #486) (sess-20260923-1030-4a526255)
 - queue: PACKET_QUEUE_LEVEL -- server broadcasts the level id it is simulating, client reloads geometry when it changes at a round boundary instead of keeping its first fetch (card #481); new make test-queue-level (sess-20260923-1030-4a526255)
