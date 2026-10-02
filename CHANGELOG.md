@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-02
+- lobby: GAMES page no longer duplicates ZOMBIES/QUEUE/LEVELS/TYLER tiles (reachable via SURVIVAL > MODES); --survival/--zombies CLI flags bypass the submenu (#496 follow-up) (sess-20260923-1030-4a526255)
 - lobby: MODES submenu page grouping survival/zombies/queue/levels/tyler (#496) (sess-20260923-1030-4a526255)
 - lobby: grid nav / hit-test / double-click timing now generated from PARENA stdlib/ui/menu (card #483) (sess-20260923-1030-4a526255)
 - levels: every NOCK level baked into the binary (baked_levels_gen.h, make bake-levels), top-level SETTINGS page with LIVE LEVELS toggle (cards #479, #480); README documents SURVIVAL/CUSTOMIZE/SETTINGS/queue level tracking (sess-20260923-1030-4a526255)
