@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-02
+- Zombie-mode movers learn the city (#522): shared learned wall grid, stuck detection, A* detours out of pockets; clawing zombies stay relentless; U-pocket test added (fails on old code) (sess-20260923-1030-4a526255)
 - LAB mode: hero now spawns facing the lab stations instead of staring at the exit wall (#516); headless screenshot verified (sess-20260923-1030-4a526255)
 - Mannequin-kit bodies (queue players, citizens, men, zombies, corpses) drawn 4x per #515; draw-only, hitboxes unchanged (sess-20260923-1030-4a526255)
 - BIG_O LAB level: --lab / MODES->LAB loads INTERRIOR_1 clone + 6 programmatic lab widgets (var/lab/lab.json); E-interactive stations (splice/centrifuge/pcr/vat/fridge/console) with rules in PARENA (lab_station_rules.prn -> generated C, make test-lab-station); level_boxes parses lab_stations; phone works in LAB -- SECTION 592 cards #504-#508 (sess-20260923-1030-4a526255)
