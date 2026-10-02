@@ -46,6 +46,19 @@ test-buggy-wall:
 		-o /tmp/shankpit_buggy_wall_test -lm
 	/tmp/shankpit_buggy_wall_test
 
+.PHONY: test-litbox-render
+test-litbox-render:
+	gcc -std=gnu99 -Wall -g $(INCLUDES) packages/render/litbox_render_test.c packages/render/gl_shader.c \
+		-o /tmp/shankpit_litbox_render_test -lSDL2 -lGL -lm
+	xvfb-run -a -s "-screen 0 640x480x24" env LIBGL_ALWAYS_SOFTWARE=1 /tmp/shankpit_litbox_render_test
+
+.PHONY: test-ambient-boost
+test-ambient-boost:
+	gcc -std=gnu99 -Wall -g -fsanitize=address,undefined $(INCLUDES) packages/render/ambient_boost_test.c \
+		packages/render/retro_lighting.c packages/render/retro_sky.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/sky_weather.c packages/simulation/ambient_rules.c \
+		packages/world/parena_runtime.c -o /tmp/shankpit_ambient_boost_test -lm -lGL
+	/tmp/shankpit_ambient_boost_test
+
 .PHONY: test-glass-render
 test-glass-render:
 	gcc -std=gnu99 -Wall -g $(INCLUDES) packages/render/glass_render_test.c packages/render/gl_shader.c \

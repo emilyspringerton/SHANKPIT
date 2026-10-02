@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-02
+- feat(render): per-fragment dynamic lighting for map boxes (#451/#452) — flashlights are Gaussian spot lights, IPS/HPS fixtures are point lights, summed per pixel in a shader (litbox_shader.h) instead of one value per box face at the box centre, so no hard lit/dark edge and fixtures light big walls properly; flashlight beam mesh fades Gaussian with no hard rim or far cap. Pause-menu AMBIENT LIGHT slider (#460): LEFT/RIGHT, persisted as line 4 of shankpit_display.cfg, level->fill mapping is PARENA (ambient_rules.prn -> ambient_rules.c). New make test-litbox-render (live GL), test-ambient-boost. Not yet seen in a real level screenshot or deployed. (sess-20260923-1030-4a526255)
 - fix(buggy): buggy now collides with map_geo walls (substepped horizontal sweep in simulate_buggy_state — shared by server and local, so multiplayer is authoritative; curbs under step height still drivable; blasted brick holes drivable). New make test-buggy-wall. Brick destructibility multiplayer path (server collect/broadcast, client mirror apply) already covered by test-brick-world, not re-verified live. (sess-20260923-1030-4a526255)
 - Live GL test for SHADER_GLASS alpha pass (make test-glass-render): blends over bg/geometry, no depth write (sess-20260923-1030-4a526255)
 - Restored procedural SCENE_CITY (LEVELS menu 'CITY (BUILT-IN)', --city); fixed third-person camera (was in front of the player), wall-clipped orbit camera, aim bridging, V toggle in local matches (sess-20260923-1030-4a526255)

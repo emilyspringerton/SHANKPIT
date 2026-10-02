@@ -326,10 +326,16 @@ static const char *g_flashlight_fs_src =
     "uniform vec4 u_color;\n"
     "varying float v_radial_t;\n"
     "varying float v_axial_t;\n"
+    /* Gaussian falloff on both axes, reaching ~0 at the rim AND at the far end: no hard edge on the
+       cone's silhouette or its far cap (the old smoothstep(0.45,1.0) edge and a 0.10 alpha floor at
+       the far end drew a visible cut-off). The beam fades into the dark like a real light in haze;
+       the lit surface it lands on (per-fragment, see g_litbox_fs_src) carries the actual light. */
     "void main() {\n"
-    "    float edge_fade = 1.0 - smoothstep(0.45, 1.0, v_radial_t);\n"
-    "    float far_fade = 1.0 - smoothstep(0.55, 1.0, v_axial_t);\n"
-    "    float alpha = edge_fade * (0.10 + 0.55 * far_fade) * u_color.a;\n"
+    "    float edge_fade = exp(-v_radial_t * v_radial_t * 3.2);\n"
+    "    edge_fade *= 1.0 - smoothstep(0.82, 1.0, v_radial_t);\n"
+    "    float near_fade = smoothstep(0.0, 0.10, v_axial_t);\n"
+    "    float far_fade = exp(-v_axial_t * v_axial_t * 2.4) * (1.0 - smoothstep(0.72, 1.0, v_axial_t));\n"
+    "    float alpha = edge_fade * near_fade * (0.05 + 0.55 * far_fade) * u_color.a;\n"
     "    gl_FragColor = vec4(u_color.rgb, alpha);\n"
     "}\n";
 
@@ -582,6 +588,71 @@ static int fixture_lights_gather(int scene_id, FixtureLight *out, float hps_flic
     return count;
 }
 
+/* ---- Per-fragment dynamic lighting for map boxes (#451/#452) --------------------------------------
+ * The CPU lighting above evaluates a light ONCE per box face at the box CENTRE, so a whole face is
+ * lit or dark as a unit: a long wall next to a light fixture (or half inside a flashlight cone)
+ * flips at its centre -- a hard edge, and "a light block that doesn't light things up" whenever
+ * the block's neighbours are big. Like Unity/Unreal's forward pass, the box shader below sums every
+ * light per FRAGMENT: flashlights are spot lights (Gaussian angular + distance falloff, no cone
+ * cutoff), IPS/HPS fixtures are omnidirectional point lights (smooth windowed falloff, wrapped
+ * N.L so a face turned slightly away still catches a little). Sun/moon/fog stay in the per-face
+ * vertex colour exactly as before; this adds on top. Used only while a dynamic light is active;
+ * otherwise draw_map keeps the plain fixed-function path (zero cost, zero change). */
+#include "litbox_shader.h"
+#define LITBOX_SPOTS_MAX 8
+#define LITBOX_POINTS_MAX 16
+static GLuint g_litbox_program = 0;
+static int g_litbox_ready = 0;
+static GLint g_litbox_loc_center = -1, g_litbox_loc_size = -1, g_litbox_loc_albedo = -1;
+static GLint g_litbox_loc_nspot = -1, g_litbox_loc_npoint = -1, g_litbox_loc_spot_pos = -1, g_litbox_loc_spot_dir = -1;
+static GLint g_litbox_loc_point_pos = -1, g_litbox_loc_point_col = -1, g_litbox_loc_tex = -1, g_litbox_loc_cone = -1;
+
+static void litbox_shader_init(void) {
+    if (!gl_shader_load_extensions()) return;
+    GLuint vs = gl_compile_shader(GL_VERTEX_SHADER, g_litbox_vs_src);
+    GLuint fs = gl_compile_shader(GL_FRAGMENT_SHADER, g_litbox_fs_src);
+    g_litbox_program = gl_link_program(vs, fs);
+    if (!g_litbox_program) { SDL_Log("litbox: shader link failed -- per-box CPU lighting fallback"); return; }
+    GLuint p = g_litbox_program;
+    g_litbox_loc_center = gl_get_uniform_location(p, "u_center");
+    g_litbox_loc_size = gl_get_uniform_location(p, "u_size");
+    g_litbox_loc_albedo = gl_get_uniform_location(p, "u_albedo");
+    g_litbox_loc_nspot = gl_get_uniform_location(p, "u_nspot");
+    g_litbox_loc_npoint = gl_get_uniform_location(p, "u_npoint");
+    g_litbox_loc_spot_pos = gl_get_uniform_location(p, "u_spot_pos");
+    g_litbox_loc_spot_dir = gl_get_uniform_location(p, "u_spot_dir");
+    g_litbox_loc_point_pos = gl_get_uniform_location(p, "u_point_pos");
+    g_litbox_loc_point_col = gl_get_uniform_location(p, "u_point_col");
+    g_litbox_loc_tex = gl_get_uniform_location(p, "u_tex");
+    g_litbox_loc_cone = gl_get_uniform_location(p, "u_cone_cos");
+    g_litbox_ready = 1;
+    SDL_Log("litbox: per-fragment dynamic lighting ready");
+}
+
+/* litbox_upload_lights -- once per draw_map call: the active flashlights and fixture lights. */
+static void litbox_upload_lights(const FlashlightSource *fs, int nfs, const FixtureLight *fx, int nfx) {
+    if (nfs > LITBOX_SPOTS_MAX) nfs = LITBOX_SPOTS_MAX;
+    if (nfx > LITBOX_POINTS_MAX) nfx = LITBOX_POINTS_MAX;
+    float sp[LITBOX_SPOTS_MAX * 4], sd[LITBOX_SPOTS_MAX * 4];
+    float pp[LITBOX_POINTS_MAX * 4], pc[LITBOX_POINTS_MAX * 4];
+    for (int i = 0; i < nfs; i++) {
+        sp[i*4+0] = fs[i].ex; sp[i*4+1] = fs[i].ey; sp[i*4+2] = fs[i].ez; sp[i*4+3] = FLASHLIGHT_RANGE;
+        sd[i*4+0] = fs[i].fx; sd[i*4+1] = fs[i].fy; sd[i*4+2] = fs[i].fz; sd[i*4+3] = 0.0f;
+    }
+    for (int j = 0; j < nfx; j++) {
+        pp[j*4+0] = fx[j].x; pp[j*4+1] = fx[j].y; pp[j*4+2] = fx[j].z; pp[j*4+3] = FIXTURE_LIGHT_RANGE;
+        pc[j*4+0] = fx[j].r; pc[j*4+1] = fx[j].g; pc[j*4+2] = fx[j].b; pc[j*4+3] = 1.0f;
+    }
+    gl_use_program(g_litbox_program);
+    gl_uniform1i(g_litbox_loc_tex, 0);
+    gl_uniform1i(g_litbox_loc_nspot, nfs);
+    gl_uniform1i(g_litbox_loc_npoint, nfx);
+    gl_uniform1f(g_litbox_loc_cone, cosf(FLASHLIGHT_HALF_ANGLE_DEG * 0.0174533f));
+    if (nfs > 0) { gl_uniform4fv_n(g_litbox_loc_spot_pos, nfs, sp); gl_uniform4fv_n(g_litbox_loc_spot_dir, nfs, sd); }
+    if (nfx > 0) { gl_uniform4fv_n(g_litbox_loc_point_pos, nfx, pp); gl_uniform4fv_n(g_litbox_loc_point_col, nfx, pc); }
+    gl_use_program(0);
+}
+
 #ifndef NET_VERBOSE_LOG
 #define NET_VERBOSE_LOG 0
 #endif
@@ -744,10 +815,11 @@ static int g_pause_sel = 0;
 #define PAUSE_RESUME     0
 #define PAUSE_HOLES      1
 #define PAUSE_DEBRIS     2
-#define PAUSE_FULLSCREEN 3
-#define PAUSE_SNAPSHOT   4
-#define PAUSE_QUIT       5
-#define PAUSE_ITEMS      6
+#define PAUSE_AMBIENT    3
+#define PAUSE_FULLSCREEN 4
+#define PAUSE_SNAPSHOT   5
+#define PAUSE_QUIT       6
+#define PAUSE_ITEMS      7
 /* g_opt_bullet_holes -- founder real-time, 2026-10-01: "always ensure all features have menu items".
    The per-gun bullet-hole decals (draw_bullet_holes) are a real, always-on rendering feature; this
    is their pause-menu toggle (default ON), persisted in shankpit_display.cfg line 2. Tracking
@@ -757,6 +829,19 @@ static int g_opt_bullet_holes = 1;
    gone wall cell, packages/world/brick_debris.h). The destruction itself is a core rule and always
    on; this only toggles the particles. Pause menu, persisted in shankpit_display.cfg line 3. */
 static int g_opt_brick_debris = 1;
+/* g_opt_ambient_level -- the pause-menu ambient-light slider (card #460), 0..10, persisted as the 4th
+   line of shankpit_display.cfg. The level->fill-light mapping, step and clamp are PARENA
+   (stdlib/shankpit/ambient_rules.prn, generated into packages/simulation/ambient_rules.c); this is
+   just the stored value and the call that hands the result to the lighting code. */
+int ambient_level_default(void);
+int ambient_clamp(int level);
+int ambient_step(int level, int dir);
+int ambient_boost_permille(int level);
+static int g_opt_ambient_level = 3;
+static void apply_ambient_level(void) {
+    g_opt_ambient_level = ambient_clamp(g_opt_ambient_level);
+    retro_lighting_set_ambient_boost((float)ambient_boost_permille(g_opt_ambient_level) * 0.001f);
+}
 static BrickDebrisPool g_brick_debris;
 
 enum { SKIN_MENU_BACK = -1 };
@@ -3217,14 +3302,15 @@ static const char *DISPLAY_CONFIG_PATH = "shankpit_display.cfg";
 static void save_display_config(void) {
     FILE *f = fopen(DISPLAY_CONFIG_PATH, "w");
     if (!f) return;
-    fprintf(f, "%d\n%d\n%d\n", g_fullscreen, g_opt_bullet_holes, g_opt_brick_debris);
+    fprintf(f, "%d\n%d\n%d\n%d\n", g_fullscreen, g_opt_bullet_holes, g_opt_brick_debris, g_opt_ambient_level);
     fclose(f);
 }
 
 static void load_display_config(void) {
+    g_opt_ambient_level = ambient_level_default();
     FILE *f = fopen(DISPLAY_CONFIG_PATH, "r");
-    if (!f) return;
-    int fs = 0, holes = 1, debris = 1;
+    if (!f) { apply_ambient_level(); return; }
+    int fs = 0, holes = 1, debris = 1, ambient = -1;
     if (fscanf(f, "%d", &fs) == 1 && fs) {
         g_fullscreen = 1;
         SDL_SetWindowFullscreen(g_win, SDL_WINDOW_FULLSCREEN_DESKTOP);
@@ -3232,7 +3318,9 @@ static void load_display_config(void) {
     }
     if (fscanf(f, "%d", &holes) == 1) g_opt_bullet_holes = holes ? 1 : 0; /* old 1-line cfg -> stays ON */
     if (fscanf(f, "%d", &debris) == 1) g_opt_brick_debris = debris ? 1 : 0;
+    if (fscanf(f, "%d", &ambient) == 1) g_opt_ambient_level = ambient; /* old 3-line cfg keeps the PARENA default */
     fclose(f);
+    apply_ambient_level();
 }
 
 static void remap_mouse(int wx, int wy, int *vx, int *vy) {
@@ -3845,6 +3933,9 @@ void draw_map(const RetroLightingState *lighting) {
 
     FixtureLight fixture_lights[FIXTURE_LIGHTS_MAX];
     int fixture_light_count = fixture_lights_gather(phys_scene_id, fixture_lights, hps_flicker);
+    /* per-fragment lighting replaces the per-box-centre CPU boosts below while any dynamic light is up */
+    const int use_litbox = g_litbox_ready && (flashlight_source_count + fixture_light_count > 0);
+    if (use_litbox) litbox_upload_lights(flashlight_sources, flashlight_source_count, fixture_lights, fixture_light_count);
 
     enum { GLASS_DRAW_MAX = 512 };
     int glass_list[GLASS_DRAW_MAX];
@@ -3958,7 +4049,7 @@ void draw_map(const RetroLightingState *lighting) {
            it -- see flashlight_face_boost's own doc comment for the real fix this is (per-face
            normal instead of a flat box-wide add; every active player's flashlight, not just the
            local viewer's). */
-        if (flashlight_source_count > 0) {
+        if (!use_litbox && flashlight_source_count > 0) {
             float top_boost   = flashlight_face_boost(flashlight_sources, flashlight_source_count, b.x, b.y, b.z,  0.0f,  1.0f,  0.0f);
             float bot_boost   = flashlight_face_boost(flashlight_sources, flashlight_source_count, b.x, b.y, b.z,  0.0f, -1.0f,  0.0f);
             float front_boost = flashlight_face_boost(flashlight_sources, flashlight_source_count, b.x, b.y, b.z,  0.0f,  0.0f,  1.0f);
@@ -3981,7 +4072,7 @@ void draw_map(const RetroLightingState *lighting) {
            gets, just omnidirectional and carrying each fixture's own real color. Harmless no-op
            on a light fixture's own box (is_ips_light/is_hps_light's own override below replaces
            these lit values wholesale anyway, same order flashlight's boost already follows). */
-        if (fixture_light_count > 0) {
+        if (!use_litbox && fixture_light_count > 0) {
             float tr, tg, tb, br, bg, bb, fr, fg, fb, kr, kg, kb, lr, lg, lb, rr, rg, rb;
             fixture_light_face_contribution(fixture_lights, fixture_light_count, b.x, b.y, b.z,  0.0f,  1.0f,  0.0f, &tr, &tg, &tb);
             fixture_light_face_contribution(fixture_lights, fixture_light_count, b.x, b.y, b.z,  0.0f, -1.0f,  0.0f, &br, &bg, &bb);
@@ -4038,38 +4129,54 @@ void draw_map(const RetroLightingState *lighting) {
         const float ov = is_fracture_piece ? g_custom_level_uv_off[i][1] * wall_uv_density : 0.0f;
         const float ow = is_fracture_piece ? g_custom_level_uv_off[i][2] * wall_uv_density : 0.0f;
 
+        if (use_litbox) {
+            gl_use_program(g_litbox_program);
+            float lc[3] = { b.x, b.y, b.z }, ls[3] = { b.w, b.h, b.d };
+            float la[3] = { base_r, base_g, base_b };
+            if (is_ips_light || is_hps_light) la[0] = la[1] = la[2] = 0.0f; /* fixtures are self-lit */
+            gl_uniform3fv(g_litbox_loc_center, lc);
+            gl_uniform3fv(g_litbox_loc_size, ls);
+            gl_uniform3fv(g_litbox_loc_albedo, la);
+        }
         glBegin(GL_QUADS);
+        glNormal3f(0.0f, 1.0f, 0.0f);
         glColor3f(top_r, top_g, top_b);
         glTexCoord2f(-0.5f*uw + ou,  0.5f*ud + ow); glVertex3f(-0.5,0.5,0.5);
         glTexCoord2f( 0.5f*uw + ou,  0.5f*ud + ow); glVertex3f(0.5,0.5,0.5);
         glTexCoord2f( 0.5f*uw + ou, -0.5f*ud + ow); glVertex3f(0.5,0.5,-0.5);
         glTexCoord2f(-0.5f*uw + ou, -0.5f*ud + ow); glVertex3f(-0.5,0.5,-0.5);
+        glNormal3f(0.0f, -1.0f, 0.0f);
         glColor3f(bot_r, bot_g, bot_b);
         glTexCoord2f(-0.5f*uw + ou,  0.5f*ud + ow); glVertex3f(-0.5,-0.5,0.5);
         glTexCoord2f( 0.5f*uw + ou,  0.5f*ud + ow); glVertex3f(0.5,-0.5,0.5);
         glTexCoord2f( 0.5f*uw + ou, -0.5f*ud + ow); glVertex3f(0.5,-0.5,-0.5);
         glTexCoord2f(-0.5f*uw + ou, -0.5f*ud + ow); glVertex3f(-0.5,-0.5,-0.5);
+        glNormal3f(0.0f, 0.0f, 1.0f);
         glColor3f(front_r, front_g, front_b);
         glTexCoord2f(-0.5f*uw + ou, -0.5f*uh + ov); glVertex3f(-0.5,-0.5,0.5);
         glTexCoord2f( 0.5f*uw + ou, -0.5f*uh + ov); glVertex3f(0.5,-0.5,0.5);
         glTexCoord2f( 0.5f*uw + ou,  0.5f*uh + ov); glVertex3f(0.5,0.5,0.5);
         glTexCoord2f(-0.5f*uw + ou,  0.5f*uh + ov); glVertex3f(-0.5,0.5,0.5);
+        glNormal3f(0.0f, 0.0f, -1.0f);
         glColor3f(rear_r, rear_g, rear_b);
         glTexCoord2f(-0.5f*uw + ou, -0.5f*uh + ov); glVertex3f(-0.5,-0.5,-0.5);
         glTexCoord2f( 0.5f*uw + ou, -0.5f*uh + ov); glVertex3f(0.5,-0.5,-0.5);
         glTexCoord2f( 0.5f*uw + ou,  0.5f*uh + ov); glVertex3f(0.5,0.5,-0.5);
         glTexCoord2f(-0.5f*uw + ou,  0.5f*uh + ov); glVertex3f(-0.5,0.5,-0.5);
+        glNormal3f(-1.0f, 0.0f, 0.0f);
         glColor3f(left_r, left_g, left_b);
         glTexCoord2f(-0.5f*ud + ow, -0.5f*uh + ov); glVertex3f(-0.5,-0.5,-0.5);
         glTexCoord2f( 0.5f*ud + ow, -0.5f*uh + ov); glVertex3f(-0.5,-0.5,0.5);
         glTexCoord2f( 0.5f*ud + ow,  0.5f*uh + ov); glVertex3f(-0.5,0.5,0.5);
         glTexCoord2f(-0.5f*ud + ow,  0.5f*uh + ov); glVertex3f(-0.5,0.5,-0.5);
+        glNormal3f(1.0f, 0.0f, 0.0f);
         glColor3f(right_r, right_g, right_b);
         glTexCoord2f( 0.5f*ud + ow, -0.5f*uh + ov); glVertex3f(0.5,-0.5,0.5);
         glTexCoord2f(-0.5f*ud + ow, -0.5f*uh + ov); glVertex3f(0.5,-0.5,-0.5);
         glTexCoord2f(-0.5f*ud + ow,  0.5f*uh + ov); glVertex3f(0.5,0.5,-0.5);
         glTexCoord2f( 0.5f*ud + ow,  0.5f*uh + ov); glVertex3f(0.5,0.5,0.5);
         glEnd();
+        if (use_litbox) gl_use_program(0);
         glBindTexture(GL_TEXTURE_2D, 0);
         glDisable(GL_TEXTURE_2D);
 
@@ -8903,16 +9010,24 @@ static void draw_pause_overlay(void) {
     glDisable(GL_BLEND);
     glColor3f(0.0f, 1.0f, 1.0f);
     draw_string("PAUSED", 427, 478, 12);
+    char ambient_label[40];
+    {   /* "AMBIENT LIGHT: [#####-----]" -- a bar so it reads as a slider */
+        char bar[11];
+        for (int k = 0; k < 10; k++) bar[k] = (k < g_opt_ambient_level) ? '#' : '-';
+        bar[10] = 0;
+        snprintf(ambient_label, sizeof(ambient_label), "AMBIENT LIGHT: [%s]", bar);
+    }
     const char *items[PAUSE_ITEMS] = {
         "RESUME",
         g_opt_bullet_holes ? "BULLET HOLES: ON" : "BULLET HOLES: OFF",
         g_opt_brick_debris ? "BRICK DEBRIS: ON" : "BRICK DEBRIS: OFF",
+        ambient_label,
         g_fullscreen ? "FULLSCREEN: ON" : "FULLSCREEN: OFF",
         lobby_snapshot_label(),
         "QUIT TO LOBBY"
     };
     for (int i = 0; i < PAUSE_ITEMS; i++) {
-        float y = 370.0f - (float)i * 44.0f;
+        float y = 370.0f - (float)i * 40.0f;
         if (i == g_pause_sel) {
             glColor3f(1.0f, 1.0f, 0.0f);
             draw_string(">", 300, y, 6);
@@ -8922,7 +9037,7 @@ static void draw_pause_overlay(void) {
         draw_string(items[i], 330, y, 6);
     }
     glColor3f(0.38f, 0.38f, 0.38f);
-    draw_string("ESC: RESUME   ENTER: SELECT", 320, 100, 4);
+    draw_string("ESC: RESUME   ENTER: SELECT   LEFT/RIGHT: AMBIENT", 320, 100, 4);
     glEnable(GL_DEPTH_TEST);
     glMatrixMode(GL_PROJECTION); glPopMatrix();
     glMatrixMode(GL_MODELVIEW); glPopMatrix();
@@ -10792,6 +10907,7 @@ int main(int argc, char* argv[]) {
     }
     gband_shader_and_mesh_init();
     flashlight_shader_init();
+    litbox_shader_init();
     material_shader_init();
     ips_light_shader_init();
     hps_light_shader_init();
@@ -11202,6 +11318,10 @@ int main(int argc, char* argv[]) {
                             g_pause_sel = (g_pause_sel - 1 + PAUSE_ITEMS) % PAUSE_ITEMS;
                         } else if (e.key.keysym.sym == SDLK_DOWN || e.key.keysym.sym == SDLK_s) {
                             g_pause_sel = (g_pause_sel + 1) % PAUSE_ITEMS;
+                        } else if ((e.key.keysym.sym == SDLK_LEFT || e.key.keysym.sym == SDLK_RIGHT) && g_pause_sel == PAUSE_AMBIENT) {
+                            g_opt_ambient_level = ambient_step(g_opt_ambient_level, e.key.keysym.sym == SDLK_RIGHT ? 1 : -1);
+                            apply_ambient_level();
+                            save_display_config();
                         } else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) {
                             if (g_pause_sel == PAUSE_RESUME) {
                                 g_paused = 0;
@@ -11212,6 +11332,11 @@ int main(int argc, char* argv[]) {
                             } else if (g_pause_sel == PAUSE_DEBRIS) {
                                 g_opt_brick_debris = !g_opt_brick_debris;
                                 if (!g_opt_brick_debris) brick_debris_clear(&g_brick_debris);
+                                save_display_config();
+                            } else if (g_pause_sel == PAUSE_AMBIENT) {
+                                /* ENTER cycles up and wraps, for players without the arrow keys at hand */
+                                g_opt_ambient_level = (g_opt_ambient_level >= 10) ? 0 : ambient_step(g_opt_ambient_level, 1);
+                                apply_ambient_level();
                                 save_display_config();
                             } else if (g_pause_sel == PAUSE_FULLSCREEN) {
                                 toggle_fullscreen();

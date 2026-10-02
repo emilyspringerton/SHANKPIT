@@ -156,6 +156,11 @@ void gl_uniform4fv(GLint location, const float *v4) {
     p_glUniform4fv(location, 1, v4);
 }
 
+void gl_uniform4fv_n(GLint location, int count, const float *v4n) {
+    if (!g_extensions_loaded || location < 0 || count <= 0) return;
+    p_glUniform4fv(location, count, v4n);
+}
+
 void gl_uniform3fv(GLint location, const float *v3) {
     if (!g_extensions_loaded || location < 0) return;
     p_glUniform3fv(location, 1, v3);

@@ -130,6 +130,9 @@ void retro_lighting_eval(float time_sec, RetroLightingPreset preset, RetroLighti
     }
 }
 
+static float g_ambient_boost = 0.0f;
+void retro_lighting_set_ambient_boost(float boost) { g_ambient_boost = boost < 0.0f ? 0.0f : (boost > 1.0f ? 1.0f : boost); }
+
 void retro_lighting_eval_surface_rgb(const RetroLightingState *state,
                                      float nx, float ny, float nz,
                                      float ambient_floor,
@@ -177,6 +180,10 @@ void retro_lighting_eval_surface_rgb(const RetroLightingState *state,
         ar += state->moon_r * state->moon_intensity * moon_ndotl;
         ag += state->moon_g * state->moon_intensity * moon_ndotl;
         ab += state->moon_b * state->moon_intensity * moon_ndotl;
+
+        ar += g_ambient_boost;
+        ag += g_ambient_boost;
+        ab += g_ambient_boost;
 
         ar = clamp01f(ar);
         ag = clamp01f(ag);

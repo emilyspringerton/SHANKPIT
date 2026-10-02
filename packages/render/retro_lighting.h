@@ -43,6 +43,9 @@ typedef struct RetroLightingState {
 } RetroLightingState;
 
 void retro_lighting_eval(float time_sec, RetroLightingPreset preset, RetroLightingState *out_state);
+/* Flat fill light (0..~0.4) added to every surface's ambient term -- the pause-menu ambient slider
+   (PARENA stdlib/shankpit/ambient_rules.prn maps the slider level to this). 0 = the original look. */
+void retro_lighting_set_ambient_boost(float boost);
 void retro_lighting_eval_surface_rgb(const RetroLightingState *state,
                                      float nx, float ny, float nz,
                                      float ambient_floor,
