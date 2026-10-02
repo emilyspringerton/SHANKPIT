@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-02
+- BIG_O phone gains an ORB app (opens the Architect's Orb); MODE_ZOMBIES now shares the BIG_O phone (P key, banner, app UI) -- SECTION 591 slice 1, kanban #503/#485 (sess-20260923-1030-4a526255)
 - Orb snippets (card #495): F5 saves slots to shankpit_orb_slots.json, reloaded on next open; background fetch of IDUNA nock-edu-snippets for widget ORB (cached) fills empty slots. Parser/serializer unit-tested; remote endpoint not deployed yet. (sess-20260923-1030-4a526255)
 - Architect's Orb: EduVM scripting terminal ported from the GFD lineage (backquote, all local modes except QUEUE), PARENA mod bindings stdlib/shankpit/eduvm.prn, orb + machine bay in world, array/bubble-sort slot; fixed upstream parser bug that broke scripts starting with a builtin call (card #494). (sess-20260923-1030-4a526255)
 - MODE_QUEUE players now draw as the UAL mannequin tinted yellow and, when killed, fall as XPBD rigid-body ragdolls (card #501). Compiles clean; not verified against a live queue match. (sess-20260923-1030-4a526255)
