@@ -27,6 +27,8 @@ int main(void) {
     for (int i = 0; i < 6; i++) phone_input(&p, BP_SELECT, 0);
     CHECK(p.trust[0] == 3 && p.replied[0] == 1);
     phone_input(&p, BP_RIGHT, 0); phone_input(&p, BP_SELECT, 0); CHECK(p.replied[0] == 2);
+    /* ORB app: SELECT asks the host to open the Architect's Orb */
+    phone_init(&p); go(&p, BP_APP_ORB); CHECK(phone_input(&p, BP_SELECT, 0).kind == BP_FX_OPEN_ORB);
     /* map pin toggles; camera counts photos and emits fx */
     go(&p, BP_APP_MAP); phone_input(&p, BP_DOWN, 0); phone_input(&p, BP_SELECT, 0); CHECK(p.zone_pinned == 1);
     phone_input(&p, BP_SELECT, 0); CHECK(p.zone_pinned == -1);

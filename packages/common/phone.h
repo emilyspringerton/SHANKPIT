@@ -36,6 +36,7 @@
 typedef enum {
     BP_APP_MESSAGES = 0, BP_APP_CONTACTS, BP_APP_MAP, BP_APP_CAMERA, BP_APP_NOTES,   /* TYLER spec apps */
     BP_APP_LAB, BP_APP_CARGO, BP_APP_SKILLS, BP_APP_LOADOUT, BP_APP_WARDROBE, BP_APP_STATUS, /* BIG_O apps */
+    BP_APP_ORB,                                                                      /* EduVM terminal (#485) */
     BP_APP_COUNT
 } BpApp;
 
@@ -47,6 +48,7 @@ typedef enum {
     BP_FX_WEAPON_SWITCH,    /* arg = weapon slot -> PC_PACKET_WEAPON_SWITCH */
     BP_FX_TAKE_PHOTO,       /* host may grab a screenshot; counter already advanced */
     BP_FX_EAT_FOOD,         /* arg = heal amount (food_item_heal); item already removed from cargo */
+    BP_FX_OPEN_ORB,         /* ORB app SELECT -- host closes the phone and opens the Architect's Orb */
     BP_FX_SMASH_CAKE        /* FOOD_CAKE specifically -- no heal, item already removed from cargo;
                                 host triggers the real distraction effect (witness_ai_smash_cake) */
 } BpEffectKind;
@@ -70,7 +72,7 @@ static const char *const BP_WEATHER_NAMES[4] = { "CLEAR", "OVERCAST", "RAIN", "S
 #define BP_MSG_THORNE_BRIEF 6   /* client message table id: Dr. Thorne's A1M1 reprimand; unlocks him in Contacts */
 
 static const char *const BP_APP_NAMES[BP_APP_COUNT] = {
-    "MESSAGES", "CONTACTS", "MAP", "CAMERA", "NOTES", "LAB", "CARGO", "SKILLS", "LOADOUT", "WARDROBE", "STATUS"
+    "MESSAGES", "CONTACTS", "MAP", "CAMERA", "NOTES", "LAB", "CARGO", "SKILLS", "LOADOUT", "WARDROBE", "STATUS", "ORB"
 };
 
 /* Contacts: trust ladder observer -> witness -> bound -> documented (spec). Preset replies advance it. */
@@ -285,6 +287,9 @@ static inline BpEffect phone_input(Phone *p, BpAction a, int unspent_points) {
         break;
     case BP_APP_WARDROBE:
         if (a == BP_SELECT) p->costume = p->cursor;
+        break;
+    case BP_APP_ORB:
+        if (a == BP_SELECT) fx.kind = BP_FX_OPEN_ORB;
         break;
     default: break;
     }

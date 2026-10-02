@@ -448,7 +448,7 @@ A tiny scripting language you write in-game that drives physical machines, porte
   and drops them into empty slots 5-8. Parse/serialize/placement are unit-tested (`make test-eduvm`). **Untested live:** the IDUNA endpoint exists in
   code and tests but is not deployed yet, and NOCK has no UI tab for it, so remote snippets are created over the admin API only.
 - Limits: single-player only; the machine bay is fixed props, and snippets attach to the one `ORB` widget (per-placed-widget attachment is not built);
-  the Orb is a keyboard terminal, not yet an affordance on the BIG_O phone.
+  the Orb is also an ORB app on the BIG_O phone (press P in MODE_STORY or MODE_ZOMBIES, ENTER on ORB; headless-verified in ZOMBIES).
 
 ## Menu: SETTINGS, CUSTOMIZE, baked levels (2026-10-02)
 

@@ -1232,6 +1232,12 @@ static void draw_phone_app(const Phone *p) {
         draw_string(buf, col_x, row_y - row_h, 2.6f);
         snprintf(buf, sizeof(buf), "PHOTOS TAKEN: %d", p->photos);
         draw_string(buf, col_x, row_y - 2 * row_h, 2.6f);
+    } else if (p->app == BP_APP_ORB) {
+        glColor3f(0.85f, 0.92f, 0.97f);
+        draw_string("ARCHITECT'S ORB", col_x, row_y, 3.0f);
+        glColor3f(0.6f, 0.72f, 0.82f);
+        draw_string("EDUVM SCRIPT TERMINAL", col_x, row_y - row_h, 2.4f);
+        draw_string("[ENTER] OPEN   (BACKQUOTE ALSO OPENS)", col_x, row_y - 2 * row_h, 2.2f);
     } else {
         int n = bp_rows(p);
         for (int i = 0; i < n && i < 10; i++) {
@@ -8822,6 +8828,18 @@ void draw_hud(PlayerState *p) {
     }
 
     draw_chat_pane(SDL_GetTicks());
+    if (local_state.game_mode == MODE_ZOMBIES && app_state == STATE_GAME_LOCAL) {   /* SECTION 591: same phone HUD MODE_STORY draws */
+        if (g_story_phone.banner_id) {
+            glColor4f(0.06f, 0.08f, 0.10f, 0.72f);
+            glRectf(20.0f, 680.0f, 300.0f, 714.0f);
+            glColor3f(0.55f, 0.85f, 1.0f);
+            draw_string(story_phone_message_text(g_story_phone.banner_id), 32.0f, 692.0f, 3.4f);
+        }
+        if (g_story_phone.open) {
+            if (g_story_phone.app < 0) draw_phone_home_grid(&g_story_phone);
+            else draw_phone_app(&g_story_phone);
+        }
+    }
     draw_orb_overlay();
 
     glEnable(GL_DEPTH_TEST); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW); glPopMatrix();
@@ -12029,6 +12047,9 @@ int main(int argc, char* argv[]) {
                                 printf("[FOOD] ate for +%d health (now %d)\n", fx.arg, hero->health);
                             } else if (fx.kind == BP_FX_SMASH_CAKE) {
                                 witness_ai_smash_cake(SDL_GetTicks());
+                            } else if (fx.kind == BP_FX_OPEN_ORB) {
+                                phone_toggle(&g_story_phone);   /* close the phone, then open the Orb */
+                                if (!g_orb_open) orb_toggle();
                             }
                         }
                         else if (e.key.keysym.sym == SDLK_BACKSPACE) phone_input(&g_story_phone, BP_BACK, 0);
@@ -12044,12 +12065,13 @@ int main(int argc, char* argv[]) {
                                local_state.game_mode, app_state, local_state.story_phase, g_story_phone.open);
                         fflush(stdout);
                     }
-                    if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
-                        app_state == STATE_GAME_LOCAL &&
-                        local_state.story_phase == STORY_PHASE_PLAYING &&
-                        e.key.keysym.sym == SDLK_p) {
+                    if (((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
+                         local_state.story_phase == STORY_PHASE_PLAYING) ||
+                        local_state.game_mode == MODE_ZOMBIES) {   /* SECTION 591: ZOMBIES shares the BIG_O phone */
+                      if (app_state == STATE_GAME_LOCAL && e.key.keysym.sym == SDLK_p) {
                         phone_toggle(&g_story_phone);
                         continue;
+                      }
                     }
                     if (g_paused) {
                         if (e.key.keysym.sym == SDLK_ESCAPE) {
@@ -12196,6 +12218,7 @@ int main(int argc, char* argv[]) {
                         (local_state.story_phase == STORY_PHASE_CUTSCENE || g_story_phone.open)) {
                         continue;
                     }
+                    if (app_state == STATE_GAME_LOCAL && local_state.game_mode == MODE_ZOMBIES && g_story_phone.open) continue;
                     float sens = (current_fov < 50.0f) ? 0.05f : 0.15f; 
                     cam_yaw -= e.motion.xrel * sens;
                     if(cam_yaw > 360) cam_yaw -= 360; if(cam_yaw < 0) cam_yaw += 360;
@@ -12363,7 +12386,8 @@ int main(int argc, char* argv[]) {
                     (local_state.story_phase == STORY_PHASE_CUTSCENE ||
                      local_state.story_phase == STORY_PHASE_COMPLETE ||
                      local_state.story_phase == STORY_PHASE_FAILED ||
-                     g_story_phone.open) || g_orb_open) {
+                     g_story_phone.open) || g_orb_open ||
+                    (local_state.game_mode == MODE_ZOMBIES && g_story_phone.open)) {
                     input_fwd = 0.0f; input_str = 0.0f;
                     input_jump = 0; input_crouch = 0; input_shoot = 0; input_reload = 0; input_use = 0; input_ability = 0;
                 }
