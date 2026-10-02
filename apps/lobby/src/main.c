@@ -45,6 +45,7 @@
 #include "../../../packages/simulation/tyler_coldopen.h"
 #include "../../../packages/reflux/reflux_mod_host.h"
 #include "../../../packages/world/level_boxes.h"
+#include "../../../packages/world/edit_map.h"
 #include "../../../packages/world/spray_registry.h"
 #include "../../../packages/world/bullet_hole.h"
 #include "../../../packages/world/brick_debris.h"
@@ -2335,6 +2336,7 @@ typedef enum {
     LOBBY_QUEUE,
     LOBBY_TYLER,
     LOBBY_LAB,       /* SECTION 592 (card #508): the BIG_O lab level */
+    LOBBY_EDITMAP,   /* kanban #517/#530: EDIT MAP mode */
     LOBBY_COUNT
 } LobbyAction;
 
@@ -2355,7 +2357,8 @@ static const char *LOBBY_LABELS[LOBBY_COUNT] = {
     "TRAIN",
     "QUEUE",
     "TYLER",
-    "LAB"
+    "LAB",
+    "EDIT MAP"
 };
 
 // APPS page -- founder real-time, 2026-09-22 (SHANKPIT_OS_NORTHSTAR.md): "we need the games
@@ -2406,9 +2409,9 @@ typedef enum { SETTINGS_LIVE_LEVELS = 0, SETTINGS_BULLET_HOLES, SETTINGS_BRICK_D
 // mode starts changes -- only where the player finds it. The GAMES-page tiles for the other modes are
 // left in place (server-pushed UI entries index into that list); this page is the grouped way in.
 #define LOBBY_PAGE_MODES 4
-#define MODES_COUNT 6
-static const char *MODES_LABELS[MODES_COUNT] = { "SURVIVAL", "ZOMBIES", "QUEUE", "LEVELS", "TYLER", "LAB" };
-static const int MODES_ACTION[MODES_COUNT] = { LOBBY_SURVIVAL, LOBBY_ZOMBIES, LOBBY_QUEUE, LOBBY_LEVEL_SELECT, LOBBY_TYLER, LOBBY_LAB };
+#define MODES_COUNT 7
+static const char *MODES_LABELS[MODES_COUNT] = { "SURVIVAL", "ZOMBIES", "QUEUE", "LEVELS", "TYLER", "LAB", "EDIT MAP" };
+static const int MODES_ACTION[MODES_COUNT] = { LOBBY_SURVIVAL, LOBBY_ZOMBIES, LOBBY_QUEUE, LOBBY_LEVEL_SELECT, LOBBY_TYLER, LOBBY_LAB, LOBBY_EDITMAP };
 static int lobby_page = 0;
 static int lobby_modes_bypass = 0; /* set while the MODES page re-dispatches into the GAMES-page launcher */
 
@@ -2989,6 +2992,95 @@ static void lobby_survival_guns_tick(void) {
         wpn_req = w;  /* keep the input latch on the new weapon so the next tick does not switch back */
         SDL_Log("SURVIVAL: picked up weapon %d", w);
     }
+}
+
+
+// ---- EDIT MAP mode (kanban #517/#530 EDIT-2) ----
+// A free-fly (STATE_SPECTATOR wisp) editor on any NOCK registry map or local .json file. B places a
+// box on the surface under the crosshair, X deletes the box under it, M moves spawner 0 there,
+// F5 saves the op log to var/maps/<name>.edits.json (source level JSON is never rewritten -- see
+// packages/world/edit_map.h). The same op log is what EDIT-3 streams into a live NOCK session.
+static int g_edit_active = 0;
+static char g_edit_pick[256] = "";
+static char g_edit_name[LEVEL_BOXES_MAX_NAME] = "";
+static CustomLevelData *g_edit_lvl = NULL;
+static EditLog g_edit_log;
+static char g_edit_msg[96] = "";
+#define EDIT_BOX_SIZE 4.0f
+
+static void edit_say(const char *m) { snprintf(g_edit_msg, sizeof g_edit_msg, "%s", m); SDL_Log("EDIT MAP: %s", m); }
+
+static int edit_load_source(CustomLevelData *lvl) {
+    if (g_edit_pick[0] && strstr(g_edit_pick, ".json")) return level_boxes_load_from_file(g_edit_pick, lvl);
+    LevelRegistryEntry entries[LEVEL_REGISTRY_MAX_ENTRIES];
+    int count = level_boxes_fetch_registry_list(entries, LEVEL_REGISTRY_MAX_ENTRIES);
+    for (int i = 0; i < count; i++) {
+        if (g_edit_pick[0] && strcasecmp(entries[i].name, g_edit_pick) != 0) continue;
+        if (level_boxes_fetch_export(entries[i].id, lvl)) return 1;
+    }
+    /* offline / unnamed fallback: the checked-in local map, or any var/maps/*.json */
+    return level_boxes_load_from_file("var/zombie/nextown_zombies.json", lvl);
+}
+
+static void edit_reapply(void) { level_boxes_apply_to_physics(g_edit_lvl); scene_load(SCENE_CUSTOM_LEVEL); }
+
+static int edit_crosshair(float *hx, float *hy, float *hz, float *nx, float *ny, float *nz) {
+    PlayerState *p = &local_state.players[0];
+    float ex = p->x, ey = p->y + EYE_HEIGHT, ez = p->z;
+    float ry = -cam_yaw * 0.0174533f, rp = cam_pitch * 0.0174533f;
+    float fx = sinf(ry) * cosf(rp), fy = sinf(rp), fz = -cosf(ry) * cosf(rp);
+    return trace_map(ex, ey, ez, ex + fx * 200.0f, ey + fy * 200.0f, ez + fz * 200.0f, hx, hy, hz, nx, ny, nz);
+}
+
+static void edit_key(SDL_Keycode k) {
+    if (!g_edit_active || !g_edit_lvl) return;
+    float hx, hy, hz, nx, ny, nz;
+    if (k == SDLK_F5) {
+        mkdir("var/maps", 0755);
+        char path[320]; snprintf(path, sizeof path, "var/maps/%s.edits.json", g_edit_name);
+        edit_say(edit_map_save(&g_edit_log, g_edit_name, path) ? "saved edits" : "SAVE FAILED");
+        return;
+    }
+    if (k != SDLK_b && k != SDLK_x && k != SDLK_m) return;
+    if (!edit_crosshair(&hx, &hy, &hz, &nx, &ny, &nz)) { edit_say("no surface under crosshair"); return; }
+    EditOp op; memset(&op, 0, sizeof op);
+    if (k == SDLK_b) {
+        op.kind = EDIT_OP_ADD_BOX;
+        op.x = roundf(hx + nx * EDIT_BOX_SIZE * 0.5f); op.y = roundf(hy + ny * EDIT_BOX_SIZE * 0.5f); op.z = roundf(hz + nz * EDIT_BOX_SIZE * 0.5f);
+        op.w = op.h = op.d = EDIT_BOX_SIZE;
+    } else if (k == SDLK_x) {
+        int idx = edit_map_box_at(g_edit_lvl, hx - nx * 0.05f, hy - ny * 0.05f, hz - nz * 0.05f, 0.0f);
+        if (idx < 0) { edit_say("no box under crosshair"); return; }
+        op.kind = EDIT_OP_DEL_BOX; op.index = idx;
+    } else {
+        op.kind = EDIT_OP_MOVE_SPAWNER; op.index = 0; op.x = hx; op.y = hy; op.z = hz;
+        op.yaw = g_edit_lvl->spawner_count ? g_edit_lvl->spawners[0].yaw : 0.0f;
+    }
+    if (edit_map_do(&g_edit_log, g_edit_lvl, &op)) { edit_reapply(); edit_say(k == SDLK_b ? "box placed" : k == SDLK_x ? "box deleted" : "spawner moved"); }
+    else edit_say("edit rejected (limit or no spawner)");
+}
+
+static int lobby_start_editmap_mode(void) {
+    if (!g_edit_lvl) g_edit_lvl = (CustomLevelData *)malloc(sizeof(CustomLevelData));
+    if (!g_edit_lvl) return 0;
+    if (!edit_load_source(g_edit_lvl)) { SDL_Log("EDIT MAP: no map available"); return 0; }
+    snprintf(g_edit_name, sizeof g_edit_name, "%s", g_edit_lvl->name);
+    for (char *c = g_edit_name; *c; c++) if (!isalnum((unsigned char)*c) && *c != '-' && *c != '_') *c = '_';
+    memset(&g_edit_log, 0, sizeof g_edit_log);
+    char path[320]; snprintf(path, sizeof path, "var/maps/%s.edits.json", g_edit_name);
+    CustomLevelData *lvl = g_edit_lvl;
+    int replayed = edit_map_load_apply(&g_edit_log, lvl, path);
+    local_init_match(1, MODE_DEATHMATCH);
+    level_boxes_apply_to_physics(lvl);
+    scene_load(SCENE_CUSTOM_LEVEL);
+    PlayerState *hero = &local_state.players[0];
+    hero->scene_id = SCENE_CUSTOM_LEVEL;
+    local_state.story_phase = STORY_PHASE_PLAYING;
+    phys_respawn(hero, SDL_GetTicks());
+    hero->state = STATE_SPECTATOR; hero->third_person = 0;   /* fly cam */
+    g_edit_active = 1;
+    SDL_Log("EDIT MAP: '%s' %d boxes, %d edits replayed. B place / X delete / M move spawner / F5 save", lvl->name, lvl->count, replayed < 0 ? 0 : replayed);
+    return 1;
 }
 
 static int lobby_start_zombies_mode(void) {
@@ -3975,9 +4067,13 @@ static void lobby_start_action(int action) {
     } else {
         app_state = STATE_GAME_LOCAL;
         g_lab_active = 0;
+        g_edit_active = 0;
         switch (action) {
             case LOBBY_LAB:
                 if (!lobby_start_lab_mode()) app_state = STATE_LOBBY;
+                break;
+            case LOBBY_EDITMAP:
+                if (!lobby_start_editmap_mode()) app_state = STATE_LOBBY;
                 break;
             case LOBBY_ZOMBIES:
                 if (!lobby_start_zombies_mode()) app_state = STATE_LOBBY;
@@ -9556,6 +9652,23 @@ static void draw_tdmb_match_over_overlay(void) {
     glMatrixMode(GL_MODELVIEW); glPopMatrix();
 }
 
+// draw_editmap_hud -- EDIT MAP key legend + last action, top centre.
+static void draw_editmap_hud(void) {
+    if (!g_edit_active) return;
+    char line[160];
+    snprintf(line, sizeof line, "EDIT %s  %d EDITS   B BOX  X DEL  M SPAWN  F5 SAVE", g_edit_name, g_edit_log.n);
+    glDisable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    glColor3f(0.0f, 0.0f, 0.0f); draw_string(line, 42.0f, 688.0f, 3);
+    glColor3f(0.95f, 0.9f, 0.7f); draw_string(line, 40.0f, 690.0f, 3);
+    if (g_edit_msg[0]) { glColor3f(0.6f, 1.0f, 0.6f); draw_string(g_edit_msg, 40.0f, 660.0f, 3); }
+    glMatrixMode(GL_MODELVIEW); glPopMatrix();
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glEnable(GL_DEPTH_TEST);
+}
+
 // draw_survival_hud -- card #482: wave number and zombies left (alive + still to spawn), top centre;
 // "NEXT WAVE" between waves; "YOU SURVIVED TO WAVE n" once the hero is down.
 static void draw_survival_hud(void) {
@@ -10189,6 +10302,7 @@ void draw_scene(PlayerState *render_p) {
     draw_travel_overlay();
     draw_tdmb_match_over_overlay();
     draw_survival_hud();
+    draw_editmap_hud();
     if (app_state == STATE_GAME_NET && net_diag.server_disconnected) draw_disconnect_overlay();
     if (g_paused) draw_pause_overlay();
 }
@@ -11703,6 +11817,7 @@ int main(int argc, char* argv[]) {
     buggy_rules_install(); /* PARENA buggy handling (#468) */
     int cli_start_zombies = 0;
     int cli_start_lab = 0;
+    int cli_start_editmap = 0;
     int cli_start_survival = 0;
     int cli_start_city = 0;
     int cli_third_person = 0;
@@ -11713,6 +11828,9 @@ int main(int argc, char* argv[]) {
             cli_start_city = 1; /* straight into the built-in cityscape */
         } else if(strcmp(argv[i], "--survival") == 0) {
             cli_start_survival = 1; /* straight into SURVIVAL (menu tile equivalent) */
+        } else if(strcmp(argv[i], "--edit-map") == 0) {
+            cli_start_editmap = 1; /* straight into EDIT MAP; optional next arg = registry name or .json path */
+            if (i+1<argc && argv[i+1][0] != '-') snprintf(g_edit_pick, sizeof g_edit_pick, "%s", argv[++i]);
         } else if(strcmp(argv[i], "--lab") == 0) {
             cli_start_lab = 1; /* straight into the BIG_O LAB level */
         } else if(strcmp(argv[i], "--zombies") == 0) {
@@ -11872,6 +11990,7 @@ int main(int argc, char* argv[]) {
     double previous = get_time();
     double accumulator = 0.0;
     if (cli_start_zombies) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_ZOMBIES); lobby_modes_bypass = 0; }
+    if (cli_start_editmap) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_EDITMAP); lobby_modes_bypass = 0; }
     if (cli_start_lab) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_LAB); lobby_modes_bypass = 0; }
     if (cli_start_survival) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_SURVIVAL); lobby_modes_bypass = 0; }
     if (cli_start_city) { lobby_start_city(); if (cli_third_person) local_state.players[0].third_person = 1; }
@@ -12226,6 +12345,7 @@ int main(int argc, char* argv[]) {
                         continue;
                       }
                     }
+                    if (g_edit_active && app_state == STATE_GAME_LOCAL && !g_paused) edit_key(e.key.keysym.sym);
                     if (g_lab_active && app_state == STATE_GAME_LOCAL && !g_story_phone.open && !g_orb_open && e.key.keysym.sym == SDLK_e) {
                         lab_interact(SDL_GetTicks());   /* SECTION 592: LAB stations; E is also the normal use key, harmless */
                     }
