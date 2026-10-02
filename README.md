@@ -290,13 +290,16 @@ Two world-reacts-to-your-weapon systems, both in the lobby/server build and both
 - **Per-gun bullet holes.** Every hitscan shot leaves a Half-Life-style decal on the wall, a different hole per
   gun (magnum / AR / shotgun / sniper). The textures are PARENA programs rendered by NOCK and served from
   IDUNA's `nock_textures` (live fetch, checked-in fallback). `make test-bullet-hole`.
-- **Destructible brick.** On any level (NOCK/registry level, any mode), a box whose material is `brick` can be
-  shot, blasted and breached: the box is overlaid with ~3-unit cells, each with HP (PAPERCRAFT's Paper Engine
+- **Destructible brick.** On any level (NOCK/registry level, any mode), a box whose material is `brick`, `concrete`, `wood` or `glass`
+  can be shot, blasted and breached (per-kind HP/resistance from PARENA: concrete 120 HP, wood 60, glass 10 and shatters
+  on any hit; **glass** also has its own transparent `glass` shader whose cyan RGBA tint is a PARENA function,
+  `on-glass-tint` in `brick_rules.prn` -- create a material with shader `glass` in the NOCK materials screen; the render
+  pass is verified to compile/link on a real GL context but a glass box in a live level has NOT been screenshotted yet): the box is overlaid with ~3-unit cells, each with HP (PAPERCRAFT's Paper Engine
   decisions -- material resistance, damage tiers, distance falloff -- plus SHANKPIT weapon rules, all PARENA:
   `PARENA/stdlib/papercraft/*` + `stdlib/shankpit/brick_rules.prn`). A destroyed cell becomes a real hole: the
   surviving volume is re-expressed as ordinary collision/render boxes, so movement, hitscan, rockets and
   lighting all see it. Rockets open player-sized holes; blades don't scratch it; floors/slabs, doors and
-  non-brick materials are indestructible. The server is the only authority (`PACKET_BRICK_STATE`,
+  other materials (metal, lights) are indestructible. The server is the only authority (`PACKET_BRICK_STATE`,
   idempotent per-cell HP, repeated and refreshed so a late joiner or a lost datagram converges); cracked/gone
   cells throw papercraft-style debris and take their bullet-hole decals with them. Example level in the
   registry: **TUTORIAL_BRICK** (LEVELS menu). `make test-brick` (engine + real-engine integration, ASan/UBSan),

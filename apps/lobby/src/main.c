@@ -3783,6 +3783,9 @@ void draw_map(const RetroLightingState *lighting) {
     FixtureLight fixture_lights[FIXTURE_LIGHTS_MAX];
     int fixture_light_count = fixture_lights_gather(phys_scene_id, fixture_lights, hps_flicker);
 
+    enum { GLASS_DRAW_MAX = 512 };
+    int glass_list[GLASS_DRAW_MAX];
+    int glass_count = 0;
     for(int i=1; i<map_count; i++) {
         Box b = map_geo[i];
         /* Destructible brick (packages/world/brick_fracture.h): a carved authored box is replaced by
@@ -3793,6 +3796,17 @@ void draw_map(const RetroLightingState *lighting) {
         const int is_custom_scene = (phys_scene_id == SCENE_CUSTOM_LEVEL && i < CUSTOM_LEVEL_SLOT_CAP);
         if (is_custom_scene && g_custom_level_hidden[i]) continue;
         const int is_fracture_piece = (is_custom_scene && i > g_custom_level_authored);
+        /* SHADER_GLASS: not drawn here at all -- collected and drawn after every opaque box
+           (farthest first) so a pane never hides what's behind it. Falls through to the ordinary
+           opaque path if the glass pass isn't available. */
+        if (is_custom_scene && material_pass_active && g_glass_shader_ready && glass_count < GLASS_DRAW_MAX) {
+            int gmi = g_custom_level_material_idx[i];
+            if (gmi >= 0 && gmi < g_custom_level_material_count &&
+                strcmp(g_custom_level_material_shader[gmi], SHADER_GLASS) == 0) {
+                glass_list[glass_count++] = i;
+                continue;
+            }
+        }
         /* SHADER_IPS_LIGHT/SHADER_HPS_LIGHT (founder real-time, 2026-09-14): a light fixture
            material shouldn't be darkened by day/night lighting or ground AO the way an ordinary
            wall correctly is -- it's meant to look self-lit. Checked once per box, used below to
@@ -4035,6 +4049,28 @@ void draw_map(const RetroLightingState *lighting) {
                                                 material_mvp.m, material_light_dir, material_cam_pos);
                 }
             }
+        }
+    }
+
+    /* SHADER_GLASS boxes collected above: farthest first (simple painter's sort on centre
+       distance to the camera), alpha-blended, depth-write off. GL state is the stock fixed-
+       function state draw_map leaves; the pass sets/restores only what it touches. */
+    if (glass_count > 0) {
+        float gd[GLASS_DRAW_MAX];
+        for (int k = 0; k < glass_count; k++) {
+            const Box *gb = &map_geo[glass_list[k]];
+            float dx = gb->x - material_cam_pos[0], dy = gb->y - material_cam_pos[1], dz = gb->z - material_cam_pos[2];
+            gd[k] = dx * dx + dy * dy + dz * dz;
+        }
+        for (int a = 1; a < glass_count; a++) {   /* insertion sort, descending distance */
+            int li = glass_list[a]; float ld = gd[a]; int b2 = a - 1;
+            while (b2 >= 0 && gd[b2] < ld) { glass_list[b2 + 1] = glass_list[b2]; gd[b2 + 1] = gd[b2]; b2--; }
+            glass_list[b2 + 1] = li; gd[b2 + 1] = ld;
+        }
+        for (int k = 0; k < glass_count; k++) {
+            const Box *gb = &map_geo[glass_list[k]];
+            draw_material_glass_box(gb->x, gb->y, gb->z, gb->w, gb->h, gb->d,
+                                    material_mvp.m, material_light_dir, material_cam_pos);
         }
     }
 
@@ -10694,6 +10730,7 @@ int main(int argc, char* argv[]) {
     material_shader_init();
     ips_light_shader_init();
     hps_light_shader_init();
+    glass_shader_init();
     light_glow_shader_init();
     bloom_init(); // S493, real screen-space bloom -- see bloom.h; failure is real, honest, non-fatal (draw_scene checks and renders straight to the backbuffer if this didn't succeed)
     terrain_shader_init();
