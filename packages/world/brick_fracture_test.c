@@ -223,6 +223,37 @@ int main(void) {
     }
     CHECK(overflowed);
 
+    /* 9. per-parent kinds: concrete / wood / glass walls (same 3x3x3 box each), AR round (20) at
+          the cell centre. Hand-derived from brick_rules.prn: wood (mat 1, 20% resist -> 16,
+          60 HP) is gone in 4 shots; concrete (mat 2, 50% -> 10, 120 HP) in 12; glass (mat 4,
+          0% -> 20 vs 10 HP) in 1. Kinds coexist in one fracture, and bf_apply_net bounds hp by
+          the PARENT's own max (glass rejects 11, concrete accepts 120). */
+    {
+        BrickFracture *k = (BrickFracture *)malloc(sizeof(BrickFracture));
+        if (!k) return 2;
+        bf_reset(k);
+        CHECK(bf_add_parent_kind(k, 0, 0, 1.5f, 0, 3, 3, 3, BF_KIND_WOOD) == 1);
+        CHECK(bf_add_parent_kind(k, 1, 10, 1.5f, 0, 3, 3, 3, BF_KIND_CONCRETE) == 1);
+        CHECK(bf_add_parent_kind(k, 2, 20, 1.5f, 0, 3, 3, 3, BF_KIND_GLASS) == 1);
+        CHECK(k->parent[0].max_hp == 60 && k->parent[0].material == 1);
+        CHECK(k->parent[1].max_hp == 120 && k->parent[1].material == 2);
+        CHECK(k->parent[2].max_hp == 10 && k->parent[2].material == 4);
+        unsigned int key = bf_key(0, 0, 0);
+        int want[3] = { 4, 12, 1 };
+        for (int pi = 0; pi < 3; pi++) {
+            int shots = 0;
+            while (bf_cell_hp(k, pi, key) > 0 && shots < 30) {
+                bf_damage_sphere(k, 10.0f * (float)pi, 1.5f, 0.0f, 0.1f, 2, 20, pi, key);
+                shots++;
+            }
+            CHECK(shots == want[pi]);
+            CHECK(k->parent[pi].removed == 1);
+        }
+        CHECK(bf_apply_net(k, 2, bf_key(0, 0, 0), 11) == 0);
+        CHECK(bf_apply_net(k, 1, bf_key(0, 0, 0), 120) == 1);
+        free(k);
+    }
+
     free(bf); free(bf2); free(cp);
     if (g_fail) { printf("brick_fracture_test: %d FAILED\n", g_fail); return 1; }
     printf("brick_fracture_test: all checks passed\n");

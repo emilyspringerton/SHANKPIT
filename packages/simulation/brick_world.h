@@ -15,7 +15,7 @@
  * spot. A networked client (brick_world_set_authority(0)) never damages anything itself -- it only
  * mirrors PACKET_BRICK_STATE -- so prediction can never fork the world.
  *
- * What is destructible. A level box whose material is "brick" (the default material), unless it is
+ * What is destructible. A level box whose material is "brick" (the default), "concrete", "wood" or "glass", unless it is
  * (a) a door or button box (those move, and are scripted), or (b) a thin horizontal slab -- a floor
  * or platform deck (height <= 12 and both horizontal extents >= 20): carving the floor out from
  * under a level would be griefing, not demolition.
@@ -158,6 +158,17 @@ static inline void brick_world_install_ai_hooks(void) {
     witness_ai_set_map_hook(brick_world_ai_map);
 }
 
+/* brick_world_kind_for_material -- level material NAME -> BF_KIND_*, or -1 if indestructible.
+ * Founder real-time, 2026-10-02: "add papercraft destructability to concrete and wood and add a
+ * new one for glass". Metal and every other material stay indestructible. */
+static inline int brick_world_kind_for_material(const char *name) {
+    if (strcmp(name, "brick") == 0) return BF_KIND_BRICK;
+    if (strcmp(name, "concrete") == 0) return BF_KIND_CONCRETE;
+    if (strcmp(name, "wood") == 0) return BF_KIND_WOOD;
+    if (strcmp(name, "glass") == 0) return BF_KIND_GLASS;
+    return -1;
+}
+
 static inline void brick_world_init_from_level(const CustomLevelData *lvl) {
     brick_world_install_ai_hooks();
     bf_reset(&g_brick);
@@ -176,8 +187,9 @@ static inline void brick_world_init_from_level(const CustomLevelData *lvl) {
         const LevelBox *b = &lvl->boxes[i];
         if (excluded[i] || brick_world_box_is_slab(b)) continue;
         if (b->material_idx < 0 || b->material_idx >= lvl->material_count) continue;
-        if (strcmp(lvl->materials[b->material_idx].name, "brick") != 0) continue;
-        if (bf_add_parent(&g_brick, i, b->x, b->y, b->z, b->w, b->h, b->d)) added++;
+        int kind = brick_world_kind_for_material(lvl->materials[b->material_idx].name);
+        if (kind < 0) continue;
+        if (bf_add_parent_kind(&g_brick, i, b->x, b->y, b->z, b->w, b->h, b->d, kind)) added++;
     }
     g_brick_active = (added > 0);
     /* persisted damage from a saved snapshot: restore the records, then rebuild + commit so the
@@ -206,7 +218,7 @@ static inline int brick_world_export_damage(LevelBrickCell *out, int max) {
     int n = 0;
     for (int r = 0; r < g_brick.rec_count && n < max; r++) {
         const BfRec *rc = &g_brick.rec[r];
-        if ((int)rc->hp >= g_brick.max_hp) continue;
+        if ((int)rc->hp >= g_brick.parent[rc->parent].max_hp) continue;
         out[n].wall = rc->parent; out[n].key = rc->key; out[n].hp = rc->hp;
         n++;
     }

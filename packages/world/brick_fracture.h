@@ -55,6 +55,11 @@ int on_brick_cell_max_hp(int brick_kind);
 #define BF_AXIS_MAX               1000
 #define BF_MAX_REMOVED_PER_PARENT 160
 #define BF_BRICK_KIND             0
+/* Destructible kinds (PARENA brick_rules.prn on-brick-paper-material / on-brick-cell-max-hp). */
+#define BF_KIND_BRICK    0
+#define BF_KIND_CONCRETE 1
+#define BF_KIND_WOOD     2
+#define BF_KIND_GLASS    3
 
 #define BF_STATE_INTACT  0
 #define BF_STATE_CRACKED 1
@@ -69,6 +74,9 @@ typedef struct {
     float cell[3];         /* cell size per axis */
     int first_rec;         /* head of this parent's record list, -1 if none */
     int removed;           /* number of records with hp == 0 */
+    int kind;              /* BF_KIND_* */
+    int max_hp;            /* full cell HP for this kind (PARENA) */
+    int material;          /* PAPER_MATERIAL_* for this kind (PARENA) */
 } BfParent;
 
 typedef struct {
@@ -143,7 +151,7 @@ static inline void bf_clear_damage(BrickFracture *bf) {
 /* bf_add_parent -- registers level box `index` (centre x,y,z; full extents w,h,d) as destructible.
  * Indexes must be added in ascending order and are the same index the host uses for the box
  * everywhere else (level box array index). Returns 1 if accepted. */
-static inline int bf_add_parent(BrickFracture *bf, int index, float x, float y, float z, float w, float h, float d) {
+static inline int bf_add_parent_kind(BrickFracture *bf, int index, float x, float y, float z, float w, float h, float d, int kind) {
     if (index < 0 || index >= BF_MAX_PARENTS) return 0;
     if (!(w > 0.01f && h > 0.01f && d > 0.01f)) return 0;
     while (bf->parent_count <= index) {
@@ -163,7 +171,14 @@ static inline int bf_add_parent(BrickFracture *bf, int index, float x, float y, 
         p->lo[a] = ctr[a] - dim[a] * 0.5f;
     }
     p->active = 1; p->first_rec = -1; p->removed = 0;
+    p->kind = kind;
+    p->max_hp = on_brick_cell_max_hp(kind);
+    p->material = on_brick_paper_material(kind);
     return 1;
+}
+
+static inline int bf_add_parent(BrickFracture *bf, int index, float x, float y, float z, float w, float h, float d) {
+    return bf_add_parent_kind(bf, index, x, y, z, w, h, d, BF_KIND_BRICK);
 }
 
 static inline int bf_find_rec(const BrickFracture *bf, int parent, unsigned int key) {
@@ -180,7 +195,7 @@ static inline void bf_cell_center(const BfParent *p, int ix, int iy, int iz, flo
 
 static inline int bf_cell_hp(const BrickFracture *bf, int parent, unsigned int key) {
     int r = bf_find_rec(bf, parent, key);
-    return r < 0 ? bf->max_hp : (int)bf->rec[r].hp;
+    return r < 0 ? bf->parent[parent].max_hp : (int)bf->rec[r].hp;
 }
 
 static inline void bf_push_event(BrickFracture *bf, const BfParent *p, int parent, unsigned int key, int state, int debris) {
@@ -209,20 +224,21 @@ static inline void bf_push_net(BrickFracture *bf, int parent, unsigned int key, 
 static inline int bf_set_cell_hp(BrickFracture *bf, int parent, unsigned int key, int hp, int emit_events) {
     BfParent *p = &bf->parent[parent];
     if (hp < 0) hp = 0;
-    if (hp > bf->max_hp) hp = bf->max_hp;
+    int pmax = p->max_hp;
+    if (hp > pmax) hp = pmax;
     int r = bf_find_rec(bf, parent, key);
-    int before = (r < 0) ? bf->max_hp : (int)bf->rec[r].hp;
+    int before = (r < 0) ? pmax : (int)bf->rec[r].hp;
     if (before == hp) return 0;
     if (r < 0) {
         if (bf->rec_count >= BF_MAX_RECORDS) return -1;
         r = bf->rec_count++;
-        bf->rec[r].key = key; bf->rec[r].hp = (unsigned char)bf->max_hp;
+        bf->rec[r].key = key; bf->rec[r].hp = (unsigned char)pmax;
         bf->rec[r].parent = (unsigned char)parent;
         bf->rec[r].next = p->first_rec; p->first_rec = r;
     }
     bf->rec[r].hp = (unsigned char)hp;
-    int sb = on_paper_fragment_state_for_hp(before, bf->max_hp);
-    int sa = on_paper_fragment_state_for_hp(hp, bf->max_hp);
+    int sb = on_paper_fragment_state_for_hp(before, pmax);
+    int sa = on_paper_fragment_state_for_hp(hp, pmax);
     if (before == 0 && hp > 0) { p->removed--; bf->pieces_dirty = 1; }
     if (before > 0 && hp == 0) { p->removed++; bf->pieces_dirty = 1; }
     if (emit_events && sa != sb) bf_push_event(bf, p, parent, key, sa, on_brick_debris_count(sb, sa));
@@ -269,7 +285,7 @@ static inline int bf_damage_sphere(BrickFracture *bf, float cx, float cy, float 
                     if (dmg <= 0) continue;
                     int before = bf_cell_hp(bf, pi, key);
                     if (before <= 0) continue;
-                    int after = on_paper_fragment_damage(bf->material, before, dmg);
+                    int after = on_paper_fragment_damage(p->material, before, dmg);
                     if (after == 0 && p->removed >= BF_MAX_REMOVED_PER_PARENT) after = 1;
                     if (after == before) continue;
                     int rc = bf_set_cell_hp(bf, pi, key, after, 1);
@@ -432,7 +448,7 @@ static inline int bf_apply_net(BrickFracture *bf, int parent, unsigned int key, 
     const BfParent *p = &bf->parent[parent];
     if (ix >= p->n[0] || iy >= p->n[1] || iz >= p->n[2]) return 0;
     if (key >> 30) return 0;                                  /* stray high bits */
-    if (hp < 0 || hp > bf->max_hp) return 0;
+    if (hp < 0 || hp > p->max_hp) return 0;
     return bf_set_cell_hp(bf, parent, key, hp, 1) > 0;
 }
 
