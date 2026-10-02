@@ -89,6 +89,18 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms);
  * tick alongside witness_ai_tick; a real no-op outside MODE_ZOMBIES. */
 void witness_ai_zombies_tick(ServerState *s, unsigned int now_ms);
 
+/* MODE_SURVIVAL (cards #482/#488) -- wave defence on SCENE_CITY. witness_ai_survival_tick spawns
+ * each wave's always-hunting zombies hidden behind buildings near the hero (quota 4+3*wave, at most
+ * 5+wave alive), clears corpses between waves and starts the next after a 6 s rest. _wave() is 0
+ * until the first tick, _remaining() = zombies alive + still to spawn this wave (for the HUD).
+ * Real no-op outside MODE_SURVIVAL. */
+void witness_ai_survival_tick(ServerState *s, unsigned int now_ms);
+void witness_ai_survival_reset(void);
+int  witness_ai_survival_wave(void);
+int  witness_ai_survival_remaining(const ServerState *s);
+int  witness_ai_survival_quota(int wave);
+int  witness_ai_survival_maxalive(int wave);
+
 /* Wall-damage hook -- hunting zombies that are blocked by a building claw it (founder real-time,
  * 2026-10-02: "ensure that zombies can do damage to the buildings"). witness_ai.c can't include
  * brick_world.h (its non-static physics.h deps collide at link time in a second TU, see

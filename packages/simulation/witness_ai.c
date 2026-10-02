@@ -730,7 +730,7 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
             /* MODE_ZOMBIES (card #486, "just always start to hunt the player"): every zombie always
                has the hero as its target, whatever the distance -- nextown is big and they were
                hard to find; the spawn ring (<=120) bounds how far they actually walk. */
-            has_target = (s->game_mode == MODE_ZOMBIES) ? 1 : hdist <= WITNESS_AI_ZOMBIE_PERCEPTION_RADIUS;
+            has_target = (s->game_mode == MODE_ZOMBIES || s->game_mode == MODE_SURVIVAL) ? 1 : hdist <= WITNESS_AI_ZOMBIE_PERCEPTION_RADIUS;
         }
         zombie_tick(&z->zstate, now_ms, has_target);
 
@@ -1155,4 +1155,65 @@ void witness_ai_seed_voxworld_encounter(ServerState *s, unsigned int now_ms) {
     witness_ai_spawn_giant_bug(s, cx + 150.0f, 8.0f, cz - 150.0f, now_ms);
 
     printf("[WITNESS] voxworld encounter seeded: 4 citizens, 2 zombies (1 HUNTING), 1 The Men, 1 Giant Zombie Bug\n");
+}
+
+
+/* --- MODE_SURVIVAL: wave defence on the built-in city (card #482/#488) ---
+ * Waves of always-hunting zombies, spawned hidden behind buildings near the hero. A wave is
+ * `quota` zombies, at most `maxalive` on the field at once; when the quota is spawned and the last
+ * one is dead the next wave starts after an intermission. No day/night, citizens, birds or The
+ * Men -- this is the pure fight; MODE_ZOMBIES is the sandbox. Hero death is handled where the
+ * zombie melee lands (witness_ai_hero_melee_hit), same as every other mode. */
+static struct { int wave, spawned, kills_total; unsigned int next_spawn_ms, wave_start_ms; int started; } g_surv;
+#define SURV_INTERMISSION_MS 6000u
+#define SURV_SPAWN_GAP_MS 1100u
+
+int witness_ai_survival_quota(int wave) { return 4 + 3 * (wave < 1 ? 1 : wave); }
+int witness_ai_survival_maxalive(int wave) {
+    int m = 5 + (wave < 1 ? 1 : wave);
+    return m > WITNESS_AI_MAX_ZOMBIES ? WITNESS_AI_MAX_ZOMBIES : m;
+}
+void witness_ai_survival_reset(void) { memset(&g_surv, 0, sizeof g_surv); }
+int witness_ai_survival_wave(void) { return g_surv.wave; }
+int witness_ai_survival_remaining(const ServerState *s) {
+    int alive = 0;
+    for (int i = 0; i < WITNESS_AI_MAX_ZOMBIES; i++)
+        if (g_zombies[i].active && s->players[g_zombies[i].player_id].state != STATE_DEAD) alive++;
+    int left = witness_ai_survival_quota(g_surv.wave) - g_surv.spawned;
+    return alive + (left > 0 ? left : 0);
+}
+
+void witness_ai_survival_tick(ServerState *s, unsigned int now_ms) {
+    if (!s || s->game_mode != MODE_SURVIVAL) return;
+    PlayerState *hero = &s->players[0];
+    if (!hero->active || hero->state == STATE_DEAD) return;
+    if (!g_surv.started) {
+        g_surv.started = 1; g_surv.wave = 1; g_surv.spawned = 0;
+        g_surv.wave_start_ms = now_ms; g_surv.next_spawn_ms = now_ms + SURV_INTERMISSION_MS / 2;
+    }
+    int alive = 0;
+    for (int i = 0; i < WITNESS_AI_MAX_ZOMBIES; i++)
+        if (g_zombies[i].active && s->players[g_zombies[i].player_id].state != STATE_DEAD) alive++;
+    int quota = witness_ai_survival_quota(g_surv.wave);
+
+    if (g_surv.spawned >= quota && alive == 0) {
+        /* wave cleared: free the corpses, rest, then the next wave */
+        for (int i = 0; i < WITNESS_AI_MAX_ZOMBIES; i++)
+            if (g_zombies[i].active) deactivate_managed_player(s, g_zombies[i].player_id);
+        g_surv.wave++; g_surv.spawned = 0;
+        g_surv.wave_start_ms = now_ms;
+        g_surv.next_spawn_ms = now_ms + SURV_INTERMISSION_MS;
+        return;
+    }
+    if (g_surv.spawned < quota && alive < witness_ai_survival_maxalive(g_surv.wave) && now_ms >= g_surv.next_spawn_ms) {
+        float x, z;
+        if (zombies_ring_spot_ex(hero, 60.0f, 130.0f, 1, &x, &z)) {
+            int id = witness_ai_spawn_zombie(s, x, 8.0f, z, now_ms);
+            if (id > 0) {
+                witness_ai_force_zombie_mood(id, ZOMBIE_MOOD_HUNTING);
+                g_surv.spawned++;
+            }
+        }
+        g_surv.next_spawn_ms = now_ms + SURV_SPAWN_GAP_MS;
+    }
 }

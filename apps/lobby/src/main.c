@@ -2307,7 +2307,7 @@ static void overlay_render(OverlaySystem *overlay, const PlayerState *viewer) {
 typedef enum {
     LOBBY_LEVEL_SELECT = 0,
     LOBBY_ZOMBIES,   /* was LOBBY_JOIN / "FIND CTF" -- founder real-time, 2026-10-02: replace FIND CTF with ZOMBIES */
-    LOBBY_SPRAYS,
+    LOBBY_SURVIVAL,  /* was LOBBY_SPRAYS -- card #482: SPRAYS (and SKINS) moved under the CUSTOMIZE submenu (lobby_page 2) */
     LOBBY_STORY,
     LOBBY_STORY_CAVE,
     LOBBY_SOLO,
@@ -2322,7 +2322,7 @@ char lobby_labels_mutable[LOBBY_COUNT][64];
 static const char *LOBBY_LABELS[LOBBY_COUNT] = {
     "LEVELS",
     "ZOMBIES",
-    "SPRAYS",
+    "SURVIVAL",
     "STORY",
     "CAVE-001",
     "SOLO",
@@ -2360,7 +2360,12 @@ static const char *APPS_LABELS[APP_COUNT] = {
     "ZOMBIES",
 };
 
-// lobby_page -- 0 = GAMES (the original single page, untouched), 1 = APPS (new).
+// lobby_page -- 0 = GAMES (the original single page, untouched), 1 = APPS (new), 2 = CUSTOMIZE
+// (card #482, "nest skins and sprays under customize menu (add submenu affordances)": the GAMES
+// page's last tile, formerly SKINS, is now CUSTOMIZE and opens this page: SKINS, SPRAYS, < GAMES).
+#define LOBBY_PAGE_CUSTOMIZE 2
+typedef enum { CUSTOMIZE_SKINS = 0, CUSTOMIZE_SPRAYS, CUSTOMIZE_COUNT } CustomizeAction;
+static const char *CUSTOMIZE_LABELS[CUSTOMIZE_COUNT] = { "SKINS", "SPRAYS" };
 static int lobby_page = 0;
 
 static void lobby_init_labels() {
@@ -2854,6 +2859,20 @@ static int lobby_zombies_find_level(CustomLevelData *lvl) {
     }
     if (level_boxes_load_from_file("var/zombie/nextown_zombies.json", lvl)) { lvl->source_id = 0; return 1; }
     return 0;
+}
+
+// lobby_start_survival_mode -- cards #482/#488: SURVIVAL, wave defence on the built-in SCENE_CITY
+// (founder: "survival map should use shankpit CITY map"). Local and offline like ZOMBIES; the
+// waves are witness_ai_survival_tick's job (packages/simulation/witness_ai.c).
+static int lobby_start_survival_mode(void) {
+    local_init_match(1, MODE_SURVIVAL);
+    scene_load(SCENE_CITY);
+    PlayerState *hero = &local_state.players[0];
+    hero->scene_id = SCENE_CITY;
+    local_state.story_phase = STORY_PHASE_PLAYING;
+    phys_respawn(hero, SDL_GetTicks());
+    SDL_Log("SURVIVAL: wave defence on SCENE_CITY");
+    return 1;
 }
 
 static int lobby_start_zombies_mode(void) {
@@ -3369,6 +3388,9 @@ static int lobby_menu_count() {
     if (lobby_page == 1) {
         return APP_COUNT + 1;
     }
+    if (lobby_page == LOBBY_PAGE_CUSTOMIZE) {
+        return CUSTOMIZE_COUNT + 1;
+    }
     if (ui_use_server && ui_state.entry_count > 0) {
         return ui_state.entry_count + 1;
     }
@@ -3382,8 +3404,13 @@ static const char *lobby_menu_label(int idx) {
         if (idx >= 0 && idx < APP_COUNT) return APPS_LABELS[idx];
         return "";
     }
+    if (lobby_page == LOBBY_PAGE_CUSTOMIZE) {
+        if (idx == last_idx) return "< GAMES";
+        if (idx >= 0 && idx < CUSTOMIZE_COUNT) return CUSTOMIZE_LABELS[idx];
+        return "";
+    }
     if (idx == last_idx) {
-        return "SKINS";
+        return "CUSTOMIZE";
     }
     if (ui_use_server && idx >= 0 && idx < ui_state.entry_count) {
         return ui_state.entries[idx].label;
@@ -3393,7 +3420,7 @@ static const char *lobby_menu_label(int idx) {
 
 static const char *lobby_menu_entry_id(int idx) {
     int last_idx = lobby_menu_count() - 1;
-    if (lobby_page == 1) {
+    if (lobby_page == 1 || lobby_page == LOBBY_PAGE_CUSTOMIZE) {
         return NULL;
     }
     if (idx == last_idx) {
@@ -3727,19 +3754,27 @@ static void lobby_start_action(int action) {
         }
         return;
     }
+    if (lobby_page == LOBBY_PAGE_CUSTOMIZE) {
+        if (action == lobby_menu_count() - 1) {
+            lobby_page = 0;
+            lobby_selection = 0;
+        } else if (action == CUSTOMIZE_SKINS) {
+            skin_menu_open = 1;
+            skin_menu_selection = clamp_skin_id(g_selected_skin);
+            skin_menu_scroll = 0;
+            ensure_skin_selection_visible();
+        } else if (action == CUSTOMIZE_SPRAYS) {
+            spray_select_menu_open();
+        }
+        return;
+    }
     if (action == lobby_menu_count() - 1) {
-        skin_menu_open = 1;
-        skin_menu_selection = clamp_skin_id(g_selected_skin);
-        skin_menu_scroll = 0;
-        ensure_skin_selection_visible();
+        lobby_page = LOBBY_PAGE_CUSTOMIZE;
+        lobby_selection = 0;
         return;
     }
     if (action == LOBBY_LEVEL_SELECT) {
         level_select_menu_open();
-        return;
-    }
-    if (action == LOBBY_SPRAYS) {
-        spray_select_menu_open();
         return;
     }
     if (ui_use_server) {
@@ -3761,6 +3796,9 @@ static void lobby_start_action(int action) {
         switch (action) {
             case LOBBY_ZOMBIES:
                 if (!lobby_start_zombies_mode()) app_state = STATE_LOBBY;
+                break;
+            case LOBBY_SURVIVAL:
+                if (!lobby_start_survival_mode()) app_state = STATE_LOBBY;
                 break;
             case LOBBY_SOLO:
                 local_init_match(1, MODE_DEATHMATCH);
@@ -7310,7 +7348,7 @@ void draw_player_3rd(PlayerState *p) {
         int forced_skin = -1;
         if (local_state.game_mode == MODE_TDMB || local_state.game_mode == MODE_TDMO || local_state.game_mode == MODE_CTFB) {
             forced_skin = (p->team_id == 1) ? SKIN_NINJA : SKIN_PIRATE;
-        } else if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE || local_state.game_mode == MODE_ZOMBIES) && p->is_bot) {
+        } else if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE || local_state.game_mode == MODE_ZOMBIES || local_state.game_mode == MODE_SURVIVAL) && p->is_bot) {
             /* S466 follow-up, founder real-time: "can we animate and model end to end?" -- real,
                visible proof the general pipeline drives a distinct, AI-controlled character:
                story_ai NPCs (now genuinely ticking/moving as of S466) render as the founder's own
@@ -9015,6 +9053,30 @@ static void draw_tdmb_match_over_overlay(void) {
     glMatrixMode(GL_MODELVIEW); glPopMatrix();
 }
 
+// draw_survival_hud -- card #482: wave number and zombies left (alive + still to spawn), top centre;
+// "NEXT WAVE" between waves; "YOU SURVIVED TO WAVE n" once the hero is down.
+static void draw_survival_hud(void) {
+    if (local_state.game_mode != MODE_SURVIVAL) return;
+    int wave = witness_ai_survival_wave();
+    int left = witness_ai_survival_remaining(&local_state);
+    int hero_down = local_state.players[0].state == STATE_DEAD || local_state.story_phase == STORY_PHASE_FAILED;
+    char line[96];
+    if (hero_down) snprintf(line, sizeof line, "YOU SURVIVED TO WAVE %d", wave > 0 ? wave : 1);
+    else if (wave <= 0) snprintf(line, sizeof line, "SURVIVAL - GET READY");
+    else if (left <= 0) snprintf(line, sizeof line, "WAVE %d CLEARED", wave);
+    else snprintf(line, sizeof line, "WAVE %d   ZOMBIES LEFT %d", wave, left);
+    glDisable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    glColor3f(0.0f, 0.0f, 0.0f);
+    draw_string(line, 440.0f + 2.0f, 670.0f - 2.0f, 4);
+    glColor3f(hero_down ? 1.0f : 0.95f, hero_down ? 0.35f : 0.9f, hero_down ? 0.3f : 0.7f);
+    draw_string(line, 440.0f, 670.0f, 4);
+    glEnable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glMatrixMode(GL_MODELVIEW); glPopMatrix();
+}
+
 static void draw_disconnect_overlay(void) {
     glDisable(GL_DEPTH_TEST);
     glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
@@ -9489,7 +9551,7 @@ void draw_scene(PlayerState *render_p) {
            just above, so it's the real camera view matrix at this point) and strips its
            translation itself -- no explicit cam_x/y/z needed, unlike retro_sky_draw's old
            signature. */
-        int dnc_server_driven = (local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE || local_state.game_mode == MODE_ZOMBIES);
+        int dnc_server_driven = (local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE || local_state.game_mode == MODE_ZOMBIES || local_state.game_mode == MODE_SURVIVAL);
         if (!dnc_server_driven) {
             static Uint32 dnc_last_ms = 0;
             static float dnc_accum_minutes = 0.0f; /* real, found-live bug fix (2026-09-25): a bare
@@ -9620,6 +9682,7 @@ void draw_scene(PlayerState *render_p) {
     if (!render_p->third_person && render_p->state != STATE_SPECTATOR) draw_weapon_p(render_p); draw_hud(render_p); draw_garage_overlay(render_p); draw_tab_scoreboard(render_p);
     draw_travel_overlay();
     draw_tdmb_match_over_overlay();
+    draw_survival_hud();
     if (app_state == STATE_GAME_NET && net_diag.server_disconnected) draw_disconnect_overlay();
     if (g_paused) draw_pause_overlay();
 }
@@ -11133,6 +11196,7 @@ static void buggy_advance_remote_positions(unsigned int now_ms) {
 int main(int argc, char* argv[]) {
     buggy_rules_install(); /* PARENA buggy handling (#468) */
     int cli_start_zombies = 0;
+    int cli_start_survival = 0;
     int cli_start_city = 0;
     int cli_third_person = 0;
     for(int i=1; i<argc; i++) {
@@ -11140,6 +11204,8 @@ int main(int argc, char* argv[]) {
             cli_third_person = 1; /* with --city: start in third person (also toggled in-game with V) */
         } else if(strcmp(argv[i], "--city") == 0) {
             cli_start_city = 1; /* straight into the built-in cityscape */
+        } else if(strcmp(argv[i], "--survival") == 0) {
+            cli_start_survival = 1; /* straight into SURVIVAL (menu tile equivalent) */
         } else if(strcmp(argv[i], "--zombies") == 0) {
             cli_start_zombies = 1; /* straight into the ZOMBIES sandbox (menu tile equivalent) */
         } else if(strcmp(argv[i], "--host") == 0 && i+1<argc) {
@@ -11297,6 +11363,7 @@ int main(int argc, char* argv[]) {
     double previous = get_time();
     double accumulator = 0.0;
     if (cli_start_zombies) lobby_start_action(LOBBY_ZOMBIES);
+    if (cli_start_survival) lobby_start_action(LOBBY_SURVIVAL);
     if (cli_start_city) { lobby_start_city(); if (cli_third_person) local_state.players[0].third_person = 1; }
     int prev_app_state = STATE_LOBBY;
     float input_fwd = 0.0f, input_str = 0.0f;
@@ -11527,7 +11594,7 @@ int main(int argc, char* argv[]) {
                         continue;
                     }
                     if (lobby_page_toggle_hit_test(mx, my)) {
-                        lobby_page = (lobby_page == 0) ? 1 : 0;
+                        lobby_page = (lobby_page == 0) ? 1 : 0; /* from APPS or CUSTOMIZE: back to GAMES */
                         lobby_selection = 0;
                         ui_last_click_ms = 0;
                         ui_last_click_index = -1;
@@ -11804,7 +11871,7 @@ int main(int argc, char* argv[]) {
              glClear(GL_COLOR_BUFFER_BIT);
              setup_lobby_2d();
              glColor3f(0, 1, 1); // CYAN TEXT
-             draw_string(lobby_page == 0 ? "SHANKPIT" : "SHANKPIT / APPS", LOBBY_LAYOUT.title_x, LOBBY_LAYOUT.title_y, 12);
+             draw_string(lobby_page == 0 ? "SHANKPIT" : (lobby_page == LOBBY_PAGE_CUSTOMIZE ? "SHANKPIT / CUSTOMIZE" : "SHANKPIT / APPS"), LOBBY_LAYOUT.title_x, LOBBY_LAYOUT.title_y, 12);
              lobby_page_toggle_draw();
              if (app_launch_status[0]) {
                  glColor3f(0.95f, 0.9f, 0.2f);

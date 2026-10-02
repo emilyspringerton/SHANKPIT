@@ -152,6 +152,38 @@ int main(void) {
     printf("PASS: %d/%d zombies spawned in the hero's open view (rest hidden behind the building)\n", seen, total);
     nboxes = 1;
 
+    /* ---- cards #482/#488: MODE_SURVIVAL waves ---- */
+    memset(&S, 0, sizeof S);
+    S.game_mode = MODE_SURVIVAL;
+    S.players[0].active = 1; S.players[0].state = STATE_ALIVE;
+    nboxes = 1;
+    witness_ai_reset(6u, 0);
+    witness_ai_survival_reset();
+    assert(witness_ai_survival_wave() == 0);
+    assert(witness_ai_survival_quota(1) == 7 && witness_ai_survival_quota(3) == 13);
+    assert(witness_ai_survival_maxalive(1) == 6);
+    int max_alive_seen = 0, wave_seen_max = 0;
+    for (int i = 0; i < 400 && witness_ai_survival_wave() < 3; i++) {
+        t += 700;
+        witness_ai_survival_tick(&S, t); witness_ai_tick(&S, t);
+        int alive = 0;
+        for (int k = 1; k < MAX_CLIENTS; k++)
+            if (S.players[k].active && S.players[k].state != STATE_DEAD && witness_ai_role_for_player(k) == WITNESS_AI_ROLE_ZOMBIE) alive++;
+        if (alive > max_alive_seen) max_alive_seen = alive;
+        if (witness_ai_survival_wave() > wave_seen_max) wave_seen_max = witness_ai_survival_wave();
+        assert(alive <= witness_ai_survival_maxalive(witness_ai_survival_wave()));
+        /* the player kills whatever has reached the field: a wave only ends when every zombie is dead */
+        if (i % 6 == 5) for (int k = 1; k < MAX_CLIENTS; k++)
+            if (S.players[k].active && S.players[k].state != STATE_DEAD && witness_ai_role_for_player(k) == WITNESS_AI_ROLE_ZOMBIE) { S.players[k].state = STATE_DEAD; break; }
+    }
+    assert(wave_seen_max >= 3);                     /* waves advance once the field is cleared */
+    assert(max_alive_seen >= 2 && max_alive_seen <= witness_ai_survival_maxalive(3));
+    printf("PASS: survival reached wave %d, never more than %d zombies at once\n", wave_seen_max, max_alive_seen);
+    S.game_mode = MODE_ZOMBIES; /* survival tick is a no-op outside its own mode */
+    int w = witness_ai_survival_wave();
+    witness_ai_survival_tick(&S, t + 100000u);
+    assert(witness_ai_survival_wave() == w);
+
     printf("ALL PASS\n");
     return 0;
 }
