@@ -945,7 +945,7 @@ static void story_swarm_apply_player_hit(PlayerState *hero, unsigned int now_ms)
     float cone_dot = 0.9f;
     if (weapon == WPN_SNIPER) cone_dot = 0.86f;
     else if (weapon == WPN_SHOTGUN) cone_dot = 0.94f;
-    else if (weapon == WPN_KNIFE || weapon == WPN_KATANA) { max_dist = 26.0f; cone_dot = 0.70f; }
+    else if (weapon == WPN_KNIFE || weapon == WPN_KATANA || weapon == WPN_HAMMER) { max_dist = 26.0f; cone_dot = 0.70f; }
     StoryEnemy *best = NULL;
     float best_dist = 100000.0f;
     for (int i = 0; i < STORY_MAX_SWARM_ENEMIES; i++) {
@@ -985,7 +985,7 @@ static void story_boss_apply_player_hit(PlayerState *hero, unsigned int now_ms) 
     float cone_dot = 0.93f;
     if (weapon == WPN_SNIPER) cone_dot = 0.88f;
     else if (weapon == WPN_SHOTGUN) cone_dot = 0.95f;
-    else if (weapon == WPN_KNIFE || weapon == WPN_KATANA) {
+    else if (weapon == WPN_KNIFE || weapon == WPN_KATANA || weapon == WPN_HAMMER) {
         max_dist = 24.0f;
         cone_dot = 0.72f;
     }
@@ -1973,7 +1973,7 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
     update_projectiles(cmd_time);
     if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
         (local_state.story_phase == STORY_PHASE_PLAYING || local_state.story_phase == STORY_PHASE_SWARM)) {
-        if (p0->is_shooting >= 5 || (p0->current_weapon == WPN_KNIFE && p0->in_shoot) || (p0->current_weapon == WPN_KATANA && p0->in_shoot)) {
+        if (p0->is_shooting >= 5 || (p0->current_weapon == WPN_KNIFE && p0->in_shoot) || (p0->current_weapon == WPN_KATANA && p0->in_shoot) || (p0->current_weapon == WPN_HAMMER && p0->in_shoot)) {
             if (local_state.story_phase == STORY_PHASE_PLAYING) story_boss_apply_player_hit(p0, cmd_time);
             else story_swarm_apply_player_hit(p0, cmd_time);
         }

@@ -322,6 +322,24 @@ Two world-reacts-to-your-weapon systems, both in the lobby/server build and both
   900-piece geometry budget per level (a damage that would exceed it is refused, never half-applied); damage
   resets with each match.
 
+## Hammer (weapon 8, key 8) -- the demolition tool (2026-10-02)
+
+A heavy melee tool built for destructible brick. A swing hurts a player in reach (70 damage, no headshot bonus: two
+honest hits kill; slow 42-tick swing, no ammo, no reload) **and strikes the wall in front of you** (reach 7.5 units)
+through the same map-damage surface hook zombie claws use; PARENA's `brick_rules.prn` counts the hammer x3 against
+masonry, so a 6-thick brick wall opens in 2 swings (the magnum needs ~7 bursts; blades still do nothing).
+`make test-hammer` (physics: hurt, cooldown, reach, hook) and `make test-brick-world` (real destruction).
+
+**The model comes from NOCK.** Model the hammer in Blender, import it through the Widgets tab's glTF importer, and save it
+as the widget **`MODEL_HAMMER`**. IDUNA serves it read-only at `/api/v1/shankpit-models/MODEL_HAMMER` (only `MODEL_*`
+widgets are public); the lobby fetches it in a background thread at startup, caches `shankpit_model_MODEL_HAMMER.json`,
+and draws its boxes in hand in first AND third person. However it was modelled, the client puts the longest axis along
+the hand, the heavier end forward and scales it to fit (`packages/render/held_model.h`, `make test-held-model`). With no
+widget (or offline on a first run) a built-in wooden-handle/steel-head hammer is drawn, so it is never invisible.
+Honest limits: no dedicated hammer sound (reuses the katana swing), the 1p swing is the shared recoil animation, the
+widget model is boxes (one per Blender mesh object, rotated parts become their bounding box), MAX_WEAPONS went 8 -> 9
+so a server and client must both be on this build, and none of it has been seen in a live match yet.
+
 ## Buggy: walls, placement, PARENA handling, lighting (2026-10-02)
 
 - **Walls are solid.** The buggy used to drive straight through every box (its sim had no collision at all, and one

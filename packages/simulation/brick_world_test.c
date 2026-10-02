@@ -142,6 +142,21 @@ int main(void) {
     fire(&p, WPN_KNIFE, 100); fire(&p, WPN_KATANA, 100);
     CHECK(g_brick.rec_count == rec_now);
 
+    /* 3b. the hammer (#447): out of reach it does nothing; in reach a couple of swings open a 2-cell wall */
+    {
+        PlayerState h = p;
+        h.x = -22.5f; h.z = -3.0f - (HAMMER_REACH + 6.0f);        /* too far: the wall face is 13.5 away */
+        int rc = g_brick.rec_count;
+        fire(&h, WPN_HAMMER, 43 * 4);
+        CHECK(g_brick.rec_count == rc && solid_at(-22.5f, 10.0f, -1.5f));
+        h.z = -3.0f - 3.0f;                                       /* 3 units from the face: in reach, and the second layer (6 away) too */
+        int swings = 0;
+        for (int i = 0; i < 12 && (solid_at(-22.5f, 10.0f, -1.5f) || solid_at(-22.5f, 10.0f, 1.5f)); i++) { fire(&h, WPN_HAMMER, 43); swings++; }
+        CHECK(!solid_at(-22.5f, 10.0f, -1.5f) && !solid_at(-22.5f, 10.0f, 1.5f));
+        CHECK(swings >= 2 && swings <= 6);                        /* masonry takes honest swings, not one tap */
+        printf("hammer: opened the wall in %d swings\n", swings);
+    }
+
     /* 4. network: what the server would send, applied to a freshly reset world, rebuilds the exact
           same geometry (the order and the repeats do not matter) */
     BfPiece snap[BF_MAX_PIECES]; int snap_n = g_brick.piece_count;

@@ -3320,6 +3320,29 @@ int check_hit_location(float ox, float oy, float oz, float dx, float dy, float d
     return 0;
 }
 
+/* phys_hammer_strike -- one hammer swing (#447): melee against players like the knife, plus a strike on
+   the wall in front of the swinger. The wall part goes through the same map-damage surface hook zombie
+   claws use (brick_world_on_surface); with no hook installed (clients, tests) it is just a melee swing. */
+#define HAMMER_REACH 7.5f
+static inline int phys_try_melee_strike(PlayerState *attacker, PlayerState *targets, int base_damage, int hit_feedback, int allow_headshot_multiplier, unsigned int now_ms, unsigned int respawn_delay_ms);
+static inline int trace_map_boxes(float x1, float y1, float z1, float x2, float y2, float z2,
+              float *out_x, float *out_y, float *out_z, float *nx, float *ny, float *nz);
+static inline int phys_hammer_strike(PlayerState *p, PlayerState *targets, unsigned int now_ms, unsigned int respawn_delay_ms) {
+    int hit = phys_try_melee_strike(p, targets, WPN_STATS[WPN_HAMMER].dmg, 16, 0, now_ms, respawn_delay_ms); /* no headshot bonus: two honest hits kill */
+    if (g_phys_map_surface_hook) {
+        float r = -p->yaw * 0.0174533f, rp = p->pitch * 0.0174533f;
+        float dx = sinf(r) * cosf(rp), dy = sinf(rp), dz = -cosf(r) * cosf(rp);
+        float ey = p->y + EYE_HEIGHT;
+        float hx, hy, hz, nx, ny, nz;
+        if (trace_map_boxes(p->x, ey, p->z, p->x + dx * HAMMER_REACH, ey + dy * HAMMER_REACH, p->z + dz * HAMMER_REACH,
+                            &hx, &hy, &hz, &nx, &ny, &nz)) {
+            g_phys_map_surface_hook(p->scene_id, hx, hy, hz, nx, ny, nz, WPN_STATS[WPN_HAMMER].dmg, WPN_HAMMER);
+            hit = 1;
+        }
+    }
+    return hit;
+}
+
 static inline int phys_try_melee_strike(PlayerState *attacker, PlayerState *targets, int base_damage, int hit_feedback, int allow_headshot_multiplier, unsigned int now_ms, unsigned int respawn_delay_ms) {
     float r = -attacker->yaw * 0.0174533f;
     float rp = attacker->pitch * 0.0174533f;
@@ -3912,7 +3935,7 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
         }
     }
 
-    if (reload && p->reload_timer == 0 && w != WPN_KNIFE && w != WPN_KATANA) {
+    if (reload && p->reload_timer == 0 && w != WPN_KNIFE && w != WPN_KATANA && w != WPN_HAMMER) {
         if (p->ammo[w] < WPN_STATS[w].ammo_max) {
             if (p->ammo[w] > 0) p->reload_timer = RELOAD_TIME_TACTICAL;
             else p->reload_timer = RELOAD_TIME_FULL; 
@@ -3929,11 +3952,11 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
             p->recoil_anim = 0.5f;
             return;
         }
-        if (w != WPN_KNIFE && w != WPN_KATANA && p->ammo[w] <= 0) p->reload_timer = RELOAD_TIME_FULL;
+        if (w != WPN_KNIFE && w != WPN_KATANA && w != WPN_HAMMER && p->ammo[w] <= 0) p->reload_timer = RELOAD_TIME_FULL;
         else {
             p->is_shooting = 5; p->recoil_anim = 1.0f;
             p->attack_cooldown = WPN_STATS[w].rof;
-            if (w != WPN_KNIFE && w != WPN_KATANA) p->ammo[w]--;
+            if (w != WPN_KNIFE && w != WPN_KATANA && w != WPN_HAMMER) p->ammo[w]--;
             if (w == WPN_KATANA) {
                 p->katana_slash_timer = KATANA_SLASH_ACTIVE_TICKS;
                 p->recoil_anim = 0.35f;
@@ -3942,6 +3965,11 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
             }
             if (w == WPN_KNIFE) {
                 phys_try_melee_strike(p, targets, WPN_STATS[w].dmg, 10, 1, now_ms, respawn_delay_ms);
+                return;
+            }
+            if (w == WPN_HAMMER) {
+                p->recoil_anim = 0.8f;
+                phys_hammer_strike(p, targets, now_ms, respawn_delay_ms);
                 return;
             }
             if (w == WPN_MISSILE) {

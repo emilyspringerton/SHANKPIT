@@ -88,7 +88,7 @@ static inline int brick_world_hook_ready(int scene_id) {
 static inline void brick_world_on_hitscan(int scene_id, float ox, float oy, float oz, float dx, float dy, float dz, int weapon) {
     if (!brick_world_hook_ready(scene_id)) return;
     if (weapon < 0 || weapon >= MAX_WEAPONS) return;
-    if (weapon == WPN_KNIFE || weapon == WPN_KATANA || weapon == WPN_FLASHLIGHT || weapon == WPN_MISSILE) return;
+    if (weapon == WPN_KNIFE || weapon == WPN_KATANA || weapon == WPN_FLASHLIGHT || weapon == WPN_MISSILE || weapon == WPN_HAMMER) return;
     int cnt = WPN_STATS[weapon].cnt;
     if (cnt < 1) cnt = 1;
     int dmg = WPN_STATS[weapon].dmg / cnt;

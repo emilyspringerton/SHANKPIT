@@ -49,6 +49,7 @@
 #include "../../../packages/world/brick_debris.h"
 #include "../../../packages/simulation/brick_world.h"
 #include "../../../packages/simulation/buggy_rules_host.h"
+#include "../../../packages/render/held_model.h"
 #include "../../../packages/render/proc_tex.h"
 #include "../../../packages/render/retro_sky.h"
 #include "../../../packages/render/sky_weather.h"
@@ -5020,6 +5021,57 @@ static void draw_thirdperson_knife_model(void) {
     glPopMatrix();
 }
 
+/* ---- WPN_HAMMER model (#447) ------------------------------------------------------------------
+   Drawn from the NOCK widget MODEL_HAMMER when the game has fetched it (a background thread at startup,
+   see hammer_model_start; cached on disk, so it also works offline after the first run), else from a
+   built-in handle + head so the weapon is never invisible. Used by the first-person viewmodel and the
+   third-person hand alike (draw_gun_model). Hand space: handle along +Z, grip near the origin. */
+static HeldModel g_hammer_model;
+static volatile int g_hammer_model_ready = 0;
+
+static int hammer_model_worker(void *arg) {
+    (void)arg;
+    HeldBox raw[HELD_MODEL_MAX];
+    int n = held_model_load("MODEL_HAMMER", raw, HELD_MODEL_MAX);
+    if (n > 0) {
+        static HeldModel tmp;
+        if (held_model_normalize(raw, n, 1.6f, -0.45f, &tmp)) {
+            g_hammer_model = tmp;
+            g_hammer_model_ready = 1;
+            SDL_Log("hammer: using NOCK widget model MODEL_HAMMER (%d boxes)", tmp.count);
+        }
+    } else {
+        SDL_Log("hammer: no MODEL_HAMMER widget available -- built-in hammer");
+    }
+    return 0;
+}
+
+static void hammer_model_start(void) {
+    SDL_Thread *t = SDL_CreateThread(hammer_model_worker, "hammer_model", NULL);
+    if (t) SDL_DetachThread(t);
+}
+
+static void draw_hammer_model(void) {
+    glPushMatrix();
+    glScalef(0.9f, 0.9f, 0.9f);
+    if (g_hammer_model_ready) {
+        for (int i = 0; i < g_hammer_model.count; i++) {
+            const HeldBox *b = &g_hammer_model.box[i];
+            glColor3f(b->r, b->g, b->b);
+            glPushMatrix(); glTranslatef(b->x, b->y, b->z); draw_box(b->w, b->h, b->d); glPopMatrix();
+        }
+    } else {
+        glColor3f(0.36f, 0.24f, 0.13f);                                   /* wooden handle */
+        glPushMatrix(); glTranslatef(0.0f, 0.0f, 0.0f); draw_box(0.075f, 0.075f, 1.15f); glPopMatrix();
+        glColor3f(0.46f, 0.47f, 0.50f);                                   /* steel head */
+        glPushMatrix(); glTranslatef(0.0f, 0.0f, 0.66f); draw_box(0.30f, 0.26f, 0.52f); glPopMatrix();
+        glColor3f(0.30f, 0.31f, 0.34f);                                   /* striking faces */
+        glPushMatrix(); glTranslatef(0.17f, 0.0f, 0.66f); draw_box(0.05f, 0.28f, 0.54f); glPopMatrix();
+        glPushMatrix(); glTranslatef(-0.17f, 0.0f, 0.66f); draw_box(0.05f, 0.28f, 0.54f); glPopMatrix();
+    }
+    glPopMatrix();
+}
+
 void draw_gun_model(int weapon_id) {
     const float weapon_scale = 0.9f;
     if (weapon_id == WPN_KNIFE) {
@@ -5038,6 +5090,10 @@ void draw_gun_model(int weapon_id) {
         glVertex3f(0.0f, 0.02f, -0.15f); glVertex3f(0.0f, 0.02f, 1.7f);
         glEnd();
         glPopMatrix();
+        return;
+    }
+    if (weapon_id == WPN_HAMMER) {
+        draw_hammer_model();
         return;
     }
     if (weapon_id == WPN_FLASHLIGHT) {
@@ -5143,6 +5199,7 @@ static ViewmodelTuning viewmodel_tuning_for_weapon(int weapon_id) {
         case WPN_SNIPER:  t = (ViewmodelTuning){0.49f, -0.63f, -1.58f, 19.0f, 0.19f, 2.1f, 0.20f, 0.07f}; break;
         case WPN_KNIFE:   t = (ViewmodelTuning){0.54f, -0.56f, -1.00f, 0.0f, 0.0f, 0.0f, 0.00f, 0.07f}; break;
         case WPN_KATANA:  t = (ViewmodelTuning){0.64f, -0.58f, -1.05f, 7.0f, 0.03f, 8.0f, 0.06f, 0.14f}; break;
+        case WPN_HAMMER:  t = (ViewmodelTuning){0.62f, -0.62f, -1.15f, 9.0f, 0.04f, 10.0f, 0.08f, 0.12f}; break;
         default: break;
     }
     return t;
@@ -5280,7 +5337,7 @@ static void draw_viewmodel_weapon(int weapon_id) {
         draw_viewmodel_knife_firstperson();
         return;
     }
-    if (weapon_id == WPN_KATANA) {
+    if (weapon_id == WPN_KATANA || weapon_id == WPN_HAMMER) {
         draw_gun_model(weapon_id);
         return;
     }
@@ -5326,7 +5383,7 @@ static void draw_viewmodel_flag_carry(int carried_flag_team_id) {
 }
 
 static void draw_weapon_muzzle_flash(int weapon_id, float intensity) {
-    if (weapon_id == WPN_KNIFE || weapon_id == WPN_KATANA || intensity <= 0.01f) return;
+    if (weapon_id == WPN_KNIFE || weapon_id == WPN_KATANA || weapon_id == WPN_HAMMER || intensity <= 0.01f) return;
     float size = 0.28f;
     float length = 0.56f;
     switch (weapon_id) {
@@ -7094,9 +7151,10 @@ void draw_weapon_p(PlayerState *p) {
         flag_swing_start_ms = 0;
     }
 
-    float kick = (p->current_weapon == WPN_KNIFE || flag_carrying_vm) ? 0.0f : p->recoil_anim * tune.kick_scale;
+    float kick = (p->current_weapon == WPN_KNIFE || p->current_weapon == WPN_HAMMER || flag_carrying_vm) ? 0.0f : p->recoil_anim * tune.kick_scale;
     float reload_dip = (p->reload_timer > 0) ? sinf(p->reload_timer * 0.2f) * 0.5f - 0.5f : 0.0f;
     float slash_swing = (p->current_weapon == WPN_KATANA && p->katana_slash_timer > 0) ? ((float)p->katana_slash_timer / (float)KATANA_SLASH_ACTIVE_TICKS) : 0.0f;
+    if (p->current_weapon == WPN_HAMMER) slash_swing = clamp01f(p->recoil_anim); /* the swing IS the recoil anim, a big overhead chop */
     float dash_push = (p->current_weapon == WPN_KATANA && p->dash_timer > 0) ? 0.22f : 0.0f;
     float knife_drive = 0.0f, knife_recover = 0.0f;
     if (p->current_weapon == WPN_KNIFE && knife_stab_t > 0.0f) {
@@ -7170,6 +7228,7 @@ void draw_head(int weapon_id) {
         case WPN_SHOTGUN: glColor3f(0.5f, 0.3f, 0.2f); break;
         case WPN_SNIPER:  glColor3f(0.1f, 0.1f, 0.15f); break;
         case WPN_KATANA:  glColor3f(0.0f, 0.85f, 1.0f); break;
+        case WPN_HAMMER:  glColor3f(0.55f, 0.42f, 0.30f); break;
     }
     glBegin(GL_QUADS);
     glVertex3f(-0.4, 0.8, 0.4); glVertex3f(0.4, 0.8, 0.4); glVertex3f(0.4, 0, 0.4); glVertex3f(-0.4, 0, 0.4);
@@ -7810,7 +7869,7 @@ void draw_circle(float x, float y, float r, int segments) {
 
 static void draw_ammo_bars(const PlayerState *p) {
     if (!p) return;
-    if (p->current_weapon == WPN_KNIFE || p->current_weapon == WPN_KATANA) return;
+    if (p->current_weapon == WPN_KNIFE || p->current_weapon == WPN_KATANA || p->current_weapon == WPN_HAMMER) return;
     if (p->current_weapon < 0 || p->current_weapon >= MAX_WEAPONS) return;
 
     int ammo = p->ammo[p->current_weapon];
@@ -10413,7 +10472,7 @@ void net_process_snapshot(char *buffer, int len) {
             if (my_client_id >= 0 && my_client_id < MAX_CLIENTS) {
                 PlayerState *lp = &local_state.players[my_client_id];
                 float lyaw_rad = cam_yaw * 0.0174533f;
-                audio_play_weapon(p->current_weapon,
+                audio_play_weapon(p->current_weapon == WPN_HAMMER ? WPN_KATANA : p->current_weapon,
                                   np->x, np->y, np->z,
                                   lp->x, lp->y, lp->z,
                                   lyaw_rad);
@@ -10918,6 +10977,7 @@ int main(int argc, char* argv[]) {
     gband_shader_and_mesh_init();
     flashlight_shader_init();
     litbox_shader_init();
+    hammer_model_start();
     material_shader_init();
     ips_light_shader_init();
     hps_light_shader_init();
@@ -11547,6 +11607,7 @@ int main(int argc, char* argv[]) {
                 if(k[SDL_SCANCODE_1]) wpn_req=0; if(k[SDL_SCANCODE_2]) wpn_req=1;
                 if(k[SDL_SCANCODE_3]) wpn_req=2; if(k[SDL_SCANCODE_4]) wpn_req=3; if(k[SDL_SCANCODE_5]) wpn_req=4; if(k[SDL_SCANCODE_6]) wpn_req=5;
                 if(k[SDL_SCANCODE_7]) wpn_req=WPN_FLASHLIGHT;
+                if(k[SDL_SCANCODE_8]) wpn_req=WPN_HAMMER;
             }
 
             int fov_pid = (app_state == STATE_GAME_NET && net_local_pid > 0 && local_state.players[net_local_pid].active)

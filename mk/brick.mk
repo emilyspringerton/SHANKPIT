@@ -62,6 +62,18 @@ test-ambient-boost:
 		packages/world/parena_runtime.c -o /tmp/shankpit_ambient_boost_test -lm -lGL
 	/tmp/shankpit_ambient_boost_test
 
+.PHONY: test-hammer
+test-hammer:
+	gcc -std=gnu99 -Wall -g -fsanitize=address,undefined $(INCLUDES) packages/common/hammer_test.c packages/world/terrain.c \
+		-o /tmp/shankpit_hammer_test -lm
+	/tmp/shankpit_hammer_test
+
+.PHONY: test-held-model
+test-held-model:
+	gcc -std=gnu99 -Wall -Wextra -g -fsanitize=address,undefined $(INCLUDES) packages/render/held_model_test.c \
+		-o /tmp/shankpit_held_model_test -lm
+	/tmp/shankpit_held_model_test
+
 .PHONY: test-glass-render
 test-glass-render:
 	gcc -std=gnu99 -Wall -g $(INCLUDES) packages/render/glass_render_test.c packages/render/gl_shader.c \

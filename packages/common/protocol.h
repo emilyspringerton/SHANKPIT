@@ -12,7 +12,7 @@
     EMILY/BACKLOG.md SECTION 536 follow-up ("server-authoritative day/night sync") */
 
 #define MAX_CLIENTS 70
-#define MAX_WEAPONS 8
+#define MAX_WEAPONS 9
 #define MAX_PROJECTILES 1024
 #define MAX_HELICOPTERS 8
 #define MAX_BUGGIES 16
@@ -120,6 +120,11 @@ typedef struct {
                              The beam itself (a real GLSL-shaded cone) and the local world-
                              brightening it does are both client-side-only, see apps/lobby's own
                              draw_flashlight_beam/flashlight_box_boost. */
+
+#define WPN_HAMMER 8 /* card #447: a heavy melee tool. Slow swing, big player damage, and it is the one weapon
+                         made for DEMOLITION: a swing also strikes the wall in front of you (reach
+                         HAMMER_REACH in physics.h) through the map-damage surface hook, with PARENA's
+                         brick_rules.prn multiplying its damage against masonry. No ammo, no reload. */
 
 #define RELOAD_TIME_FULL 60
 #define RELOAD_TIME_TACTICAL 42
@@ -239,7 +244,8 @@ static const WeaponStats WPN_STATS[MAX_WEAPONS] = {
     {WPN_SNIPER,  101, 52, 1, 0.0f,  5},
     {WPN_KATANA,   40, 28, 1, 0.0f,  0},
     {WPN_MISSILE, 130, 95, 1, 0.0f,  3},
-    {WPN_FLASHLIGHT, 0, 1, 0, 0.0f,  0}
+    {WPN_FLASHLIGHT, 0, 1, 0, 0.0f,  0},
+    {WPN_HAMMER,  70, 42, 1, 0.0f,  0}
 };
 
 typedef struct {

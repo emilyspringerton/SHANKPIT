@@ -130,7 +130,7 @@ void test_katana_contract() {
 
 void test_missile_launcher_contract() {
     printf("--- Testing Missile Launcher Contract ---\n");
-    ASSERT_EQ(MAX_WEAPONS, 7, "MAX_WEAPONS includes missile launcher");
+    ASSERT_TRUE(MAX_WEAPONS > WPN_MISSILE, "MAX_WEAPONS includes missile launcher");
     ASSERT_EQ(WPN_MISSILE, 6, "Missile launcher weapon enum appended after katana");
     ASSERT_TRUE(WPN_STATS[WPN_MISSILE].ammo_max > 0, "Missile launcher carries real ammo (unlike knife/katana)");
     ASSERT_TRUE(WPN_STATS[WPN_MISSILE].dmg > WPN_STATS[WPN_SNIPER].dmg, "Missile launcher hits harder than a sniper body shot");
