@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-02
+- feat: destructible loot chests in survival (#528) -- PARENA chest_rules mod (tiers/HP/drop table), chests.c pool + ray/blast hits, lobby hooks chained with brick_world, draw; knife now reaches the map-hitscan hook; README updated (sess-20260923-1030-4a526255)
 - Buggy warthog-style orbit chase cam + steers toward camera; PARENA helicopter flight model (heli_rules.prn: collective, tilted-thrust cyclic, lagged pedals), heli cam/yaw/strafe fixes (#542) (sess-20260923-1030-4a526255)
 - Enemy yellow/red outline shader; shield hit bubble shader, break shatter particles + snare/cymbal sound; server-owned 25% shield pack drop in QUEUE (PACKET_SHIELD_PACKS, refills to full, no regen) (#538-541) (sess-20260923-1030-4a526255)
 - Player models (box/ronin, mannequin, tyler mesh, ragdoll spawn) now face their direction of motion: facing used 180-yaw, mirrored except at yaw 0/180; now 180+yaw (#537) (sess-20260923-1030-4a526255)
