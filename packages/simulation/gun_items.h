@@ -38,6 +38,8 @@ int gun_loot_pick(int roll);
 /* Seeds the map: `count` guns on a ring (radius ~14..26) around (cx,cz) at height y, weapons cycled through the
  * loot table so every type is present. Returns how many were placed. */
 int gun_items_seed_ring(float cx, float y, float cz, int count);
+/* like seed_ring but radii r0 + r_step*(i%3), each point snapped onto the nearest road centreline (roads at (k+0.5)*pitch) */
+int gun_items_seed_roads(float cx, float y, float cz, int count, float r0, float r_step, float pitch);
 
 /* Enemy-death hook: call once per tick per enemy slot. `alive` 0 on the tick(s) it is dead. Drops a gun at (x,y,z)
  * the FIRST tick it is seen dead if `roll100` (0..99) < GUN_DROP_PERCENT; re-arms when alive again. Returns the

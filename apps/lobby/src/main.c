@@ -2977,7 +2977,8 @@ static int lobby_start_survival_mode(void) {
     hero->current_weapon = WPN_KNIFE;
     gun_items_reset();
     /* the city is flat at y = 0 (the hero spawns dropping in from y ~ 6 and settles there) */
-    int guns = gun_items_seed_ring(hero->x, 0.0f, hero->z, 12);
+    /* card #526: spread well out into the city, on the road centrelines (pitch = block + road), not bunched at the spawn */
+    int guns = gun_items_seed_roads(hero->x, 0.0f, hero->z, 12, 140.0f, 120.0f, CITY_BLOCK_SIZE + CITY_ROAD_SIZE);
     SDL_Log("SURVIVAL: wave defence on SCENE_CITY, %d guns on the ground", guns);
     return 1;
 }

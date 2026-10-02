@@ -1,6 +1,7 @@
 /* gun_items_test.c -- card #487. Hand-derived.
  * gcc -Wall -Wextra -Werror -I. -o /tmp/gun_items_test packages/simulation/gun_items_test.c packages/simulation/gun_items.c -lm */
 #include <stdio.h>
+#include <math.h>
 #include "gun_items.h"
 #include "../common/protocol.h"
 
@@ -47,6 +48,18 @@ int main(void) {
     for (int i = 0; i < 6; i++) { const GunItem *g = gun_items_get(i); seen[g->weapon]++; }
     CHECK(seen[WPN_MAGNUM] == 1 && seen[WPN_AR] == 1 && seen[WPN_SHOTGUN] == 1 && seen[WPN_KATANA] == 1 && seen[WPN_SNIPER] == 1 && seen[WPN_MISSILE] == 1,
           "ring holds one of each of the six loot weapons");
+
+    /* road seeding: 6 guns, all >= r0-pitch/2 from origin, each on a road centreline (284 pitch -> 142 + k*284) */
+    gun_items_reset();
+    CHECK(gun_items_seed_roads(0, 0, 0, 6, 140.0f, 120.0f, 284.0f) == 6, "road ring places 6");
+    int on_road = 1, far_enough = 1;
+    for (int i = 0; i < 6; i++) {
+        const GunItem *g = gun_items_get(i);
+        float fx = fmodf(fabsf(g->x), 284.0f), fz = fmodf(fabsf(g->z), 284.0f);
+        if (fabsf(fx - 142.0f) > 0.01f && fabsf(fz - 142.0f) > 0.01f) on_road = 0;
+        if (sqrtf(g->x * g->x + g->z * g->z) < 100.0f) far_enough = 0;
+    }
+    CHECK(on_road && far_enough, "every road-seeded gun sits on a road centreline, well out from the spawn");
 
     /* enemy death drops exactly once, re-arms on respawn */
     gun_items_reset();

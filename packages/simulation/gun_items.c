@@ -63,6 +63,21 @@ int gun_items_seed_ring(float cx, float y, float cz, int count) {
     return placed;
 }
 
+int gun_items_seed_roads(float cx, float y, float cz, int count, float r0, float r_step, float pitch) {
+    static const int bands[6] = { 10, 40, 60, 80, 90, 97 };
+    int placed = 0;
+    for (int i = 0; i < count; i++) {
+        float a = (6.2831853f * (float)i) / (float)(count > 0 ? count : 1);
+        float r = r0 + r_step * (float)(i % 3);
+        float x = cx + r * cosf(a), z = cz + r * sinf(a);
+        /* roads run along the half-pitch lines; pull whichever axis is nearer a road centre onto it */
+        float rx = (floorf(x / pitch) + 0.5f) * pitch, rz = (floorf(z / pitch) + 0.5f) * pitch;
+        if (fabsf(x - rx) <= fabsf(z - rz)) x = rx; else z = rz;
+        if (gun_items_drop(gun_loot_pick(bands[i % 6]), x, y, z) >= 0) placed++;
+    }
+    return placed;
+}
+
 int gun_items_note_enemy(int slot, int alive, float x, float y, float z, int roll100, int loot_roll) {
     if (slot < 0 || slot >= GUN_ITEM_MAX) return -1;
     if (alive) { g_enemy_dropped[slot] = 0; return -1; }
