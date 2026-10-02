@@ -7229,7 +7229,7 @@ static void draw_player_skin_tyler(PlayerState *p, float draw_pitch, float draw_
            (no +180 term) formula corrects. Re-verified after the fix:
            mesh now shows its back at yaw=0, matching the box. */
         float draw_yaw = norm_yaw_deg(p->yaw);
-        float facing_rad = -draw_yaw * 0.0174533f;
+        float facing_rad = draw_yaw * 0.0174533f; /* #537: +yaw, not -yaw -- see draw_player_3rd */
         gband_mesh_rig_draw(p->id, p->x, p->y, p->z, facing_rad, g_gband_frame_dt_ms,
                              &g_gband_frame_vp, gband_draw_skinned);
     } else {
@@ -7347,7 +7347,7 @@ static void rd_frame(float dt_ms) {
         RagdollSpawn sp;
         memset(&sp, 0, sizeof sp);
         sp.x = p->x; sp.y = p->y; sp.z = p->z;
-        sp.facing_rad = (180.0f - norm_yaw_deg(p->yaw)) * 0.0174533f;
+        sp.facing_rad = (180.0f + norm_yaw_deg(p->yaw)) * 0.0174533f; /* #537: must match the living mesh */
         sp.kind = RAGDOLL_KIND_BULLET;
         sp.damage = 100;
         sp.hit_type = RAGDOLL_HIT_BODY;
@@ -7476,7 +7476,7 @@ static void draw_player_skin_mannequin(PlayerState *p, float draw_pitch, float d
        to all 5 kits since they share one glTF-family import pipeline, not confirmed frame-by-frame
        against a real screenshot the way tyler_body's own fix was. */
     float draw_yaw = norm_yaw_deg(p->yaw);
-    float facing_rad = (180.0f - draw_yaw) * 0.0174533f;
+    float facing_rad = (180.0f + draw_yaw) * 0.0174533f; /* #537: see draw_player_3rd */
 
     int is_giant_bug = (role == WITNESS_AI_ROLE_GIANT_BUG);
     int is_bird = (role == WITNESS_AI_ROLE_BIRD);
@@ -7755,7 +7755,11 @@ void draw_player_3rd(PlayerState *p) {
     glPushMatrix();
     glTranslatef(p->x, p->y + 0.2f, p->z);
     // Simulation yaw assumes forward is -Z, but this model is authored facing +Z.
-    glRotatef(180.0f - draw_yaw, 0, 1, 0);
+    // #537 (founder: "they always be walkin backwards"): the sim's forward is (-sin yaw, -cos yaw) (the camera is
+    // glRotatef(-yaw), physics uses r=-yaw), and glRotatef(t) turns +Z to (sin t, cos t), so t = 180 + yaw. The old
+    // 180 - yaw only agrees at yaw 0/180 -- every earlier "verified" screenshot was at yaw 0 -- so a model walking
+    // along X faced the opposite way to its motion.
+    glRotatef(180.0f + draw_yaw, 0, 1, 0);
     if (p->state == STATE_DEAD) {
         float nx = p->death_dir_x;
         float nz = p->death_dir_z;
