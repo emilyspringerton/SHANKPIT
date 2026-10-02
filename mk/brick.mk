@@ -42,7 +42,7 @@ test-third-person:
 .PHONY: test-buggy-wall
 test-buggy-wall:
 	gcc -std=gnu99 -Wall -g -fsanitize=address,undefined $(INCLUDES) \
-		packages/common/buggy_wall_test.c packages/world/terrain.c \
+		packages/common/buggy_wall_test.c packages/world/terrain.c packages/simulation/buggy_rules.c \
 		-o /tmp/shankpit_buggy_wall_test -lm
 	/tmp/shankpit_buggy_wall_test
 	gcc -std=gnu99 -Wall -Wextra -g -fsanitize=address,undefined $(INCLUDES) \

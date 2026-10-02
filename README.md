@@ -322,6 +322,28 @@ Two world-reacts-to-your-weapon systems, both in the lobby/server build and both
   900-piece geometry budget per level (a damage that would exceed it is refused, never half-applied); damage
   resets with each match.
 
+## Buggy: walls, placement, PARENA handling, lighting (2026-10-02)
+
+- **Walls are solid.** The buggy used to drive straight through every box (its sim had no collision at all, and one
+  tick at top speed is longer than a thin wall). It now sweeps against the level's boxes -- shared by server and
+  local play, so multiplayer is authoritative -- scrubs speed on a hit, drives over a curb under 0.6 units, rides on
+  box tops (platforms, ramps) and drives under anything higher. A wall blasted open by destructible brick is drivable.
+- **Placeable in levels.** A thin wall named `buggy_spawn` / `buggy_spawn_<degrees>` in a NOCK level -- or in a
+  placed widget, so a "garage bay" is reusable and rotates with its placement -- exports a `buggy_spawns` entry and
+  the buggy spawns on it (NOCK: "+ Add buggy spawn" in the level and widget editors).
+- **Programmable.** Handling -- the 4-band transmission curve, top speeds, steering rate/authority, lateral grip -- is
+  a PARENA mod (`PARENA/stdlib/shankpit/buggy_rules.prn`, generated into `packages/simulation/buggy_rules.c`,
+  `make regen-buggy-rules`). Defaults reproduce the old constants (240-tick run: 759.6 vs 759.8 units); a different
+  mod changes the buggy (verified: a 2x top-speed mod). Fixed-point permille, so it is deterministic.
+- **Lighting (same sprint).** Map boxes are lit per pixel: flashlights are Gaussian spot lights (no cone edge, the
+  beam mesh fades with no hard rim), IPS/HPS fixtures are point lights that light big walls properly. Pause menu
+  has an **AMBIENT LIGHT** slider (LEFT/RIGHT, persisted in `shankpit_display.cfg`, mapping is PARENA
+  `ambient_rules.prn`).
+- Tests: `make test-buggy-wall`, `test-litbox-render` (live GL under Xvfb), `test-ambient-boost`. Honest limits: the
+  buggy is verified headless only (no live in-game drive yet), a spawn tile's facing is its name suffix, the
+  tile's own `y` is not a floor for buggies beyond the box-top rule above, and NOCK/IDUNA need a rebuild + restart
+  to serve the new editor buttons and export.
+
 ## ZOMBIES sandbox (2026-10-02)
 
 The main-menu **ZOMBIES** tile (it replaced "FIND CTF") starts a local sandbox on a persistent level -- the

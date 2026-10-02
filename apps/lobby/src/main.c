@@ -48,6 +48,7 @@
 #include "../../../packages/world/bullet_hole.h"
 #include "../../../packages/world/brick_debris.h"
 #include "../../../packages/simulation/brick_world.h"
+#include "../../../packages/simulation/buggy_rules_host.h"
 #include "../../../packages/render/proc_tex.h"
 #include "../../../packages/render/retro_sky.h"
 #include "../../../packages/render/sky_weather.h"
@@ -10816,6 +10817,7 @@ static void buggy_advance_remote_positions(unsigned int now_ms) {
 }
 
 int main(int argc, char* argv[]) {
+    buggy_rules_install(); /* PARENA buggy handling (#468) */
     int cli_start_zombies = 0;
     int cli_start_city = 0;
     int cli_third_person = 0;

@@ -3407,6 +3407,66 @@ static inline float buggy_drive_force_for_speed(float speed_norm) {
     return 0.84f + (0.06f - 0.84f) * t;
 }
 
+/* ---- Programmable buggy handling (#468) -----------------------------------------------------------
+   How the buggy FEELS -- transmission curve, top speeds, steering, grip -- is a PARENA mod
+   (PARENA/stdlib/shankpit/buggy_rules.prn, generated into packages/simulation/buggy_rules.c and
+   installed by buggy_rules_install in packages/simulation/buggy_rules_host.h). physics.h keeps the
+   integration, collision and wheel support. With nothing installed (every test that just includes this
+   header) the original built-in constants below are used, so behaviour is unchanged. Rules are
+   fixed-point: speeds/turn in milli-units, curves in permille. Inputs are clamped here, never in the mod. */
+typedef struct {
+    int (*top_speed_milli)(void);
+    int (*reverse_top_speed_milli)(void);
+    int (*drive_force_permille)(int speed_permille);
+    int (*turn_rate_milli)(int abs_norm_permille);
+    int (*steer_authority_permille)(int abs_norm_permille);
+    int (*lateral_grip_permille)(int abs_norm_permille);
+} PhysBuggyRules;
+static const PhysBuggyRules *g_phys_buggy_rules = NULL;
+static inline void phys_set_buggy_rules(const PhysBuggyRules *r) { g_phys_buggy_rules = r; }
+
+static inline int buggy_norm_permille(float n) {
+    if (n < 0.0f) n = 0.0f;
+    if (n > 1.0f) n = 1.0f;
+    return (int)(n * 1000.0f + 0.5f);
+}
+static inline float buggy_top_speed(void) {
+    if (g_phys_buggy_rules && g_phys_buggy_rules->top_speed_milli) {
+        float v = (float)g_phys_buggy_rules->top_speed_milli() * 0.001f;
+        if (v > 0.1f) return v;
+    }
+    return BUGGY_TOP_SPEED;
+}
+static inline float buggy_reverse_top_speed(void) {
+    if (g_phys_buggy_rules && g_phys_buggy_rules->reverse_top_speed_milli) {
+        float v = (float)g_phys_buggy_rules->reverse_top_speed_milli() * 0.001f;
+        if (v > 0.05f) return v;
+    }
+    return BUGGY_REVERSE_TOP_SPEED;
+}
+static inline float buggy_drive_force(float speed_norm) {
+    if (g_phys_buggy_rules && g_phys_buggy_rules->drive_force_permille) {
+        float v = (float)g_phys_buggy_rules->drive_force_permille(buggy_norm_permille(speed_norm)) * 0.001f;
+        return v < 0.0f ? 0.0f : v;
+    }
+    return buggy_drive_force_for_speed(speed_norm);
+}
+static inline float buggy_turn_rate(float abs_norm) {
+    if (g_phys_buggy_rules && g_phys_buggy_rules->turn_rate_milli)
+        return (float)g_phys_buggy_rules->turn_rate_milli(buggy_norm_permille(abs_norm)) * 0.001f;
+    return BUGGY_TURN_RATE_LOW + (BUGGY_TURN_RATE_HIGH - BUGGY_TURN_RATE_LOW) * abs_norm;
+}
+static inline float buggy_steer_authority(float abs_norm) {
+    if (g_phys_buggy_rules && g_phys_buggy_rules->steer_authority_permille)
+        return (float)g_phys_buggy_rules->steer_authority_permille(buggy_norm_permille(abs_norm)) * 0.001f;
+    return 0.38f + 0.62f * abs_norm;
+}
+static inline float buggy_lateral_grip(float abs_norm) {
+    if (g_phys_buggy_rules && g_phys_buggy_rules->lateral_grip_permille)
+        return (float)g_phys_buggy_rules->lateral_grip_permille(buggy_norm_permille(abs_norm)) * 0.001f;
+    return BUGGY_LATERAL_GRIP * (0.62f + 0.68f * abs_norm);
+}
+
 static inline void buggy_sample_wheel_heights(const BuggyState *b, float heights[4]) {
     float r = -b->yaw * (3.14159265358979323846f / 180.0f);
     float fwd_x = sinf(r), fwd_z = -cosf(r);
@@ -3497,21 +3557,21 @@ static inline void simulate_buggy_state(BuggyState *b, float throttle, float ste
 
     float forward_speed = b->vx * fwd_x + b->vz * fwd_z;
     float lateral_speed = b->vx * right_x + b->vz * right_z;
-    float speed_norm = fabsf(forward_speed) / BUGGY_TOP_SPEED;
+    float speed_norm = fabsf(forward_speed) / buggy_top_speed();
     if (speed_norm > 1.0f) speed_norm = 1.0f;
 
     if (throttle > 0.01f) {
-        float drive = BUGGY_BASE_DRIVE_FORCE * buggy_drive_force_for_speed(speed_norm) * throttle * dt_scale;
+        float drive = BUGGY_BASE_DRIVE_FORCE * buggy_drive_force(speed_norm) * throttle * dt_scale;
         forward_speed += drive;
     } else if (throttle < -0.01f) {
         if (forward_speed > 0.03f) {
-            float brake_strength = 1.0f + (forward_speed / BUGGY_TOP_SPEED) * 0.55f;
+            float brake_strength = 1.0f + (forward_speed / buggy_top_speed()) * 0.55f;
             forward_speed -= BUGGY_BRAKE_FRICTION * (-throttle) * brake_strength * dt_scale;
             if (forward_speed < 0.0f) forward_speed = 0.0f;
         } else {
-            float rev_norm = fabsf(forward_speed) / BUGGY_REVERSE_TOP_SPEED;
+            float rev_norm = fabsf(forward_speed) / buggy_reverse_top_speed();
             if (rev_norm > 1.0f) rev_norm = 1.0f;
-            float rev_force = BUGGY_BASE_DRIVE_FORCE * 0.72f * buggy_drive_force_for_speed(rev_norm);
+            float rev_force = BUGGY_BASE_DRIVE_FORCE * 0.72f * buggy_drive_force(rev_norm);
             forward_speed += throttle * rev_force * dt_scale;
         }
     } else {
@@ -3524,14 +3584,14 @@ static inline void simulate_buggy_state(BuggyState *b, float throttle, float ste
         }
     }
 
-    if (forward_speed > BUGGY_TOP_SPEED) forward_speed = BUGGY_TOP_SPEED;
-    if (forward_speed < -BUGGY_REVERSE_TOP_SPEED) forward_speed = -BUGGY_REVERSE_TOP_SPEED;
+    if (forward_speed > buggy_top_speed()) forward_speed = buggy_top_speed();
+    if (forward_speed < -buggy_reverse_top_speed()) forward_speed = -buggy_reverse_top_speed();
 
-    float abs_norm = fabsf(forward_speed) / BUGGY_TOP_SPEED;
+    float abs_norm = fabsf(forward_speed) / buggy_top_speed();
     if (abs_norm > 1.0f) abs_norm = 1.0f;
 
-    float steer_rate = BUGGY_TURN_RATE_LOW + (BUGGY_TURN_RATE_HIGH - BUGGY_TURN_RATE_LOW) * abs_norm;
-    float steer_authority = 0.38f + 0.62f * abs_norm;
+    float steer_rate = buggy_turn_rate(abs_norm);
+    float steer_authority = buggy_steer_authority(abs_norm);
     float steer_sign = (forward_speed < -0.03f) ? -1.0f : 1.0f;
     float steer_response = apply_input ? 0.22f : 0.10f;
     b->steer += (steer - b->steer) * steer_response * dt_scale;
@@ -3539,7 +3599,7 @@ static inline void simulate_buggy_state(BuggyState *b, float throttle, float ste
     if (b->steer < -1.0f) b->steer = -1.0f;
     b->yaw = norm_yaw_deg(b->yaw + b->steer * steer_rate * steer_authority * steer_sign * dt_scale);
 
-    float grip = BUGGY_LATERAL_GRIP * (0.62f + 0.68f * abs_norm) * dt_scale;
+    float grip = buggy_lateral_grip(abs_norm) * dt_scale;
     if (grip > 1.0f) grip = 1.0f;
     lateral_speed *= (1.0f - grip);
 

@@ -27,6 +27,7 @@
 #include "../../../packages/world/story_doors.h"
 #include "../../../packages/simulation/story_buttons.h"
 #include "../../../packages/simulation/brick_world.h"
+#include "../../../packages/simulation/buggy_rules_host.h"
 
 /* cutscene handshake globals — defined in lobby/main.c for the client;
    server sim uses local_game.h but never renders cutscenes, so stub to 0. */
@@ -1493,6 +1494,7 @@ void server_broadcast_brick_state(void) {
 }
 
 int main(int argc, char *argv[]) {
+    buggy_rules_install(); /* PARENA buggy handling (#468) */
     int server_port = 6969;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--record") == 0) {
