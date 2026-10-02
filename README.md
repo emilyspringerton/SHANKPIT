@@ -418,6 +418,14 @@ day/night, citizens or birds (that is the ZOMBIES sandbox). Logic: `witness_ai_s
 (`make test-witness-ai-zombies` drives it to wave 3). Honest limits: offline only, no score/leaderboard, no
 dedicated game-over screen beyond the HUD line, tuning numbers are first guesses.
 
+**Guns are ground items (card #487).** You start with the knife and flashlight only; 12 guns (colour-coded boxes
+with a light beam) lie in a ring around the spawn, and a killed zombie has a 35% chance to leave one (magnum 30 /
+AR 25 / shotgun 20 / katana 10 / sniper 10 / missile 5). Walk over one to take it: it is equipped with a full
+magazine, and number keys only select weapons you own. Logic: `packages/simulation/gun_items.c`
+(`gun_items_test.c`, hand-derived). Limits: offline only -- not server-authoritative, so the Fortnite-style
+competitive multiplayer survival map this card describes is still to do; ground is assumed flat at y = 0; no
+pickup sound or on-screen prompt.
+
 ## Menu: SETTINGS, CUSTOMIZE, baked levels (2026-10-02)
 
 The last main-menu tile is **CUSTOMIZE** (SKINS, SPRAYS); a **SETTINGS** button under the APPS toggle opens

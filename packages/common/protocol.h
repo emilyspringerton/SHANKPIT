@@ -503,6 +503,10 @@ typedef struct {
        night/social-stealth register (BIGO_ENGINE_MERGE_NORTHSTAR.md's own "night" phase), which can
        now set this flag directly whenever it lands, without needing a third camera branch. */
     int third_person;
+    /* card #487 (survival guns as world items): when weapon_gated, only weapons whose bit is set in
+       weapon_owned_mask can be equipped (local_update). 0/0 = every weapon, i.e. all other modes, unchanged. */
+    int weapon_gated;
+    unsigned int weapon_owned_mask;
 } PlayerState;
 
 typedef struct {

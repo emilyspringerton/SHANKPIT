@@ -1785,7 +1785,9 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
     p0->in_fwd = fwd;
     p0->in_strafe = str;
     p0->in_bike = bike;
-    if (weapon_req >= 0 && weapon_req < MAX_WEAPONS) p0->current_weapon = weapon_req;
+    if (weapon_req >= 0 && weapon_req < MAX_WEAPONS &&
+        (!p0->weapon_gated || (p0->weapon_owned_mask & (1u << weapon_req)))) p0->current_weapon = weapon_req;
+    if (p0->weapon_gated && !(p0->weapon_owned_mask & (1u << p0->current_weapon))) p0->current_weapon = WPN_KNIFE;
     if (p0->state == STATE_DEAD) {
         fwd = 0.0f; str = 0.0f; shoot = 0; jump = 0; crouch = 0; reload = 0; ability = 0; bike = 0;
     }

@@ -61,6 +61,7 @@
 #include "../../../packages/common/phone.h"
 #include "../../../packages/simulation/world_alert_bridge.h"
 #include "../../../packages/simulation/food_pickup.h"
+#include "../../../packages/simulation/gun_items.h"
 #include "../../../packages/audio/audio.h"
 #include "../../../packages/render/gl_shader.h"
 #include "../../../packages/render/bloom.h"
@@ -2894,8 +2895,37 @@ static int lobby_start_survival_mode(void) {
     hero->scene_id = SCENE_CITY;
     local_state.story_phase = STORY_PHASE_PLAYING;
     phys_respawn(hero, SDL_GetTicks());
-    SDL_Log("SURVIVAL: wave defence on SCENE_CITY");
+    /* card #487: survival players start with melee + flashlight and arm themselves from guns lying on the ground
+       (and dropped by what they kill) -- weapon_gated makes local_update refuse unowned weapons. */
+    hero->weapon_gated = 1;
+    hero->weapon_owned_mask = (1u << WPN_KNIFE) | (1u << WPN_FLASHLIGHT);
+    hero->current_weapon = WPN_KNIFE;
+    gun_items_reset();
+    /* the city is flat at y = 0 (the hero spawns dropping in from y ~ 6 and settles there) */
+    int guns = gun_items_seed_ring(hero->x, 0.0f, hero->z, 12);
+    SDL_Log("SURVIVAL: wave defence on SCENE_CITY, %d guns on the ground", guns);
     return 1;
+}
+
+/* lobby_survival_guns_tick -- card #487, once per sim tick in MODE_SURVIVAL: enemies that just died may leave a
+ * gun (gun_items_note_enemy), and the hero picks up whatever they are standing next to (owned bit, equip it,
+ * refill its ammo). Local only; the multiplayer survival map is the follow-up. */
+static void lobby_survival_guns_tick(void) {
+    PlayerState *hero = &local_state.players[0];
+    for (int i = 1; i < MAX_CLIENTS; i++) {
+        PlayerState *e = &local_state.players[i];
+        if (!e->active || !e->is_bot) continue;
+        gun_items_note_enemy(i, e->state != STATE_DEAD, e->x, e->y, e->z, rand() % 100, rand() % 100);
+    }
+    if (hero->state == STATE_DEAD) return;
+    int w = gun_items_check(hero->x, hero->y, hero->z);
+    if (w >= 0 && w < MAX_WEAPONS) {
+        hero->weapon_owned_mask |= (1u << w);
+        hero->ammo[w] = WPN_STATS[w].ammo_max;
+        hero->current_weapon = w;
+        wpn_req = w;  /* keep the input latch on the new weapon so the next tick does not switch back */
+        SDL_Log("SURVIVAL: picked up weapon %d", w);
+    }
 }
 
 static int lobby_start_zombies_mode(void) {
@@ -9030,6 +9060,32 @@ void draw_projectiles() {
     glEnd();
 }
 
+/* draw_gun_items -- card #487: guns lying on the ground in survival, a spinning bobbing box in a colour per weapon
+ * plus a thin light beam so they can be spotted across the city. */
+static void draw_gun_items(unsigned int now_ms) {
+    static const float col[MAX_WEAPONS][3] = {
+        {0.8f,0.8f,0.8f}, {1.0f,0.85f,0.2f}, {0.3f,0.8f,1.0f}, {1.0f,0.45f,0.15f}, {0.7f,0.4f,1.0f},
+        {0.9f,0.9f,0.9f}, {1.0f,0.2f,0.2f}, {1.0f,1.0f,0.6f}, {0.6f,0.6f,0.6f}
+    };
+    glDisable(GL_TEXTURE_2D);
+    for (int i = 0; i < GUN_ITEM_MAX; i++) {
+        const GunItem *g = gun_items_get(i);
+        if (!g || !g->active) continue;
+        int w = (g->weapon >= 0 && g->weapon < MAX_WEAPONS) ? g->weapon : 0;
+        float t = (float)now_ms * 0.001f;
+        glColor3f(col[w][0], col[w][1], col[w][2]);
+        glPushMatrix();
+        glTranslatef(g->x, g->y + 0.9f + 0.15f * sinf(t * 2.5f + (float)i), g->z);
+        glRotatef(t * 90.0f, 0.0f, 1.0f, 0.0f);
+        draw_box(1.1f, 0.3f, 0.35f);
+        glPopMatrix();
+        glPushMatrix();
+        glTranslatef(g->x, g->y + 6.0f, g->z);
+        draw_box(0.08f, 12.0f, 0.08f);
+        glPopMatrix();
+    }
+}
+
 // client_load_queue_level -- S459-39, real, found-live fix. Founder real-time: "it seems like it
 // almost worked but it didnt load the level i just fell into the abyss of the sky." Root cause:
 // S459-38's own QUEUE_LEVEL_LOADED logic only runs SERVER-side (apps/server/src/main.c's
@@ -9752,6 +9808,7 @@ void draw_scene(PlayerState *render_p) {
         }
     }
     draw_projectiles();
+    if (local_state.game_mode == MODE_SURVIVAL) draw_gun_items(SDL_GetTicks());
     if ((render_p->in_vehicle && render_p->vehicle_type != VEH_BUGGY) || render_p->third_person || g_cam_override.active) draw_player_3rd(render_p);
     for(int i=0; i<MAX_CLIENTS; i++) {
         PlayerState *p = &local_state.players[i];
@@ -12210,6 +12267,7 @@ int main(int argc, char* argv[]) {
                     lobby_third_person_aim(&local_state.players[0], cam_yaw, cam_pitch, &local_aim_yaw, &local_aim_pitch);
                 local_update(input_fwd, input_str, local_aim_yaw, local_aim_pitch, input_shoot, wpn_req, input_jump, input_crouch, input_reload, input_ability, input_bike, NULL, now_ms);
                 lobby_check_story_level_exits(now_ms);
+                if (local_state.game_mode == MODE_SURVIVAL) lobby_survival_guns_tick();
                 if (local_state.game_mode == MODE_TYLER) {
                     tyler_coldopen_tick(&g_tyler_coldopen_local, now_ms, g_story_next_level_id, lobby_tyler_exit_fn);
                 }
