@@ -50,6 +50,7 @@
 #include "../../../packages/simulation/brick_world.h"
 #include "../../../packages/simulation/buggy_rules_host.h"
 #include "../../../packages/render/held_model.h"
+#include "../../../packages/render/camera_rig.h"
 #include "../../../packages/render/proc_tex.h"
 #include "../../../packages/render/retro_sky.h"
 #include "../../../packages/render/sky_weather.h"
@@ -818,10 +819,11 @@ static int g_pause_sel = 0;
 #define PAUSE_HOLES      1
 #define PAUSE_DEBRIS     2
 #define PAUSE_AMBIENT    3
-#define PAUSE_FULLSCREEN 4
-#define PAUSE_SNAPSHOT   5
-#define PAUSE_QUIT       6
-#define PAUSE_ITEMS      7
+#define PAUSE_BROADCAST  4
+#define PAUSE_FULLSCREEN 5
+#define PAUSE_SNAPSHOT   6
+#define PAUSE_QUIT       7
+#define PAUSE_ITEMS      8
 /* g_opt_bullet_holes -- founder real-time, 2026-10-01: "always ensure all features have menu items".
    The per-gun bullet-hole decals (draw_bullet_holes) are a real, always-on rendering feature; this
    is their pause-menu toggle (default ON), persisted in shankpit_display.cfg line 2. Tracking
@@ -839,6 +841,15 @@ int ambient_level_default(void);
 int ambient_clamp(int level);
 int ambient_step(int level, int dir);
 int ambient_boost_permille(int level);
+/* broadcast camera state (cards #456-#458) -- declared here so the pause menu can show it; the code lives
+   in the BROADCAST CAMERAS block above draw_scene. */
+static CameraRig g_camrig;
+static int g_broadcast_on = 0;            /* 0 off, 1 on */
+static int g_broadcast_multiview = 1;
+static const char *CAMRIG_FILE = "shankpit_camrig.json";
+typedef struct { int active; float eye[3], aim[3]; } CamOverride;
+static CamOverride g_cam_override;
+static int g_world_only_pass = 0;
 static int g_opt_ambient_level = 3;
 static void apply_ambient_level(void) {
     g_opt_ambient_level = ambient_clamp(g_opt_ambient_level);
@@ -9090,12 +9101,13 @@ static void draw_pause_overlay(void) {
         g_opt_bullet_holes ? "BULLET HOLES: ON" : "BULLET HOLES: OFF",
         g_opt_brick_debris ? "BRICK DEBRIS: ON" : "BRICK DEBRIS: OFF",
         ambient_label,
+        g_broadcast_on ? (g_camrig.auto_cut ? "BROADCAST CAMERAS: AUTO" : "BROADCAST CAMERAS: MANUAL") : "BROADCAST CAMERAS: OFF",
         g_fullscreen ? "FULLSCREEN: ON" : "FULLSCREEN: OFF",
         lobby_snapshot_label(),
         "QUIT TO LOBBY"
     };
     for (int i = 0; i < PAUSE_ITEMS; i++) {
-        float y = 370.0f - (float)i * 40.0f;
+        float y = 370.0f - (float)i * 36.0f;
         if (i == g_pause_sel) {
             glColor3f(1.0f, 1.0f, 0.0f);
             draw_string(">", 300, y, 6);
@@ -9109,6 +9121,157 @@ static void draw_pause_overlay(void) {
     glEnable(GL_DEPTH_TEST);
     glMatrixMode(GL_PROJECTION); glPopMatrix();
     glMatrixMode(GL_MODELVIEW); glPopMatrix();
+}
+
+/* ---- BROADCAST CAMERAS (cards #456 realistic cameras / #457 director / #458 serialization) ----------
+   F3 (or the pause menu's BROADCAST CAMERAS item) puts the viewer behind the camera rig: the PROGRAM
+   camera fills the screen with a clean world view (no player HUD), and -- with multiview on (F5) -- the
+   other cameras run live in tiles along the bottom, the program one outlined red, the next one green.
+   The rig (camera_rig.h, brains in PARENA camera_rules) has a simulated operator per camera and an auto
+   director; F4 hands the cuts to a human: [ and ] pick the program camera, , and . pick who to watch.
+   The rig is a JSON file, shankpit_camrig.json (loaded at startup if present, saved when broadcast turns
+   off) -- the scene collection of a native stream. Rendering reuses draw_scene: a camera override replaces
+   the player's eye, and g_world_only_pass returns right after the world (before overlays and HUD). */
+
+static void broadcast_load_rig(void) {
+    camrig_default(&g_camrig);
+    FILE *f = fopen(CAMRIG_FILE, "rb");
+    if (!f) return;
+    static char buf[16384];
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+    CameraRig loaded;
+    if (camrig_parse(&loaded, buf) > 0) { g_camrig = loaded; SDL_Log("broadcast: loaded %d camera(s) from %s", loaded.count, CAMRIG_FILE); }
+    else SDL_Log("broadcast: %s is not a valid camera rig -- using the default rig", CAMRIG_FILE);
+}
+
+static void broadcast_save_rig(void) {
+    static char buf[16384];
+    int n = camrig_serialize(&g_camrig, buf, sizeof(buf));
+    if (n <= 0) return;
+    FILE *f = fopen(CAMRIG_FILE, "wb");
+    if (!f) return;
+    fwrite(buf, 1, (size_t)n, f);
+    fclose(f);
+}
+
+static void broadcast_set(int on) {
+    if (on == g_broadcast_on) return;
+    g_broadcast_on = on;
+    if (!on) broadcast_save_rig();
+    else { g_camrig.director_subject = -1; g_camrig.next_think_ms = 0; }
+}
+
+static int broadcast_collect_actors(CamActor *out) {
+    int n = 0;
+    for (int i = 0; i < MAX_CLIENTS && n < MAX_CLIENTS; i++) {
+        const PlayerState *p = &local_state.players[i];
+        if (!p->active) continue;
+        CamActor *a = &out[n++];
+        a->id = p->id; a->active = 1; a->dead = (p->state == STATE_DEAD); a->team = p->team_id;
+        a->x = p->x; a->y = p->y; a->z = p->z; a->yaw = p->yaw;
+        a->vx = p->vx * 64.0f; a->vz = p->vz * 64.0f;   /* units per tick -> per second (the sim runs at 64 Hz, TICK_RATE) */
+        a->health = p->health; a->shooting = p->is_shooting > 0 || p->in_shoot;
+        a->last_kill_ms = p->last_kill_time_ms;
+    }
+    return n;
+}
+
+static void broadcast_cycle_subject(int dir) {
+    CamActor act[MAX_CLIENTS];
+    int n = broadcast_collect_actors(act);
+    if (n == 0) return;
+    int cur = -1;
+    for (int i = 0; i < n; i++) if (act[i].id == g_camrig.director_subject) cur = i;
+    cur = (cur + dir + n) % n;
+    g_camrig.director_subject = act[cur].id;
+    g_camrig.shot_start_ms = SDL_GetTicks();
+}
+
+/* One camera's world view into a sub-rectangle of the virtual screen (vx,vy,vw,vh in 1280x720 space). */
+static void broadcast_render_view(PlayerState *render_p, const CamView *v, float vx, float vy, float vw, float vh) {
+    float sx = (float)g_vp_w / (float)VIRTUAL_W, sy = (float)g_vp_h / (float)VIRTUAL_H;
+    int px = g_vp_x + (int)(vx * sx), py = g_vp_y + (int)(vy * sy), pw = (int)(vw * sx), ph = (int)(vh * sy);
+    glViewport(px, py, pw, ph);
+    glEnable(GL_SCISSOR_TEST); glScissor(px, py, pw, ph);
+    glMatrixMode(GL_PROJECTION); glLoadIdentity();
+    gluPerspective(v->fov, vw / vh, 0.1, Z_FAR);
+    glMatrixMode(GL_MODELVIEW);
+    g_cam_override.active = 1;
+    memcpy(g_cam_override.eye, v->eye, sizeof(v->eye));
+    memcpy(g_cam_override.aim, v->aim, sizeof(v->aim));
+    g_world_only_pass = 1;
+    draw_scene(render_p);
+    g_world_only_pass = 0;
+    g_cam_override.active = 0;
+    glDisable(GL_SCISSOR_TEST);
+    glViewport(g_vp_x, g_vp_y, g_vp_w, g_vp_h);
+    glMatrixMode(GL_PROJECTION); glLoadIdentity(); gluPerspective(current_fov, (float)VIRTUAL_W / (float)VIRTUAL_H, 0.1, Z_FAR);
+    glMatrixMode(GL_MODELVIEW);
+}
+
+static void broadcast_rect(float x0, float y0, float x1, float y1, float r, float g, float b) {
+    glColor3f(r, g, b);
+    glLineWidth(3.0f);
+    glBegin(GL_LINE_LOOP); glVertex2f(x0, y0); glVertex2f(x1, y0); glVertex2f(x1, y1); glVertex2f(x0, y1); glEnd();
+}
+
+/* The whole broadcast frame: program view, multiview tiles, labels. Replaces draw_scene for this frame. */
+static void broadcast_frame(PlayerState *render_p) {
+    unsigned int now = SDL_GetTicks();
+    static unsigned int last = 0;
+    int dt = last ? (int)(now - last) : 16;
+    last = now;
+    CamActor act[MAX_CLIENTS];
+    int n = broadcast_collect_actors(act);
+    camrig_update(&g_camrig, act, n, now, dt);
+
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    CamView v;
+    if (camrig_view(&g_camrig, g_camrig.program, now, &v)) broadcast_render_view(render_p, &v, 0, 0, VIRTUAL_W, VIRTUAL_H);
+
+    /* tiles: every other camera, live */
+    int tiles[CAMRIG_MAX], nt = 0;
+    for (int i = 0; i < g_camrig.count && nt < 5; i++) if (i != g_camrig.program) tiles[nt++] = i;
+    const float tw = 256.0f, th = 144.0f, gap = 10.0f, x0 = 16.0f, y0 = 14.0f;
+    if (g_broadcast_multiview) {
+        for (int k = 0; k < nt; k++) {
+            CamView tv;
+            if (camrig_view(&g_camrig, tiles[k], now, &tv)) broadcast_render_view(render_p, &tv, x0 + (float)k * (tw + gap), y0, tw, th);
+        }
+    }
+
+    /* 2D overlay */
+    glDisable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, VIRTUAL_W, 0, VIRTUAL_H);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    if (g_broadcast_multiview) {
+        for (int k = 0; k < nt; k++) {
+            float tx = x0 + (float)k * (tw + gap);
+            int is_prev = (tiles[k] == g_camrig.preview);
+            broadcast_rect(tx, y0, tx + tw, y0 + th, is_prev ? 0.1f : 0.35f, is_prev ? 0.9f : 0.35f, is_prev ? 0.2f : 0.35f);
+            glColor3f(1, 1, 1);
+            draw_string(g_camrig.cam[tiles[k]].name, tx + 6, y0 + th - 18, 3);
+        }
+    }
+    broadcast_rect(2, 2, VIRTUAL_W - 2, VIRTUAL_H - 2, 0.9f, 0.1f, 0.1f);   /* red tally: this is the program feed */
+    char line[160], who[24];
+    glColor3f(1.0f, 0.2f, 0.2f);
+    draw_string("LIVE", 24, VIRTUAL_H - 44, 5);
+    if (g_camrig.director_subject >= 0) snprintf(who, sizeof(who), "WATCHING P%d", g_camrig.director_subject);
+    else snprintf(who, sizeof(who), "NO SUBJECT");
+    snprintf(line, sizeof(line), "CAM %s   %s   %s", g_camrig.count ? g_camrig.cam[g_camrig.program].name : "-", who,
+             g_camrig.auto_cut ? "DIRECTOR AUTO" : "DIRECTOR MANUAL");
+    glColor3f(1, 1, 1);
+    draw_string(line, 190, VIRTUAL_H - 42, 3);
+    glColor3f(0.7f, 0.7f, 0.7f);
+    draw_string("F3 EXIT   F4 AUTO/MANUAL   F5 MULTIVIEW   [ ] CAMERA   , . SUBJECT", 24, VIRTUAL_H - 70, 2);
+    glEnable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glMatrixMode(GL_MODELVIEW); glPopMatrix();
+    if (g_paused) draw_pause_overlay();
 }
 
 void draw_scene(PlayerState *render_p) {
@@ -9142,7 +9305,9 @@ void draw_scene(PlayerState *render_p) {
         }
     }
     static float heli_cam_x = 0.0f, heli_cam_y = 0.0f, heli_cam_z = 0.0f;
-    if (render_p->in_vehicle && render_p->vehicle_type == VEH_HELICOPTER) {
+    if (g_cam_override.active) {
+        /* broadcast camera: the eye comes from the rig, applied below */
+    } else if (render_p->in_vehicle && render_p->vehicle_type == VEH_HELICOPTER) {
         HelicopterState *hh = NULL;
         for (int i = 0; i < MAX_HELICOPTERS; i++) {
             if (local_state.helicopters[i].active && local_state.helicopters[i].occupant_player_id == render_p->id) {
@@ -9199,7 +9364,10 @@ void draw_scene(PlayerState *render_p) {
         reconcile_z = reconcile_corr_z;
     }
 
-    if (story_cutscene) {
+    if (g_cam_override.active) {
+        gluLookAt(g_cam_override.eye[0], g_cam_override.eye[1], g_cam_override.eye[2],
+                  g_cam_override.aim[0], g_cam_override.aim[1], g_cam_override.aim[2], 0.0f, 1.0f, 0.0f);
+    } else if (story_cutscene) {
         const StoryBossState *boss = &local_state.story_boss;
         float look_x = boss->x;
         float look_y = boss->y + 24.0f;
@@ -9361,7 +9529,7 @@ void draw_scene(PlayerState *render_p) {
         }
     }
     draw_projectiles();
-    if ((render_p->in_vehicle && render_p->vehicle_type != VEH_BUGGY) || render_p->third_person) draw_player_3rd(render_p);
+    if ((render_p->in_vehicle && render_p->vehicle_type != VEH_BUGGY) || render_p->third_person || g_cam_override.active) draw_player_3rd(render_p);
     for(int i=0; i<MAX_CLIENTS; i++) {
         PlayerState *p = &local_state.players[i];
         if (!p->active || p->scene_id != render_p->scene_id) continue;
@@ -9370,6 +9538,7 @@ void draw_scene(PlayerState *render_p) {
         draw_flashlight_beam(p); /* other players' own beam cones are now visible too, not just yours */
     }
     if (weather_fog) sky_weather_fog_off(); /* world pass ends here -- overlays, first-person weapon and HUD stay crisp */
+    if (g_world_only_pass) return;           /* broadcast tiles / program feed: just the world */
     overlay_begin_frame(&g_overlay);
     overlay_collect_items(render_p, now_ms);
     overlay_render(&g_overlay, render_p);
@@ -10978,6 +11147,7 @@ int main(int argc, char* argv[]) {
     flashlight_shader_init();
     litbox_shader_init();
     hammer_model_start();
+    broadcast_load_rig();
     material_shader_init();
     ips_light_shader_init();
     hps_light_shader_init();
@@ -11408,6 +11578,11 @@ int main(int argc, char* argv[]) {
                                 g_opt_ambient_level = (g_opt_ambient_level >= 10) ? 0 : ambient_step(g_opt_ambient_level, 1);
                                 apply_ambient_level();
                                 save_display_config();
+                            } else if (g_pause_sel == PAUSE_BROADCAST) {
+                                /* OFF -> AUTO director -> MANUAL director -> OFF */
+                                if (!g_broadcast_on) { broadcast_set(1); g_camrig.auto_cut = 1; }
+                                else if (g_camrig.auto_cut) g_camrig.auto_cut = 0;
+                                else broadcast_set(0);
                             } else if (g_pause_sel == PAUSE_FULLSCREEN) {
                                 toggle_fullscreen();
                             } else if (g_pause_sel == PAUSE_SNAPSHOT) {
@@ -11470,6 +11645,20 @@ int main(int argc, char* argv[]) {
                         g_paused = 1;
                         g_pause_sel = 0;
                         SDL_SetRelativeMouseMode(SDL_FALSE);
+                    } else if (e.key.keysym.sym == SDLK_F3) {
+                        broadcast_set(!g_broadcast_on);
+                    } else if (e.key.keysym.sym == SDLK_F4 && g_broadcast_on) {
+                        g_camrig.auto_cut = !g_camrig.auto_cut;
+                    } else if (e.key.keysym.sym == SDLK_F5 && g_broadcast_on) {
+                        g_broadcast_multiview = !g_broadcast_multiview;
+                    } else if (g_broadcast_on && e.key.keysym.sym == SDLK_LEFTBRACKET && g_camrig.count > 0) {
+                        g_camrig.auto_cut = 0; g_camrig.program = (g_camrig.program + g_camrig.count - 1) % g_camrig.count;
+                    } else if (g_broadcast_on && e.key.keysym.sym == SDLK_RIGHTBRACKET && g_camrig.count > 0) {
+                        g_camrig.auto_cut = 0; g_camrig.program = (g_camrig.program + 1) % g_camrig.count;
+                    } else if (g_broadcast_on && e.key.keysym.sym == SDLK_COMMA) {
+                        g_camrig.auto_cut = 0; broadcast_cycle_subject(-1);
+                    } else if (g_broadcast_on && e.key.keysym.sym == SDLK_PERIOD) {
+                        g_camrig.auto_cut = 0; broadcast_cycle_subject(1);
                     } else if (e.key.keysym.sym == SDLK_F1) {
                         lobby_level_snapshot(1);
                     } else if (e.key.keysym.sym == SDLK_F6) {
@@ -11841,7 +12030,7 @@ int main(int argc, char* argv[]) {
             int bloom_w = 0, bloom_h = 0;
             SDL_GetWindowSize(win, &bloom_w, &bloom_h);
             bloom_begin_scene(bloom_w, bloom_h);
-            draw_scene(&blended);
+            if (g_broadcast_on) broadcast_frame(&blended); else draw_scene(&blended);
             bloom_end_scene_and_composite(bloom_w, bloom_h);
             SDL_GL_SwapWindow(win);
         }
