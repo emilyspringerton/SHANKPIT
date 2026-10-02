@@ -7136,6 +7136,11 @@ static void rd_frame(float dt_ms) {
     }
 }
 
+/* #515 (founder real-time: "the player models that use the manequins are too small, scale them up by
+ * double then double again"): every mannequin-kit body is drawn 4x. Role multipliers (giant bug 2.5x,
+ * bird 0.3x) stay relative to this. Draw-only: hitboxes/camera are unchanged. */
+#define MANNEQUIN_DRAW_SCALE 4.0f
+
 /* Draws player p's ragdoll corpse. Returns 1 if the player is (or was) a ragdoll corpse and was handled. */
 static int rd_draw_corpse(PlayerState *p) {
     if (!g_rd_ready || p->id <= 0 || p->id >= MAX_CLIENTS || p->state != STATE_DEAD) return 0;
@@ -7143,6 +7148,14 @@ static int rd_draw_corpse(PlayerState *p) {
     if (g_rd_slot[p->id] < 0) return 0;
     float skin[GSKEL_MAX_JOINTS][16];
     if (!ragdoll_pool_get_skin_matrices(&g_rd_pool, g_rd_slot[p->id], skin)) return 1;
+    { /* #515: the sim runs in metres; scale the world-space skin matrices about the body's own position so corpses match the 4x live body */
+        Mat4 t_in = mat4_translate(-p->x, -p->y, -p->z), sc = mat4_scale(MANNEQUIN_DRAW_SCALE, MANNEQUIN_DRAW_SCALE, MANNEQUIN_DRAW_SCALE), t_out = mat4_translate(p->x, p->y, p->z);
+        Mat4 a = mat4_multiply(&sc, &t_in), full = mat4_multiply(&t_out, &a);
+        for (uint32_t j = 0; j < GSKEL_MAX_JOINTS; j++) {
+            Mat4 sj; memcpy(sj.m, skin[j], sizeof(sj.m));
+            Mat4 r = mat4_multiply(&full, &sj); memcpy(skin[j], r.m, sizeof(r.m));
+        }
+    }
     int role = witness_ai_role_for_player(p->id);
     g_skel_npc_evil_tint = local_state.game_mode == MODE_QUEUE ? 9 : role == WITNESS_AI_ROLE_ZOMBIE ? 2 : role == WITNESS_AI_ROLE_THE_MEN ? 3 : 5 + (p->id & 3);
     gband_skel_npc_draw_skin(role == WITNESS_AI_ROLE_ZOMBIE && g_skel_npc_kit_zombie >= 0 ? g_skel_npc_kit_zombie : g_skel_npc_kit_mannequin,
@@ -7226,7 +7239,7 @@ static void draw_player_skin_mannequin(PlayerState *p, float draw_pitch, float d
     if (queue_yellow) g_skel_npc_evil_tint = 9;
     /* The skinned draw bakes the world transform into the vertices (vp only), so GL matrix calls
        around it do nothing -- gband_skel_npc_set_scale is the real scale hook. */
-    gband_skel_npc_set_scale(is_giant_bug ? 2.5f : is_bird ? 0.3f : 1.0f);
+    gband_skel_npc_set_scale(MANNEQUIN_DRAW_SCALE * (is_giant_bug ? 2.5f : is_bird ? 0.3f : 1.0f));
     gband_skel_npc_draw(kit_index, p->id, p->x, p->y, p->z, facing_rad, g_gband_frame_dt_ms,
                          p->anim_override,
                          &g_gband_frame_vp, skel_npc_draw_skinned);
