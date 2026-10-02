@@ -45,7 +45,12 @@
 #include "../../../packages/simulation/tyler_coldopen.h"
 #include "../../../packages/reflux/reflux_mod_host.h"
 #include "../../../packages/world/level_boxes.h"
+#include <sys/stat.h>
+#ifdef _WIN32
+#include <direct.h>
+#endif
 #include "../../../packages/world/edit_map.h"
+#include "../../../packages/world/edit_sync.h"
 #include "../../../packages/world/spray_registry.h"
 #include "../../../packages/world/bullet_hole.h"
 #include "../../../packages/world/brick_debris.h"
@@ -3032,11 +3037,17 @@ static int edit_crosshair(float *hx, float *hy, float *hz, float *nx, float *ny,
     return trace_map(ex, ey, ez, ex + fx * 200.0f, ey + fy * 200.0f, ez + fz * 200.0f, hx, hy, hz, nx, ny, nz);
 }
 
+static void es_enqueue(const char *kind, const char *data);
+
 static void edit_key(SDL_Keycode k) {
     if (!g_edit_active || !g_edit_lvl) return;
     float hx, hy, hz, nx, ny, nz;
     if (k == SDLK_F5) {
+#ifdef _WIN32
+        _mkdir("var/maps");
+#else
         mkdir("var/maps", 0755);
+#endif
         char path[320]; snprintf(path, sizeof path, "var/maps/%s.edits.json", g_edit_name);
         edit_say(edit_map_save(&g_edit_log, g_edit_name, path) ? "saved edits" : "SAVE FAILED");
         return;
@@ -3056,8 +3067,130 @@ static void edit_key(SDL_Keycode k) {
         op.kind = EDIT_OP_MOVE_SPAWNER; op.index = 0; op.x = hx; op.y = hy; op.z = hz;
         op.yaw = g_edit_lvl->spawner_count ? g_edit_lvl->spawners[0].yaw : 0.0f;
     }
-    if (edit_map_do(&g_edit_log, g_edit_lvl, &op)) { edit_reapply(); edit_say(k == SDLK_b ? "box placed" : k == SDLK_x ? "box deleted" : "spawner moved"); }
+    if (edit_map_do(&g_edit_log, g_edit_lvl, &op)) {
+        char d[200];
+        if (op.kind == EDIT_OP_ADD_BOX) { snprintf(d, sizeof d, "{\"id\":%d,\"x\":%.2f,\"y\":%.2f,\"z\":%.2f,\"sx\":%.2f,\"sy\":%.2f,\"sz\":%.2f}", 100000 + g_edit_log.n, op.x, op.y, op.z, op.w, op.h, op.d); es_enqueue("box_add", d); }
+        else if (op.kind == EDIT_OP_DEL_BOX) { snprintf(d, sizeof d, "{\"id\":-1,\"index\":%d}", op.index); es_enqueue("box_del", d); }
+        else { snprintf(d, sizeof d, "{\"x\":%.2f,\"y\":%.2f,\"z\":%.2f,\"yaw\":%.2f}", op.x, op.y, op.z, op.yaw); es_enqueue("spawner", d); }
+        edit_reapply(); edit_say(k == SDLK_b ? "box placed" : k == SDLK_x ? "box deleted" : "spawner moved"); }
     else edit_say("edit rejected (limit or no spawner)");
+}
+
+
+// ---- EDIT MAP live sync (kanban #518/#519/#520/#531 EDIT-3) ----
+// A worker thread (curl long-poll, blocking) joins or creates an IDUNA edit session shared with the
+// NOCK web editor. Main thread -> worker: an outbox of events (avatar pose, box_add/box_del, spawner).
+// Worker -> main thread: NOCK's spawner / teleport / spawn_mode events, drained once per frame.
+// Spawn mode (#520): "spawner" teleports the hero to the spawner, "crosshair" to the surface under the
+// crosshair (T key). Known limit: LevelBox carries no registry wall id, so box_del events carry the
+// box index and remote NOCK box edits are not applied here yet (spawner/teleport/spawn_mode are).
+#define ES_QUEUE 32
+typedef struct { char kind[16]; char data[200]; } EsOut;
+static int g_es_on = 0, g_es_crosshair = 0, g_es_seq = 0;
+static char g_es_id[33] = "";
+static char g_es_base[200] = "https://okemily.com/api/v1/shankpit-edit-sessions";
+static SDL_Thread *g_es_thread = NULL;
+static SDL_mutex *g_es_mu = NULL;
+static EsOut g_es_out[ES_QUEUE]; static int g_es_out_n = 0;
+static EditSyncEvent g_es_in[ES_QUEUE]; static int g_es_in_n = 0;
+static unsigned int g_es_last_avatar_ms = 0; static float g_es_lx, g_es_ly, g_es_lz;
+
+static void es_enqueue(const char *kind, const char *data) {
+    if (!g_es_on || !g_es_mu) return;
+    SDL_LockMutex(g_es_mu);
+    if (g_es_out_n < ES_QUEUE) { snprintf(g_es_out[g_es_out_n].kind, 16, "%s", kind); snprintf(g_es_out[g_es_out_n].data, 200, "%s", data); g_es_out_n++; }
+    SDL_UnlockMutex(g_es_mu);
+}
+
+static int es_worker(void *arg) {
+    (void)arg;
+    int fails = 0;
+    while (g_es_on) {
+        EsOut batch[ES_QUEUE]; int bn;
+        SDL_LockMutex(g_es_mu); bn = g_es_out_n; memcpy(batch, g_es_out, sizeof(EsOut) * (size_t)bn); g_es_out_n = 0; SDL_UnlockMutex(g_es_mu);
+        for (int i = 0; i < bn; i++) edit_sync_post_event(g_es_base, g_es_id, batch[i].kind, batch[i].data);
+        EditSyncEvent ev[EDIT_SYNC_MAX_EVENTS]; int seq = g_es_seq;
+        int n = edit_sync_poll(g_es_base, g_es_id, g_es_seq, 2, ev, EDIT_SYNC_MAX_EVENTS, &seq);
+        if (n < 0) { if (++fails >= 5) { SDL_Log("EDIT SYNC: session lost, leaving"); g_es_on = 0; } SDL_Delay(1000); continue; }
+        fails = 0;
+        SDL_LockMutex(g_es_mu);
+        for (int i = 0; i < n; i++) if (ev[i].from_nock && g_es_in_n < ES_QUEUE) g_es_in[g_es_in_n++] = ev[i];
+        g_es_seq = seq;
+        SDL_UnlockMutex(g_es_mu);
+    }
+    return 0;
+}
+
+static int es_start(const char *join_id) {
+    if (g_es_on) return 1;
+    const char *b = getenv("SHANKPIT_EDIT_SESSIONS_URL"); if (b && *b) snprintf(g_es_base, sizeof g_es_base, "%s", b);
+    if (join_id && strlen(join_id) == 32) memcpy(g_es_id, join_id, 33);
+    else if (!edit_sync_create(g_es_base, g_edit_lvl ? g_edit_lvl->source_id : 0, g_edit_lvl ? g_edit_lvl->name : "", g_es_id)) { edit_say("could not create live session"); return 0; }
+    if (!g_es_mu) g_es_mu = SDL_CreateMutex();
+    g_es_seq = 0; g_es_out_n = g_es_in_n = 0; g_es_on = 1;
+    g_es_thread = SDL_CreateThread(es_worker, "edit_sync", NULL);
+    if (g_es_thread) SDL_DetachThread(g_es_thread);
+    es_enqueue("hello", "{\"client\":\"shankpit\"}");
+    SDL_Log("EDIT SYNC: live session %s (join from NOCK with this id)", g_es_id);
+    edit_say("LIVE session started");
+    return 1;
+}
+
+static void es_hero_to(float x, float y, float z, float yaw) {
+    PlayerState *h = &local_state.players[0];
+    h->x = x; h->y = y; h->z = z; if (yaw == yaw) cam_yaw = norm_yaw_deg(yaw);
+}
+
+static void es_set_mode_post(void) {
+    es_enqueue("spawn_mode", g_es_crosshair ? "{\"mode\":\"crosshair\"}" : "{\"mode\":\"spawner\"}");
+}
+
+/* T: put the hero where the current spawn mode says (spawner marker, or the crosshair hit). */
+static void es_spawn_now(void) {
+    float hx, hy, hz, nx, ny, nz;
+    if (g_es_crosshair) {
+        if (edit_crosshair(&hx, &hy, &hz, &nx, &ny, &nz)) es_hero_to(hx, hy + 0.5f, hz, NAN);
+        else edit_say("no surface under crosshair");
+    } else if (g_edit_lvl && g_edit_lvl->spawner_count > 0) {
+        const LevelSpawner *sp = &g_edit_lvl->spawners[0];
+        es_hero_to(sp->x, sp->y, sp->z, sp->yaw);
+    }
+}
+
+/* once per frame, main thread: apply NOCK events, stream our pose */
+static void es_frame(void) {
+    if (!g_es_on || !g_edit_lvl) return;
+    EditSyncEvent in[ES_QUEUE]; int n;
+    SDL_LockMutex(g_es_mu); n = g_es_in_n; memcpy(in, g_es_in, sizeof(EditSyncEvent) * (size_t)n); g_es_in_n = 0; SDL_UnlockMutex(g_es_mu);
+    for (int i = 0; i < n; i++) {
+        const EditSyncEvent *e = &in[i];
+        if (!strcmp(e->kind, "spawn_mode")) { g_es_crosshair = e->mode_crosshair; edit_say(g_es_crosshair ? "spawn mode: CROSSHAIR" : "spawn mode: SPAWNER"); }
+        else if (!strcmp(e->kind, "spawner") && e->has_pos) {
+            EditOp op; memset(&op, 0, sizeof op);
+            op.kind = EDIT_OP_MOVE_SPAWNER; op.index = 0; op.x = e->x; op.y = e->y; op.z = e->z; op.yaw = e->yaw;
+            edit_map_do(&g_edit_log, g_edit_lvl, &op);     /* remote move: applied, never echoed back */
+            SDL_Log("EDIT SYNC: NOCK moved spawner to %.1f,%.1f,%.1f", e->x, e->y, e->z);
+            if (!g_es_crosshair) es_hero_to(e->x, e->y, e->z, e->yaw);   /* #519: NOCK moves the spawner -> the character follows */
+        }
+        else if (!strcmp(e->kind, "teleport") && e->has_pos) es_hero_to(e->x, e->y, e->z, e->yaw);
+    }
+    unsigned int now = SDL_GetTicks();
+    PlayerState *h = &local_state.players[0];
+    if (now - g_es_last_avatar_ms >= 100 &&
+        (fabsf(h->x - g_es_lx) + fabsf(h->y - g_es_ly) + fabsf(h->z - g_es_lz) > 0.05f)) {
+        char d[160];
+        snprintf(d, sizeof d, "{\"x\":%.3f,\"y\":%.3f,\"z\":%.3f,\"yaw\":%.2f,\"pitch\":%.2f}", h->x, h->y, h->z, cam_yaw, cam_pitch);
+        es_enqueue("avatar", d);
+        g_es_last_avatar_ms = now; g_es_lx = h->x; g_es_ly = h->y; g_es_lz = h->z;
+    }
+}
+
+static void es_stop(void) { g_es_on = 0; }
+static void edit_key_sync(SDL_Keycode k) {
+    if (!g_edit_active) return;
+    if (k == SDLK_j) es_start(NULL);
+    else if (k == SDLK_y) { g_es_crosshair = !g_es_crosshair; es_set_mode_post(); edit_say(g_es_crosshair ? "spawn mode: CROSSHAIR" : "spawn mode: SPAWNER"); }
+    else if (k == SDLK_t) es_spawn_now();
 }
 
 static int lobby_start_editmap_mode(void) {
@@ -4067,7 +4200,7 @@ static void lobby_start_action(int action) {
     } else {
         app_state = STATE_GAME_LOCAL;
         g_lab_active = 0;
-        g_edit_active = 0;
+        g_edit_active = 0; es_stop();
         switch (action) {
             case LOBBY_LAB:
                 if (!lobby_start_lab_mode()) app_state = STATE_LOBBY;
@@ -9655,14 +9788,18 @@ static void draw_tdmb_match_over_overlay(void) {
 // draw_editmap_hud -- EDIT MAP key legend + last action, top centre.
 static void draw_editmap_hud(void) {
     if (!g_edit_active) return;
+    es_frame();
     char line[160];
-    snprintf(line, sizeof line, "EDIT %s  %d EDITS   B BOX  X DEL  M SPAWN  F5 SAVE", g_edit_name, g_edit_log.n);
+    snprintf(line, sizeof line, "EDIT %s  %d EDITS   B BOX  X DEL  M SPAWN  F5 SAVE  J LIVE  Y MODE  T SPAWN", g_edit_name, g_edit_log.n);
+    char l2[96] = "";
+    if (g_es_on) snprintf(l2, sizeof l2, "LIVE %.8s...  SPAWN ON %s", g_es_id, g_es_crosshair ? "CROSSHAIR" : "SPAWNER");
     glDisable(GL_DEPTH_TEST);
     glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
     glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
     glColor3f(0.0f, 0.0f, 0.0f); draw_string(line, 42.0f, 688.0f, 3);
     glColor3f(0.95f, 0.9f, 0.7f); draw_string(line, 40.0f, 690.0f, 3);
     if (g_edit_msg[0]) { glColor3f(0.6f, 1.0f, 0.6f); draw_string(g_edit_msg, 40.0f, 660.0f, 3); }
+    if (l2[0]) { glColor3f(0.5f, 0.8f, 1.0f); draw_string(l2, 40.0f, 632.0f, 3); }
     glMatrixMode(GL_MODELVIEW); glPopMatrix();
     glMatrixMode(GL_PROJECTION); glPopMatrix();
     glMatrixMode(GL_MODELVIEW);
@@ -11818,6 +11955,7 @@ int main(int argc, char* argv[]) {
     int cli_start_zombies = 0;
     int cli_start_lab = 0;
     int cli_start_editmap = 0;
+    char cli_edit_session[40] = "";
     int cli_start_survival = 0;
     int cli_start_city = 0;
     int cli_third_person = 0;
@@ -11831,6 +11969,10 @@ int main(int argc, char* argv[]) {
         } else if(strcmp(argv[i], "--edit-map") == 0) {
             cli_start_editmap = 1; /* straight into EDIT MAP; optional next arg = registry name or .json path */
             if (i+1<argc && argv[i+1][0] != '-') snprintf(g_edit_pick, sizeof g_edit_pick, "%s", argv[++i]);
+        } else if(strcmp(argv[i], "--edit-session") == 0 && i+1<argc) {
+            snprintf(cli_edit_session, sizeof cli_edit_session, "%s", argv[++i]); cli_start_editmap = 1;
+        } else if(strcmp(argv[i], "--edit-live") == 0) {
+            snprintf(cli_edit_session, sizeof cli_edit_session, "new"); cli_start_editmap = 1;
         } else if(strcmp(argv[i], "--lab") == 0) {
             cli_start_lab = 1; /* straight into the BIG_O LAB level */
         } else if(strcmp(argv[i], "--zombies") == 0) {
@@ -11990,7 +12132,7 @@ int main(int argc, char* argv[]) {
     double previous = get_time();
     double accumulator = 0.0;
     if (cli_start_zombies) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_ZOMBIES); lobby_modes_bypass = 0; }
-    if (cli_start_editmap) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_EDITMAP); lobby_modes_bypass = 0; }
+    if (cli_start_editmap) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_EDITMAP); lobby_modes_bypass = 0; if (cli_edit_session[0]) es_start(strcmp(cli_edit_session, "new") ? cli_edit_session : NULL); }
     if (cli_start_lab) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_LAB); lobby_modes_bypass = 0; }
     if (cli_start_survival) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_SURVIVAL); lobby_modes_bypass = 0; }
     if (cli_start_city) { lobby_start_city(); if (cli_third_person) local_state.players[0].third_person = 1; }
@@ -12345,7 +12487,7 @@ int main(int argc, char* argv[]) {
                         continue;
                       }
                     }
-                    if (g_edit_active && app_state == STATE_GAME_LOCAL && !g_paused) edit_key(e.key.keysym.sym);
+                    if (g_edit_active && app_state == STATE_GAME_LOCAL && !g_paused) { edit_key(e.key.keysym.sym); edit_key_sync(e.key.keysym.sym); }
                     if (g_lab_active && app_state == STATE_GAME_LOCAL && !g_story_phone.open && !g_orb_open && e.key.keysym.sym == SDLK_e) {
                         lab_interact(SDL_GetTicks());   /* SECTION 592: LAB stations; E is also the normal use key, harmless */
                     }
