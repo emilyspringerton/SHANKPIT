@@ -1016,3 +1016,13 @@ Python (PyTorch/TF) ←→ C Extension ←→ Headless Sim
 - No dynamic memory allocation in hot paths
 - Inline hit detection in combat loop
 - Minimal function call overhead
+
+## Destructible loot chests (survival, card #528, 2026-10-02)
+
+Survival mode now scatters chests across the city road ring. Shoot, stab or blast one and it wears down (darkening toward red);
+when it breaks it drops a weapon pickup where it stood. Three tiers -- wooden, reinforced, rare (gold, with a light beam). HP,
+tier rarity, the per-tier drop table and per-weapon damage scaling are a PARENA mod (`PARENA/stdlib/shankpit/chest_rules.prn`,
+generated into `packages/simulation/chest_rules.c`; `make regen-chest-rules` / `check-chest-rules`). Pool + geometry:
+`packages/simulation/chests.c`. Tests: `make test-chests` (headless, hand-derived) and `make test-chest-rules` in PARENA.
+**Honest limits:** headless-tested only, never seen in a live match; client-local (not server-authoritative) like gun pickups;
+NOCK placement of chests, WOTAN rare-drop integration and EDUSCRIPT scripting are NOT built yet.

@@ -3983,6 +3983,10 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
                 return;
             }
             if (w == WPN_KNIFE) {
+                if (g_phys_map_hitscan_hook) { /* melee still reaches world props (loot chests); brick_world ignores WPN_KNIFE */
+                    float kr = -p->yaw * 0.0174533f, kp = p->pitch * 0.0174533f;
+                    g_phys_map_hitscan_hook(p->scene_id, p->x, p->y + EYE_HEIGHT, p->z, sinf(kr) * cosf(kp), sinf(kp), -cosf(kr) * cosf(kp), w);
+                }
                 phys_try_melee_strike(p, targets, WPN_STATS[w].dmg, 10, 1, now_ms, respawn_delay_ms);
                 return;
             }

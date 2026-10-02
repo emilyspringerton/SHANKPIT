@@ -70,6 +70,7 @@
 #include "../../../packages/simulation/food_pickup.h"
 #include "../../../packages/simulation/lab_station_host.h"
 #include "../../../packages/simulation/gun_items.h"
+#include "../../../packages/simulation/chests.h"
 #include "../../../packages/simulation/shield_packs.h"
 #include "../../../packages/audio/audio.h"
 #include "../../../packages/render/gl_shader.h"
@@ -3016,6 +3017,44 @@ static int lobby_start_lab_mode(void) {
     return 1;
 }
 
+/* card #528 loot chests: shots, slashes and blasts wear chests down (chests.c; HP/drops come from the PARENA chest_rules mod).
+ * Chained in front of whatever map-damage hooks are installed (brick_world), so both see every shot. */
+static PhysMapHitscanHook g_chest_prev_hitscan = NULL;
+static PhysMapBlastHook g_chest_prev_blast = NULL;
+static void chest_on_hitscan(int scene_id, float ox, float oy, float oz, float dx, float dy, float dz, int weapon) {
+    if (g_chest_prev_hitscan) g_chest_prev_hitscan(scene_id, ox, oy, oz, dx, dy, dz, weapon);
+    if (chests_active_count() == 0 || weapon < 0 || weapon >= MAX_WEAPONS || weapon == WPN_MISSILE) return;
+    float range = (weapon == WPN_KNIFE) ? 3.5f : (weapon == WPN_KATANA ? 4.0f : 400.0f);
+    int cnt = WPN_STATS[weapon].cnt < 1 ? 1 : WPN_STATS[weapon].cnt;
+    for (int i = 0; i < cnt; i++) {
+        float px = dx, py = dy, pz = dz, spr = WPN_STATS[weapon].spr;
+        if (spr > 0.0f) {
+            px += ((float)(rand() % 2001) / 1000.0f - 1.0f) * spr;
+            py += ((float)(rand() % 2001) / 1000.0f - 1.0f) * spr;
+            pz += ((float)(rand() % 2001) / 1000.0f - 1.0f) * spr;
+            float len = sqrtf(px * px + py * py + pz * pz);
+            if (len > 1e-6f) { px /= len; py /= len; pz /= len; }
+        }
+        float hr = range, hx, hy, hz, nx, ny, nz;  /* a wall in the way shortens the ray, so chests behind walls are safe */
+        if (trace_map(ox, oy, oz, ox + px * range, oy + py * range, oz + pz * range, &hx, &hy, &hz, &nx, &ny, &nz))
+            hr = sqrtf((hx - ox) * (hx - ox) + (hy - oy) * (hy - oy) + (hz - oz) * (hz - oz));
+        int broke = 0;
+        int slot = chests_hit_ray(ox, oy, oz, px, py, pz, hr, weapon, WPN_STATS[weapon].dmg / cnt, rand() % 100, &broke);
+        if (slot >= 0) SDL_Log("CHEST: slot %d hit by weapon %d%s", slot, weapon, broke ? " -- broke, weapon dropped" : "");
+    }
+}
+static void chest_on_blast(int scene_id, float x, float y, float z, float radius, int damage, int weapon) {
+    if (g_chest_prev_blast) g_chest_prev_blast(scene_id, x, y, z, radius, damage, weapon);
+    if (chests_active_count() == 0) return;
+    int n = chests_hit_blast(x, y, z, radius, weapon, damage, rand() % 100);
+    if (n > 0) SDL_Log("CHEST: blast broke %d chest(s)", n);
+}
+static void chest_install_hooks(void) {
+    if (g_phys_map_hitscan_hook == chest_on_hitscan) return;
+    g_chest_prev_hitscan = g_phys_map_hitscan_hook; g_chest_prev_blast = g_phys_map_blast_hook;
+    g_phys_map_hitscan_hook = chest_on_hitscan; g_phys_map_blast_hook = chest_on_blast;
+}
+
 // lobby_start_survival_mode -- cards #482/#488: SURVIVAL, wave defence on the built-in SCENE_CITY
 // (founder: "survival map should use shankpit CITY map"). Local and offline like ZOMBIES; the
 // waves are witness_ai_survival_tick's job (packages/simulation/witness_ai.c).
@@ -3035,7 +3074,11 @@ static int lobby_start_survival_mode(void) {
     /* the city is flat at y = 0 (the hero spawns dropping in from y ~ 6 and settles there) */
     /* card #526: spread well out into the city, on the road centrelines (pitch = block + road), not bunched at the spawn */
     int guns = gun_items_seed_roads(hero->x, 0.0f, hero->z, 12, 140.0f, 120.0f, CITY_BLOCK_SIZE + CITY_ROAD_SIZE);
-    SDL_Log("SURVIVAL: wave defence on SCENE_CITY, %d guns on the ground", guns);
+    /* card #528: destructible loot chests on the same road ring, offset so they sit between the guns */
+    chests_reset();
+    chest_install_hooks();
+    int chests = chests_seed_roads(hero->x, 0.0f, hero->z, 10, 140.0f, 120.0f, CITY_BLOCK_SIZE + CITY_ROAD_SIZE);
+    SDL_Log("SURVIVAL: wave defence on SCENE_CITY, %d guns + %d chests on the ground", guns, chests);
     return 1;
 }
 
@@ -10185,6 +10228,36 @@ void draw_projectiles() {
     glEnd();
 }
 
+/* draw_chests -- card #528: loot chests in survival. Body + darker lid band per tier (wooden brown, reinforced steel, rare
+ * gold with a light beam so it can be spotted across the city); a chest darkens toward red as it takes damage. */
+static void draw_chests(void) {
+    static const float body[3][3] = { {0.55f,0.36f,0.18f}, {0.50f,0.55f,0.62f}, {0.95f,0.78f,0.20f} };
+    glDisable(GL_TEXTURE_2D);
+    for (int i = 0; i < CHEST_MAX; i++) {
+        const Chest *c = chests_get(i);
+        if (!c || !c->active) continue;
+        int t = (c->tier >= 0 && c->tier <= 2) ? c->tier : 0;
+        float hurt = 1.0f - (float)c->hp / (float)(c->max_hp > 0 ? c->max_hp : 1);   /* 0 fresh .. 1 nearly broken */
+        glColor3f(body[t][0] * (1.0f - 0.5f * hurt) + 0.4f * hurt, body[t][1] * (1.0f - 0.7f * hurt), body[t][2] * (1.0f - 0.7f * hurt));
+        glPushMatrix();
+        glTranslatef(c->x, c->y + CHEST_HALF_Y * 0.55f, c->z);
+        draw_box(CHEST_HALF_X * 2.0f, CHEST_HALF_Y * 1.1f, CHEST_HALF_Z * 2.0f);
+        glPopMatrix();
+        glColor3f(body[t][0] * 0.55f, body[t][1] * 0.55f, body[t][2] * 0.55f);
+        glPushMatrix();
+        glTranslatef(c->x, c->y + CHEST_HALF_Y * 1.55f, c->z);
+        draw_box(CHEST_HALF_X * 2.05f, CHEST_HALF_Y * 0.9f, CHEST_HALF_Z * 2.05f);
+        glPopMatrix();
+        if (t == 2) {
+            glColor3f(1.0f, 0.85f, 0.3f);
+            glPushMatrix();
+            glTranslatef(c->x, c->y + 7.0f, c->z);
+            draw_box(0.08f, 14.0f, 0.08f);
+            glPopMatrix();
+        }
+    }
+}
+
 /* draw_gun_items -- card #487: guns lying on the ground in survival, a spinning bobbing box in a colour per weapon
  * plus a thin light beam so they can be spotted across the city. */
 static void draw_gun_items(unsigned int now_ms) {
@@ -11008,7 +11081,7 @@ void draw_scene(PlayerState *render_p) {
         }
     }
     draw_projectiles();
-    if (local_state.game_mode == MODE_SURVIVAL) draw_gun_items(SDL_GetTicks());
+    if (local_state.game_mode == MODE_SURVIVAL) { draw_gun_items(SDL_GetTicks()); draw_chests(); }
     draw_orb_world(SDL_GetTicks());
     draw_lab_world(SDL_GetTicks());
     if ((render_p->in_vehicle && render_p->vehicle_type != VEH_BUGGY) || render_p->third_person || g_cam_override.active) draw_player_3rd(render_p);
