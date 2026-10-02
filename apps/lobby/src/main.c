@@ -10016,6 +10016,20 @@ static void stream_set(int on) {
         return;
     }
     const char *sink = getenv("SHANKPIT_STREAM_SINK_CMD");
+    {   /* card #535: prefer the ffmpeg shipped next to the game (Windows release zip), else PATH */
+        char *base = SDL_GetBasePath();
+        char fp[512] = "";
+        if (base) {
+#ifdef _WIN32
+            snprintf(fp, sizeof(fp), "%sffmpeg.exe", base);
+#else
+            snprintf(fp, sizeof(fp), "%sffmpeg", base);
+#endif
+            SDL_free(base);
+        }
+        FILE *ff = fp[0] ? fopen(fp, "rb") : NULL;
+        if (ff) { fclose(ff); stream_out_set_ffmpeg(fp); } else stream_out_set_ffmpeg("");
+    }
     char target[256] = "shankpit_stream_out.mp4";
     const char *env_url = getenv("SHANKPIT_STREAM_URL");
     if (env_url && env_url[0]) snprintf(target, sizeof(target), "%s", env_url);
@@ -10023,7 +10037,7 @@ static void stream_set(int on) {
         FILE *f = fopen("shankpit_stream.cfg", "r");
         if (f) { char line[256]; if (fgets(line, sizeof(line), f)) { line[strcspn(line, "\r\n")] = '\0'; if (line[0]) snprintf(target, sizeof(target), "%s", line); } fclose(f); }
     }
-    if (!(sink && sink[0]) && !stream_out_ffmpeg_available()) { snprintf(g_stream_msg, sizeof(g_stream_msg), "STREAM NEEDS FFMPEG (NOT FOUND)"); SDL_Log("stream: ffmpeg not found"); return; }
+    if (!(sink && sink[0]) && !stream_out_ffmpeg_available()) { snprintf(g_stream_msg, sizeof(g_stream_msg), "STREAM NEEDS FFMPEG: PUT ffmpeg NEXT TO THE GAME OR ON PATH"); SDL_Log("stream: ffmpeg not found"); return; }
     int w = g_vp_w & ~1, h = g_vp_h & ~1;
     if (!stream_out_open(&g_stream, w, h, 30, target, sink)) {
         snprintf(g_stream_msg, sizeof(g_stream_msg), "STREAM REFUSED: BAD TARGET OR SIZE");

@@ -339,7 +339,9 @@ bad files are rejected -- the scene collection of a native stream. `make test-ca
 tiles) out as raw video into an encoder: `rtmp://...` goes out as FLV (set `SHANKPIT_STREAM_URL` or put it on the first
 line of `shankpit_stream.cfg`), anything else is a file (default `shankpit_stream_out.mp4`). Targets are whitelisted before
 they ever touch a shell. **The encoder is ffmpeg -- a labeled STOPGAP** (replacement PARENA H.264 encoder + RTMP muxer are
-logged in `EMILY/BACKLOG.md`); `SHANKPIT_STREAM_SINK_CMD` swaps in any program that reads raw rgb24 on stdin.
+logged in `EMILY/BACKLOG.md`). **The Windows release zip bundles `ffmpeg.exe`** (BtbN win64 GPL build, license in
+`FFMPEG_LICENSE.txt`) next to the game, which is used before anything on `PATH` -- written into `release.yml`, **not yet
+run in CI**; Linux builds still need ffmpeg installed. `SHANKPIT_STREAM_SINK_CMD` swaps in any program that reads raw rgb24 on stdin.
 `make test-stream-out` runs headless with no ffmpeg.
 
 Verified live: headless Xvfb screenshots of the real lobby (`--city`) in broadcast mode -- follow cam, orbit cam, three

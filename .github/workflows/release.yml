@@ -466,6 +466,17 @@ jobs:
           # for each app at "<the running exe's own dir>/bundled/<name>.exe" first; this is the
           # first release that actually populates it, so the lobby's APPS page buttons work.
           cp -r bundled ShankPit_Client/
+          # Native streaming (cards #458/#535): the STREAM encoder is ffmpeg (a documented stopgap, see
+          # packages/render/stream_out.h). Players should not have to install it, so ship ffmpeg.exe next to the
+          # game -- stream_set() looks for "<exe dir>/ffmpeg.exe" before falling back to PATH. BtbN's win64 GPL
+          # build (has libx264, which the encoder command needs). GPL: its license text rides along and the source is
+          # at https://github.com/BtbN/FFmpeg-Builds / https://ffmpeg.org. "latest" is not byte-reproducible, unlike
+          # the CONSTRUCT; a failed download fails the release rather than silently shipping a client with no encoder.
+          curl -fsSL --retry 3 -o ffmpeg_win.zip https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip
+          unzip -q -j ffmpeg_win.zip '*/bin/ffmpeg.exe' '*/LICENSE.txt' -d ffmpeg_extract
+          cp ffmpeg_extract/ffmpeg.exe ShankPit_Client/
+          cp ffmpeg_extract/LICENSE.txt ShankPit_Client/FFMPEG_LICENSE.txt
+          rm -rf ffmpeg_win.zip ffmpeg_extract
           printf '%s\n' "start ShankPit.exe" > ShankPit_Client/PLAY.bat
           zip -r "ShankPit_Client_${BUILD}.zip" ShankPit_Client
 

@@ -35,6 +35,13 @@ int main(void) {
     assert(!stream_out_build_cmd(cmd, sizeof(cmd), 640, 360, 0, "a.mp4"));
     assert(!stream_out_build_cmd(cmd, 20, 640, 360, 25, "a.mp4"));  /* does not fit: refused, never truncated */
 
+    /* ---- bundled ffmpeg path (#535) ---- */
+    assert(stream_out_build_cmd(cmd, sizeof(cmd), 640, 360, 25, "a.mp4") && strncmp(cmd, "\"ffmpeg\" ", 9) == 0);
+    assert(stream_out_set_ffmpeg("C:\\Games\\ShankPit Client\\ffmpeg.exe"));
+    assert(stream_out_build_cmd(cmd, sizeof(cmd), 640, 360, 25, "a.mp4") && strncmp(cmd, "\"C:\\Games\\ShankPit Client\\ffmpeg.exe\" ", 38) == 0);
+    assert(stream_out_ffmpeg_available());
+    assert(!stream_out_set_ffmpeg("x\";calc;\"") && !g_stream_ffmpeg[0]);   /* shell metacharacters: refused, falls back to PATH */
+
     /* ---- capture -> pipe: frames arrive intact and top-down ---- */
     const int W = 32, H = 16;
     const char *out = "/tmp/shankpit_stream_out_test.raw";

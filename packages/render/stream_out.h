@@ -47,6 +47,24 @@ static inline int stream_out_target_ok(const char *t) {
     return 1;
 }
 
+/* A bundled ffmpeg (the Windows release zip ships ffmpeg.exe next to the game, card #535). The game calls
+ * stream_out_set_ffmpeg() with its path if the file exists; otherwise "ffmpeg" is looked up on PATH. The path ends up in
+ * a shell command, so it gets the same hard whitelist as the target (plus \\ and space) and is quoted. */
+static char g_stream_ffmpeg[512] = "";
+static inline int stream_out_set_ffmpeg(const char *path) {
+    g_stream_ffmpeg[0] = '\0';
+    if (!path || !path[0] || strlen(path) >= sizeof(g_stream_ffmpeg)) return 0;
+    for (const char *c = path; *c; c++) {
+        char ch = *c;
+        int ok = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+                 ch == ':' || ch == '/' || ch == '\\' || ch == '.' || ch == '_' || ch == '-' || ch == ' ' || ch == '+' || ch == '~';
+        if (!ok) return 0;
+    }
+    snprintf(g_stream_ffmpeg, sizeof(g_stream_ffmpeg), "%s", path);
+    return 1;
+}
+static inline const char *stream_out_ffmpeg_cmd(void) { return g_stream_ffmpeg[0] ? g_stream_ffmpeg : "ffmpeg"; }
+
 static inline int stream_out_is_rtmp(const char *t) { return strncmp(t, "rtmp://", 7) == 0 || strncmp(t, "rtmps://", 8) == 0; }
 
 /* stream_out_build_cmd -- the encoder command line for a target (ffmpeg). Returns 0 and leaves cmd empty if the
@@ -60,9 +78,9 @@ static inline int stream_out_build_cmd(char *cmd, size_t cap, int w, int h, int 
     else if (n > 4 && strcmp(target + n - 4, ".mkv") == 0) container = "matroska";
     else if (n > 4 && strcmp(target + n - 4, ".flv") == 0) container = "flv";
     int len = snprintf(cmd, cap,
-        "ffmpeg -loglevel error -y -f rawvideo -pix_fmt rgb24 -s %dx%d -r %d -i - "
+        "\"%s\" -loglevel error -y -f rawvideo -pix_fmt rgb24 -s %dx%d -r %d -i - "
         "-c:v libx264 -preset veryfast -tune zerolatency -pix_fmt yuv420p -g %d -b:v 4500k -an %s -f %s \"%s\"",
-        w, h, fps, fps * 2, strcmp(container, "mp4") == 0 && !stream_out_is_rtmp(target) ? "-movflags +faststart" : "", container, target);
+        stream_out_ffmpeg_cmd(), w, h, fps, fps * 2, strcmp(container, "mp4") == 0 && !stream_out_is_rtmp(target) ? "-movflags +faststart" : "", container, target);
     if (len < 0 || (size_t)len >= cap) { cmd[0] = '\0'; return 0; }
     return 1;
 }
@@ -80,7 +98,11 @@ static inline int stream_out_open(StreamOut *so, int w, int h, int fps, const ch
     so->flip = (unsigned char *)malloc((size_t)w * (size_t)h * 3u);
     if (!so->flip) return 0;
 #ifdef _WIN32
-    so->pipe = _popen(cmd, "wb");
+    {   /* cmd /c strips the outer quotes of a command that starts with a quote -- wrap it once more so a quoted ffmpeg path survives */
+        char wrapped[1100];
+        snprintf(wrapped, sizeof(wrapped), "\"%s\"", cmd);
+        so->pipe = _popen(wrapped, "wb");
+    }
 #else
     so->pipe = popen(cmd, "w");
 #endif
@@ -124,6 +146,7 @@ static inline int stream_out_close(StreamOut *so) {
 /* stream_out_ffmpeg_available -- is there an ffmpeg to encode with? (Checked when the user turns streaming on, so a
  * missing encoder is a clear message instead of a silently empty stream.) */
 static inline int stream_out_ffmpeg_available(void) {
+    if (g_stream_ffmpeg[0]) return 1;   /* the bundled copy, already checked to exist by the caller */
 #ifdef _WIN32
     FILE *p = _popen("ffmpeg -version >NUL 2>&1 && echo ok", "r");
 #else
