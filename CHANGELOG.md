@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-02
+- F1 uploads a timestamped level snapshot (ISO second name, debounced) with persisted brick damage; exit autosaves to NOCK cloud; loader+brick_world restore damage (IDUNA f38e8ee, SHANKPIT a8a63a5) (sess-20260923-1030-4a526255)
 - feat(lobby): TYLER tile now starts local offline MODE_TYLER — loads assets/tyler_levels/*.json, runs the cold-open coordinator in-process (REFLUX beats -> HUD subtitles), wisp->Duck phase switch at CONSTRUCT; hides first-person gun for spectator/third_person, draws own body when third_person (sess-20260923-1030-4a526255)
 
 - feat(lobby): TYLER tile replaces CTFB on the main menu (networked MODE_TYLER connect; MODE_CTFB itself untouched) (sess-20260923-1030-4a526255)
