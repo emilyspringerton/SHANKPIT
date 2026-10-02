@@ -290,6 +290,13 @@ Two world-reacts-to-your-weapon systems, both in the lobby/server build and both
 - **Per-gun bullet holes.** Every hitscan shot leaves a Half-Life-style decal on the wall, a different hole per
   gun (magnum / AR / shotgun / sniper). The textures are PARENA programs rendered by NOCK and served from
   IDUNA's `nock_textures` (live fetch, checked-in fallback). `make test-bullet-hole`.
+- **Built-in cityscape (restored 2026-10-02).** The procedural `SCENE_CITY` removed by the 2026-02-14 "Update ..."
+  commits is back as geometry + a level entry: a 25x25 district grid of towers with alleys/ramps/ruins, an elevated
+  highway ring with ramps, curbside hydrants (~1,070 collision/render boxes), soft world edge + kill plane. Pick
+  **CITY (BUILT-IN)** (row 0 of the LEVELS menu) or run `shank_lobby --city`. `make test-city` (geometry, spawns, bounds)
+  and a real Xvfb screenshot verify it. Honest limits: single-player local deathmatch only -- not in the server
+  rotation, no portal from the garage, and the old city alive-sim (huntsman, field agents, dragon heat events) is NOT
+  restored (separate card); the ground slab is unlit-dark at night.
 - **Destructible brick.** On any level (NOCK/registry level, any mode), a box whose material is `brick`, `concrete`, `wood` or `glass`
   can be shot, blasted and breached (per-kind HP/resistance from PARENA: concrete 120 HP, wood 60, glass 10 and shatters
   on any hit; **glass** also has its own transparent `glass` shader whose cyan RGBA tint is a PARENA function,

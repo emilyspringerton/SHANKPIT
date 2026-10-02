@@ -124,6 +124,7 @@ static const char *scene_name_debug(int scene_id) {
         case SCENE_VOXWORLD: return "VOXWORLD";
         case SCENE_POO_POO_ISLAND: return "POO_POO_ISLAND";
         case SCENE_STORY_CAVE: return "STORY_CAVE";
+        case SCENE_CITY: return "CITY";
         default: return "UNKNOWN";
     }
 }

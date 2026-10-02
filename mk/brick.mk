@@ -23,3 +23,11 @@ test-brick: test-brick-fracture test-brick-world
 # Needs python3 + numpy (scripts/rl_env_packet.py's imports).
 brick-e2e: server
 	python3 scripts/brick_e2e.py
+
+# Restored SCENE_CITY procedural geometry (packages/common/physics.h init_city_geo).
+.PHONY: test-city
+test-city:
+	gcc -std=gnu99 -Wall -g -fsanitize=address,undefined $(INCLUDES) \
+		packages/common/city_geo_test.c packages/world/terrain.c \
+		-o /tmp/shankpit_city_geo_test -lm
+	/tmp/shankpit_city_geo_test

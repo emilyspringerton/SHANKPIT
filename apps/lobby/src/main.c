@@ -2269,9 +2269,17 @@ static void lobby_init_labels() {
 // (blocking, via curl -- the same real, accepted cost every other registry-browsing precedent in
 // this monorepo already pays on open, e.g. BRAWLPIT's own AI-opponent browser). A real network
 // failure degrades to an honest "no levels found" panel (level_select_error), never a crash.
+#define LEVEL_SELECT_BUILTIN_CITY_ID (-1001) /* sentinel registry id: the built-in procedural SCENE_CITY */
 static void level_select_menu_open(void) {
-    level_select_count = level_boxes_fetch_registry_list(level_select_entries, LEVEL_SELECT_MAX_ENTRIES);
-    level_select_error = (level_select_count == 0);
+    /* Row 0 is always the built-in cityscape (card T62892945) -- present even when the registry
+       fetch fails, so the list is never empty. The fetch fills rows 1.. . */
+    memset(&level_select_entries[0], 0, sizeof(level_select_entries[0]));
+    level_select_entries[0].id = LEVEL_SELECT_BUILTIN_CITY_ID;
+    snprintf(level_select_entries[0].name, sizeof(level_select_entries[0].name), "CITY (BUILT-IN)");
+    int fetched = level_boxes_fetch_registry_list(level_select_entries + 1, LEVEL_SELECT_MAX_ENTRIES - 1);
+    if (fetched < 0) fetched = 0;
+    level_select_count = fetched + 1;
+    level_select_error = (fetched == 0);
     level_select_selection = 0;
     level_select_scroll = 0;
     level_select_open = 1;
@@ -2757,6 +2765,24 @@ static int lobby_start_zombies_mode(void) {
     return 1;
 }
 
+/* lobby_start_city -- local deathmatch on the built-in procedural SCENE_CITY (card T62892945).
+ * Used by the LEVELS menu's row 0 and the --city CLI flag. */
+static void lobby_start_city(void) {
+    level_select_open = 0;
+    app_state = STATE_GAME_LOCAL;
+    local_init_match(1, MODE_DEATHMATCH);
+    scene_load(SCENE_CITY);
+    local_state.players[0].scene_id = SCENE_CITY;   /* same double-set as the custom-level path */
+    scene_force_spawn(&local_state.players[0]);
+    death_cam_blend = 0.0f;
+    SDL_SetRelativeMouseMode(SDL_TRUE);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    gluPerspective(75.0, (float)VIRTUAL_W/(float)VIRTUAL_H, 0.1, Z_FAR);
+    glMatrixMode(GL_MODELVIEW);
+    glEnable(GL_DEPTH_TEST);
+}
+
 // level_select_confirm -- fetches the chosen level's real export, loads it into physics.h's own
 // custom-level buffers, and starts a real local match on it. Mirrors lobby_start_action's own
 // "enter game" tail exactly (death_cam_blend/mouse mode/projection matrix) since this is a real,
@@ -2764,6 +2790,8 @@ static int lobby_start_zombies_mode(void) {
 static void level_select_confirm(void) {
     if (level_select_selection < 0 || level_select_selection >= level_select_count) return;
     int id = level_select_entries[level_select_selection].id;
+
+    if (id == LEVEL_SELECT_BUILTIN_CITY_ID) { lobby_start_city(); return; }
 
     CustomLevelData lvl;
     if (!level_boxes_fetch_export(id, &lvl)) {
@@ -3274,6 +3302,8 @@ static void lobby_apply_scene_id(const char *scene_id) {
         scene_load(SCENE_OIL_TANKER);
     } else if (strcmp(scene_id, "POO_POO_ISLAND") == 0) {
         scene_load(SCENE_POO_POO_ISLAND);
+    } else if (strcmp(scene_id, "CITY") == 0) {
+        scene_load(SCENE_CITY);
     } else if (strcmp(scene_id, "STORY_CAVE") == 0) {
         scene_load(SCENE_VOXWORLD);
     }
@@ -8233,6 +8263,7 @@ static const char *scene_name_ui(int scene_id) {
         case SCENE_OIL_TANKER: return "OIL_TANKER";
         case SCENE_POO_POO_ISLAND: return "POO_POO_ISLAND";
         case SCENE_STORY_CAVE: return "STORY_CAVE";
+        case SCENE_CITY: return "CITY";
         default: return "UNKNOWN";
     }
 }
@@ -10635,8 +10666,11 @@ static void buggy_advance_remote_positions(unsigned int now_ms) {
 
 int main(int argc, char* argv[]) {
     int cli_start_zombies = 0;
+    int cli_start_city = 0;
     for(int i=1; i<argc; i++) {
-        if(strcmp(argv[i], "--zombies") == 0) {
+        if(strcmp(argv[i], "--city") == 0) {
+            cli_start_city = 1; /* straight into the built-in cityscape */
+        } else if(strcmp(argv[i], "--zombies") == 0) {
             cli_start_zombies = 1; /* straight into the ZOMBIES sandbox (menu tile equivalent) */
         } else if(strcmp(argv[i], "--host") == 0 && i+1<argc) {
             strncpy(SERVER_HOST, argv[++i], 63);
@@ -10790,6 +10824,7 @@ int main(int argc, char* argv[]) {
     double previous = get_time();
     double accumulator = 0.0;
     if (cli_start_zombies) lobby_start_action(LOBBY_ZOMBIES);
+    if (cli_start_city) lobby_start_city();
     int prev_app_state = STATE_LOBBY;
     float input_fwd = 0.0f, input_str = 0.0f;
     int input_jump = 0, input_crouch = 0, input_shoot = 0, input_reload = 0, input_use = 0, input_ability = 0, input_bike = 0;
