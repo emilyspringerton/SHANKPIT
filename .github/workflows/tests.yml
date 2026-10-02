@@ -96,6 +96,21 @@ jobs:
           python3 -m pip install --quiet numpy
           make brick-e2e
 
+      # 2026-10-02 sprint, all headless (plain gcc, ASan/UBSan, no SDL/GL/ffmpeg): the buggy collides with
+      # walls, rides on box tops, spawns on author tiles and takes its handling from a PARENA mod; the hammer
+      # (physics + held-model normaliser); the broadcast camera rig/director/serialization; the stream-out
+      # pipe. (test-litbox-render and test-ambient-boost link libGL and run locally, not in this
+      # pre-dependency step.)
+      - name: Buggy, hammer, camera rig, stream out, ambient (headless)
+        shell: bash
+        run: |
+          set -euo pipefail
+          make test-buggy-wall
+          make test-hammer
+          make test-held-model
+          make test-camera-rig
+          make test-stream-out
+
       # MODE_TYLER (TYLER VALHANNA cold open) voice + the P0 fixes it needed. Headless, plain gcc,
       # ASan+UBSan, no SDL, no audio device: the scripted actors really walk (story_ai gate +
       # yaw-convention fix), the lines table / voice driver / mixer / wire packet. Sources come from
