@@ -256,7 +256,7 @@ static void gband_draw_skinned(const float *verts6, int vert_count, const Mat4 *
  * gband_skel_npc_draw's own function-pointer contract, so there's no per-call color param to
  * thread through -- this module-level flag is the real, minimal way to swap tint for one draw
  * call, same "static drives the next callback" convention g_gband_frame_dt_ms already uses. */
-static int g_skel_npc_evil_tint = 0; /* 0 base, 1 evil-red, 2 zombie, 3 the men, 4 bird, 5..8 citizen variants */
+static int g_skel_npc_evil_tint = 0; /* 0 base, 1 evil-red, 2 zombie, 3 the men, 4 bird, 5..8 citizen variants, 9 queue-yellow */
 
 static void skel_npc_draw_skinned(const float *verts6, int vert_count, const Mat4 *mvp, const Mat4 *model) {
     (void)model; /* world transform pre-baked into verts6, same contract as gband_draw_skinned */
@@ -264,15 +264,16 @@ static void skel_npc_draw_skinned(const float *verts6, int vert_count, const Mat
     static const float evil_color[4] = {0.30f, 0.05f, 0.05f, 1.0f}; /* dark venous red -- "evil" reuse of the same kit */
     gl_use_program(g_gband_program); /* same shader as Tyler -- pos+normal in, flat-lit color out */
     gl_uniform_matrix4fv(gl_get_uniform_location(g_gband_program, "u_mvp"), mvp->m);
-    static const float role_color[9][4] = {
+    static const float role_color[10][4] = {
         {0.55f, 0.50f, 0.46f, 1.0f}, {0.30f, 0.05f, 0.05f, 1.0f},
         {0.38f, 0.52f, 0.30f, 1.0f},                              /* zombie: sickly green */
         {0.07f, 0.07f, 0.09f, 1.0f},                              /* the men: black suits */
         {0.05f, 0.05f, 0.07f, 1.0f},                              /* bird: crow */
         {0.62f, 0.38f, 0.30f, 1.0f}, {0.30f, 0.42f, 0.62f, 1.0f}, /* citizens: varied clothes */
-        {0.60f, 0.56f, 0.28f, 1.0f}, {0.45f, 0.30f, 0.52f, 1.0f} };
+        {0.60f, 0.56f, 0.28f, 1.0f}, {0.45f, 0.30f, 0.52f, 1.0f},
+        {0.95f, 0.80f, 0.10f, 1.0f} };                            /* queue players: yellow mannequin (#501) */
     (void)evil_color; (void)base_color;
-    int tint = (g_skel_npc_evil_tint >= 0 && g_skel_npc_evil_tint < 9) ? g_skel_npc_evil_tint : 0;
+    int tint = (g_skel_npc_evil_tint >= 0 && g_skel_npc_evil_tint < 10) ? g_skel_npc_evil_tint : 0;
     gl_uniform4fv(gl_get_uniform_location(g_gband_program, "u_color"), role_color[tint]);
     gl_dynamic_vbo_draw(&g_skel_npc_vbo, verts6, vert_count, GL_TRIANGLES);
     gl_use_program(0);
@@ -7019,7 +7020,8 @@ static void rd_frame(float dt_ms) {
     for (int i = 1; i < MAX_CLIENTS; i++) {
         PlayerState *p = &local_state.players[i];
         int role = p->active ? witness_ai_role_for_player(i) : WITNESS_AI_ROLE_NONE;
-        int ragdoll_role = (role == WITNESS_AI_ROLE_CITIZEN || role == WITNESS_AI_ROLE_THE_MEN || role == WITNESS_AI_ROLE_ZOMBIE);
+        int ragdoll_role = (role == WITNESS_AI_ROLE_CITIZEN || role == WITNESS_AI_ROLE_THE_MEN || role == WITNESS_AI_ROLE_ZOMBIE)
+                        || local_state.game_mode == MODE_QUEUE; /* #501: queue players ragdoll too */
         if (!ragdoll_role || p->state != STATE_DEAD) {
             if (!p->active || p->state != STATE_DEAD) g_rd_slot[i] = -1; /* alive/respawned/despawned: forget the corpse */
             continue;
@@ -7075,7 +7077,7 @@ static int rd_draw_corpse(PlayerState *p) {
     float skin[GSKEL_MAX_JOINTS][16];
     if (!ragdoll_pool_get_skin_matrices(&g_rd_pool, g_rd_slot[p->id], skin)) return 1;
     int role = witness_ai_role_for_player(p->id);
-    g_skel_npc_evil_tint = role == WITNESS_AI_ROLE_ZOMBIE ? 2 : role == WITNESS_AI_ROLE_THE_MEN ? 3 : 5 + (p->id & 3);
+    g_skel_npc_evil_tint = local_state.game_mode == MODE_QUEUE ? 9 : role == WITNESS_AI_ROLE_ZOMBIE ? 2 : role == WITNESS_AI_ROLE_THE_MEN ? 3 : 5 + (p->id & 3);
     gband_skel_npc_draw_skin(role == WITNESS_AI_ROLE_ZOMBIE && g_skel_npc_kit_zombie >= 0 ? g_skel_npc_kit_zombie : g_skel_npc_kit_mannequin,
                              (const float (*)[16])skin, &g_gband_frame_vp, skel_npc_draw_skinned);
     g_skel_npc_evil_tint = 0;
@@ -7117,6 +7119,8 @@ static void draw_player_skin_mannequin(PlayerState *p, float draw_pitch, float d
     } else if (role == WITNESS_AI_ROLE_CITIZEN && kits[0] >= 0) {
         kit_index = kits[0]; /* UAL1 idle/walk; per-citizen tint below gives them variety */
     }
+    int queue_yellow = (local_state.game_mode == MODE_QUEUE && kits[0] >= 0);
+    if (queue_yellow) kit_index = kits[0];
     if (kit_index < 0) {
         for (int i = 0; i < 5; i++) {
             int candidate = kits[(p->id + i) % 5];
@@ -7152,6 +7156,7 @@ static void draw_player_skin_mannequin(PlayerState *p, float draw_pitch, float d
         role == WITNESS_AI_ROLE_THE_MEN ? 3 :
         is_bird ? 4 :
         role == WITNESS_AI_ROLE_CITIZEN ? 5 + (p->id & 3) : 0;
+    if (queue_yellow) g_skel_npc_evil_tint = 9;
     /* The skinned draw bakes the world transform into the vertices (vp only), so GL matrix calls
        around it do nothing -- gband_skel_npc_set_scale is the real scale hook. */
     gband_skel_npc_set_scale(is_giant_bug ? 2.5f : is_bird ? 0.3f : 1.0f);
@@ -7464,6 +7469,9 @@ void draw_player_3rd(PlayerState *p) {
         int forced_skin = -1;
         if (local_state.game_mode == MODE_TDMB || local_state.game_mode == MODE_TDMO || local_state.game_mode == MODE_CTFB) {
             forced_skin = (p->team_id == 1) ? SKIN_NINJA : SKIN_PIRATE;
+        } else if (local_state.game_mode == MODE_QUEUE) {
+            /* #501: every queue player is the yellow mannequin (hard-coded for now; models/rigs swappable later) */
+            forced_skin = SKIN_MANNEQUIN;
         } else if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE || local_state.game_mode == MODE_ZOMBIES || local_state.game_mode == MODE_SURVIVAL) && p->is_bot) {
             /* S466 follow-up, founder real-time: "can we animate and model end to end?" -- real,
                visible proof the general pipeline drives a distinct, AI-controlled character:
