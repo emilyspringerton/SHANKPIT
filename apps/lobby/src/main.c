@@ -1092,6 +1092,8 @@ static Phone g_story_phone = {0};
 /* SECTION 592 (card #508): the LAB level -- INTERRIOR_1 cloned + lab widgets (IDUNA cmd/shankpit-lab-builder). While
    g_lab_active the BIG_O phone works like in ZOMBIES, and lab_<kind> tiles are interactive stations (E). */
 static int g_lab_active = 0;
+static int g_floor_tinted = 0;            /* #533: NOCK per-level floor tint (colour + alpha), set by level load */
+static float g_floor_rgba[4] = {0.5f, 0.5f, 0.5f, 1.0f};
 static LevelLabStation g_lab_st[LEVEL_BOXES_MAX_LAB_STATIONS];
 static int g_lab_st_n = 0;
 static char g_lab_msg[64];
@@ -2657,6 +2659,8 @@ static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
     }
     phys_set_custom_level_materials(mat_names, mat_shaders, mat_specular, mat_shininess, mat_friction, lvl->material_count);
     phys_set_custom_level(x, y, z, w, h, d, r, g, b, material_idx, lvl->count, lvl->ground_plane_enabled, lvl->ground_plane_squares);
+    g_floor_tinted = lvl->floor_tinted;
+    g_floor_rgba[0] = lvl->floor_r; g_floor_rgba[1] = lvl->floor_g; g_floor_rgba[2] = lvl->floor_b; g_floor_rgba[3] = lvl->floor_a;
     {   /* #464: author-placed buggies */
         float bx[LEVEL_BOXES_MAX_BUGGY_SPAWNS], by[LEVEL_BOXES_MAX_BUGGY_SPAWNS], bz[LEVEL_BOXES_MAX_BUGGY_SPAWNS], byaw[LEVEL_BOXES_MAX_BUGGY_SPAWNS];
         for (int bi = 0; bi < lvl->buggy_spawn_count; bi++) {
@@ -4303,6 +4307,15 @@ void draw_grid() {
     if (phys_scene_id == SCENE_CUSTOM_LEVEL) {
         if (!g_custom_level_ground_plane_enabled) return; // no floor at all -- no grid to show either
         float half = (g_custom_level_ground_plane_squares * CUSTOM_LEVEL_GRID_CELL_SIZE) / 2.0f;
+        if (g_floor_tinted) {   /* #533: tinted, optionally translucent floor under the grid lines */
+            glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glDepthMask(GL_FALSE);
+            glColor4f(g_floor_rgba[0], g_floor_rgba[1], g_floor_rgba[2], g_floor_rgba[3]);
+            glBegin(GL_QUADS);
+            glVertex3f(-half, 0.05f, -half); glVertex3f(-half, 0.05f, half); glVertex3f(half, 0.05f, half); glVertex3f(half, 0.05f, -half);
+            glEnd();
+            glDepthMask(GL_TRUE); glDisable(GL_BLEND);
+        }
         glLineWidth(1.0f); glBegin(GL_LINES);
         glColor3f(0.0f, 1.0f, 1.0f);
         for (float i = -half; i <= half; i += CUSTOM_LEVEL_GRID_CELL_SIZE) {
@@ -9790,7 +9803,8 @@ static void draw_editmap_hud(void) {
     if (!g_edit_active) return;
     es_frame();
     char line[160];
-    snprintf(line, sizeof line, "EDIT %s  %d EDITS   B BOX  X DEL  M SPAWN  F5 SAVE  J LIVE  Y MODE  T SPAWN", g_edit_name, g_edit_log.n);
+    snprintf(line, sizeof line, "EDIT %s  %d EDITS   B BOX  X DEL  M SPAWN  F5 SAVE", g_edit_name, g_edit_log.n);
+    char l3[64]; snprintf(l3, sizeof l3, "J LIVE SESSION  Y SPAWN MODE  T SPAWN NOW");
     char l2[96] = "";
     if (g_es_on) snprintf(l2, sizeof l2, "LIVE %.8s...  SPAWN ON %s", g_es_id, g_es_crosshair ? "CROSSHAIR" : "SPAWNER");
     glDisable(GL_DEPTH_TEST);
@@ -9799,6 +9813,7 @@ static void draw_editmap_hud(void) {
     glColor3f(0.0f, 0.0f, 0.0f); draw_string(line, 42.0f, 688.0f, 3);
     glColor3f(0.95f, 0.9f, 0.7f); draw_string(line, 40.0f, 690.0f, 3);
     if (g_edit_msg[0]) { glColor3f(0.6f, 1.0f, 0.6f); draw_string(g_edit_msg, 40.0f, 660.0f, 3); }
+    glColor3f(0.8f, 0.8f, 0.7f); draw_string(l3, 40.0f, 600.0f, 3);
     if (l2[0]) { glColor3f(0.5f, 0.8f, 1.0f); draw_string(l2, 40.0f, 632.0f, 3); }
     glMatrixMode(GL_MODELVIEW); glPopMatrix();
     glMatrixMode(GL_PROJECTION); glPopMatrix();

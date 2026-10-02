@@ -354,6 +354,9 @@ typedef struct {
        physics.h-independent by design (see this file's own header comment); it's a pure data
        carrier, same real role next_level_id/is_story_start already play. */
     int enclosed;
+    /* floor_tint (kanban #533) -- per-level ground-plane colour + alpha, 0..1; floor_tinted = 0 -> default floor */
+    int floor_tinted;
+    float floor_r, floor_g, floor_b, floor_a;
     /* source_id -- the registry level id this was fetched as (set by level_boxes_fetch_export; 0 for
        a file-loaded level). F1 / exit-autosave snapshots clone THIS level server-side. */
     int source_id;
@@ -516,6 +519,21 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
     out->enclosed = 0;
     const char *enc_val = level_boxes_find_key(buf, end, "enclosed");
     if (enc_val) level_boxes_parse_bool(enc_val, &out->enclosed);
+
+    // floor_tint (#533) -- {"r":..,"g":..,"b":..,"a":..}; absent/null = untinted default floor.
+    out->floor_tinted = 0;
+    const char *ft = level_boxes_find_key(buf, end, "floor_tint");
+    if (ft && *ft == '{') {
+        const char *fe = strchr(ft, '}');
+        const char *vr = fe ? level_boxes_find_key(ft, fe, "r") : NULL;
+        const char *vg = fe ? level_boxes_find_key(ft, fe, "g") : NULL;
+        const char *vb = fe ? level_boxes_find_key(ft, fe, "b") : NULL;
+        const char *va = fe ? level_boxes_find_key(ft, fe, "a") : NULL;
+        if (vr && vg && vb && va &&
+            level_boxes_parse_number(vr, &out->floor_r) && level_boxes_parse_number(vg, &out->floor_g) &&
+            level_boxes_parse_number(vb, &out->floor_b) && level_boxes_parse_number(va, &out->floor_a))
+            out->floor_tinted = 1;
+    }
 
     // brick_damage -- absent key (every undamaged / pre-2026-10-02 level) leaves the count at 0.
     // Keys are parsed with strtoul, not level_boxes_parse_number: a float mantissa can't hold a
