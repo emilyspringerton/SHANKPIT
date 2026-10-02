@@ -2929,6 +2929,12 @@ static int lobby_start_lab_mode(void) {
         const char *lp = getenv("SHANKPIT_LAB_POS"); float lx, ly, lz, lyaw;
         if (lp && sscanf(lp, "%f,%f,%f,%f", &lx, &ly, &lz, &lyaw) == 4) { hero->x = lx; hero->y = ly; hero->z = lz; hero->yaw = lyaw; }
     }
+    if (lvl->lab_station_count > 0) {   /* #516: phys_respawn ignores the spawner's yaw, so the hero spawned staring at the exit wall -- face the benches (forward = (-sin yaw, -cos yaw)) */
+        float cx = 0.0f, cz = 0.0f;
+        for (int i = 0; i < lvl->lab_station_count; i++) { cx += lvl->lab_stations[i].x; cz += lvl->lab_stations[i].z; }
+        cx /= (float)lvl->lab_station_count; cz /= (float)lvl->lab_station_count;
+        if (!getenv("SHANKPIT_LAB_POS")) hero->yaw = atan2f(-(cx - hero->x), -(cz - hero->z)) * 57.29578f;
+    }
     cam_yaw = norm_yaw_deg(hero->yaw);   /* local starts don't sync the camera to the spawner yaw; do it so the lab faces its benches */
     g_lab_active = 1;
     g_lab_st_n = lvl->lab_station_count;
