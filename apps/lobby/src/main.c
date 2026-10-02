@@ -726,8 +726,9 @@ static int g_pause_sel = 0;
 #define PAUSE_HOLES      1
 #define PAUSE_DEBRIS     2
 #define PAUSE_FULLSCREEN 3
-#define PAUSE_QUIT       4
-#define PAUSE_ITEMS      5
+#define PAUSE_SNAPSHOT   4
+#define PAUSE_QUIT       5
+#define PAUSE_ITEMS      6
 /* g_opt_bullet_holes -- founder real-time, 2026-10-01: "always ensure all features have menu items".
    The per-gun bullet-hole decals (draw_bullet_holes) are a real, always-on rendering feature; this
    is their pause-menu toggle (default ON), persisted in shankpit_display.cfg line 2. Tracking
@@ -2375,11 +2376,20 @@ static SDL_Thread *g_snap_thread = NULL;
 static SDL_atomic_t g_snap_busy;
 typedef struct { int id; int n; LevelBrickCell cells[LEVEL_BOXES_MAX_BRICK_CELLS]; int ok; } SnapJob;
 static SnapJob g_snap_job;
+static volatile int g_snap_result = 0;   // 0 none yet, 1 last upload ok, 2 last upload failed (pause-menu label)
+
+static const char *lobby_snapshot_label(void) {
+    if (SDL_AtomicGet(&g_snap_busy)) return "SNAPSHOT: UPLOADING...";
+    if (g_snap_result == 1) return "SNAPSHOT: SAVED (F1 AGAIN)";
+    if (g_snap_result == 2) return "SNAPSHOT: FAILED (F1 RETRY)";
+    return "SAVE LEVEL SNAPSHOT (F1)";
+}
 
 static int snap_worker(void *unused) {
     (void)unused;
     g_snap_job.ok = level_boxes_post_snapshot(g_snap_job.id, g_snap_job.cells, g_snap_job.n);
     SDL_Log("[SNAPSHOT] level %d upload %s (%d damaged cells)", g_snap_job.id, g_snap_job.ok ? "ok" : "FAILED", g_snap_job.n);
+    g_snap_result = g_snap_job.ok ? 1 : 2;
     SDL_AtomicSet(&g_snap_busy, 0);
     return 0;
 }
@@ -8624,10 +8634,11 @@ static void draw_pause_overlay(void) {
         g_opt_bullet_holes ? "BULLET HOLES: ON" : "BULLET HOLES: OFF",
         g_opt_brick_debris ? "BRICK DEBRIS: ON" : "BRICK DEBRIS: OFF",
         g_fullscreen ? "FULLSCREEN: ON" : "FULLSCREEN: OFF",
+        lobby_snapshot_label(),
         "QUIT TO LOBBY"
     };
     for (int i = 0; i < PAUSE_ITEMS; i++) {
-        float y = 370.0f - (float)i * 50.0f;
+        float y = 370.0f - (float)i * 44.0f;
         if (i == g_pause_sel) {
             glColor3f(1.0f, 1.0f, 0.0f);
             draw_string(">", 300, y, 6);
@@ -10922,6 +10933,8 @@ int main(int argc, char* argv[]) {
                                 save_display_config();
                             } else if (g_pause_sel == PAUSE_FULLSCREEN) {
                                 toggle_fullscreen();
+                            } else if (g_pause_sel == PAUSE_SNAPSHOT) {
+                                lobby_level_snapshot(1);
                             } else if (g_pause_sel == PAUSE_QUIT) {
                                 g_paused = 0;
                                 lobby_level_snapshot(0);   // autosave carved geometry to NOCK cloud on exit
