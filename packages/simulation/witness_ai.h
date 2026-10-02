@@ -79,6 +79,12 @@ int witness_ai_spawn_zombie(ServerState *s, float x, float y, float z, unsigned 
  * owned WitnessSim's own ambient decorum decay to roughly once per second. */
 void witness_ai_tick(ServerState *s, unsigned int now_ms);
 
+/* Card #522 learned city map (roomba memory, see witness_ai.c): 0 unknown, 1 free (a mover stood there),
+ * 2 blocked (a mover's whisker found a wall there, or it got physically stuck there). Shared by every mover
+ * and cleared by witness_ai_reset. Exposed for tests and debug overlays. */
+int witness_ai_learned_cell(float x, float z);
+int witness_ai_learned_blocked_count(void);
+
 /* witness_ai_zombies_tick -- MODE_ZOMBIES day/night population lifecycle (founder real-time,
  * 2026-10-02). Reads s->story_clock's phase and steers the live population toward a per-phase
  * target: DAY many citizens / few zombie stragglers, DUSK zombies start rising, NIGHT a horde and

@@ -396,8 +396,11 @@ zombies repository's default, else the registry's **nextown**, else `var/zombie/
 (`shank_lobby --zombies` goes straight in). A day/night clock drives a BIG_O-derived population
 (`witness_ai_zombies_tick`): citizens wander by day, zombies rise at dusk into a horde at night and burn off at
 dawn, The Men clean up witnesses, and **five birds** (BIG_O's avian coalition: they watch the watchers and a
-signaling flock's beacon wakes zombies) are there from the first tick. Every mover steers around building walls,
-and a hunting zombie whose way is walled off **claws the wall** -- brick breaches (other materials stay
+signaling flock's beacon wakes zombies) are there from the first tick. Every mover steers around building walls
+and **learns the city roomba-style** (#522): a shared coarse grid fills in from what movers feel (a proximity ring and
+whisker fan when blocked, stuck detection when they stop making progress), and A* over that learned map lets a
+citizen/bug/cornered zombie back out of a dead-end pocket instead of grinding into its far wall (unit-tested with a
+U-shaped trap; only `make test-witness-ai-zombies`-level verified, not played through live yet), while a hunting zombie whose way is walled off **claws the wall** -- brick breaches (other materials stay
 indestructible; that is an engine limit, not a ZOMBIES one). Citizens, The Men and zombies use the UAL mannequin
 (zombies the UAL-derived `zombie_*` clips) and fall as XPBD rigid-body ragdolls. F1 / exit autosave in ZOMBIES file
 the wrecked level into IDUNA's **zombies repository** and make it the next ZOMBIES level; NOCK has a "Set for

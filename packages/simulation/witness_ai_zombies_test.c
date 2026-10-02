@@ -28,6 +28,22 @@ static void walk(float dt) {
         p->z += cosf(r) * p->in_fwd * 20.0f * dt;
     }
 }
+/* like walk(), but a mover cannot enter a box (+ the 1.6 body radius witness_ai.c steers with) */
+static int solid_at(float x, float z) {
+    for (int b = 1; b < nboxes; b++)
+        if (x > boxes[b].x - boxes[b].w * 0.5f - 1.0f && x < boxes[b].x + boxes[b].w * 0.5f + 1.0f &&
+            z > boxes[b].z - boxes[b].d * 0.5f - 1.0f && z < boxes[b].z + boxes[b].d * 0.5f + 1.0f) return 1;
+    return 0;
+}
+static void walk_solid(float dt) {
+    for (int i = 1; i < MAX_CLIENTS; i++) {
+        PlayerState *p = &S.players[i];
+        if (!p->active || p->state == STATE_DEAD) continue;
+        float r = p->yaw * 0.0174533f;
+        float nx = p->x + sinf(r) * p->in_fwd * 20.0f * dt, nz = p->z + cosf(r) * p->in_fwd * 20.0f * dt;
+        if (!solid_at(nx, nz)) { p->x = nx; p->z = nz; }
+    }
+}
 static int count_role(int role) {
     int n = 0;
     for (int i = 1; i < MAX_CLIENTS; i++) if (S.players[i].active && witness_ai_role_for_player(i) == role) n++;
@@ -86,11 +102,44 @@ int main(void) {
         S.players[zid].x = 10.0f; S.players[zid].z = 0.0f;             /* pin the threat */
         witness_ai_tick(&S, t);
         walk(0.05f);
-        if (S.players[cid].x > maxx) maxx = S.players[cid].x;
+        /* it may route AROUND the building now (card #522) -- what must never happen is entering it */
+        if (fabsf(S.players[cid].z) < 40.0f && S.players[cid].x < 32.0f && S.players[cid].x > maxx) maxx = S.players[cid].x;
     }
     /* body radius is 1.6 around a face at x=28: the citizen must stay out of the box + margin */
     assert(maxx < 28.0f + 0.5f);
-    printf("PASS: fleeing citizen stopped/steered at the wall (max x=%.2f, face at 28)\n", maxx);
+    printf("PASS: fleeing citizen never entered the building (max x beside it=%.2f, face at 28)\n", maxx);
+
+    /* ---- card #522: a hunter in a dead-end pocket learns the walls and backs out around them ---- */
+    witness_ai_set_wall_hit_hook(NULL); /* no clawing through: it has to find the way out */
+    memset(&S, 0, sizeof S);
+    S.game_mode = MODE_ZOMBIES;
+    S.players[0].active = 1; S.players[0].state = STATE_ALIVE;
+    S.players[0].x = 0.0f; S.players[0].y = 0.0f; S.players[0].z = 120.0f; /* hero straight "north", behind the pocket's back wall */
+    witness_ai_reset(3u, 0);
+    nboxes = 4;
+    boxes[1] = (TBox){ -14.0f, 20.0f, 10.0f, 4.0f, 40.0f, 44.0f }; /* west wall  x=-16..-12, z -12..32 */
+    boxes[2] = (TBox){  14.0f, 20.0f, 10.0f, 4.0f, 40.0f, 44.0f }; /* east wall  x= 12..16 */
+    boxes[3] = (TBox){   0.0f, 20.0f, 30.0f, 32.0f, 40.0f, 4.0f }; /* back wall  z=28..32, open to the south */
+    int pz = witness_ai_spawn_zombie(&S, 0.0f, 0.0f, 0.0f, 0);
+    assert(pz > 0);
+    S.players[pz].yaw = 0.0f;
+    assert(witness_ai_learned_blocked_count() == 0);
+    float maxz = -1e9f;
+    t = 10000;
+    for (int i = 0; i < 2400; i++) {            /* 120 s of game time at 50 ms */
+        t += 50;
+        witness_ai_force_zombie_mood(pz, 2 /* HUNTING */);
+        witness_ai_tick(&S, t);
+        walk_solid(0.05f);
+        if (S.players[pz].z > maxz) maxz = S.players[pz].z;
+    }
+    assert(witness_ai_learned_blocked_count() > 0);          /* it remembered walls */
+    assert(witness_ai_learned_cell(0.0f, 0.0f) == 1);        /* and the floor it stood on */
+    assert(maxz > 45.0f || S.players[pz].z > 45.0f);         /* it got past the pocket instead of grinding in it */
+    printf("PASS: pocketed zombie learned %d wall cells and escaped (max z=%.1f, back wall at 28)\n", witness_ai_learned_blocked_count(), maxz);
+    witness_ai_set_wall_hit_hook(hit_cb);
+    nboxes = 2;
+    boxes[1] = (TBox){ 30.0f, 20.0f, 0.0f, 4.0f, 40.0f, 80.0f }; /* the building face again, for the tests below */
 
     /* ---- zombies claw brick walls that block the way to their target ---- */
     memset(&S, 0, sizeof S);

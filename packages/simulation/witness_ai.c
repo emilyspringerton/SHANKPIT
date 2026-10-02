@@ -59,6 +59,8 @@ static int wai_map(const WaiBox **b) {
     return raw ? n : 0;
 }
 #define WAI_BODY_R 1.6f
+static void wai_learn_reset(void);
+static void wai_learn_clear_near(float x, float z);
 static signed char g_wai_side[MAX_CLIENTS];
 static unsigned int g_zlast_spawn_ms;
 void witness_ai_set_wall_hit_hook(WitnessWallHitFn fn) { g_wall_hit_hook = fn; }
@@ -218,6 +220,7 @@ void witness_ai_reset(unsigned int seed, unsigned int now_ms) {
     memset(g_birds, 0, sizeof(g_birds));
     memset(g_wai_breach, 0, sizeof(g_wai_breach));
     memset(g_wai_side, 0, sizeof(g_wai_side));
+    wai_learn_reset();
     g_have_last_sim_tick = 0;
     g_zlast_spawn_ms = 0;
     g_player_zone = ZONE_PUBLIC; /* matches witness_sim_init's own player-0 default */
@@ -663,15 +666,215 @@ static int wai_zombie_breach(ServerState *s, PlayerState *zp, int id, unsigned i
     if (now_ms - g_zombie_claw_ms[id] >= WAI_ZOMBIE_CLAW_COOLDOWN_MS) {
         g_zombie_claw_ms[id] = now_ms;
         g_wall_hit_hook(zp->scene_id, hx, hy, hz, nx, 0.0f, nz, WAI_ZOMBIE_CLAW_DAMAGE);
+        wai_learn_clear_near(hx - nx * 1.0f, hz - nz * 1.0f);   /* the face may be gone now */
     }
     (void)s;
     return 1;
 }
 
-static void wai_avoid_walls(PlayerState *p, int id) {
-    if (p->in_fwd <= 0.0f || p->state == STATE_DEAD) return;
+/* Learned city map -- card #522 (founder real-time: "the characters in zombie mode are constantly getting
+ * stuck on the walls they should learn where the rooms are like a roomba to avoid hitting them they should
+ * learn the city little by little"). The whisker steer above only reacts to what is straight ahead, so a
+ * mover that walks into a concave pocket (a courtyard, a dead-end alley, a room whose door is behind it)
+ * grinds there forever. This is the roomba memory: ONE coarse grid shared by every mover, filled in only by
+ * what movers actually experience -- a cell a mover stands in is FREE, a cell its whisker found a wall in or
+ * where it got physically stuck is BLOCKED. Nobody reads the level geometry to build the map ahead of time,
+ * so the city is learned bump by bump and every mover benefits from every other mover's bumps. When the way
+ * ahead is blocked, A* over the learned map (unknown cells cost a little extra, blocked cells are walls)
+ * picks a route and the mover commits to it for a moment so it cannot dither at a corner. */
+#define WAI_CELL 3.0f
+#define WAI_GRID 256
+#define WAI_GRID_HALF 128
+#define WAI_WIN 24                 /* planner window: +-24 cells (72 m) around the mover */
+#define WAI_STUCK_CHECK_MS 800u
+#define WAI_STUCK_MIN_MOVE 1.0f
+#define WAI_COMMIT_MS 1200u
+enum { WAI_UNKNOWN = 0, WAI_FREE = 1, WAI_BLOCKED = 2 };
+static unsigned char g_wai_cell[WAI_GRID * WAI_GRID];
+static float g_wai_lx[MAX_CLIENTS], g_wai_lz[MAX_CLIENTS];
+static unsigned int g_wai_lchk[MAX_CLIENTS], g_wai_commit_until[MAX_CLIENTS];
+static float g_wai_commit_yaw[MAX_CLIENTS];
+static unsigned int g_wai_now;
+static float g_wai_rx[MAX_CLIENTS][48], g_wai_rz[MAX_CLIENTS][48];
+static int g_wai_rn[MAX_CLIENTS], g_wai_ri[MAX_CLIENTS];
+static unsigned int g_wai_route_until[MAX_CLIENTS];
+static float g_wai_gx[MAX_CLIENTS], g_wai_gz[MAX_CLIENTS];
+static unsigned char g_wai_blocked_drop[MAX_CLIENTS];
+
+static void wai_learn_reset(void) {
+    memset(g_wai_cell, 0, sizeof g_wai_cell); memset(g_wai_lchk, 0, sizeof g_wai_lchk); memset(g_wai_commit_until, 0, sizeof g_wai_commit_until);
+    memset(g_wai_blocked_drop, 0, sizeof g_wai_blocked_drop); memset(g_wai_rn, 0, sizeof g_wai_rn); memset(g_wai_ri, 0, sizeof g_wai_ri); memset(g_wai_route_until, 0, sizeof g_wai_route_until);
+}
+static int wai_cell_xz(float x, float z, int *cx, int *cz) {
+    int ix = (int)floorf(x / WAI_CELL) + WAI_GRID_HALF, iz = (int)floorf(z / WAI_CELL) + WAI_GRID_HALF;
+    if (ix < 0 || iz < 0 || ix >= WAI_GRID || iz >= WAI_GRID) return 0;
+    *cx = ix; *cz = iz; return 1;
+}
+static void wai_learn_mark(float x, float z, int kind) {
+    int cx, cz; if (!wai_cell_xz(x, z, &cx, &cz)) return;
+    unsigned char *c = &g_wai_cell[cz * WAI_GRID + cx];
+    if (kind == WAI_BLOCKED) *c = WAI_BLOCKED;
+    else if (*c == WAI_UNKNOWN) *c = WAI_FREE;          /* standing on a border cell never erases a wall; only a breach does */
+}
+/* a wall was just torn down at (x,z): forget the walls around it so the next bump re-learns the gap */
+static void wai_learn_clear_near(float x, float z) {
+    int cx, cz; if (!wai_cell_xz(x, z, &cx, &cz)) return;
+    for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++) {
+        int ix = cx + dx, iz = cz + dz;
+        if (ix >= 0 && iz >= 0 && ix < WAI_GRID && iz < WAI_GRID) g_wai_cell[iz * WAI_GRID + ix] = WAI_UNKNOWN;
+    }
+}
+int witness_ai_learned_cell(float x, float z) {
+    int cx, cz; return wai_cell_xz(x, z, &cx, &cz) ? g_wai_cell[cz * WAI_GRID + cx] : WAI_UNKNOWN;
+}
+int witness_ai_learned_blocked_count(void) {
+    int n = 0; for (int i = 0; i < WAI_GRID * WAI_GRID; i++) if (g_wai_cell[i] == WAI_BLOCKED) n++; return n;
+}
+
+/* A* over the learned map from (sx,sz) toward (gx,gz) inside the window. Fills out_x/out_z with the route's
+ * waypoints (cell centres, every 2nd cell, start excluded) and returns how many (0 = no route improves on
+ * standing still). If the goal cell is walled off inside the window it routes to the reachable cell closest
+ * to the goal (the frontier), which is what lets a mover back out of a pocket. */
+#define WAI_ROUTE_MAX 48
+static int wai_plan_route(float sx, float sz, float gx, float gz, float *out_x, float *out_z) {
+    int scx, scz; if (!wai_cell_xz(sx, sz, &scx, &scz)) return 0;
+    int W = 2 * WAI_WIN + 1;
+    static float g[(2 * WAI_WIN + 1) * (2 * WAI_WIN + 1)];
+    static short parent[(2 * WAI_WIN + 1) * (2 * WAI_WIN + 1)];
+    static unsigned char state[(2 * WAI_WIN + 1) * (2 * WAI_WIN + 1)]; /* 0 new, 1 open, 2 closed */
+    memset(state, 0, sizeof state);
+    int gcx = (int)floorf(gx / WAI_CELL) + WAI_GRID_HALF, gcz = (int)floorf(gz / WAI_CELL) + WAI_GRID_HALF;
+    int s_i = WAI_WIN * W + WAI_WIN;
+    g[s_i] = 0.0f; parent[s_i] = -1; state[s_i] = 1;
+    int best_i = s_i; float best_h = 1e9f;
+    for (;;) {
+        int cur = -1; float cur_f = 1e30f;
+        for (int i = 0; i < W * W; i++) { /* open-set scan: 2401 cells, only runs when blocked */
+            if (state[i] != 1) continue;
+            int dx = i % W - WAI_WIN + scx - gcx, dz = i / W - WAI_WIN + scz - gcz;
+            float f = g[i] + sqrtf((float)(dx * dx + dz * dz));
+            if (f < cur_f) { cur_f = f; cur = i; }
+        }
+        if (cur < 0) break;
+        state[cur] = 2;
+        int ox = cur % W - WAI_WIN, oz = cur / W - WAI_WIN;
+        { int dx = ox + scx - gcx, dz = oz + scz - gcz; float h = sqrtf((float)(dx * dx + dz * dz));
+          if (h < best_h - 0.001f) { best_h = h; best_i = cur; }
+          if (dx == 0 && dz == 0) break; }
+        for (int d = 0; d < 8; d++) {
+            static const int ddx[8] = {1,-1,0,0,1,1,-1,-1}, ddz[8] = {0,0,1,-1,1,-1,1,-1};
+            int nx = ox + ddx[d], nz = oz + ddz[d];
+            if (nx < -WAI_WIN || nx > WAI_WIN || nz < -WAI_WIN || nz > WAI_WIN) continue;
+            int wx = scx + nx, wz = scz + nz;
+            if (wx < 0 || wz < 0 || wx >= WAI_GRID || wz >= WAI_GRID) continue;
+            unsigned char k = g_wai_cell[wz * WAI_GRID + wx];
+            if (k == WAI_BLOCKED) continue;
+            if (d >= 4) { /* no cutting a corner between two walls */
+                if (g_wai_cell[(scz + oz) * WAI_GRID + wx] == WAI_BLOCKED || g_wai_cell[wz * WAI_GRID + (scx + ox)] == WAI_BLOCKED) continue;
+            }
+            int ni = (nz + WAI_WIN) * W + (nx + WAI_WIN);
+            if (state[ni] == 2) continue;
+            float step = (d >= 4 ? 1.414f : 1.0f) * (k == WAI_UNKNOWN ? 1.25f : 1.0f);
+            if (state[ni] == 0 || g[cur] + step < g[ni]) { g[ni] = g[cur] + step; parent[ni] = (short)cur; state[ni] = 1; }
+        }
+    }
+    if (best_i == s_i) return 0;
+    int route[(2 * WAI_WIN + 1) * (2 * WAI_WIN + 1)]; int rn = 0, walk_i = best_i;
+    while (walk_i != s_i && walk_i >= 0 && rn < (int)(sizeof route / sizeof route[0])) { route[rn++] = walk_i; walk_i = parent[walk_i]; }
+    int n = 0;
+    for (int k = rn - 1; k >= 0 && n < WAI_ROUTE_MAX; k -= (k > 1 ? 2 : 1)) {   /* start -> goal order, every 2nd cell, always keep the last */
+        int ti = route[k];
+        out_x[n] = ((ti % W - WAI_WIN + scx - WAI_GRID_HALF) + 0.5f) * WAI_CELL;
+        out_z[n] = ((ti / W - WAI_WIN + scz - WAI_GRID_HALF) + 0.5f) * WAI_CELL;
+        n++;
+    }
+    return n;
+}
+
+static int wai_start_route(const PlayerState *p, int id, float gx, float gz) {
+    g_wai_gx[id] = gx; g_wai_gz[id] = gz;
+    g_wai_rn[id] = wai_plan_route(p->x, p->z, gx, gz, g_wai_rx[id], g_wai_rz[id]);
+    g_wai_ri[id] = 0;
+    g_wai_route_until[id] = g_wai_now + 9000u;
+    return g_wai_rn[id] > 0;
+}
+/* Steer at the next waypoint of the mover's route. Returns 0 (route dropped) when it ran out, timed out, or
+ * the next hop is walled off for real. */
+static int wai_follow_route(PlayerState *p, int id) {
+    while (g_wai_ri[id] < g_wai_rn[id]) {
+        float dx = g_wai_rx[id][g_wai_ri[id]] - p->x, dz = g_wai_rz[id][g_wai_ri[id]] - p->z;
+        if (dx * dx + dz * dz > 2.5f * 2.5f) break;
+        g_wai_ri[id]++;
+    }
+    if (g_wai_ri[id] >= g_wai_rn[id] || g_wai_now >= g_wai_route_until[id]) { g_wai_rn[id] = g_wai_ri[id] = 0; return 0; }
+    float yaw = atan2f(g_wai_rx[id][g_wai_ri[id]] - p->x, g_wai_rz[id][g_wai_ri[id]] - p->z) * (180.0f / 3.14159f);
+    if (!wai_heading_clear(p, yaw, 3.0f)) { g_wai_rn[id] = g_wai_ri[id] = 0; g_wai_blocked_drop[id] = 1; return 0; }
+    p->yaw = wai_norm_yaw(yaw);
+    return 1;
+}
+
+static void wai_sense(const PlayerState *p) {
+    int pcx, pcz;   /* proximity ring, like a roomba's bump sensors: feel every cell within 5 cells (15 m) */
+    if (wai_cell_xz(p->x, p->z, &pcx, &pcz))
+        for (int dz = -5; dz <= 5; dz++) for (int dx = -5; dx <= 5; dx++) {
+            float wx = ((pcx + dx) - WAI_GRID_HALF + 0.5f) * WAI_CELL, wz = ((pcz + dz) - WAI_GRID_HALF + 0.5f) * WAI_CELL;
+            if (wai_point_blocked(wx, p->y, wz)) wai_learn_mark(wx, wz, WAI_BLOCKED);
+        }
+    for (int a = -90; a <= 90; a += 15) {   /* and a whisker fan for the longer reach */
+        float r = (p->yaw + (float)a) * 0.0174533f, sx = sinf(r), cz = cosf(r);
+        for (float d = 2.0f; d <= 14.0f; d += 1.5f)
+            if (wai_point_blocked(p->x + sx * d, p->y, p->z + cz * d)) { wai_learn_mark(p->x + sx * d, p->z + cz * d, WAI_BLOCKED); break; }
+    }
+}
+
+/* relentless: a zombie that can claw walls down (the wall-hit hook exists) walks the straight line and tears
+ * through, it does not plan a detour -- it only routes (via the stuck detector) when clawing gets it nowhere. */
+static void wai_avoid_walls(PlayerState *p, int id, int relentless) {
+    if (p->state == STATE_DEAD) return;
+    wai_learn_mark(p->x, p->z, WAI_FREE);               /* roomba: where I stand is open floor */
+    if (p->in_fwd <= 0.0f) { g_wai_lchk[id] = 0; return; }
+    float intended = p->yaw;                              /* the heading the chase/flee logic wants */
+
+    /* Stuck detector: walking (in_fwd) but not getting anywhere => the cell ahead is a wall I did not
+       see (a thin box, a prop, another body wedging me). Learn it and commit to a detour for a moment. */
+    if (g_wai_lchk[id] == 0) { g_wai_lchk[id] = g_wai_now ? g_wai_now : 1u; g_wai_lx[id] = p->x; g_wai_lz[id] = p->z; }
+    else if (g_wai_now - g_wai_lchk[id] >= WAI_STUCK_CHECK_MS) {
+        float mx = p->x - g_wai_lx[id], mz = p->z - g_wai_lz[id];
+        if (sqrtf(mx * mx + mz * mz) < WAI_STUCK_MIN_MOVE && g_wai_now >= g_wai_commit_until[id]) {
+            float r = p->yaw * 0.0174533f;
+            wai_learn_mark(p->x + sinf(r) * WAI_CELL, p->z + cosf(r) * WAI_CELL, WAI_BLOCKED);
+            wai_start_route(p, id, p->x + sinf(r) * 60.0f, p->z + cosf(r) * 60.0f);
+            g_wai_commit_yaw[id] = wai_norm_yaw(p->yaw + ((id & 1) ? 110.0f : -110.0f));   /* no route: shoulder out sideways */
+            g_wai_commit_until[id] = g_wai_now + WAI_COMMIT_MS;
+        }
+        g_wai_lchk[id] = g_wai_now; g_wai_lx[id] = p->x; g_wai_lz[id] = p->z;
+    }
+    /* A learned route is being walked: stay on it (the straight line to the goal is the local minimum that
+       put us here). If a hop turns out to be walled off for real, learn that and re-route at once -- never
+       fall back to the straight line, that is what walks a mover back into the pocket. */
+    if (g_wai_ri[id] < g_wai_rn[id] && wai_follow_route(p, id)) return;
+    for (int tries = 0; g_wai_blocked_drop[id] && tries < 3; tries++) {
+        g_wai_blocked_drop[id] = 0;
+        wai_sense(p);
+        if (wai_start_route(p, id, g_wai_gx[id], g_wai_gz[id]) && wai_follow_route(p, id)) return;
+    }
+    g_wai_blocked_drop[id] = 0;
+    if (g_wai_now < g_wai_commit_until[id]) {             /* committed detour: hold it until it runs out or runs into a wall */
+        if (wai_heading_clear(p, g_wai_commit_yaw[id], 3.0f)) {   /* only the next few metres: the detour bends around the wall */ p->yaw = wai_norm_yaw(g_wai_commit_yaw[id]); return; }
+        g_wai_commit_until[id] = 0;
+    }
+
     float look = 6.0f + 6.0f * p->in_fwd;
     if (wai_heading_clear(p, p->yaw, look)) { g_wai_side[id] = 0; return; }
+
+    /* Blocked ahead: sweep the whiskers across a fan to learn the wall's face (every blocked sample along
+       each ray becomes a BLOCKED cell), then ask the learned map for a route. */
+    if (!relentless) {
+        wai_sense(p);
+        float r = p->yaw * 0.0174533f;
+        if (wai_start_route(p, id, p->x + sinf(r) * 60.0f, p->z + cosf(r) * 60.0f) && wai_follow_route(p, id)) return;
+    }
+    (void)intended;
     if (g_wai_side[id] == 0) g_wai_side[id] = (id & 1) ? 1 : -1;
     static const float offs[] = { 30.0f, 60.0f, 90.0f, 125.0f, 160.0f };
     for (int k = 0; k < 5; k++) {
@@ -690,6 +893,7 @@ static void wai_avoid_walls(PlayerState *p, int id) {
 
 void witness_ai_tick(ServerState *s, unsigned int now_ms) {
     if (!s) return;
+    g_wai_now = now_ms;
 
     if (!g_have_last_sim_tick || now_ms - g_last_sim_tick_ms >= WITNESS_AI_SIM_TICK_INTERVAL_MS) {
         witness_sim_tick(&g_sim, 1);
@@ -1022,12 +1226,12 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
     /* Wall awareness pass -- see wai_avoid_walls. Runs last so it steers whatever heading the
        flee/chase/men/bug logic above settled on. */
     for (int i = 0; i < WITNESS_AI_MAX_CITIZENS; i++)
-        if (g_citizens[i].active) wai_avoid_walls(&s->players[g_citizens[i].player_id], g_citizens[i].player_id);
+        if (g_citizens[i].active) wai_avoid_walls(&s->players[g_citizens[i].player_id], g_citizens[i].player_id, 0);
     for (int i = 0; i < WITNESS_AI_MAX_ZOMBIES; i++)
         if (g_zombies[i].active && !g_wai_breach[g_zombies[i].player_id])
-            wai_avoid_walls(&s->players[g_zombies[i].player_id], g_zombies[i].player_id);
+            wai_avoid_walls(&s->players[g_zombies[i].player_id], g_zombies[i].player_id, g_wall_hit_hook != NULL);
     for (int i = 0; i < WITNESS_AI_MAX_GIANT_BUGS; i++)
-        if (g_giant_bugs[i].active) wai_avoid_walls(&s->players[g_giant_bugs[i].player_id], g_giant_bugs[i].player_id);
+        if (g_giant_bugs[i].active) wai_avoid_walls(&s->players[g_giant_bugs[i].player_id], g_giant_bugs[i].player_id, 0);
 }
 
 
