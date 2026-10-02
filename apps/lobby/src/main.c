@@ -2177,6 +2177,10 @@ static void overlay_render(OverlaySystem *overlay, const PlayerState *viewer) {
 // PROCESSES (see protocol.h's own MODE_QUEUE doc comment) rather than a local simulation. MODE_TDMB
 // itself stays defined/untouched (packages/common/protocol.h) even though no menu tile reaches it
 // anymore -- same real "remove the tile, not the feature" precedent as always.
+// LOBBY_TYLER replaces LOBBY_CTFB in the same menu slot -- founder real-time, 2026-10-02: "ensure
+// TYLER mode has a menu icon in shankpit replace CTFB button on the main menu." Networked connect
+// requesting MODE_TYLER (the server must be running with --tyler). MODE_CTFB itself is untouched
+// -- only its menu entry point is removed, same "remove the tile, not the feature" precedent.
 typedef enum {
     LOBBY_LEVEL_SELECT = 0,
     LOBBY_JOIN,
@@ -2186,7 +2190,7 @@ typedef enum {
     LOBBY_SOLO,
     LOBBY_BATTLE,
     LOBBY_QUEUE,
-    LOBBY_CTFB,
+    LOBBY_TYLER,
     LOBBY_COUNT
 } LobbyAction;
 
@@ -2201,7 +2205,7 @@ static const char *LOBBY_LABELS[LOBBY_COUNT] = {
     "SOLO",
     "TRAIN",
     "QUEUE",
-    "CTFB"
+    "TYLER"
 };
 
 // APPS page -- founder real-time, 2026-09-22 (SHANKPIT_OS_NORTHSTAR.md): "we need the games
@@ -3085,6 +3089,13 @@ static void lobby_apply_ui_state() {
         net_connect();
         return;
     }
+    if (strcmp(ui_state.active_mode_id, "mode.tyler") == 0) {
+        app_state = STATE_GAME_NET;
+        reset_client_render_state_for_net();
+        net_requested_mode = MODE_TYLER;
+        net_connect();
+        return;
+    }
     if (strcmp(ui_state.active_mode_id, "mode.tdmo") == 0) {
         app_state = STATE_GAME_NET;
         reset_client_render_state_for_net();
@@ -3368,10 +3379,11 @@ static void lobby_start_action(int action) {
             }
         }
     }
-    if (action == LOBBY_JOIN || action == LOBBY_QUEUE) {
+    if (action == LOBBY_JOIN || action == LOBBY_QUEUE || action == LOBBY_TYLER) {
         app_state = STATE_GAME_NET;
         reset_client_render_state_for_net();
-        net_requested_mode = (action == LOBBY_QUEUE) ? MODE_QUEUE : MODE_CTF;
+        net_requested_mode = (action == LOBBY_QUEUE) ? MODE_QUEUE
+                           : (action == LOBBY_TYLER) ? MODE_TYLER : MODE_CTF;
         net_connect();
     } else {
         app_state = STATE_GAME_LOCAL;
@@ -3393,9 +3405,6 @@ static void lobby_start_action(int action) {
                 break;
             case LOBBY_BATTLE:
                 local_init_match(12, MODE_DEATHMATCH);
-                break;
-            case LOBBY_CTFB:
-                local_init_match(12, MODE_CTFB);
                 break;
             default:
                 break;
