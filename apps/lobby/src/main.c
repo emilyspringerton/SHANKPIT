@@ -2366,6 +2366,13 @@ static const char *APPS_LABELS[APP_COUNT] = {
 #define LOBBY_PAGE_CUSTOMIZE 2
 typedef enum { CUSTOMIZE_SKINS = 0, CUSTOMIZE_SPRAYS, CUSTOMIZE_COUNT } CustomizeAction;
 static const char *CUSTOMIZE_LABELS[CUSTOMIZE_COUNT] = { "SKINS", "SPRAYS" };
+
+// lobby_page 3 = SETTINGS (card #480, "NEW AFFORDANCE FOR TOP LEVEL MENU SETTINGS TO TOGGLE ON LIVE LEVEL
+// DOWNLOADING"; card #479 bakes the levels in and this is the switch). A second small button under the
+// APPS toggle opens it. Items are toggles that mutate in place and persist via save_display_config; the
+// in-game pause menu keeps its own copies of the shared ones (bullet holes, brick debris, fullscreen).
+#define LOBBY_PAGE_SETTINGS 3
+typedef enum { SETTINGS_LIVE_LEVELS = 0, SETTINGS_BULLET_HOLES, SETTINGS_BRICK_DEBRIS, SETTINGS_FULLSCREEN, SETTINGS_COUNT } SettingsAction;
 static int lobby_page = 0;
 
 static void lobby_init_labels() {
@@ -3347,7 +3354,7 @@ static const char *DISPLAY_CONFIG_PATH = "shankpit_display.cfg";
 static void save_display_config(void) {
     FILE *f = fopen(DISPLAY_CONFIG_PATH, "w");
     if (!f) return;
-    fprintf(f, "%d\n%d\n%d\n%d\n", g_fullscreen, g_opt_bullet_holes, g_opt_brick_debris, g_opt_ambient_level);
+    fprintf(f, "%d\n%d\n%d\n%d\n%d\n", g_fullscreen, g_opt_bullet_holes, g_opt_brick_debris, g_opt_ambient_level, level_boxes_live_download);
     fclose(f);
 }
 
@@ -3355,7 +3362,7 @@ static void load_display_config(void) {
     g_opt_ambient_level = ambient_level_default();
     FILE *f = fopen(DISPLAY_CONFIG_PATH, "r");
     if (!f) { apply_ambient_level(); return; }
-    int fs = 0, holes = 1, debris = 1, ambient = -1;
+    int fs = 0, holes = 1, debris = 1, ambient = -1, live_levels = 0;
     if (fscanf(f, "%d", &fs) == 1 && fs) {
         g_fullscreen = 1;
         SDL_SetWindowFullscreen(g_win, SDL_WINDOW_FULLSCREEN_DESKTOP);
@@ -3364,6 +3371,7 @@ static void load_display_config(void) {
     if (fscanf(f, "%d", &holes) == 1) g_opt_bullet_holes = holes ? 1 : 0; /* old 1-line cfg -> stays ON */
     if (fscanf(f, "%d", &debris) == 1) g_opt_brick_debris = debris ? 1 : 0;
     if (fscanf(f, "%d", &ambient) == 1) g_opt_ambient_level = ambient; /* old 3-line cfg keeps the PARENA default */
+    if (fscanf(f, "%d", &live_levels) == 1) level_boxes_set_live_download(live_levels); /* old cfg: baked levels (card #479) */
     fclose(f);
     apply_ambient_level();
 }
@@ -3391,6 +3399,9 @@ static int lobby_menu_count() {
     if (lobby_page == LOBBY_PAGE_CUSTOMIZE) {
         return CUSTOMIZE_COUNT + 1;
     }
+    if (lobby_page == LOBBY_PAGE_SETTINGS) {
+        return SETTINGS_COUNT + 1;
+    }
     if (ui_use_server && ui_state.entry_count > 0) {
         return ui_state.entry_count + 1;
     }
@@ -3409,6 +3420,16 @@ static const char *lobby_menu_label(int idx) {
         if (idx >= 0 && idx < CUSTOMIZE_COUNT) return CUSTOMIZE_LABELS[idx];
         return "";
     }
+    if (lobby_page == LOBBY_PAGE_SETTINGS) {
+        if (idx == last_idx) return "< GAMES";
+        switch (idx) {
+            case SETTINGS_LIVE_LEVELS:  return level_boxes_live_download ? "LIVE LEVELS: ON" : "LIVE LEVELS: OFF";
+            case SETTINGS_BULLET_HOLES: return g_opt_bullet_holes ? "BULLET HOLES: ON" : "BULLET HOLES: OFF";
+            case SETTINGS_BRICK_DEBRIS: return g_opt_brick_debris ? "BRICK DEBRIS: ON" : "BRICK DEBRIS: OFF";
+            case SETTINGS_FULLSCREEN:   return g_fullscreen ? "FULLSCREEN: ON" : "FULLSCREEN: OFF";
+        }
+        return "";
+    }
     if (idx == last_idx) {
         return "CUSTOMIZE";
     }
@@ -3420,7 +3441,7 @@ static const char *lobby_menu_label(int idx) {
 
 static const char *lobby_menu_entry_id(int idx) {
     int last_idx = lobby_menu_count() - 1;
-    if (lobby_page == 1 || lobby_page == LOBBY_PAGE_CUSTOMIZE) {
+    if (lobby_page == 1 || lobby_page == LOBBY_PAGE_CUSTOMIZE || lobby_page == LOBBY_PAGE_SETTINGS) {
         return NULL;
     }
     if (idx == last_idx) {
@@ -3751,6 +3772,25 @@ static void lobby_start_action(int action) {
         }
         if (action >= 0 && action < APP_COUNT) {
             lobby_launch_app((AppsAction)action);
+        }
+        return;
+    }
+    if (lobby_page == LOBBY_PAGE_SETTINGS) {
+        if (action == lobby_menu_count() - 1) {
+            lobby_page = 0;
+            lobby_selection = 0;
+        } else if (action == SETTINGS_LIVE_LEVELS) {
+            level_boxes_set_live_download(!level_boxes_live_download);
+            save_display_config();
+        } else if (action == SETTINGS_BULLET_HOLES) {
+            g_opt_bullet_holes = !g_opt_bullet_holes;
+            save_display_config();
+        } else if (action == SETTINGS_BRICK_DEBRIS) {
+            g_opt_brick_debris = !g_opt_brick_debris;
+            if (!g_opt_brick_debris) brick_debris_clear(&g_brick_debris);
+            save_display_config();
+        } else if (action == SETTINGS_FULLSCREEN) {
+            toggle_fullscreen();
         }
         return;
     }
@@ -9815,6 +9855,28 @@ static void lobby_page_toggle_draw(void) {
     draw_string(lobby_page == 0 ? "APPS >" : "< GAMES", x + 16.0f, y + h * 0.5f, 5);
 }
 
+// SETTINGS button -- directly under the APPS/< GAMES toggle (card #480).
+static void lobby_settings_btn_rect(float *x, float *y, float *w, float *h) {
+    *x = 1040.0f; *y = 76.0f; *w = 200.0f; *h = 44.0f;
+}
+static void lobby_settings_btn_draw(void) {
+    if (lobby_page == LOBBY_PAGE_SETTINGS) return; // the toggle above already reads "< GAMES"
+    float x, y, w, h;
+    lobby_settings_btn_rect(&x, &y, &w, &h);
+    glColor3f(0.2f, 0.6f, 0.6f);
+    glRectf(x, y, x + w, y + h);
+    glColor3f(0.0f, 0.0f, 0.0f);
+    draw_string("SETTINGS", x + 16.0f + 2.0f, y + h * 0.5f - 2.0f, 5);
+    glColor3f(0.98f, 0.98f, 1.0f);
+    draw_string("SETTINGS", x + 16.0f, y + h * 0.5f, 5);
+}
+static int lobby_settings_btn_hit_test(float mx, float my) {
+    if (lobby_page == LOBBY_PAGE_SETTINGS) return 0;
+    float x, y, w, h;
+    lobby_settings_btn_rect(&x, &y, &w, &h);
+    return (mx >= x && mx <= x + w && my >= y && my <= y + h);
+}
+
 static int lobby_page_toggle_hit_test(float mx, float my) {
     float x, y, w, h;
     lobby_page_toggle_rect(&x, &y, &w, &h);
@@ -11593,6 +11655,13 @@ int main(int argc, char* argv[]) {
                         }
                         continue;
                     }
+                    if (lobby_settings_btn_hit_test(mx, my)) {
+                        lobby_page = LOBBY_PAGE_SETTINGS;
+                        lobby_selection = 0;
+                        ui_last_click_ms = 0;
+                        ui_last_click_index = -1;
+                        continue;
+                    }
                     if (lobby_page_toggle_hit_test(mx, my)) {
                         lobby_page = (lobby_page == 0) ? 1 : 0; /* from APPS or CUSTOMIZE: back to GAMES */
                         lobby_selection = 0;
@@ -11871,8 +11940,10 @@ int main(int argc, char* argv[]) {
              glClear(GL_COLOR_BUFFER_BIT);
              setup_lobby_2d();
              glColor3f(0, 1, 1); // CYAN TEXT
-             draw_string(lobby_page == 0 ? "SHANKPIT" : (lobby_page == LOBBY_PAGE_CUSTOMIZE ? "SHANKPIT / CUSTOMIZE" : "SHANKPIT / APPS"), LOBBY_LAYOUT.title_x, LOBBY_LAYOUT.title_y, 12);
+             draw_string(lobby_page == 0 ? "SHANKPIT" : (lobby_page == LOBBY_PAGE_CUSTOMIZE ? "SHANKPIT / CUSTOMIZE" : (lobby_page == LOBBY_PAGE_SETTINGS ? "SHANKPIT / SETTINGS" : "SHANKPIT / APPS")), LOBBY_LAYOUT.title_x, LOBBY_LAYOUT.title_y, 12);
              lobby_page_toggle_draw();
+             lobby_settings_btn_draw();
+            lobby_settings_btn_draw();
              if (app_launch_status[0]) {
                  glColor3f(0.95f, 0.9f, 0.2f);
                  draw_string(app_launch_status, 1040.0f, 80.0f, 4);

@@ -38,7 +38,7 @@ EMILY_BOT_BIN := $(BIN_DIR)/emily-bot
 EA_DIR       := dist/ea
 
 # ---- Targets ----
-.PHONY: test-witness-ai-zombies test-bullet-hole test-queue-level all lobby server serverctl clean setup print go-server ea ea-windows emily-bot rigid-ragdoll test-physics test-audio-chain ux-screenshot-test
+.PHONY: test-witness-ai-zombies test-bullet-hole test-queue-level test-baked-levels bake-levels all lobby server serverctl clean setup print go-server ea ea-windows emily-bot rigid-ragdoll test-physics test-audio-chain ux-screenshot-test
 
 all: $(LOBBY_BIN) $(SERVER_BIN)
 
@@ -235,6 +235,15 @@ test-bullet-hole:
 test-queue-level:
 	$(CC) -std=c99 -O2 -Wall -Wextra -pedantic -Werror -Ipackages/common -o /tmp/queue_level_test packages/common/queue_level_test.c
 	/tmp/queue_level_test
+
+# bake-levels -- card #479: regenerate packages/world/baked_levels_gen.h from a live IDUNA (review + commit the diff).
+bake-levels:
+	python3 scripts/bake_levels.py
+
+# test-baked-levels -- card #479/#480: the baked level table serves the registry + every export offline.
+test-baked-levels:
+	$(CC) -std=gnu99 -O2 -Wall -Wextra -Werror -Ipackages/world -o /tmp/baked_levels_test packages/world/baked_levels_test.c -lm
+	/tmp/baked_levels_test
 
 # test-audio-chain -- NOCK filter chains in the engine (2026-09-27): packages/audio/audio_chain.c
 # over PARENA-generated audio_dsp_gen.c must reproduce IDUNA NOCK's TypeScript render bit-for-bit

@@ -406,6 +406,33 @@ networked client has no role info, so online zombies render with default skins);
 (the living clip pose isn't captured); needs the IDUNA deploy for the zombies repository; rendering of the new
 NPCs was exercised headless for crashes but not eyeballed in a screenshot yet.
 
+ZOMBIES zombies now **always hunt** the player (no perception radius -- nextown is big) and spawn 72-130 units
+out, preferring spots **walled off by a building** so they come round a corner instead of popping into view.
+
+## SURVIVAL (2026-10-02)
+
+The **SURVIVAL** tile (`shank_lobby --survival`) is local wave defence on the built-in **SCENE_CITY**. Wave *n*
+is 4+3n always-hunting zombies (at most 5+n on the field), spawned hidden behind buildings near you; clear the
+field and, after a 6 s rest, the next wave starts. The HUD shows the wave and zombies left; there is no
+day/night, citizens or birds (that is the ZOMBIES sandbox). Logic: `witness_ai_survival_tick`
+(`make test-witness-ai-zombies` drives it to wave 3). Honest limits: offline only, no score/leaderboard, no
+dedicated game-over screen beyond the HUD line, tuning numbers are first guesses.
+
+## Menu: SETTINGS, CUSTOMIZE, baked levels (2026-10-02)
+
+The last main-menu tile is **CUSTOMIZE** (SKINS, SPRAYS); a **SETTINGS** button under the APPS toggle opens
+live-level downloading, bullet holes, brick debris and fullscreen (persisted in `shankpit_display.cfg`).
+Every NOCK level is now **baked into the binary** (`packages/world/baked_levels_gen.h`, regenerate with
+`make bake-levels` from a live IDUNA and commit the diff); the client uses those by default and never touches the
+network for levels. **LIVE LEVELS: ON** prefers the network and falls back to the baked copy. A level added in NOCK
+after the last bake is invisible with the setting OFF -- by design. The game server keeps resolving live
+(`SHANKPIT_BAKED_LEVELS=1` makes it baked-only). `make test-baked-levels`. Not yet: the baked table has the
+registry's levels at bake time only (the ZOMBIES default is baked, later zombies snapshots are not), and level
+"bridge" can't be baked because IDUNA itself refuses to export it (121 boxes after flattening, max 100).
+
+QUEUE clients now learn the level the server is on (`PACKET_QUEUE_LEVEL`, 1 Hz) and reload geometry when it
+changes at a round boundary (`make test-queue-level`); previously a client kept the first level it fetched.
+
 ## Controls (Player + Vehicles)
 
 ### Core movement & combat

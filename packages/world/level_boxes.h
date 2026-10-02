@@ -1163,21 +1163,56 @@ static inline int level_boxes_parse_registry_list(const char *json, LevelRegistr
     }
     return count;
 }
+/* Card #479/#480 -- levels are BAKED into the binary (baked_levels_gen.h, scripts/bake_levels.py) and
+ * the registry/export fetches below serve from that table by default. level_boxes_live_download is the
+ * player's "LIVE LEVEL DOWNLOADING" setting (top-level SETTINGS menu; persisted by the lobby): when
+ * ON the network is preferred and the baked copy is only the offline fallback; when OFF the network is
+ * never touched for levels. A level that exists only on the server (added in NOCK after the last bake)
+ * is therefore invisible with the setting OFF -- that is the point of the setting, not a bug.
+ * The headless game server keeps its own behaviour (live) -- see apps/server/src/main.c. */
+#include "baked_levels_gen.h"
+static int level_boxes_live_download = 0;
+static inline void level_boxes_set_live_download(int on) { level_boxes_live_download = on ? 1 : 0; }
+
+static inline int level_boxes_baked_registry_list(const char *collection, LevelRegistryEntry *out, int max) {
+    const char *json = NULL;
+    if (!collection || !*collection) json = BAKED_REGISTRY_MAIN;
+    else if (strcmp(collection, "zombies") == 0) json = BAKED_REGISTRY_ZOMBIES;
+    if (!json) return 0;
+    return level_boxes_parse_registry_list(json, out, max);
+}
+
+static inline int level_boxes_baked_export(int id, CustomLevelData *out) {
+    for (int i = 0; i < BAKED_LEVEL_EXPORT_COUNT; i++) {
+        if (BAKED_LEVEL_EXPORTS[i].id != id) continue;
+        CustomLevelData tmp;
+        if (!level_boxes_parse_json(BAKED_LEVEL_EXPORTS[i].json, &tmp)) return 0;
+        tmp.source_id = id;
+        *out = tmp;
+        return 1;
+    }
+    return 0;
+}
 
 // level_boxes_fetch_registry_list fetches and parses the real, live level list. Returns the real
 // entry count (0 if the registry is empty or unreachable -- a real network failure degrades to
 // "no online levels shown," not a crash, matching this file's own established "a bad/missing
-// resource never corrupts what's already working" convention).
+// resource never corrupts what's already working" convention). See level_boxes_live_download above
+// for when the baked table is used instead of / after the network.
 static inline int level_boxes_fetch_registry_list_in(const char *collection, LevelRegistryEntry *out, int max) {
-    char url[256];
-    if (collection && *collection) snprintf(url, sizeof(url), "%s?collection=%s", LEVEL_REGISTRY_BASE_URL, collection);
-    else snprintf(url, sizeof(url), "%s", LEVEL_REGISTRY_BASE_URL);
-    char *buf = NULL;
-    long n = level_boxes_fetch_url(url, &buf);
-    if (n <= 0) return 0;
-    int count = level_boxes_parse_registry_list(buf, out, max);
-    free(buf);
-    return count;
+    if (level_boxes_live_download) {
+        char url[256];
+        if (collection && *collection) snprintf(url, sizeof(url), "%s?collection=%s", LEVEL_REGISTRY_BASE_URL, collection);
+        else snprintf(url, sizeof(url), "%s", LEVEL_REGISTRY_BASE_URL);
+        char *buf = NULL;
+        long n = level_boxes_fetch_url(url, &buf);
+        if (n > 0) {
+            int count = level_boxes_parse_registry_list(buf, out, max);
+            free(buf);
+            if (count > 0) return count;
+        }
+    }
+    return level_boxes_baked_registry_list(collection, out, max);
 }
 
 static inline int level_boxes_fetch_registry_list(LevelRegistryEntry *out, int max) {
@@ -1188,22 +1223,25 @@ static inline int level_boxes_fetch_registry_list(LevelRegistryEntry *out, int m
 // export endpoint has no LZ4 option, unlike BRAWLPIT's -- a real, simpler wire format, not a
 // missing feature) and parses it into *out via level_boxes_parse_json. Returns 1 on success, 0 on
 // any real failure -- *out is left untouched on failure, matching level_boxes_load_from_file's
-// own established contract.
+// own established contract. With level_boxes_live_download off, serves the baked copy only.
 static inline int level_boxes_fetch_export(int id, CustomLevelData *out) {
-    char url[256];
-    snprintf(url, sizeof(url), "%s/%d/export", LEVEL_REGISTRY_BASE_URL, id);
-
-    char *buf = NULL;
-    long n = level_boxes_fetch_url(url, &buf);
-    if (n <= 0) return 0;
-
-    CustomLevelData tmp;
-    int ok = level_boxes_parse_json(buf, &tmp);
-    free(buf);
-    if (!ok) return 0;
-    tmp.source_id = id;
-    *out = tmp;
-    return 1;
+    if (level_boxes_live_download) {
+        char url[256];
+        snprintf(url, sizeof(url), "%s/%d/export", LEVEL_REGISTRY_BASE_URL, id);
+        char *buf = NULL;
+        long n = level_boxes_fetch_url(url, &buf);
+        if (n > 0) {
+            CustomLevelData tmp;
+            int ok = level_boxes_parse_json(buf, &tmp);
+            free(buf);
+            if (ok) {
+                tmp.source_id = id;
+                *out = tmp;
+                return 1;
+            }
+        }
+    }
+    return level_boxes_baked_export(id, out);
 }
 
 // level_boxes_build_snapshot_json -- the POST body for IDUNA's POST /api/v1/shankpit-levels/snapshots:

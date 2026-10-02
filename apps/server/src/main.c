@@ -1519,6 +1519,10 @@ void server_broadcast_brick_state(void) {
 
 int main(int argc, char *argv[]) {
     buggy_rules_install(); /* PARENA buggy handling (#468) */
+    /* Card #479: clients default to the baked-in levels; the shared game server keeps resolving the admin-
+       flagged QUEUE default live (a NOCK flag change must still take effect at the next round), falling back
+       to the baked copy when IDUNA is unreachable. SHANKPIT_BAKED_LEVELS=1 makes it use baked levels only. */
+    { const char *bk = getenv("SHANKPIT_BAKED_LEVELS"); level_boxes_set_live_download(!(bk && bk[0] == '1')); }
     int server_port = 6969;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--record") == 0) {
