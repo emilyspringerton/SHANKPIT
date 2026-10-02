@@ -426,6 +426,18 @@ magazine, and number keys only select weapons you own. Logic: `packages/simulati
 competitive multiplayer survival map this card describes is still to do; ground is assumed flat at y = 0; no
 pickup sound or on-screen prompt.
 
+## BIG_O LAB level (2026-10-02)
+
+`shank_lobby --lab` (or SURVIVAL -> MODES -> LAB) loads the **LAB** level: INTERRIOR_1 cloned and dressed with six lab station
+widgets created programmatically through IDUNA's `LevelStore`/`WidgetStore` API (`IDUNA/cmd/shankpit-lab-builder`, run on a DB
+copy; the result is checked in as `var/lab/lab.json`, and a registry level named LAB wins if one is published). Tiles named
+`lab_<kind>` export as `lab_stations`; walk up and press **E**: SPLICE bench (sample -> clone), CENTRIFUGE (2 samples -> 1 of the
+next type), PCR (amplify), CLONE VAT (decant a clone, +25 hp), SAMPLE FRIDGE (read-out), CONSOLE (opens the phone's LAB app). Every
+rule is PARENA (`PARENA/stdlib/big_o/lab_station_rules.prn` -> `packages/simulation/lab_station_rules.c`; `make test-lab-station`,
+`regen-lab-station`, `check-lab-station`). The BIG_O phone (P) and the Orb (backquote) work inside the lab; ZOMBIES kills feed the
+same samples. Status: headless-verified (renders, E on the splice bench splices); **not published to the live registry** (needs an
+IDUNA deploy + admin write), the station art is blocky placeholder boxes, and there is no pheromone army / shadow-war yet.
+
 ## Architect's Orb -- EduVM scripting terminal (2026-10-02)
 
 A tiny scripting language you write in-game that drives physical machines, ported from the GoblinFoxDragon/SHANKPIT lineage

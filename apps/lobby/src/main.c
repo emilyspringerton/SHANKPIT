@@ -61,6 +61,7 @@
 #include "../../../packages/common/phone.h"
 #include "../../../packages/simulation/world_alert_bridge.h"
 #include "../../../packages/simulation/food_pickup.h"
+#include "../../../packages/simulation/lab_station_host.h"
 #include "../../../packages/simulation/gun_items.h"
 #include "../../../packages/audio/audio.h"
 #include "../../../packages/render/gl_shader.h"
@@ -1082,6 +1083,14 @@ static SkyWeather g_sky_weather = {0};
 // its first real, player-VISIBLE day/night turn boundary (a DAYBREAK/NIGHTFALL/STORM WARNING
 // banner) without building the full phone UI to get there.
 static Phone g_story_phone = {0};
+/* SECTION 592 (card #508): the LAB level -- INTERRIOR_1 cloned + lab widgets (IDUNA cmd/shankpit-lab-builder). While
+   g_lab_active the BIG_O phone works like in ZOMBIES, and lab_<kind> tiles are interactive stations (E). */
+static int g_lab_active = 0;
+static LevelLabStation g_lab_st[LEVEL_BOXES_MAX_LAB_STATIONS];
+static int g_lab_st_n = 0;
+static char g_lab_msg[64];
+static unsigned int g_lab_msg_until = 0;
+#define PHONE_SANDBOX() (local_state.game_mode == MODE_ZOMBIES || g_lab_active)
 static WorldAlertBridge g_story_alert_bridge = {0};
 
 // Display text for the small, real, currently-dispatchable set of message ids
@@ -2325,6 +2334,7 @@ typedef enum {
     LOBBY_BATTLE,
     LOBBY_QUEUE,
     LOBBY_TYLER,
+    LOBBY_LAB,       /* SECTION 592 (card #508): the BIG_O lab level */
     LOBBY_COUNT
 } LobbyAction;
 
@@ -2344,7 +2354,8 @@ static const char *LOBBY_LABELS[LOBBY_COUNT] = {
     "SOLO",
     "TRAIN",
     "QUEUE",
-    "TYLER"
+    "TYLER",
+    "LAB"
 };
 
 // APPS page -- founder real-time, 2026-09-22 (SHANKPIT_OS_NORTHSTAR.md): "we need the games
@@ -2395,9 +2406,9 @@ typedef enum { SETTINGS_LIVE_LEVELS = 0, SETTINGS_BULLET_HOLES, SETTINGS_BRICK_D
 // mode starts changes -- only where the player finds it. The GAMES-page tiles for the other modes are
 // left in place (server-pushed UI entries index into that list); this page is the grouped way in.
 #define LOBBY_PAGE_MODES 4
-#define MODES_COUNT 5
-static const char *MODES_LABELS[MODES_COUNT] = { "SURVIVAL", "ZOMBIES", "QUEUE", "LEVELS", "TYLER" };
-static const int MODES_ACTION[MODES_COUNT] = { LOBBY_SURVIVAL, LOBBY_ZOMBIES, LOBBY_QUEUE, LOBBY_LEVEL_SELECT, LOBBY_TYLER };
+#define MODES_COUNT 6
+static const char *MODES_LABELS[MODES_COUNT] = { "SURVIVAL", "ZOMBIES", "QUEUE", "LEVELS", "TYLER", "LAB" };
+static const int MODES_ACTION[MODES_COUNT] = { LOBBY_SURVIVAL, LOBBY_ZOMBIES, LOBBY_QUEUE, LOBBY_LEVEL_SELECT, LOBBY_TYLER, LOBBY_LAB };
 static int lobby_page = 0;
 static int lobby_modes_bypass = 0; /* set while the MODES page re-dispatches into the GAMES-page launcher */
 
@@ -2892,6 +2903,43 @@ static int lobby_zombies_find_level(CustomLevelData *lvl) {
     }
     if (level_boxes_load_from_file("var/zombie/nextown_zombies.json", lvl)) { lvl->source_id = 0; return 1; }
     return 0;
+}
+
+// lobby_start_lab_mode -- SECTION 592 / card #508 (founder real-time: "add the LAB affordances in the game to the
+// level INTERIOR -- CLONE that level into LAB"). Loads the registry level named LAB, else the checked-in
+// var/lab/lab.json export (IDUNA cmd/shankpit-lab-builder), as a one-player sandbox with the BIG_O phone.
+static int lobby_start_lab_mode(void) {
+    CustomLevelData *lvl = (CustomLevelData *)malloc(sizeof(CustomLevelData));
+    if (!lvl) return 0;
+    int ok = 0;
+    LevelRegistryEntry entries[LEVEL_REGISTRY_MAX_ENTRIES];
+    int count = level_boxes_fetch_registry_list(entries, LEVEL_REGISTRY_MAX_ENTRIES);
+    for (int i = 0; i < count && !ok; i++)
+        if (strcmp(entries[i].name, "LAB") == 0 && level_boxes_fetch_export(entries[i].id, lvl) && lvl->lab_station_count > 0) ok = 1;
+    if (!ok && level_boxes_load_from_file("var/lab/lab.json", lvl)) { lvl->source_id = 0; ok = 1; }
+    if (!ok) { SDL_Log("LAB: no LAB level (registry has none and var/lab/lab.json is missing)"); free(lvl); return 0; }
+    local_init_match(1, MODE_DEATHMATCH);
+    level_boxes_apply_to_physics(lvl);
+    scene_load(SCENE_CUSTOM_LEVEL);
+    PlayerState *hero = &local_state.players[0];
+    hero->scene_id = SCENE_CUSTOM_LEVEL;
+    local_state.story_phase = STORY_PHASE_PLAYING;
+    phys_respawn(hero, SDL_GetTicks());
+    {   /* test/debug: SHANKPIT_LAB_POS="x,y,z,yaw" places the hero (headless verification of the stations) */
+        const char *lp = getenv("SHANKPIT_LAB_POS"); float lx, ly, lz, lyaw;
+        if (lp && sscanf(lp, "%f,%f,%f,%f", &lx, &ly, &lz, &lyaw) == 4) { hero->x = lx; hero->y = ly; hero->z = lz; hero->yaw = lyaw; }
+    }
+    cam_yaw = norm_yaw_deg(hero->yaw);   /* local starts don't sync the camera to the spawner yaw; do it so the lab faces its benches */
+    g_lab_active = 1;
+    g_lab_st_n = lvl->lab_station_count;
+    memcpy(g_lab_st, lvl->lab_stations, sizeof(LevelLabStation) * (size_t)lvl->lab_station_count);
+    g_lab_msg[0] = 0; g_lab_msg_until = 0;
+    if (g_story_phone.samples[0] + g_story_phone.samples[1] + g_story_phone.samples[2] == 0) {   /* starter kit so the stations can be tried */
+        g_story_phone.samples[0] = 3; g_story_phone.samples[1] = 2; g_story_phone.samples[2] = 1;
+    }
+    SDL_Log("LAB: loaded '%s' (%d boxes, %d stations)", lvl->name, lvl->count, g_lab_st_n);
+    free(lvl);
+    return 1;
 }
 
 // lobby_start_survival_mode -- cards #482/#488: SURVIVAL, wave defence on the built-in SCENE_CITY
@@ -3920,7 +3968,11 @@ static void lobby_start_action(int action) {
         net_connect();
     } else {
         app_state = STATE_GAME_LOCAL;
+        g_lab_active = 0;
         switch (action) {
+            case LOBBY_LAB:
+                if (!lobby_start_lab_mode()) app_state = STATE_LOBBY;
+                break;
             case LOBBY_ZOMBIES:
                 if (!lobby_start_zombies_mode()) app_state = STATE_LOBBY;
                 break;
@@ -8438,6 +8490,75 @@ static void draw_orb_overlay(void) {
     glColor3f(0.65f, 0.95f, 0.95f); draw_string(wl, 140.0f, 92.0f, 2.4f);
 }
 
+/* ---- LAB stations (SECTION 592 / card #508) ---- */
+static const char *const LAB_STATION_LABELS[6] = { "SPLICE BENCH", "CENTRIFUGE", "PCR THERMOCYCLER", "CLONE VAT", "SAMPLE FRIDGE", "CONSOLE" };
+static const float LAB_STATION_RGB[6][3] = { {0.2f,0.9f,0.5f}, {0.9f,0.3f,0.25f}, {0.9f,0.8f,0.2f}, {0.2f,0.8f,0.9f}, {0.85f,0.88f,0.9f}, {0.3f,0.6f,0.95f} };
+
+/* nearest station within the PARENA reach (labst_reach_tenths) of the hero, or -1 */
+static int lab_nearest_station(void) {
+    if (!g_lab_active) return -1;
+    PlayerState *h = &local_state.players[0];
+    float reach = (float)labst_reach_tenths() * 0.1f + 2.0f;   /* a little slack: stations are tile centres */
+    int best = -1; float bd = reach * reach;
+    for (int i = 0; i < g_lab_st_n; i++) {
+        float dx = g_lab_st[i].x - h->x, dz = g_lab_st[i].z - h->z, dy = g_lab_st[i].y - h->y;
+        if (dy > 14.0f || dy < -14.0f) continue;
+        float d = dx * dx + dz * dz;
+        if (d <= bd) { bd = d; best = i; }
+    }
+    return best;
+}
+
+static void lab_interact(unsigned int now_ms) {
+    int i = lab_nearest_station();
+    if (i < 0) return;
+    LabStationResult r;
+    lab_station_use(&g_story_phone, g_lab_st[i].kind, &r);
+    snprintf(g_lab_msg, sizeof g_lab_msg, "%s", r.msg);
+    g_lab_msg_until = now_ms + 3500u;
+    printf("[LAB] %s -> %s\n", LAB_STATION_LABELS[g_lab_st[i].kind], r.msg);
+    if (r.heal > 0) {
+        PlayerState *hero = &local_state.players[0];
+        hero->health += r.heal; if (hero->health > 100) hero->health = 100;
+    }
+    if (r.open_phone) {
+        if (!g_story_phone.open) phone_toggle(&g_story_phone);
+        g_story_phone.app = BP_APP_LAB; g_story_phone.cursor = 0;
+    }
+}
+
+static void draw_lab_world(unsigned int now_ms) {
+    if (!g_lab_active) return;
+    float t = (float)now_ms * 0.001f;
+    int near_i = lab_nearest_station();
+    glDisable(GL_TEXTURE_2D);
+    for (int i = 0; i < g_lab_st_n; i++) {
+        const float *c = LAB_STATION_RGB[g_lab_st[i].kind];
+        float bob = 0.25f * sinf(t * 2.5f + (float)i);
+        float k = (i == near_i) ? 1.0f : 0.55f;
+        glPushMatrix(); glTranslatef(g_lab_st[i].x, g_lab_st[i].y + 1.6f + bob, g_lab_st[i].z); glRotatef(t * 60.0f, 0, 1, 0);
+        glColor3f(c[0] * k, c[1] * k, c[2] * k); draw_box(0.45f, 0.45f, 0.45f);
+        glPopMatrix();
+    }
+}
+
+static void draw_lab_hud(unsigned int now_ms) {
+    if (!g_lab_active) return;
+    int i = lab_nearest_station();
+    if (i >= 0 && !g_story_phone.open && !g_orb_open) {
+        char b[96]; snprintf(b, sizeof b, "[E] %s", LAB_STATION_LABELS[g_lab_st[i].kind]);
+        const float *c = LAB_STATION_RGB[g_lab_st[i].kind];
+        glColor3f(c[0], c[1], c[2]);
+        draw_string(b, 470.0f, 330.0f, 3.6f);
+    }
+    char s[96];
+    PlayerState *lh = &local_state.players[0];
+    snprintf(s, sizeof s, "LAB  SAMPLES %d/%d/%d  CLONES %d  [P] PHONE  @%.0f,%.0f,%.0f", g_story_phone.samples[0], g_story_phone.samples[1], g_story_phone.samples[2], g_story_phone.clone_count, lh->x, lh->y, lh->z);
+    glColor3f(0.55f, 0.85f, 1.0f);
+    draw_string(s, 12.0f, 690.0f, 2.6f);
+    if (now_ms < g_lab_msg_until) { glColor3f(1.0f, 0.95f, 0.6f); draw_string(g_lab_msg, 470.0f, 290.0f, 3.0f); }
+}
+
 static void draw_chat_pane(unsigned int now_ms) {
     const float SZ  = 3.5f;
     const float LH  = 18.0f;
@@ -8835,7 +8956,7 @@ void draw_hud(PlayerState *p) {
     }
 
     draw_chat_pane(SDL_GetTicks());
-    if (local_state.game_mode == MODE_ZOMBIES && app_state == STATE_GAME_LOCAL) {   /* SECTION 591: same phone HUD MODE_STORY draws */
+    if (PHONE_SANDBOX() && app_state == STATE_GAME_LOCAL) {   /* SECTION 591/592: same phone HUD MODE_STORY draws */
         if (g_story_phone.banner_id) {
             glColor4f(0.06f, 0.08f, 0.10f, 0.72f);
             glRectf(20.0f, 680.0f, 300.0f, 714.0f);
@@ -8847,6 +8968,7 @@ void draw_hud(PlayerState *p) {
             else draw_phone_app(&g_story_phone);
         }
     }
+    draw_lab_hud(SDL_GetTicks());
     draw_orb_overlay();
 
     glEnable(GL_DEPTH_TEST); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW); glPopMatrix();
@@ -10030,6 +10152,7 @@ void draw_scene(PlayerState *render_p) {
     draw_projectiles();
     if (local_state.game_mode == MODE_SURVIVAL) draw_gun_items(SDL_GetTicks());
     draw_orb_world(SDL_GetTicks());
+    draw_lab_world(SDL_GetTicks());
     if ((render_p->in_vehicle && render_p->vehicle_type != VEH_BUGGY) || render_p->third_person || g_cam_override.active) draw_player_3rd(render_p);
     for(int i=0; i<MAX_CLIENTS; i++) {
         PlayerState *p = &local_state.players[i];
@@ -11560,6 +11683,7 @@ static void buggy_advance_remote_positions(unsigned int now_ms) {
 int main(int argc, char* argv[]) {
     buggy_rules_install(); /* PARENA buggy handling (#468) */
     int cli_start_zombies = 0;
+    int cli_start_lab = 0;
     int cli_start_survival = 0;
     int cli_start_city = 0;
     int cli_third_person = 0;
@@ -11570,6 +11694,8 @@ int main(int argc, char* argv[]) {
             cli_start_city = 1; /* straight into the built-in cityscape */
         } else if(strcmp(argv[i], "--survival") == 0) {
             cli_start_survival = 1; /* straight into SURVIVAL (menu tile equivalent) */
+        } else if(strcmp(argv[i], "--lab") == 0) {
+            cli_start_lab = 1; /* straight into the BIG_O LAB level */
         } else if(strcmp(argv[i], "--zombies") == 0) {
             cli_start_zombies = 1; /* straight into the ZOMBIES sandbox (menu tile equivalent) */
         } else if(strcmp(argv[i], "--host") == 0 && i+1<argc) {
@@ -11727,6 +11853,7 @@ int main(int argc, char* argv[]) {
     double previous = get_time();
     double accumulator = 0.0;
     if (cli_start_zombies) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_ZOMBIES); lobby_modes_bypass = 0; }
+    if (cli_start_lab) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_LAB); lobby_modes_bypass = 0; }
     if (cli_start_survival) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_SURVIVAL); lobby_modes_bypass = 0; }
     if (cli_start_city) { lobby_start_city(); if (cli_third_person) local_state.players[0].third_person = 1; }
     int prev_app_state = STATE_LOBBY;
@@ -12074,11 +12201,14 @@ int main(int argc, char* argv[]) {
                     }
                     if (((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
                          local_state.story_phase == STORY_PHASE_PLAYING) ||
-                        local_state.game_mode == MODE_ZOMBIES) {   /* SECTION 591: ZOMBIES shares the BIG_O phone */
+                        PHONE_SANDBOX()) {   /* SECTION 591/592: ZOMBIES and LAB share the BIG_O phone */
                       if (app_state == STATE_GAME_LOCAL && e.key.keysym.sym == SDLK_p) {
                         phone_toggle(&g_story_phone);
                         continue;
                       }
+                    }
+                    if (g_lab_active && app_state == STATE_GAME_LOCAL && !g_story_phone.open && !g_orb_open && e.key.keysym.sym == SDLK_e) {
+                        lab_interact(SDL_GetTicks());   /* SECTION 592: LAB stations; E is also the normal use key, harmless */
                     }
                     if (g_paused) {
                         if (e.key.keysym.sym == SDLK_ESCAPE) {
@@ -12225,7 +12355,7 @@ int main(int argc, char* argv[]) {
                         (local_state.story_phase == STORY_PHASE_CUTSCENE || g_story_phone.open)) {
                         continue;
                     }
-                    if (app_state == STATE_GAME_LOCAL && local_state.game_mode == MODE_ZOMBIES && g_story_phone.open) continue;
+                    if (app_state == STATE_GAME_LOCAL && PHONE_SANDBOX() && g_story_phone.open) continue;
                     float sens = (current_fov < 50.0f) ? 0.05f : 0.15f; 
                     cam_yaw -= e.motion.xrel * sens;
                     if(cam_yaw > 360) cam_yaw -= 360; if(cam_yaw < 0) cam_yaw += 360;
@@ -12394,7 +12524,7 @@ int main(int argc, char* argv[]) {
                      local_state.story_phase == STORY_PHASE_COMPLETE ||
                      local_state.story_phase == STORY_PHASE_FAILED ||
                      g_story_phone.open) || g_orb_open ||
-                    (local_state.game_mode == MODE_ZOMBIES && g_story_phone.open)) {
+                    (PHONE_SANDBOX() && g_story_phone.open)) {
                     input_fwd = 0.0f; input_str = 0.0f;
                     input_jump = 0; input_crouch = 0; input_shoot = 0; input_reload = 0; input_use = 0; input_ability = 0;
                 }

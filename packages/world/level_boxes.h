@@ -130,6 +130,12 @@ typedef struct {
 #define LEVEL_BOXES_MAX_BUGGY_SPAWNS 16
 typedef struct { float x, y, z, yaw; } LevelBuggySpawn;
 
+/* SECTION 592: interactive BIG_O lab stations (IDUNA export "lab_stations": walls named lab_<kind>). kind uses the
+   PARENA lab_station_rules.prn numbering: 0 splice 1 centrifuge 2 pcr 3 vat 4 fridge 5 console. */
+#define LEVEL_BOXES_MAX_LAB_STATIONS 32
+typedef struct { int kind; float x, y, z; } LevelLabStation;
+static const char *const LEVEL_LAB_STATION_NAMES[6] = { "splice", "centrifuge", "pcr", "vat", "fridge", "console" };
+
 #define LEVEL_BOXES_MAX_DOORS 16
 #define LEVEL_BOXES_SCRIPT_PATH_LEN 256
 
@@ -319,6 +325,8 @@ typedef struct {
     int spawner_count;
     LevelBuggySpawn buggy_spawns[LEVEL_BOXES_MAX_BUGGY_SPAWNS]; /* #464 */
     int buggy_spawn_count;
+    LevelLabStation lab_stations[LEVEL_BOXES_MAX_LAB_STATIONS]; /* SECTION 592 */
+    int lab_station_count;
     LevelDoor doors[LEVEL_BOXES_MAX_DOORS]; /* Story System Phase 1 */
     int door_count;
     LevelButton buttons[LEVEL_BOXES_MAX_BUTTONS]; /* S485, REFLUX pub/sub */
@@ -739,6 +747,46 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
                     if ((bv = level_boxes_find_key(bobj_start, bobj_end, "yaw"))) level_boxes_parse_number(bv, &bs->yaw);
                     out->buggy_spawn_count++;
                     bcursor = bobj_end + 1;
+                }
+            }
+        }
+    }
+
+    // Lab stations (SECTION 592) -- same small-scanner shape; absent key = none. kind is a string in the JSON.
+    out->lab_station_count = 0;
+    const char *lb_arr_key = level_boxes_find_key(buf, end, "lab_stations");
+    if (lb_arr_key) {
+        const char *lb_arr = level_boxes_skip_ws(lb_arr_key);
+        if (*lb_arr == '[') {
+            const char *lb_arr_end = level_boxes_find_array_end(lb_arr, end);
+            if (lb_arr_end) {
+                const char *lcursor = lb_arr + 1;
+                while (lcursor < lb_arr_end && out->lab_station_count < LEVEL_BOXES_MAX_LAB_STATIONS) {
+                    lcursor = level_boxes_skip_ws(lcursor);
+                    if (lcursor >= lb_arr_end) break;
+                    if (*lcursor != '{') { lcursor++; continue; }
+                    const char *lobj_start = lcursor;
+                    const char *lobj_end = strchr(lobj_start, '}');
+                    if (!lobj_end || lobj_end > lb_arr_end) break;
+                    LevelLabStation *ls = &out->lab_stations[out->lab_station_count];
+                    memset(ls, 0, sizeof(*ls));
+                    ls->kind = -1;
+                    const char *lv;
+                    if ((lv = level_boxes_find_key(lobj_start, lobj_end, "kind"))) {
+                        lv = level_boxes_skip_ws(lv);
+                        if (*lv == '"') {
+                            lv++;
+                            for (int k = 0; k < 6; k++) {
+                                size_t n = strlen(LEVEL_LAB_STATION_NAMES[k]);
+                                if (strncmp(lv, LEVEL_LAB_STATION_NAMES[k], n) == 0 && lv[n] == '"') { ls->kind = k; break; }
+                            }
+                        }
+                    }
+                    if ((lv = level_boxes_find_key(lobj_start, lobj_end, "x"))) level_boxes_parse_number(lv, &ls->x);
+                    if ((lv = level_boxes_find_key(lobj_start, lobj_end, "y"))) level_boxes_parse_number(lv, &ls->y);
+                    if ((lv = level_boxes_find_key(lobj_start, lobj_end, "z"))) level_boxes_parse_number(lv, &ls->z);
+                    if (ls->kind >= 0) out->lab_station_count++;
+                    lcursor = lobj_end + 1;
                 }
             }
         }
