@@ -447,6 +447,9 @@ jobs:
           mkdir -p ShankPit_Client
           cp ShankPit.exe ShankPit_Client/
           cp sdl2_mingw/bin/SDL2.dll ShankPit_Client/
+          # SDL2_ttf.dll: the lobby/client links -lSDL2_ttf now (EDITOR.GAME in-process widget, S559) --
+          # without it next to the exe Windows refuses to start it (missing-DLL error).
+          cp sdl2_mingw/bin/SDL2_ttf.dll ShankPit_Client/
           cp SHANKPIT_CONSTRUCT.txt ShankPit_Client/
           # S470 real fix (founder real-time, live report against a real screenshot: "no robots
           # tho" -- every character, including the player's own tyler_body, rendered as a plain

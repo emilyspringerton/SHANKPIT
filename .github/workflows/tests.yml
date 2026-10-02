@@ -328,6 +328,9 @@ jobs:
           mkdir -p ShankPit_Client
           cp ShankPit.exe ShankPit_Client/
           cp sdl2_mingw/bin/SDL2.dll ShankPit_Client/
+          # SDL2_ttf.dll: the lobby/client links -lSDL2_ttf now (EDITOR.GAME in-process widget, S559) --
+          # without it next to the exe Windows refuses to start it (missing-DLL error).
+          cp sdl2_mingw/bin/SDL2_ttf.dll ShankPit_Client/
           cp SHANKPIT_CONSTRUCT.txt ShankPit_Client/
           printf '%s\n' "start ShankPit.exe" > ShankPit_Client/PLAY.bat
           zip -r "ShankPit_Client_${BUILD}.zip" ShankPit_Client
@@ -454,6 +457,9 @@ jobs:
           cp ShankServer_Linux_Debug ShankPit_Debug/
           cp ShankPitDebug.exe ShankPit_Debug/
           cp sdl2_mingw/bin/SDL2.dll ShankPit_Debug/
+          # SDL2_ttf.dll: the lobby/client links -lSDL2_ttf now (EDITOR.GAME in-process widget, S559) --
+          # without it next to the exe Windows refuses to start it (missing-DLL error).
+          cp sdl2_mingw/bin/SDL2_ttf.dll ShankPit_Debug/
           printf '%s\n' "start ShankPitDebug.exe" > ShankPit_Debug/PLAY_DEBUG.bat
           printf '%s\n' "NET_VERBOSE_LOG=1 ./ShankServer_Linux_Debug --deathmatch" > ShankPit_Debug/RUN_DEBUG_SERVER.sh
           chmod +x ShankPit_Debug/RUN_DEBUG_SERVER.sh
