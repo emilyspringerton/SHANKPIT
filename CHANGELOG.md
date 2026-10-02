@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-02
+- Floor tint (#533): level_boxes parses floor_tint, draw_grid renders tinted translucent floor; NOCK + IDUNA side committed, IDUNA redeploy pending (sess-20260923-1030-4a526255)
 - EDIT MAP live sync (#531): edit_sync.h + worker thread; verified end-to-end against a local mock of the IDUNA session API (not the deployed IDUNA) (sess-20260923-1030-4a526255)
 - EDIT MAP mode (#530): fly cam, place/delete box, move spawner, op-log save; unit-tested edit_map.h; mode launch verified headless, key path not driven live (no xdotool) (sess-20260923-1030-4a526255)
 - Zombie-mode movers learn the city (#522): shared learned wall grid, stuck detection, A* detours out of pockets; clawing zombies stay relentless; U-pocket test added (fails on old code) (sess-20260923-1030-4a526255)
