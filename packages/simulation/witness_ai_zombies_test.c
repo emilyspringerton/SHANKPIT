@@ -112,6 +112,46 @@ int main(void) {
     assert(S.players[zid].x < 28.0f);                 /* and did not walk through it */
     printf("PASS: zombie clawed the wall %d times, face x=%.2f normal=(%.0f,%.0f)\n", hits, hit_x, hit_nx, hit_nz);
 
+    /* ---- card #486: a sandbox zombie always hunts, however far the hero is ---- */
+    memset(&S, 0, sizeof S);
+    S.game_mode = MODE_ZOMBIES;
+    S.players[0].active = 1; S.players[0].state = STATE_ALIVE;
+    S.players[0].x = 900.0f; S.players[0].z = 0.0f;
+    nboxes = 1;
+    witness_ai_reset(4u, 0);
+    zid = witness_ai_spawn_zombie(&S, 0.0f, 0.0f, 0.0f, 0);
+    witness_ai_force_zombie_mood(zid, 2);
+    for (int i = 0; i < 40; i++) { t += 50; witness_ai_tick(&S, t); walk(0.05f); }
+    assert(S.players[zid].in_fwd > 0.0f);          /* chasing from 900 away (old radius was 400) */
+    assert(S.players[zid].x > 0.5f);               /* and actually moving toward the hero (+x) */
+    printf("PASS: zombie 900 away from the hero still hunts (x=%.1f)\n", S.players[zid].x);
+
+    /* ---- card #486: with a building available, zombies spawn out of the hero's sight ---- */
+    memset(&S, 0, sizeof S);
+    S.game_mode = MODE_ZOMBIES;
+    S.players[0].active = 1; S.players[0].state = STATE_ALIVE;
+    S.players[0].x = 0.0f; S.players[0].z = 0.0f;
+    day_night_clock_init(&S.story_clock, 1u, 23);  /* night: wants a horde */
+    nboxes = 1; /* index 0 is skipped by the walker; boxes[1..] are real */
+    boxes[1] = (TBox){ 0.0f, 10.0f, 80.0f, 200.0f, 30.0f, 8.0f }; /* a long building across +z, 80 away */
+    nboxes = 2;
+    witness_ai_reset(5u, 0);
+    for (int i = 0; i < 60; i++) { t += 3000; witness_ai_zombies_tick(&S, t); }
+    int seen = 0, total = 0;
+    for (int i = 1; i < MAX_CLIENTS; i++) {
+        PlayerState *zp = &S.players[i];
+        if (!zp->active || witness_ai_role_for_player(i) != WITNESS_AI_ROLE_ZOMBIE) continue;
+        total++;
+        /* visible = on the hero's side of the building plane and not walled off from the hero */
+        if (zp->z < 70.0f && zp->z > -1000.0f) {
+            seen++;
+        }
+    }
+    assert(total >= 6);
+    assert(seen == 0 || seen * 4 < total);          /* the hidden-first spawner put (nearly) all of them behind the building */
+    printf("PASS: %d/%d zombies spawned in the hero's open view (rest hidden behind the building)\n", seen, total);
+    nboxes = 1;
+
     printf("ALL PASS\n");
     return 0;
 }

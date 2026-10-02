@@ -727,7 +727,10 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
             hdx = hero_p->x - zp->x;
             hdz = hero_p->z - zp->z;
             hdist = sqrtf(hdx * hdx + hdz * hdz);
-            has_target = hdist <= (s->game_mode == MODE_ZOMBIES ? 400.0f : WITNESS_AI_ZOMBIE_PERCEPTION_RADIUS); /* sandbox horde converges from the spawn ring */
+            /* MODE_ZOMBIES (card #486, "just always start to hunt the player"): every zombie always
+               has the hero as its target, whatever the distance -- nextown is big and they were
+               hard to find; the spawn ring (<=120) bounds how far they actually walk. */
+            has_target = (s->game_mode == MODE_ZOMBIES) ? 1 : hdist <= WITNESS_AI_ZOMBIE_PERCEPTION_RADIUS;
         }
         zombie_tick(&z->zstate, now_ms, has_target);
 
@@ -1031,14 +1034,30 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
 /* --- MODE_ZOMBIES day/night population lifecycle (see witness_ai.h) --- */
 static unsigned int g_zrng = 0x2545F491u;
 static unsigned int zrand(void) { g_zrng ^= g_zrng << 13; g_zrng ^= g_zrng >> 17; g_zrng ^= g_zrng << 5; return g_zrng; }
-static int zombies_ring_spot(const PlayerState *hero, float rmin, float rmax, float *ox, float *oz) {
-    for (int t = 0; t < 12; t++) {
+/* Card #486: is the straight (x,z) line hero -> (x,z) walled off? Sampled every 3 units at ground
+   level, same honest "boxes only, no real raycast" model the rest of this file uses. */
+static int zombies_hidden_from(const PlayerState *hero, float x, float z) {
+    float dx = x - hero->x, dz = z - hero->z, d = sqrtf(dx * dx + dz * dz);
+    for (float t = 3.0f; t < d; t += 3.0f) {
+        if (wai_point_blocked(hero->x + dx * (t / d), 0.0f, hero->z + dz * (t / d))) return 1;
+    }
+    return 0;
+}
+/* hide != 0: prefer a spot with a building between it and the hero (spawn "behind buildings", out of
+   sight), falling back to any open spot if none is found. */
+static int zombies_ring_spot_ex(const PlayerState *hero, float rmin, float rmax, int hide, float *ox, float *oz) {
+    for (int t = 0; t < (hide ? 40 : 12); t++) {
         float a = (float)(zrand() % 3600u) * (6.2831853f / 3600.0f);
         float r = rmin + (float)(zrand() % 1000u) * 0.001f * (rmax - rmin);
         float x = hero->x + sinf(a) * r, z = hero->z + cosf(a) * r;
-        if (!wai_point_blocked(x, 8.0f, z) && !wai_point_blocked(x, 0.0f, z)) { *ox = x; *oz = z; return 1; }
+        if (wai_point_blocked(x, 8.0f, z) || wai_point_blocked(x, 0.0f, z)) continue;
+        if (hide && !zombies_hidden_from(hero, x, z)) continue;
+        *ox = x; *oz = z; return 1;
     }
-    return 0;
+    return hide ? zombies_ring_spot_ex(hero, rmin, rmax, 0, ox, oz) : 0;
+}
+static int zombies_ring_spot(const PlayerState *hero, float rmin, float rmax, float *ox, float *oz) {
+    return zombies_ring_spot_ex(hero, rmin, rmax, 0, ox, oz);
 }
 
 void witness_ai_zombies_tick(ServerState *s, unsigned int now_ms) {
@@ -1056,8 +1075,8 @@ void witness_ai_zombies_tick(ServerState *s, unsigned int now_ms) {
     int phase = (int)day_night_clock_phase(&s->story_clock);
     int want_z, want_c;
     switch (phase) {
-        case DNC_DAWN:  want_z = 2;  want_c = 5; break;
-        case DNC_DAY:   want_z = 1;  want_c = 8; break;
+        case DNC_DAWN:  want_z = 3;  want_c = 5; break;
+        case DNC_DAY:   want_z = 2;  want_c = 8; break;
         case DNC_DUSK:  want_z = 6;  want_c = 5; break;
         default:        want_z = 12; want_c = 2; break; /* night */
     }
@@ -1089,7 +1108,7 @@ void witness_ai_zombies_tick(ServerState *s, unsigned int now_ms) {
     if (now_ms - g_zlast_spawn_ms < 2500u) return;
     g_zlast_spawn_ms = now_ms;
     float x, z;
-    if (nz < want_z && zombies_ring_spot(hero, 90.0f, 170.0f, &x, &z)) {
+    if (nz < want_z && zombies_ring_spot_ex(hero, 72.0f, 130.0f, 1, &x, &z)) {
         int id = witness_ai_spawn_zombie(s, x, 8.0f, z, now_ms);
         if (id > 0) witness_ai_force_zombie_mood(id, ZOMBIE_MOOD_HUNTING);
     } else if (nc < want_c && zombies_ring_spot(hero, 60.0f, 150.0f, &x, &z)) {
