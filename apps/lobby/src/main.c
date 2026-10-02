@@ -35,6 +35,7 @@
 
 #include "../../../packages/common/protocol.h"
 #include "../../../packages/common/physics.h"
+#include "../../../packages/common/third_person.h"
 #include "../../../packages/common/shared_movement.h"
 #include "../../../packages/common/net_sim.h"
 #include "../../../packages/simulation/cutscene.h"
@@ -2763,6 +2764,38 @@ static int lobby_start_zombies_mode(void) {
     SDL_Log("ZOMBIES: loaded '%s' (source id %d, %d boxes, %d damaged cells)", lvl->name, lvl->source_id, lvl->count, lvl->brick_damage_count);
     free(lvl);
     return 1;
+}
+
+#define THIRD_PERSON_CAM_DIST 6.0f
+/* lobby_third_person_arm -- the orbit camera's offset from the player (cx/cz are SUBTRACTED from
+ * the player position, cam_y is added to it, the same convention draw_scene's cx/cz/cam_y use),
+ * pulled in so it never sits inside a wall (third_person.h). Shared by the renderer and the aim
+ * bridge so the two can never disagree about where the camera is. */
+static void lobby_third_person_arm(const PlayerState *p, float yaw, float pitch,
+                                   float *cx, float *cz, float *cam_y) {
+    float rad = -yaw * 0.01745f;
+    float prad = pitch * 0.01745f;
+    /* arm = camera position - pivot (pivot is the player at y + 1). The camera sits BEHIND the
+       player. With rad = -yaw the player faces (sin(rad), ., -cos(rad)) (physics.h: yaw 0 faces
+       -Z), so behind is (-sin(rad), ., +cos(rad)).
+       REAL BUG FIXED (card T62892945, "fix our 3rd person"): the previous orbit camera used
+       cz = +cos(rad)*D, which -- since the camera sits at z - cz -- put it 6 units IN FRONT of the
+       player looking away, so the character was behind the lens and never visible. The x term was
+       already correct; only z was flipped. */
+    float ax = -sinf(rad) * THIRD_PERSON_CAM_DIST * cosf(prad);
+    float ay = THIRD_PERSON_CAM_DIST * sinf(prad);
+    float az = cosf(rad) * THIRD_PERSON_CAM_DIST * cosf(prad);
+    tp_camera_offset_clipped(p->x, p->y + 1.0f, p->z, &ax, &ay, &az);
+    *cx = -ax; *cz = -az; *cam_y = 1.0f + ay;
+}
+
+/* lobby_third_person_aim -- aim bridging for a player in third person: yaw/pitch that send a shot
+ * from the eye to the point the camera's centre ray hits, so hits land on the crosshair. */
+static void lobby_third_person_aim(const PlayerState *p, float yaw, float pitch, float *out_yaw, float *out_pitch) {
+    float cx, cz, cam_y;
+    lobby_third_person_arm(p, yaw, pitch, &cx, &cz, &cam_y);
+    tp_aim_yaw_pitch(p->x - cx, p->y + cam_y, p->z - cz, yaw, pitch,
+                     p->x, p->y + EYE_HEIGHT, p->z, out_yaw, out_pitch);
 }
 
 /* lobby_start_city -- local deathmatch on the built-in procedural SCENE_CITY (card T62892945).
@@ -8962,12 +8995,7 @@ void draw_scene(PlayerState *render_p) {
          * own doc comment, protocol.h, for the real target consumer: MODE_STORY's not-yet-built
          * night/social-stealth register). Every other mode's camera math is completely unchanged
          * by this branch -- it fires only for a player this flag was explicitly set on. */
-        #define THIRD_PERSON_CAM_DIST 6.0f
-        float rad = -cam_yaw * 0.01745f;
-        float prad = cam_pitch * 0.01745f;
-        cx = sinf(rad) * THIRD_PERSON_CAM_DIST * cosf(prad);
-        cz = cosf(rad) * THIRD_PERSON_CAM_DIST * cosf(prad);
-        cam_y = 1.0f + THIRD_PERSON_CAM_DIST * sinf(prad);
+        lobby_third_person_arm(render_p, cam_yaw, cam_pitch, &cx, &cz, &cam_y);
     } else {
         float follow_yaw = cam_yaw;
         float cam_z_off = cam_buggy ? 26.0f : (render_p->in_vehicle ? 10.0f : lerpf(0.0f, 8.5f, death_cam_blend));
@@ -10667,8 +10695,11 @@ static void buggy_advance_remote_positions(unsigned int now_ms) {
 int main(int argc, char* argv[]) {
     int cli_start_zombies = 0;
     int cli_start_city = 0;
+    int cli_third_person = 0;
     for(int i=1; i<argc; i++) {
-        if(strcmp(argv[i], "--city") == 0) {
+        if(strcmp(argv[i], "--third") == 0) {
+            cli_third_person = 1; /* with --city: start in third person (also toggled in-game with V) */
+        } else if(strcmp(argv[i], "--city") == 0) {
             cli_start_city = 1; /* straight into the built-in cityscape */
         } else if(strcmp(argv[i], "--zombies") == 0) {
             cli_start_zombies = 1; /* straight into the ZOMBIES sandbox (menu tile equivalent) */
@@ -10824,7 +10855,7 @@ int main(int argc, char* argv[]) {
     double previous = get_time();
     double accumulator = 0.0;
     if (cli_start_zombies) lobby_start_action(LOBBY_ZOMBIES);
-    if (cli_start_city) lobby_start_city();
+    if (cli_start_city) { lobby_start_city(); if (cli_third_person) local_state.players[0].third_person = 1; }
     int prev_app_state = STATE_LOBBY;
     float input_fwd = 0.0f, input_str = 0.0f;
     int input_jump = 0, input_crouch = 0, input_shoot = 0, input_reload = 0, input_use = 0, input_ability = 0, input_bike = 0;
@@ -11232,6 +11263,11 @@ int main(int argc, char* argv[]) {
                     }
                     if ((local_state.game_mode == MODE_TDMB || local_state.game_mode == MODE_TDMO || local_state.game_mode == MODE_CTFB) && local_state.match_over && e.key.keysym.sym == SDLK_r) {
                         local_init_match(12, local_state.game_mode);
+                    } else if (e.key.keysym.sym == SDLK_v && app_state == STATE_GAME_LOCAL &&
+                               local_state.game_mode != MODE_TYLER && local_state.players[0].state == STATE_ALIVE) {
+                        /* V: toggle first/third person in a local match (card T62892945). MODE_TYLER
+                           owns its own third_person flag and is left alone. */
+                        local_state.players[0].third_person = !local_state.players[0].third_person;
                     } else if (e.key.keysym.sym == SDLK_m) {
                         overlay_cycle_mode(&g_overlay);
                         printf("[OVERLAY] mode=%s\n", overlay_mode_name(g_overlay.mode));
@@ -11410,7 +11446,10 @@ int main(int argc, char* argv[]) {
                                            my_client_id, net_local_pid,
                                            net_diag.connect_started ? (now_ms - net_diag.connect_start_ms) : 0);
                         }
-                        UserCmd cmd = client_create_cmd(input_fwd, input_str, cam_yaw, cam_pitch, input_shoot, input_jump, input_crouch, input_reload, input_use, input_ability, input_bike, wpn_req);
+                        float net_aim_yaw = cam_yaw, net_aim_pitch = cam_pitch;
+                        if (local_state.players[net_local_pid].third_person)
+                            lobby_third_person_aim(&local_state.players[net_local_pid], cam_yaw, cam_pitch, &net_aim_yaw, &net_aim_pitch);
+                        UserCmd cmd = client_create_cmd(input_fwd, input_str, net_aim_yaw, net_aim_pitch, input_shoot, input_jump, input_crouch, input_reload, input_use, input_ability, input_bike, wpn_req);
                         client_apply_cmd_movement(&local_state.players[net_local_pid], &cmd, now_ms);
                         net_send_cmd(cmd);
                         net_last_cmd_send_ms = now_ms;
@@ -11533,7 +11572,10 @@ int main(int argc, char* argv[]) {
                     local_state.story_phase_start_ms == 0) {
                     local_state.story_phase_start_ms = now_ms;
                 }
-                local_update(input_fwd, input_str, cam_yaw, cam_pitch, input_shoot, wpn_req, input_jump, input_crouch, input_reload, input_ability, input_bike, NULL, now_ms);
+                float local_aim_yaw = cam_yaw, local_aim_pitch = cam_pitch;
+                if (local_state.players[0].third_person)
+                    lobby_third_person_aim(&local_state.players[0], cam_yaw, cam_pitch, &local_aim_yaw, &local_aim_pitch);
+                local_update(input_fwd, input_str, local_aim_yaw, local_aim_pitch, input_shoot, wpn_req, input_jump, input_crouch, input_reload, input_ability, input_bike, NULL, now_ms);
                 lobby_check_story_level_exits(now_ms);
                 if (local_state.game_mode == MODE_TYLER) {
                     tyler_coldopen_tick(&g_tyler_coldopen_local, now_ms, g_story_next_level_id, lobby_tyler_exit_fn);

@@ -297,6 +297,13 @@ Two world-reacts-to-your-weapon systems, both in the lobby/server build and both
   and a real Xvfb screenshot verify it. Honest limits: single-player local deathmatch only -- not in the server
   rotation, no portal from the garage, and the old city alive-sim (huntsman, field agents, dragon heat events) is NOT
   restored (separate card); the ground slab is unlit-dark at night.
+- **Third person (fixed 2026-10-02).** The orbit camera put the camera 6 units *in front of* the player looking away
+  (z sign flipped), so the character was never visible; it now sits behind. It is also pulled in so it never clips
+  into a wall, and shots are aim-bridged (`packages/common/third_person.h`): the eye aims at the point the camera's
+  centre ray hits, so hits land on the crosshair instead of parallax-missing. **V** toggles first/third person in a
+  local match (`--city --third` starts there). `make test-third-person` + a real Xvfb screenshot verify it. Honest
+  limits: the V toggle is local-match only (in a networked match `third_person` comes from the server snapshot);
+  the old Feb-2026 shoulder-offset reticle/ADS camera is not restored.
 - **Destructible brick.** On any level (NOCK/registry level, any mode), a box whose material is `brick`, `concrete`, `wood` or `glass`
   can be shot, blasted and breached (per-kind HP/resistance from PARENA: concrete 120 HP, wood 60, glass 10 and shatters
   on any hit; **glass** also has its own transparent `glass` shader whose cyan RGBA tint is a PARENA function,

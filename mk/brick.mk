@@ -31,3 +31,10 @@ test-city:
 		packages/common/city_geo_test.c packages/world/terrain.c \
 		-o /tmp/shankpit_city_geo_test -lm
 	/tmp/shankpit_city_geo_test
+
+.PHONY: test-third-person
+test-third-person:
+	gcc -std=gnu99 -Wall -g -fsanitize=address,undefined $(INCLUDES) \
+		packages/common/third_person_test.c packages/world/terrain.c \
+		-o /tmp/shankpit_third_person_test -lm
+	/tmp/shankpit_third_person_test
