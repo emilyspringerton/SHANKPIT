@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-02
+- Broadcast/director cameras no longer clip through walls (#534): chase/orbit/drone eye is pulled in front of map geometry (sess-20260923-1030-4a526255)
 - Director mode (#525): enabling broadcast from the pause menu closes it so [ ] , . keys work in MANUAL; TAB/Shift-TAB cycle subject; [ ] and subject keys work in AUTO (held for the hold time) instead of forcing manual (sess-20260923-1030-4a526255)
 - survival: ground guns now seeded 140-380 units out along city roads instead of bunched at the spawn (#526) (sess-20260923-1030-4a526255)
 - Floor tint (#533): level_boxes parses floor_tint, draw_grid renders tinted translucent floor; NOCK + IDUNA side committed, IDUNA redeploy pending (sess-20260923-1030-4a526255)
