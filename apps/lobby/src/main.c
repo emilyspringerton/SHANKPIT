@@ -10104,6 +10104,19 @@ static void broadcast_rect(float x0, float y0, float x1, float y1, float r, floa
     glBegin(GL_LINE_LOOP); glVertex2f(x0, y0); glVertex2f(x1, y0); glVertex2f(x1, y1); glVertex2f(x0, y1); glEnd();
 }
 
+/* Card #534: a chasing/orbiting/drone camera must not end up inside or behind a wall. Trace from the subject (the aim
+   point) out to the eye; if map geometry is in the way, pull the eye in front of it. Tripods (CAM_FIXED) are placed
+   on purpose, so they are left alone. */
+static void broadcast_keep_out_of_walls(const CamDef *c, CamView *v) {
+    if (c->kind == CAM_FIXED) return;
+    float hx, hy, hz, nx, ny, nz;
+    if (!trace_map(v->aim[0], v->aim[1], v->aim[2], v->eye[0], v->eye[1], v->eye[2], &hx, &hy, &hz, &nx, &ny, &nz)) return;
+    float dx = v->eye[0] - v->aim[0], dy = v->eye[1] - v->aim[1], dz = v->eye[2] - v->aim[2];
+    float len = sqrtf(dx * dx + dy * dy + dz * dz);
+    if (len < 1e-4f) return;
+    v->eye[0] = hx - dx / len * 0.35f; v->eye[1] = hy - dy / len * 0.35f; v->eye[2] = hz - dz / len * 0.35f;
+}
+
 /* The whole broadcast frame: program view, multiview tiles, labels. Replaces draw_scene for this frame. */
 static void broadcast_frame(PlayerState *render_p) {
     unsigned int now = SDL_GetTicks();
@@ -10117,7 +10130,7 @@ static void broadcast_frame(PlayerState *render_p) {
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     CamView v;
-    if (camrig_view(&g_camrig, g_camrig.program, now, &v)) broadcast_render_view(render_p, &v, 0, 0, VIRTUAL_W, VIRTUAL_H);
+    if (camrig_view(&g_camrig, g_camrig.program, now, &v)) { broadcast_keep_out_of_walls(&g_camrig.cam[g_camrig.program], &v); broadcast_render_view(render_p, &v, 0, 0, VIRTUAL_W, VIRTUAL_H); }
     /* native stream: the CLEAN program feed -- read back before the multiview tiles and overlay are drawn over it */
     if (g_stream_on && stream_out_due(&g_stream, now)) {
         if (g_vp_w < g_stream.w || g_vp_h < g_stream.h) {
@@ -10145,7 +10158,7 @@ static void broadcast_frame(PlayerState *render_p) {
     if (g_broadcast_multiview) {
         for (int k = 0; k < nt; k++) {
             CamView tv;
-            if (camrig_view(&g_camrig, tiles[k], now, &tv)) broadcast_render_view(render_p, &tv, x0 + (float)k * (tw + gap), y0, tw, th);
+            if (camrig_view(&g_camrig, tiles[k], now, &tv)) { broadcast_keep_out_of_walls(&g_camrig.cam[tiles[k]], &tv); broadcast_render_view(render_p, &tv, x0 + (float)k * (tw + gap), y0, tw, th); }
         }
     }
 
