@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-02
+- Director mode (#525): enabling broadcast from the pause menu closes it so [ ] , . keys work in MANUAL; TAB/Shift-TAB cycle subject; [ ] and subject keys work in AUTO (held for the hold time) instead of forcing manual (sess-20260923-1030-4a526255)
 - survival: ground guns now seeded 140-380 units out along city roads instead of bunched at the spawn (#526) (sess-20260923-1030-4a526255)
 - Floor tint (#533): level_boxes parses floor_tint, draw_grid renders tinted translucent floor; NOCK + IDUNA side committed, IDUNA redeploy pending (sess-20260923-1030-4a526255)
 - EDIT MAP live sync (#531): edit_sync.h + worker thread; verified end-to-end against a local mock of the IDUNA session API (not the deployed IDUNA) (sess-20260923-1030-4a526255)
