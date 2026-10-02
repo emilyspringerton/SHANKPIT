@@ -2178,8 +2178,8 @@ static void overlay_render(OverlaySystem *overlay, const PlayerState *viewer) {
 // itself stays defined/untouched (packages/common/protocol.h) even though no menu tile reaches it
 // anymore -- same real "remove the tile, not the feature" precedent as always.
 // LOBBY_TYLER replaces LOBBY_CTFB in the same menu slot -- founder real-time, 2026-10-02: "ensure
-// TYLER mode has a menu icon in shankpit replace CTFB button on the main menu." Networked connect
-// requesting MODE_TYLER (the server must be running with --tyler). MODE_CTFB itself is untouched
+// TYLER mode has a menu icon in shankpit replace CTFB button on the main menu." Starts local,
+// offline MODE_TYLER (lobby_start_tyler_mode). MODE_CTFB itself is untouched
 // -- only its menu entry point is removed, same "remove the tile, not the feature" precedent.
 typedef enum {
     LOBBY_LEVEL_SELECT = 0,
@@ -2556,6 +2556,62 @@ static void lobby_start_story_mode(void) {
     g_story_cutscene_done   = 0;
     g_story_outro_requested = 0;
     cutscene_start(&g_story_cs, g_cutscene_intro, g_cutscene_intro_count, SDL_GetTicks());
+}
+
+
+// ---- MODE_TYLER, local single-player (TYLER VALHANNA cold open) ----
+// Founder real-time, 2026-10-02: "make TYLER mode playable locally from the tile". Offline: both
+// levels load from assets/tyler_levels/*.json (no registry fetch); the cold-open coordinator
+// (tyler_coldopen.c) runs in THIS process, so its REFLUX beats feed the HUD subtitle block below.
+// Mirrors apps/server/src/main.c's server_apply_custom_level / tyler_apply_phase_override /
+// story_force_level_transition for the one two-level sequence this mode has.
+#define TYLER_ICELAND_PATH   "assets/tyler_levels/tyler_1986_iceland.json"
+#define TYLER_CONSTRUCT_PATH "assets/tyler_levels/construct.json"
+static TylerColdOpenState g_tyler_coldopen_local;
+
+static void lobby_tyler_phase_override(const char *level_name) {
+    int is_construct = (strcmp(level_name, "CONSTRUCT") == 0);
+    PlayerState *p = &local_state.players[0];
+    if (is_construct) { /* the Duck: third-person, Leela kit */
+        p->state = STATE_ALIVE; p->forced_kit = AI_KIT_LEELA; p->third_person = 1;
+    } else {            /* the wisp: free-fly spectator, no body */
+        p->state = STATE_SPECTATOR; p->forced_kit = AI_KIT_AUTO; p->third_person = 0;
+    }
+}
+
+static int lobby_tyler_load_level(const char *path, unsigned int now_ms) {
+    CustomLevelData lvl;
+    if (!level_boxes_load_from_file(path, &lvl)) return 0;
+    lobby_apply_story_level(&lvl);
+    PlayerState *hero = &local_state.players[0];
+    hero->scene_id = SCENE_CUSTOM_LEVEL;
+    phys_respawn(hero, now_ms);
+    g_tyler_coldopen_local.active = 0;
+    int slots[2], n = 0;
+    for (int i = 1; i < MAX_CLIENTS && n < 2; i++) {
+        if (local_state.players[i].active && local_state.players[i].is_bot) slots[n++] = i;
+    }
+    if (strcmp(lvl.name, "CONSTRUCT") != 0 && n == 2) {
+        tyler_coldopen_start(&g_tyler_coldopen_local, slots[0], slots[1], now_ms);
+    }
+    lobby_tyler_phase_override(lvl.name);
+    return 1;
+}
+
+static int lobby_tyler_exit_fn(int next_level_id, int target_spawner_id, unsigned int now_ms) {
+    (void)next_level_id; (void)target_spawner_id;
+    SDL_Log("TYLER: cold open done -> CONSTRUCT");
+    return lobby_tyler_load_level(TYLER_CONSTRUCT_PATH, now_ms);
+}
+
+static int lobby_start_tyler_mode(void) {
+    local_init_match(1, MODE_TYLER);
+    unsigned int now_ms = SDL_GetTicks();
+    if (!lobby_tyler_load_level(TYLER_ICELAND_PATH, now_ms)) {
+        SDL_Log("TYLER: could not load %s (run from the SHANKPIT repo root)", TYLER_ICELAND_PATH);
+        return 0;
+    }
+    return 1;
 }
 
 // level_select_confirm -- fetches the chosen level's real export, loads it into physics.h's own
@@ -3090,10 +3146,8 @@ static void lobby_apply_ui_state() {
         return;
     }
     if (strcmp(ui_state.active_mode_id, "mode.tyler") == 0) {
-        app_state = STATE_GAME_NET;
-        reset_client_render_state_for_net();
-        net_requested_mode = MODE_TYLER;
-        net_connect();
+        app_state = STATE_GAME_LOCAL;
+        if (!lobby_start_tyler_mode()) app_state = STATE_LOBBY;
         return;
     }
     if (strcmp(ui_state.active_mode_id, "mode.tdmo") == 0) {
@@ -3379,11 +3433,10 @@ static void lobby_start_action(int action) {
             }
         }
     }
-    if (action == LOBBY_JOIN || action == LOBBY_QUEUE || action == LOBBY_TYLER) {
+    if (action == LOBBY_JOIN || action == LOBBY_QUEUE) {
         app_state = STATE_GAME_NET;
         reset_client_render_state_for_net();
-        net_requested_mode = (action == LOBBY_QUEUE) ? MODE_QUEUE
-                           : (action == LOBBY_TYLER) ? MODE_TYLER : MODE_CTF;
+        net_requested_mode = (action == LOBBY_QUEUE) ? MODE_QUEUE : MODE_CTF;
         net_connect();
     } else {
         app_state = STATE_GAME_LOCAL;
@@ -3405,6 +3458,9 @@ static void lobby_start_action(int action) {
                 break;
             case LOBBY_BATTLE:
                 local_init_match(12, MODE_DEATHMATCH);
+                break;
+            case LOBBY_TYLER:
+                if (!lobby_start_tyler_mode()) app_state = STATE_LOBBY;
                 break;
             default:
                 break;
@@ -8773,7 +8829,7 @@ void draw_scene(PlayerState *render_p) {
         }
     }
     draw_projectiles();
-    if (render_p->in_vehicle && render_p->vehicle_type != VEH_BUGGY) draw_player_3rd(render_p);
+    if ((render_p->in_vehicle && render_p->vehicle_type != VEH_BUGGY) || render_p->third_person) draw_player_3rd(render_p);
     for(int i=0; i<MAX_CLIENTS; i++) {
         PlayerState *p = &local_state.players[i];
         if (!p->active || p->scene_id != render_p->scene_id) continue;
@@ -8785,7 +8841,7 @@ void draw_scene(PlayerState *render_p) {
     overlay_begin_frame(&g_overlay);
     overlay_collect_items(render_p, now_ms);
     overlay_render(&g_overlay, render_p);
-    draw_weapon_p(render_p); draw_hud(render_p); draw_garage_overlay(render_p); draw_tab_scoreboard(render_p);
+    if (!render_p->third_person && render_p->state != STATE_SPECTATOR) draw_weapon_p(render_p); draw_hud(render_p); draw_garage_overlay(render_p); draw_tab_scoreboard(render_p);
     draw_travel_overlay();
     draw_tdmb_match_over_overlay();
     if (app_state == STATE_GAME_NET && net_diag.server_disconnected) draw_disconnect_overlay();
@@ -11144,6 +11200,9 @@ int main(int argc, char* argv[]) {
                 }
                 local_update(input_fwd, input_str, cam_yaw, cam_pitch, input_shoot, wpn_req, input_jump, input_crouch, input_reload, input_ability, input_bike, NULL, now_ms);
                 lobby_check_story_level_exits(now_ms);
+                if (local_state.game_mode == MODE_TYLER) {
+                    tyler_coldopen_tick(&g_tyler_coldopen_local, now_ms, g_story_next_level_id, lobby_tyler_exit_fn);
+                }
                 lobby_doors_tick();
             }
                 accumulator -= TICK_DT;
