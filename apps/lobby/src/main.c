@@ -10057,6 +10057,8 @@ static int broadcast_collect_actors(CamActor *out) {
     return n;
 }
 
+/* Cycle who the program watches. In MANUAL it stays; in AUTO the pick is held for the rig's hold time and then the
+   director carries on, so subjects (and views, below) can be cycled in auto too (card #525). */
 static void broadcast_cycle_subject(int dir) {
     CamActor act[MAX_CLIENTS];
     int n = broadcast_collect_actors(act);
@@ -10066,6 +10068,12 @@ static void broadcast_cycle_subject(int dir) {
     cur = (cur + dir + n) % n;
     g_camrig.director_subject = act[cur].id;
     g_camrig.shot_start_ms = SDL_GetTicks();
+}
+
+static void broadcast_cycle_camera(int dir) {
+    if (g_camrig.count <= 0) return;
+    g_camrig.program = (g_camrig.program + dir + g_camrig.count) % g_camrig.count;
+    g_camrig.shot_start_ms = SDL_GetTicks();   /* in AUTO the director holds this view for its hold time before cutting again */
 }
 
 /* One camera's world view into a sub-rectangle of the virtual screen (vx,vy,vw,vh in 1280x720 space). */
@@ -10165,7 +10173,7 @@ static void broadcast_frame(PlayerState *render_p) {
     glColor3f(1, 1, 1);
     draw_string(line, 190, VIRTUAL_H - 42, 3);
     glColor3f(0.7f, 0.7f, 0.7f);
-    draw_string("F3 EXIT   F4 AUTO/MANUAL   F5 MULTIVIEW   F2 STREAM   [ ] CAMERA   , . SUBJECT", 24, VIRTUAL_H - 70, 2);
+    draw_string("F3 EXIT   F4 AUTO/MANUAL   F5 MULTIVIEW   F2 STREAM   [ ] CAMERA   TAB , . SUBJECT", 24, VIRTUAL_H - 70, 2);
     if (g_stream_on) {
         char sl[96]; snprintf(sl, sizeof(sl), "STREAMING %dx%d  %lu FRAMES", g_stream.w, g_stream.h, g_stream.frames);
         glColor3f(1.0f, 0.3f, 0.3f);
@@ -12540,6 +12548,9 @@ int main(int argc, char* argv[]) {
                                 if (!g_broadcast_on) { broadcast_set(1); g_camrig.auto_cut = 1; }
                                 else if (g_camrig.auto_cut) g_camrig.auto_cut = 0;
                                 else broadcast_set(0);
+                                /* card #525: the director's keys ([ ] , . TAB) are dead while the pause menu has the keyboard,
+                                   so MANUAL looked broken -- close the menu when broadcast is on so the keys reach it */
+                                if (g_broadcast_on) { g_paused = 0; SDL_SetRelativeMouseMode(SDL_TRUE); }
                             } else if (g_pause_sel == PAUSE_STREAM) {
                                 stream_set(!g_stream_on);
                             } else if (g_pause_sel == PAUSE_FULLSCREEN) {
@@ -12613,13 +12624,15 @@ int main(int argc, char* argv[]) {
                     } else if (e.key.keysym.sym == SDLK_F5 && g_broadcast_on) {
                         g_broadcast_multiview = !g_broadcast_multiview;
                     } else if (g_broadcast_on && e.key.keysym.sym == SDLK_LEFTBRACKET && g_camrig.count > 0) {
-                        g_camrig.auto_cut = 0; g_camrig.program = (g_camrig.program + g_camrig.count - 1) % g_camrig.count;
+                        broadcast_cycle_camera(-1);
                     } else if (g_broadcast_on && e.key.keysym.sym == SDLK_RIGHTBRACKET && g_camrig.count > 0) {
-                        g_camrig.auto_cut = 0; g_camrig.program = (g_camrig.program + 1) % g_camrig.count;
+                        broadcast_cycle_camera(1);
                     } else if (g_broadcast_on && e.key.keysym.sym == SDLK_COMMA) {
-                        g_camrig.auto_cut = 0; broadcast_cycle_subject(-1);
+                        broadcast_cycle_subject(-1);
                     } else if (g_broadcast_on && e.key.keysym.sym == SDLK_PERIOD) {
-                        g_camrig.auto_cut = 0; broadcast_cycle_subject(1);
+                        broadcast_cycle_subject(1);
+                    } else if (g_broadcast_on && e.key.keysym.sym == SDLK_TAB) {
+                        broadcast_cycle_subject((e.key.keysym.mod & KMOD_SHIFT) ? -1 : 1);
                     } else if (e.key.keysym.sym == SDLK_F1) {
                         lobby_level_snapshot(1);
                     } else if (e.key.keysym.sym == SDLK_F6) {
