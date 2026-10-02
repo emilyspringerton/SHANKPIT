@@ -2358,6 +2358,70 @@ static unsigned int g_story_last_level_transition_ms = 0;
 // physics.h's own custom-level buffers. Not in level_boxes.h itself -- that header is deliberately
 // kept free of any dependency on physics.h (see its own doc comment), so this glue lives on the
 // caller's side, same real boundary apps/server/src/main.c's own --level handler keeps too.
+
+// ---- Level snapshots: F1 upload + exit autosave (founder real-time, 2026-10-02) ----
+// "can we make it so that F1 uploads a copy of the level to shankpit levels ... iso timestamp down
+// to the second so if you spam it it only uploads 1 ... it should preserve the level damage ...
+// also when you exit it auto saves your level to NOCK cloud." The snapshot is the source registry
+// level + the brick engine's damage records (brick_world_export_damage); IDUNA clones the level
+// under "<name>_<UTC ISO second>" so a same-second repeat can't create a second row (and the client
+// also debounces: in-flight guard + 2s press gap + no re-upload of an unchanged state). Local
+// (authoritative) matches only -- a networked client only mirrors damage, the server owns it.
+static int g_level_source_id = 0;
+static unsigned int g_snap_loaded_serial = 0;
+static unsigned int g_snap_uploaded_serial = 0xFFFFFFFFu;
+static unsigned int g_snap_last_press_ms = 0;
+static SDL_Thread *g_snap_thread = NULL;
+static SDL_atomic_t g_snap_busy;
+typedef struct { int id; int n; LevelBrickCell cells[LEVEL_BOXES_MAX_BRICK_CELLS]; int ok; } SnapJob;
+static SnapJob g_snap_job;
+
+static int snap_worker(void *unused) {
+    (void)unused;
+    g_snap_job.ok = level_boxes_post_snapshot(g_snap_job.id, g_snap_job.cells, g_snap_job.n);
+    SDL_Log("[SNAPSHOT] level %d upload %s (%d damaged cells)", g_snap_job.id, g_snap_job.ok ? "ok" : "FAILED", g_snap_job.n);
+    SDL_AtomicSet(&g_snap_busy, 0);
+    return 0;
+}
+
+static void snap_join(void) {
+    if (g_snap_thread) { SDL_WaitThread(g_snap_thread, NULL); g_snap_thread = NULL; }
+}
+
+// manual=1: F1 (async, always allowed once per distinct state). manual=0: exit/transition autosave
+// (blocking so it finishes before the process or level goes away; only when damage changed).
+static void lobby_level_snapshot(int manual) {
+    if (app_state != STATE_GAME_LOCAL || g_level_source_id <= 0) {
+        if (manual) SDL_Log("[SNAPSHOT] nothing to upload: not in a local registry level");
+        return;
+    }
+    unsigned int serial = brick_world_commit_serial();
+    if (manual) {
+        unsigned int now = SDL_GetTicks();
+        if (now - g_snap_last_press_ms < 2000u) return;       // spam debounce
+        if (SDL_AtomicGet(&g_snap_busy)) return;              // one upload in flight at a time
+        g_snap_last_press_ms = now;
+        if (serial == g_snap_uploaded_serial) { SDL_Log("[SNAPSHOT] unchanged since last upload"); return; }
+        snap_join();
+        g_snap_job.id = g_level_source_id;
+        g_snap_job.n = brick_world_export_damage(g_snap_job.cells, LEVEL_BOXES_MAX_BRICK_CELLS);
+        g_snap_uploaded_serial = serial;
+        SDL_AtomicSet(&g_snap_busy, 1);
+        g_snap_thread = SDL_CreateThread(snap_worker, "level_snapshot", NULL);
+        if (!g_snap_thread) SDL_AtomicSet(&g_snap_busy, 0);
+        else SDL_Log("[SNAPSHOT] F1: uploading level %d (%d damaged cells)...", g_snap_job.id, g_snap_job.n);
+    } else {
+        snap_join();
+        if (serial == g_snap_loaded_serial || serial == g_snap_uploaded_serial) return;
+        g_snap_job.id = g_level_source_id;
+        g_snap_job.n = brick_world_export_damage(g_snap_job.cells, LEVEL_BOXES_MAX_BRICK_CELLS);
+        if (g_snap_job.n <= 0) return;
+        g_snap_uploaded_serial = serial;
+        SDL_AtomicSet(&g_snap_busy, 1);
+        snap_worker(NULL);
+    }
+}
+
 static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
     // S493, founder real-time: "theres not much difference between having lights on and not
     // having lights - its still basically illuminated in this totally enclosed level." Real root
@@ -2395,6 +2459,9 @@ static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
     phys_set_custom_level(x, y, z, w, h, d, r, g, b, material_idx, lvl->count, lvl->ground_plane_enabled, lvl->ground_plane_squares);
     brick_world_init_from_level(lvl); // destructible brick: pick the carvable boxes, install the weapon/blast hooks
     brick_debris_clear(&g_brick_debris);
+    g_level_source_id = lvl->source_id;                 // snapshots clone THIS registry level
+    g_snap_loaded_serial = brick_world_commit_serial(); // damage state this load started from
+    g_snap_uploaded_serial = 0xFFFFFFFFu;
 
     // S459-58: real, author-placed spawn points, team/FFA-aware.
     float sp_x[LEVEL_BOXES_MAX_SPAWNERS], sp_y[LEVEL_BOXES_MAX_SPAWNERS], sp_z[LEVEL_BOXES_MAX_SPAWNERS];
@@ -2513,6 +2580,7 @@ static void lobby_check_story_level_exits(unsigned int now_ms) {
 
     int next_id = g_story_next_level_id;
     CustomLevelData lvl;
+    lobby_level_snapshot(0);   // leaving this level: autosave its damage first
     if (!level_boxes_fetch_export(next_id, &lvl)) {
         g_story_last_level_transition_ms = now_ms;
         return;
@@ -10513,7 +10581,7 @@ int main(int argc, char* argv[]) {
 
         SDL_Event e;
         while(SDL_PollEvent(&e)) {
-            if(e.type == SDL_QUIT) running = 0;
+            if(e.type == SDL_QUIT) { lobby_level_snapshot(0); running = 0; }
             if(e.type == SDL_CONTROLLERDEVICEADDED && !g_shank_pad) {
                 g_shank_pad = SDL_GameControllerOpen(e.cdevice.which);
             }
@@ -10856,6 +10924,7 @@ int main(int argc, char* argv[]) {
                                 toggle_fullscreen();
                             } else if (g_pause_sel == PAUSE_QUIT) {
                                 g_paused = 0;
+                                lobby_level_snapshot(0);   // autosave carved geometry to NOCK cloud on exit
                                 if (app_state == STATE_GAME_NET) net_shutdown();
                                 app_state = STATE_LOBBY;
                                 SDL_SetRelativeMouseMode(SDL_FALSE);
@@ -10906,6 +10975,8 @@ int main(int argc, char* argv[]) {
                         g_paused = 1;
                         g_pause_sel = 0;
                         SDL_SetRelativeMouseMode(SDL_FALSE);
+                    } else if (e.key.keysym.sym == SDLK_F1) {
+                        lobby_level_snapshot(1);
                     } else if (e.key.keysym.sym == SDLK_F6) {
                         terrain_wireframe_debug = !terrain_wireframe_debug;
                         printf("[TERRAIN] wireframe=%s\n", terrain_wireframe_debug ? "on" : "off");

@@ -65,6 +65,13 @@ typedef struct {
         baseline exactly (see this field's own parse site below). */
 } LevelBoxMaterial;
 
+#define LEVEL_BOXES_MAX_BRICK_CELLS 4096 /* = brick_fracture.h BF_MAX_RECORDS; IDUNA MaxBrickCells matches */
+typedef struct {
+    int wall;           /* index into the exported (flattened) boxes[] */
+    unsigned int key;   /* ix | iy << 10 | iz << 20, brick_fracture.h bf_key */
+    int hp;             /* 0 = cell gone */
+} LevelBrickCell;
+
 typedef struct {
     float x, y, z;    /* center, world units -- matches physics.h's own real Box convention */
     float w, h, d;     /* full extents (NOT half-extents) -- matches NOCK's own sx/sy/sz exactly */
@@ -329,6 +336,15 @@ typedef struct {
        physics.h-independent by design (see this file's own header comment); it's a pure data
        carrier, same real role next_level_id/is_story_start already play. */
     int enclosed;
+    /* source_id -- the registry level id this was fetched as (set by level_boxes_fetch_export; 0 for
+       a file-loaded level). F1 / exit-autosave snapshots clone THIS level server-side. */
+    int source_id;
+    /* brick_damage -- persisted destructible-brick damage (founder real-time, 2026-10-02: "it needs
+       to save that geometry"). The same (parent wall index, packed cell key, hp) record triple
+       brick_fracture.h keeps in memory, so authored walls stay whole and the carved vertices/edges/
+       faces/normals are regenerated deterministically from box + cell grid on load. Absent = none. */
+    int brick_damage_count;
+    LevelBrickCell brick_damage[LEVEL_BOXES_MAX_BRICK_CELLS];
 } CustomLevelData;
 
 static inline const char *level_boxes_skip_ws(const char *p) {
@@ -482,6 +498,36 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
     out->enclosed = 0;
     const char *enc_val = level_boxes_find_key(buf, end, "enclosed");
     if (enc_val) level_boxes_parse_bool(enc_val, &out->enclosed);
+
+    // brick_damage -- absent key (every undamaged / pre-2026-10-02 level) leaves the count at 0.
+    // Keys are parsed with strtoul, not level_boxes_parse_number: a float mantissa can't hold a
+    // 30-bit packed cell key exactly.
+    out->brick_damage_count = 0;
+    const char *bd_key = level_boxes_find_key(buf, end, "brick_damage");
+    if (bd_key) {
+        const char *bd_arr = level_boxes_skip_ws(bd_key);
+        const char *bd_end = (*bd_arr == '[') ? level_boxes_find_array_end(bd_arr, end) : NULL;
+        if (bd_end) {
+            const char *c = bd_arr + 1;
+            while (c < bd_end && out->brick_damage_count < LEVEL_BOXES_MAX_BRICK_CELLS) {
+                c = level_boxes_skip_ws(c);
+                if (c >= bd_end) break;
+                if (*c != '{') { c++; continue; }
+                const char *oe = strchr(c, '}');
+                if (!oe || oe > bd_end) break;
+                const char *vw = level_boxes_find_key(c, oe, "wall");
+                const char *vk = level_boxes_find_key(c, oe, "key");
+                const char *vh = level_boxes_find_key(c, oe, "hp");
+                if (vw && vk && vh) {
+                    LevelBrickCell *bc = &out->brick_damage[out->brick_damage_count++];
+                    bc->wall = (int)strtol(vw, NULL, 10);
+                    bc->key = (unsigned int)strtoul(vk, NULL, 10);
+                    bc->hp = (int)strtol(vh, NULL, 10);
+                }
+                c = oe + 1;
+            }
+        }
+    }
 
     // Ground plane fields (S459-08) -- real, sane defaults (enabled, 2 squares) for a
     // hand-written or pre-S459-08 file that omits them, matching this file's own established
@@ -1101,8 +1147,55 @@ static inline int level_boxes_fetch_export(int id, CustomLevelData *out) {
     int ok = level_boxes_parse_json(buf, &tmp);
     free(buf);
     if (!ok) return 0;
+    tmp.source_id = id;
     *out = tmp;
     return 1;
+}
+
+// level_boxes_build_snapshot_json -- the POST body for IDUNA's POST /api/v1/shankpit-levels/snapshots:
+// {"source_level_id":N,"brick_damage":[{"wall":w,"key":k,"hp":h},...]}. Returns the malloc'd,
+// NUL-terminated body (caller frees), or NULL on allocation failure.
+static inline char *level_boxes_build_snapshot_json(int source_id, const LevelBrickCell *cells, int n) {
+    size_t cap = 96 + (size_t)n * 56;
+    char *b = (char *)malloc(cap);
+    if (!b) return NULL;
+    size_t o = (size_t)snprintf(b, cap, "{\"source_level_id\":%d,\"brick_damage\":[", source_id);
+    for (int i = 0; i < n; i++)
+        o += (size_t)snprintf(b + o, cap - o, "%s{\"wall\":%d,\"key\":%u,\"hp\":%d}", i ? "," : "", cells[i].wall, cells[i].key, cells[i].hp);
+    snprintf(b + o, cap - o, "]}");
+    return b;
+}
+
+#ifdef _WIN32
+static inline FILE *level_boxes_popen_write(const char *cmd) { return _popen(cmd, "wb"); }
+#define LEVEL_BOXES_NULL_DEV "NUL"
+#else
+static inline FILE *level_boxes_popen_write(const char *cmd) { return popen(cmd, "w"); }
+#define LEVEL_BOXES_NULL_DEV "/dev/null"
+#endif
+
+// level_boxes_post_snapshot uploads a timestamped copy of registry level `source_id` carrying the
+// given brick damage (the server clocks the ISO-second name; a same-second repeat is a harmless
+// no-op server-side). Blocking curl, same accepted cost as the fetches above -- callers that can't
+// stall (F1 mid-game) run it on a worker thread. Returns 1 on a 2xx, 0 otherwise.
+static inline int level_boxes_post_snapshot(int source_id, const LevelBrickCell *cells, int n) {
+    if (source_id <= 0 || n < 0 || n > LEVEL_BOXES_MAX_BRICK_CELLS) return 0;
+    char *body = level_boxes_build_snapshot_json(source_id, cells, n);
+    if (!body) return 0;
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd),
+             "curl -s -f --max-time 8 -o " LEVEL_BOXES_NULL_DEV " -X POST -H \"Content-Type: application/json\" --data-binary @- \"%s/snapshots\"",
+             LEVEL_REGISTRY_BASE_URL);
+    FILE *p = level_boxes_popen_write(cmd);
+    if (!p) { free(body); return 0; }
+    fwrite(body, 1, strlen(body), p);
+    free(body);
+    int status = LEVEL_BOXES_PCLOSE(p);
+#ifdef _WIN32
+    return status == 0;
+#else
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+#endif
 }
 
 #endif

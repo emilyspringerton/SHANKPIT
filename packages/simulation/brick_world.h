@@ -165,10 +165,37 @@ static inline void brick_world_init_from_level(const CustomLevelData *lvl) {
         if (bf_add_parent(&g_brick, i, b->x, b->y, b->z, b->w, b->h, b->d)) added++;
     }
     g_brick_active = (added > 0);
+    /* persisted damage from a saved snapshot: restore the records, then rebuild + commit so the
+       carved geometry is live (collision AND render) before the first frame */
+    if (g_brick_active && lvl->brick_damage_count > 0) {
+        int restored = 0;
+        for (int i = 0; i < lvl->brick_damage_count; i++) {
+            const LevelBrickCell *bc = &lvl->brick_damage[i];
+            if (bc->wall < 0 || bc->wall >= g_brick.parent_count || !g_brick.parent[bc->wall].active) continue;
+            int ix, iy, iz; bf_unkey(bc->key, &ix, &iy, &iz);
+            const BfParent *bp = &g_brick.parent[bc->wall];
+            if (ix >= bp->n[0] || iy >= bp->n[1] || iz >= bp->n[2]) continue;
+            if (bf_set_cell_hp(&g_brick, bc->wall, bc->key, bc->hp, 0) > 0) restored++;
+        }
+        if (restored > 0 && bf_rebuild(&g_brick)) brick_world_commit();
+    }
     g_phys_map_hitscan_hook = brick_world_on_hitscan;
     g_phys_map_blast_hook = brick_world_on_blast;
     g_phys_map_surface_hook = brick_world_on_surface;
     g_local_match_reset_hook = brick_world_reset_match;
+}
+
+/* brick_world_export_damage -- the current damage as LevelBrickCell records (cells below full hp,
+ * i.e. everything bf_set_cell_hp wrote a record for). Returns the count written (<= max). */
+static inline int brick_world_export_damage(LevelBrickCell *out, int max) {
+    int n = 0;
+    for (int r = 0; r < g_brick.rec_count && n < max; r++) {
+        const BfRec *rc = &g_brick.rec[r];
+        if ((int)rc->hp >= g_brick.max_hp) continue;
+        out[n].wall = rc->parent; out[n].key = rc->key; out[n].hp = rc->hp;
+        n++;
+    }
+    return n;
 }
 
 /* ---- Network ---------------------------------------------------------------------------------- */

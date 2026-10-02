@@ -197,6 +197,57 @@ int main(void) {
     load_level();
     CHECK(g_brick.rec_count == 0 && g_brick.piece_count == 0 && solid_at(1.5f, 10.0f, -1.5f));
 
+    /* 8. persisted damage round trip (F1 snapshot / exit autosave): carve, export the records, build
+          the upload body, parse it back the way the loader parses a registry export, reload the level
+          with those records and require the SAME holes (and the same geometry) with zero re-shooting */
+    {
+        load_level();
+        brick_world_set_authority(1);
+        memset(&p, 0, sizeof(p));
+        p.active = 1; p.scene_id = SCENE_CUSTOM_LEVEL; p.state = STATE_ALIVE;
+        p.x = 1.5f; p.y = 10.0f - EYE_HEIGHT; p.z = -40.0f; p.yaw = 180.0f; p.pitch = 0.0f;
+        for (int i = 0; i < 40 && (solid_at(1.5f, 10.0f, -1.5f) || solid_at(1.5f, 10.0f, 1.5f)); i++) fire(&p, WPN_MAGNUM, 26);
+        g_phys_blast_normal[2] = -1.0f;
+        g_phys_map_blast_hook(SCENE_CUSTOM_LEVEL, 20.0f, 10.0f, -3.0f, MISSILE_SPLASH_RADIUS, 130, WPN_MISSILE);
+        g_phys_blast_normal[2] = 0.0f;
+        CHECK(!solid_at(1.5f, 10.0f, -1.5f) && !solid_at(19.5f, 10.0f, 1.5f));
+        int removed_a = g_brick.parent[0].removed, pieces_a = g_brick.piece_count;
+        static LevelBrickCell cells[LEVEL_BOXES_MAX_BRICK_CELLS];
+        int n = brick_world_export_damage(cells, LEVEL_BOXES_MAX_BRICK_CELLS);
+        CHECK(n > 0 && n == g_brick.rec_count);
+
+        char *body = level_boxes_build_snapshot_json(7, cells, n);
+        CHECK(body != NULL && strstr(body, "\"source_level_id\":7") != NULL);
+        char *doc = (char *)malloc(strlen(body) + 16);
+        sprintf(doc, "{\"walls\":[],%s", body + 1);
+        static CustomLevelData parsed;
+        CHECK(level_boxes_parse_json(doc, &parsed) == 1);
+        CHECK(parsed.brick_damage_count == n);
+        int same = 1;
+        for (int i = 0; i < n; i++)
+            same &= (parsed.brick_damage[i].wall == cells[i].wall && parsed.brick_damage[i].key == cells[i].key && parsed.brick_damage[i].hp == cells[i].hp);
+        CHECK(same);   /* includes 30-bit keys: strtoul, not float */
+        free(doc); free(body);
+
+        load_level();                          /* fresh, undamaged */
+        CHECK(solid_at(1.5f, 10.0f, -1.5f) && g_brick.rec_count == 0);
+        g_lvl.brick_damage_count = parsed.brick_damage_count;
+        memcpy(g_lvl.brick_damage, parsed.brick_damage, sizeof(LevelBrickCell) * (size_t)n);
+        brick_world_init_from_level(&g_lvl);   /* what the server / lobby do on a snapshot load */
+        CHECK(!solid_at(1.5f, 10.0f, -1.5f) && !solid_at(1.5f, 10.0f, 1.5f) && !solid_at(19.5f, 10.0f, 1.5f));
+        CHECK(g_brick.parent[0].removed == removed_a && g_brick.piece_count == pieces_a);
+        CHECK(solid_at(25.5f, 10.0f, 0.5f));
+        /* hostile damage records are ignored, not trusted: bad wall, inactive parent, out-of-grid key */
+        load_level();   /* real loads call phys_set_custom_level first, which resets the committed slots */
+        g_lvl.brick_damage_count = 3;
+        g_lvl.brick_damage[0] = (LevelBrickCell){ 99, 1, 0 };
+        g_lvl.brick_damage[1] = (LevelBrickCell){ 1, 1, 0 };
+        g_lvl.brick_damage[2] = (LevelBrickCell){ 0, 0x3FFFFFFFu, 0 };
+        brick_world_init_from_level(&g_lvl);
+        CHECK(g_brick.rec_count == 0 && solid_at(1.5f, 10.0f, -1.5f));
+        g_lvl.brick_damage_count = 0;
+    }
+
     if (g_fail) { printf("brick_world_test: %d FAILED\n", g_fail); return 1; }
     printf("brick_world_test: all checks passed (magnum breach in %d bursts)\n", shots);
     return 0;
