@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-02
+- EDIT MAP live sync (#531): edit_sync.h + worker thread; verified end-to-end against a local mock of the IDUNA session API (not the deployed IDUNA) (sess-20260923-1030-4a526255)
 - EDIT MAP mode (#530): fly cam, place/delete box, move spawner, op-log save; unit-tested edit_map.h; mode launch verified headless, key path not driven live (no xdotool) (sess-20260923-1030-4a526255)
 - Zombie-mode movers learn the city (#522): shared learned wall grid, stuck detection, A* detours out of pockets; clawing zombies stay relentless; U-pocket test added (fails on old code) (sess-20260923-1030-4a526255)
 - LAB mode: hero now spawns facing the lab stations instead of staring at the exit wall (#516); headless screenshot verified (sess-20260923-1030-4a526255)
