@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-02
+- BIG_O LAB level: --lab / MODES->LAB loads INTERRIOR_1 clone + 6 programmatic lab widgets (var/lab/lab.json); E-interactive stations (splice/centrifuge/pcr/vat/fridge/console) with rules in PARENA (lab_station_rules.prn -> generated C, make test-lab-station); level_boxes parses lab_stations; phone works in LAB -- SECTION 592 cards #504-#508 (sess-20260923-1030-4a526255)
 - MODE_ZOMBIES BIG_O unification slice 2: food items lie in a ring around spawn (CARGO app works), kills harvest samples into the phone LAB (food_pickup_seed_ring + test); card #503 (sess-20260923-1030-4a526255)
 - BIG_O phone gains an ORB app (opens the Architect's Orb); MODE_ZOMBIES now shares the BIG_O phone (P key, banner, app UI) -- SECTION 591 slice 1, kanban #503/#485 (sess-20260923-1030-4a526255)
 - Orb snippets (card #495): F5 saves slots to shankpit_orb_slots.json, reloaded on next open; background fetch of IDUNA nock-edu-snippets for widget ORB (cached) fills empty slots. Parser/serializer unit-tested; remote endpoint not deployed yet. (sess-20260923-1030-4a526255)
