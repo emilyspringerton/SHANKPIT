@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-02
+- Player models (box/ronin, mannequin, tyler mesh, ragdoll spawn) now face their direction of motion: facing used 180-yaw, mirrored except at yaw 0/180; now 180+yaw (#537) (sess-20260923-1030-4a526255)
 - Streaming (#535): Windows client zip now bundles ffmpeg.exe (+GPL license); stream_set prefers the exe-dir ffmpeg, falls back to PATH; README updated (sess-20260923-1030-4a526255)
 - Broadcast/director cameras no longer clip through walls (#534): chase/orbit/drone eye is pulled in front of map geometry (sess-20260923-1030-4a526255)
 - Director mode (#525): enabling broadcast from the pause menu closes it so [ ] , . keys work in MANUAL; TAB/Shift-TAB cycle subject; [ ] and subject keys work in AUTO (held for the hold time) instead of forcing manual (sess-20260923-1030-4a526255)
