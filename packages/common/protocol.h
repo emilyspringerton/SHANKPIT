@@ -80,6 +80,13 @@
  * the whole connection and kept stale geometry. Absolute and idempotent, like PACKET_BRICK_STATE. */
 #define PACKET_QUEUE_LEVEL 14
 
+/* PACKET_SHIELD_PACKS -- card #541 (25% shield-pack drop on death in queue). Server -> client, MODE_QUEUE only.
+ * The WHOLE set of shield packs currently lying in the world (not a delta), a few times a second to every
+ * welcomed client, so a dropped datagram or a late joiner heals itself. The server alone rolls the drop and
+ * grants the refill (see packages/simulation/shield_packs.h); a client only renders this list. */
+#define PACKET_SHIELD_PACKS 15
+#define NET_SHIELD_PACK_MAX 16
+
 #define VOXEL_CHUNK_SIZE            16
 #define VOXEL_MAX_BLOCKS_PER_CHUNK  1024
 #define VOXEL_BLOCK_STONE           1
@@ -180,6 +187,16 @@ typedef struct {
     NetHeader hdr;
     int level_id;
 } NetQueueLevel;
+
+/* NetShieldPacks -- see PACKET_SHIELD_PACKS's own doc comment above. Send only the first `count` entries:
+ * len = offsetof(NetShieldPacks, p) + count * sizeof(NetShieldPack). */
+typedef struct { float x, y, z; } NetShieldPack;
+typedef struct {
+    NetHeader hdr;
+    unsigned char count;
+    unsigned char pad[3];
+    NetShieldPack p[NET_SHIELD_PACK_MAX];
+} NetShieldPacks;
 
 /* NetBrickState -- see PACKET_BRICK_STATE's own doc comment above. key_lo/key_hi are the two halves
  * of the 30-bit cell key (ix | iy<<10 | iz<<20) so the entry has no padding or endianness trap. */

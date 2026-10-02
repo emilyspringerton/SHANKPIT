@@ -27,6 +27,8 @@
 #include "../../../packages/world/story_doors.h"
 #include "../../../packages/simulation/story_buttons.h"
 #include "../../../packages/simulation/brick_world.h"
+#include <stddef.h>
+#include "../../../packages/simulation/shield_packs.h"
 #include "../../../packages/simulation/buggy_rules_host.h"
 
 /* cutscene handshake globals — defined in lobby/main.c for the client;
@@ -269,6 +271,7 @@ static void queue_load_default_level(void);
 
 static void server_advance_queue_round(unsigned int now_ms) {
     g_round_start_ms = now_ms;
+    shield_packs_reset(); // card #541: a new round starts without last round's packs
     // S459-105: self-heal onto whatever level is CURRENTLY flagged default-for-queue, every
     // round -- see queue_load_default_level's own doc comment for the real "joined into both
     // levels" bug this closes. A no-op cost-wise if nothing changed (server_apply_custom_level
@@ -1494,6 +1497,48 @@ void server_broadcast_queue_level(void) {
     }
 }
 
+/* server_shield_packs_tick -- card #541. MODE_QUEUE only. A player dying has a SHIELD_PACK_DROP_PERCENT chance
+ * to leave a pack where they fell; any living player standing on a pack whose shield is below full takes it and
+ * is refilled to full. Shields still do not regenerate (founder: "leave it like that") -- a pack is the only way
+ * back up. The server rolls and grants; clients only render PACKET_SHIELD_PACKS. */
+static void server_shield_packs_tick(void) {
+    if (local_state.game_mode != MODE_QUEUE || local_state.match_over) return;
+    for (int i = 1; i < MAX_CLIENTS; i++) {
+        PlayerState *p = &local_state.players[i];
+        if (!p->active || p->scene_id != g_server_match_scene) { shield_packs_note_player(i, 1, 0, 0, 0, 100); continue; }
+        int alive = (p->state != STATE_DEAD);
+        shield_packs_note_player(i, alive, p->x, p->y, p->z, rand() % 100);
+        if (alive && p->shield < 100 && shield_packs_take(p->x, p->y, p->z)) {
+            p->shield = 100;
+            NET_SERVER_LOG("SHIELD_PACK_TAKEN player=%d", i);
+        }
+    }
+}
+
+/* server_broadcast_shield_packs -- card #541, see PACKET_SHIELD_PACKS in protocol.h. Whole set, every snapshot
+ * interval, MODE_QUEUE only; the repeat is the heal for a dropped datagram or a late joiner. */
+void server_broadcast_shield_packs(void) {
+    if (local_state.game_mode != MODE_QUEUE) return;
+    NetShieldPacks pkt;
+    memset(&pkt, 0, sizeof(pkt));
+    pkt.hdr.type = PACKET_SHIELD_PACKS;
+    pkt.hdr.client_id = 0;
+    pkt.hdr.timestamp = get_server_time();
+    int n = 0;
+    for (int i = 0; i < SHIELD_PACK_MAX && n < NET_SHIELD_PACK_MAX; i++) {
+        const ShieldPack *sp = shield_packs_get(i);
+        if (!sp || !sp->active) continue;
+        pkt.p[n].x = sp->x; pkt.p[n].y = sp->y; pkt.p[n].z = sp->z;
+        n++;
+    }
+    pkt.count = (unsigned char)n;
+    int len = (int)(offsetof(NetShieldPacks, p) + (size_t)n * sizeof(NetShieldPack));
+    for (int i = 1; i < MAX_CLIENTS; i++) {
+        if (!slots[i].active || !slots[i].welcomed) continue;
+        sendto(sock, (const char *)&pkt, len, 0, (struct sockaddr*)&slots[i].addr, sizeof(struct sockaddr_in));
+    }
+}
+
 /* server_broadcast_brick_state -- destructible brick (packages/simulation/brick_world.h), see
  * PACKET_BRICK_STATE in protocol.h. Sends this tick's brick-cell changes, scheduled repeats and a
  * slice of the rotating refresh to every welcomed client; sends nothing when no level with
@@ -1939,12 +1984,14 @@ int main(int argc, char *argv[]) {
                 tdmb_last_kills[i] = pp->kills;
             }
         }
+        server_shield_packs_tick();
         recorder_write_frame(tick, now);
         if ((tick % SERVER_SNAPSHOT_INTERVAL_TICKS) == 0) {
             server_broadcast();
             server_broadcast_world_clock();
             server_broadcast_brick_state();
             server_broadcast_queue_level();
+            server_broadcast_shield_packs();
         }
         net_server_emit_summary(now);
 
