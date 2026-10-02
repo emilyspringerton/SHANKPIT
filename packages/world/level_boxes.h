@@ -1074,6 +1074,9 @@ typedef struct {
     // at a time (internal/shankpit.LevelSummary's own real is_story_start field), same shape
     // is_default_queue above already established.
     int is_story_start;
+    // is_zombie_default -- the level the ZOMBIES sandbox loads (zombies collection; see IDUNA
+    // internal/shankpit SetZombieDefaultLevel).
+    int is_zombie_default;
 } LevelRegistryEntry;
 
 // level_boxes_parse_registry_list parses IDUNA's real GET /api/v1/shankpit-levels response (a
@@ -1109,6 +1112,9 @@ static inline int level_boxes_parse_registry_list(const char *json, LevelRegistr
                 out[count].is_story_start = 0;
                 const char *ss_val = level_boxes_find_key(obj_start, obj_end, "is_story_start");
                 if (ss_val) level_boxes_parse_bool(ss_val, &out[count].is_story_start);
+                out[count].is_zombie_default = 0;
+                const char *zd_val = level_boxes_find_key(obj_start, obj_end, "is_zombie_default");
+                if (zd_val) level_boxes_parse_bool(zd_val, &out[count].is_zombie_default);
                 count++;
             }
         }
@@ -1121,13 +1127,20 @@ static inline int level_boxes_parse_registry_list(const char *json, LevelRegistr
 // entry count (0 if the registry is empty or unreachable -- a real network failure degrades to
 // "no online levels shown," not a crash, matching this file's own established "a bad/missing
 // resource never corrupts what's already working" convention).
-static inline int level_boxes_fetch_registry_list(LevelRegistryEntry *out, int max) {
+static inline int level_boxes_fetch_registry_list_in(const char *collection, LevelRegistryEntry *out, int max) {
+    char url[256];
+    if (collection && *collection) snprintf(url, sizeof(url), "%s?collection=%s", LEVEL_REGISTRY_BASE_URL, collection);
+    else snprintf(url, sizeof(url), "%s", LEVEL_REGISTRY_BASE_URL);
     char *buf = NULL;
-    long n = level_boxes_fetch_url(LEVEL_REGISTRY_BASE_URL, &buf);
+    long n = level_boxes_fetch_url(url, &buf);
     if (n <= 0) return 0;
     int count = level_boxes_parse_registry_list(buf, out, max);
     free(buf);
     return count;
+}
+
+static inline int level_boxes_fetch_registry_list(LevelRegistryEntry *out, int max) {
+    return level_boxes_fetch_registry_list_in(NULL, out, max);
 }
 
 // level_boxes_fetch_export fetches level `id`'s real, plain-JSON export (SHANKPIT's own public
@@ -1155,15 +1168,20 @@ static inline int level_boxes_fetch_export(int id, CustomLevelData *out) {
 // level_boxes_build_snapshot_json -- the POST body for IDUNA's POST /api/v1/shankpit-levels/snapshots:
 // {"source_level_id":N,"brick_damage":[{"wall":w,"key":k,"hp":h},...]}. Returns the malloc'd,
 // NUL-terminated body (caller frees), or NULL on allocation failure.
-static inline char *level_boxes_build_snapshot_json(int source_id, const LevelBrickCell *cells, int n) {
+static inline char *level_boxes_build_snapshot_json_ex(int source_id, const LevelBrickCell *cells, int n, int zombies) {
     size_t cap = 96 + (size_t)n * 56;
     char *b = (char *)malloc(cap);
     if (!b) return NULL;
-    size_t o = (size_t)snprintf(b, cap, "{\"source_level_id\":%d,\"brick_damage\":[", source_id);
+    size_t o = (size_t)snprintf(b, cap, "{\"source_level_id\":%d,%s\"brick_damage\":[", source_id,
+                                zombies ? "\"collection\":\"zombies\",\"set_default\":true," : "");
     for (int i = 0; i < n; i++)
         o += (size_t)snprintf(b + o, cap - o, "%s{\"wall\":%d,\"key\":%u,\"hp\":%d}", i ? "," : "", cells[i].wall, cells[i].key, cells[i].hp);
     snprintf(b + o, cap - o, "]}");
     return b;
+}
+
+static inline char *level_boxes_build_snapshot_json(int source_id, const LevelBrickCell *cells, int n) {
+    return level_boxes_build_snapshot_json_ex(source_id, cells, n, 0);
 }
 
 #ifdef _WIN32
@@ -1178,9 +1196,10 @@ static inline FILE *level_boxes_popen_write(const char *cmd) { return popen(cmd,
 // given brick damage (the server clocks the ISO-second name; a same-second repeat is a harmless
 // no-op server-side). Blocking curl, same accepted cost as the fetches above -- callers that can't
 // stall (F1 mid-game) run it on a worker thread. Returns 1 on a 2xx, 0 otherwise.
-static inline int level_boxes_post_snapshot(int source_id, const LevelBrickCell *cells, int n) {
+// zombies=1 files the snapshot in the ZOMBIES level repository and makes it the sandbox's level.
+static inline int level_boxes_post_snapshot_ex(int source_id, const LevelBrickCell *cells, int n, int zombies) {
     if (source_id <= 0 || n < 0 || n > LEVEL_BOXES_MAX_BRICK_CELLS) return 0;
-    char *body = level_boxes_build_snapshot_json(source_id, cells, n);
+    char *body = level_boxes_build_snapshot_json_ex(source_id, cells, n, zombies);
     if (!body) return 0;
     char cmd[512];
     snprintf(cmd, sizeof(cmd),
@@ -1196,6 +1215,10 @@ static inline int level_boxes_post_snapshot(int source_id, const LevelBrickCell 
 #else
     return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 #endif
+}
+
+static inline int level_boxes_post_snapshot(int source_id, const LevelBrickCell *cells, int n) {
+    return level_boxes_post_snapshot_ex(source_id, cells, n, 0);
 }
 
 #endif

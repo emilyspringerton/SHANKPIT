@@ -135,6 +135,9 @@ static int g_has_prev[MAX_NPC_SLOTS];
    hand-kept in sync across a different real boundary elsewhere in this monorepo. */
 #define GBAND_SKEL_NPC_MOVE_EPSILON 0.02f
 
+static float g_npc_scale = 1.0f;
+void gband_skel_npc_set_scale(float s) { g_npc_scale = (s > 0.01f) ? s : 1.0f; }
+
 void gband_skel_npc_draw(int kit_index, int npc_slot, float npc_x, float npc_y, float npc_z, float facing_rad, float dt_ms,
                           int anim_override,
                           const Mat4 *vp,
@@ -202,6 +205,10 @@ void gband_skel_npc_draw(int kit_index, int npc_slot, float npc_x, float npc_y, 
     Mat4 npc_world_t = mat4_translate(npc_x, npc_y, npc_z);
     Mat4 npc_rot = mat4_rotate_y(facing_rad);
     Mat4 npc_world = mat4_multiply(&npc_world_t, &npc_rot);
+    if (g_npc_scale != 1.0f) {
+        Mat4 sc = mat4_scale(g_npc_scale, g_npc_scale, g_npc_scale);
+        npc_world = mat4_multiply(&npc_world, &sc);
+    }
     for (uint32_t j = 0; j < kit->skel.joint_count; j++) {
         Mat4 sj;
         memcpy(sj.m, skin[j], sizeof(sj.m));
@@ -212,6 +219,24 @@ void gband_skel_npc_draw(int kit_index, int npc_slot, float npc_x, float npc_y, 
     uint32_t vert_count = gpose_skin_mesh(&kit->mesh, skin, kit->out_buf);
     if (vert_count > kit->out_capacity_verts) vert_count = kit->out_capacity_verts; /* defensive */
 
+    Mat4 identity = mat4_identity();
+    Mat4 mvp = mat4_multiply(vp, &identity);
+    draw_skinned(kit->out_buf, (int)vert_count, &mvp, &identity);
+}
+
+const GSkel *gband_skel_npc_kit_skel(int kit_index) {
+    if (kit_index < 0 || kit_index >= g_kit_count || !g_kits[kit_index].ready) return NULL;
+    return &g_kits[kit_index].skel;
+}
+
+void gband_skel_npc_draw_skin(int kit_index, const float (*skin)[16], const Mat4 *vp,
+                              void (*draw_skinned)(const float *verts6, int vert_count,
+                                                   const Mat4 *mvp, const Mat4 *model)) {
+    if (kit_index < 0 || kit_index >= g_kit_count || !skin) return;
+    GbandSkelNpcKit *kit = &g_kits[kit_index];
+    if (!kit->ready) return;
+    uint32_t vert_count = gpose_skin_mesh(&kit->mesh, skin, kit->out_buf);
+    if (vert_count > kit->out_capacity_verts) vert_count = kit->out_capacity_verts;
     Mat4 identity = mat4_identity();
     Mat4 mvp = mat4_multiply(vp, &identity);
     draw_skinned(kit->out_buf, (int)vert_count, &mvp, &identity);

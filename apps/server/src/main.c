@@ -1640,6 +1640,7 @@ int main(int argc, char *argv[]) {
            witness_ai_seed_voxworld_encounter (local_init_match) spawns for MODE_STORY's VOXWORLD
            scene. Same "safe to call unconditionally" property story_ai_tick's own comment above
            already established -- a real no-op whenever nothing is spawned. */
+        if (local_state.game_mode == MODE_ZOMBIES) witness_ai_zombies_tick(&local_state, now);
         witness_ai_tick(&local_state, now);
         story_check_level_exits(now);
         /* S536, TYLER VALHANNA -- same "safe to call unconditionally" property story_ai_tick's
@@ -1868,7 +1869,7 @@ int main(int argc, char *argv[]) {
          * server.service runs --deathmatch only, see this repo's own CLAUDE.md) has a real,
          * server-authoritative clock ready the moment one is. Every other mode: zero cost, zero
          * behavior change -- this whole block is skipped outright. */
-        if (local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) {
+        if (local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE || local_state.game_mode == MODE_ZOMBIES) {
             static unsigned int dnc_last_ms = 0;
             static float dnc_accum_minutes = 0.0f; /* real, found-live bug fix -- see
                 local_game.h's own local_update doc comment for the full account (a bare

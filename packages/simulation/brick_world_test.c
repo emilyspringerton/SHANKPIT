@@ -74,6 +74,10 @@ static void fire(PlayerState *p, int weapon, int ticks) {
     }
 }
 
+/* brick_world.h installs the AI hooks; this test links no witness_ai.c, so stand-ins for its setters. */
+void witness_ai_set_wall_hit_hook(WitnessWallHitFn fn) { (void)fn; }
+void witness_ai_set_map_hook(WitnessMapFn fn) { (void)fn; }
+
 int main(void) {
     load_level();
     CHECK(g_brick_active == 1);
@@ -246,6 +250,23 @@ int main(void) {
         brick_world_init_from_level(&g_lvl);
         CHECK(g_brick.rec_count == 0 && solid_at(1.5f, 10.0f, -1.5f));
         g_lvl.brick_damage_count = 0;
+    }
+
+    /* 9. zombie claws (witness_ai -> brick_world_ai_wall_hit): repeated claw hits on a brick face open a hole */
+    {
+        load_level();
+        brick_world_set_authority(1);
+        CHECK(solid_at(1.5f, 10.0f, -1.5f));
+        int swings = 0;
+        for (; swings < 200 && solid_at(1.5f, 10.0f, -1.5f); swings++)
+            brick_world_ai_wall_hit(SCENE_CUSTOM_LEVEL, 1.5f, 10.0f, -2.0f, 0.0f, 0.0f, -1.0f, 28);
+        CHECK(!solid_at(1.5f, 10.0f, -1.5f));
+        CHECK(swings > 1 && swings < 200);
+        printf("zombie claw: hole after %d swings\n", swings);
+        /* a hit with no wall behind it is a harmless no-op */
+        int rc = g_brick.rec_count;
+        brick_world_ai_wall_hit(SCENE_CUSTOM_LEVEL, 500.0f, 10.0f, 500.0f, 0.0f, 0.0f, -1.0f, 28);
+        CHECK(g_brick.rec_count == rc);
     }
 
     if (g_fail) { printf("brick_world_test: %d FAILED\n", g_fail); return 1; }

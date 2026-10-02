@@ -305,6 +305,23 @@ Two world-reacts-to-your-weapon systems, both in the lobby/server build and both
   900-piece geometry budget per level (a damage that would exceed it is refused, never half-applied); damage
   resets with each match.
 
+## ZOMBIES sandbox (2026-10-02)
+
+The main-menu **ZOMBIES** tile (it replaced "FIND CTF") starts a local sandbox on a persistent level -- the
+zombies repository's default, else the registry's **nextown**, else `var/zombie/nextown_zombies.json`
+(`shank_lobby --zombies` goes straight in). A day/night clock drives a BIG_O-derived population
+(`witness_ai_zombies_tick`): citizens wander by day, zombies rise at dusk into a horde at night and burn off at
+dawn, The Men clean up witnesses, and **five birds** (BIG_O's avian coalition: they watch the watchers and a
+signaling flock's beacon wakes zombies) are there from the first tick. Every mover steers around building walls,
+and a hunting zombie whose way is walled off **claws the wall** -- brick breaches (other materials stay
+indestructible; that is an engine limit, not a ZOMBIES one). Citizens, The Men and zombies use the UAL mannequin
+(zombies the UAL-derived `zombie_*` clips) and fall as XPBD rigid-body ragdolls. F1 / exit autosave in ZOMBIES file
+the wrecked level into IDUNA's **zombies repository** and make it the next ZOMBIES level; NOCK has a "Set for
+ZOMBIES" button and a ZOMBIE Levels list. `make test-witness-ai-zombies`. Honest limits: local play only (the
+networked client has no role info, so online zombies render with default skins); ragdolls spawn from the rest pose
+(the living clip pose isn't captured); needs the IDUNA deploy for the zombies repository; rendering of the new
+NPCs was exercised headless for crashes but not eyeballed in a screenshot yet.
+
 ## Controls (Player + Vehicles)
 
 ### Core movement & combat

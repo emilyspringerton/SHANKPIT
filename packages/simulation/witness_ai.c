@@ -8,6 +8,7 @@
 #include "zombie_values.h"
 #include "witness_live.h"
 #include "giant_bug_values.h"
+#include "avian_values.h"
 
 typedef struct {
     int active;
@@ -33,6 +34,36 @@ typedef struct {
     int last_health;             /* combat/pain feedback, see witness_ai.h's own doc comment */
     unsigned int last_attack_ms;
 } WitnessAiGiantBug;
+
+#define WITNESS_AI_MAX_BIRDS 6
+typedef struct {
+    int active;
+    int player_id;
+    AvianState astate;
+    float angle;      /* radians around the human */
+    float radius;
+    float speed;      /* rad/s */
+    float alt;
+} WitnessAiBird;
+static WitnessAiBird g_birds[WITNESS_AI_MAX_BIRDS];
+static WitnessWallHitFn g_wall_hit_hook;
+typedef struct { float x, y, z, w, h, d; } WaiBox; /* layout-identical to physics.h's Box */
+#define WAI_PLAYER_HEIGHT 6.47f
+static WitnessMapFn g_map_hook;
+void witness_ai_set_map_hook(WitnessMapFn fn) { g_map_hook = fn; }
+static int wai_map(const WaiBox **b) {
+    const void *raw = NULL;
+    if (!g_map_hook) { *b = NULL; return 0; }
+    int n = g_map_hook(&raw);
+    *b = (const WaiBox *)raw;
+    return raw ? n : 0;
+}
+#define WAI_BODY_R 1.6f
+static signed char g_wai_side[MAX_CLIENTS];
+static unsigned int g_zlast_spawn_ms;
+void witness_ai_set_wall_hit_hook(WitnessWallHitFn fn) { g_wall_hit_hook = fn; }
+static unsigned int g_zombie_claw_ms[MAX_CLIENTS];
+static unsigned char g_wai_breach[MAX_CLIENTS];
 
 #define WITNESS_AI_MAX_GIANT_BUGS 8
 #define WITNESS_AI_BUG_EAT_RADIUS 4.0f
@@ -184,7 +215,11 @@ void witness_ai_reset(unsigned int seed, unsigned int now_ms) {
     memset(g_citizens, 0, sizeof(g_citizens));
     memset(g_zombies, 0, sizeof(g_zombies));
     memset(g_giant_bugs, 0, sizeof(g_giant_bugs));
+    memset(g_birds, 0, sizeof(g_birds));
+    memset(g_wai_breach, 0, sizeof(g_wai_breach));
+    memset(g_wai_side, 0, sizeof(g_wai_side));
     g_have_last_sim_tick = 0;
+    g_zlast_spawn_ms = 0;
     g_player_zone = ZONE_PUBLIC; /* matches witness_sim_init's own player-0 default */
     g_have_last_player_zone_check = 0;
     g_carried_id = -1;
@@ -258,6 +293,9 @@ int witness_ai_role_for_player(int player_id) {
     for (int i = 0; i < WITNESS_AI_MAX_GIANT_BUGS; i++) {
         if (g_giant_bugs[i].active && g_giant_bugs[i].player_id == player_id) return WITNESS_AI_ROLE_GIANT_BUG;
     }
+    for (int i = 0; i < WITNESS_AI_MAX_BIRDS; i++) {
+        if (g_birds[i].active && g_birds[i].player_id == player_id) return WITNESS_AI_ROLE_BIRD;
+    }
     return WITNESS_AI_ROLE_NONE;
 }
 
@@ -289,6 +327,9 @@ static void deactivate_managed_player(ServerState *s, int player_id) {
             g_zombies[i].active = 0;
             break;
         }
+    }
+    for (int i = 0; i < WITNESS_AI_MAX_BIRDS; i++) {
+        if (g_birds[i].active && g_birds[i].player_id == player_id) { g_birds[i].active = 0; break; }
     }
     if (s && player_id > 0 && player_id < MAX_CLIENTS) s->players[player_id].active = 0;
 }
@@ -449,6 +490,204 @@ int witness_ai_citizen_vigilance(int player_id) {
     return -1;
 }
 
+/* --- the birds: BIG_O's avian coalition as live flyers (see witness_ai.h) --- */
+int witness_ai_bird_count(void) {
+    int n = 0;
+    for (int i = 0; i < WITNESS_AI_MAX_BIRDS; i++) if (g_birds[i].active) n++;
+    return n;
+}
+
+int witness_ai_spawn_bird(ServerState *s, float x, float y, float z, unsigned int now_ms) {
+    if (!s) return -1;
+    WitnessAiBird *b = NULL;
+    for (int i = 0; i < WITNESS_AI_MAX_BIRDS; i++) if (!g_birds[i].active) { b = &g_birds[i]; break; }
+    if (!b) return -1;
+    int slot = find_free_player_slot(s);
+    if (slot < 0) return -1;
+    init_bot_player(s, slot, x, y, z);
+    s->players[slot].health = 5;
+    b->active = 1;
+    b->player_id = slot;
+    avian_state_init(&b->astate, now_ms);
+    b->angle = (float)(slot * 1.7f);
+    b->radius = 38.0f + (float)((slot * 7) % 5) * 9.0f;
+    b->speed = 0.22f + 0.05f * (float)(slot % 3);
+    b->alt = 26.0f + (float)((slot * 5) % 4) * 6.0f;
+    return slot;
+}
+
+static void witness_ai_birds_tick(ServerState *s, unsigned int now_ms) {
+    static unsigned int last_ms;
+    float dt = (last_ms == 0 || now_ms < last_ms) ? 0.0f : (float)(now_ms - last_ms) * 0.001f;
+    if (dt > 0.25f) dt = 0.25f;
+    last_ms = now_ms;
+    PlayerState *hero = &s->players[0];
+    if (!hero->active) return;
+
+    int signaling = 0;
+    for (int i = 0; i < WITNESS_AI_MAX_BIRDS; i++)
+        if (g_birds[i].active && (g_birds[i].astate.mood == AVIAN_MOOD_SIGNALING || g_birds[i].astate.mood == AVIAN_MOOD_MOBBING)) signaling++;
+
+    for (int i = 0; i < WITNESS_AI_MAX_BIRDS; i++) {
+        WitnessAiBird *b = &g_birds[i];
+        if (!b->active) continue;
+        PlayerState *bp = &s->players[b->player_id];
+
+        /* Observing the observer: alarmed by a HUNTING/FRENZIED zombie or a wary citizen near the
+           bird -- second-order signal, same shape BIG_O/core/avian_live.h defines. */
+        int alert = 0;
+        for (int zi = 0; zi < WITNESS_AI_MAX_ZOMBIES && !alert; zi++) {
+            if (!g_zombies[zi].active) continue;
+            if (g_zombies[zi].zstate.mood < ZOMBIE_MOOD_HUNTING) continue;
+            PlayerState *zp = &s->players[g_zombies[zi].player_id];
+            float dx = zp->x - bp->x, dz = zp->z - bp->z;
+            if (dx * dx + dz * dz < 90.0f * 90.0f) alert = 1;
+        }
+        for (int ci = 0; ci < WITNESS_AI_MAX_CITIZENS && !alert; ci++) {
+            if (!g_citizens[ci].active) continue;
+            if (npc_brain_effective_vigilance(&g_citizens[ci].brain) < 60) continue;
+            PlayerState *cp = &s->players[g_citizens[ci].player_id];
+            float dx = cp->x - bp->x, dz = cp->z - bp->z;
+            if (dx * dx + dz * dz < 90.0f * 90.0f) alert = 1;
+        }
+        if (alert) avian_get_alerted(&b->astate, now_ms);
+        avian_tick(&b->astate, now_ms, signaling);
+
+        /* A signaling flock's beacon pulls dormant/agitated zombies toward the human. */
+        if (avian_beacon_strength(&b->astate) > 0.4f) {
+            for (int zi = 0; zi < WITNESS_AI_MAX_ZOMBIES; zi++) {
+                if (!g_zombies[zi].active || g_zombies[zi].zstate.mood >= ZOMBIE_MOOD_HUNTING) continue;
+                zombie_get_agitated(&g_zombies[zi].zstate, now_ms);
+            }
+        }
+
+        int mobbing = (b->astate.mood == AVIAN_MOOD_MOBBING);
+        float rad = mobbing ? 10.0f : b->radius;
+        float alt = mobbing ? 9.0f : b->alt;
+        b->angle += b->speed * (mobbing ? 2.2f : 1.0f) * dt;
+        float tx = hero->x + sinf(b->angle) * rad, tz = hero->z + cosf(b->angle) * rad;
+        float ty = hero->y + alt + sinf(b->angle * 3.0f) * 2.0f;
+        /* ease toward the orbit slot rather than snapping when the flock re-forms */
+        float k = 1.0f - expf(-3.0f * dt);
+        bp->x += (tx - bp->x) * k; bp->y += (ty - bp->y) * k; bp->z += (tz - bp->z) * k;
+        bp->vx = bp->vy = bp->vz = 0.0f;
+        bp->in_fwd = 0.0f;
+        bp->yaw = (b->angle * 57.29578f) + 90.0f;
+        bp->state = STATE_ALIVE;
+        bp->health = 5;
+    }
+}
+
+/* Wall awareness -- founder real-time, 2026-10-02: "make sure they dont run into the buildings
+ * constantly make the citizens at least aware of the walls." Every mover in this file used to set
+ * a bare straight-line yaw toward its goal (hero, away-from-zombie, a target citizen) and rely on
+ * resolve_collision to stop it, so a citizen fleeing "away" from a zombie just pressed into the
+ * nearest building face forever. wai_avoid_walls is a feeler (whisker) steer run as the LAST pass
+ * of every tick: it probes the level's real collision boxes (map_geo, the same list the player's
+ * own movement collides against, so brick-fracture holes open real doorways for the AI too) along
+ * the intended heading, and if the way ahead is blocked picks the nearest-to-intended heading that
+ * is clear, sticking to one side per mover so it slides along a wall instead of dithering. Fully
+ * boxed in => stands still rather than grinding. Axis-aligned boxes only, same as the level data. */
+static float wai_norm_yaw(float y) { while (y > 180.0f) y -= 360.0f; while (y < -180.0f) y += 360.0f; return y; }
+
+static int wai_point_blocked(float x, float y, float z) {
+    float feet = y, head = y + WAI_PLAYER_HEIGHT;
+    const WaiBox *mg; int mc = wai_map(&mg);
+    for (int i = 1; i < mc; i++) {
+        const WaiBox *b = &mg[i];
+        if (b->w <= 0.0f || b->h <= 0.0f || b->d <= 0.0f) continue;
+        if (b->y + b->h * 0.5f < feet + 1.2f) continue;  /* floor / step: walkable */
+        if (b->y - b->h * 0.5f > head) continue;          /* overhead */
+        if (x > b->x - b->w * 0.5f - WAI_BODY_R && x < b->x + b->w * 0.5f + WAI_BODY_R &&
+            z > b->z - b->d * 0.5f - WAI_BODY_R && z < b->z + b->d * 0.5f + WAI_BODY_R) return 1;
+    }
+    return 0;
+}
+
+static int wai_heading_clear(const PlayerState *p, float yaw_deg, float look) {
+    float r = yaw_deg * 0.0174533f;
+    float sx = sinf(r), cz = cosf(r);
+    for (float d = 2.0f; d <= look + 0.01f; d += 2.0f) {
+        if (wai_point_blocked(p->x + sx * d, p->y, p->z + cz * d)) return 0;
+    }
+    return 1;
+}
+
+/* wai_probe_wall -- first solid face along (yaw) from the mover, mid-body height. Fills the hit
+ * point and outward (toward-mover) normal; returns 1 if a face is within maxd. Axis-aligned boxes:
+ * slab entry on the dominant axis of travel gives the exact face. */
+static int wai_probe_wall(const PlayerState *p, float yaw_deg, float maxd,
+                          float *hx, float *hy, float *hz, float *nx, float *nz) {
+    float r = yaw_deg * 0.0174533f, dx = sinf(r), dz = cosf(r);
+    float best_t = maxd + 1.0f; int hit = 0;
+    float ymid = p->y + WAI_PLAYER_HEIGHT * 0.5f;
+    const WaiBox *mg; int mc = wai_map(&mg);
+    for (int i = 1; i < mc; i++) {
+        const WaiBox *b = &mg[i];
+        if (b->w <= 0.0f || b->h <= 0.0f || b->d <= 0.0f) continue;
+        if (b->y + b->h * 0.5f < p->y + 1.2f || b->y - b->h * 0.5f > p->y + WAI_PLAYER_HEIGHT) continue;
+        float lo[2] = { b->x - b->w * 0.5f, b->z - b->d * 0.5f };
+        float hi[2] = { b->x + b->w * 0.5f, b->z + b->d * 0.5f };
+        float o[2] = { p->x, p->z }, d[2] = { dx, dz };
+        float t0 = 0.0f, t1 = maxd; int axis_in = -1; float sgn = 0.0f;
+        int ok = 1;
+        for (int a = 0; a < 2 && ok; a++) {
+            if (fabsf(d[a]) < 1e-5f) { if (o[a] < lo[a] || o[a] > hi[a]) ok = 0; continue; }
+            float ta = (lo[a] - o[a]) / d[a], tb = (hi[a] - o[a]) / d[a];
+            float sg = d[a] > 0 ? -1.0f : 1.0f;
+            if (ta > tb) { float t = ta; ta = tb; tb = t; }
+            if (ta > t0) { t0 = ta; axis_in = a; sgn = sg; }
+            if (tb < t1) t1 = tb;
+            if (t0 > t1) ok = 0;
+        }
+        if (!ok || axis_in < 0 || t0 >= best_t) continue;
+        best_t = t0; hit = 1;
+        *hx = p->x + dx * t0; *hz = p->z + dz * t0; *hy = ymid;
+        *nx = (axis_in == 0) ? sgn : 0.0f; *nz = (axis_in == 1) ? sgn : 0.0f;
+    }
+    return hit;
+}
+
+#define WAI_ZOMBIE_CLAW_REACH 3.2f
+#define WAI_ZOMBIE_CLAW_COOLDOWN_MS 450u
+#define WAI_ZOMBIE_CLAW_DAMAGE 28
+
+/* A hunting zombie whose straight line to its target is walled off tears the wall down instead of
+ * steering around it (relentless). Returns 1 if it is breaching this tick (caller skips avoidance). */
+static int wai_zombie_breach(ServerState *s, PlayerState *zp, int id, unsigned int now_ms) {
+    if (!g_wall_hit_hook) return 0;
+    float hx, hy, hz, nx, nz;
+    if (!wai_probe_wall(zp, zp->yaw, WAI_ZOMBIE_CLAW_REACH + WAI_BODY_R, &hx, &hy, &hz, &nx, &nz)) return 0;
+    zp->in_fwd = 0.0f;                      /* plant and claw */
+    zp->anim_override = 1;                  /* GBAND_SKEL_NPC_ANIM_GREET slot == zombie_attack clip */
+    if (now_ms - g_zombie_claw_ms[id] >= WAI_ZOMBIE_CLAW_COOLDOWN_MS) {
+        g_zombie_claw_ms[id] = now_ms;
+        g_wall_hit_hook(zp->scene_id, hx, hy, hz, nx, 0.0f, nz, WAI_ZOMBIE_CLAW_DAMAGE);
+    }
+    (void)s;
+    return 1;
+}
+
+static void wai_avoid_walls(PlayerState *p, int id) {
+    if (p->in_fwd <= 0.0f || p->state == STATE_DEAD) return;
+    float look = 6.0f + 6.0f * p->in_fwd;
+    if (wai_heading_clear(p, p->yaw, look)) { g_wai_side[id] = 0; return; }
+    if (g_wai_side[id] == 0) g_wai_side[id] = (id & 1) ? 1 : -1;
+    static const float offs[] = { 30.0f, 60.0f, 90.0f, 125.0f, 160.0f };
+    for (int k = 0; k < 5; k++) {
+        for (int pass = 0; pass < 2; pass++) {
+            float sgn = (pass == 0) ? (float)g_wai_side[id] : -(float)g_wai_side[id];
+            float y = p->yaw + sgn * offs[k];
+            if (wai_heading_clear(p, y, look)) {
+                p->yaw = wai_norm_yaw(y);
+                if (pass == 1) g_wai_side[id] = (signed char)-g_wai_side[id];
+                return;
+            }
+        }
+    }
+    p->in_fwd = 0.0f; /* boxed in: stand, don't grind into the wall */
+}
+
 void witness_ai_tick(ServerState *s, unsigned int now_ms) {
     if (!s) return;
 
@@ -488,7 +727,7 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
             hdx = hero_p->x - zp->x;
             hdz = hero_p->z - zp->z;
             hdist = sqrtf(hdx * hdx + hdz * hdz);
-            has_target = hdist <= WITNESS_AI_ZOMBIE_PERCEPTION_RADIUS;
+            has_target = hdist <= (s->game_mode == MODE_ZOMBIES ? 400.0f : WITNESS_AI_ZOMBIE_PERCEPTION_RADIUS); /* sandbox horde converges from the spawn ring */
         }
         zombie_tick(&z->zstate, now_ms, has_target);
 
@@ -499,8 +738,11 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
             hdist > WITNESS_AI_ZOMBIE_MELEE_RANGE) {
             zp->yaw = atan2f(hdx, hdz) * (180.0f / 3.14159f);
             zp->in_fwd = (z->zstate.mood == ZOMBIE_MOOD_FRENZIED) ? 1.0f : 0.7f;
+            g_wai_breach[z->player_id] = (unsigned char)wai_zombie_breach(s, zp, z->player_id, now_ms);
+            if (!g_wai_breach[z->player_id] && zp->anim_override == 1) zp->anim_override = 0;
         } else {
             zp->in_fwd = 0.0f;
+            g_wai_breach[z->player_id] = 0;
         }
 
         /* Melee: real, direct hero damage on contact, same shield-then-health order and
@@ -544,6 +786,12 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
         if (fleeing) {
             cp->yaw = atan2f(away_dx, away_dz) * (180.0f / 3.14159f);
             cp->in_fwd = 0.85f;
+        } else if (s->game_mode == MODE_ZOMBIES && c->brain.archetype != NPC_ARCHETYPE_THE_MEN) {
+            /* Sandbox wander: every ~6s pick a heading (or stand), deterministic per citizen. */
+            unsigned int ep = now_ms / 6000u + (unsigned int)c->player_id * 2654435761u;
+            ep ^= ep >> 13; ep *= 0x5bd1e995u; ep ^= ep >> 15;
+            if ((ep & 3u) == 0u) { cp->in_fwd = 0.0f; }
+            else { cp->yaw = (float)(ep % 360u) - 180.0f; cp->in_fwd = 0.35f; }
         } else {
             cp->in_fwd = 0.0f;
         }
@@ -764,6 +1012,90 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
                 g_lab_deliveries++;
             }
         }
+    }
+
+    witness_ai_birds_tick(s, now_ms);
+
+    /* Wall awareness pass -- see wai_avoid_walls. Runs last so it steers whatever heading the
+       flee/chase/men/bug logic above settled on. */
+    for (int i = 0; i < WITNESS_AI_MAX_CITIZENS; i++)
+        if (g_citizens[i].active) wai_avoid_walls(&s->players[g_citizens[i].player_id], g_citizens[i].player_id);
+    for (int i = 0; i < WITNESS_AI_MAX_ZOMBIES; i++)
+        if (g_zombies[i].active && !g_wai_breach[g_zombies[i].player_id])
+            wai_avoid_walls(&s->players[g_zombies[i].player_id], g_zombies[i].player_id);
+    for (int i = 0; i < WITNESS_AI_MAX_GIANT_BUGS; i++)
+        if (g_giant_bugs[i].active) wai_avoid_walls(&s->players[g_giant_bugs[i].player_id], g_giant_bugs[i].player_id);
+}
+
+
+/* --- MODE_ZOMBIES day/night population lifecycle (see witness_ai.h) --- */
+static unsigned int g_zrng = 0x2545F491u;
+static unsigned int zrand(void) { g_zrng ^= g_zrng << 13; g_zrng ^= g_zrng >> 17; g_zrng ^= g_zrng << 5; return g_zrng; }
+static int zombies_ring_spot(const PlayerState *hero, float rmin, float rmax, float *ox, float *oz) {
+    for (int t = 0; t < 12; t++) {
+        float a = (float)(zrand() % 3600u) * (6.2831853f / 3600.0f);
+        float r = rmin + (float)(zrand() % 1000u) * 0.001f * (rmax - rmin);
+        float x = hero->x + sinf(a) * r, z = hero->z + cosf(a) * r;
+        if (!wai_point_blocked(x, 8.0f, z) && !wai_point_blocked(x, 0.0f, z)) { *ox = x; *oz = z; return 1; }
+    }
+    return 0;
+}
+
+void witness_ai_zombies_tick(ServerState *s, unsigned int now_ms) {
+    if (!s || s->game_mode != MODE_ZOMBIES) return;
+    PlayerState *hero = &s->players[0];
+    if (!hero->active) return;
+
+    /* The birds are there from day 1: the first call seeds the whole flock, and the flock is
+       topped back up whenever one is lost, regardless of time of day. */
+    while (witness_ai_bird_count() < 5) {
+        float bx = hero->x + (float)((int)(zrand() % 60u) - 30), bz = hero->z + (float)((int)(zrand() % 60u) - 30);
+        if (witness_ai_spawn_bird(s, bx, hero->y + 30.0f, bz, now_ms) < 0) break;
+    }
+
+    int phase = (int)day_night_clock_phase(&s->story_clock);
+    int want_z, want_c;
+    switch (phase) {
+        case DNC_DAWN:  want_z = 2;  want_c = 5; break;
+        case DNC_DAY:   want_z = 1;  want_c = 8; break;
+        case DNC_DUSK:  want_z = 6;  want_c = 5; break;
+        default:        want_z = 12; want_c = 2; break; /* night */
+    }
+    if (want_z > WITNESS_AI_MAX_ZOMBIES) want_z = WITNESS_AI_MAX_ZOMBIES;
+
+    int nz = 0, nc = 0, nm = 0;
+    for (int i = 0; i < WITNESS_AI_MAX_ZOMBIES; i++) if (g_zombies[i].active && s->players[g_zombies[i].player_id].state != STATE_DEAD) nz++;
+    for (int i = 0; i < WITNESS_AI_MAX_CITIZENS; i++) {
+        if (!g_citizens[i].active) continue;
+        if (g_citizens[i].brain.archetype == NPC_ARCHETYPE_THE_MEN) nm++; else nc++;
+    }
+
+    /* Cull: corpses are cleaned up (slot freed) once the hero is well away; surplus zombies
+       "burn at dawn" and surplus citizens "go home" -- only ever out of the hero's sight. */
+    for (int i = 0; i < WITNESS_AI_MAX_ZOMBIES; i++) {
+        if (!g_zombies[i].active) continue;
+        PlayerState *zp = &s->players[g_zombies[i].player_id];
+        float dx = zp->x - hero->x, dz = zp->z - hero->z, d2 = dx * dx + dz * dz;
+        if (zp->state == STATE_DEAD && d2 > 40.0f * 40.0f) { deactivate_managed_player(s, g_zombies[i].player_id); continue; }
+        if (nz > want_z && d2 > 70.0f * 70.0f) { deactivate_managed_player(s, g_zombies[i].player_id); nz--; }
+    }
+    for (int i = 0; i < WITNESS_AI_MAX_CITIZENS && nc > want_c; i++) {
+        if (!g_citizens[i].active || g_citizens[i].brain.archetype == NPC_ARCHETYPE_THE_MEN) continue;
+        PlayerState *cp = &s->players[g_citizens[i].player_id];
+        float dx = cp->x - hero->x, dz = cp->z - hero->z;
+        if (dx * dx + dz * dz > 70.0f * 70.0f) { deactivate_managed_player(s, g_citizens[i].player_id); nc--; }
+    }
+
+    if (now_ms - g_zlast_spawn_ms < 2500u) return;
+    g_zlast_spawn_ms = now_ms;
+    float x, z;
+    if (nz < want_z && zombies_ring_spot(hero, 90.0f, 170.0f, &x, &z)) {
+        int id = witness_ai_spawn_zombie(s, x, 8.0f, z, now_ms);
+        if (id > 0) witness_ai_force_zombie_mood(id, ZOMBIE_MOOD_HUNTING);
+    } else if (nc < want_c && zombies_ring_spot(hero, 60.0f, 150.0f, &x, &z)) {
+        witness_ai_spawn_citizen(s, ZONE_PUBLIC, 30 + (int)(zrand() % 30u), 20 + (int)(zrand() % 30u), x, 8.0f, z, now_ms);
+    } else if (nm < 2 && zombies_ring_spot(hero, 80.0f, 160.0f, &x, &z)) {
+        witness_ai_spawn_the_men(s, ZONE_PUBLIC, 85, 15, x, 8.0f, z, now_ms);
     }
 }
 

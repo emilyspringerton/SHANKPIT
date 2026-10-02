@@ -23,6 +23,7 @@
  * Level-agnostic and mode-agnostic by design (SHANKPIT/CLAUDE.md: levels are never story-mode-only).
  */
 
+#include "witness_ai.h"
 #include "../world/brick_fracture.h"
 #include "../world/level_boxes.h"
 
@@ -144,7 +145,21 @@ static inline int brick_world_box_is_slab(const LevelBox *b) {
 
 /* brick_world_init_from_level -- call right after the level's boxes reach physics.h
  * (phys_set_custom_level). Picks the destructible parents, resets all damage and installs the hooks. */
+/* AI <-> world hooks (witness_ai.c cannot include physics.h, see witness_ai.h): zombies claw brick
+ * walls through brick_world_on_surface, and every AI mover reads the live collision boxes. Weapon
+ * WPN_AR is the PARENA material-resistance lookup key; the damage figure is the claw's own. */
+static void brick_world_ai_wall_hit(int scene_id, float hx, float hy, float hz,
+                                    float nx, float ny, float nz, int damage) {
+    brick_world_on_surface(scene_id, hx, hy, hz, nx, ny, nz, damage, WPN_AR);
+}
+static int brick_world_ai_map(const void **boxes) { *boxes = map_geo; return map_count; }
+static inline void brick_world_install_ai_hooks(void) {
+    witness_ai_set_wall_hit_hook(brick_world_ai_wall_hit);
+    witness_ai_set_map_hook(brick_world_ai_map);
+}
+
 static inline void brick_world_init_from_level(const CustomLevelData *lvl) {
+    brick_world_install_ai_hooks();
     bf_reset(&g_brick);
     g_brick_active = 0;
     g_brick_resend_n = 0;

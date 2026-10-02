@@ -594,6 +594,12 @@ typedef struct {
  * rl_bot_pool.py precedent (a standing pool of real UDP clients queuing through the same real
  * matchmaker packets humans use) more literally than BRAWLPIT's own ORDINARY matchmaker bot-fill
  * (which is actually the same in-process-puppet pattern TDMO already uses here). */
+/* MODE_ZOMBIES=110 -- founder real-time, 2026-10-02: ZOMBIES is the basic sandbox (replaces the
+ * FIND CTF menu tile). A persistent level (default: nextown) with a real day/night lifecycle
+ * (story_clock) driving a witness_ai population -- citizens by day, zombies rising at dusk and
+ * burning off at dawn, The Men cleaning up witnesses. Destruction (brick damage) is saved back to
+ * the IDUNA "zombies" level collection. See witness_ai_zombies_tick. Uses the story-mode plumbing
+ * MODE_TYLER already borrows (story_phase PLAYING, i>0 corpses never respawn). */
 /* MODE_TYLER=109 -- TYLER VALHANNA cold open (episodes/vh01_valhanna_coldopen.md), founder
  * real-time: "bring it to life with the shankpit engine... write a new game mode called TYLER...
  * this is a demo for BIG_O" (S536 BIG_O<->SHANKPIT engine merge track, docs2/specs/
@@ -606,7 +612,7 @@ typedef struct {
  * STATE_SPECTATOR below) watching an AI_MODE_SCRIPTED Tyler+Hana sequence; phase 2 (level
  * construct) -- the player controls the Duck (gband_skel_npc "Leela" kit) in third person. See
  * packages/simulation/tyler_coldopen.h for the scripted-sequence coordinator. */
-typedef enum { MODE_DEATHMATCH=0, MODE_TDM=1, MODE_SURVIVAL=2, MODE_CTF=3, MODE_ODDBALL=4, MODE_LOCAL=98, MODE_NET=99, MODE_EVOLUTION=100, MODE_TDMB=101, MODE_TDMO=102, MODE_CTFB=103, MODE_CTFO=104, MODE_STORY=105, MODE_HEADED_BOT=106, MODE_STORY_CAVE=107, MODE_QUEUE=108, MODE_TYLER=109 } GameMode;
+typedef enum { MODE_DEATHMATCH=0, MODE_TDM=1, MODE_SURVIVAL=2, MODE_CTF=3, MODE_ODDBALL=4, MODE_LOCAL=98, MODE_NET=99, MODE_EVOLUTION=100, MODE_TDMB=101, MODE_TDMO=102, MODE_CTFB=103, MODE_CTFO=104, MODE_STORY=105, MODE_HEADED_BOT=106, MODE_STORY_CAVE=107, MODE_QUEUE=108, MODE_TYLER=109, MODE_ZOMBIES=110 } GameMode;
 typedef enum {
     STORY_PHASE_CUTSCENE = 0,    /* intro cutscene (TYLER episode — Tyler arrives) */
     STORY_PHASE_PLAYING = 1,

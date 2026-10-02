@@ -61,6 +61,7 @@
 #include "../../../packages/render/material_shaders.h"
 #include "../../../packages/goldenband/gband_mesh_rig.h"
 #include "../../../packages/goldenband/gband_skel_npc.h"
+#include "../../../packages/simulation/ragdoll_pool.h"
 
 /* ── S144-02 Stage B: GOLDENBAND skinned mesh for Tyler ──────────────────────
  * Ports REDGARDEN/GFD's S144-07 gband_mesh_rig onto the shader/VBO
@@ -92,6 +93,8 @@ static int g_skel_npc_ready = 0;
    particular kit failed to load (a real, individually-degradable state -- see
    gband_shader_and_mesh_init's own per-kit SDL_Log). */
 static int g_skel_npc_kit_mannequin = -1;
+static void rd_init(void);
+static int g_skel_npc_kit_zombie = -1; /* mannequin mesh + zombie_{idle,walk,attack} clips (derived from the UAL1 mocap) */
 static int g_skel_npc_kit_stan = -1;
 static int g_skel_npc_kit_mike = -1;
 static int g_skel_npc_kit_leela = -1;
@@ -202,6 +205,11 @@ static void gband_shader_and_mesh_init(void) {
        idle for that phase) but a genuine UAL1_Standard_Dance_Loop for the dance phase. */
     g_skel_npc_kit_mannequin = gband_skel_npc_load_kit("assets/goldenband", "mannequin_npc", "UAL1_Standard_Idle_Loop", "UAL1_Standard_Walk_Loop", NULL, "UAL1_Standard_Dance_Loop");
     if (g_skel_npc_kit_mannequin < 0) SDL_Log("S467: mannequin_npc kit load failed");
+    /* Zombies: same mannequin mesh/skeleton, the zombie_* clips BIG_O's tools/gen_zombie_clips.py derives
+       from the UAL1 idle/walk mocap (shamble, arms forward). The "greet" slot carries zombie_attack
+       (witness_ai sets anim_override=GREET while a zombie claws a wall); dance slot unused. */
+    g_skel_npc_kit_zombie = gband_skel_npc_load_kit("assets/goldenband", "mannequin_npc", "zombie_idle", "zombie_walk", "zombie_attack", NULL);
+    if (g_skel_npc_kit_zombie < 0) SDL_Log("zombie kit load failed (zombies fall back to the UAL mannequin kit)");
     g_skel_npc_kit_stan = gband_skel_npc_load_kit("assets/goldenband", "Stan", "Stan_Idle", "Stan_Walk", "Stan_Hello", "Stan_Hello");
     if (g_skel_npc_kit_stan < 0) SDL_Log("S468: Stan kit load failed");
     g_skel_npc_kit_mike = gband_skel_npc_load_kit("assets/goldenband", "Mike", "Mike_Idle", "Mike_Walk", "Mike_Hello", "Mike_Hello");
@@ -219,6 +227,7 @@ static void gband_shader_and_mesh_init(void) {
     }
     SDL_Log("S467/S468: general-skeleton NPC kits ready (mannequin=%d stan=%d mike=%d leela=%d george=%d)",
             g_skel_npc_kit_mannequin, g_skel_npc_kit_stan, g_skel_npc_kit_mike, g_skel_npc_kit_leela, g_skel_npc_kit_george);
+    rd_init();
 }
 
 static void gband_draw_skinned(const float *verts6, int vert_count, const Mat4 *mvp, const Mat4 *model) {
@@ -240,7 +249,7 @@ static void gband_draw_skinned(const float *verts6, int vert_count, const Mat4 *
  * gband_skel_npc_draw's own function-pointer contract, so there's no per-call color param to
  * thread through -- this module-level flag is the real, minimal way to swap tint for one draw
  * call, same "static drives the next callback" convention g_gband_frame_dt_ms already uses. */
-static int g_skel_npc_evil_tint = 0;
+static int g_skel_npc_evil_tint = 0; /* 0 base, 1 evil-red, 2 zombie, 3 the men, 4 bird, 5..8 citizen variants */
 
 static void skel_npc_draw_skinned(const float *verts6, int vert_count, const Mat4 *mvp, const Mat4 *model) {
     (void)model; /* world transform pre-baked into verts6, same contract as gband_draw_skinned */
@@ -248,7 +257,16 @@ static void skel_npc_draw_skinned(const float *verts6, int vert_count, const Mat
     static const float evil_color[4] = {0.30f, 0.05f, 0.05f, 1.0f}; /* dark venous red -- "evil" reuse of the same kit */
     gl_use_program(g_gband_program); /* same shader as Tyler -- pos+normal in, flat-lit color out */
     gl_uniform_matrix4fv(gl_get_uniform_location(g_gband_program, "u_mvp"), mvp->m);
-    gl_uniform4fv(gl_get_uniform_location(g_gband_program, "u_color"), g_skel_npc_evil_tint ? evil_color : base_color);
+    static const float role_color[9][4] = {
+        {0.55f, 0.50f, 0.46f, 1.0f}, {0.30f, 0.05f, 0.05f, 1.0f},
+        {0.38f, 0.52f, 0.30f, 1.0f},                              /* zombie: sickly green */
+        {0.07f, 0.07f, 0.09f, 1.0f},                              /* the men: black suits */
+        {0.05f, 0.05f, 0.07f, 1.0f},                              /* bird: crow */
+        {0.62f, 0.38f, 0.30f, 1.0f}, {0.30f, 0.42f, 0.62f, 1.0f}, /* citizens: varied clothes */
+        {0.60f, 0.56f, 0.28f, 1.0f}, {0.45f, 0.30f, 0.52f, 1.0f} };
+    (void)evil_color; (void)base_color;
+    int tint = (g_skel_npc_evil_tint >= 0 && g_skel_npc_evil_tint < 9) ? g_skel_npc_evil_tint : 0;
+    gl_uniform4fv(gl_get_uniform_location(g_gband_program, "u_color"), role_color[tint]);
     gl_dynamic_vbo_draw(&g_skel_npc_vbo, verts6, vert_count, GL_TRIANGLES);
     gl_use_program(0);
 }
@@ -2184,7 +2202,7 @@ static void overlay_render(OverlaySystem *overlay, const PlayerState *viewer) {
 // -- only its menu entry point is removed, same "remove the tile, not the feature" precedent.
 typedef enum {
     LOBBY_LEVEL_SELECT = 0,
-    LOBBY_JOIN,
+    LOBBY_ZOMBIES,   /* was LOBBY_JOIN / "FIND CTF" -- founder real-time, 2026-10-02: replace FIND CTF with ZOMBIES */
     LOBBY_SPRAYS,
     LOBBY_STORY,
     LOBBY_STORY_CAVE,
@@ -2199,7 +2217,7 @@ char lobby_labels_mutable[LOBBY_COUNT][64];
 
 static const char *LOBBY_LABELS[LOBBY_COUNT] = {
     "LEVELS",
-    "FIND CTF",
+    "ZOMBIES",
     "SPRAYS",
     "STORY",
     "CAVE-001",
@@ -2374,7 +2392,8 @@ static unsigned int g_snap_uploaded_serial = 0xFFFFFFFFu;
 static unsigned int g_snap_last_press_ms = 0;
 static SDL_Thread *g_snap_thread = NULL;
 static SDL_atomic_t g_snap_busy;
-typedef struct { int id; int n; LevelBrickCell cells[LEVEL_BOXES_MAX_BRICK_CELLS]; int ok; } SnapJob;
+typedef struct { int id; int n; int zombies; LevelBrickCell cells[LEVEL_BOXES_MAX_BRICK_CELLS]; int ok; } SnapJob;
+static int g_snap_zombies = 0;   // 1 while playing ZOMBIES: snapshots file into the zombies repository + become its default
 static SnapJob g_snap_job;
 static volatile int g_snap_result = 0;   // 0 none yet, 1 last upload ok, 2 last upload failed (pause-menu label)
 
@@ -2387,7 +2406,7 @@ static const char *lobby_snapshot_label(void) {
 
 static int snap_worker(void *unused) {
     (void)unused;
-    g_snap_job.ok = level_boxes_post_snapshot(g_snap_job.id, g_snap_job.cells, g_snap_job.n);
+    g_snap_job.ok = level_boxes_post_snapshot_ex(g_snap_job.id, g_snap_job.cells, g_snap_job.n, g_snap_job.zombies);
     SDL_Log("[SNAPSHOT] level %d upload %s (%d damaged cells)", g_snap_job.id, g_snap_job.ok ? "ok" : "FAILED", g_snap_job.n);
     g_snap_result = g_snap_job.ok ? 1 : 2;
     SDL_AtomicSet(&g_snap_busy, 0);
@@ -2414,6 +2433,7 @@ static void lobby_level_snapshot(int manual) {
         if (serial == g_snap_uploaded_serial) { SDL_Log("[SNAPSHOT] unchanged since last upload"); return; }
         snap_join();
         g_snap_job.id = g_level_source_id;
+        g_snap_job.zombies = g_snap_zombies;
         g_snap_job.n = brick_world_export_damage(g_snap_job.cells, LEVEL_BOXES_MAX_BRICK_CELLS);
         g_snap_uploaded_serial = serial;
         SDL_AtomicSet(&g_snap_busy, 1);
@@ -2424,6 +2444,7 @@ static void lobby_level_snapshot(int manual) {
         snap_join();
         if (serial == g_snap_loaded_serial || serial == g_snap_uploaded_serial) return;
         g_snap_job.id = g_level_source_id;
+        g_snap_job.zombies = g_snap_zombies;
         g_snap_job.n = brick_world_export_damage(g_snap_job.cells, LEVEL_BOXES_MAX_BRICK_CELLS);
         if (g_snap_job.n <= 0) return;
         g_snap_uploaded_serial = serial;
@@ -2470,6 +2491,7 @@ static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
     brick_world_init_from_level(lvl); // destructible brick: pick the carvable boxes, install the weapon/blast hooks
     brick_debris_clear(&g_brick_debris);
     g_level_source_id = lvl->source_id;                 // snapshots clone THIS registry level
+    g_snap_zombies = 0;                                 // lobby_start_zombies_mode re-arms this after loading
     g_snap_loaded_serial = brick_world_commit_serial(); // damage state this load started from
     g_snap_uploaded_serial = 0xFFFFFFFFu;
 
@@ -2689,6 +2711,49 @@ static int lobby_start_tyler_mode(void) {
         SDL_Log("TYLER: could not load %s (run from the SHANKPIT repo root)", TYLER_ICELAND_PATH);
         return 0;
     }
+    return 1;
+}
+
+
+// ---- MODE_ZOMBIES, the basic sandbox (founder real-time, 2026-10-02) ----
+// "replace FIND CTF with ZOMBIES and thats going to be our basic sandbox ... have a new repository of
+// zombie levels ... use nextown by default." Loads the zombies repository's default level (the one
+// flagged by NOCK's "Set for ZOMBIES" or by a ZOMBIES-mode F1/exit snapshot), else the main
+// registry's "nextown", else the checked-in var/zombie/nextown_zombies.json. Destruction made in
+// the sandbox saves back to the zombies repository (g_snap_zombies), so a wrecked city becomes the
+// next ZOMBIES level. The day/night lifecycle and the population are witness_ai_zombies_tick's job.
+static int lobby_zombies_find_level(CustomLevelData *lvl) {
+    LevelRegistryEntry entries[LEVEL_REGISTRY_MAX_ENTRIES];
+    int count = level_boxes_fetch_registry_list_in("zombies", entries, LEVEL_REGISTRY_MAX_ENTRIES);
+    for (int i = 0; i < count; i++) {
+        if (entries[i].is_zombie_default && level_boxes_fetch_export(entries[i].id, lvl)) return 1;
+    }
+    count = level_boxes_fetch_registry_list(entries, LEVEL_REGISTRY_MAX_ENTRIES);
+    for (int i = 0; i < count; i++) {
+        if (strcasecmp(entries[i].name, "nextown") == 0 && level_boxes_fetch_export(entries[i].id, lvl)) return 1;
+    }
+    if (level_boxes_load_from_file("var/zombie/nextown_zombies.json", lvl)) { lvl->source_id = 0; return 1; }
+    return 0;
+}
+
+static int lobby_start_zombies_mode(void) {
+    CustomLevelData *lvl = (CustomLevelData *)malloc(sizeof(CustomLevelData));
+    if (!lvl) return 0;
+    local_init_match(1, MODE_ZOMBIES);
+    if (!lobby_zombies_find_level(lvl)) {
+        SDL_Log("ZOMBIES: no level available (registry unreachable and var/zombie/nextown_zombies.json missing)");
+        free(lvl);
+        return 0;
+    }
+    level_boxes_apply_to_physics(lvl);
+    scene_load(SCENE_CUSTOM_LEVEL);
+    PlayerState *hero = &local_state.players[0];
+    hero->scene_id = SCENE_CUSTOM_LEVEL;
+    local_state.story_phase = STORY_PHASE_PLAYING;
+    phys_respawn(hero, SDL_GetTicks());
+    g_snap_zombies = 1;
+    SDL_Log("ZOMBIES: loaded '%s' (source id %d, %d boxes, %d damaged cells)", lvl->name, lvl->source_id, lvl->count, lvl->brick_damage_count);
+    free(lvl);
     return 1;
 }
 
@@ -3216,11 +3281,9 @@ static void lobby_apply_scene_id(const char *scene_id) {
 
 static void lobby_apply_ui_state() {
     if (!ui_use_server) return;
-    if (strcmp(ui_state.active_mode_id, "mode.join") == 0) {
-        app_state = STATE_GAME_NET;
-        reset_client_render_state_for_net();
-        net_requested_mode = MODE_CTF;
-        net_connect();
+    if (strcmp(ui_state.active_mode_id, "mode.join") == 0 || strcmp(ui_state.active_mode_id, "mode.zombies") == 0) {
+        app_state = STATE_GAME_LOCAL;
+        if (!lobby_start_zombies_mode()) app_state = STATE_LOBBY;
         return;
     }
     if (strcmp(ui_state.active_mode_id, "mode.tyler") == 0) {
@@ -3511,14 +3574,17 @@ static void lobby_start_action(int action) {
             }
         }
     }
-    if (action == LOBBY_JOIN || action == LOBBY_QUEUE) {
+    if (action == LOBBY_QUEUE) {
         app_state = STATE_GAME_NET;
         reset_client_render_state_for_net();
-        net_requested_mode = (action == LOBBY_QUEUE) ? MODE_QUEUE : MODE_CTF;
+        net_requested_mode = MODE_QUEUE;
         net_connect();
     } else {
         app_state = STATE_GAME_LOCAL;
         switch (action) {
+            case LOBBY_ZOMBIES:
+                if (!lobby_start_zombies_mode()) app_state = STATE_LOBBY;
+                break;
             case LOBBY_SOLO:
                 local_init_match(1, MODE_DEATHMATCH);
                 break;
@@ -6463,6 +6529,117 @@ static void draw_player_skin_tyler(PlayerState *p, float draw_pitch, float draw_
 // S470: p->anim_override IS now a real networked field (unlike AIRole above) -- see its own doc
 // comment in protocol.h -- forcing the GREET/DANCE gesture gband_skel_npc_draw plays regardless
 // of this NPC's current movement, driven server-side by story_ai.c's own ai_run_greet.
+
+/* ---- Rigid-body ragdoll corpses for the AI population (founder real-time, 2026-10-02: "use UAL
+ * animations and the mannequin rigid body rag doll for the zombies and the citizens and the men").
+ * The XPBD pool (packages/simulation/ragdoll_pool.c, 17 Winter/Dempster-mass segments on the
+ * mannequin skeleton) simulates a body when a witness_ai citizen / The Men / zombie dies, and the
+ * mannequin kit is drawn from its world-space skin matrices. Spawned from the rest pose (the living
+ * clip pose is not captured -- named limit); the shove comes from the hero toward the victim. */
+static RagdollPool g_rd_pool;
+static int g_rd_ready = 0;
+static int g_rd_slot[MAX_CLIENTS];
+static unsigned int g_rd_seq[MAX_CLIENTS];
+
+static int rd_box_query(void *user, const double lo[3], const double hi[3], RagdollAabb *out, int max_out) {
+    (void)user;
+    int n = 0;
+    for (int i = 1; i < map_count && n < max_out; i++) {
+        const Box *b = &map_geo[i];
+        if (b->w <= 0.0f || b->h <= 0.0f || b->d <= 0.0f) continue;
+        double mn[3] = { b->x - b->w * 0.5, b->y - b->h * 0.5, b->z - b->d * 0.5 };
+        double mx[3] = { b->x + b->w * 0.5, b->y + b->h * 0.5, b->z + b->d * 0.5 };
+        if (mx[0] < lo[0] || mn[0] > hi[0] || mx[1] < lo[1] || mn[1] > hi[1] || mx[2] < lo[2] || mn[2] > hi[2]) continue;
+        for (int a = 0; a < 3; a++) { out[n].min[a] = mn[a]; out[n].max[a] = mx[a]; }
+        n++;
+    }
+    return n;
+}
+
+static void rd_init(void) {
+    for (int i = 0; i < MAX_CLIENTS; i++) g_rd_slot[i] = -1;
+    const GSkel *sk = gband_skel_npc_kit_skel(g_skel_npc_kit_mannequin);
+    if (!sk) { SDL_Log("ragdoll: mannequin kit not ready, corpses use the box fall"); return; }
+    g_rd_ready = ragdoll_pool_init(&g_rd_pool, sk, 0);
+    RagdollWorld w;
+    memset(&w, 0, sizeof w);
+    w.ground_y = 0.0;
+    w.query = rd_box_query;
+    ragdoll_pool_set_world(&g_rd_pool, &w);
+    SDL_Log("ragdoll: rigid-body pool %s", g_rd_ready ? "ready" : "init FAILED");
+}
+
+/* One call per frame, before any player is drawn. */
+static void rd_frame(float dt_ms) {
+    if (!g_rd_ready) return;
+    PlayerState *eye = &local_state.players[0];
+    ragdoll_pool_set_viewer(&g_rd_pool, eye->x, eye->y, eye->z);
+    for (int i = 1; i < MAX_CLIENTS; i++) {
+        PlayerState *p = &local_state.players[i];
+        int role = p->active ? witness_ai_role_for_player(i) : WITNESS_AI_ROLE_NONE;
+        int ragdoll_role = (role == WITNESS_AI_ROLE_CITIZEN || role == WITNESS_AI_ROLE_THE_MEN || role == WITNESS_AI_ROLE_ZOMBIE);
+        if (!ragdoll_role || p->state != STATE_DEAD) {
+            if (!p->active || p->state != STATE_DEAD) g_rd_slot[i] = -1; /* alive/respawned/despawned: forget the corpse */
+            continue;
+        }
+        if (g_rd_slot[i] >= 0) {
+            RagdollInfo inf;
+            if (!ragdoll_pool_info(&g_rd_pool, g_rd_slot[i], &inf) || inf.state == RAGDOLL_STATE_FREE || inf.seq != g_rd_seq[i])
+                g_rd_slot[i] = -2; /* this corpse's body has been despawned: draw nothing, don't respawn */
+            continue;
+        }
+        if (g_rd_slot[i] == -2) continue;
+        RagdollSpawn sp;
+        memset(&sp, 0, sizeof sp);
+        sp.x = p->x; sp.y = p->y; sp.z = p->z;
+        sp.facing_rad = (180.0f - norm_yaw_deg(p->yaw)) * 0.0174533f;
+        sp.kind = RAGDOLL_KIND_BULLET;
+        sp.damage = 100;
+        sp.hit_type = RAGDOLL_HIT_BODY;
+        sp.hit_bone = RAGDOLL_BONE_AUTO;
+        sp.hit_height_mm = 1300;
+        sp.dir[0] = p->x - eye->x; sp.dir[1] = 0.0; sp.dir[2] = p->z - eye->z;
+        sp.vel[0] = p->vx; sp.vel[1] = p->vy; sp.vel[2] = p->vz;
+        sp.now_tick = SDL_GetTicks();
+        int slot = ragdoll_pool_spawn(&g_rd_pool, &sp);
+        g_rd_slot[i] = slot;
+        if (slot >= 0) { RagdollInfo inf; if (ragdoll_pool_info(&g_rd_pool, slot, &inf)) g_rd_seq[i] = inf.seq; }
+    }
+    ragdoll_pool_step(&g_rd_pool, dt_ms);
+    if (local_state.game_mode == MODE_ZOMBIES) { /* population heartbeat, every 10s */
+        static unsigned int last_log;
+        unsigned int now = SDL_GetTicks();
+        if (now - last_log > 10000u) {
+            last_log = now;
+            int c[5] = {0};
+            for (int i = 1; i < MAX_CLIENTS; i++) {
+                int r = local_state.players[i].active ? witness_ai_role_for_player(i) : -1;
+                if (r >= 0 && r < 5) c[r]++;
+            }
+            SDL_Log("ZOMBIES: %s %02d:%02d  citizens=%d men=%d zombies=%d birds=%d  ragdolls=%d",
+                    day_night_clock_phase_name(day_night_clock_phase(&local_state.story_clock)),
+                    day_night_clock_minute_of_day(&local_state.story_clock) / 60, day_night_clock_minute_of_day(&local_state.story_clock) % 60,
+                    c[WITNESS_AI_ROLE_CITIZEN], c[WITNESS_AI_ROLE_THE_MEN], c[WITNESS_AI_ROLE_ZOMBIE], c[WITNESS_AI_ROLE_BIRD],
+                    ragdoll_pool_count(&g_rd_pool, RAGDOLL_STATE_ACTIVE));
+        }
+    }
+}
+
+/* Draws player p's ragdoll corpse. Returns 1 if the player is (or was) a ragdoll corpse and was handled. */
+static int rd_draw_corpse(PlayerState *p) {
+    if (!g_rd_ready || p->id <= 0 || p->id >= MAX_CLIENTS || p->state != STATE_DEAD) return 0;
+    if (g_rd_slot[p->id] == -2) return 1; /* despawned corpse: nothing to draw */
+    if (g_rd_slot[p->id] < 0) return 0;
+    float skin[GSKEL_MAX_JOINTS][16];
+    if (!ragdoll_pool_get_skin_matrices(&g_rd_pool, g_rd_slot[p->id], skin)) return 1;
+    int role = witness_ai_role_for_player(p->id);
+    g_skel_npc_evil_tint = role == WITNESS_AI_ROLE_ZOMBIE ? 2 : role == WITNESS_AI_ROLE_THE_MEN ? 3 : 5 + (p->id & 3);
+    gband_skel_npc_draw_skin(role == WITNESS_AI_ROLE_ZOMBIE && g_skel_npc_kit_zombie >= 0 ? g_skel_npc_kit_zombie : g_skel_npc_kit_mannequin,
+                             (const float (*)[16])skin, &g_gband_frame_vp, skel_npc_draw_skinned);
+    g_skel_npc_evil_tint = 0;
+    return 1;
+}
+
 static void draw_player_skin_mannequin(PlayerState *p, float draw_pitch, float draw_recoil) {
     if (!g_skel_npc_ready) {
         draw_player_skin_tyler(p, draw_pitch, draw_recoil);
@@ -6489,16 +6666,14 @@ static void draw_player_skin_mannequin(PlayerState *p, float draw_pitch, float d
     } else if (role == WITNESS_AI_ROLE_GIANT_BUG && kits[3] >= 0) {
         kit_index = kits[3]; /* leela, same kit as regular zombies -- "evil versions of the ones
                                  we already have but BIG": no new art, reuse + scale + tint */
-    } else if (role == WITNESS_AI_ROLE_THE_MEN && kits[4] >= 0) {
-        kit_index = kits[4]; /* george -- a single, consistent "professional" look */
-    } else if (role == WITNESS_AI_ROLE_ZOMBIE && kits[3] >= 0) {
-        kit_index = kits[3]; /* leela -- distinct from both citizens and The Men */
-    } else if (role == WITNESS_AI_ROLE_CITIZEN) {
-        int citizen_kits[2] = { kits[1], kits[2] }; /* stan/mike -- some per-citizen variety */
-        for (int i = 0; i < 2; i++) {
-            int candidate = citizen_kits[(p->id + i) % 2];
-            if (candidate >= 0) { kit_index = candidate; break; }
-        }
+    } else if (role == WITNESS_AI_ROLE_THE_MEN && kits[0] >= 0) {
+        kit_index = kits[0]; /* founder real-time, 2026-10-02: the men, citizens and zombies all use the UAL mannequin */
+    } else if (role == WITNESS_AI_ROLE_ZOMBIE && (g_skel_npc_kit_zombie >= 0 || kits[0] >= 0)) {
+        kit_index = (g_skel_npc_kit_zombie >= 0) ? g_skel_npc_kit_zombie : kits[0]; /* zombie_* clips, UAL-derived */
+    } else if (role == WITNESS_AI_ROLE_BIRD && kits[0] >= 0) {
+        kit_index = kits[0];
+    } else if (role == WITNESS_AI_ROLE_CITIZEN && kits[0] >= 0) {
+        kit_index = kits[0]; /* UAL1 idle/walk; per-citizen tint below gives them variety */
     }
     if (kit_index < 0) {
         for (int i = 0; i < 5; i++) {
@@ -6529,21 +6704,19 @@ static void draw_player_skin_mannequin(PlayerState *p, float draw_pitch, float d
     float facing_rad = (180.0f - draw_yaw) * 0.0174533f;
 
     int is_giant_bug = (role == WITNESS_AI_ROLE_GIANT_BUG);
-    g_skel_npc_evil_tint = is_giant_bug;
-    if (is_giant_bug) {
-        /* Scale up in place (about the NPC's own ground position, not the world origin) -- "BIG"
-           per the founder's own ask, real GL, no new mesh. */
-        glPushMatrix();
-        glTranslatef(p->x, p->y, p->z);
-        glScalef(2.5f, 2.5f, 2.5f);
-        glTranslatef(-p->x, -p->y, -p->z);
-    }
+    int is_bird = (role == WITNESS_AI_ROLE_BIRD);
+    g_skel_npc_evil_tint = is_giant_bug ? 1 :
+        role == WITNESS_AI_ROLE_ZOMBIE ? 2 :
+        role == WITNESS_AI_ROLE_THE_MEN ? 3 :
+        is_bird ? 4 :
+        role == WITNESS_AI_ROLE_CITIZEN ? 5 + (p->id & 3) : 0;
+    /* The skinned draw bakes the world transform into the vertices (vp only), so GL matrix calls
+       around it do nothing -- gband_skel_npc_set_scale is the real scale hook. */
+    gband_skel_npc_set_scale(is_giant_bug ? 2.5f : is_bird ? 0.3f : 1.0f);
     gband_skel_npc_draw(kit_index, p->id, p->x, p->y, p->z, facing_rad, g_gband_frame_dt_ms,
                          p->anim_override,
                          &g_gband_frame_vp, skel_npc_draw_skinned);
-    if (is_giant_bug) {
-        glPopMatrix();
-    }
+    gband_skel_npc_set_scale(1.0f);
     g_skel_npc_evil_tint = 0;
 }
 
@@ -6796,6 +6969,7 @@ void draw_head(int weapon_id) {
 }
 
 void draw_player_3rd(PlayerState *p) {
+    if (rd_draw_corpse(p)) return; /* rigid-body ragdoll corpse of a citizen / the men / a zombie */
     float draw_yaw = norm_yaw_deg(p->yaw);
     float draw_pitch = clamp_pitch_deg(p->pitch);
     float draw_recoil = (p->is_shooting > 0) ? 1.0f : p->recoil_anim;
@@ -6846,7 +7020,7 @@ void draw_player_3rd(PlayerState *p) {
         int forced_skin = -1;
         if (local_state.game_mode == MODE_TDMB || local_state.game_mode == MODE_TDMO || local_state.game_mode == MODE_CTFB) {
             forced_skin = (p->team_id == 1) ? SKIN_NINJA : SKIN_PIRATE;
-        } else if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) && p->is_bot) {
+        } else if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE || local_state.game_mode == MODE_ZOMBIES) && p->is_bot) {
             /* S466 follow-up, founder real-time: "can we animate and model end to end?" -- real,
                visible proof the general pipeline drives a distinct, AI-controlled character:
                story_ai NPCs (now genuinely ticking/moving as of S466) render as the founder's own
@@ -8776,6 +8950,7 @@ void draw_scene(PlayerState *render_p) {
         Uint32 gband_now_ticks = SDL_GetTicks();
         g_gband_frame_dt_ms = (g_gband_last_ms == 0) ? 16.0f : (float)(gband_now_ticks - g_gband_last_ms);
         if (g_gband_frame_dt_ms > 250.0f) g_gband_frame_dt_ms = 250.0f; /* clamp stalls/first-frame spike */
+        rd_frame(g_gband_frame_dt_ms);
         g_gband_last_ms = gband_now_ticks;
     }
 
@@ -8793,7 +8968,7 @@ void draw_scene(PlayerState *render_p) {
            just above, so it's the real camera view matrix at this point) and strips its
            translation itself -- no explicit cam_x/y/z needed, unlike retro_sky_draw's old
            signature. */
-        int dnc_server_driven = (local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE);
+        int dnc_server_driven = (local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE || local_state.game_mode == MODE_ZOMBIES);
         if (!dnc_server_driven) {
             static Uint32 dnc_last_ms = 0;
             static float dnc_accum_minutes = 0.0f; /* real, found-live bug fix (2026-09-25): a bare
@@ -10423,8 +10598,11 @@ static void buggy_advance_remote_positions(unsigned int now_ms) {
 }
 
 int main(int argc, char* argv[]) {
+    int cli_start_zombies = 0;
     for(int i=1; i<argc; i++) {
-        if(strcmp(argv[i], "--host") == 0 && i+1<argc) {
+        if(strcmp(argv[i], "--zombies") == 0) {
+            cli_start_zombies = 1; /* straight into the ZOMBIES sandbox (menu tile equivalent) */
+        } else if(strcmp(argv[i], "--host") == 0 && i+1<argc) {
             strncpy(SERVER_HOST, argv[++i], 63);
         } else if(strcmp(argv[i], "--port") == 0 && i+1<argc) {
             SERVER_PORT = atoi(argv[++i]);
@@ -10574,6 +10752,7 @@ int main(int argc, char* argv[]) {
     int running = 1;
     double previous = get_time();
     double accumulator = 0.0;
+    if (cli_start_zombies) lobby_start_action(LOBBY_ZOMBIES);
     int prev_app_state = STATE_LOBBY;
     float input_fwd = 0.0f, input_str = 0.0f;
     int input_jump = 0, input_crouch = 0, input_shoot = 0, input_reload = 0, input_use = 0, input_ability = 0, input_bike = 0;

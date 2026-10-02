@@ -147,7 +147,7 @@ func defaultMenuEntries() []MenuEntry {
 		{ID: "mode.recorder", Label: "RECORDER", Kind: "action", Enabled: true},
 		{ID: "mode.garage", Label: "OSAKA GARAGE", Kind: "action", Enabled: true},
 		{ID: "mode.city", Label: "CITY", Kind: "action", Enabled: true},
-		{ID: "mode.join", Label: "JOIN S.FARTHQ.COM", Kind: "action", Enabled: true},
+		{ID: "mode.zombies", Label: "ZOMBIES", Kind: "action", Enabled: true},
 	}
 }
 
@@ -220,8 +220,8 @@ func (s *Server) handleIntent(intent IntentEnvelope) IntentResult {
 				state.Session.ActiveSceneID = "CITY"
 				state.Session.ActiveModeID = "mode.city"
 				state.Overlay.Environment = "CITY"
-			case "mode.join":
-				state.Session.ActiveModeID = "mode.join"
+			case "mode.zombies", "mode.join":
+				state.Session.ActiveModeID = "mode.zombies"
 			default:
 				state.Session.ActiveSceneID = "STADIUM"
 				state.Session.ActiveModeID = entryID

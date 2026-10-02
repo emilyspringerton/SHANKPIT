@@ -23,6 +23,7 @@
 #define GOLDENBAND_GBAND_SKEL_NPC_H
 
 #include "../common/mat4.h"
+#include "gskel.h"
 
 #define GBAND_SKEL_NPC_MAX_KITS 8
 
@@ -52,6 +53,20 @@ int gband_skel_npc_load_kit(const char *asset_dir, const char *mesh_name,
                              const char *greet_clip_name, const char *dance_clip_name);
 
 void gband_skel_npc_shutdown(void);
+
+// The kit's skeleton (NULL for a bad/unready kit) -- the ragdoll pool is built on it.
+const GSkel *gband_skel_npc_kit_skel(int kit_index);
+
+// Uniform scale applied (about the NPC's feet) to every subsequent gband_skel_npc_draw call until changed.
+// The skinned draw bakes its world transform into the vertices, so a GL glScalef around the call has no
+// effect -- this is the real way to draw a giant bug / small bird. 1.0 = normal.
+void gband_skel_npc_set_scale(float s);
+
+// Draws the kit's mesh with caller-supplied WORLD-space skin matrices (joint_count of them,
+// column-major float[16], e.g. ragdoll_pool_get_skin_matrices) instead of sampling a clip.
+void gband_skel_npc_draw_skin(int kit_index, const float (*skin)[16], const Mat4 *vp,
+                              void (*draw_skinned)(const float *verts6, int vert_count,
+                                                   const Mat4 *mvp, const Mat4 *model));
 
 // gband_skel_npc_kit_ready reports whether kit_index is a real, successfully-loaded kit --
 // callers should fall back to a different skin/kit on 0, never draw nothing.

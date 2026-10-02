@@ -1693,7 +1693,7 @@ static void update_projectiles(unsigned int now_ms) {
 void local_update(float fwd, float str, float yaw, float pitch, int shoot, int weapon_req, int jump, int crouch, int reload, int ability, int bike, void *server_context, unsigned int cmd_time) {
     PlayerState *p0 = &local_state.players[0];
     const float dt = SHANKPIT_NET_FIXED_DT;
-    if (local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) {
+    if (local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE || local_state.game_mode == MODE_ZOMBIES) {
         /* EMILY/BACKLOG.md SECTION 536 follow-up ("server-authoritative day/night sync"): this IS
          * the authoritative tick for a local (non-networked) story match -- same real-time-to-sim-
          * minutes rate (DAY_NIGHT_MINUTES_PER_REAL_SEC) the old client-local render-loop tick used,
@@ -1842,6 +1842,10 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
     if (local_state.game_mode == MODE_TYLER && local_state.story_phase == STORY_PHASE_PLAYING) {
         story_ai_tick(&local_state, cmd_time);
     }
+    if (local_state.game_mode == MODE_ZOMBIES) {
+        witness_ai_zombies_tick(&local_state, cmd_time);
+        witness_ai_tick(&local_state, cmd_time);
+    }
     if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
         local_state.story_phase == STORY_PHASE_PLAYING) {
         story_ai_tick(&local_state, cmd_time);
@@ -1856,7 +1860,7 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
         if (!p->active) continue;
         if (p->state == STATE_DEAD) {
             if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE ||
-                 local_state.game_mode == MODE_TYLER) && i > 0) {
+                 local_state.game_mode == MODE_TYLER || local_state.game_mode == MODE_ZOMBIES) && i > 0) {
                 p->respawn_time = 0;
                 continue;
             }
@@ -1903,7 +1907,7 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
         }
         if (i > 0 && p->active && p->state != STATE_DEAD) {
             if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE ||
-                 local_state.game_mode == MODE_TYLER) &&
+                 local_state.game_mode == MODE_TYLER || local_state.game_mode == MODE_ZOMBIES) &&
                 local_state.story_phase == STORY_PHASE_PLAYING) {
                 if (!p->in_vehicle) {
                     MoveIntent bot_move_intent = {
@@ -1997,7 +2001,10 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
     }
 }
 
+static int local_game_ai_map(const void **boxes) { *boxes = map_geo; return map_count; }
+
 void local_init_match(int num_players, int mode) {
+    witness_ai_set_map_hook(local_game_ai_map); /* AI wall awareness works on every scene, not only custom levels */
     if (g_local_match_reset_hook) g_local_match_reset_hook();
     memset(&local_state, 0, sizeof(ServerState));
     memset(tdmb_last_kills, 0, sizeof(tdmb_last_kills));
@@ -2018,7 +2025,7 @@ void local_init_match(int num_players, int mode) {
      * entry is a deliberate change from an earlier "one persistent, whole-session instance"
      * exception this clock used to be -- now consistent with every other ServerState field this
      * function already resets (story_phase, story_boss, story_rift, ...). */
-    if (mode == MODE_STORY || mode == MODE_STORY_CAVE) {
+    if (mode == MODE_STORY || mode == MODE_STORY_CAVE || mode == MODE_ZOMBIES) {
         day_night_clock_init(&local_state.story_clock, (unsigned int)time(NULL), 8);
     }
     story_clear_swarm();
@@ -2041,6 +2048,12 @@ void local_init_match(int num_players, int mode) {
         local_state.scene_id = SCENE_STORY_CAVE;
         local_state.cave_endure_until_ms = 0;
         printf("[CAVE] starting CAVE-001 endurance encounter\n");
+    } else if (mode == MODE_ZOMBIES) {
+        /* ZOMBIES sandbox: one human, the population is the day/night lifecycle's job
+           (witness_ai_zombies_tick). scene_id is a placeholder -- the caller loads the zombie level. */
+        num_players = 1;
+        local_state.scene_id = SCENE_GARAGE_OSAKA;
+        printf("[ZOMBIES] starting zombie sandbox (MODE_ZOMBIES)\n");
     } else if (mode == MODE_TYLER) {
         /* TYLER VALHANNA cold open: one real player (the wisp) plus the two scripted NPCs the
            level's own Characters spawn. No bot-fill, no scoring. scene_id is a placeholder --
@@ -2082,6 +2095,7 @@ void local_init_match(int num_players, int mode) {
         init_genome(&local_state.players[i].brain);
     }
     scene_load(local_state.scene_id);
+    if (mode == MODE_ZOMBIES) witness_ai_reset((unsigned int)time(NULL), 0);
     if (mode == MODE_STORY) {
         story_ai_reset(&local_state);
         /* BIG_O engine merge phase 7d, MODE_STORY content cutover ("replace outright" per founder

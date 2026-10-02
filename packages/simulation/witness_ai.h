@@ -79,6 +79,41 @@ int witness_ai_spawn_zombie(ServerState *s, float x, float y, float z, unsigned 
  * owned WitnessSim's own ambient decorum decay to roughly once per second. */
 void witness_ai_tick(ServerState *s, unsigned int now_ms);
 
+/* witness_ai_zombies_tick -- MODE_ZOMBIES day/night population lifecycle (founder real-time,
+ * 2026-10-02). Reads s->story_clock's phase and steers the live population toward a per-phase
+ * target: DAY many citizens / few zombie stragglers, DUSK zombies start rising, NIGHT a horde and
+ * citizens mostly gone indoors (despawned out of sight), DAWN the horde burns off. Spawns happen
+ * on a ring around the human (player 0) on open ground only (never inside a building box) and
+ * never in view-distance pop-in range. Citizens wander; everything steers around walls
+ * (wai_avoid_walls). Calls nothing but witness_ai_* spawn/despawn, so it is safe to call every
+ * tick alongside witness_ai_tick; a real no-op outside MODE_ZOMBIES. */
+void witness_ai_zombies_tick(ServerState *s, unsigned int now_ms);
+
+/* Wall-damage hook -- hunting zombies that are blocked by a building claw it (founder real-time,
+ * 2026-10-02: "ensure that zombies can do damage to the buildings"). witness_ai.c can't include
+ * brick_world.h (its non-static physics.h deps collide at link time in a second TU, see
+ * witness_ai_hero_melee_hit's own note), so the host (apps/lobby, apps/server) installs this
+ * callback pointing at brick_world_on_surface. Only brick is destructible in the engine today
+ * (packages/world/brick_fracture.h BF_BRICK_KIND); a hit on any other material is a no-op there. */
+typedef void (*WitnessWallHitFn)(int scene_id, float hx, float hy, float hz,
+                                 float nx, float ny, float nz, int damage);
+void witness_ai_set_wall_hit_hook(WitnessWallHitFn fn);
+
+/* Map-geometry hook -- same reason (physics.h can't be included here): the host returns the
+ * current collision boxes (physics.h's Box: 6 floats x,y,z,w,h,d, centre + full extents, index 0
+ * a skip slot) and their count, live each call since scene loads swap the pointer. Without it the
+ * AI is wall-blind (no steering, no clawing). */
+typedef int (*WitnessMapFn)(const void **boxes);
+void witness_ai_set_map_hook(WitnessMapFn fn);
+
+/* The birds ("the birds should be there from day 1") -- BIG_O's avian coalition (avian_values.h)
+ * as live, flying entities: they orbit the human, "observe the observer" (alarmed by hunting
+ * zombies and wary citizens nearby), and a signaling flock's beacon wakes dormant zombies.
+ * Kinematic (positioned directly each tick, no gravity). witness_ai_zombies_tick seeds a flock on
+ * its very first call. Returns the player slot id or -1. */
+int witness_ai_spawn_bird(ServerState *s, float x, float y, float z, unsigned int now_ms);
+int witness_ai_bird_count(void);
+
 /* witness_ai_sync_zones -- BIG_O engine merge phase 7c. Real, live consumer of
  * level_boxes_zone_for_position (packages/world/level_boxes.h): for every active citizen,
  * resolves its CURRENT PlayerState position against the given level's own authored zone volumes
@@ -150,6 +185,7 @@ int witness_ai_citizen_zone(int player_id);
 #define WITNESS_AI_ROLE_THE_MEN 1
 #define WITNESS_AI_ROLE_ZOMBIE 2
 #define WITNESS_AI_ROLE_GIANT_BUG 3
+#define WITNESS_AI_ROLE_BIRD 4
 int witness_ai_role_for_player(int player_id);
 
 /* Spawns one member of The Men (npc_archetype.h's NPC_ARCHETYPE_THE_MEN -- high base_vigilance,
