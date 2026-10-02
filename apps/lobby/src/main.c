@@ -69,6 +69,7 @@
 #include "../../../packages/goldenband/gband_mesh_rig.h"
 #include "../../../packages/goldenband/gband_skel_npc.h"
 #include "../../../packages/simulation/ragdoll_pool.h"
+#include "../../../packages/education/eduvm_host.h"
 
 /* ── S144-02 Stage B: GOLDENBAND skinned mesh for Tyler ──────────────────────
  * Ports REDGARDEN/GFD's S144-07 gband_mesh_rig onto the shader/VBO
@@ -8239,6 +8240,123 @@ static void draw_mechanism_hud(const MechanismReading *m, int story_phase) {
     }
 }
 
+/* ---- Architect's Orb (card #494): the EduVM scripting terminal ported from the GFD/SHANKPIT lineage.
+ * ` toggles it in every mode except the multiplayer QUEUE. Inside: F7 compile, F8 run, F9 reset slot, F10 reset
+ * the machines, TAB next slot, ENTER newline. The scripts drive a small machine bay (crate, gate, bridge,
+ * portal) placed in front of where the match started. The VM is packages/education (C); the compile/run/trial
+ * logic is called through the PARENA mod stdlib/shankpit/eduvm.prn (eduvm_mod.c). */
+static int g_orb_open = 0;
+static int g_orb_seeded = 0;
+static int g_orb_anchor_ok = 0;
+static float g_orb_ax, g_orb_ay, g_orb_az;
+static int g_orb_anchor_scene = -1, g_orb_anchor_mode = -1;
+static int g_orb_trial_done = 0;
+
+static int orb_available(void) {
+    return app_state == STATE_GAME_LOCAL && local_state.game_mode != MODE_QUEUE;
+}
+
+static void orb_toggle(void) {
+    if (!g_orb_seeded) {
+        g_orb_seeded = 1;
+        EduScriptSystem *es = eduvm_system();
+        for (int i = 0; i < EDU_MAX_SCRIPTS; i++) edu_seed_slot(i, i < 4 ? i : 4);
+        es->active_slot = 0;
+    }
+    g_orb_open = !g_orb_open;
+    if (g_orb_open) { SDL_StartTextInput(); SDL_SetRelativeMouseMode(SDL_FALSE); }
+    else { SDL_StopTextInput(); SDL_SetRelativeMouseMode(SDL_TRUE); }
+}
+
+/* returns 1 if the key was consumed by the open orb terminal */
+static int orb_key(SDL_Keycode k) {
+    EduScriptSystem *es = eduvm_system();
+    if (k == SDLK_BACKQUOTE || k == SDLK_ESCAPE) { orb_toggle(); return 1; }
+    if (k == SDLK_F7) { edu_compile_slot(es->active_slot); }
+    else if (k == SDLK_F8) {
+        int solved = edu_trial_step(es->active_slot);
+        if (solved && !g_orb_trial_done) {
+            g_orb_trial_done = 1;
+            es->world.trial_complete = 1;
+            snprintf(es->last_output, sizeof es->last_output, "ARCHITECT TRIAL COMPLETE");
+        }
+    }
+    else if (k == SDLK_F9) edu_script_reset_active(es);
+    else if (k == SDLK_F10) { edu_reset_world(); g_orb_trial_done = 0; }
+    else if (k == SDLK_TAB) es->active_slot = (es->active_slot + 1) % EDU_MAX_SCRIPTS;
+    else if (k == SDLK_BACKSPACE) edu_script_backspace(es);
+    else if (k == SDLK_RETURN || k == SDLK_KP_ENTER) edu_script_newline(es);
+    return 1;
+}
+
+static void orb_text(const char *t) {
+    if (t[0] == '`') return; /* the toggle key itself arrives as text too */
+    edu_script_insert_text(eduvm_system(), t);
+}
+
+/* the orb + machine bay, in world space, anchored ahead of the hero the first frame of each match/scene */
+static void draw_orb_world(unsigned int now_ms) {
+    if (!orb_available()) return;
+    PlayerState *h = &local_state.players[0];
+    if (!g_orb_anchor_ok || g_orb_anchor_scene != h->scene_id || g_orb_anchor_mode != local_state.game_mode) {
+        float yr = norm_yaw_deg(h->yaw) * 0.0174533f;
+        g_orb_ax = h->x + sinf(yr) * 9.0f; g_orb_az = h->z - cosf(yr) * 9.0f; g_orb_ay = h->y;
+        g_orb_anchor_ok = 1; g_orb_anchor_scene = h->scene_id; g_orb_anchor_mode = local_state.game_mode;
+    }
+    float t = (float)now_ms * 0.001f;
+    glDisable(GL_TEXTURE_2D);
+    /* the orb: a pulsing, spinning violet diamond on a plinth */
+    glPushMatrix(); glTranslatef(g_orb_ax, g_orb_ay + 0.5f, g_orb_az); glColor3f(0.35f, 0.3f, 0.42f); draw_box(0.9f, 1.0f, 0.9f); glPopMatrix();
+    glPushMatrix(); glTranslatef(g_orb_ax, g_orb_ay + 1.9f + 0.12f * sinf(t * 2.0f), g_orb_az); glRotatef(t * 70.0f, 0, 1, 0);
+    glColor3f(0.62f + 0.2f * sinf(t * 3.0f), 0.45f, 0.95f); draw_box(0.55f, 0.55f, 0.55f); glRotatef(45.0f, 0, 0, 1); draw_box(0.55f, 0.55f, 0.55f); glPopMatrix();
+    /* machine bay, 4 units to the right of the orb: crate rail, gate, bridge, portal ring */
+    float bx = g_orb_ax + 4.0f, by = g_orb_ay, bz = g_orb_az;
+    float cx = (float)edu_crate_x() * 0.5f; if (cx > 8.0f) cx = 8.0f; if (cx < 0.0f) cx = 0.0f;
+    glPushMatrix(); glTranslatef(bx + cx, by + 0.4f, bz); glColor3f(0.95f, 0.75f, 0.15f); draw_box(0.8f, 0.8f, 0.8f); glPopMatrix();
+    glPushMatrix(); glTranslatef(bx + 10.0f, by + (edu_gate_open() ? 0.15f : 1.5f), bz); glColor3f(edu_gate_open() ? 0.7f : 0.95f, edu_gate_open() ? 0.78f : 0.38f, 0.88f); draw_box(0.3f, edu_gate_open() ? 0.3f : 3.0f, 2.4f); glPopMatrix();
+    glPushMatrix(); glTranslatef(bx + 5.0f, by + 0.15f, bz + 3.0f); glRotatef(edu_bridge_raised() ? 55.0f : 0.0f, 0, 0, 1); glColor3f(0.86f, 0.84f, 0.95f); draw_box(5.0f, 0.2f, 1.4f); glPopMatrix();
+    float stab = (float)edu_portal_stability() / 100.0f; if (stab > 1.0f) stab = 1.0f;
+    glPushMatrix(); glTranslatef(bx + 10.0f, by + 1.6f, bz + 4.0f); glColor3f(0.4f + 0.5f * stab, 0.35f, 0.9f); draw_box(0.15f, 3.0f * (0.3f + 0.7f * stab), 0.15f); 
+    if (edu_portal_open()) { glColor3f(0.92f, 0.85f + 0.1f * sinf(t * 8.0f), 1.0f); draw_box(0.05f, 3.2f, 2.0f); }
+    glPopMatrix();
+}
+
+static void draw_orb_overlay(void) {
+    if (!orb_available()) return;
+    if (!g_orb_open) {
+        glColor3f(0.72f, 0.62f, 0.95f);
+        draw_string("` ARCHITECT'S ORB", 12.0f, 56.0f, 3.2f);
+        return;
+    }
+    EduScriptSystem *es = eduvm_system();
+    EduScriptSlot *sl = &es->slots[es->active_slot];
+    glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f(0.08f, 0.06f, 0.14f, 0.92f);
+    glRectf(120.0f, 80.0f, 1160.0f, 660.0f);
+    glDisable(GL_BLEND);
+    glColor3f(0.72f, 0.62f, 0.95f);
+    draw_string("ARCHITECT'S ORB", 140.0f, 632.0f, 3.4f);
+    glColor3f(0.6f, 0.55f, 0.8f);
+    draw_string("` close  F7 compile  F8 run  F9 clear  F10 reset machines  TAB slot", 140.0f, 608.0f, 2.2f);
+    char hdr[96]; snprintf(hdr, sizeof hdr, "SLOT %d/%d  %s", es->active_slot + 1, EDU_MAX_SCRIPTS, sl->name);
+    glColor3f(0.85f, 0.82f, 0.95f); draw_string(hdr, 140.0f, 580.0f, 2.8f);
+    glColor3f(0.92f, 0.95f, 0.92f);
+    const char *p = sl->source; float y = 548.0f;
+    while (*p && y > 200.0f) {
+        char line[160]; int n = 0;
+        while (*p && *p != '\n' && n < 150) line[n++] = *p++;
+        line[n] = 0; if (*p == '\n') p++;
+        draw_string(line, 140.0f, y, 2.4f); y -= 24.0f;
+    }
+    glColor3f(0.4f, 0.9f, 0.5f); draw_string(es->compile_status, 140.0f, 170.0f, 2.4f);
+    glColor3f(0.9f, 0.9f, 0.4f); draw_string(es->run_status, 140.0f, 144.0f, 2.4f);
+    glColor3f(0.8f, 0.8f, 1.0f); draw_string(es->last_output, 140.0f, 118.0f, 2.4f);
+    char wl[200];
+    snprintf(wl, sizeof wl, "gate=%d bridge=%d portal=%d stable=%d crate=%d trial=%d",
+             edu_gate_open(), edu_bridge_raised(), edu_portal_open(), edu_portal_stability(), edu_crate_x(), es->world.trial_complete);
+    glColor3f(0.65f, 0.95f, 0.95f); draw_string(wl, 140.0f, 92.0f, 2.4f);
+}
+
 static void draw_chat_pane(unsigned int now_ms) {
     const float SZ  = 3.5f;
     const float LH  = 18.0f;
@@ -8636,6 +8754,7 @@ void draw_hud(PlayerState *p) {
     }
 
     draw_chat_pane(SDL_GetTicks());
+    draw_orb_overlay();
 
     glEnable(GL_DEPTH_TEST); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW); glPopMatrix();
 }
@@ -9817,6 +9936,7 @@ void draw_scene(PlayerState *render_p) {
     }
     draw_projectiles();
     if (local_state.game_mode == MODE_SURVIVAL) draw_gun_items(SDL_GetTicks());
+    draw_orb_world(SDL_GetTicks());
     if ((render_p->in_vehicle && render_p->vehicle_type != VEH_BUGGY) || render_p->third_person || g_cam_override.active) draw_player_3rd(render_p);
     for(int i=0; i<MAX_CLIENTS; i++) {
         PlayerState *p = &local_state.players[i];
@@ -11786,6 +11906,12 @@ int main(int argc, char* argv[]) {
                     }
                 }
             } else {
+                /* Architect's Orb (#494): owns text + keys while open */
+                if (g_orb_open && e.type == SDL_TEXTINPUT) { orb_text(e.text.text); continue; }
+                if (g_orb_open && e.type == SDL_KEYDOWN) { orb_key(e.key.keysym.sym); continue; }
+                if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_BACKQUOTE && orb_available() && !g_chat_open && !g_paused) {
+                    orb_toggle(); continue;
+                }
                 /* chat pane: capture text input when open */
                 if (g_chat_open && e.type == SDL_TEXTINPUT) {
                     size_t tlen = strlen(e.text.text);
@@ -12169,7 +12295,7 @@ int main(int argc, char* argv[]) {
                     (local_state.story_phase == STORY_PHASE_CUTSCENE ||
                      local_state.story_phase == STORY_PHASE_COMPLETE ||
                      local_state.story_phase == STORY_PHASE_FAILED ||
-                     g_story_phone.open)) {
+                     g_story_phone.open) || g_orb_open) {
                     input_fwd = 0.0f; input_str = 0.0f;
                     input_jump = 0; input_crouch = 0; input_shoot = 0; input_reload = 0; input_use = 0; input_ability = 0;
                 }

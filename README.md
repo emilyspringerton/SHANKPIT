@@ -426,6 +426,24 @@ magazine, and number keys only select weapons you own. Logic: `packages/simulati
 competitive multiplayer survival map this card describes is still to do; ground is assumed flat at y = 0; no
 pickup sound or on-screen prompt.
 
+## Architect's Orb -- EduVM scripting terminal (2026-10-02)
+
+A tiny scripting language you write in-game that drives physical machines, ported from the GoblinFoxDragon/SHANKPIT lineage
+(card #494). Available in every local mode **except the multiplayer QUEUE**.
+
+- Press **`** (backquote) to open the Orb. **F7** compile, **F8** run, **F9** clear the slot, **F10** reset the machines, **TAB** next
+  slot (8 slots: Architect Trial, Orb Scan, Legacy Motion, Bubble Sort, empty...), **`** or ESC to close. Movement is frozen while it is open.
+- Scripts are `let`/`if`/`while`, integer arrays (`let a = array(5); a[0] = 3;`) and builtins (`open_gate()`, `raise_bridge()`,
+  `stabilize_portal(n)`, `scan_portal()`, `move_crate()`, `print(x)` ...). A glowing orb on a plinth and a small machine bay (crate, gate, bridge,
+  portal) appear a few metres ahead of where the match started and react to the scripts. Solving the Architect Trial (stability >= 100, portal
+  open, bridge raised, gate open) prints ARCHITECT TRIAL COMPLETE.
+- Layout: the VM is `packages/education/` (C, vendored from GFD). `eduvm_mod.c` is **generated** from `PARENA/stdlib/shankpit/eduvm.prn`
+  (`make regen-eduvm` / `make check-eduvm`), the PARENA mod bindings: compile/run a slot, read the machine state, the trial rule. `make test-eduvm` runs the mod over the real VM.
+- Verified headless (Xvfb): opened the Orb in SURVIVAL, ran the Architect Trial (gate/bridge/portal all set, stability 125), ran the bubble-sort slot.
+- Fixed on the way: the GFD parser mis-rewound after a bare identifier, so any script whose statements began with a builtin call (not `let`) failed to compile
+  ("unknown variable"). Only `let`-led scripts ever worked upstream. GFD's copy still has the bug.
+- Limits: single-player only; machines are fixed props, not the NOCK widget system (that is card #495); the Orb is a keyboard terminal, not yet an affordance on the BIG_O phone.
+
 ## Menu: SETTINGS, CUSTOMIZE, baked levels (2026-10-02)
 
 The last main-menu tile is **CUSTOMIZE** (SKINS, SPRAYS); a **SETTINGS** button under the APPS toggle opens
