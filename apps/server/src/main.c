@@ -764,6 +764,7 @@ static void story_check_level_exits(unsigned int now_ms) {
 // -- see its own doc comment) can call this too, self-healing QUEUE onto whatever level is
 // CURRENTLY flagged default at the start of every round, not just the server's own first ever
 // activation.
+static int g_queue_level_id = -1; // registry id QUEUE is simulating (-1 = oil-tanker fallback); broadcast as PACKET_QUEUE_LEVEL, card #481
 static void queue_load_default_level(void) {
     LevelRegistryEntry entries[LEVEL_REGISTRY_MAX_ENTRIES];
     int count = level_boxes_fetch_registry_list(entries, LEVEL_REGISTRY_MAX_ENTRIES);
@@ -774,12 +775,14 @@ static void queue_load_default_level(void) {
     CustomLevelData lvl;
     if (found_id >= 0 && level_boxes_fetch_export(found_id, &lvl)) {
         server_apply_custom_level(&lvl);
+        g_queue_level_id = found_id;
         NET_SERVER_LOG("QUEUE_LEVEL_LOADED name=%s id=%d boxes=%d", lvl.name, found_id, lvl.count);
         return;
     }
     NET_SERVER_LOG("QUEUE_LEVEL_FALLBACK reason=%s -- using SCENE_OIL_TANKER",
                    found_id < 0 ? "level_44_not_found" : "export_fetch_failed");
     g_server_match_scene = SCENE_OIL_TANKER;
+    g_queue_level_id = -1;
     scene_load(g_server_match_scene);
 }
 
@@ -1470,6 +1473,27 @@ void server_broadcast_world_clock(void) {
     }
 }
 
+/* server_broadcast_queue_level -- card #481, see PACKET_QUEUE_LEVEL in protocol.h. MODE_QUEUE only;
+ * throttled to 1 Hz (the level only changes at a round boundary, the repeat heals a dropped datagram
+ * and a late joiner). Separate packet from the snapshot, same zero-risk reasoning as the others. */
+void server_broadcast_queue_level(void) {
+    if (local_state.game_mode != MODE_QUEUE) return;
+    static unsigned int last_ms = 0;
+    unsigned int now_ms = get_server_time();
+    if (last_ms != 0 && (now_ms - last_ms) < 1000) return;
+    last_ms = now_ms;
+    NetQueueLevel pkt;
+    memset(&pkt, 0, sizeof(pkt));
+    pkt.hdr.type = PACKET_QUEUE_LEVEL;
+    pkt.hdr.client_id = 0;
+    pkt.hdr.timestamp = now_ms;
+    pkt.level_id = g_queue_level_id;
+    for (int i = 1; i < MAX_CLIENTS; i++) {
+        if (!slots[i].active || !slots[i].welcomed) continue;
+        sendto(sock, &pkt, sizeof(pkt), 0, (struct sockaddr*)&slots[i].addr, sizeof(struct sockaddr_in));
+    }
+}
+
 /* server_broadcast_brick_state -- destructible brick (packages/simulation/brick_world.h), see
  * PACKET_BRICK_STATE in protocol.h. Sends this tick's brick-cell changes, scheduled repeats and a
  * slice of the rotating refresh to every welcomed client; sends nothing when no level with
@@ -1916,6 +1940,7 @@ int main(int argc, char *argv[]) {
             server_broadcast();
             server_broadcast_world_clock();
             server_broadcast_brick_state();
+            server_broadcast_queue_level();
         }
         net_server_emit_summary(now);
 

@@ -71,6 +71,15 @@
  * match: it only mirrors this. Custom-level (NOCK) maps only; any other scene sends nothing. */
 #define PACKET_BRICK_STATE 13
 
+/* PACKET_QUEUE_LEVEL -- card #481 ("ensure that the queue works intelligently it needs to start
+ * tracking what level the user is actually on"). Server -> client, MODE_QUEUE only, sent once a
+ * second to every welcomed client. Carries the registry id of the custom level the server is
+ * simulating right now (-1 = built-in SCENE_OIL_TANKER fallback). Needed because every custom level
+ * shares one scene_id (SCENE_CUSTOM_LEVEL) so neither PACKET_WELCOME nor PACKET_SNAPSHOT can tell
+ * the client the level changed at a round boundary; the client used to latch its first fetch for
+ * the whole connection and kept stale geometry. Absolute and idempotent, like PACKET_BRICK_STATE. */
+#define PACKET_QUEUE_LEVEL 14
+
 #define VOXEL_CHUNK_SIZE            16
 #define VOXEL_MAX_BLOCKS_PER_CHUNK  1024
 #define VOXEL_BLOCK_STONE           1
@@ -165,6 +174,12 @@ typedef struct {
     unsigned char weather;
     int weather_ends;
 } NetWorldClock;
+
+/* NetQueueLevel -- see PACKET_QUEUE_LEVEL's own doc comment above. */
+typedef struct {
+    NetHeader hdr;
+    int level_id;
+} NetQueueLevel;
 
 /* NetBrickState -- see PACKET_BRICK_STATE's own doc comment above. key_lo/key_hi are the two halves
  * of the 30-bit cell key (ix | iy<<10 | iz<<20) so the entry has no padding or endianness trap. */

@@ -38,7 +38,7 @@ EMILY_BOT_BIN := $(BIN_DIR)/emily-bot
 EA_DIR       := dist/ea
 
 # ---- Targets ----
-.PHONY: test-witness-ai-zombies test-bullet-hole all lobby server serverctl clean setup print go-server ea ea-windows emily-bot rigid-ragdoll test-physics test-audio-chain ux-screenshot-test
+.PHONY: test-witness-ai-zombies test-bullet-hole test-queue-level all lobby server serverctl clean setup print go-server ea ea-windows emily-bot rigid-ragdoll test-physics test-audio-chain ux-screenshot-test
 
 all: $(LOBBY_BIN) $(SERVER_BIN)
 
@@ -230,6 +230,11 @@ test-bullet-hole:
 	$(CC) -std=c99 -O2 -Wall -Wextra -Ipackages/world -o /tmp/bullet_hole_test packages/world/bullet_hole_test.c \
 		packages/world/png_decode_gen.c packages/world/parena_runtime.c -lm
 	/tmp/bullet_hole_test
+
+# test-queue-level -- PACKET_QUEUE_LEVEL wire contract (card #481): size, id round-trip incl. -1, unique type.
+test-queue-level:
+	$(CC) -std=c99 -O2 -Wall -Wextra -pedantic -Werror -Ipackages/common -o /tmp/queue_level_test packages/common/queue_level_test.c
+	/tmp/queue_level_test
 
 # test-audio-chain -- NOCK filter chains in the engine (2026-09-27): packages/audio/audio_chain.c
 # over PARENA-generated audio_dsp_gen.c must reproduce IDUNA NOCK's TypeScript render bit-for-bit

@@ -8924,6 +8924,18 @@ void draw_projectiles() {
 // name), so both sides derive the identical level independently instead of one trusting bytes
 // sent by the other.
 static int g_queue_level_loaded = 0; // only latches once the real fetch+apply SUCCEEDS -- a transient failure retries on the next scene-entry instead of leaving the client permanently geometry-less for the rest of the session
+static int g_queue_level_id = -2; // card #481: registry id of the level this client's physics currently holds (-2 = none yet)
+static void client_load_queue_level_id(int found_id) {
+    if (found_id < 0) return;
+    CustomLevelData lvl;
+    if (!level_boxes_fetch_export(found_id, &lvl)) return; // keeps the old id; the next PACKET_QUEUE_LEVEL retries
+    level_boxes_apply_to_physics(&lvl);
+    g_spray_decal_count = 0; // decals are keyed by the shared SCENE_CUSTOM_LEVEL id -- see net_connect's reset
+    g_spray_decal_next = 0;
+    g_queue_level_id = found_id;
+    g_queue_level_loaded = 1;
+    printf("[QUEUE] now on level id=%d (%s)\n", found_id, lvl.name);
+}
 static void client_load_queue_level(void) {
     if (g_queue_level_loaded) return;
     LevelRegistryEntry entries[LEVEL_REGISTRY_MAX_ENTRIES];
@@ -8933,10 +8945,7 @@ static void client_load_queue_level(void) {
         if (entries[i].is_default_queue) { found_id = entries[i].id; break; }
     }
     if (found_id < 0) return; // real, honest no-op -- matches the server's own oil-tanker fallback (a built-in scene needs no client fetch at all)
-    CustomLevelData lvl;
-    if (!level_boxes_fetch_export(found_id, &lvl)) return;
-    level_boxes_apply_to_physics(&lvl);
-    g_queue_level_loaded = 1;
+    client_load_queue_level_id(found_id);
 }
 
 static void client_apply_scene_id(int scene_id, unsigned int now_ms) {
@@ -10190,6 +10199,7 @@ void net_connect() {
     if (sock < 0) net_init();
     if (sock < 0) return;
     local_state.game_mode = net_requested_mode;
+    g_queue_level_id = -2;
     g_queue_level_loaded = 0; // real reset per S459-39: a fresh connect attempt deserves a fresh level-fetch attempt, not a stale failure/success latched from a previous session
     g_default_spray_prefetched = 0; // S459-74, same real reasoning -- a transient registry failure on a prior connect shouldn't be latched forever
     NET_CLIENT_LOG("CONNECT_BEGIN host=%s port=%d mode=%d", SERVER_HOST, SERVER_PORT, net_requested_mode);
@@ -11040,6 +11050,16 @@ void net_tick() {
                 }
                 NET_CLIENT_LOG("SCENE_CHANGE scene=%d mode=%d spawn=(%.1f,%.1f,%.1f)",
                                new_scene, local_state.game_mode, sx, sy, sz);
+            }
+        } else if (head->type == PACKET_QUEUE_LEVEL && len >= (int)sizeof(NetQueueLevel)) {
+            /* card #481: the server's authoritative QUEUE level id. A change (a round boundary
+               re-resolved the admin-flagged default) re-fetches geometry instead of keeping the
+               level this connection latched first. */
+            NetQueueLevel ql;
+            memcpy(&ql, buffer, sizeof(ql));
+            if (net_requested_mode == MODE_QUEUE && local_state.scene_id == SCENE_CUSTOM_LEVEL &&
+                ql.level_id >= 0 && ql.level_id != g_queue_level_id) {
+                client_load_queue_level_id(ql.level_id);
             }
         } else if (head->type == PACKET_BRICK_STATE) {
             /* destructible brick: mirror the server's authoritative cell state (validated inside) */
