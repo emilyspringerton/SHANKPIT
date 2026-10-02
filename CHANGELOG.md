@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-02
+- survival: new SURVIVAL game mode (waves of hunting zombies on the built-in SCENE_CITY, wave HUD, --survival flag) + CUSTOMIZE submenu holding SKINS/SPRAYS (cards #482, #488) (sess-20260923-1030-4a526255)
 - zombies: MODE_ZOMBIES zombies always hunt the hero (no radius gate) and spawn near the hero hidden behind buildings, day/dawn pops 2/3 (card #486) (sess-20260923-1030-4a526255)
 - queue: PACKET_QUEUE_LEVEL -- server broadcasts the level id it is simulating, client reloads geometry when it changes at a round boundary instead of keeping its first fetch (card #481); new make test-queue-level (sess-20260923-1030-4a526255)
 - feat(stream): native stream out of the broadcast program feed (#458a/#472) — F2 / pause menu STREAM OUT pipes the CLEAN program view (no HUD/tiles) as raw rgb24 into an encoder: rtmp:// -> FLV, else a file; target whitelisted before it reaches a shell; ffmpeg is a labeled STOPGAP (PARENA H.264 + RTMP replacement logged in EMILY/BACKLOG.md), SHANKPIT_STREAM_SINK_CMD swaps the encoder. Verified live headless: 88 whole 1280x720 frames captured to a raw file, one decoded (clean, upright); ffmpeg itself not installed here so the encode path is untested. Also: pause menu relaid out for nine items (size 4). make test-stream-out. README gets a 'Broadcast cameras, director and native stream' section. (sess-20260923-1030-4a526255)
