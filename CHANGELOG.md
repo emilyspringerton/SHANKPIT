@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-02
+- fix(buggy): buggy now collides with map_geo walls (substepped horizontal sweep in simulate_buggy_state — shared by server and local, so multiplayer is authoritative; curbs under step height still drivable; blasted brick holes drivable). New make test-buggy-wall. Brick destructibility multiplayer path (server collect/broadcast, client mirror apply) already covered by test-brick-world, not re-verified live. (sess-20260923-1030-4a526255)
 - Live GL test for SHADER_GLASS alpha pass (make test-glass-render): blends over bg/geometry, no depth write (sess-20260923-1030-4a526255)
 - Restored procedural SCENE_CITY (LEVELS menu 'CITY (BUILT-IN)', --city); fixed third-person camera (was in front of the player), wall-clipped orbit camera, aim bridging, V toggle in local matches (sess-20260923-1030-4a526255)
 - Destructible concrete, wood and glass boxes (was brick-only; per-kind HP/resist from PARENA); new SHADER_GLASS transparent pass with PARENA-programmable cyan tint (on-glass-tint); IDUNA accepts shader 'glass' (sess-20260923-1030-4a526255)
