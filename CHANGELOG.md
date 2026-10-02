@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-02
+- LAB mode: hero now spawns facing the lab stations instead of staring at the exit wall (#516); headless screenshot verified (sess-20260923-1030-4a526255)
 - Mannequin-kit bodies (queue players, citizens, men, zombies, corpses) drawn 4x per #515; draw-only, hitboxes unchanged (sess-20260923-1030-4a526255)
 - BIG_O LAB level: --lab / MODES->LAB loads INTERRIOR_1 clone + 6 programmatic lab widgets (var/lab/lab.json); E-interactive stations (splice/centrifuge/pcr/vat/fridge/console) with rules in PARENA (lab_station_rules.prn -> generated C, make test-lab-station); level_boxes parses lab_stations; phone works in LAB -- SECTION 592 cards #504-#508 (sess-20260923-1030-4a526255)
 - MODE_ZOMBIES BIG_O unification slice 2: food items lie in a ring around spawn (CARGO app works), kills harvest samples into the phone LAB (food_pickup_seed_ring + test); card #503 (sess-20260923-1030-4a526255)
