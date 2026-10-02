@@ -70,6 +70,7 @@
 #include "../../../packages/goldenband/gband_skel_npc.h"
 #include "../../../packages/simulation/ragdoll_pool.h"
 #include "../../../packages/education/eduvm_host.h"
+#include "../../../packages/education/eduvm_snippets.h"
 
 /* ── S144-02 Stage B: GOLDENBAND skinned mesh for Tyler ──────────────────────
  * Ports REDGARDEN/GFD's S144-07 gband_mesh_rig onto the shader/VBO
@@ -8252,6 +8253,64 @@ static float g_orb_ax, g_orb_ay, g_orb_az;
 static int g_orb_anchor_scene = -1, g_orb_anchor_mode = -1;
 static int g_orb_trial_done = 0;
 
+/* Saveable snippets (#495). F5 in the Orb writes every non-empty slot to ORB_SLOTS_FILE; it is loaded back the next
+ * time the Orb first opens. A background thread also fetches the NOCK-authored snippets attached to the widget
+ * "ORB" (IDUNA public list, cached next to the executable for offline) and drops them into empty slots. */
+#define ORB_SLOTS_FILE "shankpit_orb_slots.json"
+#define ORB_REMOTE_CACHE "shankpit_edu_snippets_ORB.json"
+#define ORB_REMOTE_URL "https://okemily.com/api/v1/nock-edu-snippets?widget=ORB"
+static EduSnippet g_orb_remote[EDU_MAX_SCRIPTS];
+static volatile int g_orb_remote_n = 0;
+static volatile int g_orb_remote_ready = 0;
+static int g_orb_remote_applied = 0;
+
+static int orb_remote_worker(void *arg) {
+    (void)arg;
+    char *buf = NULL;
+    long n = level_boxes_fetch_url(ORB_REMOTE_URL, &buf);
+    int count = 0;
+    if (n > 0) {
+        count = edu_snippets_parse(buf, g_orb_remote, EDU_MAX_SCRIPTS);
+        if (count >= 0) { FILE *c = fopen(ORB_REMOTE_CACHE, "wb"); if (c) { fwrite(buf, 1, (size_t)n, c); fclose(c); } }
+        free(buf);
+    } else {
+        if (buf) free(buf);
+        FILE *c = fopen(ORB_REMOTE_CACHE, "rb");
+        if (c) {
+            static char cache[65536];
+            size_t got = fread(cache, 1, sizeof cache - 1, c);
+            fclose(c);
+            cache[got] = 0;
+            count = edu_snippets_parse(cache, g_orb_remote, EDU_MAX_SCRIPTS);
+        }
+    }
+    SDL_Log("orb: %d NOCK snippet(s) for widget ORB", count);
+    g_orb_remote_n = count;
+    g_orb_remote_ready = 1;
+    return 0;
+}
+
+static void orb_save_slots(void) {
+    static char json[EDU_MAX_SCRIPTS * (EDU_MAX_SCRIPT_TEXT * 2 + 160) + 8];
+    EduScriptSystem *es = eduvm_system();
+    int n = edu_snippets_serialize(es, json, (int)sizeof json);
+    FILE *fp = n > 0 ? fopen(ORB_SLOTS_FILE, "wb") : NULL;
+    if (fp) { fwrite(json, 1, (size_t)n, fp); fclose(fp); snprintf(es->run_status, sizeof es->run_status, "saved to %s", ORB_SLOTS_FILE); }
+    else snprintf(es->run_status, sizeof es->run_status, "save FAILED");
+}
+
+static void orb_load_slots(void) {
+    FILE *fp = fopen(ORB_SLOTS_FILE, "rb");
+    if (!fp) return;
+    static char json[EDU_MAX_SCRIPTS * (EDU_MAX_SCRIPT_TEXT * 2 + 160) + 8];
+    size_t got = fread(json, 1, sizeof json - 1, fp);
+    fclose(fp);
+    json[got] = 0;
+    static EduSnippet sn[EDU_MAX_SCRIPTS];
+    int n = edu_snippets_parse(json, sn, EDU_MAX_SCRIPTS);
+    edu_snippets_load_into(eduvm_system(), sn, n);
+}
+
 static int orb_available(void) {
     return app_state == STATE_GAME_LOCAL && local_state.game_mode != MODE_QUEUE;
 }
@@ -8262,6 +8321,14 @@ static void orb_toggle(void) {
         EduScriptSystem *es = eduvm_system();
         for (int i = 0; i < EDU_MAX_SCRIPTS; i++) edu_seed_slot(i, i < 4 ? i : 4);
         es->active_slot = 0;
+        orb_load_slots();
+        SDL_Thread *t = SDL_CreateThread(orb_remote_worker, "orb_snippets", NULL);
+        if (t) SDL_DetachThread(t);
+    }
+    if (g_orb_remote_ready && !g_orb_remote_applied) {
+        g_orb_remote_applied = 1;
+        int placed = edu_snippets_fill_empty(eduvm_system(), g_orb_remote, g_orb_remote_n, 4);
+        if (placed) SDL_Log("orb: placed %d NOCK snippet(s) into empty slots", placed);
     }
     g_orb_open = !g_orb_open;
     if (g_orb_open) { SDL_StartTextInput(); SDL_SetRelativeMouseMode(SDL_FALSE); }
@@ -8281,6 +8348,7 @@ static int orb_key(SDL_Keycode k) {
             snprintf(es->last_output, sizeof es->last_output, "ARCHITECT TRIAL COMPLETE");
         }
     }
+    else if (k == SDLK_F5) orb_save_slots();
     else if (k == SDLK_F9) edu_script_reset_active(es);
     else if (k == SDLK_F10) { edu_reset_world(); g_orb_trial_done = 0; }
     else if (k == SDLK_TAB) es->active_slot = (es->active_slot + 1) % EDU_MAX_SCRIPTS;
@@ -8337,7 +8405,7 @@ static void draw_orb_overlay(void) {
     glColor3f(0.72f, 0.62f, 0.95f);
     draw_string("ARCHITECT'S ORB", 140.0f, 632.0f, 3.4f);
     glColor3f(0.6f, 0.55f, 0.8f);
-    draw_string("` close  F7 compile  F8 run  F9 clear  F10 reset machines  TAB slot", 140.0f, 608.0f, 2.2f);
+    draw_string("` close  F5 save  F7 compile  F8 run  F9 clear  F10 reset  TAB slot", 140.0f, 608.0f, 2.2f);
     char hdr[96]; snprintf(hdr, sizeof hdr, "SLOT %d/%d  %s", es->active_slot + 1, EDU_MAX_SCRIPTS, sl->name);
     glColor3f(0.85f, 0.82f, 0.95f); draw_string(hdr, 140.0f, 580.0f, 2.8f);
     glColor3f(0.92f, 0.95f, 0.92f);

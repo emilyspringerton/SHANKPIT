@@ -442,7 +442,13 @@ A tiny scripting language you write in-game that drives physical machines, porte
 - Verified headless (Xvfb): opened the Orb in SURVIVAL, ran the Architect Trial (gate/bridge/portal all set, stability 125), ran the bubble-sort slot.
 - Fixed on the way: the GFD parser mis-rewound after a bare identifier, so any script whose statements began with a builtin call (not `let`) failed to compile
   ("unknown variable"). Only `let`-led scripts ever worked upstream. GFD's copy still has the bug.
-- Limits: single-player only; machines are fixed props, not the NOCK widget system (that is card #495); the Orb is a keyboard terminal, not yet an affordance on the BIG_O phone.
+- **Saveable snippets (card #495):** **F5** saves every non-empty slot to `shankpit_orb_slots.json` (next to the executable); it reloads the
+  next time the Orb first opens. A background thread also fetches the snippets NOCK authors attach to the widget `ORB`
+  (`GET https://okemily.com/api/v1/nock-edu-snippets?widget=ORB`, IDUNA's `nock_edu_snippets`, cached as `shankpit_edu_snippets_ORB.json`)
+  and drops them into empty slots 5-8. Parse/serialize/placement are unit-tested (`make test-eduvm`). **Untested live:** the IDUNA endpoint exists in
+  code and tests but is not deployed yet, and NOCK has no UI tab for it, so remote snippets are created over the admin API only.
+- Limits: single-player only; the machine bay is fixed props, and snippets attach to the one `ORB` widget (per-placed-widget attachment is not built);
+  the Orb is a keyboard terminal, not yet an affordance on the BIG_O phone.
 
 ## Menu: SETTINGS, CUSTOMIZE, baked levels (2026-10-02)
 

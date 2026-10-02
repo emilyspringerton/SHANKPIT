@@ -5,12 +5,14 @@
 #   make check-eduvm       fail if the checked-in generated file is stale vs the .prn
 PARENA_DIR ?= ../PARENA
 EDUVM_PRN := $(PARENA_DIR)/stdlib/shankpit/eduvm.prn
-EDU_SRC := packages/education/edu_lexer.c packages/education/edu_parser.c packages/education/edu_bytecode.c packages/education/edu_vm.c packages/education/edu_bindings.c packages/education/edu_script.c packages/education/eduvm_host.c packages/education/eduvm_mod_unit.c packages/world/parena_runtime.c
+EDU_SRC := packages/education/edu_lexer.c packages/education/edu_parser.c packages/education/edu_bytecode.c packages/education/edu_vm.c packages/education/edu_bindings.c packages/education/edu_script.c packages/education/eduvm_host.c packages/education/eduvm_snippets.c packages/education/eduvm_mod_unit.c packages/world/parena_runtime.c
 
 .PHONY: test-eduvm regen-eduvm check-eduvm
 test-eduvm:
 	gcc -Wall -Wextra -Werror -Wno-unused-parameter -Ipackages/education -Ipackages/world packages/education/eduvm_test.c $(EDU_SRC) -o /tmp/eduvm_test -lm
 	/tmp/eduvm_test
+	gcc -Wall -Wextra -Werror -Ipackages/education packages/education/eduvm_snippets_test.c packages/education/eduvm_snippets.c packages/education/edu_script.c packages/education/edu_lexer.c packages/education/edu_parser.c packages/education/edu_bytecode.c packages/education/edu_vm.c packages/education/edu_bindings.c -o /tmp/eduvm_snippets_test -lm
+	/tmp/eduvm_snippets_test
 
 regen-eduvm:
 	@test -x $(PARENA_DIR)/parena || $(MAKE) -C $(PARENA_DIR) build >/dev/null
