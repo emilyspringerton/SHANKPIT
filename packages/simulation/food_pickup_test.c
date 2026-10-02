@@ -15,6 +15,19 @@
 int main(void) {
     {
         food_pickup_reset();
+        food_pickup_seed_ring(SCENE_CUSTOM_LEVEL, 100.0f, 2.0f, 100.0f);
+        assert(food_pickup_active_count() == FOOD_ITEM_COUNT);
+        assert(food_pickup_check(SCENE_CITY, 114.0f, 2.0f, 100.0f, 0) == -1);       /* wrong scene */
+        assert(food_pickup_check(SCENE_CUSTOM_LEVEL, 100.0f, 2.0f, 100.0f, 0) == -1); /* centre: nothing */
+        assert(food_pickup_check(SCENE_CUSTOM_LEVEL, 114.0f, 2.0f, 100.0f, 0) == 0);  /* item 0 at angle 0 */
+        assert(food_pickup_active_count() == FOOD_ITEM_COUNT - 1);
+        assert(!food_pickup_lnf_active());
+        food_pickup_reset();
+        assert(food_pickup_check(SCENE_CUSTOM_LEVEL, 114.0f, 2.0f, 100.0f, 0) == -1);
+        printf("PASS: food_pickup_seed_ring collects only in its own scene, no Lost and Found\n");
+    }
+    {
+        food_pickup_reset();
         assert(food_pickup_active_count() == 0);
         printf("PASS: food_pickup_reset leaves nothing active\n");
     }

@@ -35,6 +35,11 @@ void food_pickup_reset(void);
  * (scene_id checked at food_pickup_check time, not here) matches that function's own shape. */
 void food_pickup_seed_voxworld(void);
 
+/* Seeds one of each food item in a ring (radius 14-26) around (cx,cy,cz) for a non-VOXWORLD scene
+ * (MODE_ZOMBIES' custom level, SECTION 591). food_pickup_check then collects them for that scene_id;
+ * the VOXWORLD-only Lost and Found does not apply there. Call food_pickup_reset first. */
+void food_pickup_seed_ring(int scene_id, float cx, float cy, float cz);
+
 /* Real, live per-tick collection check: if (px,py,pz) is within FOOD_PICKUP_RADIUS of an active
  * spot (the 17 hand-placed ones, or the Lost and Found spot below), deactivates/collects it and
  * returns its item_id. scene_id is checked first -- a no-op everywhere except SCENE_VOXWORLD,

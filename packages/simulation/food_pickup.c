@@ -2,8 +2,10 @@
 
 #include <string.h>
 #include <stdint.h>
+#include <math.h>
 
 static FoodPickupSpot g_spots[FOOD_ITEM_COUNT];
+static int g_ring_scene = -1; /* scene (other than VOXWORLD) whose pickups food_pickup_seed_ring placed */
 
 /* "Lost and Found" -- a real, hardcoded office landmark, well clear of every other hardcoded
  * VOXWORLD coordinate in this file (citizens/zombies/The Men cluster in x roughly -70..70,
@@ -30,6 +32,7 @@ static int lnf_roll_item(void) {
 
 void food_pickup_reset(void) {
     memset(g_spots, 0, sizeof(g_spots));
+    g_ring_scene = -1;
     g_lnf_active = 0;
     g_lnf_item = -1;
     g_lnf_restock_at_ms = 0;
@@ -65,18 +68,34 @@ void food_pickup_seed_voxworld(void) {
     }
 }
 
+void food_pickup_seed_ring(int scene_id, float cx, float cy, float cz) {
+    g_ring_scene = scene_id;
+    for (int i = 0; i < FOOD_ITEM_COUNT; i++) {
+        float a = (float)i * (6.2831853f / (float)FOOD_ITEM_COUNT);
+        float r = 14.0f + 6.0f * (float)(i % 3);
+        g_spots[i].active = 1;
+        g_spots[i].item_id = i;
+        g_spots[i].x = cx + r * cosf(a);
+        g_spots[i].y = cy;
+        g_spots[i].z = cz + r * sinf(a);
+    }
+}
+
 int food_pickup_check(int scene_id, float px, float py, float pz, unsigned int now_ms) {
-    if (scene_id != SCENE_VOXWORLD) return -1;
+    int ring_only = (scene_id != SCENE_VOXWORLD);
+    if (ring_only && scene_id != g_ring_scene) return -1;
 
     for (int i = 0; i < FOOD_ITEM_COUNT; i++) {
         FoodPickupSpot *sp = &g_spots[i];
         if (!sp->active) continue;
-        float dx = sp->x - px, dy = sp->y - py, dz = sp->z - pz;
+        float dx = sp->x - px, dy = ring_only ? 0.0f : sp->y - py, dz = sp->z - pz; /* ring spots: horizontal only (level ground height unknown) */
         if (dx * dx + dy * dy + dz * dz <= FOOD_PICKUP_RADIUS * FOOD_PICKUP_RADIUS) {
             sp->active = 0;
             return sp->item_id;
         }
     }
+
+    if (ring_only) return -1; /* the Lost and Found is a VOXWORLD landmark */
 
     /* Real, live restock: rolls a new item once the cooldown from the last collection has
        elapsed (or immediately, the very first time). */

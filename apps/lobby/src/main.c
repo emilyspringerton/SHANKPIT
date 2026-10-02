@@ -2953,6 +2953,8 @@ static int lobby_start_zombies_mode(void) {
     local_state.story_phase = STORY_PHASE_PLAYING;
     phys_respawn(hero, SDL_GetTicks());
     g_snap_zombies = 1;
+    food_pickup_reset();   /* SECTION 591: BIG_O food (CARGO app) lies around the spawn */
+    food_pickup_seed_ring(SCENE_CUSTOM_LEVEL, hero->x, hero->y, hero->z);
     SDL_Log("ZOMBIES: loaded '%s' (source id %d, %d boxes, %d damaged cells)", lvl->name, lvl->source_id, lvl->count, lvl->brick_damage_count);
     free(lvl);
     return 1;
@@ -7053,6 +7055,11 @@ static void rd_frame(float dt_ms) {
         sp.dir[0] = p->x - eye->x; sp.dir[1] = 0.0; sp.dir[2] = p->z - eye->z;
         sp.vel[0] = p->vx; sp.vel[1] = p->vy; sp.vel[2] = p->vz;
         sp.now_tick = SDL_GetTicks();
+        if (local_state.game_mode == MODE_ZOMBIES) {   /* SECTION 591: a fresh kill is harvestable -> the phone's LAB samples */
+            int base = role == WITNESS_AI_ROLE_ZOMBIE ? 0 : role == WITNESS_AI_ROLE_CITIZEN ? 1 : 2;
+            g_story_phone.samples[base]++;
+            printf("[HARVEST] sample %d (now %d)\n", base, g_story_phone.samples[base]);
+        }
         int slot = ragdoll_pool_spawn(&g_rd_pool, &sp);
         g_rd_slot[i] = slot;
         if (slot >= 0) { RagdollInfo inf; if (ragdoll_pool_info(&g_rd_pool, slot, &inf)) g_rd_seq[i] = inf.seq; }
