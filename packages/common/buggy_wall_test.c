@@ -38,6 +38,21 @@ int main(void) {
     float z_curb = drive(curb, 2, 400, NULL);
     CHECK(z_curb < -100.0f);                           /* a curb below step height is driven over */
 
+    /* box tops are ground: a long 0.5-high platform ahead -- the buggy climbs on and rides on top of it */
+    static Box platform[3];
+    platform[1] = (Box){5000, 0.25f, -1540, 40, 0.5f, 3000};  /* top at y = 0.5, z from -40 to -3040 */
+    {
+        map_geo = platform; map_count = 2;
+        BuggyState b = {0};
+        b.active = 1; b.occupant_player_id = 0; b.grounded = 1; b.yaw = 0.0f;
+        b.x = 5000.0f; b.z = 0.0f; b.y = BUGGY_WHEEL_RADIUS + BUGGY_CHASSIS_CLEARANCE;
+        for (int i = 0; i < 160; i++) simulate_buggy_state(&b, 1.0f, 0.0f, 0.016f, 1);
+        float on_top = BUGGY_WHEEL_RADIUS + BUGGY_CHASSIS_CLEARANCE + 0.5f;
+        CHECK(b.z < -50.0f && b.z > -3000.0f);             /* actually on the platform */
+        CHECK(b.y > on_top - 0.2f && b.y < on_top + 0.2f); /* riding on the top, not on the terrain beneath */
+        printf("platform: z %.1f y %.2f (want ~%.2f)\n", b.z, b.y, on_top);
+    }
+
     if (g_fail) { printf("buggy_wall_test: %d FAILED\n", g_fail); return 1; }
     printf("buggy_wall_test OK (open %.1f, wall %.1f, curb %.1f)\n", z_open, z_wall, z_curb);
     return 0;

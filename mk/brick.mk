@@ -45,6 +45,9 @@ test-buggy-wall:
 		packages/common/buggy_wall_test.c packages/world/terrain.c \
 		-o /tmp/shankpit_buggy_wall_test -lm
 	/tmp/shankpit_buggy_wall_test
+	gcc -std=gnu99 -Wall -Wextra -g -fsanitize=address,undefined $(INCLUDES) \
+		packages/world/level_boxes_buggy_test.c -o /tmp/shankpit_level_boxes_buggy_test -lm
+	/tmp/shankpit_level_boxes_buggy_test
 
 .PHONY: test-litbox-render
 test-litbox-render:

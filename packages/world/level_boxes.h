@@ -122,6 +122,14 @@ typedef struct {
    The one thing that stays real, named, deferred future work: a door authored this way can only
    reference one of a level's own ROOT walls, never a wall contributed by a nested composed
    object (matching flattenObjects' own already-established scope limit for ground planes). */
+/* #464/#465 -- author-placed buggy spawns ("the buggy should be placeable in levels via the buggy
+   spawn widget tiles OR via an actual buggy placed in a level"). IDUNA's level export emits one entry
+   per wall named buggy_spawn* (a level's own tile, or one inside a placed widget -- widgets are
+   flattened server-side), yaw read from a numeric suffix (buggy_spawn_90). Absent key = no author
+   buggies (the level has none; built-in scenes keep their own pads). */
+#define LEVEL_BOXES_MAX_BUGGY_SPAWNS 16
+typedef struct { float x, y, z, yaw; } LevelBuggySpawn;
+
 #define LEVEL_BOXES_MAX_DOORS 16
 #define LEVEL_BOXES_SCRIPT_PATH_LEN 256
 
@@ -309,6 +317,8 @@ typedef struct {
     int material_count;
     LevelSpawner spawners[LEVEL_BOXES_MAX_SPAWNERS]; /* S459-58 */
     int spawner_count;
+    LevelBuggySpawn buggy_spawns[LEVEL_BOXES_MAX_BUGGY_SPAWNS]; /* #464 */
+    int buggy_spawn_count;
     LevelDoor doors[LEVEL_BOXES_MAX_DOORS]; /* Story System Phase 1 */
     int door_count;
     LevelButton buttons[LEVEL_BOXES_MAX_BUTTONS]; /* S485, REFLUX pub/sub */
@@ -698,6 +708,37 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
                     }
                     out->spawner_count++;
                     scursor = sobj_end + 1;
+                }
+            }
+        }
+    }
+
+    // Buggy spawns (#464) -- same small-scanner shape as spawners above; absent key = none.
+    out->buggy_spawn_count = 0;
+    const char *bg_arr_key = level_boxes_find_key(buf, end, "buggy_spawns");
+    if (bg_arr_key) {
+        const char *bg_arr = level_boxes_skip_ws(bg_arr_key);
+        if (*bg_arr == '[') {
+            const char *bg_arr_end = level_boxes_find_array_end(bg_arr, end);
+            if (bg_arr_end) {
+                const char *bcursor = bg_arr + 1;
+                while (bcursor < bg_arr_end && out->buggy_spawn_count < LEVEL_BOXES_MAX_BUGGY_SPAWNS) {
+                    bcursor = level_boxes_skip_ws(bcursor);
+                    if (bcursor >= bg_arr_end) break;
+                    if (*bcursor == ',') { bcursor++; continue; }
+                    if (*bcursor != '{') { bcursor++; continue; }
+                    const char *bobj_start = bcursor;
+                    const char *bobj_end = strchr(bobj_start, '}');
+                    if (!bobj_end || bobj_end > bg_arr_end) break;
+                    LevelBuggySpawn *bs = &out->buggy_spawns[out->buggy_spawn_count];
+                    memset(bs, 0, sizeof(*bs));
+                    const char *bv;
+                    if ((bv = level_boxes_find_key(bobj_start, bobj_end, "x"))) level_boxes_parse_number(bv, &bs->x);
+                    if ((bv = level_boxes_find_key(bobj_start, bobj_end, "y"))) level_boxes_parse_number(bv, &bs->y);
+                    if ((bv = level_boxes_find_key(bobj_start, bobj_end, "z"))) level_boxes_parse_number(bv, &bs->z);
+                    if ((bv = level_boxes_find_key(bobj_start, bobj_end, "yaw"))) level_boxes_parse_number(bv, &bs->yaw);
+                    out->buggy_spawn_count++;
+                    bcursor = bobj_end + 1;
                 }
             }
         }

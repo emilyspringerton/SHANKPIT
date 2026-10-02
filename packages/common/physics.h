@@ -54,6 +54,9 @@
 #define BUGGY_TRACK_WIDTH 3.8f
 #define BUGGY_WHEEL_RADIUS 1.05f
 #define BUGGY_CHASSIS_CLEARANCE 0.95f
+#define BUGGY_COLLIDE_R 2.0f
+#define BUGGY_STEP_HEIGHT 0.6f
+#define BUGGY_BODY_HEIGHT 3.0f
 
 #define EYE_HEIGHT 2.59f    
 #define PLAYER_WIDTH 0.97f  
@@ -458,6 +461,23 @@ static inline int phys_custom_level_box_pos(int box_index, float *x, float *y, f
     *y = g_custom_level_box_authored_y[slot];
     *z = g_custom_level_geo[slot].z;
     return 1;
+}
+
+// ---- Author-placed buggy spawns (#464: level_boxes.h buggy_spawns) ------------------------------
+#define CUSTOM_LEVEL_MAX_BUGGY_SPAWNS 16
+static float g_custom_level_buggy_x[CUSTOM_LEVEL_MAX_BUGGY_SPAWNS];
+static float g_custom_level_buggy_y[CUSTOM_LEVEL_MAX_BUGGY_SPAWNS];
+static float g_custom_level_buggy_z[CUSTOM_LEVEL_MAX_BUGGY_SPAWNS];
+static float g_custom_level_buggy_yaw[CUSTOM_LEVEL_MAX_BUGGY_SPAWNS];
+static int g_custom_level_buggy_count = 0;
+static inline void phys_set_custom_level_buggy_spawns(const float *x, const float *y, const float *z, const float *yaw, int count) {
+    if (count < 0) count = 0;
+    if (count > CUSTOM_LEVEL_MAX_BUGGY_SPAWNS) count = CUSTOM_LEVEL_MAX_BUGGY_SPAWNS;
+    for (int i = 0; i < count; i++) {
+        g_custom_level_buggy_x[i] = x[i]; g_custom_level_buggy_y[i] = y[i];
+        g_custom_level_buggy_z[i] = z[i]; g_custom_level_buggy_yaw[i] = yaw[i];
+    }
+    g_custom_level_buggy_count = count;
 }
 
 // ---- Destructible brick: fracture-piece slot API (packages/world/brick_fracture.h) ----------------
@@ -3400,6 +3420,19 @@ static inline void buggy_sample_wheel_heights(const BuggyState *b, float heights
         float wz = b->z + fwd_z * ox[i] + right_z * oz[i];
         float h = terrain_sample_height(&g_scene_terrain, wx, wz);
         if (h < 0.0f) h = 0.0f;
+        /* Box tops are ground too: a wheel over a platform, ramp piece or curb rides on it when the
+           top is within reach (BUGGY_STEP_HEIGHT above the current wheel bottom) -- the same
+           threshold buggy_move_xz_blocked uses to decide a box is a step, not a wall. A box above that
+           (a bridge, a ceiling) is ignored, so the buggy drives under it. */
+        float reach = b->y - (BUGGY_WHEEL_RADIUS + BUGGY_CHASSIS_CLEARANCE) + BUGGY_STEP_HEIGHT + 0.15f;
+        for (int bi = 1; bi < map_count; bi++) {
+            const Box bx = map_geo[bi];
+            if (bx.w <= 0.0f || bx.d <= 0.0f || bx.h <= 0.0f) continue;
+            float top = bx.y + bx.h / 2;
+            if (top > reach || top <= h) continue;
+            if (fabsf(wx - bx.x) > bx.w / 2 || fabsf(wz - bx.z) > bx.d / 2) continue;
+            h = top;
+        }
         heights[i] = h;
     }
 }
@@ -3412,9 +3445,6 @@ static inline void buggy_sample_wheel_heights(const BuggyState *b, float heights
    velocity component (a wall hit scrubs speed). Shared sim: server and local play both run this via
    simulate_buggy_state, so multiplayer is authoritative. Walls carved by brick destruction are just
    map_geo boxes too, so a blasted hole is drivable. */
-#define BUGGY_COLLIDE_R 2.0f
-#define BUGGY_STEP_HEIGHT 0.6f
-#define BUGGY_BODY_HEIGHT 3.0f
 static inline void buggy_move_xz_blocked(BuggyState *b, float dx, float dz) {
     float dist = sqrtf(dx * dx + dz * dz);
     int steps = (int)(dist / 1.0f) + 1;

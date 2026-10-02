@@ -448,6 +448,14 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
     }
     phys_set_custom_level_materials(mat_names, mat_shaders, mat_specular, mat_shininess, mat_friction, lvl->material_count);
     phys_set_custom_level(x, y, z, w, h, d, r, g, b, material_idx, lvl->count, lvl->ground_plane_enabled, lvl->ground_plane_squares);
+    {   /* #464: author-placed buggies */
+        float bx[LEVEL_BOXES_MAX_BUGGY_SPAWNS], by[LEVEL_BOXES_MAX_BUGGY_SPAWNS], bz[LEVEL_BOXES_MAX_BUGGY_SPAWNS], byaw[LEVEL_BOXES_MAX_BUGGY_SPAWNS];
+        for (int bi = 0; bi < lvl->buggy_spawn_count; bi++) {
+            bx[bi] = lvl->buggy_spawns[bi].x; by[bi] = lvl->buggy_spawns[bi].y;
+            bz[bi] = lvl->buggy_spawns[bi].z; byaw[bi] = lvl->buggy_spawns[bi].yaw;
+        }
+        phys_set_custom_level_buggy_spawns(bx, by, bz, byaw, lvl->buggy_spawn_count);
+    }
     brick_world_init_from_level(lvl); // destructible brick: pick the carvable boxes, install the weapon/blast hooks
 
     // S459-58: real, author-placed spawn points, team/FFA-aware.

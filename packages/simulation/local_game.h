@@ -332,6 +332,14 @@ static inline void scene_load(int scene_id) {
         buggy_spawn_defaults(&local_state.buggies[i], i, scene_id, pads[i].x, pads[i].z, 180.0f);
         printf("[BUGGY] spawned id=%d scene=%d x=%.1f z=%.1f\n", i, scene_id, pads[i].x, pads[i].z);
     }
+    if (scene_id == SCENE_CUSTOM_LEVEL) {
+        /* #464: author-placed buggies (a buggy_spawn tile in the level or in a placed widget) */
+        for (int i = 0; i < g_custom_level_buggy_count && i < MAX_BUGGIES; i++) {
+            buggy_spawn_defaults(&local_state.buggies[i], i, scene_id, g_custom_level_buggy_x[i], g_custom_level_buggy_z[i], g_custom_level_buggy_yaw[i]);
+            local_state.buggies[i].y = g_custom_level_buggy_y[i] + BUGGY_WHEEL_RADIUS + BUGGY_CHASSIS_CLEARANCE;
+            printf("[BUGGY] spawned id=%d scene=%d (level) x=%.1f z=%.1f yaw=%.0f\n", i, scene_id, g_custom_level_buggy_x[i], g_custom_level_buggy_z[i], g_custom_level_buggy_yaw[i]);
+        }
+    }
 
     if (scene_id == SCENE_VOXWORLD) {
         float red_y = voxworld_heli_spawn_y(VOXWORLD_BASE_RED_X);
