@@ -30,6 +30,7 @@
 #include <stddef.h>
 #include "../../../packages/simulation/shield_packs.h"
 #include "../../../packages/simulation/buggy_rules_host.h"
+#include "../../../packages/simulation/heli_rules_host.h"
 
 /* cutscene handshake globals — defined in lobby/main.c for the client;
    server sim uses local_game.h but never renders cutscenes, so stub to 0. */
@@ -1564,6 +1565,7 @@ void server_broadcast_brick_state(void) {
 
 int main(int argc, char *argv[]) {
     buggy_rules_install(); /* PARENA buggy handling (#468) */
+    heli_rules_install(); /* PARENA helicopter flight model (#542) */
     /* Card #479: clients default to the baked-in levels; the shared game server keeps resolving the admin-
        flagged QUEUE default live (a NOCK flag change must still take effect at the next round), falling back
        to the baked copy when IDUNA is unreachable. SHANKPIT_BAKED_LEVELS=1 makes it use baked levels only. */
@@ -1884,7 +1886,7 @@ int main(int argc, char *argv[]) {
                 h->scene_id = occ->scene_id;
                 h->input.forward = occ->in_fwd;
                 h->input.yaw = occ->in_strafe;
-                h->input.strafe = occ->in_ability ? -1.0f : (occ->in_bike ? 1.0f : 0.0f);
+                h->input.strafe = occ->in_ability ? 1.0f : (occ->in_bike ? -1.0f : 0.0f);   /* E = right, Q = left */
                 h->input.ascend = occ->in_jump;
                 h->input.descend = occ->crouching;
             } else {

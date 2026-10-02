@@ -3665,6 +3665,25 @@ static inline void simulate_buggy_state(BuggyState *b, float throttle, float ste
     }
 }
 
+/* buggy_chase_steer_intent -- warthog-style steering (#542): the buggy rotates toward the camera heading
+   (cam_yaw), so the camera is the "wheel" and the orbit camera (lobby draw_scene) keeps the buggy framed.
+   Steers whenever the driver is on the throttle OR the buggy is still rolling (a coasting buggy used to
+   ignore the camera). simulate_buggy_state flips the wheel when reversing, so the intent is flipped here
+   to keep the net rotation toward the camera instead of away from it. Returns -1..1. */
+static inline float buggy_chase_steer_intent(const BuggyState *b, float throttle, float cam_yaw) {
+    float yaw_err = norm_yaw_deg(cam_yaw - b->yaw);
+    if (yaw_err > 180.0f) yaw_err -= 360.0f;
+    if (yaw_err < -180.0f) yaw_err += 360.0f;
+    float intent = yaw_err / 50.0f;
+    float yr = -b->yaw * (3.14159265358979323846f / 180.0f);
+    float fwd_spd = b->vx * sinf(yr) + b->vz * -cosf(yr);
+    if (fabsf(throttle) < 0.05f && fabsf(fwd_spd) < 0.3f) intent = 0.0f;
+    if (fwd_spd < -0.03f) intent = -intent;
+    if (intent > 1.0f) intent = 1.0f;
+    if (intent < -1.0f) intent = -1.0f;
+    return intent;
+}
+
 static inline void simulate_buggy_drive(PlayerState *p, float throttle, float steer, float dt) {
     if (!p || !p->in_vehicle) return;
     BuggyState temp = {0};

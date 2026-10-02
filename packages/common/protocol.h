@@ -556,6 +556,10 @@ typedef struct {
     int occupant_player_id;
     int grounded;
     HeliInputState input;
+    /* flight-model state (heli_rules.prn via net_sim.h); server/local only, not on the wire -- the
+       clients draw pitch_visual/roll_visual, which are derived from these */
+    float att_pitch, att_roll;   /* degrees, + = nose down / banked right */
+    float yaw_rate;              /* degrees per tick, + = turning right */
 } HelicopterState;
 
 typedef struct {

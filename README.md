@@ -369,6 +369,22 @@ Honest limits: no dedicated hammer sound (reuses the katana swing), the 1p swing
 widget model is boxes (one per Blender mesh object, rotated parts become their bounding box), MAX_WEAPONS went 8 -> 9
 so a server and client must both be on this build, and none of it has been seen in a live match yet.
 
+## Vehicle controls: buggy chase camera + PARENA helicopter flight model (2026-10-02)
+
+- **Buggy is warthog-style.** The camera is a true orbit around the buggy (mouse / right stick swing it, pitch is
+  clamped), so the buggy is always framed -- the old camera sat on the wrong side of the car (a flipped z sign), which is
+  why it "went behind the camera". The buggy body rotates toward the camera heading (`buggy_chase_steer_intent`),
+  while driving, coasting and reversing; a parked buggy doesn't spin chasing the mouse.
+- **Helicopter flight model is a PARENA mod** (`PARENA/stdlib/shankpit/heli_rules.prn` -> `packages/simulation/
+  heli_rules.c`, `make regen-heli-rules`). Space/Ctrl move a *collective lever* (hover = a lever setting that relaxes back
+  to it); W/S pitch and Q/E roll tilt the airframe (it lags the stick) and the *tilted thrust* is what accelerates it, so
+  leaning costs lift and a hard bank sags unless you pull collective; A/D pedals command a yaw *rate* that lags. Fixed:
+  the chase camera was in front of the helicopter, A/D turned the wrong way and Q/E were swapped. Without the rules
+  installed `heli_simulate_step` keeps the old arcade mover.
+- Tests: PARENA `make test-heli-rules` (hand-derived numbers), SHANKPIT `make test-heli-flight` (hover, climb, lean-then-go,
+  sag, turn direction, buggy chasing the camera, forward/coast/reverse). Honest limits: verified headless only -- not flown
+  or driven live; the server needs a rebuild/restart for helicopters to fly the new model; the duck is not changed yet.
+
 ## Buggy: walls, placement, PARENA handling, lighting (2026-10-02)
 
 - **Walls are solid.** The buggy used to drive straight through every box (its sim had no collision at all, and one

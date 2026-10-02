@@ -56,6 +56,7 @@
 #include "../../../packages/world/brick_debris.h"
 #include "../../../packages/simulation/brick_world.h"
 #include "../../../packages/simulation/buggy_rules_host.h"
+#include "../../../packages/simulation/heli_rules_host.h"
 #include "../../../packages/render/held_model.h"
 #include "../../../packages/render/camera_rig.h"
 #include "../../../packages/render/stream_out.h"
@@ -10766,6 +10767,7 @@ void draw_scene(PlayerState *render_p) {
         }
     }
     static float heli_cam_x = 0.0f, heli_cam_y = 0.0f, heli_cam_z = 0.0f;
+    float buggy_cam_pitch = 0.0f; int buggy_cam_active = 0;
     if (g_cam_override.active) {
         /* broadcast camera: the eye comes from the rig, applied below */
     } else if (render_p->in_vehicle && render_p->vehicle_type == VEH_HELICOPTER) {
@@ -10780,7 +10782,7 @@ void draw_scene(PlayerState *render_p) {
             float rr = -cam_yaw * 0.01745f;
             float tx = render_p->x - sinf(rr) * 18.0f;
             float ty = render_p->y + 7.0f;
-            float tz = render_p->z - cosf(rr) * 18.0f;
+            float tz = render_p->z + cosf(rr) * 18.0f;   /* behind: forward is (sin rr, -cos rr). This was '-', which parked the camera in FRONT of the heli (#542) */
             if (heli_cam_x == 0.0f && heli_cam_y == 0.0f && heli_cam_z == 0.0f) {
                 heli_cam_x = tx; heli_cam_y = ty; heli_cam_z = tz;
             }
@@ -10807,12 +10809,28 @@ void draw_scene(PlayerState *render_p) {
         lobby_third_person_arm(render_p, cam_yaw, cam_pitch, &cx, &cz, &cam_y);
     } else {
         float follow_yaw = cam_yaw;
-        float cam_z_off = cam_buggy ? 26.0f : (render_p->in_vehicle ? 10.0f : lerpf(0.0f, 8.5f, death_cam_blend));
+        float cam_z_off = render_p->in_vehicle ? 10.0f : lerpf(0.0f, 8.5f, death_cam_blend);
         float rad = -follow_yaw * 0.01745f;
+        /* Camera sits at (x - cx, z - cz), so BEHIND the facing (sin rad, -cos rad) needs cz = -cos(rad)*off.
+           It used to be +cos, which put the camera in front of the vehicle/body and, with the yaw
+           following the mouse, made the buggy swing behind the lens (#542). */
         cx = sinf(rad) * cam_z_off;
-        cz = cosf(rad) * cam_z_off;
+        cz = -cosf(rad) * cam_z_off;
         if (cam_buggy) {
-            cam_y = 7.8f;
+            /* Warthog-style chase: a true ORBIT around the buggy (the camera moves on a sphere around it
+               and always looks at it) -- the mouse/right stick swing the camera, the buggy steers toward
+               the camera heading (buggy_tick_all), and the buggy can never leave the frame. Pitch is
+               clamped so the camera stays above the ground plane and never flips over the top. */
+            float v = cam_pitch - 12.0f;
+            if (v > 2.0f) v = 2.0f;
+            if (v < -70.0f) v = -70.0f;
+            buggy_cam_pitch = v; buggy_cam_active = 1;
+            const float D = 20.0f, PIVOT_Y = 2.0f;
+            float ax = D * cosf(v * 0.01745f) * sinf(-rad);
+            float az = D * cosf(v * 0.01745f) * cosf(rad);
+            float ay = -D * sinf(v * 0.01745f);
+            tp_camera_offset_clipped(render_p->x, render_p->y + PIVOT_Y, render_p->z, &ax, &ay, &az);
+            cx = -ax; cz = -az; cam_y = PIVOT_Y + ay;
         }
     }
     
@@ -10838,7 +10856,7 @@ void draw_scene(PlayerState *render_p) {
         float cam_z = boss->z + 190.0f;
         gluLookAt(cam_x, cam_y, cam_z, look_x, look_y, look_z, 0.0f, 1.0f, 0.0f);
     } else if (!(render_p->in_vehicle && render_p->vehicle_type == VEH_HELICOPTER)) {
-        float draw_cam_pitch = lerpf(cam_pitch, -14.0f, death_cam_blend);
+        float draw_cam_pitch = buggy_cam_active ? buggy_cam_pitch : lerpf(cam_pitch, -14.0f, death_cam_blend);
         glRotatef(-draw_cam_pitch, 1, 0, 0); glRotatef(-cam_yaw, 0, 1, 0);
         glTranslatef(-((render_p->x + reconcile_x) - cx), -((render_p->y + reconcile_y) + cam_y), -((render_p->z + reconcile_z) - cz));
     }
@@ -12552,6 +12570,7 @@ static void buggy_advance_remote_positions(unsigned int now_ms) {
 
 int main(int argc, char* argv[]) {
     buggy_rules_install(); /* PARENA buggy handling (#468) */
+    heli_rules_install(); /* PARENA helicopter flight model (#542) */
     int cli_start_zombies = 0;
     int cli_start_lab = 0;
     int cli_start_editmap = 0;

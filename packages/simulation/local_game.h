@@ -374,6 +374,7 @@ static inline void heli_spawn_defaults(HelicopterState *h, int id, int scene_id,
     h->occupant_player_id = -1;
     h->rotor_speed = 8.0f;
     h->yaw = 180.0f;
+    h->collective = 500.0f;   /* hover setting (heli_rules.prn) */
 }
 
 static inline void buggy_spawn_defaults(BuggyState *b, int id, int scene_id, float x, float z, float yaw) {
@@ -450,14 +451,7 @@ static inline void buggy_tick_all(void) {
                - occ->yaw is the driver's desired look/steer yaw (camera yaw target)
                - b->yaw is the buggy body yaw */
             throttle = occ->in_fwd;
-            float yaw_err = norm_yaw_deg(occ->yaw - b->yaw);
-            if (yaw_err > 180.0f) yaw_err -= 360.0f;
-            if (yaw_err < -180.0f) yaw_err += 360.0f;
-            steer_intent = yaw_err / 50.0f;
-            float throttle_abs = fabsf(throttle);
-            if (throttle_abs < 0.05f) steer_intent = 0.0f;
-            if (steer_intent > 1.0f) steer_intent = 1.0f;
-            if (steer_intent < -1.0f) steer_intent = -1.0f;
+            steer_intent = buggy_chase_steer_intent(b, throttle, occ->yaw);
         } else {
             b->occupant_player_id = -1;
         }
@@ -1833,7 +1827,7 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
             PlayerState *occ = &local_state.players[h->occupant_player_id];
             h->input.forward = occ->in_fwd;
             h->input.yaw = occ->in_strafe;
-            h->input.strafe = occ->in_ability ? -1.0f : (occ->in_bike ? 1.0f : 0.0f);
+            h->input.strafe = occ->in_ability ? 1.0f : (occ->in_bike ? -1.0f : 0.0f);   /* E = right, Q = left */
             h->input.ascend = occ->in_jump;
             h->input.descend = occ->crouching;
             heli_simulate_step(h, SHANKPIT_NET_FIXED_DT);
