@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-02
+- release: bundle SDL2_ttf.dll in ShankPit_Client/Debug Windows zips (f19b896); verified in v0.146.0 asset (sess-20260923-1030-4a526255)
 - ZOMBIES sandbox: menu tile replaces FIND CTF (MODE_ZOMBIES=110, --zombies flag); day/night population lifecycle (citizens/zombies/the men), 5 birds from tick one (BIG_O avian_values ported), wall-aware steering for every AI mover, zombies claw brick walls (brick_world_ai_wall_hit), UAL mannequin + zombie_* clips for citizens/men/zombies, rigid-body ragdoll corpses (ragdoll_pool now linked into the lobby), skinned-draw scale hook; zombies repository client (level_boxes collection fetch, snapshot collection=zombies); make test-witness-ai-zombies + brick claw test. (sess-20260923-1030-4a526255)
 - F1 uploads a timestamped level snapshot (ISO second name, debounced) with persisted brick damage; exit autosaves to NOCK cloud; loader+brick_world restore damage (IDUNA f38e8ee, SHANKPIT a8a63a5) (sess-20260923-1030-4a526255)
 - feat(lobby): TYLER tile now starts local offline MODE_TYLER — loads assets/tyler_levels/*.json, runs the cold-open coordinator in-process (REFLUX beats -> HUD subtitles), wisp->Duck phase switch at CONSTRUCT; hides first-person gun for spectator/third_person, draws own body when third_person (sess-20260923-1030-4a526255)
