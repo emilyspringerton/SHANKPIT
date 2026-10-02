@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-02
+
+- feat(lobby): TYLER tile replaces CTFB on the main menu (networked MODE_TYLER connect; MODE_CTFB itself untouched) (sess-20260923-1030-4a526255)
+
+
 ## 2026-10-01
 
 - **MODE_TYLER voice, step 1: the cold open's actors now actually walk** (founder real-time: "ensure TYLER/MODE_TYLER affordances, VALHANNA voices via TTS"; plan `docs2/specs/TYLER_VOICE_INTEGRATION_PLAN.md`). Three real, pre-existing P0 blockers found by running the coordinator against the real engine (`make test-tyler-vo`, new `tests/tyler/test_tyler_vo.c`, wired into `tests.yml`): (1) `story_ai_tick` was a silent no-op in `MODE_TYLER` (gated to `MODE_STORY`), so on the dedicated server Tyler and Hana never received any movement input -- the NORTHSTAR's "live-verified" had only checked log lines; (2) `local_game.h` had no `MODE_TYLER` handling (init branch, `story_ai_tick` call, NPC movement branch, dead-state skip), so a local match would have run `bot_think` combat AI on the actors; (3) NOT in the plan, found while testing (1): `story_ai.c`'s `ai_angle_to` used a yaw convention exactly 180 degrees opposite the simulation's movement basis (`shared_movement.h`/`physics.h`: forward = (-sin yaw, -cos yaw)), so every `story_ai` NPC walked, turned and aimed directly AWAY from its target (a marker at z=-30 sent the actor to z=+50) -- fixed in the one place the convention lives (`atan2f(-dx, -dz)`); this also corrects `MODE_STORY` NPCs, which had never been verified to approach anything. Also: an actor a beat does not name now keeps its locked scripted state (long hold) instead of reverting to ally AI (which backed away from the wisp and fired at it). Tyler/Hana now run the full 8-beat choreography to the exit in a local match (headless test: 23 assertions). The two level JSONs moved from `examples/tyler-valhanna/` to `assets/tyler_levels/` (shipped in the client zip; offline fallback).
