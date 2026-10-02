@@ -5,9 +5,13 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 # against the real Makefile's own LOBBY_SRC, which never lists ui_bridge.c as a compiled source.
 # Bazel doesn't care about the .c extension in hdrs; it only needs to be a declared input file
 # available to whatever includes it.
+# menu_gen.{c,h}: PARENA stdlib/ui/menu.prn compiled by scripts/gen_ui_menu.sh (card #483) -- the one real
+# translation unit here (the lobby's Makefile LOBBY_SRC lists packages/ui/menu_gen.c as a source).
 cc_library(
     name = "ui",
+    srcs = ["menu_gen.c"],
     hdrs = [
+        "menu_gen.h",
         "turtle_text.h",
         "ui_bridge.c",
         "ui_bridge.h",

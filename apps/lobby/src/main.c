@@ -30,6 +30,7 @@
 #include "editor_widget_bridge.h"
 #include "../../../packages/ui/turtle_text.h"
 #define UI_BRIDGE_DECL static
+#include "../../../packages/ui/menu_gen.h" /* PARENA stdlib/ui/menu.prn (card #483) */
 #include "../../../packages/ui/ui_bridge.h"
 #include "../../../packages/ui/ui_bridge.c"
 
@@ -9758,28 +9759,11 @@ static void lobby_button_pos(int index, int menu_count, const LobbyLayout *layou
     *y = layout->menu_y - layout->row_gap * (float)row;
 }
 
-/* Keep grid navigation intuitive for uneven row counts by snapping to nearest valid cell. */
+/* Keep grid navigation intuitive for uneven row counts by snapping to nearest valid cell.
+   Card #483: the logic now lives in PARENA (stdlib/ui/menu.prn -> packages/ui/menu_gen.c), shared with
+   every other menu; PARENA's tests/test_ui_menu.c proves it matches the C that used to be here. */
 static int lobby_nav_move(int selection, int menu_count, int dx, int dy) {
-    if (menu_count <= 0) return 0;
-    int cols = lobby_grid_columns(menu_count);
-    int rows = (menu_count + cols - 1) / cols;
-    int col = selection % cols;
-    int row = selection / cols;
-
-    if (dx != 0) {
-        int next_col = (col + dx + cols) % cols;
-        int idx = row * cols + next_col;
-        if (idx >= menu_count) idx = row * cols;
-        if (idx >= menu_count) idx = menu_count - 1;
-        return idx;
-    }
-    if (dy != 0) {
-        int next_row = (row + dy + rows) % rows;
-        int idx = next_row * cols + col;
-        if (idx >= menu_count) idx = menu_count - 1;
-        return idx;
-    }
-    return selection;
+    return menu_nav_move(selection, menu_count, lobby_grid_columns(menu_count), dx, dy);
 }
 
 static void draw_lobby_buttons(int menu_count, const LobbyLayout *layout) {
@@ -9825,14 +9809,9 @@ static void draw_lobby_buttons(int menu_count, const LobbyLayout *layout) {
 }
 
 static int lobby_hit_test(float mx, float my, int menu_count, const LobbyLayout *layout) {
-    for (int i = 0; i < menu_count; i++) {
-        float x = 0.0f, y = 0.0f;
-        lobby_button_pos(i, menu_count, layout, &x, &y);
-        if (mx >= x && mx <= x + layout->icon_size && my >= y && my <= y + layout->icon_size) {
-            return i;
-        }
-    }
-    return -1;
+    return menu_hit_test((double)mx, (double)my, menu_count, lobby_grid_columns(menu_count),
+                         (double)layout->menu_x, (double)layout->menu_y, (double)layout->column_w,
+                         (double)layout->row_gap, (double)layout->icon_size);
 }
 
 // lobby_page_toggle_rect / _draw / _hit_test -- the real "second page" affordance itself: a
@@ -9866,9 +9845,9 @@ static void lobby_settings_btn_draw(void) {
     glColor3f(0.2f, 0.6f, 0.6f);
     glRectf(x, y, x + w, y + h);
     glColor3f(0.0f, 0.0f, 0.0f);
-    draw_string("SETTINGS", x + 16.0f + 2.0f, y + h * 0.5f - 2.0f, 5);
+    draw_string("SETTINGS", x + 14.0f + 2.0f, y + h * 0.5f - 2.0f, 4);
     glColor3f(0.98f, 0.98f, 1.0f);
-    draw_string("SETTINGS", x + 16.0f, y + h * 0.5f, 5);
+    draw_string("SETTINGS", x + 14.0f, y + h * 0.5f, 4);
 }
 static int lobby_settings_btn_hit_test(float mx, float my) {
     if (lobby_page == LOBBY_PAGE_SETTINGS) return 0;
@@ -11674,26 +11653,22 @@ int main(int argc, char* argv[]) {
                     int hit = lobby_hit_test(mx, my, menu_count, &LOBBY_LAYOUT);
                     if (hit >= 0) {
                         unsigned int now = SDL_GetTicks();
-                        if (ui_last_click_index == hit && ui_last_click_ms > 0) {
-                            unsigned int delta = now - ui_last_click_ms;
-                            if (delta <= 250) {
-                                lobby_selection = hit;
-                                lobby_start_action(hit);
-                                ui_last_click_ms = 0;
-                                ui_last_click_index = -1;
-                            } else if (delta <= 700) {
-                                lobby_selection = hit;
-                                if (lobby_page == 0 && hit != lobby_menu_count() - 1) {
-                                    lobby_start_edit(hit);
-                                } else {
-                                    lobby_start_action(hit);
-                                }
-                                ui_last_click_ms = 0;
-                                ui_last_click_index = -1;
+                        /* card #483: double-click timing from PARENA's ui/menu (250 ms activate, 700 ms secondary) */
+                        int click_kind = menu_click_kind((int)ui_last_click_index, (int)ui_last_click_ms, hit, (int)now);
+                        if (click_kind == 1) {
+                            lobby_selection = hit;
+                            lobby_start_action(hit);
+                            ui_last_click_ms = 0;
+                            ui_last_click_index = -1;
+                        } else if (click_kind == 2) {
+                            lobby_selection = hit;
+                            if (lobby_page == 0 && hit != lobby_menu_count() - 1) {
+                                lobby_start_edit(hit);
                             } else {
-                                ui_last_click_ms = now;
-                                ui_last_click_index = hit;
+                                lobby_start_action(hit);
                             }
+                            ui_last_click_ms = 0;
+                            ui_last_click_index = -1;
                         } else {
                             ui_last_click_ms = now;
                             ui_last_click_index = hit;
