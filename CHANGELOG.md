@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-02
+- MODE_QUEUE players now draw as the UAL mannequin tinted yellow and, when killed, fall as XPBD rigid-body ragdolls (card #501). Compiles clean; not verified against a live queue match. (sess-20260923-1030-4a526255)
 - survival: guns are ground items (gun_items.c) -- start with knife/flashlight, 12 guns on a ring + 35% enemy drops, walk-over pickup equips and refills, weapon_gated/owned mask gates number keys; local only, multiplayer follow-up open (#487) (sess-20260923-1030-4a526255)
 - lobby: GAMES page no longer duplicates ZOMBIES/QUEUE/LEVELS/TYLER tiles (reachable via SURVIVAL > MODES); --survival/--zombies CLI flags bypass the submenu (#496 follow-up) (sess-20260923-1030-4a526255)
 - lobby: MODES submenu page grouping survival/zombies/queue/levels/tyler (#496) (sess-20260923-1030-4a526255)
