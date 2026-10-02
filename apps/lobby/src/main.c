@@ -2374,7 +2374,17 @@ static const char *CUSTOMIZE_LABELS[CUSTOMIZE_COUNT] = { "SKINS", "SPRAYS" };
 // in-game pause menu keeps its own copies of the shared ones (bullet holes, brick debris, fullscreen).
 #define LOBBY_PAGE_SETTINGS 3
 typedef enum { SETTINGS_LIVE_LEVELS = 0, SETTINGS_BULLET_HOLES, SETTINGS_BRICK_DEBRIS, SETTINGS_FULLSCREEN, SETTINGS_COUNT } SettingsAction;
+// lobby_page 4 = MODES (card #496, "ensure survival mode has a menu -- nest zombies and queue and
+// survival and levels ... and tyler too sub menu"). Opened from the SURVIVAL tile on the GAMES page;
+// each entry maps to the same LobbyAction the GAMES page already launches, so nothing about how a
+// mode starts changes -- only where the player finds it. The GAMES-page tiles for the other modes are
+// left in place (server-pushed UI entries index into that list); this page is the grouped way in.
+#define LOBBY_PAGE_MODES 4
+#define MODES_COUNT 5
+static const char *MODES_LABELS[MODES_COUNT] = { "SURVIVAL", "ZOMBIES", "QUEUE", "LEVELS", "TYLER" };
+static const int MODES_ACTION[MODES_COUNT] = { LOBBY_SURVIVAL, LOBBY_ZOMBIES, LOBBY_QUEUE, LOBBY_LEVEL_SELECT, LOBBY_TYLER };
 static int lobby_page = 0;
+static int lobby_modes_bypass = 0; /* set while the MODES page re-dispatches into the GAMES-page launcher */
 
 static void lobby_init_labels() {
     for (int i = 0; i < LOBBY_COUNT; i++) {
@@ -3400,6 +3410,9 @@ static int lobby_menu_count() {
     if (lobby_page == LOBBY_PAGE_CUSTOMIZE) {
         return CUSTOMIZE_COUNT + 1;
     }
+    if (lobby_page == LOBBY_PAGE_MODES) {
+        return MODES_COUNT + 1;
+    }
     if (lobby_page == LOBBY_PAGE_SETTINGS) {
         return SETTINGS_COUNT + 1;
     }
@@ -3419,6 +3432,11 @@ static const char *lobby_menu_label(int idx) {
     if (lobby_page == LOBBY_PAGE_CUSTOMIZE) {
         if (idx == last_idx) return "< GAMES";
         if (idx >= 0 && idx < CUSTOMIZE_COUNT) return CUSTOMIZE_LABELS[idx];
+        return "";
+    }
+    if (lobby_page == LOBBY_PAGE_MODES) {
+        if (idx == last_idx) return "< GAMES";
+        if (idx >= 0 && idx < MODES_COUNT) return MODES_LABELS[idx];
         return "";
     }
     if (lobby_page == LOBBY_PAGE_SETTINGS) {
@@ -3442,7 +3460,7 @@ static const char *lobby_menu_label(int idx) {
 
 static const char *lobby_menu_entry_id(int idx) {
     int last_idx = lobby_menu_count() - 1;
-    if (lobby_page == 1 || lobby_page == LOBBY_PAGE_CUSTOMIZE || lobby_page == LOBBY_PAGE_SETTINGS) {
+    if (lobby_page == 1 || lobby_page == LOBBY_PAGE_CUSTOMIZE || lobby_page == LOBBY_PAGE_SETTINGS || lobby_page == LOBBY_PAGE_MODES) {
         return NULL;
     }
     if (idx == last_idx) {
@@ -3795,6 +3813,19 @@ static void lobby_start_action(int action) {
         }
         return;
     }
+    if (lobby_page == LOBBY_PAGE_MODES) {
+        if (action == lobby_menu_count() - 1) {
+            lobby_page = 0;
+            lobby_selection = 0;
+        } else if (action >= 0 && action < MODES_COUNT) {
+            lobby_page = 0;
+            lobby_selection = MODES_ACTION[action];
+            lobby_modes_bypass = 1;
+            lobby_start_action(MODES_ACTION[action]);
+            lobby_modes_bypass = 0;
+        }
+        return;
+    }
     if (lobby_page == LOBBY_PAGE_CUSTOMIZE) {
         if (action == lobby_menu_count() - 1) {
             lobby_page = 0;
@@ -3811,6 +3842,11 @@ static void lobby_start_action(int action) {
     }
     if (action == lobby_menu_count() - 1) {
         lobby_page = LOBBY_PAGE_CUSTOMIZE;
+        lobby_selection = 0;
+        return;
+    }
+    if (!lobby_modes_bypass && action == LOBBY_SURVIVAL && strcmp(lobby_menu_label(action), "SURVIVAL") == 0) {
+        lobby_page = LOBBY_PAGE_MODES;
         lobby_selection = 0;
         return;
     }
@@ -11915,7 +11951,7 @@ int main(int argc, char* argv[]) {
              glClear(GL_COLOR_BUFFER_BIT);
              setup_lobby_2d();
              glColor3f(0, 1, 1); // CYAN TEXT
-             draw_string(lobby_page == 0 ? "SHANKPIT" : (lobby_page == LOBBY_PAGE_CUSTOMIZE ? "SHANKPIT / CUSTOMIZE" : (lobby_page == LOBBY_PAGE_SETTINGS ? "SHANKPIT / SETTINGS" : "SHANKPIT / APPS")), LOBBY_LAYOUT.title_x, LOBBY_LAYOUT.title_y, 12);
+             draw_string(lobby_page == 0 ? "SHANKPIT" : (lobby_page == LOBBY_PAGE_CUSTOMIZE ? "SHANKPIT / CUSTOMIZE" : (lobby_page == LOBBY_PAGE_SETTINGS ? "SHANKPIT / SETTINGS" : (lobby_page == LOBBY_PAGE_MODES ? "SHANKPIT / MODES" : "SHANKPIT / APPS"))), LOBBY_LAYOUT.title_x, LOBBY_LAYOUT.title_y, 12);
              lobby_page_toggle_draw();
              lobby_settings_btn_draw();
             lobby_settings_btn_draw();
