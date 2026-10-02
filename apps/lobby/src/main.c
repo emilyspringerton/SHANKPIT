@@ -2320,6 +2320,11 @@ typedef enum {
 
 char lobby_labels_mutable[LOBBY_COUNT][64];
 
+// Local GAMES page shows only these (card #496 follow-up): ZOMBIES/QUEUE/LEVELS/TYLER live under the
+// SURVIVAL -> MODES submenu now, so their top-level tiles were duplicates. Menu index -> LobbyAction.
+#define GAMES_VIS_COUNT 5
+static const int GAMES_MAP[GAMES_VIS_COUNT] = { LOBBY_SURVIVAL, LOBBY_STORY, LOBBY_STORY_CAVE, LOBBY_SOLO, LOBBY_BATTLE };
+
 static const char *LOBBY_LABELS[LOBBY_COUNT] = {
     "LEVELS",
     "ZOMBIES",
@@ -3419,7 +3424,7 @@ static int lobby_menu_count() {
     if (ui_use_server && ui_state.entry_count > 0) {
         return ui_state.entry_count + 1;
     }
-    return LOBBY_COUNT + 1;
+    return GAMES_VIS_COUNT + 1;
 }
 
 static const char *lobby_menu_label(int idx) {
@@ -3455,7 +3460,8 @@ static const char *lobby_menu_label(int idx) {
     if (ui_use_server && idx >= 0 && idx < ui_state.entry_count) {
         return ui_state.entries[idx].label;
     }
-    return lobby_labels_mutable[idx];
+    if (idx >= 0 && idx < GAMES_VIS_COUNT) return lobby_labels_mutable[GAMES_MAP[idx]];
+    return "";
 }
 
 static const char *lobby_menu_entry_id(int idx) {
@@ -3479,8 +3485,8 @@ static void lobby_commit_edit(int index) {
     ui_edit_buffer[ui_edit_len] = '\0';
     if (ui_use_server && index < ui_state.entry_count) {
         snprintf(ui_state.entries[index].label, UI_BRIDGE_LABEL_LEN, "%s", ui_edit_buffer);
-    } else if (!ui_use_server && index < LOBBY_COUNT) {
-        snprintf(lobby_labels_mutable[index], sizeof(lobby_labels_mutable[index]), "%s", ui_edit_buffer);
+    } else if (!ui_use_server && index < GAMES_VIS_COUNT) {
+        snprintf(lobby_labels_mutable[GAMES_MAP[index]], sizeof(lobby_labels_mutable[index]), "%s", ui_edit_buffer);
     }
 }
 
@@ -3845,7 +3851,10 @@ static void lobby_start_action(int action) {
         lobby_selection = 0;
         return;
     }
-    if (!lobby_modes_bypass && action == LOBBY_SURVIVAL && strcmp(lobby_menu_label(action), "SURVIVAL") == 0) {
+    if (!ui_use_server && !lobby_modes_bypass && action >= 0 && action < GAMES_VIS_COUNT) {
+        action = GAMES_MAP[action];  /* menu index -> action; CLI/MODES callers pass the action directly with the bypass flag */
+    }
+    if (!lobby_modes_bypass && action == LOBBY_SURVIVAL && (!ui_use_server || strcmp(lobby_menu_label(action), "SURVIVAL") == 0)) {
         lobby_page = LOBBY_PAGE_MODES;
         lobby_selection = 0;
         return;
@@ -11439,8 +11448,8 @@ int main(int argc, char* argv[]) {
     int running = 1;
     double previous = get_time();
     double accumulator = 0.0;
-    if (cli_start_zombies) lobby_start_action(LOBBY_ZOMBIES);
-    if (cli_start_survival) lobby_start_action(LOBBY_SURVIVAL);
+    if (cli_start_zombies) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_ZOMBIES); lobby_modes_bypass = 0; }
+    if (cli_start_survival) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_SURVIVAL); lobby_modes_bypass = 0; }
     if (cli_start_city) { lobby_start_city(); if (cli_third_person) local_state.players[0].third_person = 1; }
     int prev_app_state = STATE_LOBBY;
     float input_fwd = 0.0f, input_str = 0.0f;
