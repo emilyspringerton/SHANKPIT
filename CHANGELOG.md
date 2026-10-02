@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-02
+- MODE_ZOMBIES BIG_O unification slice 2: food items lie in a ring around spawn (CARGO app works), kills harvest samples into the phone LAB (food_pickup_seed_ring + test); card #503 (sess-20260923-1030-4a526255)
 - BIG_O phone gains an ORB app (opens the Architect's Orb); MODE_ZOMBIES now shares the BIG_O phone (P key, banner, app UI) -- SECTION 591 slice 1, kanban #503/#485 (sess-20260923-1030-4a526255)
 - Orb snippets (card #495): F5 saves slots to shankpit_orb_slots.json, reloaded on next open; background fetch of IDUNA nock-edu-snippets for widget ORB (cached) fills empty slots. Parser/serializer unit-tested; remote endpoint not deployed yet. (sess-20260923-1030-4a526255)
 - Architect's Orb: EduVM scripting terminal ported from the GFD lineage (backquote, all local modes except QUEUE), PARENA mod bindings stdlib/shankpit/eduvm.prn, orb + machine bay in world, array/bubble-sort slot; fixed upstream parser bug that broke scripts starting with a builtin call (card #494). (sess-20260923-1030-4a526255)
