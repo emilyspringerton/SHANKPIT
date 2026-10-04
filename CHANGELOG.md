@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-04
+- MODE_SURVIVAL: spawn gap 1.1 s -> 15 s, one new zombie every 15 s (founder real-time); zombies test rescaled (sess-20260923-1030-4a526255)
 - Enemy outline now renders in QUEUE: teammate exemption limited to real team modes (zeroed team_id made every queue player a 'teammate') (sess-20260923-1030-4a526255)
 - LEVEL_BOXES_MAX / CUSTOM_LEVEL_MAX_BOXES 100 -> 2048; shank_server rebuilt, shankpit-server + shankpit-zombie restarted (sess-20260923-1030-4a526255)
 
