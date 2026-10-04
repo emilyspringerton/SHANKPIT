@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-04
+- Ramp-to-cube seam step-up (PHYS_RAMP_STEP_UP) so players leaving a ramp onto a plain cube don't stall at a lip; oriented boxes now resolve before plain ones; seam regression in oriented_boxes_test; TUTORIAL_RAMP verified from its live export (sess-20260923-1030-4a526255)
 - Native rotated cubes + ramps: packages/common/obb.h oriented-polytope collision/trace/ground-height in physics.h, lobby wedge/rotation rendering, level_boxes rot_x/y/z + ramp; make test-obb (sess-20260923-1030-4a526255)
 - Lobby level/spray pickers: mouse wheel now carries the cursor (draw pass snapped scroll back to the cursor, so the wheel could not scroll past the first rows of the 32-level list) (sess-20260923-1030-4a526255)
 - Re-baked levels (card #479 bake-levels): list was stale at 19 of 32 main levels, so newer NOCK levels and the >100-box ones (nextown, 177/202 boxes) were missing when LIVE LEVELS is OFF (sess-20260923-1030-4a526255)
