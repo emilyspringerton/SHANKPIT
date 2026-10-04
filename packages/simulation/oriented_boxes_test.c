@@ -23,14 +23,15 @@ static const char *LEVEL =
  "{\"name\":\"t\",\"ground_plane_enabled\":true,\"ground_plane_squares\":40,\"walls\":["
  "{\"id\":1,\"x\":0,\"y\":3,\"z\":0,\"sx\":20,\"sy\":6,\"sz\":30,\"r\":1,\"g\":1,\"b\":1,\"friction\":0.3,\"ramp\":true},"
  "{\"id\":2,\"x\":100,\"y\":5,\"z\":0,\"sx\":10,\"sy\":10,\"sz\":10,\"r\":1,\"g\":1,\"b\":1,\"friction\":0.3},"
- "{\"id\":3,\"x\":200,\"y\":5,\"z\":0,\"sx\":10,\"sy\":10,\"sz\":10,\"r\":1,\"g\":1,\"b\":1,\"friction\":0.3,\"rot_y\":45}"
+ "{\"id\":3,\"x\":200,\"y\":5,\"z\":0,\"sx\":10,\"sy\":10,\"sz\":10,\"r\":1,\"g\":1,\"b\":1,\"friction\":0.3,\"rot_y\":45},"
+ "{\"id\":4,\"x\":-7,\"y\":3,\"z\":30,\"sx\":6,\"sy\":6,\"sz\":30,\"r\":1,\"g\":1,\"b\":1,\"friction\":0.3}"
  "]}";
 
 static void load(void) {
     static CustomLevelData lvl;
     memset(&lvl, 0, sizeof lvl);
     CHECK(level_boxes_parse_json(LEVEL, &lvl));
-    CHECK(lvl.count == 3);
+    CHECK(lvl.count == 4);
     CHECK(lvl.boxes[0].ramp == 1 && lvl.boxes[1].ramp == 0);
     CHECK(lvl.boxes[2].rot_y == 45.0f);
     static float x[8], y[8], z[8], w[8], h[8], d[8], r[8], g[8], b[8], rx[8], ry[8], rz[8];
@@ -76,6 +77,12 @@ int main(void) {
     CHECK(fabsf(pl.y - phys_sample_ground_height(pl.x, pl.z, NULL)) < 0.35f);
     CHECK(pl.y > 4.5f);
     CHECK(pl.on_ground);
+
+    /* the ramp's top edge meets a plain cube (box 4, x -10..-4, top y=6, starts z=15): walking over the seam
+       must step onto it, not stall at its face one player-width short */
+    memset(&pl, 0, sizeof pl); pl.active = 1; pl.x = -7; pl.y = 0; pl.z = -25;
+    for (int i = 0; i < 500 && pl.z < 25; i++) step(&pl, 0, 0.25f);
+    CHECK(pl.z >= 25.0f && fabsf(pl.y - 6.0f) < 0.1f);
 
     /* walking into the ramp's tall back wall from +z is blocked (no tunnelling through) */
     memset(&pl, 0, sizeof pl); pl.active = 1; pl.x = 0; pl.y = 0; pl.z = 25;

@@ -3765,6 +3765,7 @@ void accelerate(PlayerState *p, float wish_x, float wish_z, float wish_speed, fl
    0.5, i.e. under ~60 degrees -- ramps, tilted tops) lift the player straight up so they climb
    instead of being shoved backwards; ceilings push down; steep faces act as walls. Returns 1 if
    the player landed on it this call. */
+#define PHYS_RAMP_STEP_UP 0.75f /* max lip stepped onto when leaving a ramp/rotated cube */
 static inline int phys_resolve_oriented(PlayerState *p, const Box *b, const BoxOrient *o, float pw, float ph) {
     int landed = 0;
     float ys[4] = { pw, ph / 3.0f, 2.0f * ph / 3.0f, ph - pw };
@@ -3859,16 +3860,22 @@ void resolve_collision(PlayerState *p) {
             g_last_ground_source_terrain = 1;
         }
     }
+    /* Rotated cubes / ramps first, so the plain-cube pass below knows whether the player is
+       standing on a slope (see the step-up in its side-face branch). No-op without oriented boxes. */
+    int on_oriented = 0;
+    for(int i=1; i<map_count; i++) {
+        const BoxOrient *bo = phys_box_orient(i);
+        if (!bo) continue;
+        Box b = map_geo[i];
+        if (phys_resolve_oriented(p, &b, bo, pw, ph)) {
+            on_oriented = 1;
+            g_last_ground_source_terrain = 0;
+            p->ground_friction = g_custom_level_material_friction[g_custom_level_material_idx[i]];
+        }
+    }
     for(int i=1; i<map_count; i++) {
         Box b = map_geo[i];
-        const BoxOrient *bo = phys_box_orient(i);
-        if (bo) {
-            if (phys_resolve_oriented(p, &b, bo, pw, ph)) {
-                g_last_ground_source_terrain = 0;
-                p->ground_friction = g_custom_level_material_friction[g_custom_level_material_idx[i]];
-            }
-            continue;
-        }
+        if (phys_box_orient(i)) continue;
         if (p->x + pw > b.x - b.w/2 && p->x - pw < b.x + b.w/2 &&
             p->z + pw > b.z - b.d/2 && p->z - pw < b.z + b.d/2) {
             if (p->y < b.y + b.h/2 && p->y + ph > b.y - b.h/2) {
@@ -3885,6 +3892,13 @@ void resolve_collision(PlayerState *p) {
                     if (phys_scene_id == SCENE_CUSTOM_LEVEL) {
                         p->ground_friction = g_custom_level_material_friction[g_custom_level_material_idx[i]];
                     }
+                } else if (on_oriented && b.y + b.h/2 - p->y <= PHYS_RAMP_STEP_UP) {
+                    /* Walking off the top of a ramp onto a plain cube: the slope only reaches full
+                       height at its very edge, but this box's face blocks one player-width earlier,
+                       leaving a small lip. Step up onto it instead of stalling at the seam. */
+                    p->y = b.y + b.h/2; p->vy = 0; p->on_ground = 1;
+                    g_last_ground_source_terrain = 0;
+                    p->ground_friction = g_custom_level_material_friction[g_custom_level_material_idx[i]];
                 } else {
                     float dx = p->x - b.x; float dz = p->z - b.z;
                     float w = (b.w > 0.1f) ? b.w : 1.0f;

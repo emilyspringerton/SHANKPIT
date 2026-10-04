@@ -308,7 +308,9 @@ Two world-reacts-to-your-weapon systems, both in the lobby/server build and both
   gizmo with 15-degree snap or arbitrary) and a **Ramp** checkbox (still a cube in the data; a real wedge in game). Server and client
   physics (`packages/common/obb.h`, shared) collide the player (four stacked spheres), hitscan/`trace_map` and ground height against
   oriented polytopes; walkable slopes (< 60 degrees) lift the player, steeper faces act as walls; the lobby renderer draws the
-  rotation/wedge. `make test-obb` (pure math + real engine paths, ASan/UBSan). Honest limits: untested in a live GUI/match; rotated
+  rotation/wedge; leaving a ramp onto a plain cube steps up the small seam lip. `make test-obb` (pure math + real engine paths, ASan/UBSan);
+  the live registry level `TUTORIAL_RAMP` (ramp, turned ramp, 45-degree cube, tilted plank) is a worked example and was walked
+  through the real engine paths from its live export. Honest limits: never seen in a live GUI/match; rotated
   cubes skip the glass/emissive/specular extra passes and the per-fragment litbox shader and are never brick-fractured; bots,
   zombies, projectiles and buggies still treat a rotated cube as its un-rotated AABB.
 - **Destructible brick.** On any level (NOCK/registry level, any mode), a box whose material is `brick`, `concrete`, `wood` or `glass`
