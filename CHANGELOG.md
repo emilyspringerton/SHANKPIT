@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-04
+
+- fix: free-fly wisp/editor/TYLER observer cam now eases to a stop on WASD release (0.80/tick drag, eased vertical) instead of drifting forever (#543) (sess-20260923-1030-4a526255)
+
+
 ## 2026-10-02
 - feat: destructible loot chests in survival (#528) -- PARENA chest_rules mod (tiers/HP/drop table), chests.c pool + ray/blast hits, lobby hooks chained with brick_world, draw; knife now reaches the map-hitscan hook; README updated (sess-20260923-1030-4a526255)
 - Buggy warthog-style orbit chase cam + steers toward camera; PARENA helicopter flight model (heli_rules.prn: collective, tilted-thrust cyclic, lagged pedals), heli cam/yaw/strafe fixes (#542) (sess-20260923-1030-4a526255)
