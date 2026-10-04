@@ -1370,7 +1370,7 @@ void witness_ai_seed_voxworld_encounter(ServerState *s, unsigned int now_ms) {
  * zombie melee lands (witness_ai_hero_melee_hit), same as every other mode. */
 static struct { int wave, spawned, kills_total; unsigned int next_spawn_ms, wave_start_ms; int started; } g_surv;
 #define SURV_INTERMISSION_MS 6000u
-#define SURV_SPAWN_GAP_MS 1100u
+#define SURV_SPAWN_GAP_MS 15000u /* founder 2026-10-04: one new zombie every 15 s (was 1100) */
 
 int witness_ai_survival_quota(int wave) { return 4 + 3 * (wave < 1 ? 1 : wave); }
 int witness_ai_survival_maxalive(int wave) {

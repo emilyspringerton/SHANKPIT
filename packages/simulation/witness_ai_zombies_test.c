@@ -212,8 +212,8 @@ int main(void) {
     assert(witness_ai_survival_quota(1) == 7 && witness_ai_survival_quota(3) == 13);
     assert(witness_ai_survival_maxalive(1) == 6);
     int max_alive_seen = 0, wave_seen_max = 0;
-    for (int i = 0; i < 400 && witness_ai_survival_wave() < 3; i++) {
-        t += 700;
+    for (int i = 0; i < 2000 && witness_ai_survival_wave() < 3; i++) {
+        t += 5000; /* spawn gap is 15 s: three steps per zombie */
         witness_ai_survival_tick(&S, t); witness_ai_tick(&S, t);
         int alive = 0;
         for (int k = 1; k < MAX_CLIENTS; k++)
@@ -222,7 +222,7 @@ int main(void) {
         if (witness_ai_survival_wave() > wave_seen_max) wave_seen_max = witness_ai_survival_wave();
         assert(alive <= witness_ai_survival_maxalive(witness_ai_survival_wave()));
         /* the player kills whatever has reached the field: a wave only ends when every zombie is dead */
-        if (i % 6 == 5) for (int k = 1; k < MAX_CLIENTS; k++)
+        if (i % 4 == 3) for (int k = 1; k < MAX_CLIENTS; k++)
             if (S.players[k].active && S.players[k].state != STATE_DEAD && witness_ai_role_for_player(k) == WITNESS_AI_ROLE_ZOMBIE) { S.players[k].state = STATE_DEAD; break; }
     }
     assert(wave_seen_max >= 3);                     /* waves advance once the field is cleared */
