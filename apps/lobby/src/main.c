@@ -7527,7 +7527,11 @@ static int outline_mode_for(const PlayerState *p, int role) {
                   local_state.game_mode == MODE_TDMB || local_state.game_mode == MODE_TDMO || local_state.game_mode == MODE_CTF ||
                   local_state.game_mode == MODE_CTFB || local_state.game_mode == MODE_CTFO || local_state.game_mode == MODE_ODDBALL);
         rival_player = mp;
-        if (mp && my_client_id >= 0 && my_client_id < MAX_CLIENTS) {
+        /* teammate exemption only in real team modes: QUEUE/DM/ODDBALL players are never teamed, but their zeroed
+         * team_id (0 == TDMB_RED_TEAM) reads as "valid and equal" for everyone, which hid every outline in QUEUE */
+        int team_mode = (local_state.game_mode == MODE_TDM || local_state.game_mode == MODE_TDMB || local_state.game_mode == MODE_TDMO ||
+                         local_state.game_mode == MODE_CTF || local_state.game_mode == MODE_CTFB || local_state.game_mode == MODE_CTFO);
+        if (mp && team_mode && my_client_id >= 0 && my_client_id < MAX_CLIENTS) {
             const PlayerState *me = &local_state.players[my_client_id];
             if (team_id_is_valid(p->team_id) && p->team_id == me->team_id) rival_player = 0;
         }
