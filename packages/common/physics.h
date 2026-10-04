@@ -262,7 +262,7 @@ static int map_count = 0;
 // separate parallel arrays (indexed the same as map_geo) since Box itself has no color field and
 // every other scene's own geometry doesn't need one (hand-tuned per-scene rendering already
 // exists elsewhere) -- only a NOCK-authored level carries real, per-box author-chosen color.
-#define CUSTOM_LEVEL_MAX_BOXES 100 /* matches packages/world/level_boxes.h's own LEVEL_BOXES_MAX
+#define CUSTOM_LEVEL_MAX_BOXES 2048 /* matches packages/world/level_boxes.h's own LEVEL_BOXES_MAX
                                        and IDUNA/internal/shankpit.MaxWalls exactly -- the same
                                        real cap enforced at the editor's own save time */
 // REAL, FOUND, LIVE BUG (2026-09-14, founder: "we have some kind of off by 1 error for the boxes

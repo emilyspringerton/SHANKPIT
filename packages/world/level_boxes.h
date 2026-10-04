@@ -37,7 +37,7 @@
 #include <sys/wait.h>
 #endif
 
-#define LEVEL_BOXES_MAX 100 /* matches IDUNA/internal/shankpit.MaxWalls exactly -- the real,
+#define LEVEL_BOXES_MAX 2048 /* matches IDUNA/internal/shankpit.MaxWalls exactly -- the real,
                                 already-enforced cap on the editor side, so a level saved there
                                 can never exceed what this loader is willing to read back */
 #define LEVEL_BOXES_MAX_NAME 64
