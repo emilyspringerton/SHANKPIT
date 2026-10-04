@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-04
+- Enemy outline now renders in QUEUE: teammate exemption limited to real team modes (zeroed team_id made every queue player a 'teammate') (sess-20260923-1030-4a526255)
 - LEVEL_BOXES_MAX / CUSTOM_LEVEL_MAX_BOXES 100 -> 2048; shank_server rebuilt, shankpit-server + shankpit-zombie restarted (sess-20260923-1030-4a526255)
 
 - fix: free-fly wisp/editor/TYLER observer cam now eases to a stop on WASD release (0.80/tick drag, eased vertical) instead of drifting forever (#543) (sess-20260923-1030-4a526255)
