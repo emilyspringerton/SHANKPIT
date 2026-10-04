@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-04
+- Lobby level/spray pickers: mouse wheel now carries the cursor (draw pass snapped scroll back to the cursor, so the wheel could not scroll past the first rows of the 32-level list) (sess-20260923-1030-4a526255)
 - Re-baked levels (card #479 bake-levels): list was stale at 19 of 32 main levels, so newer NOCK levels and the >100-box ones (nextown, 177/202 boxes) were missing when LIVE LEVELS is OFF (sess-20260923-1030-4a526255)
 - Zombie AI: wander legs + sense radius from alertness + lock memory instead of always-hunt (ZOMBIES/SURVIVAL); hunger meter now drives scent-homing and is relieved by feeding; zombie_tick_dt fixes hunger/aggression/decay running ~20x too fast at server tick rate (sess-20260923-1030-4a526255)
 - MODE_SURVIVAL: spawn gap 1.1 s -> 15 s, one new zombie every 15 s (founder real-time); zombies test rescaled (sess-20260923-1030-4a526255)
