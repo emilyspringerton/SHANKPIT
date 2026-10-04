@@ -94,6 +94,8 @@ int witness_ai_learned_blocked_count(void);
  * (wai_avoid_walls). Calls nothing but witness_ai_* spawn/despawn, so it is safe to call every
  * tick alongside witness_ai_tick; a real no-op outside MODE_ZOMBIES. */
 void witness_ai_zombies_tick(ServerState *s, unsigned int now_ms);
+/* A managed zombie's current hunger meter (0..1), -1 if player_id isn't a zombie. */
+float witness_ai_zombie_hunger(int player_id);
 
 /* MODE_SURVIVAL (cards #482/#488) -- wave defence on SCENE_CITY. witness_ai_survival_tick spawns
  * each wave's always-hunting zombies hidden behind buildings near the hero (quota 4+3*wave, at most
@@ -288,6 +290,15 @@ int witness_ai_distraction_active(unsigned int now_ms);
  * state-machine escalation above -- that state machine still drives the narrative (DENIAL/PANIC/
  * SILENCING), this drives what the player actually SEES the citizen's body do. */
 #define WITNESS_AI_ZOMBIE_PERCEPTION_RADIUS 45.0f
+/* Wander/hunger AI (MODE_ZOMBIES + MODE_SURVIVAL, founder 2026-10-04 "zombie AI isn't really working
+ * ... wander around more, hunger meter and values from BIG_O"): a zombie senses the hero within
+ * SENSE_BASE + SENSE_PER_ALERTNESS * zombie_effective_alertness (so mood/hunger/aggression widen it),
+ * holds a lock for LOCK_MEMORY_MS after losing sight, otherwise wanders; hunger >= 0.4 biases wander
+ * legs toward the hero ("scent"), and landing a hit feeds it (FEED_HUNGER). */
+#define WITNESS_AI_ZOMBIE_SENSE_BASE 20.0f
+#define WITNESS_AI_ZOMBIE_SENSE_PER_ALERTNESS 0.5f
+#define WITNESS_AI_ZOMBIE_LOCK_MEMORY_MS 6000u
+#define WITNESS_AI_ZOMBIE_FEED_HUNGER 0.3f
 #define WITNESS_AI_ZOMBIE_MELEE_RANGE 3.0f
 #define WITNESS_AI_ZOMBIE_ATTACK_COOLDOWN_MS 1100u
 #define WITNESS_AI_ZOMBIE_MELEE_DAMAGE 14

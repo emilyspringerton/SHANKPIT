@@ -22,6 +22,11 @@ typedef struct {
     int player_id;
     ZombieState zstate;
     unsigned int last_attack_ms; /* zombie perception/melee, see witness_ai.h's own doc comment */
+    unsigned int last_tick_ms;   /* for zombie_tick_dt's real elapsed step (0 = first tick) */
+    unsigned int lock_until_ms;  /* hero stays the target until this time (sense memory) */
+    unsigned int wander_until_ms;/* current wander leg ends here */
+    float wander_yaw;
+    int wander_pause;            /* this leg is a stand-still */
 } WitnessAiZombie;
 
 /* Giant Zombie Bug -- founder real-time, 2026-09-22: "add giant zombie bugs (feral AI units)."
@@ -393,8 +398,17 @@ int witness_ai_spawn_zombie(ServerState *s, float x, float y, float z, unsigned 
     zc->active = 1;
     zc->player_id = slot;
     zc->last_attack_ms = 0;
+    zc->last_tick_ms = 0; zc->lock_until_ms = 0; zc->wander_until_ms = 0; zc->wander_yaw = 0.0f; zc->wander_pause = 0;
     zombie_state_init(&zc->zstate, now_ms);
+    /* not every zombie starts equally hungry -- desynchronises the wander->scent turn */
+    zc->zstate.hunger = (float)((((unsigned int)slot * 2654435761u) ^ now_ms) % 40u) / 100.0f;
     return slot;
+}
+
+float witness_ai_zombie_hunger(int player_id) {
+    for (int i = 0; i < WITNESS_AI_MAX_ZOMBIES; i++)
+        if (g_zombies[i].active && g_zombies[i].player_id == player_id) return g_zombies[i].zstate.hunger;
+    return -1.0f;
 }
 
 int witness_ai_spawn_giant_bug(ServerState *s, float x, float y, float z, unsigned int now_ms) {
@@ -927,16 +941,52 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
            Closes witness_ai.h's own top-doc-comment "has_target is always 0" scope cut. */
         int has_target = 0;
         float hdx = 0.0f, hdz = 0.0f, hdist = 0.0f;
+        int wander_mode = (s->game_mode == MODE_ZOMBIES || s->game_mode == MODE_SURVIVAL);
         if (hero_live && zp->scene_id == hero_p->scene_id) {
             hdx = hero_p->x - zp->x;
             hdz = hero_p->z - zp->z;
             hdist = sqrtf(hdx * hdx + hdz * hdz);
-            /* MODE_ZOMBIES (card #486, "just always start to hunt the player"): every zombie always
-               has the hero as its target, whatever the distance -- nextown is big and they were
-               hard to find; the spawn ring (<=120) bounds how far they actually walk. */
-            has_target = (s->game_mode == MODE_ZOMBIES || s->game_mode == MODE_SURVIVAL) ? 1 : hdist <= WITNESS_AI_ZOMBIE_PERCEPTION_RADIUS;
+            if (wander_mode) {
+                /* Sense radius grows with the zombie's own alertness (mood + hunger + aggression, the
+                   PARENA formula); a locked zombie keeps tracking out to 1.6x and remembers for
+                   LOCK_MEMORY_MS. Outside that it wanders (below) instead of always knowing where the
+                   hero is -- hunger "scent" still walks it home eventually. */
+                float sense = WITNESS_AI_ZOMBIE_SENSE_BASE +
+                              WITNESS_AI_ZOMBIE_SENSE_PER_ALERTNESS * (float)zombie_effective_alertness(&z->zstate);
+                if (z->zstate.mood >= ZOMBIE_MOOD_HUNTING) sense *= 1.6f;
+                if (hdist <= sense) z->lock_until_ms = now_ms + WITNESS_AI_ZOMBIE_LOCK_MEMORY_MS;
+                has_target = (z->lock_until_ms != 0 && (int)(z->lock_until_ms - now_ms) > 0);
+            } else {
+                has_target = hdist <= WITNESS_AI_ZOMBIE_PERCEPTION_RADIUS;
+            }
         }
-        zombie_tick(&z->zstate, now_ms, has_target);
+        {
+            float dt = z->last_tick_ms ? (float)(now_ms - z->last_tick_ms) / 1000.0f : 0.05f;
+            if (dt > 1.0f) dt = 1.0f;
+            z->last_tick_ms = now_ms;
+            zombie_tick_dt(&z->zstate, now_ms, has_target, dt);
+        }
+
+        if (wander_mode && !has_target) {
+            /* Wander legs of 3-7 s: a random heading, ~30% of them standing still (less when hungry);
+               when hunger >= 0.4 a leg is aimed at the hero with probability = hunger. */
+            if (z->wander_until_ms == 0 || (int)(now_ms - z->wander_until_ms) >= 0) {
+                unsigned int h = now_ms * 2654435761u + (unsigned int)z->player_id * 40503u;
+                h ^= h >> 15; h *= 0x2c1b3c6du; h ^= h >> 12;
+                float hunger = z->zstate.hunger;
+                z->wander_yaw = (float)(h % 360u) - 180.0f;
+                z->wander_pause = (int)((h >> 9) % 100u) < (int)(30.0f * (1.0f - hunger));
+                if (hero_live && hunger >= 0.4f && (int)((h >> 17) % 100u) < (int)(hunger * 100.0f)) {
+                    z->wander_yaw = atan2f(hdx, hdz) * (180.0f / 3.14159f) + (float)((int)((h >> 5) % 61u) - 30);
+                    z->wander_pause = 0;
+                }
+                z->wander_until_ms = now_ms + 3000u + (h >> 20) % 4000u;
+            }
+            zp->in_fwd = z->wander_pause ? 0.0f : (z->zstate.mood == ZOMBIE_MOOD_AGITATED ? 0.4f : 0.22f);
+            if (!z->wander_pause) zp->yaw = z->wander_yaw;
+            g_wai_breach[z->player_id] = 0;
+            continue;
+        }
 
         /* Chase via the SAME generic accelerate() pipeline story_ai.c's own bots already move
            through -- local_game.h's per-player loop applies p->in_fwd/p->yaw for any active i>0
@@ -961,6 +1011,8 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
             now_ms - z->last_attack_ms >= WITNESS_AI_ZOMBIE_ATTACK_COOLDOWN_MS) {
             z->last_attack_ms = now_ms;
             zombie_get_agitated(&z->zstate, now_ms); /* landing a hit is a real stimulus */
+            z->zstate.hunger -= WITNESS_AI_ZOMBIE_FEED_HUNGER; /* ...and a feeding one */
+            if (z->zstate.hunger < 0.0f) z->zstate.hunger = 0.0f;
             witness_ai_hero_melee_hit(s, hero_p, WITNESS_AI_ZOMBIE_MELEE_DAMAGE, hdx, hdz, now_ms);
         }
     }

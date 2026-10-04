@@ -54,6 +54,12 @@ void zombie_state_init(ZombieState *z, uint32_t now_ms);
  * already HUNTING, never a plain tick-driven drift into it. */
 void zombie_tick(ZombieState *z, uint32_t now_ms, int has_target);
 
+/* zombie_tick with a real elapsed-seconds step (clamped by the caller to ~1 s). zombie_tick above
+ * is this with dt_sec = 1.0 per call (BIG_O's v0 convention); callers that tick faster than 1 Hz
+ * (SHANKPIT's server runs witness_ai_tick every sim frame) MUST use this or hunger/aggression/decay
+ * run tens of times too fast. */
+void zombie_tick_dt(ZombieState *z, uint32_t now_ms, int has_target, float dt_sec);
+
 /* A real, discrete external stimulus (gunfire, an explosion, a fresh wound) forces at least
  * AGITATED (escalates existing HUNTING to FRENZIED instead of downgrading it) and schedules a
  * real, short re-evaluation window -- the zombie-flavored analog to humanness_get_startled. */

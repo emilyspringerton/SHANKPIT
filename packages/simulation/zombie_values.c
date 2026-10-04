@@ -41,11 +41,11 @@ void zombie_state_init(ZombieState *z, uint32_t now_ms) {
 }
 
 void zombie_tick(ZombieState *z, uint32_t now_ms, int has_target) {
-    /* Real, fixed-ish per-call step -- see this header's own zombie_tick doc comment for the
-     * real, honest v0 "flat ~1 real second per call" simplification (inherited from BIG_O
-     * unchanged; a real dt_sec parameter is a named, separate follow-up, same one BIG_O's own
-     * NORTHSTAR §10 already flagged and deliberately deferred). */
-    const float dt_sec = 1.0f;
+    /* BIG_O's v0 convention: flat ~1 real second per call. See zombie_tick_dt for the real step. */
+    zombie_tick_dt(z, now_ms, has_target, 1.0f);
+}
+
+void zombie_tick_dt(ZombieState *z, uint32_t now_ms, int has_target, float dt_sec) {
 
     if (has_target) {
         z->hunger -= 0.05f * dt_sec; /* pursuing/feeding relieves hunger pressure */

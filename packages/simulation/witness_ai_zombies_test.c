@@ -161,7 +161,8 @@ int main(void) {
     assert(S.players[zid].x < 28.0f);                 /* and did not walk through it */
     printf("PASS: zombie clawed the wall %d times, face x=%.2f normal=(%.0f,%.0f)\n", hits, hit_x, hit_nx, hit_nz);
 
-    /* ---- card #486: a sandbox zombie always hunts, however far the hero is ---- */
+    /* ---- founder 2026-10-04: sandbox zombies wander and get hungry instead of always knowing
+       where the hero is; a close hero is sensed and chased, a far one is found by hunger scent ---- */
     memset(&S, 0, sizeof S);
     S.game_mode = MODE_ZOMBIES;
     S.players[0].active = 1; S.players[0].state = STATE_ALIVE;
@@ -170,10 +171,39 @@ int main(void) {
     witness_ai_reset(4u, 0);
     zid = witness_ai_spawn_zombie(&S, 0.0f, 0.0f, 0.0f, 0);
     witness_ai_force_zombie_mood(zid, 2);
-    for (int i = 0; i < 40; i++) { t += 50; witness_ai_tick(&S, t); walk(0.05f); }
-    assert(S.players[zid].in_fwd > 0.0f);          /* chasing from 900 away (old radius was 400) */
-    assert(S.players[zid].x > 0.5f);               /* and actually moving toward the hero (+x) */
-    printf("PASS: zombie 900 away from the hero still hunts (x=%.1f)\n", S.players[zid].x);
+    float yaw0 = 0.0f; int yaw_changes = 0, stood = 0, moved = 0;
+    float fx0 = 0, fz0 = 0;
+    for (int i = 0; i < 400; i++) {   /* 20 s */
+        t += 50; witness_ai_tick(&S, t); walk(0.05f);
+        assert(S.players[zid].in_fwd <= 0.45f);        /* far zombie shambles, never sprints at a hero it can't sense */
+        if (i == 0 || fabsf(S.players[zid].yaw - yaw0) > 1.0f) { if (i) yaw_changes++; yaw0 = S.players[zid].yaw; }
+        if (S.players[zid].in_fwd == 0.0f) stood++; else moved++;
+        (void)fx0; (void)fz0;
+    }
+    assert(moved > 0);                                 /* it wanders... */
+    assert(yaw_changes >= 2);                          /* ...changing heading */
+    float h_before = witness_ai_zombie_hunger(zid);
+    for (int i = 0; i < 1600; i++) { t += 50; witness_ai_tick(&S, t); walk(0.05f); }   /* +80 s */
+    assert(witness_ai_zombie_hunger(zid) >= 0.4f || S.players[zid].x > 20.0f);  /* hunger climbs while it has no target */
+    float far0 = S.players[0].x - S.players[zid].x;
+    for (int i = 0; i < 24000; i++) { t += 50; witness_ai_tick(&S, t); walk(0.05f); }  /* +20 min */
+    assert(S.players[0].x - S.players[zid].x < far0 - 100.0f || S.players[0].x - S.players[zid].x < 60.0f);
+    printf("PASS: far zombie wanders (%d heading changes, hunger %.2f -> %.2f), scent closed 900 -> %.0f\n",
+           yaw_changes, h_before, witness_ai_zombie_hunger(zid), S.players[0].x - S.players[zid].x);
+    (void)stood;
+
+    /* a hero inside sense range is locked and chased */
+    memset(&S, 0, sizeof S);
+    S.game_mode = MODE_ZOMBIES;
+    S.players[0].active = 1; S.players[0].state = STATE_ALIVE;
+    S.players[0].x = 18.0f; S.players[0].z = 0.0f;
+    nboxes = 1;
+    witness_ai_reset(4u, 0);
+    zid = witness_ai_spawn_zombie(&S, 0.0f, 0.0f, 0.0f, 0);
+    witness_ai_force_zombie_mood(zid, 2);
+    for (int i = 0; i < 60; i++) { t += 50; witness_ai_tick(&S, t); walk(0.05f); }
+    assert(S.players[zid].in_fwd > 0.0f && S.players[zid].x > 0.5f);
+    printf("PASS: zombie 18 from the hero senses it and chases (x=%.1f)\n", S.players[zid].x);
 
     /* ---- card #486: with a building available, zombies spawn out of the hero's sight ---- */
     memset(&S, 0, sizeof S);
