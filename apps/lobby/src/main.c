@@ -13010,12 +13010,20 @@ int main(int argc, char* argv[]) {
                     int max_scroll = level_select_scroll_max();
                     if (level_select_scroll < 0) level_select_scroll = 0;
                     if (level_select_scroll > max_scroll) level_select_scroll = max_scroll;
+                    /* the draw pass snaps scroll back to keep the cursor visible, so the wheel has to
+                       carry the cursor along or it can never scroll past the first rows */
+                    if (level_select_selection < level_select_scroll) level_select_selection = level_select_scroll;
+                    if (level_select_selection >= level_select_scroll + LEVEL_SELECT_VISIBLE_ROWS) level_select_selection = level_select_scroll + LEVEL_SELECT_VISIBLE_ROWS - 1;
+                    if (level_select_selection >= level_select_count) level_select_selection = level_select_count - 1;
                 }
                 if (e.type == SDL_MOUSEWHEEL && spray_select_open) {
                     spray_select_scroll -= e.wheel.y;
                     int max_scroll = spray_select_scroll_max();
                     if (spray_select_scroll < 0) spray_select_scroll = 0;
                     if (spray_select_scroll > max_scroll) spray_select_scroll = max_scroll;
+                    if (spray_select_selection < spray_select_scroll) spray_select_selection = spray_select_scroll;
+                    if (spray_select_selection >= spray_select_scroll + SPRAY_SELECT_VISIBLE_ROWS) spray_select_selection = spray_select_scroll + SPRAY_SELECT_VISIBLE_ROWS - 1;
+                    if (spray_select_selection >= spray_select_count) spray_select_selection = spray_select_count - 1;
                 }
                 if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                     int _rmx, _rmy;
