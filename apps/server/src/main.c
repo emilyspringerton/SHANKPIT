@@ -453,6 +453,15 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
     }
     phys_set_custom_level_materials(mat_names, mat_shaders, mat_specular, mat_shininess, mat_friction, lvl->material_count);
     phys_set_custom_level(x, y, z, w, h, d, r, g, b, material_idx, lvl->count, lvl->ground_plane_enabled, lvl->ground_plane_squares);
+    {   /* oriented boxes / ramps (obb.h): static scratch keeps the 4 extra arrays off the stack */
+        static float orx[LEVEL_BOXES_MAX], ory[LEVEL_BOXES_MAX], orz[LEVEL_BOXES_MAX];
+        static unsigned char oramp[LEVEL_BOXES_MAX];
+        for (int bi = 0; bi < lvl->count; bi++) {
+            orx[bi] = lvl->boxes[bi].rot_x; ory[bi] = lvl->boxes[bi].rot_y; orz[bi] = lvl->boxes[bi].rot_z;
+            oramp[bi] = (unsigned char)(lvl->boxes[bi].ramp ? 1 : 0);
+        }
+        phys_set_custom_level_orient(orx, ory, orz, oramp, lvl->count);
+    }
     {   /* #464: author-placed buggies */
         float bx[LEVEL_BOXES_MAX_BUGGY_SPAWNS], by[LEVEL_BOXES_MAX_BUGGY_SPAWNS], bz[LEVEL_BOXES_MAX_BUGGY_SPAWNS], byaw[LEVEL_BOXES_MAX_BUGGY_SPAWNS];
         for (int bi = 0; bi < lvl->buggy_spawn_count; bi++) {

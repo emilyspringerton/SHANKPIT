@@ -7,6 +7,7 @@
 #include <string.h>
 #include "protocol.h"
 #include "../world/terrain.h"
+#include "obb.h"
 
 #ifndef PHYS_COMBAT_LOG
 #define PHYS_COMBAT_LOG 0
@@ -290,6 +291,17 @@ static int map_count = 0;
 #define CUSTOM_LEVEL_FRACTURE_SLOTS 900
 #define CUSTOM_LEVEL_SLOT_CAP (CUSTOM_LEVEL_MAX_BOXES + 1 + CUSTOM_LEVEL_FRACTURE_SLOTS)
 static Box g_custom_level_geo[CUSTOM_LEVEL_SLOT_CAP];
+// Oriented boxes / ramps (obb.h): g_custom_level_oriented[slot] != 0 means that slot has a real
+// rotation and/or ramp shape in g_custom_level_orient[slot]; 0 (every plain cube, every fracture
+// piece) keeps the exact original axis-aligned code path -- zero behaviour change for old levels.
+static BoxOrient g_custom_level_orient[CUSTOM_LEVEL_SLOT_CAP];
+static unsigned char g_custom_level_oriented[CUSTOM_LEVEL_SLOT_CAP];
+// phys_box_orient -- orientation of map_geo[i] when the active geometry is a custom level and that
+// box is rotated/ramped, else NULL.
+static inline const BoxOrient *phys_box_orient(int i) {
+    if (map_geo != g_custom_level_geo || i < 1 || i >= CUSTOM_LEVEL_SLOT_CAP) return NULL;
+    return g_custom_level_oriented[i] ? &g_custom_level_orient[i] : NULL;
+}
 static float g_custom_level_r[CUSTOM_LEVEL_SLOT_CAP];
 static float g_custom_level_g[CUSTOM_LEVEL_SLOT_CAP];
 static float g_custom_level_b[CUSTOM_LEVEL_SLOT_CAP];
@@ -430,6 +442,7 @@ static inline void phys_set_custom_level(const float *x, const float *y, const f
     memcpy(g_custom_level_orig_geo, g_custom_level_geo, sizeof(Box) * (size_t)(n + 1));
     memset(g_custom_level_uv_off, 0, sizeof(g_custom_level_uv_off));
     memset(g_custom_level_hidden, 0, sizeof(g_custom_level_hidden));
+    memset(g_custom_level_oriented, 0, sizeof(g_custom_level_oriented));
     g_custom_level_ground_plane_enabled = ground_plane_enabled;
     g_custom_level_ground_plane_squares = ground_plane_squares > 0 ? ground_plane_squares : 1;
 }
@@ -443,6 +456,21 @@ static inline void phys_set_custom_level(const float *x, const float *y, const f
 // authored y when closed. box_index is 0-based (matches LevelDoor.box_index); the actual
 // g_custom_level_geo slot is box_index+1 per phys_set_custom_level's own established "index 0 is
 // a dummy" convention.
+// phys_set_custom_level_orient -- call right after phys_set_custom_level with per-box Euler degrees
+// (NOCK rot_x/rot_y/rot_z) and ramp flags, both 0-based like the box arrays. Boxes with all-zero
+// rotation and no ramp stay on the plain AABB path.
+static inline void phys_set_custom_level_orient(const float *rx, const float *ry, const float *rz,
+                                                const unsigned char *ramp, int count) {
+    memset(g_custom_level_oriented, 0, sizeof(g_custom_level_oriented));
+    int n = count > CUSTOM_LEVEL_MAX_BOXES ? CUSTOM_LEVEL_MAX_BOXES : count;
+    for (int i = 0; i < n; i++) {
+        float ax = rx ? rx[i] : 0.0f, ay = ry ? ry[i] : 0.0f, az = rz ? rz[i] : 0.0f;
+        int rp = ramp ? ramp[i] : 0;
+        if (ax == 0.0f && ay == 0.0f && az == 0.0f && !rp) continue;
+        orient_from_euler_deg(&g_custom_level_orient[i + 1], ax, ay, az, rp);
+        g_custom_level_oriented[i + 1] = 1;
+    }
+}
 #define CUSTOM_LEVEL_DOOR_OPEN_Y_OFFSET 1000.0f
 static inline void phys_set_custom_level_box_y(int box_index, int is_open) {
     if (box_index < 0 || box_index >= CUSTOM_LEVEL_MAX_BOXES) return;
@@ -3197,6 +3225,15 @@ static inline int trace_map_boxes(float x1, float y1, float z1, float x2, float 
 
     for (int i = 1; i < map_count; i++) {
         Box b = map_geo[i];
+        const BoxOrient *bo = phys_box_orient(i);
+        if (bo) {
+            float ot, on[3];
+            if (obb_segment_hit(b.x, b.y, b.z, b.w, b.h, b.d, bo, x1, y1, z1, dx, dy, dz, best_t, &ot, on) && ot < best_t) {
+                best_t = ot; hit = 1;
+                best_nx = on[0]; best_ny = on[1]; best_nz = on[2];
+            }
+            continue;
+        }
         float lo_x = b.x - b.w / 2.0f, hi_x = b.x + b.w / 2.0f;
         float lo_y = b.y - b.h / 2.0f, hi_y = b.y + b.h / 2.0f;
         float lo_z = b.z - b.d / 2.0f, hi_z = b.z + b.d / 2.0f;
@@ -3287,6 +3324,15 @@ static inline float phys_sample_ground_height(float x, float z, int *out_source_
     }
     for (int i = 1; i < map_count; i++) {
         Box b = map_geo[i];
+        const BoxOrient *bo = phys_box_orient(i);
+        if (bo) {
+            float oy;
+            if (obb_ground_y(b.x, b.y, b.z, b.w, b.h, b.d, bo, x, z, &oy) && (oy > h || !source_terrain)) {
+                h = oy;
+                source_terrain = 0;
+            }
+            continue;
+        }
         if (x > b.x - b.w/2 && x < b.x + b.w/2 && z > b.z - b.d/2 && z < b.z + b.d/2) {
             float top = b.y + b.h / 2.0f;
             if (top > h || !source_terrain) {
@@ -3714,6 +3760,40 @@ void accelerate(PlayerState *p, float wish_x, float wish_z, float wish_speed, fl
     p->vx += acc_speed * wish_x; p->vz += acc_speed * wish_z;
 }
 
+/* phys_resolve_oriented -- player vs one rotated/ramped box: four stacked spheres (feet to head,
+   radius = player half-width) pushed out of the inflated polytope. Walkable surfaces (normal.y >
+   0.5, i.e. under ~60 degrees -- ramps, tilted tops) lift the player straight up so they climb
+   instead of being shoved backwards; ceilings push down; steep faces act as walls. Returns 1 if
+   the player landed on it this call. */
+static inline int phys_resolve_oriented(PlayerState *p, const Box *b, const BoxOrient *o, float pw, float ph) {
+    int landed = 0;
+    float ys[4] = { pw, ph / 3.0f, 2.0f * ph / 3.0f, ph - pw };
+    for (int iter = 0; iter < 3; iter++) {
+        int moved = 0;
+        for (int k = 0; k < 4; k++) {
+            float n[3], depth;
+            if (!obb_sphere_push(b->x, b->y, b->z, b->w, b->h, b->d, o, p->x, p->y + ys[k], p->z, pw, n, &depth)) continue;
+            moved = 1;
+            if (n[1] > 0.5f) {
+                p->y += depth / n[1];
+                if (p->vy < 0.0f) p->vy = 0.0f;
+                p->on_ground = 1;
+                landed = 1;
+            } else if (n[1] < -0.5f) {
+                p->y -= depth / -n[1];
+                if (p->vy > 0.0f) p->vy = 0.0f;
+            } else {
+                p->x += n[0] * depth;
+                p->z += n[2] * depth;
+                float vn = p->vx * n[0] + p->vz * n[2];
+                if (vn < 0.0f) { p->vx -= vn * n[0]; p->vz -= vn * n[2]; }
+            }
+        }
+        if (!moved) break;
+    }
+    return landed;
+}
+
 void resolve_collision(PlayerState *p) {
     float pw = p->in_vehicle ? 3.0f : PLAYER_WIDTH;
     float ph = p->in_vehicle ? 3.0f : (p->crouching ? (PLAYER_HEIGHT / 2.0f) : PLAYER_HEIGHT);
@@ -3781,6 +3861,14 @@ void resolve_collision(PlayerState *p) {
     }
     for(int i=1; i<map_count; i++) {
         Box b = map_geo[i];
+        const BoxOrient *bo = phys_box_orient(i);
+        if (bo) {
+            if (phys_resolve_oriented(p, &b, bo, pw, ph)) {
+                g_last_ground_source_terrain = 0;
+                p->ground_friction = g_custom_level_material_friction[g_custom_level_material_idx[i]];
+            }
+            continue;
+        }
         if (p->x + pw > b.x - b.w/2 && p->x - pw < b.x + b.w/2 &&
             p->z + pw > b.z - b.d/2 && p->z - pw < b.z + b.d/2) {
             if (p->y < b.y + b.h/2 && p->y + ph > b.y - b.h/2) {

@@ -2716,6 +2716,15 @@ static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
     }
     phys_set_custom_level_materials(mat_names, mat_shaders, mat_specular, mat_shininess, mat_friction, lvl->material_count);
     phys_set_custom_level(x, y, z, w, h, d, r, g, b, material_idx, lvl->count, lvl->ground_plane_enabled, lvl->ground_plane_squares);
+    {   /* oriented boxes / ramps (obb.h): static scratch keeps the 4 extra arrays off the stack */
+        static float orx[LEVEL_BOXES_MAX], ory[LEVEL_BOXES_MAX], orz[LEVEL_BOXES_MAX];
+        static unsigned char oramp[LEVEL_BOXES_MAX];
+        for (int bi = 0; bi < lvl->count; bi++) {
+            orx[bi] = lvl->boxes[bi].rot_x; ory[bi] = lvl->boxes[bi].rot_y; orz[bi] = lvl->boxes[bi].rot_z;
+            oramp[bi] = (unsigned char)(lvl->boxes[bi].ramp ? 1 : 0);
+        }
+        phys_set_custom_level_orient(orx, ory, orz, oramp, lvl->count);
+    }
     g_floor_tinted = lvl->floor_tinted;
     g_floor_rgba[0] = lvl->floor_r; g_floor_rgba[1] = lvl->floor_g; g_floor_rgba[2] = lvl->floor_b; g_floor_rgba[3] = lvl->floor_a;
     {   /* #464: author-placed buggies */
@@ -4533,6 +4542,8 @@ void draw_map(const RetroLightingState *lighting) {
     int glass_count = 0;
     for(int i=1; i<map_count; i++) {
         Box b = map_geo[i];
+        const BoxOrient *bo = phys_box_orient(i); /* rotated / ramp cube (obb.h), else NULL */
+        const int box_litbox = use_litbox && !bo;
         /* Destructible brick (packages/world/brick_fracture.h): a carved authored box is replaced by
            fracture pieces appended after the authored slots. The hidden original is not drawn; a
            piece is drawn like any box but with the texture phase of its parent (uv offset) so the
@@ -4694,6 +4705,11 @@ void draw_map(const RetroLightingState *lighting) {
 
         glPushMatrix();
         glTranslatef(b.x, b.y, b.z);
+        if (bo) {
+            const float *rm = bo->m; /* row-major local->world -> GL column-major */
+            float gm[16] = { rm[0], rm[3], rm[6], 0.0f,  rm[1], rm[4], rm[7], 0.0f,  rm[2], rm[5], rm[8], 0.0f,  0.0f, 0.0f, 0.0f, 1.0f };
+            glMultMatrixf(gm);
+        }
         glScalef(b.w, b.h, b.d);
 
         /* Real wall texture (2026-09-12): same GL_MODULATE-over-lighting approach as
@@ -4720,7 +4736,7 @@ void draw_map(const RetroLightingState *lighting) {
         const float ov = is_fracture_piece ? g_custom_level_uv_off[i][1] * wall_uv_density : 0.0f;
         const float ow = is_fracture_piece ? g_custom_level_uv_off[i][2] * wall_uv_density : 0.0f;
 
-        if (use_litbox) {
+        if (box_litbox) {
             gl_use_program(g_litbox_program);
             float lc[3] = { b.x, b.y, b.z }, ls[3] = { b.w, b.h, b.d };
             float la[3] = { base_r, base_g, base_b };
@@ -4729,6 +4745,43 @@ void draw_map(const RetroLightingState *lighting) {
             gl_uniform3fv(g_litbox_loc_size, ls);
             gl_uniform3fv(g_litbox_loc_albedo, la);
         }
+        if (bo && bo->ramp) {
+            /* NOCK ramp checkbox: a wedge in the cube's own local frame. The slope rises toward
+               local +z (high edge at z=+0.5); solid below. Same unit-cube space the quads below use,
+               so rotation/scale/texture density all carry over. */
+            glBegin(GL_QUADS);
+            glNormal3f(0.0f, -1.0f, 0.0f);   /* bottom */
+            glColor3f(bot_r, bot_g, bot_b);
+            glTexCoord2f(-0.5f*uw + ou,  0.5f*ud + ow); glVertex3f(-0.5,-0.5,0.5);
+            glTexCoord2f( 0.5f*uw + ou,  0.5f*ud + ow); glVertex3f(0.5,-0.5,0.5);
+            glTexCoord2f( 0.5f*uw + ou, -0.5f*ud + ow); glVertex3f(0.5,-0.5,-0.5);
+            glTexCoord2f(-0.5f*uw + ou, -0.5f*ud + ow); glVertex3f(-0.5,-0.5,-0.5);
+            glNormal3f(0.0f, 0.0f, 1.0f);    /* tall back wall */
+            glColor3f(front_r, front_g, front_b);
+            glTexCoord2f(-0.5f*uw + ou, -0.5f*uh + ov); glVertex3f(-0.5,-0.5,0.5);
+            glTexCoord2f( 0.5f*uw + ou, -0.5f*uh + ov); glVertex3f(0.5,-0.5,0.5);
+            glTexCoord2f( 0.5f*uw + ou,  0.5f*uh + ov); glVertex3f(0.5,0.5,0.5);
+            glTexCoord2f(-0.5f*uw + ou,  0.5f*uh + ov); glVertex3f(-0.5,0.5,0.5);
+            glNormal3f(0.0f, 0.7071f, -0.7071f); /* the slope */
+            glColor3f(top_r, top_g, top_b);
+            glTexCoord2f(-0.5f*uw + ou, -0.5f*ud + ow); glVertex3f(-0.5,-0.5,-0.5);
+            glTexCoord2f( 0.5f*uw + ou, -0.5f*ud + ow); glVertex3f(0.5,-0.5,-0.5);
+            glTexCoord2f( 0.5f*uw + ou,  0.5f*ud + ow); glVertex3f(0.5,0.5,0.5);
+            glTexCoord2f(-0.5f*uw + ou,  0.5f*ud + ow); glVertex3f(-0.5,0.5,0.5);
+            glEnd();
+            glBegin(GL_TRIANGLES);
+            glNormal3f(-1.0f, 0.0f, 0.0f);   /* left side */
+            glColor3f(left_r, left_g, left_b);
+            glTexCoord2f(-0.5f*ud + ow, -0.5f*uh + ov); glVertex3f(-0.5,-0.5,-0.5);
+            glTexCoord2f( 0.5f*ud + ow, -0.5f*uh + ov); glVertex3f(-0.5,-0.5,0.5);
+            glTexCoord2f( 0.5f*ud + ow,  0.5f*uh + ov); glVertex3f(-0.5,0.5,0.5);
+            glNormal3f(1.0f, 0.0f, 0.0f);    /* right side */
+            glColor3f(right_r, right_g, right_b);
+            glTexCoord2f( 0.5f*ud + ow, -0.5f*uh + ov); glVertex3f(0.5,-0.5,0.5);
+            glTexCoord2f(-0.5f*ud + ow, -0.5f*uh + ov); glVertex3f(0.5,-0.5,-0.5);
+            glTexCoord2f( 0.5f*ud + ow,  0.5f*uh + ov); glVertex3f(0.5,0.5,0.5);
+            glEnd();
+        } else {
         glBegin(GL_QUADS);
         glNormal3f(0.0f, 1.0f, 0.0f);
         glColor3f(top_r, top_g, top_b);
@@ -4767,11 +4820,12 @@ void draw_map(const RetroLightingState *lighting) {
         glTexCoord2f(-0.5f*ud + ow,  0.5f*uh + ov); glVertex3f(0.5,0.5,-0.5);
         glTexCoord2f( 0.5f*ud + ow,  0.5f*uh + ov); glVertex3f(0.5,0.5,0.5);
         glEnd();
-        if (use_litbox) gl_use_program(0);
+        }
+        if (box_litbox) gl_use_program(0);
         glBindTexture(GL_TEXTURE_2D, 0);
         glDisable(GL_TEXTURE_2D);
 
-        if (!is_fracture_piece) {
+        if (!is_fracture_piece && !(bo && bo->ramp)) {
         glLineWidth(1.2f);
         glColor3f(rear_r * 0.76f, rear_g * 0.80f, rear_b * 0.84f);
         glBegin(GL_LINE_LOOP);
@@ -4797,7 +4851,7 @@ void draw_map(const RetroLightingState *lighting) {
         }
         glPopMatrix();
 
-        if (material_pass_active && i < CUSTOM_LEVEL_SLOT_CAP) {
+        if (material_pass_active && !bo && i < CUSTOM_LEVEL_SLOT_CAP) { /* axis-aligned-only extra passes */
             int mi = g_custom_level_material_idx[i];
             if (mi >= 0 && mi < g_custom_level_material_count) {
                 if (is_ips_light) {

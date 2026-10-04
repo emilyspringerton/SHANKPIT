@@ -185,7 +185,8 @@ static inline void brick_world_init_from_level(const CustomLevelData *lvl) {
     int added = 0;
     for (int i = 0; i < lvl->count && i < BF_MAX_PARENTS; i++) {
         const LevelBox *b = &lvl->boxes[i];
-        if (excluded[i] || brick_world_box_is_slab(b)) continue;
+        /* rotated cubes / ramps are not axis-aligned: fracture pieces would be, so they stay solid */
+        if (excluded[i] || brick_world_box_is_slab(b) || b->ramp || b->rot_x != 0.0f || b->rot_y != 0.0f || b->rot_z != 0.0f) continue;
         if (b->material_idx < 0 || b->material_idx >= lvl->material_count) continue;
         int kind = brick_world_kind_for_material(lvl->materials[b->material_idx].name);
         if (kind < 0) continue;

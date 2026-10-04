@@ -82,6 +82,8 @@ typedef struct {
     int material_idx;    /* index into CustomLevelData.materials, resolved at parse time -- see
                              level_boxes_resolve_material's own doc comment for the real fallback
                              when a wall's own material name isn't in the level's materials array */
+    float rot_x, rot_y, rot_z; /* Euler degrees (three.js XYZ order, matches NOCK rot_x/y/z); 0 = axis-aligned */
+    int ramp;            /* 1 = rendered/collided as a wedge ramp (NOCK "ramp" checkbox); the data stays a cube */
 } LevelBox;
 
 /* S459-58, founder real-time: "add spawners to nock so we can add spawners for ffa" / "actual
@@ -688,6 +690,12 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
         box->w = sx; box->h = sy; box->d = sz;
         box->r = r; box->g = g; box->b = b;
         box->friction = friction;
+        box->rot_x = box->rot_y = box->rot_z = 0.0f;
+        box->ramp = 0;
+        if ((v = level_boxes_find_key(obj_start, obj_end, "rot_x"))) level_boxes_parse_number(v, &box->rot_x);
+        if ((v = level_boxes_find_key(obj_start, obj_end, "rot_y"))) level_boxes_parse_number(v, &box->rot_y);
+        if ((v = level_boxes_find_key(obj_start, obj_end, "rot_z"))) level_boxes_parse_number(v, &box->rot_z);
+        if ((v = level_boxes_find_key(obj_start, obj_end, "ramp"))) level_boxes_parse_bool(v, &box->ramp);
         box->material_idx = level_boxes_resolve_material(out, material_name);
         count++;
         cursor = obj_end + 1;

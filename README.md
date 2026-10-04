@@ -304,6 +304,13 @@ Two world-reacts-to-your-weapon systems, both in the lobby/server build and both
   local match (`--city --third` starts there). `make test-third-person` + a real Xvfb screenshot verify it. Honest
   limits: the V toggle is local-match only (in a networked match `third_person` comes from the server snapshot);
   the old Feb-2026 shoulder-offset reticle/ADS camera is not restored.
+- **Rotated cubes and ramps (not a grid world).** A NOCK cube can carry free rotation (`rot_x/rot_y/rot_z`, Euler degrees, Rotate-mode
+  gizmo with 15-degree snap or arbitrary) and a **Ramp** checkbox (still a cube in the data; a real wedge in game). Server and client
+  physics (`packages/common/obb.h`, shared) collide the player (four stacked spheres), hitscan/`trace_map` and ground height against
+  oriented polytopes; walkable slopes (< 60 degrees) lift the player, steeper faces act as walls; the lobby renderer draws the
+  rotation/wedge. `make test-obb` (pure math + real engine paths, ASan/UBSan). Honest limits: untested in a live GUI/match; rotated
+  cubes skip the glass/emissive/specular extra passes and the per-fragment litbox shader and are never brick-fractured; bots,
+  zombies, projectiles and buggies still treat a rotated cube as its un-rotated AABB.
 - **Destructible brick.** On any level (NOCK/registry level, any mode), a box whose material is `brick`, `concrete`, `wood` or `glass`
   can be shot, blasted and breached (per-kind HP/resistance from PARENA: concrete 120 HP, wood 60, glass 10 and shatters
   on any hit; **glass** also has its own transparent `glass` shader whose cyan RGBA tint is a PARENA function,
