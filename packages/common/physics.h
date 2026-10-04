@@ -22,6 +22,9 @@
  * MAX_SPEED -- a spectator that drifted noticeably slower vertically than it moves horizontally
  * would feel wrong, not a deliberate design choice. */
 #define FLY_SPEED 0.95f
+/* #543: per-tick velocity retention (0.80 = ~0.3s to stop at 60Hz) and vertical ease rate for the free-fly wisp / editor cam. */
+#define SPECTATOR_DRAG 0.80f
+#define SPECTATOR_VERT_EASE 0.35f
 // FRICTION/STOP_SPEED -- S478a, founder real-time: "how hard would it be to increase the
 // friction some at the edges of blocks by default so its a little easier to stick to platforms?
 // right now the physics are so slippery it can be unreasonably hard to parkour." Doubled from the

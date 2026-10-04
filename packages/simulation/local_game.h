@@ -1498,9 +1498,19 @@ void update_entity(PlayerState *p, float dt, void *server_context, unsigned int 
          * noclip mode in most engines already uses. */
         p->x += p->vx;
         p->z += p->vz;
-        if (p->in_jump) p->y += FLY_SPEED;
-        else if (p->crouching) p->y -= FLY_SPEED;
-        p->vy = 0.0f;
+        /* #543 (founder: no friction, you keep flying after letting go of WASD): exponential drag
+         * after integrating, so accelerate() still refills to full speed while a key is held
+         * (top speed unchanged) but release eases to a stop in ~0.3s. Vertical eases toward its
+         * target the same way instead of snapping. Snap-to-zero below a floor so it truly stops. */
+        p->vx *= SPECTATOR_DRAG; p->vz *= SPECTATOR_DRAG;
+        if (fabsf(p->vx) < 0.005f) p->vx = 0.0f;
+        if (fabsf(p->vz) < 0.005f) p->vz = 0.0f;
+        {
+            float vy_target = p->in_jump ? FLY_SPEED : (p->crouching ? -FLY_SPEED : 0.0f);
+            p->vy += (vy_target - p->vy) * SPECTATOR_VERT_EASE;
+            if (fabsf(p->vy) < 0.005f && vy_target == 0.0f) p->vy = 0.0f;
+            p->y += p->vy;
+        }
         p->on_ground = 0;
         if (p->recoil_anim > 0.0f) p->recoil_anim -= 0.1f;
         if (p->recoil_anim < 0.0f) p->recoil_anim = 0.0f;
