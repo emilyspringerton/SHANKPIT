@@ -8,6 +8,9 @@ RUN make server && GOWORK=off CGO_ENABLED=0 go build -o bin/emily-bot ./apps2/em
 FROM debian:12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=build /src/bin/shank_server /src/bin/emily-bot /app/
-COPY var/zombie/nextown_zombies.json /app/var/zombie/nextown_zombies.json
+COPY --from=build /src/bin/shank_server /app/shank_server.real
+COPY --from=build /src/bin/emily-bot /app/
+COPY var/zombie/nextown_zombies.json /app/seed_zombie.json
+COPY ops/docker/server-entrypoint.sh /app/shank_server
 COPY ops/docker/k8s-bot-pool.sh /app/bot-pool.sh
+RUN chmod +x /app/shank_server /app/bot-pool.sh
