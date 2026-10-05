@@ -1,0 +1,39 @@
+name: Build and push image
+
+# K8S-CD-01: pushes the shankpit server image via Cloud Build, auth via Workload Identity (no
+# stored key) -- see EMILY/gitops/CI_SETUP.md for the one-time GCP setup this depends on
+# (already done, 2026-10-05) and the two repo Variables this workflow needs. The in-cluster
+# gitops-autodeploy CronJob (EMILY/gitops/) notices the new tag on its own next poll and
+# redeploys -- this workflow does not need to talk to EMILY at all.
+on:
+  push:
+    branches: [master]
+    paths-ignore: ['**.md', 'docs/**', 'docs2/**']
+  workflow_dispatch: {}
+
+# Scoped per-workflow-file -- see release.yml/tests.yml's own concurrency blocks for the real,
+# found-live bug (2026-08-25) a shared group key across sibling workflows causes.
+concurrency:
+  group: shankpit-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Auth to GCP (Workload Identity, no stored key)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_CI_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build + push
+        run: scripts/build-image.sh "$(git rev-parse --short HEAD)"
