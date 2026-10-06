@@ -873,3 +873,6 @@
 
 ## 2026-10-06
 - Added TYLER Episode 3 ("Don't Check" / "Ne vérifie pas") — full French/English blocking script and 8-beat MODE_TYLER coordinator (`tyler_e03_coldopen.h/.c`, mirrors `tyler_coldopen.*`), plus new level `tyler_e03_dont_check.json`. No rendered VO this session — Piper/TYLER repo not present in this sandbox; voice lines table ships empty and labeled. Not yet wired into `apps/server/src/main.c`'s `--tyler` flag path; not build/run-verified this session (explicit founder direction to skip verification under token pressure). See `docs2/specs/TYLER_EPISODE_3_DONT_CHECK.md`.
+
+## 2026-10-06 (2)
+- Added TYLER flashback "The First Time They Play House" — French/English 8-beat MODE_TYLER coordinator (`tyler_fb01_coldopen.h/.c`) + new interior level (`tyler_fb01_apartment.json`). Chose direct engine placement over an ARPANET archive node (present-tense two-hander scene, no Eastwind Owl documentation framing). No rendered VO, not wired into `--tyler` flag path, not build/run-verified this session. See `docs2/specs/TYLER_FLASHBACK_PLAY_HOUSE.md`.
