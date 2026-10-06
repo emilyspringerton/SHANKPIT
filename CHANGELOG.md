@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-06
+- docs: new SHARED_ENGINE_NORTHSTAR (golden-indexed SHARED-ENGINE-NORTH) — PARENA-first shared
+  engine layer (netcode/reconcile/humanness/itemstat/matchmaking) proposed under
+  SHANKPIT/REDGARDEN/GFD, replacing the manual "canonical / reference copy" convention; BURROW
+  struct/enum/Vec Go emission named as the real blocking dependency for REDGARDEN/GFD cutover.
+  Design only, no code moved (sess-20260923-1030-4a526255)
+
 ## 2026-10-04
 - Ramp-to-cube seam step-up (PHYS_RAMP_STEP_UP) so players leaving a ramp onto a plain cube don't stall at a lip; oriented boxes now resolve before plain ones; seam regression in oriented_boxes_test; TUTORIAL_RAMP verified from its live export (sess-20260923-1030-4a526255)
 - Native rotated cubes + ramps: packages/common/obb.h oriented-polytope collision/trace/ground-height in physics.h, lobby wedge/rotation rendering, level_boxes rot_x/y/z + ramp; make test-obb (sess-20260923-1030-4a526255)
