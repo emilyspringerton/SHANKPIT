@@ -870,3 +870,6 @@
 - Improved multiplayer correctness and feel across multiple iterations: spawn synchronization, jitter diagnostics, parity harness hardening, unified simulation/movement paths, camera-relative movement, and stale-player cleanup (`2fddae0`, `4ff7fca`, `471cec3`, `4dd03e4`, `1376350`, `75b3429`, plus merged PRs #109, #107, #106, #105, #104, #103).
 - Added procedural title-screen background texture work (`bf852d2`, #108).
 - Added a definitive client-server netcode contract spec and follow-up yaw/input convention fixes (`852caf5`, `9d1af28`, #101, #102, #100).
+
+## 2026-10-06
+- Added TYLER Episode 3 ("Don't Check" / "Ne vérifie pas") — full French/English blocking script and 8-beat MODE_TYLER coordinator (`tyler_e03_coldopen.h/.c`, mirrors `tyler_coldopen.*`), plus new level `tyler_e03_dont_check.json`. No rendered VO this session — Piper/TYLER repo not present in this sandbox; voice lines table ships empty and labeled. Not yet wired into `apps/server/src/main.c`'s `--tyler` flag path; not build/run-verified this session (explicit founder direction to skip verification under token pressure). See `docs2/specs/TYLER_EPISODE_3_DONT_CHECK.md`.
