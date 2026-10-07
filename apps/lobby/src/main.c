@@ -11238,12 +11238,12 @@ static void draw_lobby_buttons(int menu_count, const LobbyLayout *layout) {
         }
 
         glColor3f(0.0f, 0.0f, 0.0f);
-        draw_string(lobby_menu_label(i), x + layout->text_x + 2.0f, y + layout->text_y - 2.0f, 5);
+        draw_string(lobby_menu_label(i), x + layout->text_x + 2.0f, y + layout->text_y - 2.0f, 3.5f);
         glColor3f(0.98f, 0.98f, 1.0f);
-        draw_string(lobby_menu_label(i), x + layout->text_x, y + layout->text_y, 5);
+        draw_string(lobby_menu_label(i), x + layout->text_x, y + layout->text_y, 3.5f);
         if (ui_edit_index == i) {
             glColor3f(0.95f, 0.9f, 0.2f);
-            draw_string(ui_edit_buffer, x + layout->text_x, y + layout->icon_size * 0.2f, 5);
+            draw_string(ui_edit_buffer, x + layout->text_x, y + layout->icon_size * 0.2f, 3.5f);
         }
     }
 }
