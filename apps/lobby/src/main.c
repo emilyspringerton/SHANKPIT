@@ -13425,13 +13425,13 @@ int main(int argc, char* argv[]) {
              glClear(GL_COLOR_BUFFER_BIT);
              setup_lobby_2d();
              glColor3f(0, 1, 1); // CYAN TEXT
-             draw_string(lobby_page == 0 ? "SHANKPIT" : (lobby_page == LOBBY_PAGE_CUSTOMIZE ? "SHANKPIT / CUSTOMIZE" : (lobby_page == LOBBY_PAGE_SETTINGS ? "SHANKPIT / SETTINGS" : (lobby_page == LOBBY_PAGE_MODES ? "SHANKPIT / MODES" : "SHANKPIT / APPS"))), LOBBY_LAYOUT.title_x, LOBBY_LAYOUT.title_y, 12);
+             draw_string(lobby_page == 0 ? "SHANKPIT" : (lobby_page == LOBBY_PAGE_CUSTOMIZE ? "SHANKPIT / CUSTOMIZE" : (lobby_page == LOBBY_PAGE_SETTINGS ? "SHANKPIT / SETTINGS" : (lobby_page == LOBBY_PAGE_MODES ? "SHANKPIT / MODES" : "SHANKPIT / APPS"))), LOBBY_LAYOUT.title_x, LOBBY_LAYOUT.title_y, 9);
              lobby_page_toggle_draw();
              lobby_settings_btn_draw();
             lobby_settings_btn_draw();
              if (app_launch_status[0]) {
                  glColor3f(0.95f, 0.9f, 0.2f);
-                 draw_string(app_launch_status, 1040.0f, 80.0f, 4);
+                 draw_string(app_launch_status, 1040.0f, 80.0f, 3);
              }
              int menu_count = lobby_menu_count();
              draw_lobby_buttons(menu_count, &LOBBY_LAYOUT);
@@ -13454,7 +13454,7 @@ int main(int argc, char* argv[]) {
              }
 
              glColor3f(0.4f, 0.6f, 0.7f);
-             draw_string("DOUBLE CLICK TO SELECT MODE", LOBBY_LAYOUT.footer_x, LOBBY_LAYOUT.footer_y, 5);
+             draw_string("DOUBLE CLICK TO SELECT MODE", LOBBY_LAYOUT.footer_x, LOBBY_LAYOUT.footer_y, 3.5f);
              SDL_GL_SwapWindow(win);
         }
         else {
