@@ -11635,14 +11635,14 @@ static void draw_spray_select_overlay(void) {
     glEnd();
 
     glColor3f(1.0f, 0.90f, 0.96f);
-    draw_string("SELECT SPRAY", panel_x + 30.0f, panel_y - 30.0f, 5);
+    draw_string("SELECT SPRAY", panel_x + 30.0f, panel_y - 30.0f, 3.5f);
 
     if (spray_select_error) {
         glColor3f(0.9f, 0.4f, 0.4f);
-        draw_string("NO SPRAYS FOUND", item_x, item_top, 4);
-        draw_string("(EXPORT ONE FROM NOCK'S PROJECTS TAB)", item_x, item_top - 24.0f, 3);
+        draw_string("NO SPRAYS FOUND", item_x, item_top, 3);
+        draw_string("(EXPORT ONE FROM NOCK'S PROJECTS TAB)", item_x, item_top - 24.0f, 2.3f);
         glColor3f(0.97f, 0.75f, 0.90f);
-        draw_string("ESC TO BACK", panel_x + 22.0f, panel_y - panel_h + 16.0f, 3);
+        draw_string("ESC TO BACK", panel_x + 22.0f, panel_y - panel_h + 16.0f, 2.3f);
         return;
     }
 
@@ -11668,13 +11668,13 @@ static void draw_spray_select_overlay(void) {
             glEnd();
         }
         glColor3f(0.95f, 0.90f, 0.92f);
-        draw_string(spray_select_entries[i].name, item_x + 12.0f, y + 29.0f, 5);
+        draw_string(spray_select_entries[i].name, item_x + 12.0f, y + 29.0f, 3.5f);
         if (spray_select_entries[i].id == g_selected_spray_id) {
             glColor3f(0.92f, 0.62f, 0.86f);
-            draw_string("ACTIVE", item_x + item_w - 70.0f, y + 29.0f, 3);
+            draw_string("ACTIVE", item_x + item_w - 70.0f, y + 29.0f, 2.3f);
         } else if (spray_select_entries[i].is_default) {
             glColor3f(0.62f, 0.86f, 0.97f);
-            draw_string("DEFAULT", item_x + item_w - 80.0f, y + 29.0f, 3);
+            draw_string("DEFAULT", item_x + item_w - 80.0f, y + 29.0f, 2.3f);
         }
     }
 
@@ -11695,7 +11695,7 @@ static void draw_spray_select_overlay(void) {
     }
 
     glColor3f(0.97f, 0.75f, 0.90f);
-    draw_string("ENTER TO SELECT / ESC TO BACK", panel_x + 22.0f, panel_y - panel_h + 16.0f, 3);
+    draw_string("ENTER TO SELECT / ESC TO BACK", panel_x + 22.0f, panel_y - panel_h + 16.0f, 2.3f);
 }
 
 void net_init() {
