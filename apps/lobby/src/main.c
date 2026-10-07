@@ -10585,7 +10585,7 @@ static void draw_pause_overlay(void) {
     glEnd();
     glDisable(GL_BLEND);
     glColor3f(0.0f, 1.0f, 1.0f);
-    draw_string("PAUSED", 427, 478, 12);
+    draw_string("PAUSED", 427, 478, 9);
     char ambient_label[40];
     {   /* "AMBIENT LIGHT: [#####-----]" -- a bar so it reads as a slider */
         char bar[11];
@@ -10605,17 +10605,17 @@ static void draw_pause_overlay(void) {
         "QUIT TO LOBBY"
     };
     for (int i = 0; i < PAUSE_ITEMS; i++) {
-        float y = 392.0f - (float)i * 32.0f;   /* nine items at size 4: the menu grew from 6 items at size 6 */
+        float y = 392.0f - (float)i * 32.0f;   /* nine items, now size 3: was size 4, size 6 before that */
         if (i == g_pause_sel) {
             glColor3f(1.0f, 1.0f, 0.0f);
-            draw_string(">", 296, y, 4);
+            draw_string(">", 296, y, 3);
         } else {
             glColor3f(0.65f, 0.65f, 0.65f);
         }
-        draw_string(items[i], 330, y, 4);
+        draw_string(items[i], 330, y, 3);
     }
     glColor3f(0.38f, 0.38f, 0.38f);
-    draw_string("ESC: RESUME   ENTER: SELECT   LEFT/RIGHT: AMBIENT", 300, 92, 3);
+    draw_string("ESC: RESUME   ENTER: SELECT   LEFT/RIGHT: AMBIENT", 300, 92, 2.3f);
     glEnable(GL_DEPTH_TEST);
     glMatrixMode(GL_PROJECTION); glPopMatrix();
     glMatrixMode(GL_MODELVIEW); glPopMatrix();
