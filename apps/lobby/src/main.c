@@ -11516,14 +11516,14 @@ static void draw_level_select_overlay(void) {
     glEnd();
 
     glColor3f(0.85f, 0.95f, 1.0f);
-    draw_string("SELECT LEVEL", panel_x + 30.0f, panel_y - 30.0f, 5);
+    draw_string("SELECT LEVEL", panel_x + 30.0f, panel_y - 30.0f, 3.5f);
 
     if (level_select_error) {
         glColor3f(0.9f, 0.4f, 0.4f);
-        draw_string("NO LEVELS FOUND", item_x, item_top, 4);
-        draw_string("(REGISTRY UNREACHABLE OR EMPTY)", item_x, item_top - 24.0f, 3);
+        draw_string("NO LEVELS FOUND", item_x, item_top, 3);
+        draw_string("(REGISTRY UNREACHABLE OR EMPTY)", item_x, item_top - 24.0f, 2.3f);
         glColor3f(0.62f, 0.86f, 0.97f);
-        draw_string("ESC TO BACK", panel_x + 22.0f, panel_y - panel_h + 16.0f, 3);
+        draw_string("ESC TO BACK", panel_x + 22.0f, panel_y - panel_h + 16.0f, 2.3f);
         return;
     }
 
@@ -11549,10 +11549,10 @@ static void draw_level_select_overlay(void) {
             glEnd();
         }
         glColor3f(0.90f, 0.92f, 0.95f);
-        draw_string(level_select_entries[i].name, item_x + 12.0f, y + 29.0f, 5);
+        draw_string(level_select_entries[i].name, item_x + 12.0f, y + 29.0f, 3.5f);
         char wc[32];
         snprintf(wc, sizeof(wc), "%d BOX", level_select_entries[i].wall_count);
-        draw_string(wc, item_x + item_w - 90.0f, y + 29.0f, 3);
+        draw_string(wc, item_x + item_w - 90.0f, y + 29.0f, 2.3f);
     }
 
     if (level_select_count > LEVEL_SELECT_VISIBLE_ROWS) {
@@ -11572,7 +11572,7 @@ static void draw_level_select_overlay(void) {
     }
 
     glColor3f(0.62f, 0.86f, 0.97f);
-    draw_string("ENTER TO PLAY / ESC TO BACK", panel_x + 22.0f, panel_y - panel_h + 16.0f, 3);
+    draw_string("ENTER TO PLAY / ESC TO BACK", panel_x + 22.0f, panel_y - panel_h + 16.0f, 2.3f);
 }
 
 // Spray select overlay (S459-23) -- mirrors draw_level_select_overlay's own exact shape/layout,
