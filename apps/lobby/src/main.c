@@ -11385,7 +11385,7 @@ static void draw_skin_chooser_overlay() {
     glEnd();
 
     glColor3f(0.85f, 0.95f, 1.0f);
-    draw_string("CHOOSE SKIN", panel_x + 30.0f, panel_y - 30.0f, 5);
+    draw_string("CHOOSE SKIN", panel_x + 30.0f, panel_y - 30.0f, 3.5f);
 
     int visible_skin_count = skin_menu_visible_skin_count();
     int entry_count = skin_menu_row_count();
@@ -11412,9 +11412,9 @@ static void draw_skin_chooser_overlay() {
             glEnd();
         }
         glColor3f(0.05f, 0.05f, 0.06f);
-        draw_string(SKIN_LABELS[i], item_x + 12.0f, y + 29.0f, 5);
+        draw_string(SKIN_LABELS[i], item_x + 12.0f, y + 29.0f, 3.5f);
         if (is_active) {
-            draw_string("< ACTIVE >", item_x + item_w - 120.0f, y + 29.0f, 4);
+            draw_string("< ACTIVE >", item_x + item_w - 120.0f, y + 29.0f, 3);
         }
     }
 
@@ -11432,7 +11432,7 @@ static void draw_skin_chooser_overlay() {
         glEnd();
     }
     glColor3f(0.05f, 0.05f, 0.06f);
-    draw_string("BACK", item_x + 12.0f, back_y + 29.0f, 5);
+    draw_string("BACK", item_x + 12.0f, back_y + 29.0f, 3.5f);
 
     if (entry_count > visible_skin_count) {
         float track_x = panel_x + panel_w - 12.0f;
@@ -11451,7 +11451,7 @@ static void draw_skin_chooser_overlay() {
     }
 
     glColor3f(0.62f, 0.86f, 0.97f);
-    draw_string("MOUSEWHEEL / UP-DOWN TO SCROLL", panel_x + 22.0f, panel_y - panel_h + 16.0f, 3);
+    draw_string("MOUSEWHEEL / UP-DOWN TO SCROLL", panel_x + 22.0f, panel_y - panel_h + 16.0f, 2.3f);
 }
 
 // --- Level select overlay (founder real-time: "ok i need the level selection interface in
