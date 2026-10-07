@@ -11269,9 +11269,9 @@ static void lobby_page_toggle_draw(void) {
     glColor3f(0.2f, 0.6f, 0.6f); // light teal, matching draw_lobby_buttons' own palette
     glRectf(x, y, x + w, y + h);
     glColor3f(0.0f, 0.0f, 0.0f);
-    draw_string(lobby_page == 0 ? "APPS >" : "< GAMES", x + 16.0f + 2.0f, y + h * 0.5f - 2.0f, 5);
+    draw_string(lobby_page == 0 ? "APPS >" : "< GAMES", x + 16.0f + 2.0f, y + h * 0.5f - 2.0f, 3.5f);
     glColor3f(0.98f, 0.98f, 1.0f);
-    draw_string(lobby_page == 0 ? "APPS >" : "< GAMES", x + 16.0f, y + h * 0.5f, 5);
+    draw_string(lobby_page == 0 ? "APPS >" : "< GAMES", x + 16.0f, y + h * 0.5f, 3.5f);
 }
 
 // SETTINGS button -- directly under the APPS/< GAMES toggle (card #480).
@@ -11285,9 +11285,9 @@ static void lobby_settings_btn_draw(void) {
     glColor3f(0.2f, 0.6f, 0.6f);
     glRectf(x, y, x + w, y + h);
     glColor3f(0.0f, 0.0f, 0.0f);
-    draw_string("SETTINGS", x + 14.0f + 2.0f, y + h * 0.5f - 2.0f, 4);
+    draw_string("SETTINGS", x + 14.0f + 2.0f, y + h * 0.5f - 2.0f, 3);
     glColor3f(0.98f, 0.98f, 1.0f);
-    draw_string("SETTINGS", x + 14.0f, y + h * 0.5f, 4);
+    draw_string("SETTINGS", x + 14.0f, y + h * 0.5f, 3);
 }
 static int lobby_settings_btn_hit_test(float mx, float my) {
     if (lobby_page == LOBBY_PAGE_SETTINGS) return 0;
