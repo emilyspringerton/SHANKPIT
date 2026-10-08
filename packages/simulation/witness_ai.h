@@ -94,12 +94,30 @@
  *    with a separate `targeting_hero` flag that only the hero-sense branch sets, so melee can never
  *    fire from a zombie merely standing near a marker with no hero anywhere close. Real, still
  *    open, same honest scope BIG_O's own §10 named: no projectile/arc, no citizen/Men reaction to a
- *    commanded zombie, no acoustic pingers/hormone emitter. Only genuinely unbuilt BIG_O system
- *    left in this family now: the basement/lab's **async multi-crew shadow war** (two players'/
- *    crews' vector armies auto-resolving server-side, Elo, DEADWEIGHT/BRAWLPIT league pattern,
- *    BIG_O/NORTHSTAR.md §1/§4) -- a genuinely different, bigger thing than the lab equipment
- *    simulation above, which is per-player/per-crew, not competitive. See BIG_O/NORTHSTAR.md for
- *    the full account of what BIG_O itself still has that SHANKPIT doesn't. */
+ *    commanded zombie, no acoustic pingers/hormone emitter. ~~Basement shadow war, entirely
+ *    unbuilt~~ -- **closed (bot-only v0), same-day continuation (2026-10-08, "continue full
+ *    game")**. The LAB level's new 7th station, WAR TERMINAL (LABST_WAR, lab_station_host.c),
+ *    deploys the player's whole clone roster (packages/common/phone.h's own Phone.clones[]/
+ *    clone_traits[]) against a same-size deterministic bot army over the new shadow_war_host.{c,h}
+ *    + PARENA/stdlib/big_o/shadow_war.prn (unit power, ADVANCE/HOLD/SCATTER multipliers, per-tick
+ *    damage, the deploy gate -- all PARENA; Elo stays plain host C, same judgment call lab_sim.c's
+ *    own float curves already made). Real, checked-first finding before writing any of it: this
+ *    was genuinely unbuilt everywhere, not just here -- BIG_O's own NORTHSTAR.md still lists it
+ *    "Deferred, named" too, and BIG_O/docs/SHIP_PLAN.md's own 2026-10-01 multi-agent attempt at
+ *    this exact package (W1 shadow_war) left no artifact in either repo, confirmed via git log
+ *    before starting, not assumed abandoned. Real, still open, named plainly, not the smaller
+ *    thing this bullet's own title might suggest: this is bot-only, NOT the "two players'/crews'
+ *    vector armies" competitive async PvP BIG_O/NORTHSTAR.md §1/§4 actually describes -- real
+ *    cross-session human-vs-human matchmaking needs IDUNA-backed persistence (an Elo
+ *    ladder/match queue), which SHIP_PLAN.md itself scoped as separate Phase-2/IDUNA integration
+ *    work, not this package's own deliverable. "Quality" as a third unit dimension (SHIP_PLAN.md's
+ *    own W1 sketch) has no real source in the lab yet (no amplification/tiering mechanic on a
+ *    spliced clone exists) -- only base x trait is modeled. Aggregate army power only, no
+ *    individual unit death or positional/grid combat. With this closed, there is no longer a
+ *    single named BIG_O system left entirely unbuilt in this family -- remaining gaps are now all
+ *    narrower, named follow-ups on already-live systems (see this doc comment throughout) rather
+ *    than a whole missing system. See BIG_O/NORTHSTAR.md for the full account of what BIG_O itself
+ *    still has that SHANKPIT doesn't. */
 
 #include "../common/protocol.h"
 #include "../world/level_boxes.h" /* CustomLevelData, level_boxes_zone_for_position -- phase 7c */

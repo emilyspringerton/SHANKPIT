@@ -118,6 +118,14 @@
  * never feeds the awareness compass/intensity readout that event family drives. */
 #define REFLUX_ACTION_PHEROMONE_THROWN 110      /* a = thrower player_id, b = marker slot index, c unused */
 
+/* The basement's shadow war (BIG_O/NORTHSTAR.md Sec.1/4; SHANKPIT docs2/specs/
+ * BIGO_ENGINE_MERGE_NORTHSTAR.md Sec.3's own "entirely unstarted" gap) resolving a battle --
+ * dispatched from shadow_war_deploy the instant a deterministic bot battle finishes (win, loss
+ * or draw), matching every other meaningful-event-gets-a-REFLUX-action precedent in this file.
+ * No subscriber yet -- same honest "reserved for a future HUD/league consumer" shape
+ * REFLUX_ACTION_ZOMBIE_SPAWNED carried before zombies_hud_bridge.c became its first real one. */
+#define REFLUX_ACTION_SHADOW_WAR_RESOLVED 111    /* a = player_id, b = SHADOW_WAR_RESULT_*, c = new elo */
+
 #define REFLUX_LOG_CAPACITY 256
 
 typedef struct {

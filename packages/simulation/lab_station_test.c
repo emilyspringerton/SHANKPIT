@@ -38,13 +38,22 @@ int main(void) {
     assert(level_boxes_parse_json(json, lvl));
     assert(lvl->lab_station_count == 2 && lvl->lab_stations[0].kind == LABST_VAT && lvl->lab_stations[1].kind == LABST_CONSOLE && lvl->lab_stations[1].x == -4.0f);
     if (level_boxes_load_from_file("var/lab/lab.json", lvl)) {
-        assert(lvl->lab_station_count == 8);
-        int seen[6] = {0};
+        assert(lvl->lab_station_count == 9);
+        int seen[7] = {0};
         for (int i = 0; i < lvl->lab_station_count; i++) seen[lvl->lab_stations[i].kind]++;
-        for (int k = 0; k < 6; k++) assert(seen[k] >= 1);
-        printf("real var/lab/lab.json: %d stations, all 6 kinds present\n", lvl->lab_station_count);
+        for (int k = 0; k < 7; k++) assert(seen[k] >= 1);
+        printf("real var/lab/lab.json: %d stations, all 7 kinds present\n", lvl->lab_station_count);
     } else printf("var/lab/lab.json not present: skipped real-level check\n");
     free(lvl);
+
+    /* LABST_WAR (shadow_war_host.h) -- no clones yet, refuses; splice one, deploy, elo moves off 0 */
+    Phone w; phone_init(&w);
+    LabStationResult wr;
+    lab_station_use(&w, LABST_WAR, &wr); assert(!wr.used && w.shadow_war_elo == 0);
+    w.samples[0] = 1;
+    lab_station_use(&w, LABST_SPLICE, &wr); assert(wr.used && w.clone_count == 1);
+    lab_station_use(&w, LABST_WAR, &wr);
+    assert(wr.used && w.clone_count == 0 && w.shadow_war_elo != 0 && strstr(wr.msg, "WAR"));
     printf("lab_station_test OK\n");
     return 0;
 }

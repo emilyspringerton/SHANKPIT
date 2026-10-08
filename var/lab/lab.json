@@ -460,6 +460,36 @@
    "friction": 0.8,
    "material": "ips_light",
    "name": "lab_console"
+  },
+  {
+   "id": 33,
+   "x": -70,
+   "y": 3.8,
+   "z": -185,
+   "sx": 3,
+   "sy": 3.6,
+   "sz": 3,
+   "r": 0.5,
+   "g": 0.1,
+   "b": 0.08,
+   "friction": 0.8,
+   "material": "concrete",
+   "name": "war_pedestal"
+  },
+  {
+   "id": 34,
+   "x": -70,
+   "y": 6.4,
+   "z": -185,
+   "sx": 2,
+   "sy": 2,
+   "sz": 2,
+   "r": 0.95,
+   "g": 0.15,
+   "b": 0.1,
+   "friction": 0.8,
+   "material": "ips_light",
+   "name": "lab_war"
   }
  ],
  "spawners": [
@@ -519,6 +549,12 @@
    "kind": "console",
    "x": -84.8,
    "y": 8.7,
+   "z": -185
+  },
+  {
+   "kind": "war",
+   "x": -70,
+   "y": 7.4,
    "z": -185
   }
  ],

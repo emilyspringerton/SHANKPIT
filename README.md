@@ -496,15 +496,45 @@ pickup sound or on-screen prompt.
 
 ## BIG_O LAB level (2026-10-02)
 
-`shank_lobby --lab` (or SURVIVAL -> MODES -> LAB) loads the **LAB** level: INTERRIOR_1 cloned and dressed with six lab station
+`shank_lobby --lab` (or SURVIVAL -> MODES -> LAB) loads the **LAB** level: INTERRIOR_1 cloned and dressed with seven lab station
 widgets created programmatically through IDUNA's `LevelStore`/`WidgetStore` API (`IDUNA/cmd/shankpit-lab-builder`, run on a DB
 copy; the result is checked in as `var/lab/lab.json`, and a registry level named LAB wins if one is published). Tiles named
 `lab_<kind>` export as `lab_stations`; walk up and press **E**: SPLICE bench (sample -> clone), CENTRIFUGE (2 samples -> 1 of the
-next type), PCR (amplify), CLONE VAT (decant a clone, +25 hp), SAMPLE FRIDGE (read-out), CONSOLE (opens the phone's LAB app). Every
-rule is PARENA (`PARENA/stdlib/big_o/lab_station_rules.prn` -> `packages/simulation/lab_station_rules.c`; `make test-lab-station`,
+next type), PCR (amplify), CLONE VAT (decant a clone, +25 hp), SAMPLE FRIDGE (read-out), CONSOLE (opens the phone's LAB app), WAR
+TERMINAL (deploys your whole clone roster into the shadow war, see below). Every rule is PARENA
+(`PARENA/stdlib/big_o/lab_station_rules.prn` -> `packages/simulation/lab_station_rules.c`; `make test-lab-station`,
 `regen-lab-station`, `check-lab-station`). The BIG_O phone (P) and the Orb (backquote) work inside the lab; ZOMBIES kills feed the
 same samples. Status: headless-verified (renders, E on the splice bench splices); **not published to the live registry** (needs an
-IDUNA deploy + admin write), the station art is blocky placeholder boxes, and there is no pheromone army / shadow-war yet.
+IDUNA deploy + admin write), and the station art is blocky placeholder boxes.
+
+## Basement shadow war (2026-10-08, "continue full game")
+
+The basement's **async shadow war** (BIG_O/NORTHSTAR.md §1/§4: "splice, breed, deploy, command via pheromones", ending in "an
+algorithmic shadow war") is live as a real, deterministic battle sim, closing the one BIG_O system
+`docs2/specs/BIGO_ENGINE_MERGE_NORTHSTAR.md` §3 and this engine's own gap ledger (`packages/simulation/witness_ai.h`) both still
+named as entirely unbuilt. Walk up to the LAB's new **WAR TERMINAL** and press **E**: your whole clone roster (base x trait,
+`packages/common/phone.h`'s own `Phone.clones[]`/`clone_traits[]`) deploys against a same-size bot "rival cell" army, both sides
+pick a command (ADVANCE/HOLD/SCATTER) and the battle resolves instantly over up to 20 deterministic ticks -- a win, loss or draw,
+an Elo rating (starts at 1200, floored at 100) that actually moves, and every clone sent is expended either way. Every rule --
+unit power (BRUTE > HOUND > SCAVENGER at every trait; a non-obvious one: at equal power, HOLD actually blunts ADVANCE, not the
+other way around), command multipliers, per-tick damage, the deploy gate -- is PARENA (`PARENA/stdlib/big_o/shadow_war.prn` ->
+`packages/simulation/shadow_war_rules.c`; `make test-shadow-war`, `regen-shadow-war`, `check-shadow-war`). Elo itself stays plain
+host math (`packages/simulation/shadow_war_host.c`) for the same reason `lab_sim.c`'s own curves did: it needs real
+exponentiation, not PARENA's integer-only scalar model. Dispatches `REFLUX_ACTION_SHADOW_WAR_RESOLVED` (no subscriber yet, same
+"reserved for later" shape most new REFLUX actions in this engine start with).
+
+**Verified, not just compiled:** `make test-shadow-war` (determinism, mirror-army symmetry, the HOLD-blunts-ADVANCE property, a
+strict-superset army never doing worse, a malformed/out-of-range army never crashing, Elo sanity including the floor, bot-policy
+determinism) and `make test-lab-station` (the real WAR TERMINAL path through a live `Phone`, end to end) are both ASan/UBSan
+clean, and both PARENA regens are byte-identical on a second run. `make server` is unaffected (the lab/war system is client-local
+only, same as the rest of the phone/lab). **Real, honest, deliberately NOT built here:** this is bot-only -- real two-human-crew
+async PvP needs cross-session persistence (an IDUNA-backed match queue/Elo ladder), which is separate, scoped follow-up work, not
+this pass's job; "quality" as a third unit dimension (named in `BIG_O/docs/SHIP_PLAN.md`'s own sketch of this system) has no real
+source anywhere in the lab yet, so it isn't modeled, only base x trait; a battle is two aggregate power pools draining each
+other, not individual units dying one at a time or a positional/grid fight; and the WAR TERMINAL's own client-side widget (placed
+in `var/lab/lab.json` directly, since this sandbox has no reliable path to the live NOCK registry) is pattern-matched against
+already-compiling sibling code, not build-verified through a real SDL2/GL `make lobby` (same pre-existing, unrelated missing-
+EDITOR.GAME-checkout blocker named throughout this README).
 
 ## Architect's Orb -- EduVM scripting terminal (2026-10-02)
 

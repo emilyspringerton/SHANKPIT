@@ -133,10 +133,12 @@ typedef struct {
 typedef struct { float x, y, z, yaw; } LevelBuggySpawn;
 
 /* SECTION 592: interactive BIG_O lab stations (IDUNA export "lab_stations": walls named lab_<kind>). kind uses the
-   PARENA lab_station_rules.prn numbering: 0 splice 1 centrifuge 2 pcr 3 vat 4 fridge 5 console. */
+   PARENA lab_station_rules.prn numbering: 0 splice 1 centrifuge 2 pcr 3 vat 4 fridge 5 console.
+   6 "war" (LABST_WAR, shadow_war_host.h) is SHANKPIT-native, added after SECTION 592 shipped --
+   its own rules are shadow_war.prn, not lab_station_rules.prn, so that kind numbering is untouched. */
 #define LEVEL_BOXES_MAX_LAB_STATIONS 32
 typedef struct { int kind; float x, y, z; } LevelLabStation;
-static const char *const LEVEL_LAB_STATION_NAMES[6] = { "splice", "centrifuge", "pcr", "vat", "fridge", "console" };
+static const char *const LEVEL_LAB_STATION_NAMES[7] = { "splice", "centrifuge", "pcr", "vat", "fridge", "console", "war" };
 
 #define LEVEL_BOXES_MAX_DOORS 16
 #define LEVEL_BOXES_SCRIPT_PATH_LEN 256
@@ -802,7 +804,7 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
                         lv = level_boxes_skip_ws(lv);
                         if (*lv == '"') {
                             lv++;
-                            for (int k = 0; k < 6; k++) {
+                            for (int k = 0; k < 7; k++) {
                                 size_t n = strlen(LEVEL_LAB_STATION_NAMES[k]);
                                 if (strncmp(lv, LEVEL_LAB_STATION_NAMES[k], n) == 0 && lv[n] == '"') { ls->kind = k; break; }
                             }

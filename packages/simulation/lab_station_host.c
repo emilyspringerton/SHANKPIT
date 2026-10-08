@@ -1,5 +1,7 @@
 #include "lab_station_host.h"
+#include "shadow_war_host.h"
 #include <stdio.h>
+#include <string.h>
 
 int labst_can_use(int, int, int, int);
 int labst_sample_delta(int);
@@ -19,14 +21,24 @@ int lab_station_pick_base(const Phone *p) {
 }
 
 void lab_station_use(Phone *p, int kind, LabStationResult *r) {
-    static const char *const NAMES[6] = { "SPLICE", "CENTRIFUGE", "PCR", "VAT", "FRIDGE", "CONSOLE" };
+    static const char *const NAMES[7] = { "SPLICE", "CENTRIFUGE", "PCR", "VAT", "FRIDGE", "CONSOLE", "WAR" };
     r->used = 0; r->heal = 0; r->open_phone = 0; r->base = -1; r->msg[0] = 0;
-    if (kind < 0 || kind > 5) return;
+    if (kind < 0 || kind > 6) return;
     int base = lab_station_pick_base(p);
     r->base = base;
     if (kind == LABST_FRIDGE) {
         snprintf(r->msg, sizeof r->msg, "FRIDGE S%d/%d/%d", p->samples[0], p->samples[1], p->samples[2]);
         r->used = 1;
+        return;
+    }
+    if (kind == LABST_WAR) {
+        /* its own system (shadow_war_host.h), not lab_station_rules.prn -- see this file's own
+         * enum doc comment in lab_station_host.h. */
+        ShadowWarDeployResult wr;
+        shadow_war_deploy(p, &p->shadow_war_elo, 0 /* local sandbox hero is always slot 0 */, &wr);
+        strncpy(r->msg, wr.msg, sizeof(r->msg) - 1);
+        r->msg[sizeof(r->msg) - 1] = 0;
+        r->used = wr.ok;
         return;
     }
     if (!labst_can_use(kind, base, p->samples[base], p->clone_count)) {

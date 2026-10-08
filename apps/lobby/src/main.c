@@ -9033,8 +9033,8 @@ static void draw_orb_overlay(void) {
 }
 
 /* ---- LAB stations (SECTION 592 / card #508) ---- */
-static const char *const LAB_STATION_LABELS[6] = { "SPLICE BENCH", "CENTRIFUGE", "PCR THERMOCYCLER", "CLONE VAT", "SAMPLE FRIDGE", "CONSOLE" };
-static const float LAB_STATION_RGB[6][3] = { {0.2f,0.9f,0.5f}, {0.9f,0.3f,0.25f}, {0.9f,0.8f,0.2f}, {0.2f,0.8f,0.9f}, {0.85f,0.88f,0.9f}, {0.3f,0.6f,0.95f} };
+static const char *const LAB_STATION_LABELS[7] = { "SPLICE BENCH", "CENTRIFUGE", "PCR THERMOCYCLER", "CLONE VAT", "SAMPLE FRIDGE", "CONSOLE", "WAR TERMINAL" };
+static const float LAB_STATION_RGB[7][3] = { {0.2f,0.9f,0.5f}, {0.9f,0.3f,0.25f}, {0.9f,0.8f,0.2f}, {0.2f,0.8f,0.9f}, {0.85f,0.88f,0.9f}, {0.3f,0.6f,0.95f}, {0.95f,0.15f,0.1f} };
 
 /* nearest station within the PARENA reach (labst_reach_tenths) of the hero, or -1 */
 static int lab_nearest_station(void) {

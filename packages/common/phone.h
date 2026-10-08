@@ -107,6 +107,9 @@ typedef struct {
     char notes[BP_NOTE_LINES][48];
     int samples[3];          /* harvested sample counts per type (fed by the host; 0 until harvesting exists) */
     int clones[BP_CLONES]; int clone_count; int clone_traits[BP_CLONES];
+    int shadow_war_elo;      /* SHANKPIT-native, not part of the original BIG_O port: the basement
+                               * shadow war's own rating (shadow_war_host.h). 0 = never fought,
+                               * lazily seeded to SHADOW_WAR_ELO_DEFAULT (1200) on first deploy. */
     int cargo[BP_INV_SLOTS]; int cargo_count;   /* CARGO's own real content -- FoodItemId values */
     int costume;             /* worn costume index */
     int weapons_owned;       /* bitmask, mirrored from server */
