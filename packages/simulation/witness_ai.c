@@ -21,6 +21,12 @@ typedef struct {
     int player_id;
     int npc_index;   /* index into g_sim.n[] */
     NpcBrain brain;
+    int men_last_target_pid; /* The Men only (brain.archetype == NPC_ARCHETYPE_THE_MEN): the
+        player_id this Man was hunting as of last tick, or -1. Lets the dispatch loop fire
+        REFLUX_ACTION_MEN_DISPATCHED once per real new-target edge instead of every tick a Man
+        spends still chasing the SAME target. Explicitly set in spawn_human, not left to memset's
+        zero -- 0 is a real, reachable player_id (the hero's), unlike every other "-1 = none"
+        sentinel in this file. */
 } WitnessAiCitizen;
 
 typedef struct {
@@ -281,6 +287,7 @@ static int spawn_human(ServerState *s, NpcArchetype archetype, int zone, int bas
     c->active = 1;
     c->player_id = slot;
     c->npc_index = npc_index;
+    c->men_last_target_pid = -1;
     npc_brain_init(&c->brain, archetype, now_ms);
     return slot;
 }
@@ -1147,6 +1154,11 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
                 giant_bug_eat_zombie(&bug->bstate, &prey->zstate, now_ms);
                 printf("[GIANT BUG] player=%d ate zombie player=%d -- strength=%.2f speed=%.2f\n",
                        bug->player_id, prey->player_id, bug->bstate.strength, bug->bstate.speed);
+                /* REFLUX_ACTION_GIANT_BUG_ATE_ZOMBIE -- fired exactly once per real meal, the same
+                   instant this entity's own real eat-to-grow mechanic fires, not on a timer.
+                   Founder real-time 2026-10-08 continuation: "Giant Zombie Bug/The Men REFLUX
+                   events" (EMILY/BACKLOG.md #4450's own named still-open item). */
+                reflux_dispatch(REFLUX_ACTION_GIANT_BUG_ATE_ZOMBIE, bug->player_id, prey->player_id, 0);
                 prey->active = 0;
                 s->players[prey->player_id].active = 0;
             }
@@ -1270,7 +1282,19 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
             }
         }
 
-        if (target_ci < 0) { mp->in_fwd = 0.0f; continue; }
+        if (target_ci < 0) { mp->in_fwd = 0.0f; man->men_last_target_pid = -1; continue; }
+
+        /* REFLUX_ACTION_MEN_DISPATCHED -- fired once on the real edge where this Man acquires a
+           NEW hunt target (no target before, or a different citizen than last tick), not every
+           tick spent still closing on the same one. Founder real-time 2026-10-08 continuation:
+           "Giant Zombie Bug/The Men REFLUX events" (EMILY/BACKLOG.md #4450). */
+        {
+            int target_pid = g_citizens[target_ci].player_id;
+            if (target_pid != man->men_last_target_pid) {
+                reflux_dispatch(REFLUX_ACTION_MEN_DISPATCHED, man->player_id, target_pid, 0);
+                man->men_last_target_pid = target_pid;
+            }
+        }
 
         if (target_dist <= WITNESS_LIVE_DISPATCH_ARRIVAL_RADIUS) {
             mp->in_fwd = 0.0f;
@@ -1279,6 +1303,12 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
             if (resolved_count > 0) {
                 printf("[THE MEN] player=%d resolved %d hunting NPC(s) in zone=%s\n",
                        man->player_id, resolved_count, witness_sim_zone_name(zone));
+                /* REFLUX_ACTION_MEN_RESOLVED -- fired exactly on this real sweep, matching the
+                   printf's own existing resolved_count>0 gate (no separate edge-tracking needed:
+                   witness_sim_memory_wipe already moves every resolved citizen out of
+                   {SILENCING, ENGAGE}, so a zone with nothing left to resolve naturally returns 0
+                   on the next sweep instead of re-firing every tick). */
+                reflux_dispatch(REFLUX_ACTION_MEN_RESOLVED, man->player_id, resolved_count, zone);
             }
         } else {
             mp->yaw = atan2f(target_dx, target_dz) * (180.0f / 3.14159f);

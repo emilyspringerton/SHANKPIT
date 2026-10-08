@@ -7,6 +7,9 @@
 #include "story_ai.h"
 #include "story_buttons.h"
 #include "witness_ai.h" /* BIG_O engine merge phase 7d -- MODE_STORY content cutover */
+#include "zombies_hud_bridge.h" /* BIG_O engine merge phase 8 -- the first real REFLUX subscriber
+    for witness_ai.c's own MODE_ZOMBIES/MODE_SURVIVAL population events (zombie mood escalation,
+    citizen witness escalation, Giant Zombie Bug feeding, The Men dispatch/resolve) */
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
@@ -1860,10 +1863,12 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
     if (local_state.game_mode == MODE_ZOMBIES) {
         witness_ai_zombies_tick(&local_state, cmd_time);
         witness_ai_tick(&local_state, cmd_time);
+        zombies_hud_bridge_tick(&local_state, cmd_time);
     }
     if (local_state.game_mode == MODE_SURVIVAL) {
         witness_ai_survival_tick(&local_state, cmd_time);
         witness_ai_tick(&local_state, cmd_time);
+        zombies_hud_bridge_tick(&local_state, cmd_time);
     }
     if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
         local_state.story_phase == STORY_PHASE_PLAYING) {
@@ -2119,8 +2124,8 @@ void local_init_match(int num_players, int mode) {
         init_genome(&local_state.players[i].brain);
     }
     scene_load(local_state.scene_id);
-    if (mode == MODE_ZOMBIES) witness_ai_reset((unsigned int)time(NULL), 0);
-    if (mode == MODE_SURVIVAL) { witness_ai_reset((unsigned int)time(NULL), 0); witness_ai_survival_reset(); }
+    if (mode == MODE_ZOMBIES) { witness_ai_reset((unsigned int)time(NULL), 0); zombies_hud_bridge_reset(); }
+    if (mode == MODE_SURVIVAL) { witness_ai_reset((unsigned int)time(NULL), 0); witness_ai_survival_reset(); zombies_hud_bridge_reset(); }
     if (mode == MODE_STORY) {
         story_ai_reset(&local_state);
         /* BIG_O engine merge phase 7d, MODE_STORY content cutover ("replace outright" per founder

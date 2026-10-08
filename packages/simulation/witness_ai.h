@@ -51,11 +51,28 @@
  *    REFLUX_ACTION_ZOMBIE_SPAWNED/HARVESTED/MOOD_ESCALATED and WITNESS_ESCALATED (packages/
  *    reflux/reflux_runtime.h) now dispatch at the real moment each happens; the bird flock's own
  *    witness_ai_birds_tick now also alerts on a human witness_state crossing into {SILENCING,
- *    ENGAGE} (channel 3), not just a loud zombie event or a citizen's own vigilance spike. Real,
- *    still-open gap, named not hidden: no *_bridge.c consumer exists yet for any of these (no
- *    smartphone to bridge to -- "we dont have the smartphone yet" -- so there is, on purpose, no
- *    real subscriber today, same "the button has no idea the bridge exists" shape world_alert_
- *    bridge.c's own phone_notify pairing already proves works once a consumer is built). */
+ *    ENGAGE} (channel 3), not just a loud zombie event or a citizen's own vigilance spike.
+ *  - ~~Giant Zombie Bug/The Men had no REFLUX events; no *_bridge.c consumer existed for any of
+ *    this population's events (no smartphone to bridge to)~~ -- **closed 2026-10-08, same-day
+ *    continuation** (founder real-time: "continue to bring in the BIG_O affordances into shankpit
+ *    zombies... we need it all evented with reflux"). REFLUX_ACTION_GIANT_BUG_ATE_ZOMBIE/
+ *    MEN_DISPATCHED/MEN_RESOLVED now dispatch at their own real call sites (the giant-bug tick
+ *    loop's eaten_zi>=0 branch; the dispatch loop's own new-target edge, tracked per-Man so a Man
+ *    chasing the same target doesn't re-fire every tick; the dispatch loop's own resolved_count>0
+ *    branch). packages/simulation/zombies_hud_bridge.c is the real first subscriber for this
+ *    whole event family (not just these two) -- a bottom-left HUD "awareness" compass+intensity
+ *    readout (apps/lobby/src/main.c's draw_zombies_awareness_hud, ported math from BIG_O/
+ *    NORTHSTAR.md §35's own bigo_awareness.h, packages/common/awareness_compass.h), wired into
+ *    local_game.h's local_update alongside witness_ai_tick. Real, still-open, named plainly:
+ *    this HUD line is written but not build/run-verified against a real SDL2/GL build in this
+ *    sandbox (SDL2 dev headers aren't installed here, and apps/lobby's own `make lobby` has a
+ *    separate, unrelated pre-existing blocker -- a missing EDITOR.GAME sibling checkout this
+ *    session didn't create); the bridge's own real logic is fully build+test-verified
+ *    (zombies_hud_bridge_test.c, standalone, same manual-build precedent world_alert_bridge_test.c
+ *    already set -- neither has a Makefile target). Deeper BIG_O systems beyond this engine's own
+ *    avian/witness/zombie/giant-bug/Men families (costume/Decorum, pheromone command wired live,
+ *    basement/lab/swarm-war) are still real, separate, not-yet-ported work -- see BIG_O/
+ *    NORTHSTAR.md for the full account of what BIG_O itself still has that SHANKPIT doesn't. */
 
 #include "../common/protocol.h"
 #include "../world/level_boxes.h" /* CustomLevelData, level_boxes_zone_for_position -- phase 7c */

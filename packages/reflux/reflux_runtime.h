@@ -95,6 +95,20 @@
 #define REFLUX_ACTION_ZOMBIE_MOOD_ESCALATED 105 /* a = player_id, b = new ZombieMood (>=HUNTING), c unused */
 #define REFLUX_ACTION_WITNESS_ESCALATED 106     /* a = citizen player_id, b = new WS_* state, c unused */
 
+/* Same MODE_ZOMBIES/MODE_SURVIVAL population, continuing the 2026-10-08 "evented with reflux" pass
+ * into the two entity families the first round named as still-open (witness_ai.h's own top doc
+ * comment, EMILY/BACKLOG.md #4450): Giant Zombie Bug and The Men. Dispatched directly from
+ * packages/simulation/witness_ai.c at the real moment each happens (GIANT_BUG_ATE_ZOMBIE: the
+ * giant-bug tick loop's own real eaten_zi>=0 branch; MEN_DISPATCHED: the real edge where a Man
+ * acquires a NEW hunt target it didn't have last tick, tracked per-Man so a Man that's still
+ * chasing the same target doesn't re-fire every tick; MEN_RESOLVED: the dispatch/resolution loop's
+ * own real resolved_count>0 branch). First real subscriber: packages/simulation/
+ * zombies_hud_bridge.c (phase 8), which also finally gives REFLUX_ACTION_ZOMBIE_MOOD_ESCALATED/
+ * WITNESS_ESCALATED above their first real consumer too -- see that file's own doc comment. */
+#define REFLUX_ACTION_GIANT_BUG_ATE_ZOMBIE 107  /* a = bug player_id, b = eaten zombie's player_id, c unused */
+#define REFLUX_ACTION_MEN_DISPATCHED 108        /* a = The Men player_id, b = target citizen player_id, c unused */
+#define REFLUX_ACTION_MEN_RESOLVED 109           /* a = The Men player_id, b = resolved_count, c = zone */
+
 #define REFLUX_LOG_CAPACITY 256
 
 typedef struct {

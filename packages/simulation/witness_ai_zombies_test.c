@@ -345,6 +345,101 @@ int main(void) {
     assert(witness_esc == 5); /* all 5 citizens cross the edge on the same tick */
     printf("PASS: REFLUX_ACTION_WITNESS_ESCALATED fired for all %d citizens crossing into SILENCING\n", witness_esc);
 
+    /* ---- founder real-time 2026-10-08 continuation: "Giant Zombie Bug/The Men REFLUX events"
+       (EMILY/BACKLOG.md #4450's own named still-open item) -- GIANT_BUG_ATE_ZOMBIE fires exactly
+       once at the real eat call site, authorized by a live The Men NPC ---- */
+    reflux_host_reset();
+    memset(&S, 0, sizeof S);
+    S.game_mode = MODE_ZOMBIES;
+    S.players[0].active = 1; S.players[0].state = STATE_ALIVE;
+    S.players[0].x = 900.0f; S.players[0].z = 900.0f; /* hero far away, plays no part */
+    nboxes = 1;
+    witness_ai_reset(9u, 0);
+    int man_id = witness_ai_spawn_the_men(&S, ZONE_PUBLIC, 80, 50, 500.0f, 0.0f, 500.0f, 0);
+    assert(man_id > 0); /* "The Men hold the key" -- authorizes the bug to act at all */
+    int bug_id = witness_ai_spawn_giant_bug(&S, 0.0f, 0.0f, 0.0f, 0);
+    assert(bug_id > 0);
+    zid = witness_ai_spawn_zombie(&S, 1.0f, 0.0f, 1.0f, 0); /* within WITNESS_AI_BUG_EAT_RADIUS (4.0) of the bug */
+    assert(zid > 0);
+    before = reflux_host_log_size();
+    witness_ai_tick(&S, 100);
+    int ate_count = 0;
+    for (int k = before; k < reflux_host_log_size(); k++)
+        if (reflux_host_action_type_at(k) == REFLUX_ACTION_GIANT_BUG_ATE_ZOMBIE) {
+            ate_count++;
+            assert(reflux_host_action_a_at(k) == bug_id);
+            assert(reflux_host_action_b_at(k) == zid);
+        }
+    assert(ate_count == 1);
+    assert(S.players[zid].active == 0); /* really eaten, not just logged */
+    printf("PASS: REFLUX_ACTION_GIANT_BUG_ATE_ZOMBIE fired once (bug=%d ate zombie=%d)\n", bug_id, zid);
+
+    /* ---- The Men's own dispatch/resolve REFLUX events, same real 5-citizens-SILENCING escalation
+       the WITNESS_ESCALATED block above already proves, now with a live Man far enough out
+       (inside WITNESS_AI_MEN_RESPONSE_RADIUS=220, outside WITNESS_LIVE_DISPATCH_ARRIVAL_RADIUS)
+       that dispatch and resolve land on genuinely different ticks ---- */
+    reflux_host_reset();
+    memset(&S, 0, sizeof S);
+    S.game_mode = MODE_ZOMBIES;
+    S.players[0].active = 1; S.players[0].state = STATE_ALIVE;
+    S.players[0].x = 900.0f; S.players[0].z = 900.0f;
+    nboxes = 1;
+    witness_ai_reset(10u, 0);
+    for (int i = 0; i < 5; i++) {
+        int cid2 = witness_ai_spawn_citizen(&S, ZONE_PUBLIC, 40, 50, 5.0f, 0.0f, 0.0f, 0);
+        assert(cid2 > 0);
+    }
+    zid = witness_ai_spawn_zombie(&S, 0.0f, 0.0f, 0.0f, 0);
+    assert(zid > 0);
+    witness_ai_force_zombie_mood(zid, 2 /* HUNTING */);
+    witness_ai_tick(&S, 100); /* same real escalation as the WITNESS_ESCALATED block: all 5 -> SILENCING */
+
+    man_id = witness_ai_spawn_the_men(&S, ZONE_PUBLIC, 80, 50, 100.0f, 0.0f, 0.0f, 0);
+    assert(man_id > 0);
+
+    before = reflux_host_log_size();
+    t += 50;
+    witness_ai_tick(&S, t);
+    int dispatched_count = 0;
+    for (int k = before; k < reflux_host_log_size(); k++)
+        if (reflux_host_action_type_at(k) == REFLUX_ACTION_MEN_DISPATCHED) {
+            dispatched_count++;
+            assert(reflux_host_action_a_at(k) == man_id);
+        }
+    assert(dispatched_count == 1);
+    printf("PASS: REFLUX_ACTION_MEN_DISPATCHED fired once when the Man acquired a real new hunt target\n");
+
+    /* still chasing the SAME target on the next several ticks must NOT re-fire the dispatch --
+       deliberately no walk() here: these 5 citizens wander independently in MODE_ZOMBIES (their
+       own per-citizen position-hash drift), so moving them would let "nearest SILENCING citizen"
+       legitimately change and confound this specific check; the final arrival loop below is
+       where the Man (and the citizens) are allowed to actually move. */
+    before = reflux_host_log_size();
+    for (int i = 0; i < 3; i++) { t += 50; witness_ai_tick(&S, t); }
+    int redispatch_count = 0;
+    for (int k = before; k < reflux_host_log_size(); k++)
+        if (reflux_host_action_type_at(k) == REFLUX_ACTION_MEN_DISPATCHED) redispatch_count++;
+    assert(redispatch_count == 0);
+    printf("PASS: REFLUX_ACTION_MEN_DISPATCHED does not re-fire every tick while still chasing the same target\n");
+
+    /* walk the Man the rest of the way in and confirm the real resolve fires once on arrival */
+    before = reflux_host_log_size();
+    int men_resolved_count = 0;
+    for (int i = 0; i < 200 && men_resolved_count == 0; i++) {
+        t += 50;
+        witness_ai_tick(&S, t);
+        walk(0.05f);
+        for (int k = before; k < reflux_host_log_size(); k++)
+            if (reflux_host_action_type_at(k) == REFLUX_ACTION_MEN_RESOLVED) {
+                men_resolved_count++;
+                assert(reflux_host_action_a_at(k) == man_id);
+                assert(reflux_host_action_b_at(k) > 0); /* resolved_count: really swept >=1 citizen */
+            }
+        before = reflux_host_log_size();
+    }
+    assert(men_resolved_count == 1);
+    printf("PASS: REFLUX_ACTION_MEN_RESOLVED fired once when the Man actually arrived and swept the zone\n");
+
     printf("ALL PASS\n");
     return 0;
 }

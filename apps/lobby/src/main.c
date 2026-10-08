@@ -42,6 +42,8 @@
 #include "../../../packages/simulation/cutscene.h"
 #include "../../../packages/simulation/typing_lesson.h"
 #include "../../../packages/simulation/local_game.h"
+#include "../../../packages/common/awareness_compass.h" /* AWARENESS_COMPASS_NAMES -- zombies_hud_bridge.c's own real HUD alert, see draw_zombies_awareness_hud */
+#include "../../../packages/reflux/reflux_runtime.h" /* REFLUX_ACTION_* constants -- same, for a type-specific HUD label */
 #include "../../../packages/simulation/tyler_coldopen.h"
 #include "../../../packages/simulation/tyler_e03_coldopen.h"
 #include "../../../packages/simulation/tyler_fb01_coldopen.h"
@@ -10588,6 +10590,49 @@ static void draw_survival_hud(void) {
     glMatrixMode(GL_MODELVIEW); glPopMatrix();
 }
 
+// draw_zombies_awareness_hud -- BIG_O engine merge phase 8 (EMILY/BACKLOG.md #4450 continuation,
+// founder real-time 2026-10-08: "bring in all the BIG_O affordances into shankpit zombies... we
+// need it all evented with reflux"). The first real, on-screen consumer of zombies_hud_bridge.c's
+// own REFLUX-fed alert -- bottom-left corner, the one corner draw_mechanism_hud's own "bureaucratic
+// horror" readout claims only in MODE_STORY (unclaimed here: this never runs in that mode). Same
+// "! NOTICED (<compass>) <intensity>%"-style readout BIG_O/NORTHSTAR.md §35 specs, adapted to the
+// LOUD zombie-event channel these modes actually have -- see awareness_compass.h's own doc comment
+// on why this isn't a literal re-creation of that Decorum-keyed feature.
+static void draw_zombies_awareness_hud(void) {
+    if (local_state.game_mode != MODE_ZOMBIES && local_state.game_mode != MODE_SURVIVAL) return;
+    int compass, intensity, action_type;
+    if (!zombies_hud_bridge_current(SDL_GetTicks(), &compass, &intensity, &action_type)) return;
+    if (compass < 0 || compass > 7) return; /* defensive: never trust a cross-module int blindly */
+
+    const char *label = "ALERT";
+    if (action_type == REFLUX_ACTION_ZOMBIE_MOOD_ESCALATED) label = "ZOMBIE";
+    else if (action_type == REFLUX_ACTION_WITNESS_ESCALATED) label = "PANIC";
+    else if (action_type == REFLUX_ACTION_GIANT_BUG_ATE_ZOMBIE) label = "BUG FED";
+    else if (action_type == REFLUX_ACTION_MEN_DISPATCHED) label = "MEN MOVING";
+    else if (action_type == REFLUX_ACTION_MEN_RESOLVED) label = "MEN CLEARED";
+
+    char line[64];
+    snprintf(line, sizeof line, "! %s (%s) %d%%", label, AWARENESS_COMPASS_NAMES[compass], intensity);
+
+    glDisable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f(0.04f, 0.04f, 0.06f, 0.74f);
+    glRectf(8.0f, 8.0f, 290.0f, 50.0f);
+    glDisable(GL_BLEND);
+    glColor3f(0.45f, 0.55f, 0.52f);
+    draw_string("AWARENESS", 14, 34, 3);
+    /* severity-colored: green/low to red/high, same spirit draw_mechanism_hud's own excess-based
+       color ramp uses, inverted (here, higher intensity = worse, not a higher Hz reading). */
+    float t = intensity / 100.0f;
+    glColor3f(0.2f + t * 0.75f, 0.85f - t * 0.65f, 0.3f - t * 0.25f);
+    draw_string(line, 14, 16, 4);
+    glMatrixMode(GL_MODELVIEW); glPopMatrix();
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glEnable(GL_DEPTH_TEST);
+}
+
 static void draw_disconnect_overlay(void) {
     glDisable(GL_DEPTH_TEST);
     glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
@@ -11253,6 +11298,7 @@ void draw_scene(PlayerState *render_p) {
     draw_travel_overlay();
     draw_tdmb_match_over_overlay();
     draw_survival_hud();
+    draw_zombies_awareness_hud();
     draw_editmap_hud();
     if (app_state == STATE_GAME_NET && net_diag.server_disconnected) draw_disconnect_overlay();
     if (g_paused) draw_pause_overlay();

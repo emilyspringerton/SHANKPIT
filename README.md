@@ -442,12 +442,19 @@ window, a far one is eventually found by hunger scent, and they still spawn 72-1
 **walled off by a building** so they come round a corner instead of popping into view.
 
 Population events are now **REFLUX**-evented (2026-10-08) -- `REFLUX_ACTION_ZOMBIE_SPAWNED`/`_HARVESTED`/
-`_MOOD_ESCALATED` and `_WITNESS_ESCALATED` (`packages/reflux/reflux_runtime.h`) dispatch at the real moment a
-zombie spawns/dies/goes loud or a citizen crosses into SILENCING/ENGAGE, and the bird flock now also alerts on
-that last one (closing the avian coalition's 3rd "observing the observer" channel, not just a loud zombie event
-or a citizen's own vigilance spike). Honest limit: no subscriber consumes any of this yet -- there's no phone
-bridge in ZOMBIES the way `world_alert_bridge.c` feeds MODE_STORY's phone, so today this is real, dispatched,
-unread telemetry, not a built feature on top of it.
+`_MOOD_ESCALATED`/`_WITNESS_ESCALATED`/`_GIANT_BUG_ATE_ZOMBIE`/`_MEN_DISPATCHED`/`_MEN_RESOLVED`
+(`packages/reflux/reflux_runtime.h`) dispatch at the real moment a zombie spawns/dies/goes loud, a citizen
+crosses into SILENCING/ENGAGE, a Giant Zombie Bug eats a zombie, or The Men dispatch to/resolve a hunt, and the
+bird flock alerts on the citizen-escalation one too (closing the avian coalition's 3rd "observing the observer"
+channel). **This population now has a real subscriber** (2026-10-08, same-day continuation):
+`packages/simulation/zombies_hud_bridge.c` polls the log, asks a small PARENA rules module
+(`zombies_awareness_rules.prn`) which of those events deserve surfacing, and feeds a ported BIG_O/NORTHSTAR.md
+§35 compass+intensity readout (`packages/common/awareness_compass.h`) -- a bottom-left `! ZOMBIE (E) 90%`-style
+HUD line for 3 real seconds, drawn by `draw_zombies_awareness_hud` in `apps/lobby/src/main.c`. The bridge's own
+logic is build+test-verified (`zombies_hud_bridge_test.c`, run manually, no Makefile target -- same precedent
+`world_alert_bridge_test.c` already set); the HUD draw call itself is **not** build-verified in this sandbox
+(no SDL2 dev headers here, and `make lobby` has a separate, pre-existing, unrelated blocker -- a missing
+EDITOR.GAME sibling checkout). `make server` and `make test-witness-ai-zombies` (ASan/UBSan) are both clean.
 
 ## SURVIVAL (2026-10-02)
 
