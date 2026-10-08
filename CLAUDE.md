@@ -4,6 +4,10 @@ SHANKPIT is a server-authoritative fast-paced FPS with a persistent world backen
 game runs on SHANKPIT. The persistent world (DragonsNShit) runs on Dragonfly (Minecraft
 Bedrock Protocol fork) as the backend. Both share entity state, season lineage, and world events.
 
+**Production runs in Kubernetes**: GKE namespace `emily`, `svc/shankpit` (6968, and 6969/UDP via
+the `shankpit-udp` LoadBalancer), image `emily/shankpit:<sha>`. See root `CLAUDE.md`'s
+"Kubernetes Operations" section to reach the live cluster instance instead of a local build.
+
 ## North Star
 
 `docs2/NORTHSTAR.md` — where the system is going and what "done" means at each layer.
