@@ -1972,6 +1972,15 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
                 p->in_shoot = 0;
             }
         }
+        // Pheromone command tool (2026-10-08, "continue full game") -- any active player's own
+        // BTN_PHEROMONE (protocol.h) reaches here already decoded into p->in_pheromone, by either
+        // shankpit_apply_usercmd_inputs (real network path, server + lobby-as-client) or this
+        // mode's own local/offline direct assignment (apps/lobby's STATE_GAME_LOCAL block). Self-
+        // rate-limited inside witness_ai_try_throw_pheromone, so calling this every tick the flag
+        // is held is correct, not spammy.
+        if ((local_state.game_mode == MODE_ZOMBIES || local_state.game_mode == MODE_SURVIVAL) && p->in_pheromone) {
+            witness_ai_try_throw_pheromone(&local_state, i, cmd_time);
+        }
         // S485, REFLUX pub/sub buttons -- deliberately unconditional, NOT gated to one game_mode
         // (S481c's own resolved policy: a general level feature never hard-codes to a single
         // mode). Runs after CTFB's own use-interaction handling above so a CTFB flag pickup and a

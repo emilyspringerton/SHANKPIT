@@ -456,6 +456,27 @@ logic is build+test-verified (`zombies_hud_bridge_test.c`, run manually, no Make
 (no SDL2 dev headers here, and `make lobby` has a separate, pre-existing, unrelated blocker -- a missing
 EDITOR.GAME sibling checkout). `make server` and `make test-witness-ai-zombies` (ASan/UBSan) are both clean.
 
+ZOMBIES/SURVIVAL also now have a real **pheromone command tool** (2026-10-08, later the same day --
+BIG_O/NORTHSTAR.md §10's own "tactical pheromone arrays... paint a target"): hold **G** to throw a marker
+along your own facing (rate-limited, no spam), and a zombie that doesn't already have you locked on will
+steer toward it instead of wandering -- `packages/common/pheromone.h`'s own pure targeting primitives
+(ported in an earlier pass with no live consumer at all) finally have one. A zombie that already has you
+locked on keeps chasing you instead -- `zombies_pheromone_should_steer_to_marker`
+(`PARENA/stdlib/shankpit/zombies_pheromone_rules.prn`) is the real decision, matching this engine's own
+"a hunt doesn't get cheaply interrupted" instinct. Works the same in real networked multiplayer and in the
+local sandbox: `BTN_PHEROMONE` (`packages/common/protocol.h`) travels the same `UserCmd` path every other
+button does (`shankpit_apply_usercmd_inputs`, `packages/common/net_sim.h`), read once per tick in
+`packages/simulation/local_game.h` for whichever player pressed it. A real, live-found correctness bug
+was caught and fixed in the same pass: the melee-damage check originally kept firing off the *current*
+target distance even when that distance belonged to a marker, not the hero -- a zombie merely standing
+near a marker could not actually hit you, but the code would have let it; fixed with a dedicated
+`targeting_hero` flag. `make server` and `make test-witness-ai-zombies` (ASan/UBSan, 3 new assertions
+covering cooldown, marker-recruits-a-wandering-zombie, and hero-beats-marker-when-already-locked) are both
+clean. Same honest limit as BIG_O's own v0: no projectile arc, no acoustic pingers, and citizens/The Men
+still don't react to a commanded zombie (only the zombie's own targeting is wired). The client-side G-key
+binding itself is pattern-matched against already-compiling sibling code but, like the HUD line above, not
+build-verified against a real SDL2/GL build in this sandbox.
+
 ## SURVIVAL (2026-10-02)
 
 The **SURVIVAL** tile (`shank_lobby --survival`) is local wave defence on the built-in **SCENE_CITY**. Wave *n*

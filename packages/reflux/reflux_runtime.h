@@ -109,6 +109,15 @@
 #define REFLUX_ACTION_MEN_DISPATCHED 108        /* a = The Men player_id, b = target citizen player_id, c unused */
 #define REFLUX_ACTION_MEN_RESOLVED 109           /* a = The Men player_id, b = resolved_count, c = zone */
 
+/* Pheromone command tool (BIG_O/NORTHSTAR.md section 10, "tactical pheromone arrays... paint a
+ * target") going live in MODE_ZOMBIES/MODE_SURVIVAL (2026-10-08, same-day continuation after the
+ * REFLUX_ACTION_MEN_RESOLVED pass above). Dispatched from witness_ai_try_throw_pheromone the
+ * instant a player's own throw is accepted (not rate-limited away by its own cooldown). Not in
+ * zombies_awareness_rules.prn's 105-109 "should ping the HUD" range on purpose -- this is the
+ * THROWING player's own deliberate action, not a new fact about the world noticing THEM, so it
+ * never feeds the awareness compass/intensity readout that event family drives. */
+#define REFLUX_ACTION_PHEROMONE_THROWN 110      /* a = thrower player_id, b = marker slot index, c unused */
+
 #define REFLUX_LOG_CAPACITY 256
 
 typedef struct {

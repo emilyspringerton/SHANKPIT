@@ -69,10 +69,37 @@
  *    separate, unrelated pre-existing blocker -- a missing EDITOR.GAME sibling checkout this
  *    session didn't create); the bridge's own real logic is fully build+test-verified
  *    (zombies_hud_bridge_test.c, standalone, same manual-build precedent world_alert_bridge_test.c
- *    already set -- neither has a Makefile target). Deeper BIG_O systems beyond this engine's own
- *    avian/witness/zombie/giant-bug/Men families (costume/Decorum, pheromone command wired live,
- *    basement/lab/swarm-war) are still real, separate, not-yet-ported work -- see BIG_O/
- *    NORTHSTAR.md for the full account of what BIG_O itself still has that SHANKPIT doesn't. */
+ *    already set -- neither has a Makefile target). **Correction, found while scoping the next
+ *    slice (2026-10-08, later the same day):** this bullet originally also named costume/Decorum
+ *    and the lab as still-open BIG_O gaps -- that was stale/wrong even at the time it was written.
+ *    Both were already live in MODE_ZOMBIES from earlier commits this bullet simply hadn't
+ *    checked against: the BIG_O phone's WARDROBE app (apps/lobby/src/main.c, `witness_ai_set_
+ *    player_costume`/`witness_ai_player_decorum[_band]`, "full phone app parity" pass) and real,
+ *    PARENA-ruled lab stations (SPLICE/CENTRIFUGE/PCR/VAT/FRIDGE/CONSOLE, packages/simulation/
+ *    lab_station_host.c + PARENA/stdlib/big_o/lab_station_rules.prn, SECTION 591/592 LAB-4) --
+ *    both gated live via `PHONE_SANDBOX()` (MODE_ZOMBIES || g_lab_active), both predating even the
+ *    REFLUX-eventing pass two bullets up. Lesson: grep the live tree before writing a gap bullet,
+ *    not just this file's own prior doc comment. ~~Pheromone command tool, never wired live~~ --
+ *    **closed 2026-10-08, later the same day** (founder real-time: "continue full game"). New
+ *    `BTN_PHEROMONE` (protocol.h) -> `shankpit_apply_usercmd_inputs` (net_sim.h) ->
+ *    `witness_ai_try_throw_pheromone` (this file): any active player throws a marker along their
+ *    own facing (cooldown-gated, no edge-trigger state needed), reusing packages/common/
+ *    pheromone.h's own pure, previously-call-site-less primitives verbatim. A wandering (not
+ *    already hero-locked) zombie now steers toward an active marker instead of the hero --
+ *    zombies_pheromone_should_steer_to_marker (PARENA/stdlib/shankpit/zombies_pheromone_rules.prn)
+ *    is the real decision of hero-lock-wins-if-present, matching this file's own "a hunt doesn't
+ *    get cheaply interrupted" instinct. Real, live-found correctness bug caught and fixed in the
+ *    same pass, not shipped broken: the melee block originally kept firing real hero damage off
+ *    `hdist` even when `hdist` had been redirected to a marker's distance, not the hero's -- fixed
+ *    with a separate `targeting_hero` flag that only the hero-sense branch sets, so melee can never
+ *    fire from a zombie merely standing near a marker with no hero anywhere close. Real, still
+ *    open, same honest scope BIG_O's own §10 named: no projectile/arc, no citizen/Men reaction to a
+ *    commanded zombie, no acoustic pingers/hormone emitter. Only genuinely unbuilt BIG_O system
+ *    left in this family now: the basement/lab's **async multi-crew shadow war** (two players'/
+ *    crews' vector armies auto-resolving server-side, Elo, DEADWEIGHT/BRAWLPIT league pattern,
+ *    BIG_O/NORTHSTAR.md §1/§4) -- a genuinely different, bigger thing than the lab equipment
+ *    simulation above, which is per-player/per-crew, not competitive. See BIG_O/NORTHSTAR.md for
+ *    the full account of what BIG_O itself still has that SHANKPIT doesn't. */
 
 #include "../common/protocol.h"
 #include "../world/level_boxes.h" /* CustomLevelData, level_boxes_zone_for_position -- phase 7c */
@@ -403,5 +430,13 @@ int witness_ai_bug_command_authorized(void);
  * to an active giant bug spawned by this module. */
 float witness_ai_bug_strength(int player_id);
 float witness_ai_bug_speed(int player_id);
+
+/* --- Pheromone command tool going live (founder real-time, 2026-10-08: "continue full game") --
+ * see this header's own top doc comment for the full account. Throws a marker along player_id's
+ * own current facing, WITNESS_AI_PHEROMONE_THROW_RANGE ahead (witness_ai.c). Self-rate-limited
+ * per player_id -- safe to call every tick a player's own input flag (protocol.h's in_pheromone)
+ * is set, no caller-side edge-trigger bookkeeping needed. Returns 1 if a marker was actually
+ * thrown, 0 if on cooldown or player_id doesn't resolve to an active, alive player. */
+int witness_ai_try_throw_pheromone(ServerState *s, int player_id, unsigned int now_ms);
 
 #endif

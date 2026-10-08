@@ -440,6 +440,80 @@ int main(void) {
     assert(men_resolved_count == 1);
     printf("PASS: REFLUX_ACTION_MEN_RESOLVED fired once when the Man actually arrived and swept the zone\n");
 
+    /* ---- Pheromone command tool (2026-10-08, "continue full game") ----
+       witness_ai_try_throw_pheromone's own cooldown + REFLUX_ACTION_PHEROMONE_THROWN. ---- */
+    reflux_host_reset();
+    memset(&S, 0, sizeof S);
+    S.game_mode = MODE_ZOMBIES;
+    S.players[0].active = 1; S.players[0].state = STATE_ALIVE;
+    S.players[0].x = 0.0f; S.players[0].z = 0.0f; S.players[0].yaw = 0.0f;
+    nboxes = 1;
+    witness_ai_reset(20u, 0);
+    unsigned int pt = 1000u; /* fresh, small, self-contained clock for this whole pheromone
+        section -- deliberately NOT the shared `t` above, which by this point in the file has
+        accumulated into the tens of thousands of ms from earlier loops and would blow straight
+        past a freshly-thrown marker's own WITNESS_AI_PHEROMONE_MARKER_LIFETIME_MS (30000) window
+        on the very first tick. */
+    before = reflux_host_log_size();
+    assert(witness_ai_try_throw_pheromone(&S, 0, pt) == 1);
+    int thrown_count = 0;
+    for (int k = before; k < reflux_host_log_size(); k++)
+        if (reflux_host_action_type_at(k) == REFLUX_ACTION_PHEROMONE_THROWN) {
+            thrown_count++;
+            assert(reflux_host_action_a_at(k) == 0);
+        }
+    assert(thrown_count == 1);
+    pt += 500;
+    assert(witness_ai_try_throw_pheromone(&S, 0, pt) == 0); /* still on cooldown (2000ms) */
+    pt += 1600;
+    assert(witness_ai_try_throw_pheromone(&S, 0, pt) == 1); /* cooldown elapsed */
+    printf("PASS: witness_ai_try_throw_pheromone dispatches REFLUX_ACTION_PHEROMONE_THROWN once, self-rate-limited\n");
+
+    /* a thrown marker recruits a zombie that has NO hero lock at all (hero moved far away right
+       after the throw, so hdist-to-hero is always huge regardless of mood/alertness scaling) */
+    memset(&S, 0, sizeof S);
+    S.game_mode = MODE_ZOMBIES;
+    S.players[0].active = 1; S.players[0].state = STATE_ALIVE;
+    S.players[0].x = 0.0f; S.players[0].z = 0.0f; S.players[0].yaw = 0.0f; /* facing +z */
+    nboxes = 1;
+    witness_ai_reset(21u, 0);
+    pt = 1000u;
+    assert(witness_ai_try_throw_pheromone(&S, 0, pt) == 1); /* marker lands at (0, 12) */
+    S.players[0].x = 5000.0f; S.players[0].z = 5000.0f;        /* now move the hero far away */
+    zid = witness_ai_spawn_zombie(&S, 0.0f, 0.0f, 50.0f, 0);    /* 38 units from the marker, within
+                                                                    WITNESS_AI_PHEROMONE_DETECTION_RADIUS (60) */
+    witness_ai_force_zombie_mood(zid, 2); /* HUNTING, same bootstrap the hero-lock test above uses */
+    float z_before = S.players[zid].z;
+    for (int i = 0; i < 40; i++) { pt += 50; witness_ai_tick(&S, pt); walk(0.05f); }
+    assert(S.players[zid].z < z_before - 5.0f);  /* moved toward the marker (z=12), not away */
+    assert(S.players[zid].x < 100.0f && S.players[zid].z < 100.0f); /* nowhere near the hero at (5000,5000) */
+    printf("PASS: a thrown marker recruits a zombie with no hero lock (z %.1f -> %.1f)\n", z_before, S.players[zid].z);
+
+    /* a hero the zombie ALREADY has locked wins over a simultaneously active marker -- thrown by a
+       second, non-hero player so the hero's own position stays put (zombies_pheromone_should_
+       steer_to_marker's own real decision, not just the geometry) */
+    memset(&S, 0, sizeof S);
+    S.game_mode = MODE_ZOMBIES;
+    S.players[0].active = 1; S.players[0].state = STATE_ALIVE;
+    S.players[0].x = 10.0f; S.players[0].z = 0.0f; /* 10 units from the zombie -- real hero-lock */
+    S.players[0].health = 100; /* real, found-live gotcha: health defaults to 0 under memset, so
+        without this the zombie's first melee hit kills the hero, hero_live goes false, and the
+        marker correctly (not a bug) takes over from a now-dead hero -- not what this test means
+        to exercise (see the test above it for that behavior path). */
+    S.players[5].active = 1; S.players[5].state = STATE_ALIVE;
+    S.players[5].x = 0.0f; S.players[5].z = -40.0f; S.players[5].yaw = 0.0f; /* marker lands at (0,-28) */
+    nboxes = 1;
+    witness_ai_reset(22u, 0);
+    zid = witness_ai_spawn_zombie(&S, 0.0f, 0.0f, 0.0f, 0);
+    witness_ai_force_zombie_mood(zid, 2);
+    pt = 1000u;
+    assert(witness_ai_try_throw_pheromone(&S, 5, pt) == 1); /* (0,-28), 28 units from the zombie */
+    for (int i = 0; i < 40; i++) { pt += 50; witness_ai_tick(&S, pt); walk(0.05f); }
+    assert(S.players[zid].x > 2.0f);   /* chased the hero (positive x)... */
+    assert(S.players[zid].z > -5.0f);  /* ...not the marker (which would pull z negative) */
+    printf("PASS: a zombie already hero-locked ignores a simultaneously active marker (x=%.1f, z=%.1f)\n",
+           S.players[zid].x, S.players[zid].z);
+
     printf("ALL PASS\n");
     return 0;
 }

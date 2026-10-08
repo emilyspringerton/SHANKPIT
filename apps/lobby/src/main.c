@@ -11941,7 +11941,7 @@ void net_connect() {
     }
 }
 
-UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoot, int jump, int crouch, int reload, int use, int ability, int bike, int wpn_idx) {
+UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoot, int jump, int crouch, int reload, int use, int ability, int bike, int pheromone, int wpn_idx) {
     UserCmd cmd;
     memset(&cmd, 0, sizeof(UserCmd));
     cmd.sequence = ++net_cmd_seq; cmd.timestamp = SDL_GetTicks();
@@ -11953,6 +11953,7 @@ UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoo
     if(use) cmd.buttons |= BTN_USE;
     if(ability) cmd.buttons |= BTN_ABILITY_1;
     if(bike) cmd.buttons |= BTN_VEHICLE_2;
+    if(pheromone) cmd.buttons |= BTN_PHEROMONE;
     /* Real, found-live reconciliation bug (founder real-time: "reconciliation jitter including
        gun jitter gun to knife when a gun is equip"): cmd.weapon_idx was set AFTER this cmd got
        stored into client_cmd_hist (the reconciliation replay buffer, client_reconcile_local_player
@@ -13026,7 +13027,7 @@ int main(int argc, char* argv[]) {
     if (cli_start_city) { lobby_start_city(); if (cli_third_person) local_state.players[0].third_person = 1; }
     int prev_app_state = STATE_LOBBY;
     float input_fwd = 0.0f, input_str = 0.0f;
-    int input_jump = 0, input_crouch = 0, input_shoot = 0, input_reload = 0, input_use = 0, input_ability = 0, input_bike = 0;
+    int input_jump = 0, input_crouch = 0, input_shoot = 0, input_reload = 0, input_use = 0, input_ability = 0, input_bike = 0, input_pheromone = 0;
     while(running) {
         double now = get_time();
         double frame_time = now - previous;
@@ -13616,6 +13617,8 @@ int main(int argc, char* argv[]) {
             int bike = in_heli ? k[SDL_SCANCODE_Q] : 0;
             int use = k[SDL_SCANCODE_F];
             int ability = in_heli ? k[SDL_SCANCODE_E] : k[SDL_SCANCODE_E];
+            int pheromone = k[SDL_SCANCODE_G]; /* MODE_ZOMBIES/MODE_SURVIVAL pheromone throw, BIG_O/
+                NORTHSTAR.md section 10's own G-key convention */
             if (g_shank_pad) {
                 const float SHANK_STICK_DEADZONE = 0.2f;
                 float lx = (float)SDL_GameControllerGetAxis(g_shank_pad, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0f;
@@ -13637,10 +13640,10 @@ int main(int argc, char* argv[]) {
                 if (move_len2 > 1.0f) { fwd /= move_len2; str /= move_len2; }
             }
             if (g_paused) {
-                fwd = 0.0f; str = 0.0f; jump = 0; crouch = 0; shoot = 0; reload = 0; use = 0; ability = 0; bike = 0;
+                fwd = 0.0f; str = 0.0f; jump = 0; crouch = 0; shoot = 0; reload = 0; use = 0; ability = 0; bike = 0; pheromone = 0;
             }
             input_fwd = fwd; input_str = str;
-            input_jump = jump; input_crouch = crouch; input_shoot = shoot; input_reload = reload; input_use = use; input_ability = ability; input_bike = bike;
+            input_jump = jump; input_crouch = crouch; input_shoot = shoot; input_reload = reload; input_use = use; input_ability = ability; input_bike = bike; input_pheromone = pheromone;
             if (!g_paused) {
                 if(k[SDL_SCANCODE_1]) wpn_req=0; if(k[SDL_SCANCODE_2]) wpn_req=1;
                 if(k[SDL_SCANCODE_3]) wpn_req=2; if(k[SDL_SCANCODE_4]) wpn_req=3; if(k[SDL_SCANCODE_5]) wpn_req=4; if(k[SDL_SCANCODE_6]) wpn_req=5;
@@ -13683,7 +13686,7 @@ int main(int argc, char* argv[]) {
                         float net_aim_yaw = cam_yaw, net_aim_pitch = cam_pitch;
                         if (local_state.players[net_local_pid].third_person)
                             lobby_third_person_aim(&local_state.players[net_local_pid], cam_yaw, cam_pitch, &net_aim_yaw, &net_aim_pitch);
-                        UserCmd cmd = client_create_cmd(input_fwd, input_str, net_aim_yaw, net_aim_pitch, input_shoot, input_jump, input_crouch, input_reload, input_use, input_ability, input_bike, wpn_req);
+                        UserCmd cmd = client_create_cmd(input_fwd, input_str, net_aim_yaw, net_aim_pitch, input_shoot, input_jump, input_crouch, input_reload, input_use, input_ability, input_bike, input_pheromone, wpn_req);
                         client_apply_cmd_movement(&local_state.players[net_local_pid], &cmd, now_ms);
                         net_send_cmd(cmd);
                         net_last_cmd_send_ms = now_ms;
@@ -13708,9 +13711,10 @@ int main(int argc, char* argv[]) {
                      g_story_phone.open) || g_orb_open ||
                     (PHONE_SANDBOX() && g_story_phone.open)) {
                     input_fwd = 0.0f; input_str = 0.0f;
-                    input_jump = 0; input_crouch = 0; input_shoot = 0; input_reload = 0; input_use = 0; input_ability = 0;
+                    input_jump = 0; input_crouch = 0; input_shoot = 0; input_reload = 0; input_use = 0; input_ability = 0; input_pheromone = 0;
                 }
                 local_state.players[0].in_use = input_use;
+                local_state.players[0].in_pheromone = input_pheromone;
                 if (input_use && local_state.players[0].vehicle_cooldown == 0 && local_state.transition_timer == 0) {
                     PlayerState *p0 = &local_state.players[0];
                     HelicopterState *near_h = NULL;

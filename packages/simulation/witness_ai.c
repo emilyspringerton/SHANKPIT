@@ -9,12 +9,18 @@
 #include "witness_live.h"
 #include "giant_bug_values.h"
 #include "avian_values.h"
+#include "../common/pheromone.h" /* PheromoneMarker, pheromone_claim_slot/expire/find_nearest -- pure
+    targeting primitive, BIG_O engine merge phase 5, no live consumer until this pass */
 #include "../reflux/reflux_runtime.h" /* REFLUX_ACTION_ZOMBIE_SPAWNED/HARVESTED/MOOD_ESCALATED, WITNESS_ESCALATED */
 
 /* Prototype for the PARENA-generated glue (reflux_mod.c, do-not-edit-by-hand) -- no shared .h
  * between generated units in this codebase, same convention world_alert_bridge.c's own identical
  * declaration already established. */
 void reflux_dispatch(int action_type, int a, int b, int c);
+
+/* Prototype for zombies_pheromone_rules.c (PARENA-generated, do-not-edit-by-hand) -- same
+ * no-shared-header-between-generated-units convention as reflux_dispatch above. */
+int zombies_pheromone_should_steer_to_marker(int hero_has_target);
 
 typedef struct {
     int active;
@@ -94,6 +100,24 @@ static WitnessAiZombie g_zombies[WITNESS_AI_MAX_ZOMBIES];
 static WitnessAiGiantBug g_giant_bugs[WITNESS_AI_MAX_GIANT_BUGS];
 static unsigned int g_last_sim_tick_ms;
 static int g_have_last_sim_tick;
+
+/* Pheromone command tool going live (2026-10-08, same-day continuation) -- see witness_ai_h's own
+ * updated doc comment and witness_ai_try_throw_pheromone's below for the full account. The marker
+ * pool itself (PheromoneMarker, packages/common/pheromone.h) was ported and tested in BIG_O engine
+ * merge phase 5 with no live consumer; this is that consumer. */
+#define WITNESS_AI_PHEROMONE_THROW_RANGE 12.0f      /* fixed throw distance, matches BIG_O's own
+    "camera-forward x a fixed throw distance, no real projectile arc" v0 scope (NORTHSTAR.md section
+    10) -- no projectile/arc/line-of-sight here either, same honest cut. */
+#define WITNESS_AI_PHEROMONE_THROW_COOLDOWN_MS 2000u
+#define WITNESS_AI_PHEROMONE_MARKER_LIFETIME_MS 30000u /* matches BIG_O's own "30s real expiry" */
+/* How far a zombie can notice an active marker. Deliberately bigger than
+ * WITNESS_AI_ZOMBIE_SENSE_BASE (20, ambient senses) but well under the max alertness-scaled,
+ * already-hunting sense radius (~112) -- a considered, named judgment call: a thrown marker is a
+ * strong, deliberate lure that should carry further than a zombie's own passive awareness, not an
+ * unlimited-range summon. */
+#define WITNESS_AI_PHEROMONE_DETECTION_RADIUS 60.0f
+static PheromoneMarker g_pheromone_markers[PHEROMONE_MAX];
+static unsigned int g_pheromone_next_throw_ms[MAX_CLIENTS];
 
 /* Player-zone trespass state ("full phone app parity, costume changes, add The Men" follow-up).
  * See witness_ai_tick's own VOXWORLD lab-circle block for what drives this. */
@@ -246,6 +270,8 @@ void witness_ai_reset(unsigned int seed, unsigned int now_ms) {
     g_carried_id = -1;
     g_lab_deliveries = 0;
     g_distraction_until_ms = 0;
+    memset(g_pheromone_markers, 0, sizeof(g_pheromone_markers));
+    memset(g_pheromone_next_throw_ms, 0, sizeof(g_pheromone_next_throw_ms));
 }
 
 /* Real, live cake-smash distraction: every active citizen/The Men's effective vigilance is halved
@@ -394,6 +420,36 @@ int witness_ai_carried_player_id(void) {
 
 int witness_ai_lab_deliveries(void) {
     return g_lab_deliveries;
+}
+
+/* witness_ai_try_throw_pheromone -- the real consumer pheromone.h's own doc comment named as
+ * "phase 7" and still didn't have as of this pass. Self-rate-limited per player_id (so the caller
+ * never needs its own edge-trigger state, see protocol.h's own in_pheromone doc comment), throws a
+ * marker at the player's current position plus a fixed distance along their own facing (same
+ * degrees-to-radians, sin=x/cos=z convention this file's own zombie-chase block already uses when
+ * it sets zp->yaw from atan2f). Returns 1 if a marker was actually thrown, 0 on cooldown or an
+ * inactive/dead/out-of-range player_id -- matching witness_ai_try_pickup's own real/honest
+ * "nothing happened" return convention (that one uses -1, this uses 0, since 0 is never itself a
+ * valid "thrown" outcome here, unlike a player_id where 0 is the hero and a real value). */
+int witness_ai_try_throw_pheromone(ServerState *s, int player_id, unsigned int now_ms) {
+    if (!s || player_id < 0 || player_id >= MAX_CLIENTS) return 0;
+    PlayerState *p = &s->players[player_id];
+    if (!p->active || p->state == STATE_DEAD) return 0;
+    if (now_ms < g_pheromone_next_throw_ms[player_id]) return 0;
+    g_pheromone_next_throw_ms[player_id] = now_ms + WITNESS_AI_PHEROMONE_THROW_COOLDOWN_MS;
+
+    pheromone_marker_expire(g_pheromone_markers, PHEROMONE_MAX, now_ms);
+    int slot = pheromone_claim_slot(g_pheromone_markers, PHEROMONE_MAX);
+    float rad = p->yaw * 3.14159f / 180.0f;
+    g_pheromone_markers[slot].active = 1;
+    g_pheromone_markers[slot].x = p->x + sinf(rad) * WITNESS_AI_PHEROMONE_THROW_RANGE;
+    g_pheromone_markers[slot].z = p->z + cosf(rad) * WITNESS_AI_PHEROMONE_THROW_RANGE;
+    g_pheromone_markers[slot].expires_at_ms = now_ms + WITNESS_AI_PHEROMONE_MARKER_LIFETIME_MS;
+
+    printf("[PHEROMONE] player=%d threw marker slot=%d at (%.1f, %.1f)\n",
+           player_id, slot, g_pheromone_markers[slot].x, g_pheromone_markers[slot].z);
+    reflux_dispatch(REFLUX_ACTION_PHEROMONE_THROWN, player_id, slot, 0);
+    return 1;
 }
 
 int witness_ai_spawn_zombie(ServerState *s, float x, float y, float z, unsigned int now_ms) {
@@ -981,6 +1037,9 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
            system yet" boundary the rest of this file's zone/witness radius checks already accept.
            Closes witness_ai.h's own top-doc-comment "has_target is always 0" scope cut. */
         int has_target = 0;
+        int targeting_hero = 0; /* distinct from has_target: stays 0 if the marker branch below
+            redirects hdx/hdz/hdist at a thrown marker instead -- witness_ai_hero_melee_hit must
+            never fire off a distance that's actually measured to a marker, not the hero. */
         float hdx = 0.0f, hdz = 0.0f, hdist = 0.0f;
         int wander_mode = (s->game_mode == MODE_ZOMBIES || s->game_mode == MODE_SURVIVAL);
         if (hero_live && zp->scene_id == hero_p->scene_id) {
@@ -999,6 +1058,30 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
                 has_target = (z->lock_until_ms != 0 && (int)(z->lock_until_ms - now_ms) > 0);
             } else {
                 has_target = hdist <= WITNESS_AI_ZOMBIE_PERCEPTION_RADIUS;
+            }
+            targeting_hero = has_target;
+        }
+
+        /* Pheromone marker targeting (2026-10-08, same-day continuation) -- a thrown marker can
+           recruit a zombie that has no hero lock at all (BIG_O/NORTHSTAR.md section 10's own "lure
+           from a distance" framing); zombies_pheromone_should_steer_to_marker (PARENA, see this
+           file's own prototype comment near the top) is the real decision of whether the hero lock
+           above wins instead -- deliberately checked AFTER the hero block so has_target already
+           reflects whichever the hero-sense computed, and BEFORE zombie_tick_dt below so a marker
+           can legitimately drive mood escalation the exact same way hero-sensing already does (BIG_O's
+           own v0 "escalates it to FRENZIED" behavior). No change to z->lock_until_ms here: a marker is
+           a stationary world object re-checked fresh every tick via pheromone_find_nearest, it needs
+           no memory of its own the way a moving hero does. */
+        if (wander_mode) {
+            pheromone_marker_expire(g_pheromone_markers, PHEROMONE_MAX, now_ms);
+            float mtx = 0.0f, mtz = 0.0f;
+            if (pheromone_find_nearest(g_pheromone_markers, PHEROMONE_MAX, zp->x, zp->z,
+                                        WITNESS_AI_PHEROMONE_DETECTION_RADIUS, &mtx, &mtz) &&
+                zombies_pheromone_should_steer_to_marker(has_target)) {
+                hdx = mtx - zp->x;
+                hdz = mtz - zp->z;
+                hdist = sqrtf(hdx * hdx + hdz * hdz);
+                has_target = 1;
             }
         }
         {
@@ -1054,8 +1137,10 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
         /* Melee: real, direct hero damage on contact, same shield-then-health order and
            STORY_PHASE_FAILED-on-death handling story_boss_tick's own attack block already
            establishes -- a zombie is a real, second source of lethal threat in VOXWORLD now, not
-           just a background prop. */
-        if (has_target && (z->zstate.mood == ZOMBIE_MOOD_HUNTING || z->zstate.mood == ZOMBIE_MOOD_FRENZIED) &&
+           just a background prop. targeting_hero (not just has_target) guards this -- a zombie
+           that's merely standing on a thrown marker's own (x,z) must never register as hdist to
+           the hero being in range. */
+        if (targeting_hero && has_target && (z->zstate.mood == ZOMBIE_MOOD_HUNTING || z->zstate.mood == ZOMBIE_MOOD_FRENZIED) &&
             hdist <= WITNESS_AI_ZOMBIE_MELEE_RANGE &&
             now_ms - z->last_attack_ms >= WITNESS_AI_ZOMBIE_ATTACK_COOLDOWN_MS) {
             z->last_attack_ms = now_ms;

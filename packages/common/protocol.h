@@ -234,6 +234,10 @@ typedef struct {
 #define BTN_ABILITY_1 32
 #define BTN_VEHICLE_2 64
 #define BTN_ULTIMATE 128   /* Bedrock Racers — spend ultimate charge (racing scene only) */
+#define BTN_PHEROMONE 256  /* MODE_ZOMBIES/MODE_SURVIVAL pheromone marker throw (G key, apps/lobby),
+    BIG_O/NORTHSTAR.md section 10's own command tool. Deliberately its own bit, not reused off
+    BTN_USE -- BTN_USE already carries generic door/button/CTF-flag interact semantics
+    (story_buttons.h), and this is a dedicated, always-available tool, not a context interact. */
 
 #define VEH_NONE  0
 #define VEH_BUGGY 1
@@ -421,6 +425,10 @@ typedef struct {
     float in_fwd;
     float in_strafe;
     int in_jump; int in_shoot; int in_reload; int crouching; int in_use; int in_bike;
+    int in_pheromone; /* BTN_PHEROMONE, see its own doc comment above -- MODE_ZOMBIES/MODE_SURVIVAL
+        only; witness_ai_try_throw_pheromone reads this and self-rate-limits, so holding the key is
+        safe and simply re-throws on its own cooldown (same "no edge-trigger needed" reasoning
+        in_use's own story-button consumer needs a rising edge for, this doesn't). */
     int use_was_down; int bike_was_down;
     int in_ability;
     int current_weapon; int ammo[MAX_WEAPONS];
