@@ -93,8 +93,23 @@
  *    `hdist` even when `hdist` had been redirected to a marker's distance, not the hero's -- fixed
  *    with a separate `targeting_hero` flag that only the hero-sense branch sets, so melee can never
  *    fire from a zombie merely standing near a marker with no hero anywhere close. Real, still
- *    open, same honest scope BIG_O's own §10 named: no projectile/arc, no citizen/Men reaction to a
- *    commanded zombie, no acoustic pingers/hormone emitter. ~~Basement shadow war, entirely
+ *    open, same honest scope BIG_O's own §10 named: no projectile/arc, no acoustic pingers/
+ *    hormone emitter. **Correction, checked while scoping the next slice (2026-10-08, later the
+ *    same day, "continue" after shadow war closed):** this bullet originally also claimed
+ *    "citizens/The Men don't react to a commanded zombie" -- checked the real citizen-flee block
+ *    (above this comment's own tick loop) and found that's false, and was already false the
+ *    moment the pheromone pass landed: citizen flee keys ONLY on `z->zstate.mood ==
+ *    HUNTING/FRENZIED` + distance, with zero regard for WHY a zombie is in that mood -- and a
+ *    marker-recruited zombie's `has_target=1` feeds `zombie_tick_dt` the identical way a hero
+ *    lock does (this file's own doc comment at the pheromone marker block says so explicitly:
+ *    "a marker can legitimately drive mood escalation the exact same way hero-sensing already
+ *    does"), so it escalates to HUNTING/FRENZIED by the same path and citizens flee it exactly as
+ *    they would a hero-chasing zombie. The Men follow transitively: a HUNTING/FRENZIED zombie is
+ *    a witnessable "loud event" (witness_live.h) regardless of cause, so nearby citizens witness
+ *    it, escalate to SILENCING/ENGAGE the normal way, and The Men's own dispatch loop (which hunts
+ *    witness state, never zombies directly) responds exactly as it already does for any other
+ *    hunt. Lesson repeated from two bullets up: grep the real tick loop before writing a gap,
+ *    not just the obvious new code added that same pass. ~~Basement shadow war, entirely
  *    unbuilt~~ -- **closed (bot-only v0), same-day continuation (2026-10-08, "continue full
  *    game")**. The LAB level's new 7th station, WAR TERMINAL (LABST_WAR, lab_station_host.c),
  *    deploys the player's whole clone roster (packages/common/phone.h's own Phone.clones[]/

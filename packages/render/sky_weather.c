@@ -373,3 +373,29 @@ void sky_weather_draw_grade(const SkyWeather *s, int win_w, int win_h) {
     glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW);
     glDisable(GL_BLEND); glEnable(GL_DEPTH_TEST);
 }
+
+void sky_weather_light_state(const SkyWeather *s, RetroLightingState *io) {
+    if (!s || !io || !s->ready) return;
+
+    /* Gloom: overcast dims a little, a storm dims more -- never fully black (a real storm at
+     * noon is still dim daylight, not night), so sun/moon are scaled harder than ambient. */
+    float gloom = sw_clamp(s->cover * 0.35f + s->storm * 0.45f, 0.0f, 0.75f);
+    float keep = 1.0f - gloom;
+    io->ambient_intensity *= 0.55f + 0.45f * keep;
+    io->sun_intensity *= keep;
+    io->moon_intensity *= keep;
+
+    /* Fog: blend the scene's own fog toward the sky's real, already-weather-matched fog colour
+     * (s->fog[], the same colour the dome/clouds/precip already fade into) by fog_wash, and
+     * tighten the draw distance toward the sky's own real meteorological visibility -- the same
+     * two numbers that already make the DOME go hazy/stormy now make the WORLD match it. Only
+     * ever tightens (min), never loosens past whatever the time-of-day preset already picked. */
+    float fw = sw_clamp(s->fog_wash, 0.0f, 1.0f);
+    io->fog_r = sw_mix(io->fog_r, s->fog[0], fw);
+    io->fog_g = sw_mix(io->fog_g, s->fog[1], fw);
+    io->fog_b = sw_mix(io->fog_b, s->fog[2], fw);
+    if (s->visibility > 1.0f) {
+        if (s->visibility * 0.15f < io->fog_near) io->fog_near = s->visibility * 0.15f;
+        if (s->visibility < io->fog_far) io->fog_far = s->visibility;
+    }
+}

@@ -11209,6 +11209,11 @@ void draw_scene(PlayerState *render_p) {
     RetroLightingState world_lighting;
     retro_lighting_eval(now_ms * 0.001f, g_world_lighting_preset, &world_lighting);
     retro_tune_world_fog(&world_lighting, local_state.scene_id);
+    /* BIGO_ENGINE_MERGE_NORTHSTAR.md Sec.3.1 follow-up ("continue full game", 2026-10-08): a
+       storm used to darken only the sky dome, never the walls -- g_sky_weather's own real,
+       already-smoothed cover/rain/storm/fog state now dims ambient/sun/moon and tightens world
+       fog toward the sky's own matching colour, for every mode (lighting isn't story-only). */
+    sky_weather_light_state(&g_sky_weather, &world_lighting);
 
     /* Weather fog (founder real-time, 2026-09-27: "make the weather effects cause actual realistic
        fog if there is fog in the weather"). The weather profile's fog (plus night and dawn radiation

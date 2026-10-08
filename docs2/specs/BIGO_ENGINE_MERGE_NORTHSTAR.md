@@ -675,9 +675,26 @@ additional scope beyond the sky/clock/REFLUX slice above. None of the below is b
   needed for one whole minute at this repo's 1:1 rate) -- this clock had likely never actually
   advanced in real gameplay at all before this fix, in any mode. See `CHANGELOG.md` 2026-09-25
   for the full account.
-- **`retro_lighting.c` weather integration.** §2b's sky visuals are real and weather-aware, but
-  `RETRO_LIGHTING_DYNAMIC`'s scene ambient/sun/moon/fog still reads the OLD `retro_sky_eval_*`
-  functions, unaware of weather. A storm currently darkens the sky dome but not the walls.
+- ~~**`retro_lighting.c` weather integration.**~~ **Closed 2026-10-08** (EMILY/BACKLOG.md SECTION
+  536 follow-up, "continue full game"). New `sky_weather_light_state(const SkyWeather *, 
+  RetroLightingState *)` (`packages/render/sky_weather.{h,c}`) adjusts the already-evaluated
+  `RetroLightingState` in place using `SkyWeather`'s own already-smoothed `cover`/`storm`
+  (dims ambient/sun/moon, never to full black) and `fog_wash`/`visibility`/`fog[3]` (blends world
+  fog toward the sky's own real weather-matched colour and tightens draw distance) — the exact
+  same numbers that already made the dome/clouds/precip weather-aware, reused rather than
+  re-derived. Called once, unconditionally, right after `retro_tune_world_fog` in
+  `apps/lobby/src/main.c` (lighting isn't story-only, matching `SHANKPIT/CLAUDE.md`'s own "levels
+  are never story-mode-only" instinct applied to lighting too). Plain host C, not PARENA — matches
+  this exact file's own `retro_lighting_eval_surface_rgb` (the SUN_SKY_FILL/MOON_SKY_FILL term)
+  and `sky_weather.c`'s own update/draw math: continuous atmosphere blending, not a discrete
+  decision. **Real, honest, not build-verified**: `sky_weather.h`/`.c` need `<SDL2/SDL_opengl.h>`
+  to even parse (the `SkyWeather` struct itself holds `GLuint` fields), and this sandbox has no
+  SDL2 dev headers at all — the same pre-existing, blanket limitation every GL-touching change in
+  this family already carries, not something this pass introduced or could route around. Verified
+  instead by a careful, field-by-field hand cross-check against both structs' real, current
+  definitions (every field name/type this function reads or writes confirmed to exist exactly as
+  used) — the same bar `lab_sim.c`'s own float-heavy, RNG-using functions already accepted before
+  any GL/display harness existed for them either.
 - **BIG_O's own `core/reflux_runtime.c` divergence.** Confirmed real and different from SHANKPIT's
   (`diff` non-empty) — BIG_O's own REFLUX never gets PARENA-powered by this pass; only SHANKPIT's
   does. Out of scope here since BIG_O isn't the target repo for this merge.

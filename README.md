@@ -138,6 +138,19 @@ Key traits in the current renderer include:
   washes to; the sun shows as a pale disc through thick fog. Verified with headless Xvfb screenshots of the
   default arena and VOXWORLD. Limits: fog is uniform (no ground-hugging height fog, no directional sun glare),
   emissive light panels/glow billboards are not fogged, and the story cave is left on its own fixed haze.
+- **weather now reaches the walls, not just the sky dome** (`sky_weather_light_state`, 2026-10-08): a storm
+  used to darken only `sky_weather.c`'s own dome/cloud/precip visuals -- `RETRO_LIGHTING_DYNAMIC`'s scene
+  ambient/sun/moon/fog (`retro_lighting.c`) never read the weather at all, a real gap named since the
+  2026-09-22 engine-merge pass and never closed until now. New `sky_weather_light_state` adjusts the
+  already-evaluated `RetroLightingState` in place using the sky's own already-smoothed `cover`/`storm`
+  (dims ambient/sun/moon, floored so a storm at noon is dim daylight, not night) and `fog_wash`/
+  `visibility`/`fog[3]` (blends world fog toward the sky's real weather-matched colour, tightens draw
+  distance) -- the same numbers already driving the dome, reused rather than re-derived. Called once,
+  unconditionally, for every mode. Plain host C (matches this file's own existing blend math), not PARENA.
+  **Not build-verified**: `sky_weather.h`'s `SkyWeather` struct holds `GLuint` fields, so the file can't
+  even be parsed without real SDL2/GL dev headers, which this sandbox doesn't have -- the same pre-existing
+  limitation every GL-touching change in this README already carries. Verified instead by a careful,
+  field-by-field hand check against both structs' real current definitions.
 - **terrain shading from sampled normals**
 - **“neon brutalist” block rendering**
 - stylized accent elements like hot pink trails and cyan grid motifs
@@ -472,8 +485,11 @@ target distance even when that distance belonged to a marker, not the hero -- a 
 near a marker could not actually hit you, but the code would have let it; fixed with a dedicated
 `targeting_hero` flag. `make server` and `make test-witness-ai-zombies` (ASan/UBSan, 3 new assertions
 covering cooldown, marker-recruits-a-wandering-zombie, and hero-beats-marker-when-already-locked) are both
-clean. Same honest limit as BIG_O's own v0: no projectile arc, no acoustic pingers, and citizens/The Men
-still don't react to a commanded zombie (only the zombie's own targeting is wired). The client-side G-key
+clean. Same honest limit as BIG_O's own v0: no projectile arc, no acoustic pingers. (Checked 2026-10-08,
+later the same day: citizens/The Men DO react to a commanded zombie once it escalates to HUNTING/
+FRENZIED -- the flee check and the witness/dispatch chain both key on mood alone, with no regard for
+whether a hero lock or a marker drove the escalation, so this needed no new code, only checking.) The
+client-side G-key
 binding itself is pattern-matched against already-compiling sibling code but, like the HUD line above, not
 build-verified against a real SDL2/GL build in this sandbox.
 

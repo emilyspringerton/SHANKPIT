@@ -5,8 +5,9 @@
  * (day/packages/common/bigo_sky.h) as part of the real engine merge: BIG_O's tech becomes
  * first-class SHANKPIT tech, not a separate app. Upgrades the old retro_sky.c (fixed fast orbit,
  * no weather, no config) with a real day/night clock + 4-state weather system (clear/overcast/
- * rain/storm), driving both the dome/cloud/precip visuals here and (via sky_weather_light_state,
- * see retro_lighting.c) the scene's ambient/sun/moon/fog lighting.
+ * rain/storm), driving both the dome/cloud/precip visuals here and (via sky_weather_light_state
+ * below, called from the real site that already runs retro_lighting_eval) the scene's own
+ * ambient/sun/moon/fog lighting.
  *
  * GL 1.x immediate mode, no extra assets beyond a config file (assets/skybox/default.cfg) --
  * matches this repo's own "no shader/VBO pipeline pulled in" convention for apps/lobby's client.
@@ -26,6 +27,7 @@
 
 #include <SDL2/SDL_opengl.h>
 
+#include "retro_lighting.h"
 #include "sky_weather_cfg.h"
 
 #define SKYW_STARS 320
@@ -67,6 +69,19 @@ int sky_weather_load_config(SkyWeather *s, const char *path, char *err, size_t e
 
 void sky_weather_update(SkyWeather *s, float minute, int weather, unsigned int now_ms);
 void sky_weather_draw(SkyWeather *s);
+
+/* Weather -> scene lighting (EMILY/BACKLOG.md SECTION 536 follow-up Sec.3.1, "continue full
+ * game": named since 2026-09-22, never actually wired until now -- a storm darkened the sky dome
+ * but not the walls). Call AFTER retro_lighting_eval has already filled *io for the current time/
+ * preset; this adjusts it in place using SkyWeather's own already-smoothed cover/rain/storm/
+ * fog_wash/visibility/fog[] fields rather than re-deriving a second, parallel set of weather
+ * numbers. A no-op (every field of *io left exactly as retro_lighting_eval set it) when `s` is
+ * NULL/not ready or the weather is fully clear (cover=rain=storm=0, fog_wash=0). Plain continuous
+ * blend math, not PARENA: matches this exact file's own retro_lighting_eval_surface_rgb (the
+ * SUN_SKY_FILL/MOON_SKY_FILL fill-light term) and sky_weather.c's own update/draw -- lighting/
+ * atmosphere interpolation in this subsystem has always been host C, a discrete game-balance
+ * decision this is not. */
+void sky_weather_light_state(const SkyWeather *s, RetroLightingState *io);
 
 /* Real world fog: GL_EXP2 in world units, coloured to match the sky, so everything drawn between
  * these two calls fades out by `visibility`. Also sets the gl_Fog state that GLSL shaders read
