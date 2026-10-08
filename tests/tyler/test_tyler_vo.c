@@ -20,6 +20,8 @@ int g_story_outro_requested = 0;
 int g_shankpit_is_server = 0;
 #include "../../packages/simulation/local_game.h"
 #include "../../packages/simulation/tyler_coldopen.h"
+#include "../../packages/simulation/tyler_e03_coldopen.h"
+#include "../../packages/simulation/tyler_fb01_coldopen.h"
 #include "../../packages/reflux/reflux_runtime.h"
 #include "../../packages/world/level_boxes.h"
 #include "../../packages/simulation/tyler_voice_lines.h"   /* GENERATED: g_tyler_voice_clip_ms, subtitles */
@@ -392,9 +394,66 @@ static void test_t4_driver_edge_cases(void) {
     CHECK(n == 1 && c[0].line_index == 2, "T4 ...and the line it could not emit is still emitted next step (not lost)");
 }
 
+/* T7: each scene the lobby plays (E03 "Don't Check", FB01 flashback) runs its own coordinator from
+ * its level JSON to exit, with every beat firing once in order. Same local setup as
+ * lobby_tyler_load_scene: the level's own two Characters, wisp override, then the scene's start/tick. */
+typedef void (*SceneStartFn)(TylerColdOpenState *, int, int, unsigned int);
+typedef void (*SceneTickFn)(TylerColdOpenState *, unsigned int, int, TylerExitFn);
+
+static void test_t7_scene_runs_to_exit(const char *label, const char *path, SceneStartFn start_fn,
+                                       SceneTickFn tick_fn, int beat_count) {
+    local_init_match(1, MODE_TYLER);
+    CustomLevelData lvl;
+    if (!load_level_into_physics(path, &lvl)) { CHECK(0, "T7 %s: level %s did not load", label, path); return; }
+    scene_load(SCENE_CUSTOM_LEVEL);
+    local_state.players[0].scene_id = SCENE_CUSTOM_LEVEL;
+    story_ai_reset(&local_state);
+    int ids[2] = { -1, -1 }, n = 0;
+    for (int i = 0; i < lvl.character_count && n < 2; i++) {
+        const LevelCharacter *lc = &lvl.characters[i];
+        int id = story_ai_spawn_enemy(&local_state, (AIRole)lc->role, lc->kit, lc->x, lc->y, lc->z);
+        if (id > 0) ids[n++] = id;
+    }
+    CHECK(n == 2, "T7 %s: level spawns its two Characters (got %d)", label, n);
+    if (n != 2) return;
+    for (int i = 1; i < MAX_CLIENTS; i++) local_state.players[i].scene_id = SCENE_CUSTOM_LEVEL;
+    phys_respawn(&local_state.players[0], 0);
+    local_state.players[0].state = STATE_SPECTATOR;
+    local_state.players[0].forced_kit = AI_KIT_AUTO;
+    reflux_host_reset();
+
+    TylerColdOpenState st;
+    memset(&st, 0, sizeof st);
+    start_fn(&st, ids[0], ids[1], 1);
+    g_exit_at = 0;
+    int beats_seen = 0, out_of_order = 0, last_beat = -1;
+    unsigned int now = 1;
+    for (int t = 0; t < 2400 && !st.done; t++) {
+        now += 16;
+        tick_fn(&st, now, 23, stub_exit);
+        local_update(0.0f, 0.0f, 0.0f, 0.0f, 0, -1, 0, 0, 0, 0, 0, NULL, now);
+        if (st.beat_triggered && st.current_beat != last_beat) {
+            if (st.current_beat != last_beat + 1) out_of_order++;
+            last_beat = st.current_beat;
+            beats_seen++;
+        }
+    }
+    CHECK(st.done && g_exit_at > 0, "T7 %s: ran to its exit (done=%d exit_at=%u)", label, st.done, g_exit_at);
+    CHECK(beats_seen == beat_count, "T7 %s: all %d beats fired (saw %d)", label, beat_count, beats_seen);
+    CHECK(out_of_order == 0, "T7 %s: beats fired strictly in order (%d out of order)", label, out_of_order);
+}
+
+static void test_t7_new_scenes(void) {
+    test_t7_scene_runs_to_exit("E03", "assets/tyler_levels/tyler_e03_dont_check.json",
+                               tyler_e03_start, tyler_e03_tick, g_tyler_e03_beat_count);
+    test_t7_scene_runs_to_exit("FB01", "assets/tyler_levels/tyler_fb01_apartment.json",
+                               tyler_fb01_start, tyler_fb01_tick, g_tyler_fb01_beat_count);
+}
+
 int main(void) {
     srand(7);
     test_t6_actors_walk();
+    test_t7_new_scenes();
     test_t6b_other_modes_unchanged();
     test_t6c_walks_toward_marker();
     test_t2_assets_and_timeline();

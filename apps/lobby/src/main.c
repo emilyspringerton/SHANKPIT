@@ -43,6 +43,8 @@
 #include "../../../packages/simulation/typing_lesson.h"
 #include "../../../packages/simulation/local_game.h"
 #include "../../../packages/simulation/tyler_coldopen.h"
+#include "../../../packages/simulation/tyler_e03_coldopen.h"
+#include "../../../packages/simulation/tyler_fb01_coldopen.h"
 #include "../../../packages/reflux/reflux_mod_host.h"
 #include "../../../packages/world/level_boxes.h"
 #include <sys/stat.h>
@@ -2914,7 +2916,64 @@ static void lobby_start_story_mode(void) {
 // story_force_level_transition for the one two-level sequence this mode has.
 #define TYLER_ICELAND_PATH   "assets/tyler_levels/tyler_1986_iceland.json"
 #define TYLER_CONSTRUCT_PATH "assets/tyler_levels/construct.json"
+#define TYLER_E03_PATH       "assets/tyler_levels/tyler_e03_dont_check.json"
+#define TYLER_FB01_PATH      "assets/tyler_levels/tyler_fb01_apartment.json"
+
+/* Play order, founder real-time 2026-10-08: "have the scenes go in the order they were added to the
+ * game" -- VH01 cold open (Iceland), then Episode 3 "Don't Check", then the FB01 flashback, then the
+ * CONSTRUCT hub. Each scene's exit advances to the next entry; CONSTRUCT has no coordinator (the
+ * Duck just roams) and is the last stop. The enum order IS the play order -- do not reorder it. */
+typedef enum {
+    TYLER_SCENE_VH01 = 0,
+    TYLER_SCENE_E03,
+    TYLER_SCENE_FB01,
+    TYLER_SCENE_CONSTRUCT,
+    TYLER_SCENE_NONE
+} TylerLocalScene;
+
+/* All three coordinators share one state shape (TylerColdOpenState), so one object drives whichever
+ * scene is live. */
 static TylerColdOpenState g_tyler_coldopen_local;
+static TylerLocalScene g_tyler_scene = TYLER_SCENE_NONE;
+/* Set by lobby_tyler_exit_fn and loaded only AFTER the coordinator's tick returns: the tick sets
+ * st->done=1 right after a successful exit_fn, so starting the next scene inside the callback would
+ * have that write clobber the new scene's state. */
+static TylerLocalScene g_tyler_pending_scene = TYLER_SCENE_NONE;
+/* REFLUX log position when the current scene loaded. The subtitle scan only looks past this, so a
+ * beat index left in the log by the previous scene is never shown as this scene's subtitle. */
+static int g_tyler_scene_log_base = 0;
+
+static const char *tyler_scene_path(TylerLocalScene s) {
+    switch (s) {
+        case TYLER_SCENE_VH01:  return TYLER_ICELAND_PATH;
+        case TYLER_SCENE_E03:   return TYLER_E03_PATH;
+        case TYLER_SCENE_FB01:  return TYLER_FB01_PATH;
+        default:                return TYLER_CONSTRUCT_PATH;
+    }
+}
+
+static TylerLocalScene tyler_scene_next(TylerLocalScene s) {
+    return (s == TYLER_SCENE_NONE || s == TYLER_SCENE_CONSTRUCT) ? TYLER_SCENE_NONE : (TylerLocalScene)(s + 1);
+}
+
+static void tyler_scene_coldopen_start(TylerLocalScene s, int a, int b, unsigned int now_ms) {
+    switch (s) {
+        case TYLER_SCENE_VH01: tyler_coldopen_start(&g_tyler_coldopen_local, a, b, now_ms); break;
+        case TYLER_SCENE_E03:  tyler_e03_start(&g_tyler_coldopen_local, a, b, now_ms); break;
+        case TYLER_SCENE_FB01: tyler_fb01_start(&g_tyler_coldopen_local, a, b, now_ms); break;
+        default: break;
+    }
+}
+
+/* The beat table for the live scene, for the subtitle renderer. count=0 when the scene has none. */
+static const TylerBeat *tyler_scene_beats(TylerLocalScene s, int *count) {
+    switch (s) {
+        case TYLER_SCENE_VH01: *count = g_tyler_coldopen_beat_count; return g_tyler_coldopen_beats;
+        case TYLER_SCENE_E03:  *count = g_tyler_e03_beat_count;      return g_tyler_e03_beats;
+        case TYLER_SCENE_FB01: *count = g_tyler_fb01_beat_count;     return g_tyler_fb01_beats;
+        default:               *count = 0; return NULL;
+    }
+}
 
 static void lobby_tyler_phase_override(const char *level_name) {
     int is_construct = (strcmp(level_name, "CONSTRUCT") == 0);
@@ -2926,35 +2985,64 @@ static void lobby_tyler_phase_override(const char *level_name) {
     }
 }
 
-static int lobby_tyler_load_level(const char *path, unsigned int now_ms) {
+static int lobby_tyler_load_scene(TylerLocalScene scene, unsigned int now_ms) {
     CustomLevelData lvl;
-    if (!level_boxes_load_from_file(path, &lvl)) return 0;
+    if (!level_boxes_load_from_file(tyler_scene_path(scene), &lvl)) return 0;
     lobby_apply_story_level(&lvl);
     PlayerState *hero = &local_state.players[0];
     hero->scene_id = SCENE_CUSTOM_LEVEL;
     phys_respawn(hero, now_ms);
+    g_tyler_scene = scene;
+    g_tyler_pending_scene = TYLER_SCENE_NONE;
     g_tyler_coldopen_local.active = 0;
+    g_tyler_scene_log_base = reflux_log_size();
     int slots[2], n = 0;
     for (int i = 1; i < MAX_CLIENTS && n < 2; i++) {
         if (local_state.players[i].active && local_state.players[i].is_bot) slots[n++] = i;
     }
-    if (strcmp(lvl.name, "CONSTRUCT") != 0 && n == 2) {
-        tyler_coldopen_start(&g_tyler_coldopen_local, slots[0], slots[1], now_ms);
+    if (scene != TYLER_SCENE_CONSTRUCT && n == 2) {
+        tyler_scene_coldopen_start(scene, slots[0], slots[1], now_ms);
     }
     lobby_tyler_phase_override(lvl.name);
     return 1;
 }
 
+/* Only records the next scene: the coordinator's tick sets st->done=1 right after a successful exit,
+ * so the actual load happens in lobby_tyler_advance_pending once that tick has returned. */
 static int lobby_tyler_exit_fn(int next_level_id, int target_spawner_id, unsigned int now_ms) {
-    (void)next_level_id; (void)target_spawner_id;
-    SDL_Log("TYLER: cold open done -> CONSTRUCT");
-    return lobby_tyler_load_level(TYLER_CONSTRUCT_PATH, now_ms);
+    (void)next_level_id; (void)target_spawner_id; (void)now_ms;
+    g_tyler_pending_scene = tyler_scene_next(g_tyler_scene);
+    if (g_tyler_pending_scene == TYLER_SCENE_NONE) return 0;
+    SDL_Log("TYLER: scene done -> %s", tyler_scene_path(g_tyler_pending_scene));
+    return 1;
+}
+
+static void lobby_tyler_scene_tick(unsigned int now_ms) {
+    switch (g_tyler_scene) {
+        case TYLER_SCENE_VH01:
+            tyler_coldopen_tick(&g_tyler_coldopen_local, now_ms, g_story_next_level_id, lobby_tyler_exit_fn);
+            break;
+        case TYLER_SCENE_E03:
+            tyler_e03_tick(&g_tyler_coldopen_local, now_ms, g_story_next_level_id, lobby_tyler_exit_fn);
+            break;
+        case TYLER_SCENE_FB01:
+            tyler_fb01_tick(&g_tyler_coldopen_local, now_ms, g_story_next_level_id, lobby_tyler_exit_fn);
+            break;
+        default: break;
+    }
+    if (g_tyler_pending_scene != TYLER_SCENE_NONE) {
+        TylerLocalScene next = g_tyler_pending_scene;
+        if (!lobby_tyler_load_scene(next, now_ms)) {
+            SDL_Log("TYLER: could not load %s (run from the SHANKPIT repo root)", tyler_scene_path(next));
+            g_tyler_pending_scene = TYLER_SCENE_NONE;
+        }
+    }
 }
 
 static int lobby_start_tyler_mode(void) {
     local_init_match(1, MODE_TYLER);
     unsigned int now_ms = SDL_GetTicks();
-    if (!lobby_tyler_load_level(TYLER_ICELAND_PATH, now_ms)) {
+    if (!lobby_tyler_load_scene(TYLER_SCENE_VH01, now_ms)) {
         SDL_Log("TYLER: could not load %s (run from the SHANKPIT repo root)", TYLER_ICELAND_PATH);
         return 0;
     }
@@ -9519,10 +9607,12 @@ void draw_hud(PlayerState *p) {
     if (local_state.game_mode == MODE_TYLER) {
         int log_n = reflux_log_size();
         int latest_beat = -1;
-        for (int li = log_n - 1; li >= 0 && li >= log_n - 32; li--) {
+        int beat_count = 0;
+        const TylerBeat *beats = tyler_scene_beats(g_tyler_scene, &beat_count);
+        for (int li = log_n - 1; li >= 0 && li >= log_n - 32 && li >= g_tyler_scene_log_base; li--) {
             if (reflux_action_type_at(li) == REFLUX_ACTION_TYLER_BEAT) { latest_beat = reflux_action_a_at(li); break; }
         }
-        if (latest_beat >= 0 && latest_beat < g_tyler_coldopen_beat_count) {
+        if (latest_beat >= 0 && latest_beat < beat_count) {
             glColor4f(0.02f, 0.05f, 0.03f, 0.72f);
             glBegin(GL_QUADS);
             glVertex2f(40, 60); glVertex2f(560, 60); glVertex2f(560, 150); glVertex2f(40, 150);
@@ -9535,7 +9625,7 @@ void draw_hud(PlayerState *p) {
              * halfway character, same simple, honest approach as this file's own other small,
              * single-purpose text formatting (draw_string itself has no wrapping at all). */
             {
-                const char *full = g_tyler_coldopen_beats[latest_beat].subtitle;
+                const char *full = beats[latest_beat].subtitle;
                 int len = (int)strlen(full);
                 int split = len / 2;
                 while (split < len && full[split] != ' ') split++;
@@ -13678,7 +13768,7 @@ int main(int argc, char* argv[]) {
                 lobby_check_story_level_exits(now_ms);
                 if (local_state.game_mode == MODE_SURVIVAL) lobby_survival_guns_tick();
                 if (local_state.game_mode == MODE_TYLER) {
-                    tyler_coldopen_tick(&g_tyler_coldopen_local, now_ms, g_story_next_level_id, lobby_tyler_exit_fn);
+                    lobby_tyler_scene_tick(now_ms);
                 }
                 lobby_doors_tick();
             }
