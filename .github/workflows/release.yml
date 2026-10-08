@@ -408,6 +408,26 @@ jobs:
           test -x bin/shank_lobby
           ldd bin/shank_lobby | grep -i 'libsdl2' || true
 
+      # SHIP-LINUX-03 (card): the Linux client must actually RENDER before it is released, not just
+      # link. Reuses the repo's own headless Xvfb check (scripts/ux_screenshot_test.sh): boots the real
+      # lobby, sends a real Enter via XTEST, and fails on a solid-black boot screen or LEVELS overlay.
+      # Gates the release job (needs: [build]) -- a blank Linux client never gets published.
+      - name: Linux client headless render smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq xvfb imagemagick python3-xlib xauth
+          mkdir -p "$RUNNER_TEMP/ux-shots"
+          ./scripts/ux_screenshot_test.sh "$RUNNER_TEMP/ux-shots"
+
+      - name: Upload Linux client screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux_client_screenshots_${{ github.run_number }}
+          path: ${{ runner.temp }}/ux-shots
+          if-no-files-found: ignore
+
       - name: Generate Source Construct
         shell: bash
         run: |
