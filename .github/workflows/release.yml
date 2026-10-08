@@ -408,6 +408,25 @@ jobs:
           test -x bin/shank_lobby
           ldd bin/shank_lobby | grep -i 'libsdl2' || true
 
+      # SHIP-LINUX-02a (card): Linux build of the DEADWEIGHT app the lobby's APPS page launches. Same
+      # source list as the Windows dw_gui.exe recipe (Build SHANKPIT OS Apps (Windows)), native gcc,
+      # Windows-only libs (ws2_32/bcrypt/mingw32, -mwindows) dropped. Bundled as bundled/dw_gui, the
+      # exact name lobby_app_binary_path looks up on non-Windows. Launch is verified only in CI's
+      # own build here; a headless launch test is SHIP-LINUX-02b.
+      - name: Build Linux OS app (DEADWEIGHT dw_gui)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ( cd os_apps/DEADWEIGHT
+            test -f apps/gui/main.c
+            gcc -std=c99 -Wall -Wextra -Werror -Icore -Icore/runtime -DPARENA_NO_GRAPHICS "-DDW_VERSION=\"ci\"" \
+              -include card_rules.h -O2 -I/usr/include/SDL2 \
+              apps/gui/main.c apps/gui/fx.c apps/gui/sfx.c core/client.c core/policy.c core/protocol.c core/card_rules.c core/fx_rules.c core/card_text.c core/iduna.c core/http.c core/account_rules.c core/runtime/parena_runtime.c \
+              -o dw_gui -lSDL2 -lm )
+          mkdir -p bundled_linux
+          cp os_apps/DEADWEIGHT/dw_gui bundled_linux/dw_gui
+          test -x bundled_linux/dw_gui
+
       # SHIP-LINUX-03 (card): the Linux client must actually RENDER before it is released, not just
       # link. Reuses the repo's own headless Xvfb check (scripts/ux_screenshot_test.sh): boots the real
       # lobby, sends a real Enter via XTEST, and fails on a solid-black boot screen or LEVELS overlay.
@@ -528,6 +547,9 @@ jobs:
           done
           test -n "$(ls ShankPit_Client_Linux/lib)"
           cp -r assets ShankPit_Client_Linux/
+          # SHIP-LINUX-02a: the lobby APPS page on Linux looks for bundled/<name> (no .exe).
+          mkdir -p ShankPit_Client_Linux/bundled
+          cp bundled_linux/* ShankPit_Client_Linux/bundled/
           cp SHANKPIT_CONSTRUCT.txt ShankPit_Client_Linux/
           printf '%s\n' '#!/bin/sh' 'cd "$(dirname "$0")"' 'LD_LIBRARY_PATH="$PWD/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" exec ./ShankPit "$@"' > ShankPit_Client_Linux/PLAY.sh
           chmod +x ShankPit_Client_Linux/ShankPit ShankPit_Client_Linux/PLAY.sh

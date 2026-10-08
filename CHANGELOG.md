@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-08
+- release: Linux DEADWEIGHT app (`dw_gui`) built natively in CI and bundled as `bundled/dw_gui` in the Linux client zip (SHIP-LINUX-02a). Other OS apps (PITVIPER, IDUNA.GAME, REDGARDEN) still Windows-only (sess-20261008-0056-77bba21e)
 - release: Linux client now ships (`ShankPit_Client_Linux_*.zip`: `ShankPit` binary built via the Makefile's own `lobby` target, bundled `lib/` SDL2 + SDL2_ttf `.so` files, `PLAY.sh`, assets, CONSTRUCT). Previously only the Linux server shipped. The OS-app APPS page is Windows-only and stays empty on Linux. Not verified in CI until the first release run completes (sess-20261008-0056-77bba21e)
 - release: `SHANKPIT_CONSTRUCT.txt` is now a standalone GitHub Release asset, not only inside the zips (sess-20261008-0056-77bba21e)
 
