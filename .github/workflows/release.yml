@@ -393,6 +393,21 @@ jobs:
             -O2 \
             -lncurses
 
+      # Linux client (card SHIP-LINUX-01, founder: "WINDOWS BUILDS (LINUX TOO)"). Until now only the
+      # Linux SERVER shipped; the client was Windows-only. Built through the Makefile's own `lobby`
+      # target, not a hand-copied gcc line, so the source list cannot drift (same lesson as the
+      # print-lobby-src export above). EDITOR_GAME_DIR is overridden to this job's own EDITOR.GAME
+      # checkout -- the Makefile default (../EDITOR.GAME) points outside the workspace on a runner.
+      - name: Build Linux Client
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libsdl2-dev libsdl2-ttf-dev libglu1-mesa-dev
+          make -j"$(nproc)" lobby EDITOR_GAME_DIR=EDITOR.GAME
+          test -x bin/shank_lobby
+          ldd bin/shank_lobby | grep -i 'libsdl2' || true
+
       - name: Generate Source Construct
         shell: bash
         run: |
@@ -480,6 +495,24 @@ jobs:
           printf '%s\n' "start ShankPit.exe" > ShankPit_Client/PLAY.bat
           zip -r "ShankPit_Client_${BUILD}.zip" ShankPit_Client
 
+          # Linux client (card SHIP-LINUX-01). Same layout idea as the Windows zip: the binary, the
+          # runtime-cwd assets/ tree (every asset load is cwd-relative, see the S470 note above), the
+          # CONSTRUCT, and a PLAY.sh that cd's into its own folder first. SDL2 + SDL2_ttf are bundled
+          # into lib/ with their real sonames (the Linux analogue of the Windows DLLs), resolved from
+          # ldd rather than hard-coded version numbers. The OS apps (bundled/*.exe) are Windows-only,
+          # so the APPS page is not populated on this build -- stated in the release notes, not hidden.
+          mkdir -p ShankPit_Client_Linux/lib
+          cp bin/shank_lobby ShankPit_Client_Linux/ShankPit
+          for so in $(ldd bin/shank_lobby | awk '/libSDL2(_ttf)?-2\.0\.so/ {print $3}'); do
+            cp -L "$so" ShankPit_Client_Linux/lib/
+          done
+          test -n "$(ls ShankPit_Client_Linux/lib)"
+          cp -r assets ShankPit_Client_Linux/
+          cp SHANKPIT_CONSTRUCT.txt ShankPit_Client_Linux/
+          printf '%s\n' '#!/bin/sh' 'cd "$(dirname "$0")"' 'LD_LIBRARY_PATH="$PWD/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" exec ./ShankPit "$@"' > ShankPit_Client_Linux/PLAY.sh
+          chmod +x ShankPit_Client_Linux/ShankPit ShankPit_Client_Linux/PLAY.sh
+          (cd ShankPit_Client_Linux && zip -r "../ShankPit_Client_Linux_${BUILD}.zip" .)
+
           mkdir -p ShankPit_Bots
           if [ -f apps/client/bot_main.c ]; then
             gcc apps/client/bot_main.c -o ShankBot_Linux -O2 -static -I. -Ipackages/common -Ipackages/simulation -lm || true
@@ -556,5 +589,6 @@ jobs:
             dist/ShankPit_World_*.zip \
             dist/ShankPit_Client_*.zip \
             dist/ShankPit_Bots_*.zip \
+            dist/SHANKPIT_CONSTRUCT.txt \
             --title "$NEXT_VERSION" \
             --generate-notes
