@@ -51,7 +51,23 @@ DISPLAY="$DISPLAY_NUM" "$BIN" > "$OUT_DIR/lobby.log" 2>&1 &
 LOBBY_PID=$!
 sleep 3
 
-DISPLAY="$DISPLAY_NUM" import -window root "$OUT_DIR/01_boot.png"
+# The lobby loads its GOLDENBAND/NPC/shader assets after the window opens, and the first frames are
+# pure black until that finishes (CI, 2026-10-08: boot frame black at 3s, LEVELS overlay rendered
+# fine after input). So poll for the first real frame up to a cap rather than sampling once at a
+# fixed time. A client that never renders still fails -- the cap is a wait, not a pass.
+BOOT_TIMEOUT="${SHANKPIT_UX_BOOT_TIMEOUT:-20}"
+boot_ok=0
+for _ in $(seq 1 "$BOOT_TIMEOUT"); do
+  DISPLAY="$DISPLAY_NUM" import -window root "$OUT_DIR/01_boot.png"
+  bm=$(identify -format "%[fx:mean]" "$OUT_DIR/01_boot.png" 2>/dev/null || echo "0")
+  if awk -v m="$bm" -v min="$MIN_MEAN_BRIGHTNESS" 'BEGIN { exit !(m+0 >= min+0) }'; then
+    boot_ok=1
+    echo "boot: first non-black frame after ~${_}s"
+    break
+  fi
+  sleep 1
+done
+[ "$boot_ok" -eq 1 ] || echo "boot: still black after ${BOOT_TIMEOUT}s"
 
 # Real synthetic Enter keypress via XTEST -- lobby_selection defaults to 0 (LOBBY_LEVEL_SELECT is
 # deliberately the first tile), so this opens the real LEVELS overlay with no mouse coordinates.
