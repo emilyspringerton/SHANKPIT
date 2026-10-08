@@ -57,6 +57,7 @@ cc_library(
     deps = [
         "//packages/common:common_headers",
         "//packages/world",  # witness_ai.h's own real level_boxes.h dependency (7c zone sync)
+        "//packages/reflux",  # REFLUX_ACTION_ZOMBIE_*/WITNESS_ESCALATED dispatch, 2026-10-08
     ],
     visibility = ["//visibility:public"],
 )

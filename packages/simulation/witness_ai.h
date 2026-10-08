@@ -44,7 +44,18 @@
  *    ENGAGE, matching resolve_hunters' own real, unchanged scope) -- a citizen stuck at PANIC
  *    stays there, a real, separate, still-open gap.
  *    Citizen flee (also 2026-09-25) is a real, separate reaction layered on top of this state
- *    machine, not a replacement for it. */
+ *    machine, not a replacement for it.
+ *  - ~~No REFLUX eventing for this population; the avian coalition only had 2 of BIG_O/core/
+ *    avian_live.h's 3 "observing the observer" channels~~ -- **closed 2026-10-08** (founder
+ *    real-time: "bring in all the BIG_O affordances... we need it all evented with reflux").
+ *    REFLUX_ACTION_ZOMBIE_SPAWNED/HARVESTED/MOOD_ESCALATED and WITNESS_ESCALATED (packages/
+ *    reflux/reflux_runtime.h) now dispatch at the real moment each happens; the bird flock's own
+ *    witness_ai_birds_tick now also alerts on a human witness_state crossing into {SILENCING,
+ *    ENGAGE} (channel 3), not just a loud zombie event or a citizen's own vigilance spike. Real,
+ *    still-open gap, named not hidden: no *_bridge.c consumer exists yet for any of these (no
+ *    smartphone to bridge to -- "we dont have the smartphone yet" -- so there is, on purpose, no
+ *    real subscriber today, same "the button has no idea the bridge exists" shape world_alert_
+ *    bridge.c's own phone_notify pairing already proves works once a consumer is built). */
 
 #include "../common/protocol.h"
 #include "../world/level_boxes.h" /* CustomLevelData, level_boxes_zone_for_position -- phase 7c */

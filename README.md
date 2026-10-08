@@ -436,8 +436,18 @@ networked client has no role info, so online zombies render with default skins);
 (the living clip pose isn't captured); needs the IDUNA deploy for the zombies repository; rendering of the new
 NPCs was exercised headless for crashes but not eyeballed in a screenshot yet.
 
-ZOMBIES zombies now **always hunt** the player (no perception radius -- nextown is big) and spawn 72-130 units
-out, preferring spots **walled off by a building** so they come round a corner instead of popping into view.
+ZOMBIES zombies **wander and get hungry** (2026-10-04) rather than always hunting: a hero within sense range
+(grows with the zombie's own mood/hunger/aggression alertness) is locked on and chased/remembered for a short
+window, a far one is eventually found by hunger scent, and they still spawn 72-130 units out preferring spots
+**walled off by a building** so they come round a corner instead of popping into view.
+
+Population events are now **REFLUX**-evented (2026-10-08) -- `REFLUX_ACTION_ZOMBIE_SPAWNED`/`_HARVESTED`/
+`_MOOD_ESCALATED` and `_WITNESS_ESCALATED` (`packages/reflux/reflux_runtime.h`) dispatch at the real moment a
+zombie spawns/dies/goes loud or a citizen crosses into SILENCING/ENGAGE, and the bird flock now also alerts on
+that last one (closing the avian coalition's 3rd "observing the observer" channel, not just a loud zombie event
+or a citizen's own vigilance spike). Honest limit: no subscriber consumes any of this yet -- there's no phone
+bridge in ZOMBIES the way `world_alert_bridge.c` feeds MODE_STORY's phone, so today this is real, dispatched,
+unread telemetry, not a built feature on top of it.
 
 ## SURVIVAL (2026-10-02)
 

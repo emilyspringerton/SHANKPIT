@@ -9,6 +9,12 @@
 #include "witness_live.h"
 #include "giant_bug_values.h"
 #include "avian_values.h"
+#include "../reflux/reflux_runtime.h" /* REFLUX_ACTION_ZOMBIE_SPAWNED/HARVESTED/MOOD_ESCALATED, WITNESS_ESCALATED */
+
+/* Prototype for the PARENA-generated glue (reflux_mod.c, do-not-edit-by-hand) -- no shared .h
+ * between generated units in this codebase, same convention world_alert_bridge.c's own identical
+ * declaration already established. */
+void reflux_dispatch(int action_type, int a, int b, int c);
 
 typedef struct {
     int active;
@@ -27,6 +33,7 @@ typedef struct {
     unsigned int wander_until_ms;/* current wander leg ends here */
     float wander_yaw;
     int wander_pause;            /* this leg is a stand-still */
+    unsigned char harvested_reported; /* REFLUX_ACTION_ZOMBIE_HARVESTED fired once for this corpse */
 } WitnessAiZombie;
 
 /* Giant Zombie Bug -- founder real-time, 2026-09-22: "add giant zombie bugs (feral AI units)."
@@ -399,9 +406,11 @@ int witness_ai_spawn_zombie(ServerState *s, float x, float y, float z, unsigned 
     zc->player_id = slot;
     zc->last_attack_ms = 0;
     zc->last_tick_ms = 0; zc->lock_until_ms = 0; zc->wander_until_ms = 0; zc->wander_yaw = 0.0f; zc->wander_pause = 0;
+    zc->harvested_reported = 0;
     zombie_state_init(&zc->zstate, now_ms);
     /* not every zombie starts equally hungry -- desynchronises the wander->scent turn */
     zc->zstate.hunger = (float)((((unsigned int)slot * 2654435761u) ^ now_ms) % 40u) / 100.0f;
+    reflux_dispatch(REFLUX_ACTION_ZOMBIE_SPAWNED, slot, 0, 0);
     return slot;
 }
 
@@ -550,8 +559,18 @@ static void witness_ai_birds_tick(ServerState *s, unsigned int now_ms) {
         if (!b->active) continue;
         PlayerState *bp = &s->players[b->player_id];
 
-        /* Observing the observer: alarmed by a HUNTING/FRENZIED zombie or a wary citizen near the
-           bird -- second-order signal, same shape BIG_O/core/avian_live.h defines. */
+        /* Observing the observer: BIG_O/core/avian_live.h's full 3-channel coalition, now ported
+           in full (founder real-time 2026-10-08: "bring in all the features we dont have"). A
+           bird never needs its own line of sight to the player -- it only needs to see (1) a
+           zombie go loud [witness_live_zombie_is_witnessable_event's own HUNTING/FRENZIED gate],
+           (2) a citizen's own effective vigilance spike [BIGO_AVIAN_OBSERVED_VIGILANCE_THRESHOLD
+           =60], or (3) a human witness_state already escalate into {SILENCING, ENGAGE} -- channel
+           3 was the one real gap left when this inline port only had channels 1/2; closed here
+           with the same 90-unit radius the other two already use. Deliberately NOT BIG_O's own
+           literal BIGO_AVIAN_WITNESS_ESCALATION_MIN=WS_COMPROMISED threshold -- see the
+           REFLUX_ACTION_WITNESS_ESCALATED dispatch site below for why that exact value is
+           unreachable on this call site, in BIG_O's own original logic too. No new struct/header
+           needed since g_sim.n[].state is already this file's own real witness-state storage. */
         int alert = 0;
         for (int zi = 0; zi < WITNESS_AI_MAX_ZOMBIES && !alert; zi++) {
             if (!g_zombies[zi].active) continue;
@@ -563,6 +582,14 @@ static void witness_ai_birds_tick(ServerState *s, unsigned int now_ms) {
         for (int ci = 0; ci < WITNESS_AI_MAX_CITIZENS && !alert; ci++) {
             if (!g_citizens[ci].active) continue;
             if (npc_brain_effective_vigilance(&g_citizens[ci].brain) < 60) continue;
+            PlayerState *cp = &s->players[g_citizens[ci].player_id];
+            float dx = cp->x - bp->x, dz = cp->z - bp->z;
+            if (dx * dx + dz * dz < 90.0f * 90.0f) alert = 1;
+        }
+        for (int ci = 0; ci < WITNESS_AI_MAX_CITIZENS && !alert; ci++) {
+            if (!g_citizens[ci].active) continue;
+            int wstate = g_sim.n[g_citizens[ci].npc_index].state;
+            if (wstate != WS_SILENCING && wstate != WS_ENGAGE) continue;
             PlayerState *cp = &s->players[g_citizens[ci].player_id];
             float dx = cp->x - bp->x, dz = cp->z - bp->z;
             if (dx * dx + dz * dz < 90.0f * 90.0f) alert = 1;
@@ -932,9 +959,16 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
         WitnessAiZombie *z = &g_zombies[i];
         if (!z->active) continue;
         PlayerState *zp = &s->players[z->player_id];
-        if (zp->state == STATE_DEAD) { zp->in_fwd = 0.0f; continue; } /* corpse stays put, see
+        if (zp->state == STATE_DEAD) { /* corpse stays put, see
             local_game.h's own MODE_STORY "i>0 dead players never respawn" convention -- a killed
             zombie is a real, permanent kill, not a respawn-timer no-op. */
+            zp->in_fwd = 0.0f;
+            if (!z->harvested_reported) { /* fire exactly once per corpse, see this struct field's doc comment */
+                reflux_dispatch(REFLUX_ACTION_ZOMBIE_HARVESTED, z->player_id, (int)z->zstate.mood, 0);
+                z->harvested_reported = 1;
+            }
+            continue;
+        }
 
         /* Real perception: flat (x,z) radius against the hero, same honest "no line-of-sight
            system yet" boundary the rest of this file's zone/witness radius checks already accept.
@@ -964,7 +998,15 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
             float dt = z->last_tick_ms ? (float)(now_ms - z->last_tick_ms) / 1000.0f : 0.05f;
             if (dt > 1.0f) dt = 1.0f;
             z->last_tick_ms = now_ms;
+            ZombieMood prev_mood = z->zstate.mood;
             zombie_tick_dt(&z->zstate, now_ms, has_target, dt);
+            /* REFLUX_ACTION_ZOMBIE_MOOD_ESCALATED -- the exact instant this zombie becomes a real
+               "loud event" (witness_live_zombie_is_witnessable_event's own HUNTING/FRENZIED gate),
+               fired once on the DORMANT/AGITATED -> HUNTING/FRENZIED edge, not every tick it stays
+               there. Founder real-time 2026-10-08: "we need it all evented with reflux." */
+            if (prev_mood < ZOMBIE_MOOD_HUNTING && z->zstate.mood >= ZOMBIE_MOOD_HUNTING) {
+                reflux_dispatch(REFLUX_ACTION_ZOMBIE_MOOD_ESCALATED, z->player_id, (int)z->zstate.mood, 0);
+            }
         }
 
         if (wander_mode && !has_target) {
@@ -1167,7 +1209,24 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
             if (!witness_live_in_range(zp->x, zp->z, cp->x, cp->z, WITNESS_LIVE_DETECTION_RADIUS)) continue;
 
             WitnessNpc *wn = &g_sim.n[c->npc_index];
+            int prev_wstate = wn->state;
             wn->state = witness_live_next_state_for_event(wn->state, count, wn->arrogance, 0);
+            /* REFLUX_ACTION_WITNESS_ESCALATED -- fired once on the real edge into {SILENCING,
+               ENGAGE}, not every tick a citizen stays there. Deliberately NOT BIG_O/core/
+               avian_live.h's own literal BIGO_AVIAN_WITNESS_ESCALATION_MIN=WS_COMPROMISED
+               threshold: witness_live_next_state_for_event always passes compromised=0 to
+               npc_next_state (by design, see witness_live.h's own doc comment -- "no forced-
+               compromise mechanic live here"), and npc_next_state/witness_state's own real,
+               checked logic (witness_rules.c) only ever returns WS_COMPROMISED when compromised==1
+               -- so that exact threshold is dead/unreachable on this call site (plausibly in
+               BIG_O's own original too, since this is the same generated witness_rules.c, "logic
+               unchanged"). {SILENCING, ENGAGE} is the real, reachable, already-load-bearing
+               threshold in THIS codebase instead: it's the exact same test the dispatch loop
+               below already uses to decide a citizen needs The Men. */
+            if (prev_wstate != WS_SILENCING && prev_wstate != WS_ENGAGE &&
+                (wn->state == WS_SILENCING || wn->state == WS_ENGAGE)) {
+                reflux_dispatch(REFLUX_ACTION_WITNESS_ESCALATED, c->player_id, wn->state, 0);
+            }
         }
     }
 

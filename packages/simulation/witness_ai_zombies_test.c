@@ -1,8 +1,10 @@
-/* witness_ai_zombies_test.c -- MODE_ZOMBIES lifecycle, wall awareness, wall clawing, birds.
+/* witness_ai_zombies_test.c -- MODE_ZOMBIES lifecycle, wall awareness, wall clawing, birds,
+ * REFLUX eventing (ZOMBIE_SPAWNED/HARVESTED/MOOD_ESCALATED, WITNESS_ESCALATED).
  * Build/run (see Makefile target test-witness-ai-zombies). No physics.h: witness_ai.c reaches the world
  * only through its map / wall-hit hooks, which this test supplies. */
 #include "witness_ai.h"
 #include "day_night_clock.h"
+#include "../reflux/reflux_runtime.h"
 
 #include <assert.h>
 #include <math.h>
@@ -262,6 +264,86 @@ int main(void) {
     int w = witness_ai_survival_wave();
     witness_ai_survival_tick(&S, t + 100000u);
     assert(witness_ai_survival_wave() == w);
+
+    /* ---- founder real-time 2026-10-08: "bring in all the BIG_O affordances... we need it all
+       evented with reflux" -- ZOMBIE_SPAWNED fires exactly once at the real spawn call site ---- */
+    reflux_host_reset();
+    memset(&S, 0, sizeof S);
+    S.game_mode = MODE_ZOMBIES;
+    S.players[0].active = 1; S.players[0].state = STATE_ALIVE;
+    S.players[0].x = 18.0f; S.players[0].z = 0.0f; /* same "senses and chases" distance as above */
+    nboxes = 1;
+    witness_ai_reset(7u, 0);
+
+    int before = reflux_host_log_size();
+    zid = witness_ai_spawn_zombie(&S, 0.0f, 0.0f, 0.0f, 0);
+    assert(zid > 0);
+    assert(reflux_host_log_size() == before + 1);
+    assert(reflux_host_action_type_at(before) == REFLUX_ACTION_ZOMBIE_SPAWNED);
+    assert(reflux_host_action_a_at(before) == zid);
+    printf("PASS: REFLUX_ACTION_ZOMBIE_SPAWNED dispatched once at spawn (player_id=%d)\n", zid);
+
+    /* naturally reaches HUNTING via real has_target/mood_change_at_ms logic (zombie_values.c),
+       not a forced mood -- same real "hero at 18 senses and chases" mechanic the test above
+       already proves lands within 60 ticks. Must produce exactly one MOOD_ESCALATED edge. */
+    int esc_count = 0;
+    for (int i = 0; i < 60; i++) {
+        t += 50;
+        int n0 = reflux_host_log_size();
+        witness_ai_tick(&S, t);
+        walk(0.05f);
+        for (int k = n0; k < reflux_host_log_size(); k++)
+            if (reflux_host_action_type_at(k) == REFLUX_ACTION_ZOMBIE_MOOD_ESCALATED) esc_count++;
+    }
+    assert(esc_count == 1);
+    assert(S.players[zid].in_fwd > 0.0f); /* confirms it is really HUNTING, same assert as the test above */
+    printf("PASS: REFLUX_ACTION_ZOMBIE_MOOD_ESCALATED fired exactly once on the natural DORMANT->HUNTING edge\n");
+
+    /* killing it must harvest exactly once, even checked over several more ticks */
+    S.players[zid].state = STATE_DEAD;
+    int harvest_count = 0;
+    for (int i = 0; i < 5; i++) {
+        t += 50;
+        int n0 = reflux_host_log_size();
+        witness_ai_tick(&S, t);
+        for (int k = n0; k < reflux_host_log_size(); k++)
+            if (reflux_host_action_type_at(k) == REFLUX_ACTION_ZOMBIE_HARVESTED) {
+                harvest_count++;
+                assert(reflux_host_action_a_at(k) == zid);
+            }
+    }
+    assert(harvest_count == 1);
+    printf("PASS: REFLUX_ACTION_ZOMBIE_HARVESTED fired exactly once per corpse\n");
+
+    /* ---- WITNESS_ESCALATED: 5 citizens (>= silence_threshold) around one HUNTING zombie cross
+       into SILENCING together -- the same real count/arrogance math the dispatch loop (The Men)
+       already relies on, not a forced state ---- */
+    reflux_host_reset();
+    memset(&S, 0, sizeof S);
+    S.game_mode = MODE_ZOMBIES;
+    S.players[0].active = 1; S.players[0].state = STATE_ALIVE;
+    S.players[0].x = 900.0f; S.players[0].z = 900.0f; /* far away: hero plays no part in this one */
+    nboxes = 1;
+    witness_ai_reset(8u, 0);
+    for (int i = 0; i < 5; i++) {
+        int cid2 = witness_ai_spawn_citizen(&S, ZONE_PUBLIC, 40, 50, 5.0f, 0.0f, 0.0f, 0); /* arrogance 50: lands on SILENCING, not PANIC/ENGAGE */
+        assert(cid2 > 0);
+    }
+    zid = witness_ai_spawn_zombie(&S, 0.0f, 0.0f, 0.0f, 0);
+    assert(zid > 0);
+    witness_ai_force_zombie_mood(zid, 2 /* HUNTING */);
+    before = reflux_host_log_size();
+    witness_ai_tick(&S, 100); /* inside zombie_state_init's own real 1000ms mood_change_at_ms
+                                  window, so zombie_tick_dt's own real re-evaluation does not
+                                  overwrite the forced mood before the witness loop reads it */
+    int witness_esc = 0;
+    for (int k = before; k < reflux_host_log_size(); k++)
+        if (reflux_host_action_type_at(k) == REFLUX_ACTION_WITNESS_ESCALATED) {
+            witness_esc++;
+            assert(reflux_host_action_b_at(k) == WS_SILENCING);
+        }
+    assert(witness_esc == 5); /* all 5 citizens cross the edge on the same tick */
+    printf("PASS: REFLUX_ACTION_WITNESS_ESCALATED fired for all %d citizens crossing into SILENCING\n", witness_esc);
 
     printf("ALL PASS\n");
     return 0;

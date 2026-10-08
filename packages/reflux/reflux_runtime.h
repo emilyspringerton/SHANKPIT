@@ -68,14 +68,32 @@
  * by packages/simulation/world_alert_bridge.c on every real day_night_clock (phase 1) phase/
  * weather transition, matching PARENA/stdlib/shankpit/world_alerts_mod.prn's own expected action-
  * type numbering (copied verbatim from BIG_O's stdlib/big_o/world_alerts_mod.prn, which reserves
- * 103/104 for a zombie population SHANKPIT doesn't have -- kept here for numbering parity with
- * that module even though nothing dispatches them). Payload: PHASE_CHANGED a=old phase b=new
- * phase c=day number; WEATHER_CHANGED a=old weather b=new weather c=0 (world_alerts_mod's own
- * zombie-density payload doesn't apply without a zombie population). */
+ * 103/104 for a zombie population). Payload: PHASE_CHANGED a=old phase b=new phase c=day number;
+ * WEATHER_CHANGED a=old weather b=new weather c=0. */
 #define REFLUX_ACTION_PHASE_CHANGED 101
 #define REFLUX_ACTION_WEATHER_CHANGED 102
-#define REFLUX_ACTION_ZOMBIE_SPAWNED 103    /* reserved, not dispatched -- no zombie population */
-#define REFLUX_ACTION_ZOMBIE_HARVESTED 104  /* reserved, not dispatched -- no zombie population */
+
+/* MODE_ZOMBIES/MODE_SURVIVAL population events -- founder real-time, 2026-10-08: "bring in all
+ * the BIG_O affordances into shankpit zombies... we need it all evented with reflux" (no
+ * smartphone bridge exists yet for this population -- unlike world_alert_bridge.c's own real
+ * phone_notify consumer, there is deliberately no *_bridge.c here yet, same "the button has no
+ * idea the bridge exists" shape, just with no real subscriber built so far). Dispatched directly
+ * from packages/simulation/witness_ai.c at the real moment each state change happens, not by
+ * polling a diff each tick (ZOMBIE_SPAWNED: witness_ai_spawn_zombie; ZOMBIE_HARVESTED: the
+ * per-zombie tick loop's own STATE_DEAD edge, once per corpse; ZOMBIE_MOOD_ESCALATED: the same
+ * tick loop's own mood edge, the instant a zombie crosses into witness_live_zombie_is_
+ * witnessable_event(); WITNESS_ESCALATED: the citizen-witnessing loop's own state edge, the
+ * instant a human crosses into {WS_SILENCING, WS_ENGAGE} -- the same real, reachable threshold
+ * the dispatch loop right below it already uses to send The Men, not BIG_O/core/avian_live.h's
+ * own literal WS_COMPROMISED threshold, which is unreachable from this call site: witness_live.h
+ * always passes compromised=0, and witness_rules.c's generated witness_state()/npc_next_state()
+ * only ever return WS_COMPROMISED when compromised==1). These were reserved-but-unused here until this
+ * change -- SHANKPIT's own MODE_ZOMBIES population (witness_ai.c) now exists where the original
+ * comment said it didn't. */
+#define REFLUX_ACTION_ZOMBIE_SPAWNED 103        /* a = zombie's player_id, b/c unused (0) */
+#define REFLUX_ACTION_ZOMBIE_HARVESTED 104      /* a = player_id, b = final ZombieMood, c unused */
+#define REFLUX_ACTION_ZOMBIE_MOOD_ESCALATED 105 /* a = player_id, b = new ZombieMood (>=HUNTING), c unused */
+#define REFLUX_ACTION_WITNESS_ESCALATED 106     /* a = citizen player_id, b = new WS_* state, c unused */
 
 #define REFLUX_LOG_CAPACITY 256
 

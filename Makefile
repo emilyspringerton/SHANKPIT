@@ -263,7 +263,7 @@ test-audio-chain:
 # mk/<pkg>.mk with its own test targets instead of editing this file.
 -include mk/*.mk
 
-WAI_TEST_SRC := packages/simulation/witness_ai.c packages/simulation/witness_sim.c packages/simulation/witness_rules.c packages/simulation/npc_archetype.c packages/simulation/zombie_values.c packages/simulation/avian_values.c packages/simulation/ai_brain_rules.c packages/simulation/giant_bug_values.c packages/simulation/giant_bug_brain.c packages/simulation/day_night_clock.c packages/simulation/world_rules.c packages/simulation/humanness.c
+WAI_TEST_SRC := packages/simulation/witness_ai.c packages/simulation/witness_sim.c packages/simulation/witness_rules.c packages/simulation/npc_archetype.c packages/simulation/zombie_values.c packages/simulation/avian_values.c packages/simulation/ai_brain_rules.c packages/simulation/giant_bug_values.c packages/simulation/giant_bug_brain.c packages/simulation/day_night_clock.c packages/simulation/world_rules.c packages/simulation/humanness.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c
 test-witness-ai-zombies: | $(BIN_DIR)
 	$(CC) -g -O1 -fsanitize=address,undefined -Wall $(INCLUDES) packages/simulation/witness_ai_zombies_test.c $(WAI_TEST_SRC) -o $(BIN_DIR)/witness_ai_zombies_test $(LIBS_M)
 	./$(BIN_DIR)/witness_ai_zombies_test
