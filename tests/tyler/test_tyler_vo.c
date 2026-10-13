@@ -25,7 +25,7 @@ int g_shankpit_is_server = 0;
 #include "../../packages/simulation/tyler_vh02_coldopen.h"
 #include "../../packages/reflux/reflux_runtime.h"
 #include "../../packages/world/level_boxes.h"
-#include "../../packages/simulation/tyler_voice_lines.h"   /* GENERATED: g_tyler_voice_clip_ms, subtitles */
+#include "../../packages/simulation/tyler_voice_tables.h"  /* build-time generated voice tables (silent fallback) */
 #include <stdint.h>
 
 
@@ -250,7 +250,9 @@ static void test_t2_assets_and_timeline(void) {
         free(w.bytes); manifest_rows++;
     }
     if (mf) fclose(mf);
-    CHECK(manifest_rows == g_tyler_voice_line_count, "T2 manifest lists %d clips, the lines table has %d", manifest_rows, g_tyler_voice_line_count);
+    int all_lines = g_tyler_voice_line_count + g_tyler_e03_voice_line_count + g_tyler_fb01_voice_line_count + g_tyler_vh02_voice_line_count;
+    CHECK(manifest_rows == all_lines, "T2 manifest lists %d clips, the four scenes' lines tables have %d", manifest_rows, all_lines);
+    CHECK(g_tyler_e03_voice_line_count > 0 && g_tyler_fb01_voice_line_count > 0 && g_tyler_vh02_voice_line_count > 0, "T2 every scene (not just VH01) has generated voice lines");
 
     /* every table row: file on disk, duration matches within 1 ms, per-beat end == the generated clip_ms */
     unsigned int beat_end[TYLER_COLDOPEN_MAX_BEATS] = {0};
@@ -268,8 +270,8 @@ static void test_t2_assets_and_timeline(void) {
         if (L->offset_ms + L->dur_ms > beat_end[L->beat]) beat_end[L->beat] = L->offset_ms + L->dur_ms;
     }
     for (int b = 0; b < TYLER_COLDOPEN_MAX_BEATS; b++)
-        CHECK(beat_end[b] == g_tyler_voice_clip_ms[b], "T2 beat %d: max(offset+dur) %u == g_tyler_voice_clip_ms %u", b, beat_end[b], g_tyler_voice_clip_ms[b]);
-    CHECK(g_tyler_voice_clip_ms[6] == 0, "T2 beat 6 is the silent action beat");
+        CHECK(beat_end[b] == g_tyler_vh01_voice_clip_ms[b], "T2 beat %d: max(offset+dur) %u == g_tyler_vh01_voice_clip_ms %u", b, beat_end[b], g_tyler_vh01_voice_clip_ms[b]);
+    CHECK(g_tyler_vh01_voice_clip_ms[6] == 0, "T2 beat 6 is the silent action beat");
 
     /* subtitles and VO share one source: the sentence beat 0's HUD box used to omit is now there */
     CHECK(strstr(g_tyler_coldopen_beats[0].subtitle, "Compte les sorties") != NULL, "T2 beat 0 subtitle carries Hana's second sentence (it was spoken but never subtitled)");
@@ -343,17 +345,22 @@ static void test_t1_driver_on_real_coordinator(void) {
 /* T4: late join, duplicate packets, lost packets -- every field of a wire-fed view is untrusted-ish. */
 static void test_t4_driver_edge_cases(void) {
     TylerVoiceDriver d; TylerVoiceCmd c[4]; int sa; int n;
-    /* line indices: 0 b0 Tyler, 1 b0 Hana, 2 b1, 3 b2, 4 b3, 5 b4, 6 b5, 7 b7 */
+    /* line indices: 0 b0 Tyler, 1 b0 Hana, 2 b1, 3 b2, 4 b3, 5 b4, 6 b5, 7 b7. Clip lengths are
+     * build-time Piper output (not deterministic), so every time below is derived from the table. */
+    const TylerVoiceLine *L_b0h = &g_tyler_voice_lines[1], *L_b2 = &g_tyler_voice_lines[3], *L_b4 = &g_tyler_voice_lines[5];
+    unsigned int mid4 = L_b4->dur_ms / 2, after4 = L_b4->offset_ms + L_b4->dur_ms + 100;
+    unsigned int join0 = L_b0h->offset_ms + 300;   /* inside Hana's line, after Tyler's is over */
+    unsigned int late2 = L_b2->dur_ms - 100;       /* mid-line, near its end */
     tyler_voice_driver_reset(&d);
-    TylerBeatView lv = { 4, 2000, 0, 1, 2 };
+    TylerBeatView lv = { 4, mid4, 0, 1, 2 };
     n = tyler_voice_driver_step(&d, &lv, c, 4, &sa);
-    CHECK(n == 1 && c[0].line_index == 5 && c[0].seek_ms == 2000 && c[0].speaker_slot == 1 && !sa, "T4 late join 2000 ms into beat 4: Tyler's line starts seeked to 2000 ms (n=%d seek=%u)", n, n ? c[0].seek_ms : 0);
-    tyler_voice_driver_reset(&d); lv = (TylerBeatView){ 4, 5900, 0, 1, 2 };
+    CHECK(n == 1 && c[0].line_index == 5 && c[0].seek_ms == mid4 && c[0].speaker_slot == 1 && !sa, "T4 late join mid-line into beat 4: Tyler's line starts seeked to %u ms (n=%d seek=%u)", mid4, n, n ? c[0].seek_ms : 0);
+    tyler_voice_driver_reset(&d); lv = (TylerBeatView){ 4, after4, 0, 1, 2 };
     n = tyler_voice_driver_step(&d, &lv, c, 4, &sa);
     CHECK(n == 0, "T4 late join after beat 4's clip already ended starts nothing (n=%d)", n);
-    tyler_voice_driver_reset(&d); lv = (TylerBeatView){ 0, 3000, 0, 1, 2 };
+    tyler_voice_driver_reset(&d); lv = (TylerBeatView){ 0, join0, 0, 1, 2 };
     n = tyler_voice_driver_step(&d, &lv, c, 4, &sa);
-    CHECK(n == 1 && c[0].line_index == 1 && c[0].seek_ms == 395 && c[0].speaker_slot == 2, "T4 join 3000 ms into beat 0: Tyler's line is over, Hana's starts seeked 395 ms");
+    CHECK(n == 1 && c[0].line_index == 1 && c[0].seek_ms == 300 && c[0].speaker_slot == 2, "T4 join into beat 0 after Tyler's line: Hana's starts seeked 300 ms");
     /* the same view repeated (snapshot cadence) never retriggers */
     tyler_voice_driver_reset(&d); lv = (TylerBeatView){ 2, 100, 0, 1, 2 };
     n = tyler_voice_driver_step(&d, &lv, c, 4, &sa);
@@ -361,7 +368,7 @@ static void test_t4_driver_edge_cases(void) {
     lv.beat_elapsed_ms = 132;
     n = tyler_voice_driver_step(&d, &lv, c, 4, &sa);
     CHECK(n == 0 && !sa, "T4 a repeated packet for the same beat never retriggers");
-    lv.beat_elapsed_ms = 4300;   /* still mid-line near its end: nothing new either */
+    lv.beat_elapsed_ms = late2;   /* still mid-line near its end: nothing new either */
     n = tyler_voice_driver_step(&d, &lv, c, 4, &sa);
     CHECK(n == 0 && !sa, "T4 a late repeat inside the same beat does not replay the line");
     /* lost packets: a jump 2 -> 4 cuts the old audio and starts beat 4's line */
@@ -453,15 +460,39 @@ static void test_t7_new_scenes(void) {
                                tyler_vh02_start, tyler_vh02_tick, g_tyler_vh02_beat_count);
 }
 
+/* T8: every scene's HUD text is French + an [EN: ...] gloss (founder: "ensure all tyler mode has the
+ * french"). Runs without any generated assets -- subtitles are committed in each scene's beat table. */
+static void test_t8_every_scene_is_french(void) {
+    const struct { const char *id; const TylerBeat *beats; int n; } sc[] = {
+        { "VH01", g_tyler_coldopen_beats, g_tyler_coldopen_beat_count },
+        { "E03",  g_tyler_e03_beats,      g_tyler_e03_beat_count },
+        { "FB01", g_tyler_fb01_beats,     g_tyler_fb01_beat_count },
+        { "VH02", g_tyler_vh02_beats,     g_tyler_vh02_beat_count },
+    };
+    for (size_t s = 0; s < sizeof sc / sizeof sc[0]; s++) {
+        CHECK(sc[s].n == 8, "T8 %s has 8 beats (%d)", sc[s].id, sc[s].n);
+        for (int b = 0; b < sc[s].n; b++) {
+            const char *sub = sc[s].beats[b].subtitle;
+            CHECK(sub[0] != '\0' && strstr(sub, "[EN:") != NULL && strlen(sub) < TYLER_COLDOPEN_SUBTITLE_LEN,
+                  "T8 %s beat %d subtitle is French with an [EN:] gloss and fits", sc[s].id, b);
+        }
+    }
+}
+
 int main(void) {
     srand(7);
     test_t6_actors_walk();
     test_t7_new_scenes();
     test_t6b_other_modes_unchanged();
     test_t6c_walks_toward_marker();
+    test_t8_every_scene_is_french();
+#ifdef TYLER_VH01_VOICE_GENERATED
     test_t2_assets_and_timeline();
     test_t1_driver_on_real_coordinator();
     test_t4_driver_edge_cases();
+#else
+    printf("SKIP T1/T2/T4: no build-time generated voice assets (run TYLER/tts/render_scenes.py; CI does)\n");
+#endif
     printf("%s: %d passed, %d failed\n", g_fail ? "FAILED" : "ALL PASS", g_pass, g_fail);
     return g_fail != 0;
 }

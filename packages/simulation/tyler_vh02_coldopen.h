@@ -17,7 +17,7 @@
 extern const TylerBeat g_tyler_vh02_beats[TYLER_VH02_MAX_BEATS];
 extern const int g_tyler_vh02_beat_count;
 
-extern const TylerVoiceLine g_tyler_vh02_voice_lines[1]; /* unused; count is 0 */
+extern const TylerVoiceLine g_tyler_vh02_voice_lines[TYLER_VOICE_MAX_LINES]; /* build-time generated; count 0 without Piper */
 extern const int g_tyler_vh02_voice_line_count;
 
 typedef TylerColdOpenState TylerVh02State; /* identical shape; reused as-is */

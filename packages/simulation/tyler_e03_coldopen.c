@@ -1,6 +1,7 @@
 /* tyler_e03_coldopen.c -- see tyler_e03_coldopen.h. Logic mirrors tyler_coldopen.c exactly, minus
  * the voice-driver stretch (no clips, so hold_ms is used as-authored, un-stretched). */
 #include "tyler_e03_coldopen.h"
+#include "tyler_voice_tables.h"
 #include "story_ai.h"
 #include "../reflux/reflux_runtime.h"
 
@@ -13,7 +14,7 @@ const TylerBeat g_tyler_e03_beats[TYLER_E03_MAX_BEATS] = {
     { TYLER_ACTOR_HANA,  2.0f, 1.0f,  5.0f, 2500, 0,
       "La porte a laquelle tu penses. [EN: The door you're thinking about.]" },
     { TYLER_ACTOR_TYLER, 4.0f, 1.0f,  2.0f, 2500, 0,
-      "Rien n'est \"juste\" une histoire, maintenant. [EN: Nothing is \"just\" a story anymore.]" },
+      "Rien n'est juste une histoire, maintenant. [EN: Nothing is just a story anymore.]" },
     { TYLER_ACTOR_BOTH,  6.0f, 1.0f, -2.0f, 3000, 0,
       "Reste droit devant. Se retourner est plus dangereux. [EN: Stay looking straight ahead. Turning is more dangerous.]" },
     { TYLER_ACTOR_TYLER, 6.0f, 1.0f, -5.0f, 3000, 0,
@@ -27,9 +28,15 @@ const TylerBeat g_tyler_e03_beats[TYLER_E03_MAX_BEATS] = {
 };
 const int g_tyler_e03_beat_count = TYLER_E03_MAX_BEATS;
 
-/* No rendered VO this session (Piper/TYLER repo unavailable) -- empty table, honestly labeled. */
-const TylerVoiceLine g_tyler_e03_voice_lines[1] = { { 0, TYLER_ACTOR_NONE, 0, 0, "" } };
-const int g_tyler_e03_voice_line_count = 0;
+/* Voice lines: build-time generated (tyler_voice_tables.h); empty + silent without Piper. */
+const TylerVoiceLine g_tyler_e03_voice_lines[TYLER_VOICE_MAX_LINES] = TYLER_E03_VOICE_LINES_INIT;
+const int g_tyler_e03_voice_line_count = TYLER_E03_VOICE_LINE_COUNT;
+
+/* From PARENA stdlib/tyler/voice_mod.prn: stretch a beat's hold to fit its spoken clip. */
+int on_tyler_voice_stretched_hold_ms(int, int, int);
+static unsigned int tyler_e03_hold(int beat_index, const TylerBeat *beat) {
+    return (unsigned int)on_tyler_voice_stretched_hold_ms((int)g_tyler_e03_voice_clip_ms[beat_index], (int)beat->hold_ms, 500);
+}
 
 void tyler_e03_start(TylerE03State *st, int tyler_slot, int hana_slot, unsigned int now_ms) {
     st->active = 1;
@@ -73,7 +80,7 @@ void tyler_e03_tick(TylerE03State *st, unsigned int now_ms, int next_level_id, T
         st->beat_started_ms = now_ms;
     }
 
-    if (now_ms - st->beat_started_ms < beat->hold_ms) return;
+    if (now_ms - st->beat_started_ms < tyler_e03_hold(st->current_beat, beat)) return;
 
     if (beat->fires_button) {
         if (exit_fn(next_level_id, 0, now_ms)) {

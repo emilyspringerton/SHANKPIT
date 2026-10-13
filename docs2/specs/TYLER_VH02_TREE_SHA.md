@@ -25,9 +25,14 @@ the level's two existing story-ally kits (kit 2/3) because no crew models exist 
 | 6 | NONE | -- | 3000 | (28.7 Hz under the floor. The door turns from the other side.) |
 | 7 | CAM | (4,1,-2.6) | 2500 | ENCOUNTER: THE CREW MEETS  *(fires exit)* |
 
+## Skins
+
+Cast per scene from the SKIN_* library (`g_tyler_scene_skins`, apps/lobby): VH01 Tyler=TYLER/Hana=ALPINE; E03 TYLER/GHOST; FB01 FROG/UNICORN; VH02 Cam=WANDERER, sound guy=VIKING; CONSTRUCT hero=DUCK. Lobby-local; not compiled in this sandbox.
+
 ## Known gaps (named)
 
-- **No rendered VO** (`g_tyler_vh02_voice_line_count = 0`); subtitles work.
+- **VO is build-time only.** `TYLER/tts/render_scenes.py` (Piper stopgap) generates it in CI; a local build without it is silent. Subtitles are French + `[EN:]` and committed.
+- **No in-game playback yet for ANY scene.** The voice tables, clips and driver exist and are tested, but `apps/lobby` has no mixer call site (VH01 included) -- pre-existing gap.
 - **Lobby-local only.** Like E03/FB01, not wired into `apps/server` / `--tyler` (no PACKET_TYLER_BEAT).
 - **Exit is the shared button mechanism**: the last beat "presses" the exit button, so the unfinished
   `ENCOUNTER` card cuts to the CONSTRUCT hub rather than to an on-screen reveal. The script's

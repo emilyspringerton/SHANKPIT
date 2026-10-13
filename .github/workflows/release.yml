@@ -56,6 +56,37 @@ jobs:
           test -e packages && echo "packages OK"
           test -e docs && echo "docs OK" || true
 
+      # MODE_TYLER French VO for EVERY scene (VH01, E03, FB01, VH02) is generated HERE, at build
+      # time -- never committed, never rendered on a dev node (founder, 2026-10-13: "the assets need
+      # to be generated at build time"). TYLER/tts/render_scenes.py (a labeled stopgap: Piper +
+      # numpy until PARENA-native synthesis lands) writes assets/tyler_vo/*.wav + MANIFEST and the
+      # per-scene packages/simulation/gen/tyler_voice_<scene>.h the C beat coordinators include.
+      # It also FAILS THE BUILD if any scene's committed HUD subtitle drifts from the TSV's French.
+      # The later `cp -r assets ShankPit_Client*` steps then ship the clips with the client.
+      # UNVERIFIED in CI as of this commit (first run pending): the HuggingFace voice URLs and
+      # `python -m piper` CLI shape are from the piper-voices / piper-tts docs, not exercised here.
+      - name: Checkout TYLER (voice script tables + generator)
+        uses: actions/checkout@v4
+        with:
+          repository: emilyspringerton/TYLER
+          path: TYLER
+
+      - name: Generate MODE_TYLER voice assets (Piper, build time)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet numpy piper-tts
+          mkdir -p tyler-voices
+          base=https://huggingface.co/rhasspy/piper-voices/resolve/main/fr/fr_FR
+          for v in tom/medium/fr_FR-tom-medium siwis/medium/fr_FR-siwis-medium; do
+            curl -fsSL --retry 3 -o "tyler-voices/$(basename "$v").onnx"      "$base/$v.onnx"
+            curl -fsSL --retry 3 -o "tyler-voices/$(basename "$v").onnx.json" "$base/$v.onnx.json"
+          done
+          python3 TYLER/tts/render_scenes.py --shankpit . --voices-dir tyler-voices \
+            --out-assets assets/tyler_vo --out-headers packages/simulation/gen
+          # With the generated tables present the full voice tests (manifest, driver, timeline) run too.
+          make test-tyler-vo
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:

@@ -46,3 +46,6 @@ var/logs/
 
 # Claude Code session directory.
 .claude/
+# MODE_TYLER voice: generated at build time in CI (TYLER/tts/render_scenes.py), never committed
+assets/tyler_vo/
+packages/simulation/gen/

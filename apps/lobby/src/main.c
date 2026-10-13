@@ -2948,6 +2948,32 @@ static TylerLocalScene g_tyler_pending_scene = TYLER_SCENE_NONE;
  * beat index left in the log by the previous scene is never shown as this scene's subtitle. */
 static int g_tyler_scene_log_base = 0;
 
+/* Per-scene skin casting (founder real-time, 2026-10-13: "different characters use different skins,
+ * not all the same skin"). Index = TylerLocalScene; [0] = the TYLER-slot actor, [1] = the HANA-slot
+ * actor of that scene's coordinator (VH02: Cam, the sound guy). -1 = leave to the default dispatch.
+ * Lobby-local only: it reads the coordinator's slots in THIS process, so no protocol change. */
+static const int g_tyler_scene_skins[TYLER_SCENE_NONE][2] = {
+    /* VH01 Iceland 1986  */ { SKIN_TYLER,   SKIN_ALPINE },   /* the real Tyler skin; Hana dressed for the cold */
+    /* E03 Don't Check    */ { SKIN_TYLER,   SKIN_GHOST  },   /* she arrives with no knock; paranoia made visible */
+    /* FB01 play house    */ { SKIN_FROG,    SKIN_UNICORN },  /* a flashback told in dress-up */
+    /* VH02 Tree SHA      */ { SKIN_WANDERER, SKIN_VIKING },  /* Cam the witness; the sound guy and his boom */
+    /* CONSTRUCT          */ { -1, -1 },
+};
+
+/* Skin for the player `p` while MODE_TYLER is running a scene, or -1. The hero (slot 0) is the Duck
+ * in the CONSTRUCT hub (SKIN_DUCK exists in the library); in the earlier scenes the hero is a
+ * body-less wisp. */
+static int tyler_forced_skin_for(const PlayerState *p) {
+    if (local_state.game_mode != MODE_TYLER || g_tyler_scene >= TYLER_SCENE_NONE) return -1;
+    if (p < local_state.players || p >= local_state.players + MAX_CLIENTS) return -1;
+    int idx = (int)(p - local_state.players);
+    if (idx == 0) return (g_tyler_scene == TYLER_SCENE_CONSTRUCT) ? SKIN_DUCK : -1;
+    if (!g_tyler_coldopen_local.active) return -1;
+    if (idx == g_tyler_coldopen_local.tyler_slot) return g_tyler_scene_skins[g_tyler_scene][0];
+    if (idx == g_tyler_coldopen_local.hana_slot)  return g_tyler_scene_skins[g_tyler_scene][1];
+    return -1;
+}
+
 static const char *tyler_scene_path(TylerLocalScene s) {
     switch (s) {
         case TYLER_SCENE_VH01:  return TYLER_ICELAND_PATH;
@@ -8106,6 +8132,10 @@ void draw_player_3rd(PlayerState *p) {
              * naming that as the natural generalization, not yet implemented until now. Tyler and
              * Hana (is_bot AI_ROLE_STORY_ALLY NPCs) already hit the branch above, unaffected. */
             forced_skin = SKIN_MANNEQUIN;
+        }
+        if (local_state.game_mode == MODE_TYLER) {
+            int tyler_skin = tyler_forced_skin_for(p);
+            if (tyler_skin >= 0) forced_skin = tyler_skin;
         }
         int draw_skin = (forced_skin >= 0) ? forced_skin : clamp_skin_id(g_selected_skin);
         const CharacterDefinition *def = character_definition_for_skin(draw_skin);

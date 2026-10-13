@@ -74,7 +74,7 @@ extern const int g_tyler_coldopen_beat_count;
 /* ---- Voiced lines (MODE_TYLER voice, founder real-time 2026-10-01: "VALHANNA voices via TTS") ----
  * One entry per spoken line: which beat, who speaks, when inside the beat it starts, how long the
  * committed clip is, and the cwd-relative path of that clip. GENERATED -- the table (and the HUD
- * subtitle strings in g_tyler_coldopen_beats) come from tyler_voice_lines.h, written by
+ * subtitle strings in g_tyler_coldopen_beats) come from the build-time-generated gen/tyler_voice_vh01.h (tyler_voice_tables.h), written by
  * TYLER/tts/render_vh01.py from one TSV, so the subtitles can never contradict the voice. The clips
  * are Piper renders (a labeled stopgap generator) committed under assets/tyler_vo/ -- Piper is not
  * deterministic, so they are never rendered in CI. SDL-free: compiled into server and lobby alike
