@@ -47,6 +47,7 @@
 #include "../../../packages/simulation/tyler_coldopen.h"
 #include "../../../packages/simulation/tyler_e03_coldopen.h"
 #include "../../../packages/simulation/tyler_fb01_coldopen.h"
+#include "../../../packages/simulation/tyler_vh02_coldopen.h"
 #include "../../../packages/reflux/reflux_mod_host.h"
 #include "../../../packages/world/level_boxes.h"
 #include <sys/stat.h>
@@ -2920,15 +2921,17 @@ static void lobby_start_story_mode(void) {
 #define TYLER_CONSTRUCT_PATH "assets/tyler_levels/construct.json"
 #define TYLER_E03_PATH       "assets/tyler_levels/tyler_e03_dont_check.json"
 #define TYLER_FB01_PATH      "assets/tyler_levels/tyler_fb01_apartment.json"
+#define TYLER_VH02_PATH      "assets/tyler_levels/tyler_vh02_tree_sha.json"
 
 /* Play order, founder real-time 2026-10-08: "have the scenes go in the order they were added to the
- * game" -- VH01 cold open (Iceland), then Episode 3 "Don't Check", then the FB01 flashback, then the
- * CONSTRUCT hub. Each scene's exit advances to the next entry; CONSTRUCT has no coordinator (the
+ * game" -- VH01 cold open (Iceland), then Episode 3 "Don't Check", then the FB01 flashback, then VH02
+ * "Tree SHA", then the CONSTRUCT hub. Each scene's exit advances to the next entry; CONSTRUCT has no coordinator (the
  * Duck just roams) and is the last stop. The enum order IS the play order -- do not reorder it. */
 typedef enum {
     TYLER_SCENE_VH01 = 0,
     TYLER_SCENE_E03,
     TYLER_SCENE_FB01,
+    TYLER_SCENE_VH02,
     TYLER_SCENE_CONSTRUCT,
     TYLER_SCENE_NONE
 } TylerLocalScene;
@@ -2950,6 +2953,7 @@ static const char *tyler_scene_path(TylerLocalScene s) {
         case TYLER_SCENE_VH01:  return TYLER_ICELAND_PATH;
         case TYLER_SCENE_E03:   return TYLER_E03_PATH;
         case TYLER_SCENE_FB01:  return TYLER_FB01_PATH;
+        case TYLER_SCENE_VH02:  return TYLER_VH02_PATH;
         default:                return TYLER_CONSTRUCT_PATH;
     }
 }
@@ -2963,6 +2967,7 @@ static void tyler_scene_coldopen_start(TylerLocalScene s, int a, int b, unsigned
         case TYLER_SCENE_VH01: tyler_coldopen_start(&g_tyler_coldopen_local, a, b, now_ms); break;
         case TYLER_SCENE_E03:  tyler_e03_start(&g_tyler_coldopen_local, a, b, now_ms); break;
         case TYLER_SCENE_FB01: tyler_fb01_start(&g_tyler_coldopen_local, a, b, now_ms); break;
+        case TYLER_SCENE_VH02: tyler_vh02_start(&g_tyler_coldopen_local, a, b, now_ms); break;
         default: break;
     }
 }
@@ -2973,6 +2978,7 @@ static const TylerBeat *tyler_scene_beats(TylerLocalScene s, int *count) {
         case TYLER_SCENE_VH01: *count = g_tyler_coldopen_beat_count; return g_tyler_coldopen_beats;
         case TYLER_SCENE_E03:  *count = g_tyler_e03_beat_count;      return g_tyler_e03_beats;
         case TYLER_SCENE_FB01: *count = g_tyler_fb01_beat_count;     return g_tyler_fb01_beats;
+        case TYLER_SCENE_VH02: *count = g_tyler_vh02_beat_count;     return g_tyler_vh02_beats;
         default:               *count = 0; return NULL;
     }
 }
@@ -3029,6 +3035,9 @@ static void lobby_tyler_scene_tick(unsigned int now_ms) {
             break;
         case TYLER_SCENE_FB01:
             tyler_fb01_tick(&g_tyler_coldopen_local, now_ms, g_story_next_level_id, lobby_tyler_exit_fn);
+            break;
+        case TYLER_SCENE_VH02:
+            tyler_vh02_tick(&g_tyler_coldopen_local, now_ms, g_story_next_level_id, lobby_tyler_exit_fn);
             break;
         default: break;
     }

@@ -22,6 +22,7 @@ int g_shankpit_is_server = 0;
 #include "../../packages/simulation/tyler_coldopen.h"
 #include "../../packages/simulation/tyler_e03_coldopen.h"
 #include "../../packages/simulation/tyler_fb01_coldopen.h"
+#include "../../packages/simulation/tyler_vh02_coldopen.h"
 #include "../../packages/reflux/reflux_runtime.h"
 #include "../../packages/world/level_boxes.h"
 #include "../../packages/simulation/tyler_voice_lines.h"   /* GENERATED: g_tyler_voice_clip_ms, subtitles */
@@ -448,6 +449,8 @@ static void test_t7_new_scenes(void) {
                                tyler_e03_start, tyler_e03_tick, g_tyler_e03_beat_count);
     test_t7_scene_runs_to_exit("FB01", "assets/tyler_levels/tyler_fb01_apartment.json",
                                tyler_fb01_start, tyler_fb01_tick, g_tyler_fb01_beat_count);
+    test_t7_scene_runs_to_exit("VH02", "assets/tyler_levels/tyler_vh02_tree_sha.json",
+                               tyler_vh02_start, tyler_vh02_tick, g_tyler_vh02_beat_count);
 }
 
 int main(void) {
