@@ -48,6 +48,8 @@
 #include "../../../packages/simulation/tyler_e03_coldopen.h"
 #include "../../../packages/simulation/tyler_fb01_coldopen.h"
 #include "../../../packages/simulation/tyler_vh02_coldopen.h"
+#include "../../../packages/simulation/tyler_vh03_coldopen.h"
+#include "../../../packages/simulation/tyler_vh04_coldopen.h"
 #include "../../../packages/reflux/reflux_mod_host.h"
 #include "../../../packages/world/level_boxes.h"
 #include <sys/stat.h>
@@ -2922,16 +2924,20 @@ static void lobby_start_story_mode(void) {
 #define TYLER_E03_PATH       "assets/tyler_levels/tyler_e03_dont_check.json"
 #define TYLER_FB01_PATH      "assets/tyler_levels/tyler_fb01_apartment.json"
 #define TYLER_VH02_PATH      "assets/tyler_levels/tyler_vh02_tree_sha.json"
+#define TYLER_VH03_PATH      "assets/tyler_levels/tyler_vh03_day_out_of_time.json"
+#define TYLER_VH04_PATH      "assets/tyler_levels/tyler_vh04_chaises_pliantes.json"
 
 /* Play order, founder real-time 2026-10-08: "have the scenes go in the order they were added to the
  * game" -- VH01 cold open (Iceland), then Episode 3 "Don't Check", then the FB01 flashback, then VH02
- * "Tree SHA", then the CONSTRUCT hub. Each scene's exit advances to the next entry; CONSTRUCT has no coordinator (the
+ * "Tree SHA", then VH03 "Jour Hors du Temps", then VH04 "Les Chaises Pliantes", then the CONSTRUCT hub. Each scene's exit advances to the next entry; CONSTRUCT has no coordinator (the
  * Duck just roams) and is the last stop. The enum order IS the play order -- do not reorder it. */
 typedef enum {
     TYLER_SCENE_VH01 = 0,
     TYLER_SCENE_E03,
     TYLER_SCENE_FB01,
     TYLER_SCENE_VH02,
+    TYLER_SCENE_VH03,
+    TYLER_SCENE_VH04,
     TYLER_SCENE_CONSTRUCT,
     TYLER_SCENE_NONE
 } TylerLocalScene;
@@ -2950,13 +2956,15 @@ static int g_tyler_scene_log_base = 0;
 
 /* Per-scene skin casting (founder real-time, 2026-10-13: "different characters use different skins,
  * not all the same skin"). Index = TylerLocalScene; [0] = the TYLER-slot actor, [1] = the HANA-slot
- * actor of that scene's coordinator (VH02: Cam, the sound guy). -1 = leave to the default dispatch.
+ * actor of that scene's coordinator (VH02/VH03: Cam, the sound guy; VH04: Cam, the Auditor). -1 = leave to the default dispatch.
  * Lobby-local only: it reads the coordinator's slots in THIS process, so no protocol change. */
 static const int g_tyler_scene_skins[TYLER_SCENE_NONE][2] = {
     /* VH01 Iceland 1986  */ { SKIN_TYLER,   SKIN_ALPINE },   /* the real Tyler skin; Hana dressed for the cold */
     /* E03 Don't Check    */ { SKIN_TYLER,   SKIN_GHOST  },   /* she arrives with no knock; paranoia made visible */
     /* FB01 play house    */ { SKIN_FROG,    SKIN_UNICORN },  /* a flashback told in dress-up */
     /* VH02 Tree SHA      */ { SKIN_WANDERER, SKIN_VIKING },  /* Cam the witness; the sound guy and his boom */
+    /* VH03 Day Out of Time */ { SKIN_WANDERER, SKIN_VIKING }, /* the same crew bodies, on the day with no date */
+    /* VH04 Folding Chairs  */ { SKIN_WANDERER, SKIN_BILL },   /* Cam; the Auditor (a teal badge panel on the chest, a lanyard) */
     /* CONSTRUCT          */ { -1, -1 },
 };
 
@@ -2985,6 +2993,8 @@ static const TylerVoiceLine *tyler_scene_voice(TylerLocalScene s, int *line_coun
         case TYLER_SCENE_E03:  *line_count = g_tyler_e03_voice_line_count;  *beat_count = g_tyler_e03_beat_count;      return g_tyler_e03_voice_lines;
         case TYLER_SCENE_FB01: *line_count = g_tyler_fb01_voice_line_count; *beat_count = g_tyler_fb01_beat_count;     return g_tyler_fb01_voice_lines;
         case TYLER_SCENE_VH02: *line_count = g_tyler_vh02_voice_line_count; *beat_count = g_tyler_vh02_beat_count;     return g_tyler_vh02_voice_lines;
+        case TYLER_SCENE_VH03: *line_count = g_tyler_vh03_voice_line_count; *beat_count = g_tyler_vh03_beat_count;     return g_tyler_vh03_voice_lines;
+        case TYLER_SCENE_VH04: *line_count = g_tyler_vh04_voice_line_count; *beat_count = g_tyler_vh04_beat_count;     return g_tyler_vh04_voice_lines;
         default:               *line_count = 0; *beat_count = 0; return NULL;
     }
 }
@@ -3017,6 +3027,8 @@ static const char *tyler_scene_path(TylerLocalScene s) {
         case TYLER_SCENE_E03:   return TYLER_E03_PATH;
         case TYLER_SCENE_FB01:  return TYLER_FB01_PATH;
         case TYLER_SCENE_VH02:  return TYLER_VH02_PATH;
+        case TYLER_SCENE_VH03:  return TYLER_VH03_PATH;
+        case TYLER_SCENE_VH04:  return TYLER_VH04_PATH;
         default:                return TYLER_CONSTRUCT_PATH;
     }
 }
@@ -3031,6 +3043,8 @@ static void tyler_scene_coldopen_start(TylerLocalScene s, int a, int b, unsigned
         case TYLER_SCENE_E03:  tyler_e03_start(&g_tyler_coldopen_local, a, b, now_ms); break;
         case TYLER_SCENE_FB01: tyler_fb01_start(&g_tyler_coldopen_local, a, b, now_ms); break;
         case TYLER_SCENE_VH02: tyler_vh02_start(&g_tyler_coldopen_local, a, b, now_ms); break;
+        case TYLER_SCENE_VH03: tyler_vh03_start(&g_tyler_coldopen_local, a, b, now_ms); break;
+        case TYLER_SCENE_VH04: tyler_vh04_start(&g_tyler_coldopen_local, a, b, now_ms); break;
         default: break;
     }
 }
@@ -3042,6 +3056,8 @@ static const TylerBeat *tyler_scene_beats(TylerLocalScene s, int *count) {
         case TYLER_SCENE_E03:  *count = g_tyler_e03_beat_count;      return g_tyler_e03_beats;
         case TYLER_SCENE_FB01: *count = g_tyler_fb01_beat_count;     return g_tyler_fb01_beats;
         case TYLER_SCENE_VH02: *count = g_tyler_vh02_beat_count;     return g_tyler_vh02_beats;
+        case TYLER_SCENE_VH03: *count = g_tyler_vh03_beat_count;     return g_tyler_vh03_beats;
+        case TYLER_SCENE_VH04: *count = g_tyler_vh04_beat_count;     return g_tyler_vh04_beats;
         default:               *count = 0; return NULL;
     }
 }
@@ -3103,6 +3119,12 @@ static void lobby_tyler_scene_tick(unsigned int now_ms) {
             break;
         case TYLER_SCENE_VH02:
             tyler_vh02_tick(&g_tyler_coldopen_local, now_ms, g_story_next_level_id, lobby_tyler_exit_fn);
+            break;
+        case TYLER_SCENE_VH03:
+            tyler_vh03_tick(&g_tyler_coldopen_local, now_ms, g_story_next_level_id, lobby_tyler_exit_fn);
+            break;
+        case TYLER_SCENE_VH04:
+            tyler_vh04_tick(&g_tyler_coldopen_local, now_ms, g_story_next_level_id, lobby_tyler_exit_fn);
             break;
         default: break;
     }

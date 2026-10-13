@@ -56,7 +56,7 @@ jobs:
           test -e packages && echo "packages OK"
           test -e docs && echo "docs OK" || true
 
-      # MODE_TYLER French VO for EVERY scene (VH01, E03, FB01, VH02) is generated HERE, at build
+      # MODE_TYLER French VO for EVERY scene (VH01, E03, FB01, VH02, VH03, VH04) is generated HERE, at build
       # time -- never committed, never rendered on a dev node (founder, 2026-10-13: "the assets need
       # to be generated at build time"). TYLER/tts/render_scenes.py (a labeled stopgap: Piper +
       # numpy until PARENA-native synthesis lands) writes assets/tyler_vo/*.wav + MANIFEST and the

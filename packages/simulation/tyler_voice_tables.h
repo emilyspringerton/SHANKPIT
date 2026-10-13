@@ -63,6 +63,30 @@ static const unsigned int g_tyler_vh02_voice_clip_ms[8] = { 0, 0, 0, 0, 0, 0, 0,
 # define TYLER_VH02_VOICE_LINES_INIT { { 0, TYLER_ACTOR_NONE, 0, 0, "" } }
 #endif
 
+#if defined(__has_include)
+# if __has_include("gen/tyler_voice_vh03.h")
+#  include "gen/tyler_voice_vh03.h"
+#  define TYLER_VH03_VOICE_GENERATED 1
+# endif
+#endif
+#ifndef TYLER_VH03_VOICE_GENERATED
+static const unsigned int g_tyler_vh03_voice_clip_ms[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+# define TYLER_VH03_VOICE_LINE_COUNT 0
+# define TYLER_VH03_VOICE_LINES_INIT { { 0, TYLER_ACTOR_NONE, 0, 0, "" } }
+#endif
+
+#if defined(__has_include)
+# if __has_include("gen/tyler_voice_vh04.h")
+#  include "gen/tyler_voice_vh04.h"
+#  define TYLER_VH04_VOICE_GENERATED 1
+# endif
+#endif
+#ifndef TYLER_VH04_VOICE_GENERATED
+static const unsigned int g_tyler_vh04_voice_clip_ms[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+# define TYLER_VH04_VOICE_LINE_COUNT 0
+# define TYLER_VH04_VOICE_LINES_INIT { { 0, TYLER_ACTOR_NONE, 0, 0, "" } }
+#endif
+
 #if defined(__GNUC__)
 # pragma GCC diagnostic pop
 #endif

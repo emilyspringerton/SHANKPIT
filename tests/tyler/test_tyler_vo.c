@@ -23,6 +23,8 @@ int g_shankpit_is_server = 0;
 #include "../../packages/simulation/tyler_e03_coldopen.h"
 #include "../../packages/simulation/tyler_fb01_coldopen.h"
 #include "../../packages/simulation/tyler_vh02_coldopen.h"
+#include "../../packages/simulation/tyler_vh03_coldopen.h"
+#include "../../packages/simulation/tyler_vh04_coldopen.h"
 #include "../../packages/reflux/reflux_runtime.h"
 #include "../../packages/world/level_boxes.h"
 #include "../../packages/simulation/tyler_voice_tables.h"  /* build-time generated voice tables (silent fallback) */
@@ -251,9 +253,11 @@ static void test_t2_assets_and_timeline(void) {
         free(w.bytes); manifest_rows++;
     }
     if (mf) fclose(mf);
-    int all_lines = g_tyler_voice_line_count + g_tyler_e03_voice_line_count + g_tyler_fb01_voice_line_count + g_tyler_vh02_voice_line_count;
-    CHECK(manifest_rows == all_lines, "T2 manifest lists %d clips, the four scenes' lines tables have %d", manifest_rows, all_lines);
-    CHECK(g_tyler_e03_voice_line_count > 0 && g_tyler_fb01_voice_line_count > 0 && g_tyler_vh02_voice_line_count > 0, "T2 every scene (not just VH01) has generated voice lines");
+    int all_lines = g_tyler_voice_line_count + g_tyler_e03_voice_line_count + g_tyler_fb01_voice_line_count + g_tyler_vh02_voice_line_count
+                  + g_tyler_vh03_voice_line_count + g_tyler_vh04_voice_line_count;
+    CHECK(manifest_rows == all_lines, "T2 manifest lists %d clips, the six scenes' lines tables have %d", manifest_rows, all_lines);
+    CHECK(g_tyler_e03_voice_line_count > 0 && g_tyler_fb01_voice_line_count > 0 && g_tyler_vh02_voice_line_count > 0
+          && g_tyler_vh03_voice_line_count > 0 && g_tyler_vh04_voice_line_count > 0, "T2 every scene (not just VH01) has generated voice lines");
 
     /* every table row: file on disk, duration matches within 1 ms, per-beat end == the generated clip_ms */
     unsigned int beat_end[TYLER_COLDOPEN_MAX_BEATS] = {0};
@@ -459,6 +463,10 @@ static void test_t7_new_scenes(void) {
                                tyler_fb01_start, tyler_fb01_tick, g_tyler_fb01_beat_count);
     test_t7_scene_runs_to_exit("VH02", "assets/tyler_levels/tyler_vh02_tree_sha.json",
                                tyler_vh02_start, tyler_vh02_tick, g_tyler_vh02_beat_count);
+    test_t7_scene_runs_to_exit("VH03", "assets/tyler_levels/tyler_vh03_day_out_of_time.json",
+                               tyler_vh03_start, tyler_vh03_tick, g_tyler_vh03_beat_count);
+    test_t7_scene_runs_to_exit("VH04", "assets/tyler_levels/tyler_vh04_chaises_pliantes.json",
+                               tyler_vh04_start, tyler_vh04_tick, g_tyler_vh04_beat_count);
 }
 
 /* T3: the SDL-free WAV decoder the in-game mixer (audio_clip_*) uses. Always-run part uses a
@@ -488,9 +496,11 @@ static void test_t3_wav_decoder(void) {
     remove("/tmp/tyler_t3_mono.wav"); remove("/tmp/tyler_t3_44k.wav");
 #ifdef TYLER_VH01_VOICE_GENERATED
     {
-        const TylerVoiceLine *all[4] = { g_tyler_voice_lines, g_tyler_e03_voice_lines, g_tyler_fb01_voice_lines, g_tyler_vh02_voice_lines };
-        const int counts[4] = { g_tyler_voice_line_count, g_tyler_e03_voice_line_count, g_tyler_fb01_voice_line_count, g_tyler_vh02_voice_line_count };
-        for (int s = 0; s < 4; s++) for (int i = 0; i < counts[s]; i++) {
+        const TylerVoiceLine *all[6] = { g_tyler_voice_lines, g_tyler_e03_voice_lines, g_tyler_fb01_voice_lines, g_tyler_vh02_voice_lines,
+                                         g_tyler_vh03_voice_lines, g_tyler_vh04_voice_lines };
+        const int counts[6] = { g_tyler_voice_line_count, g_tyler_e03_voice_line_count, g_tyler_fb01_voice_line_count, g_tyler_vh02_voice_line_count,
+                                g_tyler_vh03_voice_line_count, g_tyler_vh04_voice_line_count };
+        for (int s = 0; s < 6; s++) for (int i = 0; i < counts[s]; i++) {
             int n = audio_wav_load_stereo16(all[s][i].file, &pcm);
             long ms = (n * 1000L + 11025L) / 22050L;
             CHECK(n > 0 && labs(ms - (long)all[s][i].dur_ms) <= 1, "T3 %s decodes (%d frames, %ld ms vs table %u)", all[s][i].file, n, ms, all[s][i].dur_ms);
@@ -508,6 +518,8 @@ static void test_t8_every_scene_is_french(void) {
         { "E03",  g_tyler_e03_beats,      g_tyler_e03_beat_count },
         { "FB01", g_tyler_fb01_beats,     g_tyler_fb01_beat_count },
         { "VH02", g_tyler_vh02_beats,     g_tyler_vh02_beat_count },
+        { "VH03", g_tyler_vh03_beats,     g_tyler_vh03_beat_count },
+        { "VH04", g_tyler_vh04_beats,     g_tyler_vh04_beat_count },
     };
     for (size_t s = 0; s < sizeof sc / sizeof sc[0]; s++) {
         CHECK(sc[s].n == 8, "T8 %s has 8 beats (%d)", sc[s].id, sc[s].n);
