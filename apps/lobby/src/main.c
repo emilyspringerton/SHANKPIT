@@ -2974,6 +2974,43 @@ static int tyler_forced_skin_for(const PlayerState *p) {
     return -1;
 }
 
+/* In-game VO: each scene's own generated lines table (packages/simulation/gen, built in CI) is fed
+ * through the voice edge-driver every tick and played via audio_clip_* at the speaking actor's slot.
+ * Empty tables (a build without Piper) mean no lines, no sound -- subtitles are unaffected. */
+static TylerVoiceDriver g_tyler_voice_drv;
+
+static const TylerVoiceLine *tyler_scene_voice(TylerLocalScene s, int *line_count, int *beat_count) {
+    switch (s) {
+        case TYLER_SCENE_VH01: *line_count = g_tyler_voice_line_count;      *beat_count = g_tyler_coldopen_beat_count; return g_tyler_voice_lines;
+        case TYLER_SCENE_E03:  *line_count = g_tyler_e03_voice_line_count;  *beat_count = g_tyler_e03_beat_count;      return g_tyler_e03_voice_lines;
+        case TYLER_SCENE_FB01: *line_count = g_tyler_fb01_voice_line_count; *beat_count = g_tyler_fb01_beat_count;     return g_tyler_fb01_voice_lines;
+        case TYLER_SCENE_VH02: *line_count = g_tyler_vh02_voice_line_count; *beat_count = g_tyler_vh02_beat_count;     return g_tyler_vh02_voice_lines;
+        default:               *line_count = 0; *beat_count = 0; return NULL;
+    }
+}
+
+static void lobby_tyler_voice_step(unsigned int now_ms) {
+    int nl = 0, nb = 0;
+    const TylerVoiceLine *lines = tyler_scene_voice(g_tyler_scene, &nl, &nb);
+    if (!lines || nl <= 0) return;
+    TylerBeatView view;
+    tyler_coldopen_get_view(&g_tyler_coldopen_local, now_ms, &view);
+    TylerVoiceCmd cmds[4];
+    int stop_all = 0;
+    int n = tyler_voice_driver_step_table(&g_tyler_voice_drv, &view, lines, nl, nb, cmds, 4, &stop_all);
+    if (stop_all) audio_clip_stop_all();
+    const PlayerState *ear = &local_state.players[0];
+    float lyaw = cam_yaw * 0.0174533f;
+    for (int i = 0; i < n; i++) {
+        int slot = cmds[i].speaker_slot;
+        if (slot < 0 || slot >= MAX_CLIENTS || cmds[i].line_index < 0 || cmds[i].line_index >= nl) continue;
+        const PlayerState *sp = &local_state.players[slot];
+        int clip = audio_clip_load(lines[cmds[i].line_index].file);
+        if (clip < 0) continue;
+        audio_clip_play(clip, cmds[i].seek_ms, sp->x, sp->y, sp->z, ear->x, ear->y, ear->z, lyaw);
+    }
+}
+
 static const char *tyler_scene_path(TylerLocalScene s) {
     switch (s) {
         case TYLER_SCENE_VH01:  return TYLER_ICELAND_PATH;
@@ -3029,6 +3066,8 @@ static int lobby_tyler_load_scene(TylerLocalScene scene, unsigned int now_ms) {
     g_tyler_scene = scene;
     g_tyler_pending_scene = TYLER_SCENE_NONE;
     g_tyler_coldopen_local.active = 0;
+    tyler_voice_driver_reset(&g_tyler_voice_drv);
+    audio_clip_stop_all();
     g_tyler_scene_log_base = reflux_log_size();
     int slots[2], n = 0;
     for (int i = 1; i < MAX_CLIENTS && n < 2; i++) {
@@ -3067,6 +3106,7 @@ static void lobby_tyler_scene_tick(unsigned int now_ms) {
             break;
         default: break;
     }
+    lobby_tyler_voice_step(now_ms);
     if (g_tyler_pending_scene != TYLER_SCENE_NONE) {
         TylerLocalScene next = g_tyler_pending_scene;
         if (!lobby_tyler_load_scene(next, now_ms)) {

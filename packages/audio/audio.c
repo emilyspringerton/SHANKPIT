@@ -1,6 +1,8 @@
 #include "audio.h"
+#include "audio_wav.h"
 #include "audio_chain.h"
 #include <SDL2/SDL.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -13,7 +15,11 @@
 #define BUFFER_FRAMES  512
 
 #define MAX_SOUNDS     14       /* 0-5 weapons, 6-10 footstep pentatonic notes, 11-13 shield hit/break/pickup (#539-541) */
-#define MAX_MIX        16       /* simultaneous voices */
+#define MAX_MIX        16       /* simultaneous effect voices */
+#define MAX_CLIP_VOICES 4       /* spoken clips (TYLER VO) have their own pool, never stolen by effects */
+#define NUM_VOICES     (MAX_MIX + MAX_CLIP_VOICES)
+#define MAX_CLIPS      64
+#define CLIP_PATH_LEN  160
 
 /* ── Internal types ─────────────────────────────────────────────────────── */
 
@@ -33,7 +39,10 @@ typedef struct {
 /* ── Globals ────────────────────────────────────────────────────────────── */
 
 static SoundBuf       g_snd[MAX_SOUNDS];
-static Voice          g_voices[MAX_MIX];
+static Voice          g_voices[NUM_VOICES];
+static SoundBuf       g_clips[MAX_CLIPS];
+static char           g_clip_path[MAX_CLIPS][CLIP_PATH_LEN];
+static int            g_clip_count;
 static SDL_AudioDeviceID g_dev;
 static SDL_mutex     *g_mutex;
 static AudioChain     g_chain;        /* NOCK master chain (PARENA DSP), see audio_set_master_chain */
@@ -139,7 +148,7 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
     if (g_chain_on && frames <= CHAIN_MAX_FRAMES) {
         /* NOCK master chain: mix in float, run the PARENA chain, convert once at the end. */
         memset(g_mixf, 0, sizeof(float) * (size_t)frames * NUM_CHANNELS);
-        for (int ch = 0; ch < MAX_MIX; ch++) {
+        for (int ch = 0; ch < NUM_VOICES; ch++) {
             Voice *v = &g_voices[ch];
             if (!v->active || !v->snd || !v->snd->buf) continue;
             for (int i = 0; i < frames && v->pos < v->snd->len; i++, v->pos++) {
@@ -153,7 +162,7 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
         SDL_UnlockMutex(g_mutex);
         return;
     }
-    for (int ch = 0; ch < MAX_MIX; ch++) {
+    for (int ch = 0; ch < NUM_VOICES; ch++) {
         Voice *v = &g_voices[ch];
         if (!v->active || !v->snd || !v->snd->buf) continue;
         for (int i = 0; i < frames && v->pos < v->snd->len; i++, v->pos++) {
@@ -382,6 +391,8 @@ void audio_shutdown(void) {
         SDL_DestroyMutex(g_mutex);
         g_mutex = NULL;
     }
+    for (int i = 0; i < g_clip_count; i++) { free(g_clips[i].buf); g_clips[i].buf = NULL; }
+    g_clip_count = 0;
     for (int i = 0; i < MAX_SOUNDS; i++) {
         if (g_snd[i].buf) {
             free(g_snd[i].buf);
@@ -420,6 +431,47 @@ void audio_play_shield(int kind, float sx, float sy, float sz,
     float lgain, rgain;
     spatial_gains(sx, sy, sz, lx, ly, lz, lyaw, &lgain, &rgain);
     play_sound(11 + kind, lgain, rgain);
+}
+
+int audio_clip_load(const char *wav_path) {
+    if (!wav_path || !g_dev || !g_mutex) return -1;
+    for (int i = 0; i < g_clip_count; i++)
+        if (strcmp(g_clip_path[i], wav_path) == 0) return g_clips[i].buf ? i : -1;
+    if (g_clip_count >= MAX_CLIPS || strlen(wav_path) >= CLIP_PATH_LEN) return -1;
+    int16_t *pcm = NULL;
+    int frames = audio_wav_load_stereo16(wav_path, &pcm);
+    int id = g_clip_count++;
+    snprintf(g_clip_path[id], CLIP_PATH_LEN, "%s", wav_path);   /* remember failures too: no per-frame disk retry */
+    g_clips[id].buf = frames > 0 ? pcm : NULL;
+    g_clips[id].len = frames > 0 ? frames : 0;
+    if (frames <= 0) SDL_Log("[audio] clip not loaded (missing or not 22050 Hz PCM16): %s", wav_path);
+    return g_clips[id].buf ? id : -1;
+}
+
+void audio_clip_play(int clip_id, unsigned int seek_ms,
+                     float sx, float sy, float sz,
+                     float lx, float ly, float lz, float lyaw) {
+    if (!g_dev || !g_mutex || clip_id < 0 || clip_id >= g_clip_count || !g_clips[clip_id].buf) return;
+    int start = audio_wav_seek_frame(seek_ms, g_clips[clip_id].len);
+    if (start >= g_clips[clip_id].len) return;
+    float lgain, rgain;
+    spatial_gains(sx, sy, sz, lx, ly, lz, lyaw, &lgain, &rgain);
+    SDL_LockMutex(g_mutex);
+    int slot = MAX_MIX;
+    for (int i = MAX_MIX; i < NUM_VOICES; i++) if (!g_voices[i].active) { slot = i; break; }
+    g_voices[slot].snd = &g_clips[clip_id];
+    g_voices[slot].pos = start;
+    g_voices[slot].lgain = lgain;
+    g_voices[slot].rgain = rgain;
+    g_voices[slot].active = 1;
+    SDL_UnlockMutex(g_mutex);
+}
+
+void audio_clip_stop_all(void) {
+    if (!g_mutex) return;
+    SDL_LockMutex(g_mutex);
+    for (int i = MAX_MIX; i < NUM_VOICES; i++) g_voices[i].active = 0;
+    SDL_UnlockMutex(g_mutex);
 }
 
 int audio_set_master_chain(const char *name) {

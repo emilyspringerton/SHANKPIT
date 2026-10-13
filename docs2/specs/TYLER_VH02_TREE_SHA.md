@@ -32,7 +32,7 @@ Cast per scene from the SKIN_* library (`g_tyler_scene_skins`, apps/lobby): VH01
 ## Known gaps (named)
 
 - **VO is build-time only.** `TYLER/tts/render_scenes.py` (Piper stopgap) generates it in CI; a local build without it is silent. Subtitles are French + `[EN:]` and committed.
-- **No in-game playback yet for ANY scene.** The voice tables, clips and driver exist and are tested, but `apps/lobby` has no mixer call site (VH01 included) -- pre-existing gap.
+- **In-game playback is wired** (`audio_clip_*` in `packages/audio`, fed by `lobby_tyler_voice_step`): each line plays spatially at its speaker's slot, with a late-join seek. Never heard on a real audio device from this sandbox.
 - **Lobby-local only.** Like E03/FB01, not wired into `apps/server` / `--tyler` (no PACKET_TYLER_BEAT).
 - **Exit is the shared button mechanism**: the last beat "presses" the exit button, so the unfinished
   `ENCOUNTER` card cuts to the CONSTRUCT hub rather than to an on-screen reveal. The script's

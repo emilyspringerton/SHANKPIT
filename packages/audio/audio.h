@@ -44,4 +44,14 @@ void audio_play_shield(int kind, float sx, float sy, float sz,
  * if the chain was fetched and is now live; passing NULL removes the chain. See audio_chain.h. */
 int audio_set_master_chain(const char *name);
 
+/* Spoken clips (MODE_TYLER VO, generated at build time -- see audio_wav.h). audio_clip_load decodes a
+ * WAV once and caches it by path (returns a clip id, or -1). audio_clip_play starts it `seek_ms` in,
+ * positioned like any other sound; clips use their own small voice pool so a footstep or gunshot can
+ * never cut a line. audio_clip_stop_all cuts every playing clip (scene change / lost sync). */
+int  audio_clip_load(const char *wav_path);
+void audio_clip_play(int clip_id, unsigned int seek_ms,
+                     float sx, float sy, float sz,
+                     float lx, float ly, float lz, float lyaw);
+void audio_clip_stop_all(void);
+
 #endif /* AUDIO_H */

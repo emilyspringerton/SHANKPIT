@@ -27,6 +27,7 @@ int g_shankpit_is_server = 0;
 #include "../../packages/world/level_boxes.h"
 #include "../../packages/simulation/tyler_voice_tables.h"  /* build-time generated voice tables (silent fallback) */
 #include <stdint.h>
+#include "../../packages/audio/audio_wav.h"
 
 
 /* ---- compact SHA-256 (FIPS 180-4), just enough to verify assets/tyler_vo/MANIFEST.sha256 ---- */
@@ -460,6 +461,45 @@ static void test_t7_new_scenes(void) {
                                tyler_vh02_start, tyler_vh02_tick, g_tyler_vh02_beat_count);
 }
 
+/* T3: the SDL-free WAV decoder the in-game mixer (audio_clip_*) uses. Always-run part uses a
+ * synthesized file; with generated assets present every real clip must also decode. */
+static void write_test_wav(const char *path, int rate, int channels, int frames) {
+    FILE *f = fopen(path, "wb");
+    uint32_t data = (uint32_t)(frames * channels * 2), riff = 36 + data, br = (uint32_t)(rate * channels * 2);
+    uint16_t fmt = 1, ch = (uint16_t)channels, ba = (uint16_t)(channels * 2), bits = 16; uint32_t sixteen = 16;
+    fwrite("RIFF", 1, 4, f); fwrite(&riff, 4, 1, f); fwrite("WAVEfmt ", 1, 8, f); fwrite(&sixteen, 4, 1, f);
+    fwrite(&fmt, 2, 1, f); fwrite(&ch, 2, 1, f); fwrite(&rate, 4, 1, f); fwrite(&br, 4, 1, f);
+    fwrite(&ba, 2, 1, f); fwrite(&bits, 2, 1, f); fwrite("data", 1, 4, f); fwrite(&data, 4, 1, f);
+    for (int i = 0; i < frames * channels; i++) { int16_t s = (int16_t)(i * 7); fwrite(&s, 2, 1, f); }
+    fclose(f);
+}
+
+static void test_t3_wav_decoder(void) {
+    int16_t *pcm = NULL;
+    write_test_wav("/tmp/tyler_t3_mono.wav", 22050, 1, 1000);
+    int fr = audio_wav_load_stereo16("/tmp/tyler_t3_mono.wav", &pcm);
+    CHECK(fr == 1000 && pcm != NULL, "T3 mono 22050 Hz decodes to 1000 frames (%d)", fr);
+    CHECK(pcm && pcm[2 * 10] == pcm[2 * 10 + 1] && pcm[2 * 10] == 70, "T3 mono is duplicated to both channels");
+    free(pcm); pcm = NULL;
+    write_test_wav("/tmp/tyler_t3_44k.wav", 44100, 1, 100);
+    CHECK(audio_wav_load_stereo16("/tmp/tyler_t3_44k.wav", &pcm) == 0 && pcm == NULL, "T3 a 44100 Hz file is rejected (engine device is 22050 Hz)");
+    CHECK(audio_wav_load_stereo16("/tmp/tyler_t3_does_not_exist.wav", &pcm) == 0, "T3 a missing file returns 0, not a crash");
+    CHECK(audio_wav_seek_frame(1000, 100000) == 22050 && audio_wav_seek_frame(999999, 500) == 500 && audio_wav_seek_frame(0, 500) == 0, "T3 seek frame math clamps");
+    remove("/tmp/tyler_t3_mono.wav"); remove("/tmp/tyler_t3_44k.wav");
+#ifdef TYLER_VH01_VOICE_GENERATED
+    {
+        const TylerVoiceLine *all[4] = { g_tyler_voice_lines, g_tyler_e03_voice_lines, g_tyler_fb01_voice_lines, g_tyler_vh02_voice_lines };
+        const int counts[4] = { g_tyler_voice_line_count, g_tyler_e03_voice_line_count, g_tyler_fb01_voice_line_count, g_tyler_vh02_voice_line_count };
+        for (int s = 0; s < 4; s++) for (int i = 0; i < counts[s]; i++) {
+            int n = audio_wav_load_stereo16(all[s][i].file, &pcm);
+            long ms = (n * 1000L + 11025L) / 22050L;
+            CHECK(n > 0 && labs(ms - (long)all[s][i].dur_ms) <= 1, "T3 %s decodes (%d frames, %ld ms vs table %u)", all[s][i].file, n, ms, all[s][i].dur_ms);
+            free(pcm); pcm = NULL;
+        }
+    }
+#endif
+}
+
 /* T8: every scene's HUD text is French + an [EN: ...] gloss (founder: "ensure all tyler mode has the
  * french"). Runs without any generated assets -- subtitles are committed in each scene's beat table. */
 static void test_t8_every_scene_is_french(void) {
@@ -486,6 +526,7 @@ int main(void) {
     test_t6b_other_modes_unchanged();
     test_t6c_walks_toward_marker();
     test_t8_every_scene_is_french();
+    test_t3_wav_decoder();
 #ifdef TYLER_VH01_VOICE_GENERATED
     test_t2_assets_and_timeline();
     test_t1_driver_on_real_coordinator();

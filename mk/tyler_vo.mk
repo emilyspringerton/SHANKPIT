@@ -7,6 +7,6 @@ TYLER_VO_SRC := $(filter-out apps/server/src/main.c,$(SERVER_SRC))
 .PHONY: test-tyler-vo
 test-tyler-vo:
 	gcc -std=gnu99 -Wall -g -fsanitize=address,undefined $(INCLUDES) -Ipackages/audio \
-		tests/tyler/test_tyler_vo.c $(TYLER_VO_SRC) \
+		tests/tyler/test_tyler_vo.c $(TYLER_VO_SRC) packages/audio/audio_wav.c \
 		-o /tmp/shankpit_test_tyler_vo -lm
 	/tmp/shankpit_test_tyler_vo

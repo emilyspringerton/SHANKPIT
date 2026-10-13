@@ -130,6 +130,11 @@ void tyler_voice_driver_reset(TylerVoiceDriver *d);
  * come from PARENA tyler/voice-mod. */
 int tyler_voice_driver_step(TylerVoiceDriver *d, const TylerBeatView *v, TylerVoiceCmd *out, int max, int *stop_all);
 
+/* The same driver over any scene's own lines table (VH01 is the one above). */
+int tyler_voice_driver_step_table(TylerVoiceDriver *d, const TylerBeatView *v,
+                                  const TylerVoiceLine *lines, int line_count, int beat_count,
+                                  TylerVoiceCmd *out, int max, int *stop_all);
+
 /* tyler_coldopen_start -- call once, right after this level's two AI_ROLE_STORY_ALLY characters
  * have been spawned (server_apply_custom_level's own existing character-spawn pass already does
  * this via story_ai_spawn_enemy for any NOCK-authored character; tyler_slot/hana_slot are

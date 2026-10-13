@@ -147,9 +147,16 @@ void tyler_voice_driver_reset(TylerVoiceDriver *d) {
 }
 
 int tyler_voice_driver_step(TylerVoiceDriver *d, const TylerBeatView *v, TylerVoiceCmd *out, int max, int *stop_all) {
+    return tyler_voice_driver_step_table(d, v, g_tyler_voice_lines, g_tyler_voice_line_count,
+                                         g_tyler_coldopen_beat_count, out, max, stop_all);
+}
+
+int tyler_voice_driver_step_table(TylerVoiceDriver *d, const TylerBeatView *v,
+                                  const TylerVoiceLine *lines, int line_count, int beat_count,
+                                  TylerVoiceCmd *out, int max, int *stop_all) {
     int n = 0, i;
     *stop_all = 0;
-    if (v->beat < 0 || v->beat >= g_tyler_coldopen_beat_count || v->done) {
+    if (v->beat < 0 || v->beat >= beat_count || v->done) {
         if (d->last_beat >= 0) *stop_all = 1;        /* the cold open ended (or was reset): cut what is playing */
         d->last_beat = -1;                            /* repeated "done" views then stay quiet */
         d->started_mask = 0;
@@ -162,8 +169,8 @@ int tyler_voice_driver_step(TylerVoiceDriver *d, const TylerBeatView *v, TylerVo
         d->last_beat = v->beat;
         d->started_mask = 0;
     }
-    for (i = 0; i < g_tyler_voice_line_count && n < max; i++) {
-        const TylerVoiceLine *L = &g_tyler_voice_lines[i];
+    for (i = 0; i < line_count && n < max; i++) {
+        const TylerVoiceLine *L = &lines[i];
         int state;
         if (L->beat != v->beat || (d->started_mask & (1u << i))) continue;
         state = on_tyler_voice_line_state((int)v->beat_elapsed_ms, (int)L->offset_ms, (int)L->dur_ms);
