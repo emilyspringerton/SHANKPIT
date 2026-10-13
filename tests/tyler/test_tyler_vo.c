@@ -160,7 +160,7 @@ static void test_t6_actors_walk(void) {
     int beat_seen[8] = {0}, beat2_fwd = 0, beat1_seen = 0;
     float b1x = 0, b1z = 0, unnamed_drift = 0;
     unsigned int now = 1;
-    for (int t = 0; t < 2400 && !st.done; t++) {              /* 2400 * 16 ms = 38 s > the 32.9 s cold open */
+    for (int t = 0; t < 4800 && !st.done; t++) {              /* 4800 * 16 ms = 77 s: a bound; the cold open runs ~33 s */
         now += 16;
         tyler_coldopen_tick(&st, now, 23, stub_exit);
         local_update(0.0f, 0.0f, 0.0f, 0.0f, 0, -1, 0, 0, 0, 0, 0, NULL, now);
@@ -441,7 +441,9 @@ static void test_t7_scene_runs_to_exit(const char *label, const char *path, Scen
     g_exit_at = 0;
     int beats_seen = 0, out_of_order = 0, last_beat = -1;
     unsigned int now = 1;
-    for (int t = 0; t < 2400 && !st.done; t++) {
+    /* 4800 * 16 ms = 77 s. A bound, not a duration: the longest scene (VH04) runs ~40 s with real Piper
+     * clip lengths (every beat's hold stretches to fit its clip), which overran the old 38 s bound in CI. */
+    for (int t = 0; t < 4800 && !st.done; t++) {
         now += 16;
         tick_fn(&st, now, 23, stub_exit);
         local_update(0.0f, 0.0f, 0.0f, 0.0f, 0, -1, 0, 0, 0, 0, 0, NULL, now);
