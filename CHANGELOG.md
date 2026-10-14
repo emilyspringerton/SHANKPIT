@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-14
+
+- feat(physics): `packages/physics_parena/` -- host layer (`physics_host.{c,h}`), unit tests and differential test for the PARENA port of `physics.h` hot paths (modules in `PARENA/stdlib/shankpit/physics.prn`, `movement.prn`). `./build.sh` builds with `-Wall -Wextra -Werror -pedantic`, runs unit tests and a 290,188-check differential run against the real `physics.h` (0 mismatches), and confirms no malloc/free symbols. Not wired into the game build yet; `physics.h` is unchanged. (session: claude-session_01BFP4dwdMi5xepEyH9sH5fB)
+
 ## 2026-10-13
 - fix(tests): `make test-tyler-vo` T6/T7 stepped a scene for at most 2400 x 16 ms (38 s); with real Piper clip lengths (CI, first run of VH03/VH04) VH04 runs ~40 s because every beat's hold stretches to its clip, so "T7 VH04: ran to its exit" failed on the first CI run after `6c4720a` (446 pass / 1 fail; no release). The bound is now 4800 ticks (77 s) -- a termination guard, not a duration. Reproduced locally with a slow stand-in Piper (80 ms/char: 5 failures before, 447/447 after) and the silent run is unchanged (102/102).
 - feat(tyler): MODE_TYLER gains VH03 "Jour Hors du Temps" and VH04 "Les Chaises Pliantes" (`tyler_vh03_coldopen.{h,c}`, `tyler_vh04_coldopen.{h,c}`, `assets/tyler_levels/tyler_vh0{3,4}_*.json`, `docs2/specs/TYLER_VH0{3,4}_*.md`), played after VH02 and before the CONSTRUCT hub (add-order). VH03 was written but never wired; VH04 is new (TYLER Build 0142). Slots: Cam + the sound guy (VH03), Cam + the Auditor (VH04, skin BILL). New sources are in BOTH `LOBBY_SRC` and `SERVER_SRC` (the class of omission fixed in the entry above). `TYLER/tts/scenes/vh0{3,4}.tsv` + `render_scenes.py` SCENES carry the spoken French; the drift check passes for all six scenes. `make test-tyler-vo`: 102 pass (was 76; T1/T2/T4 skip without generated voice assets); lobby binary not built here (no SDL2 headers). Silent without Piper.
