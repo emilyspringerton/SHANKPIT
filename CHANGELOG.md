@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-15
+- Lobby "LOGIN IDUNA" button: real IDUNA SSO via loopback (vendored `packages/iduna_login/`, from IDUNA/sdk). Card #623. Not built on this box (no SDL2); in-memory token only.
 
 - feat(release): `ShankPit_Client_Lite_<build>.zip` -- same directory structure as the full client zip but without `bundled/` (the SHANKPIT OS apps), for fast iteration; the regular zip still includes everything. Written into `release.yml`, not yet run in CI (kanban #622).
 - fix(brick): damage now works on walls of nested/composed levels -- `BF_MAX_PARENTS` was 128 (and `BfRec.parent` a u8), but composed-object walls are flattened after the root walls, so anything past box 127 was never destructible (no damage, no carved render, in ZOMBIES etc). Now 2048 (= `LEVEL_BOXES_MAX`), record parent widened to u16 (wire already u16); regression check in `brick_fracture_test.c`. `brick_world_test.c` had pre-existing `-Werror` failures unrelated to this. Not verified in a live nested level (kanban #628).

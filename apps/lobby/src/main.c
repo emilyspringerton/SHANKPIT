@@ -52,6 +52,7 @@
 #include "../../../packages/simulation/tyler_vh04_coldopen.h"
 #include "../../../packages/reflux/reflux_mod_host.h"
 #include "../../../packages/world/level_boxes.h"
+#include "../../../packages/iduna_login/iduna_login.h" /* #623: IDUNA SSO login (native loopback profile) */
 #include <sys/stat.h>
 #ifdef _WIN32
 #include <direct.h>
@@ -11545,6 +11546,64 @@ static void lobby_page_toggle_draw(void) {
     draw_string(lobby_page == 0 ? "APPS >" : "< GAMES", x + 16.0f, y + h * 0.5f, 3.5f);
 }
 
+// IDUNA LOGIN button (#623) -- under SETTINGS. Real SSO flow, same contract as EDGE.GAME / the HRIP tracker:
+// the system browser goes to IDUNA's hosted login page and the JWT comes back over a 127.0.0.1 loopback
+// (IDUNA/sdk/README.md). The password / OAuth ceremony never happens inside the game. In-memory only.
+static IdunaLogin g_iduna_login;
+static int g_iduna_login_active = 0;      // a login attempt is pending
+static char g_iduna_token[IDUNA_LOGIN_TOKEN_MAX]; // non-empty = signed in (bearer for IDUNA APIs)
+static char g_iduna_name[128];
+static char g_iduna_status[96];
+static void lobby_iduna_login_btn_rect(float *x, float *y, float *w, float *h) {
+    *x = 1040.0f; *y = 128.0f; *w = 200.0f; *h = 44.0f;
+}
+static void lobby_iduna_login_start(void) {
+    if (g_iduna_login_active) { iduna_login_close(&g_iduna_login); g_iduna_login_active = 0; }
+    const char *base = getenv("IDUNA_LOGIN_BASE"); // dev override, e.g. http://127.0.0.1:18080
+    if (iduna_login_begin(&g_iduna_login, base) == 0) {
+        g_iduna_login_active = 1;
+        snprintf(g_iduna_status, sizeof g_iduna_status, "FINISH LOGIN IN YOUR BROWSER...");
+    } else {
+        snprintf(g_iduna_status, sizeof g_iduna_status, "LOGIN FAILED TO START");
+    }
+}
+static void lobby_iduna_login_tick(void) {
+    if (!g_iduna_login_active) return;
+    int r = iduna_login_poll(&g_iduna_login);
+    if (r == 0) return;
+    if (r == 1) {
+        snprintf(g_iduna_token, sizeof g_iduna_token, "%s", g_iduna_login.token);
+        snprintf(g_iduna_name, sizeof g_iduna_name, "%s", g_iduna_login.display_name);
+        snprintf(g_iduna_status, sizeof g_iduna_status, "LOGGED IN: %.60s", g_iduna_name[0] ? g_iduna_name : "PLAYER");
+    } else {
+        snprintf(g_iduna_status, sizeof g_iduna_status, "LOGIN TIMED OUT");
+    }
+    iduna_login_close(&g_iduna_login);
+    g_iduna_login_active = 0;
+}
+static void lobby_iduna_login_btn_draw(void) {
+    if (lobby_page == LOBBY_PAGE_SETTINGS) return;
+    float x, y, w, h;
+    lobby_iduna_login_btn_rect(&x, &y, &w, &h);
+    glColor3f(g_iduna_token[0] ? 0.25f : 0.2f, g_iduna_token[0] ? 0.55f : 0.45f, 0.7f);
+    glRectf(x, y, x + w, y + h);
+    const char *label = g_iduna_token[0] ? "IDUNA: SIGNED IN" : "LOGIN IDUNA";
+    glColor3f(0.0f, 0.0f, 0.0f);
+    draw_string(label, x + 14.0f + 2.0f, y + h * 0.5f - 2.0f, 3);
+    glColor3f(0.98f, 0.98f, 1.0f);
+    draw_string(label, x + 14.0f, y + h * 0.5f, 3);
+    if (g_iduna_status[0]) {
+        glColor3f(0.95f, 0.9f, 0.2f);
+        draw_string(g_iduna_status, x, y + h + 20.0f, 2);
+    }
+}
+static int lobby_iduna_login_btn_hit_test(float mx, float my) {
+    if (lobby_page == LOBBY_PAGE_SETTINGS) return 0;
+    float x, y, w, h;
+    lobby_iduna_login_btn_rect(&x, &y, &w, &h);
+    return (mx >= x && mx <= x + w && my >= y && my <= y + h);
+}
+
 // SETTINGS button -- directly under the APPS/< GAMES toggle (card #480).
 static void lobby_settings_btn_rect(float *x, float *y, float *w, float *h) {
     *x = 1040.0f; *y = 76.0f; *w = 200.0f; *h = 44.0f;
@@ -13396,6 +13455,10 @@ int main(int argc, char* argv[]) {
                         }
                         continue;
                     }
+                    if (lobby_iduna_login_btn_hit_test(mx, my)) {
+                        lobby_iduna_login_start();
+                        continue;
+                    }
                     if (lobby_settings_btn_hit_test(mx, my)) {
                         lobby_page = LOBBY_PAGE_SETTINGS;
                         lobby_selection = 0;
@@ -13700,7 +13763,8 @@ int main(int argc, char* argv[]) {
              draw_string(lobby_page == 0 ? "SHANKPIT" : (lobby_page == LOBBY_PAGE_CUSTOMIZE ? "SHANKPIT / CUSTOMIZE" : (lobby_page == LOBBY_PAGE_SETTINGS ? "SHANKPIT / SETTINGS" : (lobby_page == LOBBY_PAGE_MODES ? "SHANKPIT / MODES" : "SHANKPIT / APPS"))), LOBBY_LAYOUT.title_x, LOBBY_LAYOUT.title_y, 9);
              lobby_page_toggle_draw();
              lobby_settings_btn_draw();
-            lobby_settings_btn_draw();
+             lobby_iduna_login_tick();
+             lobby_iduna_login_btn_draw();
              if (app_launch_status[0]) {
                  glColor3f(0.95f, 0.9f, 0.2f);
                  draw_string(app_launch_status, 1040.0f, 80.0f, 3);
