@@ -443,6 +443,7 @@ int draw_row(int, int, int, int, int);
 int draw_glyph(int, int, int, int, int);
 int draw_str(int, char *, int, int);
 int skip_elem_(char *, int);
+int skip_end_(char *, int);
 int href_start(char *, int, int);
 int href_end(char *, int, int);
 int note_sel(int, int, int, int);
@@ -557,6 +558,9 @@ int glyph_color(int, int, int, int, int);
 int sel_bar(int, int, int, int, int, int, int);
 int draw_vis(int, int, int, int, int, int, int, int, int, int);
 int wrap_if(int);
+int space_wraps_();
+int word_len(char *, int, int);
+int word_wrap(char *, int, int);
 int do_clear_nl();
 int put_char_raw(int, int, int, int, int, int);
 int tt_char(int);
@@ -3031,6 +3035,18 @@ int skip_elem_(char * page __attribute__((unused)), int i __attribute__((unused)
     }
 }
 
+int skip_end_(char * page __attribute__((unused)), int i __attribute__((unused))) {
+    if (((char_at(page, i) == 60) && (char_at(page, (i + 1)) == 47))) {
+    if (((match_at(page, i, "</script") == 1) || ((match_at(page, i, "</style") == 1) || ((match_at(page, i, "</title") == 1) || ((match_at(page, i, "</SCRIPT") == 1) || ((match_at(page, i, "</STYLE") == 1) || (match_at(page, i, "</TITLE") == 1))))))) {
+    return 1;
+    } else {
+    return 0;
+    }
+    } else {
+    return 0;
+    }
+}
+
 int href_start(char * page __attribute__((unused)), int i __attribute__((unused)), int lim __attribute__((unused))) {
     int __loop_result_31 __attribute__((unused));
     int k = (i + 2);
@@ -4355,6 +4371,51 @@ int wrap_if(int cw __attribute__((unused))) {
     }
 }
 
+int space_wraps_(void) {
+    if ((((slot_get(32) + (6 * tget(3))) > tget(23)) && (slot_get(32) > tget(6)))) {
+    return 1;
+    } else {
+    return 0;
+    }
+}
+
+int word_len(char * page __attribute__((unused)), int i __attribute__((unused)), int lim __attribute__((unused))) {
+    int __loop_result_55 __attribute__((unused));
+    int k = i;
+    while (1) {
+        if (((k >= lim) || ((k - i) >= 80))) {
+        __loop_result_55 = (k - i);
+        break;
+        } else {
+        int c __attribute__((unused)) = char_at(page, k);
+        if (((c <= 32) || (c == 60))) {
+        __loop_result_55 = (k - i);
+        break;
+        } else {
+        int __recur_tmp_0 = (k + 1);
+        k = __recur_tmp_0;
+        continue;
+        }
+        }
+    }
+    return __loop_result_55;
+}
+
+int word_wrap(char * page __attribute__((unused)), int i __attribute__((unused)), int lim __attribute__((unused))) {
+    int p __attribute__((unused)) = ((i > 0) ? char_at(page, (i - 1)) : 32);
+    if (((soft_ws_() == 1) && ((p <= 32) || (p == 62)))) {
+    int n __attribute__((unused)) = (word_len(page, i, lim) * (6 * tget(3)));
+    int x __attribute__((unused)) = slot_get(32);
+    if ((((x + n) > tget(23)) && ((x > tget(6)) && (n <= (tget(23) - tget(6)))))) {
+    return next_line();
+    } else {
+    return 0;
+    }
+    } else {
+    return 0;
+    }
+}
+
 int do_clear_nl(void) {
     (void)(slot_set(635, 0));
     (void)(slot_set(636, 0));
@@ -4393,7 +4454,7 @@ int put_char(int c __attribute__((unused)), int i __attribute__((unused)), int r
 
 int name_end(char * page __attribute__((unused)), int s __attribute__((unused)), int lim __attribute__((unused))) {
     if (((s < lim) && letter_(char_at(page, s)))) {
-    int __loop_result_55 __attribute__((unused));
+    int __loop_result_56 __attribute__((unused));
     int k = s;
     while (1) {
         if (((k < lim) && (letter_(char_at(page, k)) || digit_(char_at(page, k))))) {
@@ -4401,11 +4462,11 @@ int name_end(char * page __attribute__((unused)), int s __attribute__((unused)),
         k = __recur_tmp_0;
         continue;
         } else {
-        __loop_result_55 = k;
+        __loop_result_56 = k;
         break;
         }
     }
-    return __loop_result_55;
+    return __loop_result_56;
     } else {
     return s;
     }
@@ -4438,7 +4499,7 @@ int fx_blk(char * page __attribute__((unused)), int lt __attribute__((unused)), 
 }
 
 int flex_count(char * page __attribute__((unused)), int from __attribute__((unused)), int rev __attribute__((unused))) {
-    int __loop_result_56 __attribute__((unused));
+    int __loop_result_57 __attribute__((unused));
     int k = from;
     int depth = 0;
     int n = 0;
@@ -4446,12 +4507,12 @@ int flex_count(char * page __attribute__((unused)), int from __attribute__((unus
         int lt __attribute__((unused)) = find_in(page, 60, k, rev);
         int gt __attribute__((unused)) = ((lt < 0) ? -1 : find_in(page, 62, lt, rev));
         if ((gt < 0)) {
-        __loop_result_56 = n;
+        __loop_result_57 = n;
         break;
         } else {
         int dl __attribute__((unused)) = fx_delta(page, lt, gt);
         if (((dl < 0) && (depth == 0))) {
-        __loop_result_56 = n;
+        __loop_result_57 = n;
         break;
         } else {
         if ((dl < 0)) {
@@ -4484,7 +4545,7 @@ int flex_count(char * page __attribute__((unused)), int from __attribute__((unus
         }
         }
     }
-    return __loop_result_56;
+    return __loop_result_57;
 }
 
 int ua_v(int mt __attribute__((unused)), int mb __attribute__((unused))) {
@@ -4501,15 +4562,15 @@ int ua_h(int scale __attribute__((unused)), int bold __attribute__((unused)), in
 }
 
 int li_open(void) {
-    int __loop_result_57 __attribute__((unused));
+    int __loop_result_58 __attribute__((unused));
     int d = (slot_get(31) - 1);
     while (1) {
         if ((d < 1)) {
-        __loop_result_57 = 0;
+        __loop_result_58 = 0;
         break;
         } else {
         if ((eget(d, 0) == slot_get(1655))) {
-        __loop_result_57 = 1;
+        __loop_result_58 = 1;
         break;
         } else {
         int __recur_tmp_0 = (d - 1);
@@ -4518,7 +4579,7 @@ int li_open(void) {
         }
         }
     }
-    return __loop_result_57;
+    return __loop_result_58;
 }
 
 int ua_list(void) {
@@ -4823,15 +4884,15 @@ int font_size_set(char * page __attribute__((unused)), int vs __attribute__((unu
 }
 
 int tok_unit_(char * page __attribute__((unused)), int a __attribute__((unused)), int b __attribute__((unused))) {
-    int __loop_result_58 __attribute__((unused));
+    int __loop_result_59 __attribute__((unused));
     int k = a;
     while (1) {
         if ((k >= b)) {
-        __loop_result_58 = 0;
+        __loop_result_59 = 0;
         break;
         } else {
         if ((letter_(char_at(page, k)) || (char_at(page, k) == 37))) {
-        __loop_result_58 = 1;
+        __loop_result_59 = 1;
         break;
         } else {
         int __recur_tmp_0 = (k + 1);
@@ -4840,7 +4901,7 @@ int tok_unit_(char * page __attribute__((unused)), int a __attribute__((unused))
         }
         }
     }
-    return __loop_result_58;
+    return __loop_result_59;
 }
 
 int font_tok(char * page __attribute__((unused)), int a __attribute__((unused)), int b __attribute__((unused))) {
@@ -4849,12 +4910,12 @@ int font_tok(char * page __attribute__((unused)), int a __attribute__((unused)),
 }
 
 int font_short(char * page __attribute__((unused)), int vs __attribute__((unused)), int ve __attribute__((unused))) {
-    int __loop_result_59 __attribute__((unused));
+    int __loop_result_60 __attribute__((unused));
     int k = vs;
     while (1) {
         int a __attribute__((unused)) = skip_ws(page, k, ve);
         if ((a >= ve)) {
-        __loop_result_59 = 0;
+        __loop_result_60 = 0;
         break;
         } else {
         int b __attribute__((unused)) = tok_end(page, a, ve);
@@ -4864,7 +4925,7 @@ int font_short(char * page __attribute__((unused)), int vs __attribute__((unused
         continue;
         }
     }
-    return __loop_result_59;
+    return __loop_result_60;
 }
 
 int set_boxsizing(char * page __attribute__((unused)), int vs __attribute__((unused)), int ve __attribute__((unused))) {
@@ -4914,13 +4975,13 @@ int apply_prop(char * page __attribute__((unused)), int ns __attribute__((unused
 }
 
 int decl_end(char * t __attribute__((unused)), int i __attribute__((unused)), int e __attribute__((unused))) {
-    int __loop_result_60 __attribute__((unused));
+    int __loop_result_61 __attribute__((unused));
     int k = i;
     int depth = 0;
     int q = 0;
     while (1) {
         if ((k >= e)) {
-        __loop_result_60 = e;
+        __loop_result_61 = e;
         break;
         } else {
         int c __attribute__((unused)) = char_at(t, k);
@@ -4971,7 +5032,7 @@ int decl_end(char * t __attribute__((unused)), int i __attribute__((unused)), in
         continue;
         } else {
         if (((c == 59) && (depth == 0))) {
-        __loop_result_60 = k;
+        __loop_result_61 = k;
         break;
         } else {
         int __recur_tmp_0 = (k + 1);
@@ -4988,16 +5049,16 @@ int decl_end(char * t __attribute__((unused)), int i __attribute__((unused)), in
         }
         }
     }
-    return __loop_result_60;
+    return __loop_result_61;
 }
 
 int paren_close(char * t __attribute__((unused)), int i __attribute__((unused)), int e __attribute__((unused))) {
-    int __loop_result_61 __attribute__((unused));
+    int __loop_result_62 __attribute__((unused));
     int k = i;
     int depth = 1;
     while (1) {
         if ((k >= e)) {
-        __loop_result_61 = e;
+        __loop_result_62 = e;
         break;
         } else {
         int c __attribute__((unused)) = char_at(t, k);
@@ -5010,7 +5071,7 @@ int paren_close(char * t __attribute__((unused)), int i __attribute__((unused)),
         } else {
         if ((c == 41)) {
         if ((depth <= 1)) {
-        __loop_result_61 = k;
+        __loop_result_62 = k;
         break;
         } else {
         int __recur_tmp_0 = (k + 1);
@@ -5029,7 +5090,7 @@ int paren_close(char * t __attribute__((unused)), int i __attribute__((unused)),
         }
         }
     }
-    return __loop_result_61;
+    return __loop_result_62;
 }
 
 int imp_pos(char * t __attribute__((unused)), int vs __attribute__((unused)), int ve __attribute__((unused))) {
@@ -5051,15 +5112,15 @@ int imp_pos(char * t __attribute__((unused)), int vs __attribute__((unused)), in
 }
 
 int var_find(int h __attribute__((unused))) {
-    int __loop_result_62 __attribute__((unused));
+    int __loop_result_63 __attribute__((unused));
     int k = 0;
     while (1) {
         if ((k >= slot_get(1740))) {
-        __loop_result_62 = -1;
+        __loop_result_63 = -1;
         break;
         } else {
         if ((slot_get((1750 + (k * 4))) == h)) {
-        __loop_result_62 = k;
+        __loop_result_63 = k;
         break;
         } else {
         int __recur_tmp_0 = (k + 1);
@@ -5068,7 +5129,7 @@ int var_find(int h __attribute__((unused))) {
         }
         }
     }
-    return __loop_result_62;
+    return __loop_result_63;
 }
 
 int var_store(int k __attribute__((unused)), int h __attribute__((unused)), int src __attribute__((unused)), int vs __attribute__((unused)), int ve __attribute__((unused))) {
@@ -5096,17 +5157,17 @@ int var_put(int h __attribute__((unused)), int src __attribute__((unused)), int 
 }
 
 int collect_vars(char * t __attribute__((unused)), int src __attribute__((unused)), int ds __attribute__((unused)), int de __attribute__((unused))) {
-    int __loop_result_63 __attribute__((unused));
+    int __loop_result_64 __attribute__((unused));
     int i = ds;
     while (1) {
         int a __attribute__((unused)) = skip_ws(t, i, de);
         if ((a >= de)) {
-        __loop_result_63 = 0;
+        __loop_result_64 = 0;
         break;
         } else {
         int colon __attribute__((unused)) = find_in(t, 58, a, de);
         if ((colon < 0)) {
-        __loop_result_63 = 0;
+        __loop_result_64 = 0;
         break;
         } else {
         int semi __attribute__((unused)) = decl_end(t, colon, de);
@@ -5121,19 +5182,19 @@ int collect_vars(char * t __attribute__((unused)), int src __attribute__((unused
         }
         }
     }
-    return __loop_result_63;
+    return __loop_result_64;
 }
 
 int find_var(char * t __attribute__((unused)), int s __attribute__((unused)), int e __attribute__((unused))) {
-    int __loop_result_64 __attribute__((unused));
+    int __loop_result_65 __attribute__((unused));
     int k = s;
     while (1) {
         if (((k + 4) > e)) {
-        __loop_result_64 = -1;
+        __loop_result_65 = -1;
         break;
         } else {
         if ((has_at(t, k, e, "var(") == 1)) {
-        __loop_result_64 = k;
+        __loop_result_65 = k;
         break;
         } else {
         int __recur_tmp_0 = (k + 1);
@@ -5142,7 +5203,7 @@ int find_var(char * t __attribute__((unused)), int s __attribute__((unused)), in
         }
         }
     }
-    return __loop_result_64;
+    return __loop_result_65;
 }
 
 char * var_value(char * page __attribute__((unused)), int k __attribute__((unused)), int depth __attribute__((unused)), Arena *dest __attribute__((unused))) {
@@ -5200,17 +5261,17 @@ int decl_apply(char * t __attribute__((unused)), char * page __attribute__((unus
 }
 
 int apply_decls(char * t __attribute__((unused)), char * page __attribute__((unused)), int ds __attribute__((unused)), int de __attribute__((unused)), int mode __attribute__((unused))) {
-    int __loop_result_65 __attribute__((unused));
+    int __loop_result_66 __attribute__((unused));
     int i = ds;
     while (1) {
         int a __attribute__((unused)) = skip_ws(t, i, de);
         if ((a >= de)) {
-        __loop_result_65 = 0;
+        __loop_result_66 = 0;
         break;
         } else {
         int colon __attribute__((unused)) = find_in(t, 58, a, de);
         if ((colon < 0)) {
-        __loop_result_65 = 0;
+        __loop_result_66 = 0;
         break;
         } else {
         int semi __attribute__((unused)) = decl_end(t, colon, de);
@@ -5227,19 +5288,19 @@ int apply_decls(char * t __attribute__((unused)), char * page __attribute__((unu
         }
         }
     }
-    return __loop_result_65;
+    return __loop_result_66;
 }
 
 int comment_end(char * page __attribute__((unused)), int k __attribute__((unused)), int e __attribute__((unused))) {
-    int __loop_result_66 __attribute__((unused));
+    int __loop_result_67 __attribute__((unused));
     int m = k;
     while (1) {
         if (((m + 1) >= e)) {
-        __loop_result_66 = e;
+        __loop_result_67 = e;
         break;
         } else {
         if (((char_at(page, m) == 42) && (char_at(page, (m + 1)) == 47))) {
-        __loop_result_66 = (m + 2);
+        __loop_result_67 = (m + 2);
         break;
         } else {
         int __recur_tmp_0 = (m + 1);
@@ -5248,15 +5309,15 @@ int comment_end(char * page __attribute__((unused)), int k __attribute__((unused
         }
         }
     }
-    return __loop_result_66;
+    return __loop_result_67;
 }
 
 int css_skip(char * page __attribute__((unused)), int i __attribute__((unused)), int e __attribute__((unused))) {
-    int __loop_result_67 __attribute__((unused));
+    int __loop_result_68 __attribute__((unused));
     int k = i;
     while (1) {
         if ((k >= e)) {
-        __loop_result_67 = e;
+        __loop_result_68 = e;
         break;
         } else {
         int c __attribute__((unused)) = char_at(page, k);
@@ -5270,22 +5331,22 @@ int css_skip(char * page __attribute__((unused)), int i __attribute__((unused)),
         k = __recur_tmp_0;
         continue;
         } else {
-        __loop_result_67 = k;
+        __loop_result_68 = k;
         break;
         }
         }
         }
     }
-    return __loop_result_67;
+    return __loop_result_68;
 }
 
 int skip_block(char * page __attribute__((unused)), int b __attribute__((unused)), int e __attribute__((unused))) {
-    int __loop_result_68 __attribute__((unused));
+    int __loop_result_69 __attribute__((unused));
     int k = b;
     int depth = 0;
     while (1) {
         if ((k >= e)) {
-        __loop_result_68 = e;
+        __loop_result_69 = e;
         break;
         } else {
         int c __attribute__((unused)) = char_at(page, k);
@@ -5298,7 +5359,7 @@ int skip_block(char * page __attribute__((unused)), int b __attribute__((unused)
         } else {
         if ((c == 125)) {
         if ((depth <= 1)) {
-        __loop_result_68 = (k + 1);
+        __loop_result_69 = (k + 1);
         break;
         } else {
         int __recur_tmp_0 = (k + 1);
@@ -5317,15 +5378,15 @@ int skip_block(char * page __attribute__((unused)), int b __attribute__((unused)
         }
         }
     }
-    return __loop_result_68;
+    return __loop_result_69;
 }
 
 int id_end(char * t __attribute__((unused)), int s __attribute__((unused)), int e __attribute__((unused))) {
-    int __loop_result_69 __attribute__((unused));
+    int __loop_result_70 __attribute__((unused));
     int k = s;
     while (1) {
         if ((k >= e)) {
-        __loop_result_69 = e;
+        __loop_result_70 = e;
         break;
         } else {
         int c __attribute__((unused)) = char_at(t, k);
@@ -5334,12 +5395,12 @@ int id_end(char * t __attribute__((unused)), int s __attribute__((unused)), int 
         k = __recur_tmp_0;
         continue;
         } else {
-        __loop_result_69 = k;
+        __loop_result_70 = k;
         break;
         }
         }
     }
-    return __loop_result_69;
+    return __loop_result_70;
 }
 
 int xget(int d __attribute__((unused)), int f __attribute__((unused))) {
@@ -5351,12 +5412,12 @@ int xset(int d __attribute__((unused)), int f __attribute__((unused)), int v __a
 }
 
 int bracket_close(char * t __attribute__((unused)), int i __attribute__((unused)), int e __attribute__((unused))) {
-    int __loop_result_70 __attribute__((unused));
+    int __loop_result_71 __attribute__((unused));
     int k = i;
     int q = 0;
     while (1) {
         if ((k >= e)) {
-        __loop_result_70 = e;
+        __loop_result_71 = e;
         break;
         } else {
         int c __attribute__((unused)) = char_at(t, k);
@@ -5383,7 +5444,7 @@ int bracket_close(char * t __attribute__((unused)), int i __attribute__((unused)
         continue;
         } else {
         if ((c == 93)) {
-        __loop_result_70 = k;
+        __loop_result_71 = k;
         break;
         } else {
         int __recur_tmp_0 = (k + 1);
@@ -5396,56 +5457,31 @@ int bracket_close(char * t __attribute__((unused)), int i __attribute__((unused)
         }
         }
     }
-    return __loop_result_70;
-}
-
-int quote_close(char * t __attribute__((unused)), int i __attribute__((unused)), int q __attribute__((unused)), int e __attribute__((unused))) {
-    int __loop_result_71 __attribute__((unused));
-    int k = i;
-    while (1) {
-        if ((k >= e)) {
-        __loop_result_71 = e;
-        break;
-        } else {
-        if ((char_at(t, k) == q)) {
-        __loop_result_71 = k;
-        break;
-        } else {
-        int __recur_tmp_0 = (k + 1);
-        k = __recur_tmp_0;
-        continue;
-        }
-        }
-    }
     return __loop_result_71;
 }
 
-int rng_ieq(char * t __attribute__((unused)), int a __attribute__((unused)), int b __attribute__((unused)), char * p __attribute__((unused)), int c __attribute__((unused)), int d __attribute__((unused))) {
-    if (((b - a) == (d - c))) {
+int quote_close(char * t __attribute__((unused)), int i __attribute__((unused)), int q __attribute__((unused)), int e __attribute__((unused))) {
     int __loop_result_72 __attribute__((unused));
-    int k = 0;
+    int k = i;
     while (1) {
-        if ((k >= (b - a))) {
-        __loop_result_72 = 1;
+        if ((k >= e)) {
+        __loop_result_72 = e;
         break;
         } else {
-        if ((lc(char_at(t, (a + k))) == lc(char_at(p, (c + k))))) {
+        if ((char_at(t, k) == q)) {
+        __loop_result_72 = k;
+        break;
+        } else {
         int __recur_tmp_0 = (k + 1);
         k = __recur_tmp_0;
         continue;
-        } else {
-        __loop_result_72 = 0;
-        break;
         }
         }
     }
     return __loop_result_72;
-    } else {
-    return 0;
-    }
 }
 
-int rng_eq(char * t __attribute__((unused)), int a __attribute__((unused)), int b __attribute__((unused)), char * p __attribute__((unused)), int c __attribute__((unused)), int d __attribute__((unused))) {
+int rng_ieq(char * t __attribute__((unused)), int a __attribute__((unused)), int b __attribute__((unused)), char * p __attribute__((unused)), int c __attribute__((unused)), int d __attribute__((unused))) {
     if (((b - a) == (d - c))) {
     int __loop_result_73 __attribute__((unused));
     int k = 0;
@@ -5454,7 +5490,7 @@ int rng_eq(char * t __attribute__((unused)), int a __attribute__((unused)), int 
         __loop_result_73 = 1;
         break;
         } else {
-        if ((char_at(t, (a + k)) == char_at(p, (c + k)))) {
+        if ((lc(char_at(t, (a + k))) == lc(char_at(p, (c + k))))) {
         int __recur_tmp_0 = (k + 1);
         k = __recur_tmp_0;
         continue;
@@ -5470,29 +5506,32 @@ int rng_eq(char * t __attribute__((unused)), int a __attribute__((unused)), int 
     }
 }
 
-int attr_name_end(char * p __attribute__((unused)), int a __attribute__((unused)), int te __attribute__((unused))) {
+int rng_eq(char * t __attribute__((unused)), int a __attribute__((unused)), int b __attribute__((unused)), char * p __attribute__((unused)), int c __attribute__((unused)), int d __attribute__((unused))) {
+    if (((b - a) == (d - c))) {
     int __loop_result_74 __attribute__((unused));
-    int k = a;
+    int k = 0;
     while (1) {
-        if ((k >= te)) {
-        __loop_result_74 = te;
+        if ((k >= (b - a))) {
+        __loop_result_74 = 1;
         break;
         } else {
-        int c __attribute__((unused)) = char_at(p, k);
-        if ((ws_(c) || ((c == 61) || ((c == 47) || (c == 62))))) {
-        __loop_result_74 = k;
-        break;
-        } else {
+        if ((char_at(t, (a + k)) == char_at(p, (c + k)))) {
         int __recur_tmp_0 = (k + 1);
         k = __recur_tmp_0;
         continue;
+        } else {
+        __loop_result_74 = 0;
+        break;
         }
         }
     }
     return __loop_result_74;
+    } else {
+    return 0;
+    }
 }
 
-int unq_end(char * p __attribute__((unused)), int a __attribute__((unused)), int te __attribute__((unused))) {
+int attr_name_end(char * p __attribute__((unused)), int a __attribute__((unused)), int te __attribute__((unused))) {
     int __loop_result_75 __attribute__((unused));
     int k = a;
     while (1) {
@@ -5501,7 +5540,7 @@ int unq_end(char * p __attribute__((unused)), int a __attribute__((unused)), int
         break;
         } else {
         int c __attribute__((unused)) = char_at(p, k);
-        if ((ws_(c) || (c == 62))) {
+        if ((ws_(c) || ((c == 61) || ((c == 47) || (c == 62))))) {
         __loop_result_75 = k;
         break;
         } else {
@@ -5514,13 +5553,35 @@ int unq_end(char * p __attribute__((unused)), int a __attribute__((unused)), int
     return __loop_result_75;
 }
 
-int attr_scan(char * t __attribute__((unused)), int na __attribute__((unused)), int nb __attribute__((unused)), char * p __attribute__((unused)), int k0 __attribute__((unused)), int te __attribute__((unused))) {
+int unq_end(char * p __attribute__((unused)), int a __attribute__((unused)), int te __attribute__((unused))) {
     int __loop_result_76 __attribute__((unused));
+    int k = a;
+    while (1) {
+        if ((k >= te)) {
+        __loop_result_76 = te;
+        break;
+        } else {
+        int c __attribute__((unused)) = char_at(p, k);
+        if ((ws_(c) || (c == 62))) {
+        __loop_result_76 = k;
+        break;
+        } else {
+        int __recur_tmp_0 = (k + 1);
+        k = __recur_tmp_0;
+        continue;
+        }
+        }
+    }
+    return __loop_result_76;
+}
+
+int attr_scan(char * t __attribute__((unused)), int na __attribute__((unused)), int nb __attribute__((unused)), char * p __attribute__((unused)), int k0 __attribute__((unused)), int te __attribute__((unused))) {
+    int __loop_result_77 __attribute__((unused));
     int k = k0;
     while (1) {
         int a __attribute__((unused)) = skip_ws(p, k, te);
         if (((a >= te) || ((char_at(p, a) == 47) || (char_at(p, a) == 62)))) {
-        __loop_result_76 = 0;
+        __loop_result_77 = 0;
         break;
         } else {
         int ae __attribute__((unused)) = attr_name_end(p, a, te);
@@ -5536,7 +5597,7 @@ int attr_scan(char * t __attribute__((unused)), int na __attribute__((unused)), 
         if ((hit == 1)) {
         (void)(slot_set(1648, vs));
         (void)(slot_set(1649, ve));
-        __loop_result_76 = 1;
+        __loop_result_77 = 1;
         break;
         } else {
         int __recur_tmp_0 = nxt;
@@ -5545,7 +5606,7 @@ int attr_scan(char * t __attribute__((unused)), int na __attribute__((unused)), 
         }
         }
     }
-    return __loop_result_76;
+    return __loop_result_77;
 }
 
 int attr_lookup(char * t __attribute__((unused)), int na __attribute__((unused)), int nb __attribute__((unused)), char * p __attribute__((unused)), int d __attribute__((unused))) {
@@ -5576,15 +5637,15 @@ int s_contains(char * t __attribute__((unused)), int xs __attribute__((unused)),
     if (((xe - xs) > (pe - ps))) {
     return 0;
     } else {
-    int __loop_result_77 __attribute__((unused));
+    int __loop_result_78 __attribute__((unused));
     int k = ps;
     while (1) {
         if (((k + (xe - xs)) > pe)) {
-        __loop_result_77 = 0;
+        __loop_result_78 = 0;
         break;
         } else {
         if ((rng_eq(t, xs, xe, p, k, (k + (xe - xs))) == 1)) {
-        __loop_result_77 = 1;
+        __loop_result_78 = 1;
         break;
         } else {
         int __recur_tmp_0 = (k + 1);
@@ -5593,22 +5654,22 @@ int s_contains(char * t __attribute__((unused)), int xs __attribute__((unused)),
         }
         }
     }
-    return __loop_result_77;
+    return __loop_result_78;
     }
 }
 
 int s_word(char * t __attribute__((unused)), int xs __attribute__((unused)), int xe __attribute__((unused)), char * p __attribute__((unused)), int ps __attribute__((unused)), int pe __attribute__((unused))) {
-    int __loop_result_78 __attribute__((unused));
+    int __loop_result_79 __attribute__((unused));
     int k = ps;
     while (1) {
         int a __attribute__((unused)) = skip_ws(p, k, pe);
         if ((a >= pe)) {
-        __loop_result_78 = 0;
+        __loop_result_79 = 0;
         break;
         } else {
         int b __attribute__((unused)) = tok_end(p, a, pe);
         if ((rng_eq(t, xs, xe, p, a, b) == 1)) {
-        __loop_result_78 = 1;
+        __loop_result_79 = 1;
         break;
         } else {
         int __recur_tmp_0 = b;
@@ -5617,7 +5678,7 @@ int s_word(char * t __attribute__((unused)), int xs __attribute__((unused)), int
         }
         }
     }
-    return __loop_result_78;
+    return __loop_result_79;
 }
 
 int s_dash(char * t __attribute__((unused)), int xs __attribute__((unused)), int xe __attribute__((unused)), char * p __attribute__((unused)), int ps __attribute__((unused)), int pe __attribute__((unused))) {
@@ -5643,16 +5704,16 @@ int attr_op(char * t __attribute__((unused)), int op __attribute__((unused)), in
 }
 
 int attr_sel_end(char * t __attribute__((unused)), int a __attribute__((unused)), int q __attribute__((unused))) {
-    int __loop_result_79 __attribute__((unused));
+    int __loop_result_80 __attribute__((unused));
     int k = a;
     while (1) {
         if ((k >= q)) {
-        __loop_result_79 = q;
+        __loop_result_80 = q;
         break;
         } else {
         int c __attribute__((unused)) = char_at(t, k);
         if (((c == 61) || ((c == 126) || ((c == 124) || ((c == 94) || ((c == 36) || (c == 42))))))) {
-        __loop_result_79 = k;
+        __loop_result_80 = k;
         break;
         } else {
         int __recur_tmp_0 = (k + 1);
@@ -5661,7 +5722,7 @@ int attr_sel_end(char * t __attribute__((unused)), int a __attribute__((unused))
         }
         }
     }
-    return __loop_result_79;
+    return __loop_result_80;
 }
 
 int attr_cmp(char * t __attribute__((unused)), char * p __attribute__((unused)), int ne __attribute__((unused)), int q __attribute__((unused))) {
@@ -5722,12 +5783,12 @@ int cls_hit(char * t __attribute__((unused)), char * p __attribute__((unused)), 
 }
 
 int comma_top(char * t __attribute__((unused)), int i __attribute__((unused)), int e __attribute__((unused))) {
-    int __loop_result_80 __attribute__((unused));
+    int __loop_result_81 __attribute__((unused));
     int k = i;
     int depth = 0;
     while (1) {
         if ((k >= e)) {
-        __loop_result_80 = e;
+        __loop_result_81 = e;
         break;
         } else {
         int c __attribute__((unused)) = char_at(t, k);
@@ -5746,7 +5807,7 @@ int comma_top(char * t __attribute__((unused)), int i __attribute__((unused)), i
         continue;
         } else {
         if (((c == 44) && (depth == 0))) {
-        __loop_result_80 = k;
+        __loop_result_81 = k;
         break;
         } else {
         int __recur_tmp_0 = (k + 1);
@@ -5759,22 +5820,22 @@ int comma_top(char * t __attribute__((unused)), int i __attribute__((unused)), i
         }
         }
     }
-    return __loop_result_80;
+    return __loop_result_81;
 }
 
 int list_any(char * t __attribute__((unused)), char * p __attribute__((unused)), int s __attribute__((unused)), int e __attribute__((unused)), int d __attribute__((unused))) {
-    int __loop_result_81 __attribute__((unused));
+    int __loop_result_82 __attribute__((unused));
     int k = s;
     while (1) {
         if ((k >= e)) {
-        __loop_result_81 = 0;
+        __loop_result_82 = 0;
         break;
         } else {
         int c __attribute__((unused)) = comma_top(t, k, e);
         int a __attribute__((unused)) = skip_ws(t, k, c);
         int b __attribute__((unused)) = trim_end(t, a, c);
         if (((a < b) && (cmp_step(t, p, a, b, d) == 1))) {
-        __loop_result_81 = 1;
+        __loop_result_82 = 1;
         break;
         } else {
         int __recur_tmp_0 = (c + 1);
@@ -5783,7 +5844,7 @@ int list_any(char * t __attribute__((unused)), char * p __attribute__((unused)),
         }
         }
     }
-    return __loop_result_81;
+    return __loop_result_82;
 }
 
 int pseudo_test(char * t __attribute__((unused)), char * p __attribute__((unused)), int ps __attribute__((unused)), int pe __attribute__((unused)), int as __attribute__((unused)), int ae __attribute__((unused)), int d __attribute__((unused))) {
@@ -5861,12 +5922,12 @@ int cmp_step(char * t __attribute__((unused)), char * p __attribute__((unused)),
 }
 
 int compound_start(char * t __attribute__((unused)), int s __attribute__((unused)), int e __attribute__((unused))) {
-    int __loop_result_82 __attribute__((unused));
+    int __loop_result_83 __attribute__((unused));
     int k = e;
     int depth = 0;
     while (1) {
         if ((k <= s)) {
-        __loop_result_82 = s;
+        __loop_result_83 = s;
         break;
         } else {
         int c __attribute__((unused)) = char_at(t, (k - 1));
@@ -5885,7 +5946,7 @@ int compound_start(char * t __attribute__((unused)), int s __attribute__((unused
         continue;
         } else {
         if (((depth == 0) && (ws_(c) || ((c == 62) || ((c == 43) || (c == 126)))))) {
-        __loop_result_82 = k;
+        __loop_result_83 = k;
         break;
         } else {
         int __recur_tmp_0 = (k - 1);
@@ -5898,7 +5959,7 @@ int compound_start(char * t __attribute__((unused)), int s __attribute__((unused
         }
         }
     }
-    return __loop_result_82;
+    return __loop_result_83;
 }
 
 int sel_match(char * t __attribute__((unused)), char * p __attribute__((unused)), int s __attribute__((unused)), int e __attribute__((unused)), int d __attribute__((unused))) {
@@ -5926,15 +5987,15 @@ int sel_left(char * t __attribute__((unused)), char * p __attribute__((unused)),
 }
 
 int sel_any_ancestor(char * t __attribute__((unused)), char * p __attribute__((unused)), int s __attribute__((unused)), int q __attribute__((unused)), int a __attribute__((unused))) {
-    int __loop_result_83 __attribute__((unused));
+    int __loop_result_84 __attribute__((unused));
     int k = a;
     while (1) {
         if ((k < 1)) {
-        __loop_result_83 = 0;
+        __loop_result_84 = 0;
         break;
         } else {
         if ((sel_match(t, p, s, q, k) == 1)) {
-        __loop_result_83 = 1;
+        __loop_result_84 = 1;
         break;
         } else {
         int __recur_tmp_0 = (k - 1);
@@ -5943,17 +6004,17 @@ int sel_any_ancestor(char * t __attribute__((unused)), char * p __attribute__((u
         }
         }
     }
-    return __loop_result_83;
+    return __loop_result_84;
 }
 
 int sel_spec(char * t __attribute__((unused)), int s __attribute__((unused)), int e __attribute__((unused))) {
-    int __loop_result_84 __attribute__((unused));
+    int __loop_result_85 __attribute__((unused));
     int k = s;
     int sp = 0;
     int prev = 32;
     while (1) {
         if ((k >= e)) {
-        __loop_result_84 = sp;
+        __loop_result_85 = sp;
         break;
         } else {
         int c __attribute__((unused)) = char_at(t, k);
@@ -6026,16 +6087,16 @@ int sel_spec(char * t __attribute__((unused)), int s __attribute__((unused)), in
         }
         }
     }
-    return __loop_result_84;
+    return __loop_result_85;
 }
 
 int sel_ok_(char * t __attribute__((unused)), int s __attribute__((unused)), int e __attribute__((unused))) {
-    int __loop_result_85 __attribute__((unused));
+    int __loop_result_86 __attribute__((unused));
     int k = s;
     int depth = 0;
     while (1) {
         if ((k >= e)) {
-        __loop_result_85 = 1;
+        __loop_result_86 = 1;
         break;
         } else {
         int c __attribute__((unused)) = char_at(t, k);
@@ -6054,11 +6115,11 @@ int sel_ok_(char * t __attribute__((unused)), int s __attribute__((unused)), int
         continue;
         } else {
         if (((depth == 0) && ((c == 43) || (c == 126)))) {
-        __loop_result_85 = 0;
+        __loop_result_86 = 0;
         break;
         } else {
         if (((c == 58) && (char_at(t, (k + 1)) == 58))) {
-        __loop_result_85 = 0;
+        __loop_result_86 = 0;
         break;
         } else {
         int __recur_tmp_0 = (k + 1);
@@ -6072,19 +6133,19 @@ int sel_ok_(char * t __attribute__((unused)), int s __attribute__((unused)), int
         }
         }
     }
-    return __loop_result_85;
+    return __loop_result_86;
 }
 
 int rule_pos(int sp __attribute__((unused)), int n __attribute__((unused))) {
-    int __loop_result_86 __attribute__((unused));
+    int __loop_result_87 __attribute__((unused));
     int k = 0;
     while (1) {
         if ((k >= n)) {
-        __loop_result_86 = n;
+        __loop_result_87 = n;
         break;
         } else {
         if ((slot_get((2105 + (k * 6))) > sp)) {
-        __loop_result_86 = k;
+        __loop_result_87 = k;
         break;
         } else {
         int __recur_tmp_0 = (k + 1);
@@ -6093,15 +6154,15 @@ int rule_pos(int sp __attribute__((unused)), int n __attribute__((unused))) {
         }
         }
     }
-    return __loop_result_86;
+    return __loop_result_87;
 }
 
 int rule_shift(int pos __attribute__((unused)), int n __attribute__((unused))) {
-    int __loop_result_87 __attribute__((unused));
+    int __loop_result_88 __attribute__((unused));
     int k = (n - 1);
     while (1) {
         if ((k < pos)) {
-        __loop_result_87 = 0;
+        __loop_result_88 = 0;
         break;
         } else {
         int a __attribute__((unused)) = (2100 + (k * 6));
@@ -6117,7 +6178,7 @@ int rule_shift(int pos __attribute__((unused)), int n __attribute__((unused))) {
         continue;
         }
     }
-    return __loop_result_87;
+    return __loop_result_88;
 }
 
 int add_rule(char * t __attribute__((unused)), int src __attribute__((unused)), int s __attribute__((unused)), int e __attribute__((unused)), int ds __attribute__((unused)), int de __attribute__((unused))) {
@@ -6141,11 +6202,11 @@ int add_rule(char * t __attribute__((unused)), int src __attribute__((unused)), 
 }
 
 int add_selectors(char * t __attribute__((unused)), int src __attribute__((unused)), int a __attribute__((unused)), int b __attribute__((unused)), int ds __attribute__((unused)), int de __attribute__((unused))) {
-    int __loop_result_88 __attribute__((unused));
+    int __loop_result_89 __attribute__((unused));
     int k = a;
     while (1) {
         if ((k >= b)) {
-        __loop_result_88 = 0;
+        __loop_result_89 = 0;
         break;
         } else {
         int c __attribute__((unused)) = comma_top(t, k, b);
@@ -6157,7 +6218,7 @@ int add_selectors(char * t __attribute__((unused)), int src __attribute__((unuse
         continue;
         }
     }
-    return __loop_result_88;
+    return __loop_result_89;
 }
 
 int mq_len(char * t __attribute__((unused)), int s __attribute__((unused)), int e __attribute__((unused))) {
@@ -6202,16 +6263,16 @@ int mq_cond(char * t __attribute__((unused)), int s __attribute__((unused)), int
 }
 
 int mq_word_end(char * t __attribute__((unused)), int a __attribute__((unused)), int e __attribute__((unused))) {
-    int __loop_result_89 __attribute__((unused));
+    int __loop_result_90 __attribute__((unused));
     int k = a;
     while (1) {
         if ((k >= e)) {
-        __loop_result_89 = e;
+        __loop_result_90 = e;
         break;
         } else {
         int c __attribute__((unused)) = char_at(t, k);
         if ((ws_(c) || (c == 40))) {
-        __loop_result_89 = k;
+        __loop_result_90 = k;
         break;
         } else {
         int __recur_tmp_0 = (k + 1);
@@ -6220,7 +6281,7 @@ int mq_word_end(char * t __attribute__((unused)), int a __attribute__((unused)),
         }
         }
     }
-    return __loop_result_89;
+    return __loop_result_90;
 }
 
 int mq_type_ok(char * t __attribute__((unused)), int a __attribute__((unused)), int b __attribute__((unused))) {
@@ -6228,12 +6289,12 @@ int mq_type_ok(char * t __attribute__((unused)), int a __attribute__((unused)), 
 }
 
 int mq_and(char * t __attribute__((unused)), int s __attribute__((unused)), int e __attribute__((unused))) {
-    int __loop_result_90 __attribute__((unused));
+    int __loop_result_91 __attribute__((unused));
     int k = s;
     while (1) {
         int a __attribute__((unused)) = skip_ws(t, k, e);
         if ((a >= e)) {
-        __loop_result_90 = 1;
+        __loop_result_91 = 1;
         break;
         } else {
         if ((char_at(t, a) == 40)) {
@@ -6243,7 +6304,7 @@ int mq_and(char * t __attribute__((unused)), int s __attribute__((unused)), int 
         k = __recur_tmp_0;
         continue;
         } else {
-        __loop_result_90 = 0;
+        __loop_result_91 = 0;
         break;
         }
         } else {
@@ -6253,13 +6314,13 @@ int mq_and(char * t __attribute__((unused)), int s __attribute__((unused)), int 
         k = __recur_tmp_0;
         continue;
         } else {
-        __loop_result_90 = 0;
+        __loop_result_91 = 0;
         break;
         }
         }
         }
     }
-    return __loop_result_90;
+    return __loop_result_91;
 }
 
 int mq_eval(char * t __attribute__((unused)), int s __attribute__((unused)), int e __attribute__((unused))) {
@@ -6277,16 +6338,16 @@ int media_match(char * t __attribute__((unused)), int s __attribute__((unused)),
     if ((skip_ws(t, s, e) >= e)) {
     return 1;
     } else {
-    int __loop_result_91 __attribute__((unused));
+    int __loop_result_92 __attribute__((unused));
     int k = s;
     while (1) {
         if ((k >= e)) {
-        __loop_result_91 = 0;
+        __loop_result_92 = 0;
         break;
         } else {
         int c __attribute__((unused)) = comma_top(t, k, e);
         if ((mq_eval(t, k, c) == 1)) {
-        __loop_result_91 = 1;
+        __loop_result_92 = 1;
         break;
         } else {
         int __recur_tmp_0 = (c + 1);
@@ -6295,7 +6356,7 @@ int media_match(char * t __attribute__((unused)), int s __attribute__((unused)),
         }
         }
     }
-    return __loop_result_91;
+    return __loop_result_92;
     }
 }
 
@@ -6308,15 +6369,15 @@ int sh_set(int k __attribute__((unused)), int f __attribute__((unused)), int v _
 }
 
 int sh_find(int key __attribute__((unused)), int kind __attribute__((unused))) {
-    int __loop_result_92 __attribute__((unused));
+    int __loop_result_93 __attribute__((unused));
     int k = 0;
     while (1) {
         if ((k >= slot_get(1640))) {
-        __loop_result_92 = -1;
+        __loop_result_93 = -1;
         break;
         } else {
         if (((sh_get(k, 0) == key) && (sh_get(k, 5) == kind))) {
-        __loop_result_92 = k;
+        __loop_result_93 = k;
         break;
         } else {
         int __recur_tmp_0 = (k + 1);
@@ -6325,7 +6386,7 @@ int sh_find(int key __attribute__((unused)), int kind __attribute__((unused))) {
         }
         }
     }
-    return __loop_result_92;
+    return __loop_result_93;
 }
 
 int sh_new(int key __attribute__((unused)), int kind __attribute__((unused)), int parent __attribute__((unused)), int src __attribute__((unused)), int us __attribute__((unused)), int ue __attribute__((unused))) {
@@ -6358,15 +6419,15 @@ int sh_entry(int key __attribute__((unused)), int kind __attribute__((unused)), 
 }
 
 int sh_owner(int pos __attribute__((unused))) {
-    int __loop_result_93 __attribute__((unused));
+    int __loop_result_94 __attribute__((unused));
     int k = 0;
     while (1) {
         if ((k >= slot_get(1640))) {
-        __loop_result_93 = -1;
+        __loop_result_94 = -1;
         break;
         } else {
         if (((sh_get(k, 1) == 2) && ((pos >= sh_get(k, 2)) && (pos < sh_get(k, 3))))) {
-        __loop_result_93 = k;
+        __loop_result_94 = k;
         break;
         } else {
         int __recur_tmp_0 = (k + 1);
@@ -6375,7 +6436,7 @@ int sh_owner(int pos __attribute__((unused))) {
         }
         }
     }
-    return __loop_result_93;
+    return __loop_result_94;
 }
 
 int sheet_apply(int k __attribute__((unused)), int depth __attribute__((unused))) {
@@ -6461,13 +6522,13 @@ int css_at_block(char * t __attribute__((unused)), int src __attribute__((unused
 }
 
 int at_prelude_end(char * t __attribute__((unused)), int i __attribute__((unused)), int e __attribute__((unused))) {
-    int __loop_result_94 __attribute__((unused));
+    int __loop_result_95 __attribute__((unused));
     int k = i;
     int depth = 0;
     int q = 0;
     while (1) {
         if ((k >= e)) {
-        __loop_result_94 = e;
+        __loop_result_95 = e;
         break;
         } else {
         int c __attribute__((unused)) = char_at(t, k);
@@ -6518,7 +6579,7 @@ int at_prelude_end(char * t __attribute__((unused)), int i __attribute__((unused
         continue;
         } else {
         if (((depth == 0) && ((c == 59) || (c == 123)))) {
-        __loop_result_94 = k;
+        __loop_result_95 = k;
         break;
         } else {
         int __recur_tmp_0 = (k + 1);
@@ -6535,7 +6596,7 @@ int at_prelude_end(char * t __attribute__((unused)), int i __attribute__((unused
         }
         }
     }
-    return __loop_result_94;
+    return __loop_result_95;
 }
 
 int css_at(char * t __attribute__((unused)), int src __attribute__((unused)), int a __attribute__((unused)), int e __attribute__((unused)), int depth __attribute__((unused))) {
@@ -6564,12 +6625,12 @@ int parse_rule(char * t __attribute__((unused)), int src __attribute__((unused))
 }
 
 int parse_css(char * t __attribute__((unused)), int src __attribute__((unused)), int s __attribute__((unused)), int e __attribute__((unused)), int depth __attribute__((unused))) {
-    int __loop_result_95 __attribute__((unused));
+    int __loop_result_96 __attribute__((unused));
     int i = s;
     while (1) {
         int a __attribute__((unused)) = css_skip(t, i, e);
         if ((a >= e)) {
-        __loop_result_95 = 0;
+        __loop_result_96 = 0;
         break;
         } else {
         if ((char_at(t, a) == 64)) {
@@ -6589,19 +6650,19 @@ int parse_css(char * t __attribute__((unused)), int src __attribute__((unused)),
         }
         }
     }
-    return __loop_result_95;
+    return __loop_result_96;
 }
 
 int style_close(char * page __attribute__((unused)), int k __attribute__((unused)), int e __attribute__((unused))) {
-    int __loop_result_96 __attribute__((unused));
+    int __loop_result_97 __attribute__((unused));
     int m = k;
     while (1) {
         if (((m + 7) >= e)) {
-        __loop_result_96 = e;
+        __loop_result_97 = e;
         break;
         } else {
         if ((((char_at(page, m) == 60) && (char_at(page, (m + 1)) == 47)) && (word_eq(page, (m + 2), (m + 7), "style") == 1))) {
-        __loop_result_96 = m;
+        __loop_result_97 = m;
         break;
         } else {
         int __recur_tmp_0 = (m + 1);
@@ -6610,7 +6671,7 @@ int style_close(char * page __attribute__((unused)), int k __attribute__((unused
         }
         }
     }
-    return __loop_result_96;
+    return __loop_result_97;
 }
 
 int ws_or_gt_(int c __attribute__((unused))) {
@@ -6659,11 +6720,11 @@ int link_at(char * page __attribute__((unused)), int i __attribute__((unused)), 
 }
 
 int scan_styles(char * page __attribute__((unused)), int start __attribute__((unused)), int e __attribute__((unused))) {
-    int __loop_result_97 __attribute__((unused));
+    int __loop_result_98 __attribute__((unused));
     int i = start;
     while (1) {
         if (((i + 7) >= e)) {
-        __loop_result_97 = 0;
+        __loop_result_98 = 0;
         break;
         } else {
         if ((char_at(page, i) == 60)) {
@@ -6689,20 +6750,20 @@ int scan_styles(char * page __attribute__((unused)), int start __attribute__((un
         }
         }
     }
-    return __loop_result_97;
+    return __loop_result_98;
 }
 
 int attr_start(char * page __attribute__((unused)), int a __attribute__((unused)), int b __attribute__((unused)), char * lit __attribute__((unused))) {
     int n __attribute__((unused)) = length(lit);
-    int __loop_result_98 __attribute__((unused));
+    int __loop_result_99 __attribute__((unused));
     int k = a;
     while (1) {
         if (((k + (n + 1)) >= b)) {
-        __loop_result_98 = -1;
+        __loop_result_99 = -1;
         break;
         } else {
         if (((((k > 0) && ws_(char_at(page, (k - 1)))) && (match_at(page, k, lit) == 1)) && ((char_at(page, (k + n)) == 34) || (char_at(page, (k + n)) == 39)))) {
-        __loop_result_98 = (k + (n + 1));
+        __loop_result_99 = (k + (n + 1));
         break;
         } else {
         int __recur_tmp_0 = (k + 1);
@@ -6711,21 +6772,21 @@ int attr_start(char * page __attribute__((unused)), int a __attribute__((unused)
         }
         }
     }
-    return __loop_result_98;
+    return __loop_result_99;
 }
 
 int class_has_(char * page __attribute__((unused)), int cs __attribute__((unused)), int ce __attribute__((unused)), int h __attribute__((unused))) {
-    int __loop_result_99 __attribute__((unused));
+    int __loop_result_100 __attribute__((unused));
     int k = cs;
     while (1) {
         int a __attribute__((unused)) = skip_ws(page, k, ce);
         if ((a >= ce)) {
-        __loop_result_99 = 0;
+        __loop_result_100 = 0;
         break;
         } else {
         int b __attribute__((unused)) = tok_end(page, a, ce);
         if ((hash_range(page, a, b) == h)) {
-        __loop_result_99 = 1;
+        __loop_result_100 = 1;
         break;
         } else {
         int __recur_tmp_0 = b;
@@ -6734,15 +6795,15 @@ int class_has_(char * page __attribute__((unused)), int cs __attribute__((unused
         }
         }
     }
-    return __loop_result_99;
+    return __loop_result_100;
 }
 
 int apply_rules(char * page __attribute__((unused)), int d __attribute__((unused)), int mode __attribute__((unused))) {
-    int __loop_result_100 __attribute__((unused));
+    int __loop_result_101 __attribute__((unused));
     int k = 0;
     while (1) {
         if ((k >= slot_get(30))) {
-        __loop_result_100 = 0;
+        __loop_result_101 = 0;
         break;
         } else {
         int b __attribute__((unused)) = (2100 + (k * 6));
@@ -6754,7 +6815,7 @@ int apply_rules(char * page __attribute__((unused)), int d __attribute__((unused
         continue;
         }
     }
-    return __loop_result_100;
+    return __loop_result_101;
 }
 
 int attr_colors(char * page __attribute__((unused)), int ns __attribute__((unused)), int ne __attribute__((unused)), int te __attribute__((unused))) {
@@ -6950,15 +7011,15 @@ int push_styled(char * page __attribute__((unused)), int ns __attribute__((unuse
 }
 
 int img_find(int pos __attribute__((unused))) {
-    int __loop_result_101 __attribute__((unused));
+    int __loop_result_102 __attribute__((unused));
     int k = 0;
     while (1) {
         if ((k >= slot_get(622))) {
-        __loop_result_101 = -1;
+        __loop_result_102 = -1;
         break;
         } else {
         if ((slot_get((700 + (k * 4))) == pos)) {
-        __loop_result_101 = k;
+        __loop_result_102 = k;
         break;
         } else {
         int __recur_tmp_0 = (k + 1);
@@ -6967,7 +7028,7 @@ int img_find(int pos __attribute__((unused))) {
         }
         }
     }
-    return __loop_result_101;
+    return __loop_result_102;
 }
 
 int img_add(int pos __attribute__((unused))) {
@@ -7008,17 +7069,17 @@ int attr_int(char * page __attribute__((unused)), int ne __attribute__((unused))
 
 int img_scan(int id __attribute__((unused)), int sy __attribute__((unused)), int py __attribute__((unused)), int x0 __attribute__((unused)), int dw __attribute__((unused)), int nw __attribute__((unused))) {
     int ren __attribute__((unused)) = slot_get(38);
-    int __loop_result_102 __attribute__((unused));
+    int __loop_result_103 __attribute__((unused));
     int dx = 0;
     int rs = 0;
     int rc = -2;
     while (1) {
         if ((dx >= dw)) {
         if ((rc >= 0)) {
-        __loop_result_102 = fill_rect_col(ren, rc, (x0 + rs), py, (dx - rs), 1);
+        __loop_result_103 = fill_rect_col(ren, rc, (x0 + rs), py, (dx - rs), 1);
         break;
         } else {
-        __loop_result_102 = 0;
+        __loop_result_103 = 0;
         break;
         }
         } else {
@@ -7043,7 +7104,7 @@ int img_scan(int id __attribute__((unused)), int sy __attribute__((unused)), int
         }
         }
     }
-    return __loop_result_102;
+    return __loop_result_103;
 }
 
 int img_paint(int id __attribute__((unused)), int x0 __attribute__((unused)), int y0 __attribute__((unused)), int dw __attribute__((unused)), int dh __attribute__((unused))) {
@@ -7051,11 +7112,11 @@ int img_paint(int id __attribute__((unused)), int x0 __attribute__((unused)), in
     int nh __attribute__((unused)) = img_h(id);
     int top __attribute__((unused)) = slot_get(37);
     int bot __attribute__((unused)) = (slot_get(37) + (slot_get(35) * 18));
-    int __loop_result_103 __attribute__((unused));
+    int __loop_result_104 __attribute__((unused));
     int dy = 0;
     while (1) {
         if ((dy >= dh)) {
-        __loop_result_103 = 0;
+        __loop_result_104 = 0;
         break;
         } else {
         int py __attribute__((unused)) = (y0 + dy);
@@ -7065,7 +7126,7 @@ int img_paint(int id __attribute__((unused)), int x0 __attribute__((unused)), in
         continue;
         }
     }
-    return __loop_result_103;
+    return __loop_result_104;
 }
 
 int img_alt(char * page __attribute__((unused)), int ne __attribute__((unused)), int te __attribute__((unused))) {
@@ -7074,11 +7135,11 @@ int img_alt(char * page __attribute__((unused)), int ne __attribute__((unused)),
     return 0;
     } else {
     int e __attribute__((unused)) = href_end(page, s, te);
-    int __loop_result_104 __attribute__((unused));
+    int __loop_result_105 __attribute__((unused));
     int k = s;
     while (1) {
         if (((k >= e) || ((k - s) >= 40))) {
-        __loop_result_104 = 0;
+        __loop_result_105 = 0;
         break;
         } else {
         int p __attribute__((unused)) = put_char(char_at(page, k), 0, 1000, -1, -1, -1);
@@ -7087,7 +7148,7 @@ int img_alt(char * page __attribute__((unused)), int ne __attribute__((unused)),
         continue;
         }
     }
-    return __loop_result_104;
+    return __loop_result_105;
     }
 }
 
@@ -7185,15 +7246,15 @@ int fm_put(int k __attribute__((unused)), int i __attribute__((unused)), int c _
 }
 
 int fm_find(int pos __attribute__((unused))) {
-    int __loop_result_105 __attribute__((unused));
+    int __loop_result_106 __attribute__((unused));
     int k = 0;
     while (1) {
         if ((k >= slot_get(1089))) {
-        __loop_result_105 = -1;
+        __loop_result_106 = -1;
         break;
         } else {
         if ((fm_get(k, 0) == pos)) {
-        __loop_result_105 = k;
+        __loop_result_106 = k;
         break;
         } else {
         int __recur_tmp_0 = (k + 1);
@@ -7202,7 +7263,7 @@ int fm_find(int pos __attribute__((unused))) {
         }
         }
     }
-    return __loop_result_105;
+    return __loop_result_106;
 }
 
 int fm_add(int pos __attribute__((unused))) {
@@ -7251,12 +7312,12 @@ int fm_name_hash(char * page __attribute__((unused)), int ne __attribute__((unus
 }
 
 int fm_copy(int k __attribute__((unused)), char * page __attribute__((unused)), int s __attribute__((unused)), int e __attribute__((unused))) {
-    int __loop_result_106 __attribute__((unused));
+    int __loop_result_107 __attribute__((unused));
     int i = s;
     int n = 0;
     while (1) {
         if (((i >= e) || (n >= 32))) {
-        __loop_result_106 = fm_set(k, 1, n);
+        __loop_result_107 = fm_set(k, 1, n);
         break;
         } else {
         int pk __attribute__((unused)) = fm_ent_code(page, i, e);
@@ -7278,19 +7339,19 @@ int fm_copy(int k __attribute__((unused)), char * page __attribute__((unused)), 
         }
         }
     }
-    return __loop_result_106;
+    return __loop_result_107;
 }
 
 int fm_checked_(char * page __attribute__((unused)), int ne __attribute__((unused)), int te __attribute__((unused))) {
-    int __loop_result_107 __attribute__((unused));
+    int __loop_result_108 __attribute__((unused));
     int i = ne;
     while (1) {
         if (((i + 7) > te)) {
-        __loop_result_107 = 0;
+        __loop_result_108 = 0;
         break;
         } else {
         if ((ws_(char_at(page, (i - 1))) && (match_at(page, i, "checked") == 1))) {
-        __loop_result_107 = 1;
+        __loop_result_108 = 1;
         break;
         } else {
         int __recur_tmp_0 = (i + 1);
@@ -7299,7 +7360,7 @@ int fm_checked_(char * page __attribute__((unused)), int ne __attribute__((unuse
         }
         }
     }
-    return __loop_result_107;
+    return __loop_result_108;
 }
 
 int fm_init_check(int k __attribute__((unused)), char * page __attribute__((unused)), int ne __attribute__((unused)), int te __attribute__((unused))) {
@@ -7404,11 +7465,11 @@ int fm_field(int k __attribute__((unused)), int size __attribute__((unused)), in
 }
 
 int fm_radio_off(int k __attribute__((unused))) {
-    int __loop_result_108 __attribute__((unused));
+    int __loop_result_109 __attribute__((unused));
     int j = 0;
     while (1) {
         if ((j >= slot_get(1089))) {
-        __loop_result_108 = 0;
+        __loop_result_109 = 0;
         break;
         } else {
         int x __attribute__((unused)) = (((!((j == k))) && ((fm_get(j, 3) == fm_get(k, 3)) && ((fm_get(j, 5) == fm_get(k, 5)) && (fm_get(j, 4) == 5)))) ? fm_set(j, 2, 0) : 0);
@@ -7417,7 +7478,7 @@ int fm_radio_off(int k __attribute__((unused))) {
         continue;
         }
     }
-    return __loop_result_108;
+    return __loop_result_109;
 }
 
 int fm_radio_on(int k __attribute__((unused))) {
@@ -7464,11 +7525,11 @@ int fm_label(char * src __attribute__((unused)), int s __attribute__((unused)), 
     int ren __attribute__((unused)) = slot_get(38);
     int cw __attribute__((unused)) = (6 * sc);
     int c0 __attribute__((unused)) = sdl2_raw_set_draw_color(ren, 216, 216, 216, 255);
-    int __loop_result_109 __attribute__((unused));
+    int __loop_result_110 __attribute__((unused));
     int i = s;
     while (1) {
         if (((i >= e) || ((i - s) >= 24))) {
-        __loop_result_109 = 0;
+        __loop_result_110 = 0;
         break;
         } else {
         int g __attribute__((unused)) = draw_glyph(ren, char_at(src, i), (px + (((i - s) + 1) * cw)), py, sc);
@@ -7477,7 +7538,7 @@ int fm_label(char * src __attribute__((unused)), int s __attribute__((unused)), 
         continue;
         }
     }
-    return __loop_result_109;
+    return __loop_result_110;
 }
 
 int fm_trigger(int k __attribute__((unused))) {
@@ -7620,15 +7681,15 @@ int q_close(char * page __attribute__((unused)), int ns __attribute__((unused)),
 
 int bool_attr_(char * page __attribute__((unused)), int ne __attribute__((unused)), int te __attribute__((unused)), char * lit __attribute__((unused))) {
     int n __attribute__((unused)) = length(lit);
-    int __loop_result_110 __attribute__((unused));
+    int __loop_result_111 __attribute__((unused));
     int i = ne;
     while (1) {
         if (((i + n) > te)) {
-        __loop_result_110 = 0;
+        __loop_result_111 = 0;
         break;
         } else {
         if ((ws_(char_at(page, (i - 1))) && ((match_at(page, i, lit) == 1) && (!(letter_(char_at(page, (i + n)))))))) {
-        __loop_result_110 = 1;
+        __loop_result_111 = 1;
         break;
         } else {
         int __recur_tmp_0 = (i + 1);
@@ -7637,19 +7698,19 @@ int bool_attr_(char * page __attribute__((unused)), int ne __attribute__((unused
         }
         }
     }
-    return __loop_result_110;
+    return __loop_result_111;
 }
 
 int tg_find(int pos __attribute__((unused))) {
-    int __loop_result_111 __attribute__((unused));
+    int __loop_result_112 __attribute__((unused));
     int k = 0;
     while (1) {
         if ((k >= slot_get(638))) {
-        __loop_result_111 = -1;
+        __loop_result_112 = -1;
         break;
         } else {
         if ((slot_get((660 + (k * 2))) == pos)) {
-        __loop_result_111 = k;
+        __loop_result_112 = k;
         break;
         } else {
         int __recur_tmp_0 = (k + 1);
@@ -7658,7 +7719,7 @@ int tg_find(int pos __attribute__((unused))) {
         }
         }
     }
-    return __loop_result_111;
+    return __loop_result_112;
 }
 
 int tg_add(int pos __attribute__((unused))) {
@@ -7782,11 +7843,11 @@ int tb_store(int col __attribute__((unused)), int n __attribute__((unused)), int
 }
 
 int tb_reset(void) {
-    int __loop_result_112 __attribute__((unused));
+    int __loop_result_113 __attribute__((unused));
     int k = 0;
     while (1) {
         if ((k >= 8)) {
-        __loop_result_112 = 0;
+        __loop_result_113 = 0;
         break;
         } else {
         int x __attribute__((unused)) = slot_set((650 + k), 0);
@@ -7795,16 +7856,16 @@ int tb_reset(void) {
         continue;
         }
     }
-    return __loop_result_112;
+    return __loop_result_113;
 }
 
 int tb_offsets(void) {
-    int __loop_result_113 __attribute__((unused));
+    int __loop_result_114 __attribute__((unused));
     int k = 0;
     int acc = 0;
     while (1) {
         if ((k >= 8)) {
-        __loop_result_113 = slot_set(645, acc);
+        __loop_result_114 = slot_set(645, acc);
         break;
         } else {
         int w __attribute__((unused)) = slot_get((650 + k));
@@ -7816,25 +7877,25 @@ int tb_offsets(void) {
         continue;
         }
     }
-    return __loop_result_113;
+    return __loop_result_114;
 }
 
 int tb_scan(char * page __attribute__((unused)), int from __attribute__((unused)), int lim __attribute__((unused))) {
-    int __loop_result_114 __attribute__((unused));
+    int __loop_result_115 __attribute__((unused));
     int k = from;
     int col = 0;
     int n = 0;
     int pend = 0;
     while (1) {
         if ((k >= lim)) {
-        __loop_result_114 = 0;
+        __loop_result_115 = 0;
         break;
         } else {
         int c __attribute__((unused)) = char_at(page, k);
         if ((c == 60)) {
         int gt __attribute__((unused)) = find_in(page, 62, k, lim);
         if ((gt < 0)) {
-        __loop_result_114 = 0;
+        __loop_result_115 = 0;
         break;
         } else {
         int cl __attribute__((unused)) = ((char_at(page, (k + 1)) == 47) ? 1 : 0);
@@ -7845,7 +7906,7 @@ int tb_scan(char * page __attribute__((unused)), int from __attribute__((unused)
         int istb __attribute__((unused)) = word_eq(page, ns, ne, "table");
         int st __attribute__((unused)) = (((istd == 1) || ((istr == 1) || (istb == 1))) ? tb_store(col, n, pend) : 0);
         if (((cl == 1) && (istb == 1))) {
-        __loop_result_114 = 0;
+        __loop_result_115 = 0;
         break;
         } else {
         if (((istd == 1) && (cl == 0))) {
@@ -7933,7 +7994,7 @@ int tb_scan(char * page __attribute__((unused)), int from __attribute__((unused)
         }
         }
     }
-    return __loop_result_114;
+    return __loop_result_115;
 }
 
 int table_open(char * page __attribute__((unused)), int ns __attribute__((unused)), int ne __attribute__((unused)), int te __attribute__((unused))) {
@@ -7966,56 +8027,19 @@ int tr_close(char * page __attribute__((unused)), int ns __attribute__((unused))
 }
 
 int sel_lim(char * page __attribute__((unused)), int pos __attribute__((unused)), int n __attribute__((unused))) {
-    int __loop_result_115 __attribute__((unused));
+    int __loop_result_116 __attribute__((unused));
     int i = pos;
     while (1) {
         if (((i + 8) >= n)) {
-        __loop_result_115 = n;
+        __loop_result_116 = n;
         break;
         } else {
         if ((match_at(page, i, "</select") == 1)) {
-        __loop_result_115 = i;
-        break;
-        } else {
-        int __recur_tmp_0 = (i + 1);
-        i = __recur_tmp_0;
-        continue;
-        }
-        }
-    }
-    return __loop_result_115;
-}
-
-int opt_nth(char * page __attribute__((unused)), int from __attribute__((unused)), int lim __attribute__((unused)), int idx __attribute__((unused))) {
-    int __loop_result_116 __attribute__((unused));
-    int i = from;
-    int c = 0;
-    while (1) {
-        if (((i + 7) >= lim)) {
-        if ((idx < 0)) {
-        __loop_result_116 = c;
-        break;
-        } else {
-        __loop_result_116 = -1;
-        break;
-        }
-        } else {
-        if ((match_at(page, i, "<option") == 1)) {
-        if ((c == idx)) {
         __loop_result_116 = i;
         break;
         } else {
-        int __recur_tmp_0 = (i + 7);
-        int __recur_tmp_1 = (c + 1);
-        i = __recur_tmp_0;
-        c = __recur_tmp_1;
-        continue;
-        }
-        } else {
         int __recur_tmp_0 = (i + 1);
-        int __recur_tmp_1 = c;
         i = __recur_tmp_0;
-        c = __recur_tmp_1;
         continue;
         }
         }
@@ -8023,19 +8047,23 @@ int opt_nth(char * page __attribute__((unused)), int from __attribute__((unused)
     return __loop_result_116;
 }
 
-int opt_selected(char * page __attribute__((unused)), int from __attribute__((unused)), int lim __attribute__((unused))) {
+int opt_nth(char * page __attribute__((unused)), int from __attribute__((unused)), int lim __attribute__((unused)), int idx __attribute__((unused))) {
     int __loop_result_117 __attribute__((unused));
     int i = from;
     int c = 0;
     while (1) {
         if (((i + 7) >= lim)) {
-        __loop_result_117 = 0;
+        if ((idx < 0)) {
+        __loop_result_117 = c;
         break;
         } else {
+        __loop_result_117 = -1;
+        break;
+        }
+        } else {
         if ((match_at(page, i, "<option") == 1)) {
-        int gt __attribute__((unused)) = find_in(page, 62, i, lim);
-        if (((gt >= 0) && (bool_attr_(page, (i + 7), gt, "selected") == 1))) {
-        __loop_result_117 = c;
+        if ((c == idx)) {
+        __loop_result_117 = i;
         break;
         } else {
         int __recur_tmp_0 = (i + 7);
@@ -8056,12 +8084,45 @@ int opt_selected(char * page __attribute__((unused)), int from __attribute__((un
     return __loop_result_117;
 }
 
-int opt_label_end(char * page __attribute__((unused)), int ls __attribute__((unused)), int lim __attribute__((unused))) {
+int opt_selected(char * page __attribute__((unused)), int from __attribute__((unused)), int lim __attribute__((unused))) {
     int __loop_result_118 __attribute__((unused));
+    int i = from;
+    int c = 0;
+    while (1) {
+        if (((i + 7) >= lim)) {
+        __loop_result_118 = 0;
+        break;
+        } else {
+        if ((match_at(page, i, "<option") == 1)) {
+        int gt __attribute__((unused)) = find_in(page, 62, i, lim);
+        if (((gt >= 0) && (bool_attr_(page, (i + 7), gt, "selected") == 1))) {
+        __loop_result_118 = c;
+        break;
+        } else {
+        int __recur_tmp_0 = (i + 7);
+        int __recur_tmp_1 = (c + 1);
+        i = __recur_tmp_0;
+        c = __recur_tmp_1;
+        continue;
+        }
+        } else {
+        int __recur_tmp_0 = (i + 1);
+        int __recur_tmp_1 = c;
+        i = __recur_tmp_0;
+        c = __recur_tmp_1;
+        continue;
+        }
+        }
+    }
+    return __loop_result_118;
+}
+
+int opt_label_end(char * page __attribute__((unused)), int ls __attribute__((unused)), int lim __attribute__((unused))) {
+    int __loop_result_119 __attribute__((unused));
     int i = ls;
     while (1) {
         if (((i >= lim) || ((char_at(page, i) == 60) || ((char_at(page, i) == 10) || ((i - ls) >= 24))))) {
-        __loop_result_118 = i;
+        __loop_result_119 = i;
         break;
         } else {
         int __recur_tmp_0 = (i + 1);
@@ -8069,7 +8130,7 @@ int opt_label_end(char * page __attribute__((unused)), int ls __attribute__((unu
         continue;
         }
     }
-    return __loop_result_118;
+    return __loop_result_119;
 }
 
 int fm_cycle(int k __attribute__((unused)), int cnt __attribute__((unused))) {
@@ -8141,15 +8202,15 @@ int select_open(char * page __attribute__((unused)), int ns __attribute__((unuse
 }
 
 int area_end(char * page __attribute__((unused)), int from __attribute__((unused)), int n __attribute__((unused))) {
-    int __loop_result_119 __attribute__((unused));
+    int __loop_result_120 __attribute__((unused));
     int i = from;
     while (1) {
         if (((i + 10) >= n)) {
-        __loop_result_119 = -1;
+        __loop_result_120 = -1;
         break;
         } else {
         if ((match_at(page, i, "</textarea") == 1)) {
-        __loop_result_119 = i;
+        __loop_result_120 = i;
         break;
         } else {
         int __recur_tmp_0 = (i + 1);
@@ -8158,7 +8219,7 @@ int area_end(char * page __attribute__((unused)), int from __attribute__((unused
         }
         }
     }
-    return __loop_result_119;
+    return __loop_result_120;
 }
 
 int area_draw(char * page __attribute__((unused)), int ne __attribute__((unused)), int te __attribute__((unused))) {
@@ -8198,11 +8259,11 @@ int num100(char * page __attribute__((unused)), int ne __attribute__((unused)), 
 }
 
 int bar_cells(int filled __attribute__((unused)), int ch __attribute__((unused))) {
-    int __loop_result_120 __attribute__((unused));
+    int __loop_result_121 __attribute__((unused));
     int k = 0;
     while (1) {
         if ((k >= 10)) {
-        __loop_result_120 = 0;
+        __loop_result_121 = 0;
         break;
         } else {
         int p __attribute__((unused)) = put_char(((k < filled) ? ch : 45), 0, 1000, -1, -1, -1);
@@ -8211,7 +8272,7 @@ int bar_cells(int filled __attribute__((unused)), int ch __attribute__((unused))
         continue;
         }
     }
-    return __loop_result_120;
+    return __loop_result_121;
 }
 
 int bar_draw(char * page __attribute__((unused)), int ns __attribute__((unused)), int ne __attribute__((unused)), int te __attribute__((unused))) {
@@ -8291,15 +8352,15 @@ int close_block(int hid __attribute__((unused))) {
 }
 
 int find_open(int h __attribute__((unused))) {
-    int __loop_result_121 __attribute__((unused));
+    int __loop_result_122 __attribute__((unused));
     int d = slot_get(31);
     while (1) {
         if ((d < 1)) {
-        __loop_result_121 = 0;
+        __loop_result_122 = 0;
         break;
         } else {
         if ((eget(d, 0) == h)) {
-        __loop_result_121 = d;
+        __loop_result_122 = d;
         break;
         } else {
         int __recur_tmp_0 = (d - 1);
@@ -8308,15 +8369,15 @@ int find_open(int h __attribute__((unused))) {
         }
         }
     }
-    return __loop_result_121;
+    return __loop_result_122;
 }
 
 int close_to(int idx __attribute__((unused))) {
-    int __loop_result_122 __attribute__((unused));
+    int __loop_result_123 __attribute__((unused));
     int k = 0;
     while (1) {
         if (((slot_get(31) < idx) || (k >= 16))) {
-        __loop_result_122 = 0;
+        __loop_result_123 = 0;
         break;
         } else {
         int t __attribute__((unused)) = close_top();
@@ -8325,7 +8386,7 @@ int close_to(int idx __attribute__((unused))) {
         continue;
         }
     }
-    return __loop_result_122;
+    return __loop_result_123;
 }
 
 int close_generic(char * page __attribute__((unused)), int ns __attribute__((unused)), int ne __attribute__((unused))) {
@@ -8574,7 +8635,7 @@ int tag_kind(char * page __attribute__((unused)), int i __attribute__((unused)))
 }
 
 int cp_map(int cp __attribute__((unused))) {
-    return (((cp >= 32) && (cp < 127)) ? cp : ((cp == 160) ? 32 : (((cp == 8216) || ((cp == 8217) || (cp == 8218))) ? 39 : (((cp == 8220) || ((cp == 8221) || (cp == 8222))) ? 34 : ((cp == 8211) ? 45 : ((cp == 8212) ? 1007 : ((cp == 8230) ? 1001 : ((cp == 169) ? 1002 : ((cp == 8482) ? 1003 : ((cp == 174) ? 1004 : ((cp == 8226) ? 42 : ((cp == 183) ? 46 : ((cp == 171) ? 1005 : ((cp == 187) ? 1006 : ((cp == 215) ? 120 : (((cp == 8203) || (cp == 65279)) ? 1010 : ((cp == 8594) ? 1011 : ((cp == 8592) ? 1012 : 63))))))))))))))))));
+    return (((cp >= 32) && (cp < 127)) ? cp : ((cp == 160) ? 32 : (((cp == 8216) || ((cp == 8217) || (cp == 8218))) ? 39 : (((cp == 8220) || ((cp == 8221) || (cp == 8222))) ? 34 : ((cp == 8211) ? 45 : ((cp == 8212) ? 1007 : ((cp == 8230) ? 1001 : ((cp == 169) ? 1002 : ((cp == 177) ? 1013 : ((cp == 176) ? 111 : ((cp == 178) ? 50 : ((cp == 179) ? 51 : ((cp == 181) ? 117 : ((cp == 247) ? 47 : ((cp == 8482) ? 1003 : ((cp == 174) ? 1004 : ((cp == 8226) ? 42 : ((cp == 183) ? 46 : ((cp == 171) ? 1005 : ((cp == 187) ? 1006 : ((cp == 215) ? 120 : (((cp == 8203) || (cp == 65279)) ? 1010 : ((cp == 8594) ? 1011 : ((cp == 8592) ? 1012 : 63))))))))))))))))))))))));
 }
 
 int ent_named(char * page __attribute__((unused)), int a __attribute__((unused)), int b __attribute__((unused))) {
@@ -8582,17 +8643,17 @@ int ent_named(char * page __attribute__((unused)), int a __attribute__((unused))
 }
 
 int ent_hex(char * page __attribute__((unused)), int a __attribute__((unused)), int b __attribute__((unused))) {
-    int __loop_result_123 __attribute__((unused));
+    int __loop_result_124 __attribute__((unused));
     int k = a;
     int v = 0;
     while (1) {
         if ((k >= b)) {
-        __loop_result_123 = v;
+        __loop_result_124 = v;
         break;
         } else {
         int h __attribute__((unused)) = hexd(char_at(page, k));
         if (((h < 0) || (v > 100000))) {
-        __loop_result_123 = -1;
+        __loop_result_124 = -1;
         break;
         } else {
         int __recur_tmp_0 = (k + 1);
@@ -8603,7 +8664,7 @@ int ent_hex(char * page __attribute__((unused)), int a __attribute__((unused)), 
         }
         }
     }
-    return __loop_result_123;
+    return __loop_result_124;
 }
 
 int ent_num(char * page __attribute__((unused)), int a __attribute__((unused)), int b __attribute__((unused))) {
@@ -8621,16 +8682,16 @@ int ent_cp(int v __attribute__((unused))) {
 
 int ent_semi(char * page __attribute__((unused)), int i __attribute__((unused)), int rev __attribute__((unused))) {
     int lim __attribute__((unused)) = ((rev < (i + 12)) ? rev : (i + 12));
-    int __loop_result_124 __attribute__((unused));
+    int __loop_result_125 __attribute__((unused));
     int k = (i + 1);
     while (1) {
         if ((k >= lim)) {
-        __loop_result_124 = -1;
+        __loop_result_125 = -1;
         break;
         } else {
         int c __attribute__((unused)) = char_at(page, k);
         if ((c == 59)) {
-        __loop_result_124 = k;
+        __loop_result_125 = k;
         break;
         } else {
         if ((letter_(c) || (digit_(c) || (c == 35)))) {
@@ -8638,13 +8699,13 @@ int ent_semi(char * page __attribute__((unused)), int i __attribute__((unused)),
         k = __recur_tmp_0;
         continue;
         } else {
-        __loop_result_124 = -1;
+        __loop_result_125 = -1;
         break;
         }
         }
         }
     }
-    return __loop_result_124;
+    return __loop_result_125;
 }
 
 int amp_ent(char * page __attribute__((unused)), int i __attribute__((unused)), int rev __attribute__((unused))) {
@@ -8704,12 +8765,12 @@ int put_lit(int a __attribute__((unused)), int b __attribute__((unused)), int c 
 }
 
 int put_ent(int code __attribute__((unused)), int i __attribute__((unused)), int rev __attribute__((unused)), int hs __attribute__((unused)), int he __attribute__((unused)), int ord __attribute__((unused))) {
-    return ((code < 1000) ? put_char(code, i, rev, hs, he, ord) : ((code == 1001) ? put_lit(46, 46, 46) : ((code == 1002) ? put_lit(40, 99, 41) : ((code == 1003) ? put_lit(84, 77, 0) : ((code == 1004) ? put_lit(40, 114, 41) : ((code == 1005) ? put_lit(60, 60, 0) : ((code == 1006) ? put_lit(62, 62, 0) : ((code == 1007) ? put_lit(45, 45, 0) : ((code == 1011) ? put_lit(45, 62, 0) : ((code == 1012) ? put_lit(60, 45, 0) : 0))))))))));
+    return ((code < 1000) ? put_char(code, i, rev, hs, he, ord) : ((code == 1001) ? put_lit(46, 46, 46) : ((code == 1002) ? put_lit(40, 99, 41) : ((code == 1003) ? put_lit(84, 77, 0) : ((code == 1004) ? put_lit(40, 114, 41) : ((code == 1005) ? put_lit(60, 60, 0) : ((code == 1006) ? put_lit(62, 62, 0) : ((code == 1007) ? put_lit(45, 45, 0) : ((code == 1011) ? put_lit(45, 62, 0) : ((code == 1012) ? put_lit(60, 45, 0) : ((code == 1013) ? put_lit(43, 47, 45) : 0)))))))))));
 }
 
 int draw_page(int ren __attribute__((unused)), char * page __attribute__((unused)), int start __attribute__((unused)), int revealed __attribute__((unused)), int scroll __attribute__((unused)), int cols __attribute__((unused)), int rows __attribute__((unused)), int x0 __attribute__((unused)), int y0 __attribute__((unused))) {
     int ini __attribute__((unused)) = init_draw(ren, page, start, revealed, scroll, rows, x0, y0, (cols * 12));
-    int __loop_result_125 __attribute__((unused));
+    int __loop_result_126 __attribute__((unused));
     int i = start;
     int tag = 0;
     int hs = -1;
@@ -8717,7 +8778,7 @@ int draw_page(int ren __attribute__((unused)), char * page __attribute__((unused
     int ln = 0;
     while (1) {
         if ((i >= revealed)) {
-        __loop_result_125 = finish_draw(ln);
+        __loop_result_126 = finish_draw(ln);
         break;
         } else {
         int c __attribute__((unused)) = char_at(page, i);
@@ -8748,7 +8809,7 @@ int draw_page(int ren __attribute__((unused)), char * page __attribute__((unused
         continue;
         } else {
         if ((tag == 2)) {
-        if (((c == 60) && (char_at(page, (i + 1)) == 47))) {
+        if ((skip_end_(page, i) == 1)) {
         int __recur_tmp_0 = (i + 1);
         int __recur_tmp_1 = 1;
         int __recur_tmp_2 = hs;
@@ -8879,7 +8940,7 @@ int draw_page(int ren __attribute__((unused)), char * page __attribute__((unused
         }
         } else {
         if ((((c == 10) || ((c == 32) || (c == 9))) && (soft_ws_() == 1))) {
-        int p __attribute__((unused)) = ((soft_skip_(page, i) == 1) ? 0 : put_char(32, i, revealed, hs, he, (ln - 1)));
+        int p __attribute__((unused)) = ((soft_skip_(page, i) == 1) ? 0 : ((space_wraps_() == 1) ? next_line() : put_char(32, i, revealed, hs, he, (ln - 1))));
         int q __attribute__((unused)) = ((c == 10) ? md_pop_line() : 0);
         int __recur_tmp_0 = (i + 1);
         int __recur_tmp_1 = 0;
@@ -8937,6 +8998,7 @@ int draw_page(int ren __attribute__((unused)), char * page __attribute__((unused
         } else {
         int k __attribute__((unused)) = md_kind(page, i, start, revealed, hs);
         if ((k == 0)) {
+        int w __attribute__((unused)) = word_wrap(page, i, revealed);
         int p __attribute__((unused)) = put_char(c, i, revealed, hs, he, (ln - 1));
         int __recur_tmp_0 = (i + 1);
         int __recur_tmp_1 = 0;
@@ -9095,7 +9157,7 @@ int draw_page(int ren __attribute__((unused)), char * page __attribute__((unused
         }
         }
     }
-    return __loop_result_125;
+    return __loop_result_126;
 }
 
 char * embedded_page(void) {
@@ -9111,39 +9173,16 @@ int has_prefix(char * s __attribute__((unused)), char * p __attribute__((unused)
     if ((length(s) < pn)) {
     return 0;
     } else {
-    int __loop_result_126 __attribute__((unused));
+    int __loop_result_127 __attribute__((unused));
     int i = 0;
     while (1) {
         if ((i >= pn)) {
-        __loop_result_126 = 1;
+        __loop_result_127 = 1;
         break;
         } else {
         if ((char_at(s, i) == char_at(p, i))) {
         int __recur_tmp_0 = (i + 1);
         i = __recur_tmp_0;
-        continue;
-        } else {
-        __loop_result_126 = 0;
-        break;
-        }
-        }
-    }
-    return __loop_result_126;
-    }
-}
-
-int match_at(char * buf __attribute__((unused)), int i __attribute__((unused)), char * p __attribute__((unused))) {
-    int pn __attribute__((unused)) = length(p);
-    int __loop_result_127 __attribute__((unused));
-    int k = 0;
-    while (1) {
-        if ((k >= pn)) {
-        __loop_result_127 = 1;
-        break;
-        } else {
-        if ((char_at(buf, (i + k)) == char_at(p, k))) {
-        int __recur_tmp_0 = (k + 1);
-        k = __recur_tmp_0;
         continue;
         } else {
         __loop_result_127 = 0;
@@ -9152,19 +9191,42 @@ int match_at(char * buf __attribute__((unused)), int i __attribute__((unused)), 
         }
     }
     return __loop_result_127;
+    }
+}
+
+int match_at(char * buf __attribute__((unused)), int i __attribute__((unused)), char * p __attribute__((unused))) {
+    int pn __attribute__((unused)) = length(p);
+    int __loop_result_128 __attribute__((unused));
+    int k = 0;
+    while (1) {
+        if ((k >= pn)) {
+        __loop_result_128 = 1;
+        break;
+        } else {
+        if ((char_at(buf, (i + k)) == char_at(p, k))) {
+        int __recur_tmp_0 = (k + 1);
+        k = __recur_tmp_0;
+        continue;
+        } else {
+        __loop_result_128 = 0;
+        break;
+        }
+        }
+    }
+    return __loop_result_128;
 }
 
 int find_char(char * s __attribute__((unused)), int c __attribute__((unused)), int from __attribute__((unused))) {
     int n __attribute__((unused)) = length(s);
-    int __loop_result_128 __attribute__((unused));
+    int __loop_result_129 __attribute__((unused));
     int i = from;
     while (1) {
         if ((i >= n)) {
-        __loop_result_128 = -1;
+        __loop_result_129 = -1;
         break;
         } else {
         if ((char_at(s, i) == c)) {
-        __loop_result_128 = i;
+        __loop_result_129 = i;
         break;
         } else {
         int __recur_tmp_0 = (i + 1);
@@ -9173,7 +9235,7 @@ int find_char(char * s __attribute__((unused)), int c __attribute__((unused)), i
         }
         }
     }
-    return __loop_result_128;
+    return __loop_result_129;
 }
 
 int url_https_(char * url __attribute__((unused))) {
@@ -9198,16 +9260,16 @@ int default_port(char * url __attribute__((unused))) {
 
 int host_end(char * url __attribute__((unused))) {
     int n __attribute__((unused)) = length(url);
-    int __loop_result_129 __attribute__((unused));
+    int __loop_result_130 __attribute__((unused));
     int i = url_start(url);
     while (1) {
         if ((i >= n)) {
-        __loop_result_129 = n;
+        __loop_result_130 = n;
         break;
         } else {
         int c __attribute__((unused)) = char_at(url, i);
         if (((c == 58) || (c == 47))) {
-        __loop_result_129 = i;
+        __loop_result_130 = i;
         break;
         } else {
         int __recur_tmp_0 = (i + 1);
@@ -9216,7 +9278,7 @@ int host_end(char * url __attribute__((unused))) {
         }
         }
     }
-    return __loop_result_129;
+    return __loop_result_130;
 }
 
 char * url_host(char * url __attribute__((unused)), Arena *dest __attribute__((unused))) {
@@ -9227,16 +9289,16 @@ int url_port(char * url __attribute__((unused))) {
     int he __attribute__((unused)) = host_end(url);
     int n __attribute__((unused)) = length(url);
     if (((he < n) && (char_at(url, he) == 58))) {
-    int __loop_result_130 __attribute__((unused));
+    int __loop_result_131 __attribute__((unused));
     int i = (he + 1);
     int v = 0;
     while (1) {
         if ((i >= n)) {
         if ((v > 0)) {
-        __loop_result_130 = v;
+        __loop_result_131 = v;
         break;
         } else {
-        __loop_result_130 = default_port(url);
+        __loop_result_131 = default_port(url);
         break;
         }
         } else {
@@ -9249,16 +9311,16 @@ int url_port(char * url __attribute__((unused))) {
         continue;
         } else {
         if ((v > 0)) {
-        __loop_result_130 = v;
+        __loop_result_131 = v;
         break;
         } else {
-        __loop_result_130 = default_port(url);
+        __loop_result_131 = default_port(url);
         break;
         }
         }
         }
     }
-    return __loop_result_130;
+    return __loop_result_131;
     } else {
     return default_port(url);
     }
@@ -9430,36 +9492,15 @@ int nav_then(char * url __attribute__((unused)), int r __attribute__((unused))) 
 }
 
 int find_hdr_end(char * buf __attribute__((unused)), int len __attribute__((unused))) {
-    int __loop_result_131 __attribute__((unused));
-    int i = 0;
-    while (1) {
-        if (((i + 4) > len)) {
-        __loop_result_131 = -1;
-        break;
-        } else {
-        if (((((char_at(buf, i) == 13) && (char_at(buf, (i + 1)) == 10)) && (char_at(buf, (i + 2)) == 13)) && (char_at(buf, (i + 3)) == 10))) {
-        __loop_result_131 = (i + 4);
-        break;
-        } else {
-        int __recur_tmp_0 = (i + 1);
-        i = __recur_tmp_0;
-        continue;
-        }
-        }
-    }
-    return __loop_result_131;
-}
-
-int find_location(char * buf __attribute__((unused)), int hend __attribute__((unused))) {
     int __loop_result_132 __attribute__((unused));
     int i = 0;
     while (1) {
-        if (((i + 9) > hend)) {
+        if (((i + 4) > len)) {
         __loop_result_132 = -1;
         break;
         } else {
-        if ((match_at(buf, i, "ocation: ") == 1)) {
-        __loop_result_132 = (i + 9);
+        if (((((char_at(buf, i) == 13) && (char_at(buf, (i + 1)) == 10)) && (char_at(buf, (i + 2)) == 13)) && (char_at(buf, (i + 3)) == 10))) {
+        __loop_result_132 = (i + 4);
         break;
         } else {
         int __recur_tmp_0 = (i + 1);
@@ -9469,6 +9510,27 @@ int find_location(char * buf __attribute__((unused)), int hend __attribute__((un
         }
     }
     return __loop_result_132;
+}
+
+int find_location(char * buf __attribute__((unused)), int hend __attribute__((unused))) {
+    int __loop_result_133 __attribute__((unused));
+    int i = 0;
+    while (1) {
+        if (((i + 9) > hend)) {
+        __loop_result_133 = -1;
+        break;
+        } else {
+        if ((match_at(buf, i, "ocation: ") == 1)) {
+        __loop_result_133 = (i + 9);
+        break;
+        } else {
+        int __recur_tmp_0 = (i + 1);
+        i = __recur_tmp_0;
+        continue;
+        }
+        }
+    }
+    return __loop_result_133;
 }
 
 int status_code(char * buf __attribute__((unused))) {
@@ -9593,11 +9655,11 @@ int pump_net(Arena *dest __attribute__((unused))) {
     if ((fd < 0)) {
     return 0;
     } else {
-    int __loop_result_133 __attribute__((unused));
+    int __loop_result_134 __attribute__((unused));
     int k = 0;
     while (1) {
         if ((k >= 16)) {
-        __loop_result_133 = check_headers(dest);
+        __loop_result_134 = check_headers(dest);
         break;
         } else {
         int r __attribute__((unused)) = stream_pull(fd);
@@ -9608,16 +9670,16 @@ int pump_net(Arena *dest __attribute__((unused))) {
         continue;
         } else {
         if ((r == 0)) {
-        __loop_result_133 = check_headers(dest);
+        __loop_result_134 = check_headers(dest);
         break;
         } else {
-        __loop_result_133 = net_eof(fd, gen, r, dest);
+        __loop_result_134 = net_eof(fd, gen, r, dest);
         break;
         }
         }
         }
     }
-    return __loop_result_133;
+    return __loop_result_134;
     }
 }
 
@@ -9734,16 +9796,16 @@ int render_frame(int ren __attribute__((unused)), char * page __attribute__((unu
 
 int path_end(char * url __attribute__((unused))) {
     int n __attribute__((unused)) = length(url);
-    int __loop_result_134 __attribute__((unused));
+    int __loop_result_135 __attribute__((unused));
     int i = host_end(url);
     while (1) {
         if ((i >= n)) {
-        __loop_result_134 = n;
+        __loop_result_135 = n;
         break;
         } else {
         int c __attribute__((unused)) = char_at(url, i);
         if (((c == 63) || (c == 35))) {
-        __loop_result_134 = i;
+        __loop_result_135 = i;
         break;
         } else {
         int __recur_tmp_0 = (i + 1);
@@ -9752,7 +9814,7 @@ int path_end(char * url __attribute__((unused))) {
         }
         }
     }
-    return __loop_result_134;
+    return __loop_result_135;
 }
 
 char * url_dir(char * url __attribute__((unused)), Arena *dest __attribute__((unused))) {
@@ -9785,20 +9847,20 @@ char * url_dir(char * url __attribute__((unused)), Arena *dest __attribute__((un
 
 int other_scheme_(char * h __attribute__((unused))) {
     int n __attribute__((unused)) = length(h);
-    int __loop_result_135 __attribute__((unused));
+    int __loop_result_136 __attribute__((unused));
     int i = 0;
     while (1) {
         if ((i >= n)) {
-        __loop_result_135 = 0;
+        __loop_result_136 = 0;
         break;
         } else {
         int c __attribute__((unused)) = char_at(h, i);
         if ((c == 58)) {
-        __loop_result_135 = 1;
+        __loop_result_136 = 1;
         break;
         } else {
         if ((((c == 47) || (c == 63)) || (c == 35))) {
-        __loop_result_135 = 0;
+        __loop_result_136 = 0;
         break;
         } else {
         int __recur_tmp_0 = (i + 1);
@@ -9808,7 +9870,7 @@ int other_scheme_(char * h __attribute__((unused))) {
         }
         }
     }
-    return __loop_result_135;
+    return __loop_result_136;
 }
 
 char * resolve_href(char * h __attribute__((unused)), Arena *dest __attribute__((unused))) {
@@ -9993,21 +10055,21 @@ int on_wheel(int d __attribute__((unused))) {
 }
 
 int handle_events(Arena *dest __attribute__((unused))) {
-    int __loop_result_136 __attribute__((unused));
+    int __loop_result_137 __attribute__((unused));
     int q = 0;
     while (1) {
         int ev __attribute__((unused)) = sdl2_raw_poll_event();
         if ((ev == 0)) {
-        __loop_result_136 = 0;
+        __loop_result_137 = 0;
         break;
         } else {
         if ((ev == 1)) {
-        __loop_result_136 = 1;
+        __loop_result_137 = 1;
         break;
         } else {
         if ((ev == 2)) {
         if ((on_key(sdl2_raw_last_event_key(), dest) == 1)) {
-        __loop_result_136 = 1;
+        __loop_result_137 = 1;
         break;
         } else {
         int __recur_tmp_0 = 0;
@@ -10043,7 +10105,7 @@ int handle_events(Arena *dest __attribute__((unused))) {
         }
         }
     }
-    return __loop_result_136;
+    return __loop_result_137;
 }
 
 int sdl2_delay_raw(int ms __attribute__((unused))) {
@@ -10107,11 +10169,11 @@ char * img_request(char * host __attribute__((unused)), int port __attribute__((
 }
 
 int img_drain(int fd __attribute__((unused))) {
-    int __loop_result_137 __attribute__((unused));
+    int __loop_result_138 __attribute__((unused));
     int idle = 0;
     while (1) {
         if ((idle > 600)) {
-        __loop_result_137 = 0;
+        __loop_result_138 = 0;
         break;
         } else {
         int r __attribute__((unused)) = stream_pull(fd);
@@ -10126,13 +10188,13 @@ int img_drain(int fd __attribute__((unused))) {
         idle = __recur_tmp_0;
         continue;
         } else {
-        __loop_result_137 = 0;
+        __loop_result_138 = 0;
         break;
         }
         }
         }
     }
-    return __loop_result_137;
+    return __loop_result_138;
 }
 
 int be32(Bytes data __attribute__((unused)), int p __attribute__((unused))) {
@@ -10271,15 +10333,15 @@ int img_load(int k __attribute__((unused)), Arena *dest __attribute__((unused)))
 }
 
 int img_next(void) {
-    int __loop_result_138 __attribute__((unused));
+    int __loop_result_139 __attribute__((unused));
     int k = 0;
     while (1) {
         if ((k >= slot_get(622))) {
-        __loop_result_138 = -1;
+        __loop_result_139 = -1;
         break;
         } else {
         if ((slot_get((701 + (k * 4))) == 0)) {
-        __loop_result_138 = k;
+        __loop_result_139 = k;
         break;
         } else {
         int __recur_tmp_0 = (k + 1);
@@ -10288,7 +10350,7 @@ int img_next(void) {
         }
         }
     }
-    return __loop_result_138;
+    return __loop_result_139;
 }
 
 int img_pump(void) {
@@ -10361,15 +10423,15 @@ int css_open(int k __attribute__((unused)), char * url __attribute__((unused)), 
 }
 
 int css_next(void) {
-    int __loop_result_139 __attribute__((unused));
+    int __loop_result_140 __attribute__((unused));
     int k = 0;
     while (1) {
         if ((k >= slot_get(1640))) {
-        __loop_result_139 = -1;
+        __loop_result_140 = -1;
         break;
         } else {
         if ((sh_get(k, 1) == 0)) {
-        __loop_result_139 = k;
+        __loop_result_140 = k;
         break;
         } else {
         int __recur_tmp_0 = (k + 1);
@@ -10378,7 +10440,7 @@ int css_next(void) {
         }
         }
     }
-    return __loop_result_139;
+    return __loop_result_140;
 }
 
 int css_begin(char * page __attribute__((unused)), Arena *dest __attribute__((unused))) {
@@ -10392,11 +10454,11 @@ int css_begin(char * page __attribute__((unused)), Arena *dest __attribute__((un
 }
 
 int css_pull(int fd __attribute__((unused))) {
-    int __loop_result_140 __attribute__((unused));
+    int __loop_result_141 __attribute__((unused));
     int n = 0;
     while (1) {
         if ((n >= 16)) {
-        __loop_result_140 = 1;
+        __loop_result_141 = 1;
         break;
         } else {
         int r __attribute__((unused)) = stream_pull(fd);
@@ -10407,20 +10469,20 @@ int css_pull(int fd __attribute__((unused))) {
         } else {
         if ((r == 0)) {
         if ((n > 0)) {
-        __loop_result_140 = 1;
+        __loop_result_141 = 1;
         break;
         } else {
-        __loop_result_140 = 0;
+        __loop_result_141 = 0;
         break;
         }
         } else {
-        __loop_result_140 = -1;
+        __loop_result_141 = -1;
         break;
         }
         }
         }
     }
-    return __loop_result_140;
+    return __loop_result_141;
 }
 
 int css_done(int k __attribute__((unused)), int he __attribute__((unused)), char * url __attribute__((unused)), Arena *dest __attribute__((unused))) {
@@ -10583,11 +10645,11 @@ int fm_ent_code(char * p __attribute__((unused)), int i __attribute__((unused)),
 }
 
 int fm_enc_page(char * p __attribute__((unused)), int s __attribute__((unused)), int e __attribute__((unused)), Arena *dest __attribute__((unused))) {
-    int __loop_result_141 __attribute__((unused));
+    int __loop_result_142 __attribute__((unused));
     int i = s;
     while (1) {
         if ((i >= e)) {
-        __loop_result_141 = 0;
+        __loop_result_142 = 0;
         break;
         } else {
         int pk __attribute__((unused)) = fm_ent_code(p, i, e);
@@ -10597,15 +10659,15 @@ int fm_enc_page(char * p __attribute__((unused)), int s __attribute__((unused)),
         continue;
         }
     }
-    return __loop_result_141;
+    return __loop_result_142;
 }
 
 int fm_enc_store(int j __attribute__((unused)), Arena *dest __attribute__((unused))) {
-    int __loop_result_142 __attribute__((unused));
+    int __loop_result_143 __attribute__((unused));
     int i = 0;
     while (1) {
         if ((i >= fm_get(j, 1))) {
-        __loop_result_142 = 0;
+        __loop_result_143 = 0;
         break;
         } else {
         int x __attribute__((unused)) = fm_enc_ch(fm_ch(j, i), dest);
@@ -10614,7 +10676,7 @@ int fm_enc_store(int j __attribute__((unused)), Arena *dest __attribute__((unuse
         continue;
         }
     }
-    return __loop_result_142;
+    return __loop_result_143;
 }
 
 int fm_enc_sel(char * p __attribute__((unused)), int j __attribute__((unused)), int n __attribute__((unused)), int te __attribute__((unused)), Arena *dest __attribute__((unused))) {
@@ -10676,11 +10738,11 @@ int fm_pair(char * p __attribute__((unused)), int n __attribute__((unused)), int
 }
 
 int fm_collect(char * p __attribute__((unused)), int n __attribute__((unused)), int fpos __attribute__((unused)), int trig __attribute__((unused)), Arena *dest __attribute__((unused))) {
-    int __loop_result_143 __attribute__((unused));
+    int __loop_result_144 __attribute__((unused));
     int j = 0;
     while (1) {
         if ((j >= slot_get(1089))) {
-        __loop_result_143 = 0;
+        __loop_result_144 = 0;
         break;
         } else {
         int x __attribute__((unused)) = ((fm_get(j, 3) == fpos) ? fm_pair(p, n, j, trig, dest) : 0);
@@ -10689,7 +10751,7 @@ int fm_collect(char * p __attribute__((unused)), int n __attribute__((unused)), 
         continue;
         }
     }
-    return __loop_result_143;
+    return __loop_result_144;
 }
 
 char * self_url(Arena *dest __attribute__((unused))) {
@@ -10781,11 +10843,11 @@ int fm_append(int k __attribute__((unused)), int c __attribute__((unused))) {
 int fm_type(char * t __attribute__((unused))) {
     int k __attribute__((unused)) = slot_get(1088);
     int n __attribute__((unused)) = length(t);
-    int __loop_result_144 __attribute__((unused));
+    int __loop_result_145 __attribute__((unused));
     int i = 0;
     while (1) {
         if ((i >= n)) {
-        __loop_result_144 = 0;
+        __loop_result_145 = 0;
         break;
         } else {
         int x __attribute__((unused)) = fm_append(k, char_at(t, i));
@@ -10794,7 +10856,7 @@ int fm_type(char * t __attribute__((unused))) {
         continue;
         }
     }
-    return __loop_result_144;
+    return __loop_result_145;
 }
 
 int fm_back(void) {
@@ -10841,17 +10903,17 @@ int move_win(int dx __attribute__((unused)), int dy __attribute__((unused))) {
 int frame_loop(int ren __attribute__((unused)), char * page __attribute__((unused)), int n __attribute__((unused)), int win_w __attribute__((unused)), int win_h __attribute__((unused)), int limit __attribute__((unused)), Arena *dest __attribute__((unused))) {
     int cols __attribute__((unused)) = ((win_w - 24) / 12);
     int rows __attribute__((unused)) = ((win_h - 52) / 18);
-    int __loop_result_145 __attribute__((unused));
+    int __loop_result_146 __attribute__((unused));
     int frames = 0;
     while (1) {
         if (((limit > 0) && (frames >= limit))) {
         (void)(pg_log_n("smoke limit reached; frames=", frames, dest));
-        __loop_result_145 = frames;
+        __loop_result_146 = frames;
         break;
         } else {
         if ((handle_events(dest) == 1)) {
         (void)(pg_log_n("quit; frames=", frames, dest));
-        __loop_result_145 = frames;
+        __loop_result_146 = frames;
         break;
         } else {
         int p0 __attribute__((unused)) = smoke_hop(frames, limit, dest);
@@ -10869,7 +10931,7 @@ int frame_loop(int ren __attribute__((unused)), char * page __attribute__((unuse
         }
         }
     }
-    return __loop_result_145;
+    return __loop_result_146;
 }
 
 int embed_init(int w __attribute__((unused)), int h __attribute__((unused))) {
