@@ -3402,6 +3402,34 @@ static void es_enqueue(const char *kind, const char *data) {
     SDL_UnlockMutex(g_es_mu);
 }
 
+/* NOCK pushed a new working level (unsaved edits included): the worker thread fetches the text, the main
+ * thread parses + applies it (g_es_level_txt is the hand-off, guarded by g_es_mu). */
+static char *g_es_level_txt = NULL;
+
+/* Replace the level being edited with the session's working level and re-enter it without moving the hero.
+ * NOCK is the authority during a live session, so the local op log (edits made on this side) is dropped. */
+static void es_apply_level_text(char *txt) {
+    if (!txt || !g_edit_lvl) { free(txt); return; }
+    CustomLevelData *tmp = (CustomLevelData *)malloc(sizeof(CustomLevelData));
+    if (!tmp) { free(txt); return; }
+    if (level_boxes_parse_json(txt, tmp)) {
+        PlayerState *h = &local_state.players[0];
+        float hx = h->x, hy = h->y, hz = h->z;
+        char keep_name[LEVEL_BOXES_MAX_NAME]; snprintf(keep_name, sizeof keep_name, "%s", g_edit_lvl->name);
+        int keep_id = g_edit_lvl->source_id;
+        *g_edit_lvl = *tmp;
+        g_edit_lvl->source_id = keep_id;
+        snprintf(g_edit_lvl->name, sizeof g_edit_lvl->name, "%s", keep_name);
+        memset(&g_edit_log, 0, sizeof g_edit_log);
+        edit_reapply();
+        h = &local_state.players[0];
+        h->x = hx; h->y = hy; h->z = hz;
+        SDL_Log("EDIT SYNC: loaded the live session's working level (%d boxes)", g_edit_lvl->count);
+        edit_say("level synced from NOCK");
+    } else SDL_Log("EDIT SYNC: working level did not parse");
+    free(tmp); free(txt);
+}
+
 static int es_worker(void *arg) {
     (void)arg;
     int fails = 0;
@@ -3417,6 +3445,13 @@ static int es_worker(void *arg) {
         for (int i = 0; i < n; i++) if (ev[i].from_nock && g_es_in_n < ES_QUEUE) g_es_in[g_es_in_n++] = ev[i];
         g_es_seq = seq;
         SDL_UnlockMutex(g_es_mu);
+        for (int i = 0; i < n; i++) if (ev[i].from_nock && !strcmp(ev[i].kind, "level")) {
+            char *txt = NULL;
+            if (edit_sync_fetch_level(g_es_base, g_es_id, &txt) > 0) {
+                SDL_LockMutex(g_es_mu); free(g_es_level_txt); g_es_level_txt = txt; SDL_UnlockMutex(g_es_mu);
+            }
+            break; /* one fetch covers every "level" notice in this batch */
+        }
     }
     return 0;
 }
@@ -3432,7 +3467,12 @@ static int es_start(const char *join_id) {
     if (g_es_thread) SDL_DetachThread(g_es_thread);
     es_enqueue("hello", "{\"client\":\"shankpit\"}");
     SDL_Log("EDIT SYNC: live session %s (join from NOCK with this id)", g_es_id);
-    edit_say("LIVE session started");
+    if (join_id) { /* joining: be in the level NOCK is editing (its unsaved draft), not the saved/default map */
+        char *txt = NULL;
+        if (edit_sync_fetch_level(g_es_base, g_es_id, &txt) > 0) es_apply_level_text(txt);
+        else edit_say("joined, but the session has no level yet");
+    }
+    edit_say(join_id ? "LIVE session joined" : "LIVE session started");
     return 1;
 }
 
@@ -3461,7 +3501,10 @@ static void es_spawn_now(void) {
 static void es_frame(void) {
     if (!g_es_on || !g_edit_lvl) return;
     EditSyncEvent in[ES_QUEUE]; int n;
-    SDL_LockMutex(g_es_mu); n = g_es_in_n; memcpy(in, g_es_in, sizeof(EditSyncEvent) * (size_t)n); g_es_in_n = 0; SDL_UnlockMutex(g_es_mu);
+    char *lvl_txt;
+    SDL_LockMutex(g_es_mu); n = g_es_in_n; memcpy(in, g_es_in, sizeof(EditSyncEvent) * (size_t)n); g_es_in_n = 0;
+    lvl_txt = g_es_level_txt; g_es_level_txt = NULL; SDL_UnlockMutex(g_es_mu);
+    if (lvl_txt) es_apply_level_text(lvl_txt);   /* before pose events so a teleport/spawner move lands in the new level */
     for (int i = 0; i < n; i++) {
         const EditSyncEvent *e = &in[i];
         if (!strcmp(e->kind, "spawn_mode")) { g_es_crosshair = e->mode_crosshair; edit_say(g_es_crosshair ? "spawn mode: CROSSHAIR" : "spawn mode: SPAWNER"); }

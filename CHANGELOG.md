@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-15
+
+- fix(levels): re-baked `baked_levels_gen.h` (32 -> 64 levels). The native client serves the baked registry by default and the 2026-10-04 bake predated cube rotation/ramp, so NOCK-rotated cubes never appeared rotated in game (render + physics for rot_*/ramp were already in place).
+- feat(edit-sync): joining a live NOCK edit session (`--edit-session <id>`) loads the session's working level -- the editor's unsaved draft -- instead of the default map, and re-syncs on every NOCK `level` event (hero position kept; local op log dropped, NOCK is authoritative). `edit_sync_fetch_level` in `packages/world/edit_sync.h`. Not compiled/run here (no SDL2 on this box); header + test_edit_sync build clean.
+
 ## 2026-10-14
 
 - feat(physics): `packages/physics_parena/` -- host layer (`physics_host.{c,h}`), unit tests and differential test for the PARENA port of `physics.h` hot paths (modules in `PARENA/stdlib/shankpit/physics.prn`, `movement.prn`). `./build.sh` builds with `-Wall -Wextra -Werror -pedantic`, runs unit tests and a 290,188-check differential run against the real `physics.h` (0 mismatches), and confirms no malloc/free symbols. Not wired into the game build yet; `physics.h` is unchanged. (session: claude-session_01BFP4dwdMi5xepEyH9sH5fB)

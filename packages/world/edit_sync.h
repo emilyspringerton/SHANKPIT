@@ -110,4 +110,15 @@ static inline int edit_sync_poll(const char *base, const char *id, int since, in
     free(buf);
     return c;
 }
+
+/* GET <base>/<id>/level -> the session's working level (the NOCK editor's UNSAVED draft when it has pushed
+ * one, else the saved level) in the same export JSON level_boxes_parse_json reads. malloc'd, caller frees.
+ * Returns the byte count (>0) or -1. */
+static inline long edit_sync_fetch_level(const char *base, const char *id, char **buf) {
+    char url[320];
+    snprintf(url, sizeof url, "%s/%s/level", base, id);
+    *buf = NULL;
+    long n = level_boxes_fetch_url(url, buf);
+    return n > 0 && *buf ? n : -1;
+}
 #endif
