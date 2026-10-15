@@ -519,7 +519,8 @@ jobs:
           BUILD="build_${{ github.run_number }}_${GITHUB_SHA::7}"
 
           rm -rf ShankPit_World ShankPit_Client ShankPit_Bots || true
-          rm -f ShankPit_World*.zip ShankPit_Client*.zip ShankPit_Bots*.zip || true
+          rm -f ShankPit_World*.zip ShankPit_Client*.zip ShankPit_Bots*.zip ShankPit_SlimClient*.zip || true
+          rm -rf ShankPit_SlimClient_Windows ShankPit_SlimClient_Linux || true
 
           mkdir -p ShankPit_World
           cp ShankServer_Linux ShankPit_World/
@@ -580,6 +581,24 @@ jobs:
           chmod +x ShankPit_Client_Linux/ShankPit ShankPit_Client_Linux/PLAY.sh
           (cd ShankPit_Client_Linux && zip -r "../ShankPit_Client_Linux_${BUILD}.zip" .)
 
+          # SLIM CLIENT artifacts (card #621, founder: "we need a separate shankpit SLIM CLIENT artifacts; have it do
+          # the same structure for the artifacts but just include the client not the bots artifacts"). Same
+          # build_<run>_<sha> naming + a bundled CONSTRUCT as the full artifacts, but ONLY the client: no World/server,
+          # no Bots, no SHANKPIT OS apps (bundled/). assets/ stays -- every asset load is cwd-relative (S470), a client
+          # without it renders every character as a box. One flat zip per platform, own upload + release asset.
+          rm -rf ShankPit_SlimClient_Windows ShankPit_SlimClient_Linux
+          mkdir -p ShankPit_SlimClient_Windows
+          cp ShankPit.exe sdl2_mingw/bin/SDL2.dll sdl2_mingw/bin/SDL2_ttf.dll SHANKPIT_CONSTRUCT.txt ShankPit_SlimClient_Windows/
+          cp -r assets ShankPit_SlimClient_Windows/
+          printf '%s\n' "start ShankPit.exe" > ShankPit_SlimClient_Windows/PLAY.bat
+          (cd ShankPit_SlimClient_Windows && zip -r "../ShankPit_SlimClient_Windows_${BUILD}.zip" .)
+          mkdir -p ShankPit_SlimClient_Linux
+          cp -r ShankPit_Client_Linux/. ShankPit_SlimClient_Linux/
+          rm -rf ShankPit_SlimClient_Linux/bundled
+          (cd ShankPit_SlimClient_Linux && zip -r "../ShankPit_SlimClient_Linux_${BUILD}.zip" .)
+          test "$(unzip -l "ShankPit_SlimClient_Windows_${BUILD}.zip" | grep -c 'bundled/')" = 0
+          test "$(unzip -l "ShankPit_SlimClient_Linux_${BUILD}.zip" | grep -c 'bundled/')" = 0
+
           mkdir -p ShankPit_Bots
           if [ -f apps/client/bot_main.c ]; then
             gcc apps/client/bot_main.c -o ShankBot_Linux -O2 -static -I. -Ipackages/common -Ipackages/simulation -lm || true
@@ -596,6 +615,7 @@ jobs:
             ShankPit_World_*.zip
             ShankPit_Client_*.zip
             ShankPit_Bots_*.zip
+            ShankPit_SlimClient_*.zip
             SHANKPIT_CONSTRUCT.txt
 
   # Founder real-time: "ensure all our core repos have auto release non pre release" -- same
@@ -656,6 +676,7 @@ jobs:
             dist/ShankPit_World_*.zip \
             dist/ShankPit_Client_*.zip \
             dist/ShankPit_Bots_*.zip \
+            dist/ShankPit_SlimClient_*.zip \
             dist/SHANKPIT_CONSTRUCT.txt \
             --title "$NEXT_VERSION" \
             --generate-notes

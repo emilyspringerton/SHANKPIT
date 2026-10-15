@@ -1,3 +1,7 @@
+## 2026-10-15
+
+- ci(release): SLIM CLIENT artifacts (card #621) -- `ShankPit_SlimClient_Windows_<build>.zip` + `ShankPit_SlimClient_Linux_<build>.zip`: client + SDL libs + assets/ + CONSTRUCT only (no World/server, Bots, or SHANKPIT OS `bundled/` apps), own upload + release assets. Bundle logic simulated locally; the real CI run is not verified yet.
+
 # Changelog
 
 ## 2026-10-15
