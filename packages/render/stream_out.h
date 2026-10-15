@@ -47,9 +47,9 @@ static inline int stream_out_target_ok(const char *t) {
     return 1;
 }
 
-/* A bundled ffmpeg (the Windows release zip ships ffmpeg.exe next to the game, card #535). The game calls
- * stream_out_set_ffmpeg() with its path if the file exists; otherwise "ffmpeg" is looked up on PATH. The path ends up in
- * a shell command, so it gets the same hard whitelist as the target (plus \\ and space) and is quoted. */
+/* ffmpeg override path (card #618: ffmpeg is no longer bundled; the game uses the one on PATH, see docs/FFMPEG_INSTALL.md).
+ * stream_out_set_ffmpeg() stays for tests/tooling; empty = look up "ffmpeg" on PATH. The path ends up in a shell command,
+ * so it gets the same hard whitelist as the target (plus \\ and space) and is quoted. */
 static char g_stream_ffmpeg[512] = "";
 static inline int stream_out_set_ffmpeg(const char *path) {
     g_stream_ffmpeg[0] = '\0';
