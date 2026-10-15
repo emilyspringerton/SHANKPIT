@@ -11356,18 +11356,22 @@ void draw_scene(PlayerState *render_p) {
             }
         }
         if (hh) {
+            /* Flight-sim chase cam: a rigid boom off the TAIL. Heading comes straight from the airframe yaw
+               (no lag), so turning right swings the view right and you see what is over there. Only the
+               height is eased (so landing/climbing doesn't jerk). Far and high enough that the whole
+               helicopter is readable; the pitch is derived from the boom so the heli stays framed. */
+            const float HELI_CAM_DIST = 32.0f, HELI_CAM_HEIGHT = 13.0f;
             cam_yaw = hh->yaw;
             float rr = -cam_yaw * 0.01745f;
-            float tx = render_p->x - sinf(rr) * 18.0f;
-            float ty = render_p->y + 7.0f;
-            float tz = render_p->z + cosf(rr) * 18.0f;   /* behind: forward is (sin rr, -cos rr). This was '-', which parked the camera in FRONT of the heli (#542) */
-            if (heli_cam_x == 0.0f && heli_cam_y == 0.0f && heli_cam_z == 0.0f) {
-                heli_cam_x = tx; heli_cam_y = ty; heli_cam_z = tz;
-            }
-            heli_cam_x += (tx - heli_cam_x) * 0.14f;
-            heli_cam_y += (ty - heli_cam_y) * 0.14f;
-            heli_cam_z += (tz - heli_cam_z) * 0.14f;
-            glRotatef(-18.0f, 1, 0, 0);
+            float tx = hh->x - sinf(rr) * HELI_CAM_DIST;   /* behind: forward is (sin rr, -cos rr) (#542) */
+            float ty = hh->y + HELI_CAM_HEIGHT;
+            float tz = hh->z + cosf(rr) * HELI_CAM_DIST;
+            if (heli_cam_x == 0.0f && heli_cam_y == 0.0f && heli_cam_z == 0.0f) heli_cam_y = ty;
+            if (fabsf(ty - heli_cam_y) > 40.0f) heli_cam_y = ty;   /* new heli / teleport: snap */
+            heli_cam_y += (ty - heli_cam_y) * 0.12f;
+            heli_cam_x = tx; heli_cam_z = tz;
+            float boom_pitch = atan2f(heli_cam_y - hh->y, HELI_CAM_DIST) * 57.2958f;   /* look down at the heli */
+            glRotatef(-boom_pitch, 1, 0, 0);
             glRotatef(-cam_yaw, 0, 1, 0);
             glTranslatef(-heli_cam_x, -heli_cam_y, -heli_cam_z);
         }
@@ -14057,9 +14061,9 @@ int main(int argc, char* argv[]) {
             int jump = k[SDL_SCANCODE_SPACE]; int crouch = k[SDL_SCANCODE_LCTRL];
             int shoot = (SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_LEFT));
             int reload = in_heli ? 0 : k[SDL_SCANCODE_R];
-            int bike = in_heli ? k[SDL_SCANCODE_Q] : 0;
+            int bike = in_heli ? (k[SDL_SCANCODE_Q] || k[SDL_SCANCODE_J]) : 0;   /* heli bank left: Q or J */
             int use = k[SDL_SCANCODE_F];
-            int ability = in_heli ? k[SDL_SCANCODE_E] : k[SDL_SCANCODE_E];
+            int ability = in_heli ? (k[SDL_SCANCODE_E] || k[SDL_SCANCODE_L]) : k[SDL_SCANCODE_E];   /* heli bank right: E or L */
             g_input_paint_next = k[SDL_SCANCODE_RIGHTBRACKET] ? 1 : 0;
             g_input_paint_prev = k[SDL_SCANCODE_LEFTBRACKET] ? 1 : 0;
             int pheromone = k[SDL_SCANCODE_G]; /* MODE_ZOMBIES/MODE_SURVIVAL pheromone throw, BIG_O/
