@@ -935,6 +935,39 @@ static void send_welcome(const struct sockaddr_in *addr, int client_id) {
     }
 }
 
+/* server_relay_spray_decal -- card #659, see PACKET_SPRAY_DECAL in protocol.h. The datagram is untrusted:
+ * only a live, welcomed slot may send one, every float must be finite and inside a sane world box, the
+ * normal must be roughly unit length, and a sender is limited to ~8 decals/second. The relayed copy
+ * carries the server's own scene_id for the sender. */
+static void server_relay_spray_decal(int from, const char *buffer, int size) {
+    if (from <= 0 || from >= MAX_CLIENTS || size < (int)sizeof(NetSprayDecal)) return;
+    if (!slots[from].active || !slots[from].welcomed || !local_state.players[from].active) return;
+    NetSprayDecal d;
+    memcpy(&d, buffer, sizeof(d));
+    float v[6] = { d.x, d.y, d.z, d.nx, d.ny, d.nz };
+    for (int k = 0; k < 6; k++) {
+        if (!(v[k] == v[k]) || v[k] > 100000.0f || v[k] < -100000.0f) return; /* NaN / inf / absurd */
+    }
+    float nl = d.nx * d.nx + d.ny * d.ny + d.nz * d.nz;
+    if (nl < 0.8f || nl > 1.2f) return;
+    if (d.spray_id < 0 || d.spray_id > 100000000) return;
+    static unsigned int last_ms[MAX_CLIENTS];
+    unsigned int now_ms = get_server_time();
+    if (last_ms[from] != 0 && now_ms - last_ms[from] < 125) return;
+    last_ms[from] = now_ms;
+    int scene = local_state.players[from].scene_id;
+    d.hdr.type = PACKET_SPRAY_DECAL;
+    d.hdr.client_id = (unsigned char)from;
+    d.hdr.scene_id = (unsigned char)scene;
+    d.hdr.timestamp = now_ms;
+    for (int i = 1; i < MAX_CLIENTS; i++) {
+        if (i == from || !slots[i].active || !slots[i].welcomed) continue;
+        if (local_state.players[i].scene_id != scene) continue;
+        sendto(sock, &d, sizeof(d), 0, (struct sockaddr*)&slots[i].addr, sizeof(struct sockaddr_in));
+    }
+    NET_SERVER_LOG("SPRAY_DECAL_RELAY from=%d spray=%d scene=%d", from, d.spray_id, scene);
+}
+
 static int ensure_slot_for_sender(const struct sockaddr_in *sender, int allow_alloc) {
     int slot = find_slot_by_addr(sender);
     if (slot != -1) {
@@ -1181,7 +1214,7 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
     NetHeader *head = (NetHeader*)buffer;
     int client_id = -1;
 
-    if (head->type == PACKET_CONNECT || head->type == PACKET_USERCMD || head->type == PACKET_DISCONNECT) {
+    if (head->type == PACKET_CONNECT || head->type == PACKET_USERCMD || head->type == PACKET_DISCONNECT || head->type == PACKET_SPRAY_DECAL) {
         client_id = ensure_slot_for_sender(sender, head->type == PACKET_CONNECT);
     }
     if (client_id == -1) return;
@@ -1274,6 +1307,11 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
 
     if (client_id != -1 && head->type == PACKET_DISCONNECT) {
         free_slot(client_id);
+        return;
+    }
+
+    if (client_id != -1 && head->type == PACKET_SPRAY_DECAL) {
+        server_relay_spray_decal(client_id, buffer, size);
         return;
     }
 

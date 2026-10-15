@@ -891,6 +891,7 @@ BulletHoleBuf g_bullet_holes;
 static SprayPaintBuf g_spray_paint;
 static unsigned int g_spray_last_tick_ms[MAX_CLIENTS];
 static unsigned int g_spray_last_step_ms = 0;
+static unsigned int g_spray_seen_shooting_ms[MAX_CLIENTS]; /* last time a snapshot showed this player's trigger down */
 static int g_input_paint_next = 0, g_input_paint_prev = 0;
 BulletHoleTrack g_bullet_hole_track[MAX_CLIENTS];
 ProcTexture g_bullet_hole_tex[BULLET_HOLE_SLOTS];
@@ -1958,6 +1959,7 @@ static void reset_client_render_state_for_net() {
     bullet_hole_clear(&g_bullet_holes);
     spray_clear(&g_spray_paint);
     memset(g_spray_last_tick_ms, 0, sizeof(g_spray_last_tick_ms));
+    memset(g_spray_seen_shooting_ms, 0, sizeof(g_spray_seen_shooting_ms));
     memset(g_bullet_hole_track, 0, sizeof(g_bullet_hole_track));
     brick_debris_clear(&g_brick_debris);
 }
@@ -3755,6 +3757,17 @@ static void client_prefetch_default_spray(void) {
 }
 
 #define SPRAY_PLACE_RANGE 40.0f
+// spray_decal_push -- one decal into the bounded ring (local T press, or a remote player's
+// PACKET_SPRAY_DECAL relayed by the server, card #659).
+static void spray_decal_push(float x, float y, float z, float nx, float ny, float nz, int scene_id, int spray_id) {
+    int idx = g_spray_decal_next % SPRAY_DECAL_MAX;
+    g_spray_decals[idx].x = x; g_spray_decals[idx].y = y; g_spray_decals[idx].z = z;
+    g_spray_decals[idx].nx = nx; g_spray_decals[idx].ny = ny; g_spray_decals[idx].nz = nz;
+    g_spray_decals[idx].scene_id = scene_id;
+    g_spray_decals[idx].spray_id = spray_id;
+    g_spray_decal_next++;
+    if (g_spray_decal_count < SPRAY_DECAL_MAX) g_spray_decal_count++;
+}
 static void spray_place_decal(void) {
     // Real, honest fallback -- normally already resolved by client_prefetch_default_spray at
     // scene entry (S459-74), off the input hot path; this stays as the real safety net for a
@@ -3797,13 +3810,18 @@ static void spray_place_decal(void) {
     float tx = eye_x + fx * SPRAY_PLACE_RANGE, ty = eye_y + fy * SPRAY_PLACE_RANGE, tz = eye_z + fz * SPRAY_PLACE_RANGE;
     float hx, hy, hz, nx, ny, nz;
     if (!trace_map(eye_x, eye_y, eye_z, tx, ty, tz, &hx, &hy, &hz, &nx, &ny, &nz)) return;
-    int idx = g_spray_decal_next % SPRAY_DECAL_MAX;
-    g_spray_decals[idx].x = hx; g_spray_decals[idx].y = hy; g_spray_decals[idx].z = hz;
-    g_spray_decals[idx].nx = nx; g_spray_decals[idx].ny = ny; g_spray_decals[idx].nz = nz;
-    g_spray_decals[idx].scene_id = p->scene_id;
-    g_spray_decals[idx].spray_id = g_selected_spray_id;
-    g_spray_decal_next++;
-    if (g_spray_decal_count < SPRAY_DECAL_MAX) g_spray_decal_count++;
+    spray_decal_push(hx, hy, hz, nx, ny, nz, p->scene_id, g_selected_spray_id);
+    /* card #659: tell the server so every other player in the scene sees this decal too. */
+    if (app_state == STATE_GAME_NET && sock >= 0) {
+        NetSprayDecal pkt;
+        memset(&pkt, 0, sizeof(pkt));
+        pkt.hdr.type = PACKET_SPRAY_DECAL;
+        pkt.hdr.client_id = (unsigned char)my_client_id;
+        pkt.hdr.scene_id = (unsigned char)p->scene_id;
+        pkt.spray_id = g_selected_spray_id;
+        pkt.x = hx; pkt.y = hy; pkt.z = hz; pkt.nx = nx; pkt.ny = ny; pkt.nz = nz;
+        sendto(sock, &pkt, sizeof(pkt), 0, (struct sockaddr*)&server_addr, sizeof(server_addr));
+    }
 }
 
 // draw_spray_decals renders every active decal in the given scene as a small quad oriented to its
@@ -3948,7 +3966,11 @@ static void spray_paint_observe(int scene_id, unsigned int now_ms) {
         PlayerState *p = &local_state.players[i];
         if (!p->active || p->state == STATE_DEAD || p->scene_id != scene_id) continue;
         if (p->current_weapon != WPN_SPRAYCAN) continue;
-        int held = p->is_shooting > 0 || (i == ref_id && p->in_shoot);
+        /* card #659: a remote player's trigger only arrives in snapshots (is_shooting counts down
+           between them), so latch it ~150ms -- otherwise their spray stutters on the other screen. */
+        if (p->is_shooting > 0) g_spray_seen_shooting_ms[i] = now_ms;
+        int held = p->is_shooting > 0 || (i == ref_id && p->in_shoot) ||
+                   (i != ref_id && g_spray_seen_shooting_ms[i] != 0 && now_ms - g_spray_seen_shooting_ms[i] < 150);
         if (!held) { g_spray_last_tick_ms[i] = 0; continue; }
         unsigned int last = g_spray_last_tick_ms[i];
         if (last != 0 && now_ms - last < SPRAY_TICK_MS) continue;
@@ -13173,6 +13195,18 @@ void net_tick() {
                 NET_CLIENT_LOG("SCENE_CHANGE scene=%d mode=%d spawn=(%.1f,%.1f,%.1f)",
                                new_scene, local_state.game_mode, sx, sy, sz);
             }
+        } else if (head->type == PACKET_SPRAY_DECAL && len >= (int)sizeof(NetSprayDecal)) {
+            /* card #659: another player's PNG spray. Untrusted: validate like the server did, and
+               only keep it if it is for the scene we are actually in. */
+            NetSprayDecal sd;
+            memcpy(&sd, buffer, sizeof(sd));
+            float sv[6] = { sd.x, sd.y, sd.z, sd.nx, sd.ny, sd.nz };
+            int ok = (sd.hdr.client_id != my_client_id) && sd.spray_id >= 0 &&
+                     my_client_id > 0 && my_client_id < MAX_CLIENTS &&
+                     sd.hdr.scene_id == (unsigned char)local_state.players[my_client_id].scene_id;
+            for (int k = 0; ok && k < 6; k++)
+                if (!(sv[k] == sv[k]) || sv[k] > 100000.0f || sv[k] < -100000.0f) ok = 0;
+            if (ok) spray_decal_push(sd.x, sd.y, sd.z, sd.nx, sd.ny, sd.nz, sd.hdr.scene_id, sd.spray_id);
         } else if (head->type == PACKET_QUEUE_LEVEL && len >= (int)sizeof(NetQueueLevel)) {
             /* card #481: the server's authoritative QUEUE level id. A change (a round boundary
                re-resolved the admin-flagged default) re-fetches geometry instead of keeping the

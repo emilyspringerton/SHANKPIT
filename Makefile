@@ -251,6 +251,10 @@ test-spraypaint:
 	$(CC) -std=c99 -O2 -Wall -Wextra -o /tmp/spraypaint_test packages/world/spraypaint_test.c -lm
 	/tmp/spraypaint_test
 
+test-spray-decal:
+	$(CC) -std=c99 -O2 -Wall -Wextra -pedantic -Werror -Ipackages/common -o /tmp/spray_decal_test packages/common/spray_decal_test.c
+	/tmp/spray_decal_test
+
 test-queue-level:
 	$(CC) -std=c99 -O2 -Wall -Wextra -pedantic -Werror -Ipackages/common -o /tmp/queue_level_test packages/common/queue_level_test.c
 	/tmp/queue_level_test

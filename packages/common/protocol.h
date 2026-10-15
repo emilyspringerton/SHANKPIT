@@ -85,6 +85,17 @@
  * welcomed client, so a dropped datagram or a late joiner heals itself. The server alone rolls the drop and
  * grants the refill (see packages/simulation/shield_packs.h); a client only renders this list. */
 #define PACKET_SHIELD_PACKS 15
+
+/* PACKET_SPRAY_DECAL -- card #659 (founder real-time 2026-10-15: "ensure both the png spray and the
+ * paint can show up on multiplayer on the other person's side"). A player's registry-PNG spray (the T
+ * key) is a client-side decal, so before this it only ever existed on the sprayer's own screen. Client ->
+ * server: "I sprayed spray_id at (x,y,z) on a surface with normal (nx,ny,nz)". Server validates and
+ * relays the same struct to every OTHER welcomed client in the sender's scene, with hdr.client_id set to
+ * the sender and hdr.scene_id taken from the server's own record of the sender (never trusted). Each
+ * datagram is one self-contained decal, so a dropped one costs one decal and nothing else. The paint
+ * can (WPN_SPRAYCAN) needs no packet: weapon, colour (ammo) and trigger (is_shooting) already ride
+ * NetPlayer. */
+#define PACKET_SPRAY_DECAL 16
 #define NET_SHIELD_PACK_MAX 16
 
 #define VOXEL_CHUNK_SIZE            16
@@ -206,6 +217,14 @@ typedef struct {
     unsigned char pad[3];
     NetShieldPack p[NET_SHIELD_PACK_MAX];
 } NetShieldPacks;
+
+/* NetSprayDecal -- see PACKET_SPRAY_DECAL's own doc comment above. */
+typedef struct {
+    NetHeader hdr;
+    int spray_id;
+    float x, y, z;
+    float nx, ny, nz;
+} NetSprayDecal;
 
 /* NetBrickState -- see PACKET_BRICK_STATE's own doc comment above. key_lo/key_hi are the two halves
  * of the 30-bit cell key (ix | iy<<10 | iz<<20) so the entry has no padding or endianness trap. */
