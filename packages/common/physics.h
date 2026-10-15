@@ -4088,6 +4088,21 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
     }
 
     int w = p->current_weapon;
+    if (w == WPN_SPRAYCAN) {
+        /* Spray can: colour cycle on the rising edge of [ / ] (ammo[WPN_SPRAYCAN] = colour index
+           0..SPRAY_COLOR_COUNT-1), is_shooting held while the trigger is down so every client
+           (NetPlayer.is_shooting) knows to paint. The decals themselves are client-side. */
+        int cur = (p->in_paint_next ? 1 : 0) | (p->in_paint_prev ? 2 : 0);
+        int rise = cur & ~p->paint_btn_prev;
+        p->paint_btn_prev = cur;
+        int c = p->ammo[WPN_SPRAYCAN];
+        if (c < 0 || c >= SPRAY_COLOR_COUNT) c = 0;
+        if (rise & 1) c = (c + 1) % SPRAY_COLOR_COUNT;
+        if (rise & 2) c = (c + SPRAY_COLOR_COUNT - 1) % SPRAY_COLOR_COUNT;
+        p->ammo[WPN_SPRAYCAN] = c;
+        if (shoot) p->is_shooting = 3;
+        return;
+    }
     if (w == WPN_FLASHLIGHT) return; /* pure utility slot -- no ammo/attack/reload/ability. The
                                          beam itself renders client-side whenever a player's own
                                          current_weapon == WPN_FLASHLIGHT (equip it, it's on;

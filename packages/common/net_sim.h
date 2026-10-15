@@ -262,6 +262,8 @@ static inline void shankpit_apply_usercmd_inputs(PlayerState *p, const UserCmd *
     p->in_ability = (cmd->buttons & BTN_ABILITY_1) != 0;
     p->in_bike = (cmd->buttons & BTN_VEHICLE_2) != 0;
     p->in_pheromone = (cmd->buttons & BTN_PHEROMONE) != 0;
+    p->in_paint_next = (cmd->buttons & BTN_PAINT_NEXT) != 0;
+    p->in_paint_prev = (cmd->buttons & BTN_PAINT_PREV) != 0;
 
     if (cmd->weapon_idx >= 0 && cmd->weapon_idx < MAX_WEAPONS) {
         p->current_weapon = cmd->weapon_idx;

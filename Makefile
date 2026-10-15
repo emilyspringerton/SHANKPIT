@@ -247,6 +247,10 @@ test-bullet-hole:
 	/tmp/bullet_hole_test
 
 # test-queue-level -- PACKET_QUEUE_LEVEL wire contract (card #481): size, id round-trip incl. -1, unique type.
+test-spraypaint:
+	$(CC) -std=c99 -O2 -Wall -Wextra -o /tmp/spraypaint_test packages/world/spraypaint_test.c -lm
+	/tmp/spraypaint_test
+
 test-queue-level:
 	$(CC) -std=c99 -O2 -Wall -Wextra -pedantic -Werror -Ipackages/common -o /tmp/queue_level_test packages/common/queue_level_test.c
 	/tmp/queue_level_test

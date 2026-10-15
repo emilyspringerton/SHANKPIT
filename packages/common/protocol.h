@@ -12,7 +12,7 @@
     EMILY/BACKLOG.md SECTION 536 follow-up ("server-authoritative day/night sync") */
 
 #define MAX_CLIENTS 70
-#define MAX_WEAPONS 9
+#define MAX_WEAPONS 10
 #define MAX_PROJECTILES 1024
 #define MAX_HELICOPTERS 8
 #define MAX_BUGGIES 16
@@ -142,6 +142,15 @@ typedef struct {
                          HAMMER_REACH in physics.h) through the map-damage surface hook, with PARENA's
                          brick_rules.prn multiplying its damage against masonry. No ammo, no reload. */
 
+#define WPN_SPRAYCAN 9 /* founder real-time 2026-10-15: "a spray can ... as weapon 9; [] toggles through the
+                           paint colors". Pure utility slot like the flashlight: 0 damage, no reload. Fire
+                           (hold) sprays a cone of paint (client-side decals, packages/world/spraypaint.h);
+                           BTN_PAINT_NEXT/PREV cycle the colour. The selected colour index lives in
+                           ammo[WPN_SPRAYCAN] (ammo_max 0) so it already rides NetPlayer.ammo to every
+                           client -- no wire change. */
+
+#define SPRAY_COLOR_COUNT 7 /* cyan yellow magenta white black grey tan, see packages/world/spraypaint.h */
+
 #define RELOAD_TIME_FULL 60
 #define RELOAD_TIME_TACTICAL 42
 #define SHIELD_REGEN_DELAY 180
@@ -239,6 +248,9 @@ typedef struct {
     BTN_USE -- BTN_USE already carries generic door/button/CTF-flag interact semantics
     (story_buttons.h), and this is a dedicated, always-available tool, not a context interact. */
 
+#define BTN_PAINT_NEXT 512   /* ']' -- next spray-can colour (edge-detected in update_weapons) */
+#define BTN_PAINT_PREV 1024  /* '[' -- previous spray-can colour */
+
 #define VEH_NONE  0
 #define VEH_BUGGY 1
 #define VEH_BIKE  2
@@ -281,7 +293,8 @@ static const WeaponStats WPN_STATS[MAX_WEAPONS] = {
     {WPN_KATANA,   40, 28, 1, 0.0f,  0},
     {WPN_MISSILE, 130, 95, 1, 0.0f,  3},
     {WPN_FLASHLIGHT, 0, 1, 0, 0.0f,  0},
-    {WPN_HAMMER,  70, 42, 1, 0.0f,  0}
+    {WPN_HAMMER,  70, 42, 1, 0.0f,  0},
+    {WPN_SPRAYCAN, 0, 1, 0, 0.0f,  0}
 };
 
 typedef struct {
@@ -431,6 +444,7 @@ typedef struct {
         in_use's own story-button consumer needs a rising edge for, this doesn't). */
     int use_was_down; int bike_was_down;
     int in_ability;
+    int in_paint_next; int in_paint_prev; int paint_btn_prev; /* spray can colour cycle, see WPN_SPRAYCAN */
     int current_weapon; int ammo[MAX_WEAPONS];
     int reload_timer; int attack_cooldown;
     int is_shooting; int jump_timer;

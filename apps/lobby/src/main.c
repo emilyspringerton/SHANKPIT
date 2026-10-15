@@ -62,6 +62,7 @@
 #include "../../../packages/world/edit_sync.h"
 #include "../../../packages/world/spray_registry.h"
 #include "../../../packages/world/bullet_hole.h"
+#include "../../../packages/world/spraypaint.h"
 #include "../../../packages/world/brick_debris.h"
 #include "../../../packages/simulation/brick_world.h"
 #include "../../../packages/simulation/buggy_rules_host.h"
@@ -886,6 +887,11 @@ int g_spray_decal_next = 0;
 // gun ... like half life"). Engine-side logic lives in packages/world/bullet_hole.h; the per-gun
 // artwork is authored in PARENA and stored in NOCK's texture library (bullet-hole-<gun>).
 BulletHoleBuf g_bullet_holes;
+/* Spray can (WPN_SPRAYCAN) paint + the [ ] colour-cycle inputs fed into client_create_cmd. */
+static SprayPaintBuf g_spray_paint;
+static unsigned int g_spray_last_tick_ms[MAX_CLIENTS];
+static unsigned int g_spray_last_step_ms = 0;
+static int g_input_paint_next = 0, g_input_paint_prev = 0;
 BulletHoleTrack g_bullet_hole_track[MAX_CLIENTS];
 ProcTexture g_bullet_hole_tex[BULLET_HOLE_SLOTS];
 int g_bullet_hole_tex_state[BULLET_HOLE_SLOTS]; /* 0=unset 1=ready 2=failed */
@@ -1950,6 +1956,8 @@ static void reset_client_render_state_for_net() {
     g_spray_decal_next = 0;
     shield_packs_reset();          /* #541: a fresh connection starts with no packs; the server re-sends the live set */
     bullet_hole_clear(&g_bullet_holes);
+    spray_clear(&g_spray_paint);
+    memset(g_spray_last_tick_ms, 0, sizeof(g_spray_last_tick_ms));
     memset(g_bullet_hole_track, 0, sizeof(g_bullet_hole_track));
     brick_debris_clear(&g_brick_debris);
 }
@@ -3923,6 +3931,142 @@ static void bullet_holes_observe(int scene_id) {
                 bullet_hole_add(&g_bullet_holes, slot, scene_id, hx, hy, hz, nx, ny, nz);
         }
     }
+}
+
+// ---- spray can (WPN_SPRAYCAN) ----------------------------------------------------------------
+static int spray_trace_cb(float ox, float oy, float oz, float tx, float ty, float tz,
+                          float *hx, float *hy, float *hz, float *nx, float *ny, float *nz) {
+    return trace_map(ox, oy, oz, tx, ty, tz, hx, hy, hz, nx, ny, nz);
+}
+
+// spray_paint_observe -- once per rendered frame: every active player holding the can with the
+// trigger down (NetPlayer.is_shooting, or the local trigger for zero-lag feedback) sprays a cone
+// of paint at a fixed ~30 Hz; colour index = ammo[WPN_SPRAYCAN]. Then wet paint advances (drips).
+static void spray_paint_observe(int scene_id, unsigned int now_ms) {
+    int ref_id = (my_client_id >= 0 && my_client_id < MAX_CLIENTS) ? my_client_id : 0;
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        PlayerState *p = &local_state.players[i];
+        if (!p->active || p->state == STATE_DEAD || p->scene_id != scene_id) continue;
+        if (p->current_weapon != WPN_SPRAYCAN) continue;
+        int held = p->is_shooting > 0 || (i == ref_id && p->in_shoot);
+        if (!held) { g_spray_last_tick_ms[i] = 0; continue; }
+        unsigned int last = g_spray_last_tick_ms[i];
+        if (last != 0 && now_ms - last < SPRAY_TICK_MS) continue;
+        g_spray_last_tick_ms[i] = now_ms;
+        float yaw = (i == ref_id) ? cam_yaw : p->yaw, pitch = (i == ref_id) ? cam_pitch : p->pitch;
+        float ry = -yaw * 0.0174533f, rp = pitch * 0.0174533f;
+        float fx = sinf(ry) * cosf(rp), fy = sinf(rp), fz = -cosf(ry) * cosf(rp);
+        float ex = p->x, ey = p->y + (p->crouching ? 2.5f : EYE_HEIGHT), ez = p->z;
+        spray_fire(&g_spray_paint, spray_trace_cb, p->ammo[WPN_SPRAYCAN], scene_id, ex, ey, ez, fx, fy, fz);
+    }
+    if (g_spray_last_step_ms != 0 && now_ms > g_spray_last_step_ms)
+        spray_step(&g_spray_paint, spray_trace_cb, (float)(now_ms - g_spray_last_step_ms) / 1000.0f);
+    g_spray_last_step_ms = now_ms;
+}
+
+// draw_spray_paint -- soft round blobs (centre alpha from paint thickness, rim 0) on the hit
+// surface plus a drip streak (strip + bead) hanging below any dab that ran. Normal alpha blend,
+// depth write off, polygon offset like the bullet holes; later dabs paint over earlier ones.
+static void draw_spray_paint(int scene_id) {
+    if (g_spray_paint.count == 0) return;
+    glPushAttrib(GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_POLYGON_BIT);
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_CULL_FACE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(-2.5f, -2.5f);
+    for (int n = 0; n < g_spray_paint.count; n++) {
+        /* ring order: oldest first, so newer paint covers older */
+        int idx = (g_spray_paint.count < SPRAY_DAB_MAX) ? n : (g_spray_paint.next + n) % SPRAY_DAB_MAX;
+        const SprayDab *d = &g_spray_paint.dabs[idx];
+        if (d->scene_id != scene_id) continue;
+        float upx = 0.0f, upy = 1.0f, upz = 0.0f;
+        if (fabsf(d->ny) > 0.98f) { upy = 0.0f; upz = 1.0f; }
+        float rx = d->ny * upz - d->nz * upy, ry = d->nz * upx - d->nx * upz, rz = d->nx * upy - d->ny * upx;
+        float rl = sqrtf(rx * rx + ry * ry + rz * rz);
+        if (rl < 0.0001f) continue;
+        rx /= rl; ry /= rl; rz /= rl;
+        float ux = ry * d->nz - rz * d->ny, uy = rz * d->nx - rx * d->nz, uz = rx * d->ny - ry * d->nx;
+        const float *c = SPRAY_COLORS[spray_color_clamp(d->color)];
+        float a = 0.30f + 0.70f * (d->thickness > 1.0f ? 1.0f : d->thickness);
+        float ox = d->x + d->nx * 0.02f, oy = d->y + d->ny * 0.02f, oz = d->z + d->nz * 0.02f;
+        glBegin(GL_TRIANGLE_FAN);
+        glColor4f(c[0], c[1], c[2], a);
+        glVertex3f(ox, oy, oz);
+        glColor4f(c[0], c[1], c[2], 0.0f);
+        for (int s = 0; s <= 14; s++) {
+            float ang = (float)s * (6.2831853f / 14.0f);
+            float ca = cosf(ang) * d->radius, sa = sinf(ang) * d->radius;
+            glVertex3f(ox + rx * ca + ux * sa, oy + ry * ca + uy * sa, oz + rz * ca + uz * sa);
+        }
+        glEnd();
+        if (d->drip_len > 0.01f) {
+            float w = d->drip_w, len = d->drip_len;
+            float dx = ox + d->nx * 0.005f, dz = oz + d->nz * 0.005f;
+            glColor4f(c[0], c[1], c[2], 0.95f);
+            glBegin(GL_QUADS);
+            glVertex3f(dx - rx * w, oy, dz - rz * w);
+            glVertex3f(dx + rx * w, oy, dz + rz * w);
+            glVertex3f(dx + rx * w * 0.8f, oy - len, dz + rz * w * 0.8f);
+            glVertex3f(dx - rx * w * 0.8f, oy - len, dz - rz * w * 0.8f);
+            glEnd();
+            float bw = w * 1.45f;
+            glBegin(GL_TRIANGLE_FAN);
+            glVertex3f(dx, oy - len, dz);
+            for (int s = 0; s <= 8; s++) {
+                float ang = (float)s * (6.2831853f / 8.0f);
+                glVertex3f(dx + rx * cosf(ang) * bw, oy - len + sinf(ang) * bw * 1.2f, dz + rz * cosf(ang) * bw);
+            }
+            glEnd();
+        }
+    }
+    glPopAttrib();
+}
+
+// draw_spray_cone -- faint tinted cone from the can nozzle to what it is hitting, while the
+// trigger is down (flashlight-style cone, alpha blended, depth tested). Local + remote players.
+static void draw_spray_cone(const PlayerState *p, int is_local) {
+    if (p->current_weapon != WPN_SPRAYCAN) return;
+    if (!(p->is_shooting > 0 || (is_local && p->in_shoot))) return;
+    float yaw = is_local ? cam_yaw : p->yaw, pitch = is_local ? cam_pitch : p->pitch;
+    float ry = -yaw * 0.0174533f, rp = pitch * 0.0174533f;
+    float fx = sinf(ry) * cosf(rp), fy = sinf(rp), fz = -cosf(ry) * cosf(rp);
+    float ex = p->x, ey = p->y + (p->crouching ? 2.5f : EYE_HEIGHT) - 0.25f, ez = p->z;
+    float len = SPRAY_RANGE;
+    float hx, hy, hz, nx, ny, nz;
+    if (trace_map(ex, ey, ez, ex + fx * len, ey + fy * len, ez + fz * len, &hx, &hy, &hz, &nx, &ny, &nz)) {
+        float qx = hx - ex, qy = hy - ey, qz = hz - ez;
+        len = sqrtf(qx * qx + qy * qy + qz * qz) - 0.05f;
+    }
+    if (len < 0.6f) return;
+    float upx = 0.0f, upy = 1.0f, upz = 0.0f;
+    if (fabsf(fy) > 0.98f) { upy = 0.0f; upz = 1.0f; }
+    float rx = fy * upz - fz * upy, ryv = fz * upx - fx * upz, rz = fx * upy - fy * upx;
+    float rl = sqrtf(rx * rx + ryv * ryv + rz * rz);
+    if (rl < 0.0001f) return;
+    rx /= rl; ryv /= rl; rz /= rl;
+    float ux = ryv * fz - rz * fy, uy = rz * fx - rx * fz, uz = rx * fy - ryv * fx;
+    float rad = len * tanf(SPRAY_HALF_ANGLE_DEG * 0.0174533f);
+    const float *c = SPRAY_COLORS[spray_color_clamp(p->ammo[WPN_SPRAYCAN])];
+    glPushAttrib(GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_CULL_FACE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+    glBegin(GL_TRIANGLE_FAN);
+    glColor4f(c[0], c[1], c[2], 0.22f);
+    glVertex3f(ex + fx * 0.4f, ey + fy * 0.4f, ez + fz * 0.4f);
+    glColor4f(c[0], c[1], c[2], 0.05f);
+    for (int s = 0; s <= 20; s++) {
+        float ang = (float)s * (6.2831853f / 20.0f);
+        float ca = cosf(ang) * rad, sa = sinf(ang) * rad;
+        glVertex3f(ex + fx * len + rx * ca + ux * sa, ey + fy * len + ryv * ca + uy * sa, ez + fz * len + rz * ca + uz * sa);
+    }
+    glEnd();
+    glPopAttrib();
 }
 
 // draw_bullet_holes -- each hole is a small quad on the hit surface, MULTIPLY-blended
@@ -5968,6 +6112,20 @@ void draw_gun_model(int weapon_id) {
     }
     if (weapon_id == WPN_HAMMER) {
         draw_hammer_model();
+        return;
+    }
+    if (weapon_id == WPN_SPRAYCAN) {
+        /* Aerosol can: a fat body in the selected paint colour, a grey cap, a dark nozzle. */
+        const float *c = SPRAY_COLORS[spray_color_clamp(local_state.players[(my_client_id > 0 && my_client_id < MAX_CLIENTS) ? my_client_id : 0].ammo[WPN_SPRAYCAN])];
+        glPushMatrix();
+        glScalef(weapon_scale, weapon_scale, weapon_scale);
+        glColor3f(0.78f, 0.78f, 0.80f);
+        glPushMatrix(); glScalef(0.15f, 0.15f, 0.62f); draw_box(1.0f, 1.0f, 1.0f); glPopMatrix();
+        glColor3f(c[0], c[1], c[2]);
+        glPushMatrix(); glTranslatef(0.0f, 0.0f, -0.03f); glScalef(0.162f, 0.162f, 0.36f); draw_box(1.0f, 1.0f, 1.0f); glPopMatrix();
+        glColor3f(0.12f, 0.12f, 0.13f);
+        glPushMatrix(); glTranslatef(0.0f, 0.0f, 0.36f); glScalef(0.08f, 0.08f, 0.10f); draw_box(1.0f, 1.0f, 1.0f); glPopMatrix();
+        glPopMatrix();
         return;
     }
     if (weapon_id == WPN_FLASHLIGHT) {
@@ -9732,6 +9890,19 @@ void draw_hud(PlayerState *p) {
     
     draw_shield_hud_flash(now_ms);
     // --- HIT INDICATORS ---
+    if (p->current_weapon == WPN_SPRAYCAN) {
+        int ci = spray_color_clamp(p->ammo[WPN_SPRAYCAN]);
+        const float *c = SPRAY_COLORS[ci];
+        char pl[48];
+        snprintf(pl, sizeof(pl), "PAINT %s  [ ]", spray_color_name(ci));
+        glDisable(GL_TEXTURE_2D);
+        glColor3f(c[0], c[1], c[2]);
+        glBegin(GL_QUADS);
+        glVertex2f(560.0f, 78.0f); glVertex2f(588.0f, 78.0f); glVertex2f(588.0f, 106.0f); glVertex2f(560.0f, 106.0f);
+        glEnd();
+        glColor3f(1.0f, 1.0f, 1.0f);
+        draw_string(pl, 596, 84, 2);
+    }
     if (p->hit_feedback > 0) {
         if (p->hit_feedback >= 25) glColor3f(1.0f, 0.0f, 0.0f); // RED (Kill/High Dmg)
         else glColor3f(0.0f, 1.0f, 0.0f); // GREEN (Normal)
@@ -10566,7 +10737,7 @@ static void draw_chests(void) {
 static void draw_gun_items(unsigned int now_ms) {
     static const float col[MAX_WEAPONS][3] = {
         {0.8f,0.8f,0.8f}, {1.0f,0.85f,0.2f}, {0.3f,0.8f,1.0f}, {1.0f,0.45f,0.15f}, {0.7f,0.4f,1.0f},
-        {0.9f,0.9f,0.9f}, {1.0f,0.2f,0.2f}, {1.0f,1.0f,0.6f}, {0.6f,0.6f,0.6f}
+        {0.9f,0.9f,0.9f}, {1.0f,0.2f,0.2f}, {1.0f,1.0f,0.6f}, {0.6f,0.6f,0.6f}, {0.2f,0.9f,0.9f}
     };
     glDisable(GL_TEXTURE_2D);
     for (int i = 0; i < GUN_ITEM_MAX; i++) {
@@ -10824,8 +10995,10 @@ static void brick_world_frame(void) {
                                 (unsigned int)(int)(ev[i].y * 8.0f);
             brick_debris_spawn(&g_brick_debris, ev[i].x, ev[i].y, ev[i].z, ev[i].cw, ev[i].ch, ev[i].cd, ev[i].debris, seed);
         }
-        if (ev[i].state == BF_STATE_GONE)
+        if (ev[i].state == BF_STATE_GONE) {
             bullet_hole_remove_in_box(&g_bullet_holes, ev[i].x, ev[i].y, ev[i].z, ev[i].cw * 0.5f, ev[i].ch * 0.5f, ev[i].cd * 0.5f);
+            spray_remove_in_box(&g_spray_paint, ev[i].x, ev[i].y, ev[i].z, ev[i].cw * 0.5f, ev[i].ch * 0.5f, ev[i].cd * 0.5f);
+        }
     }
     brick_debris_update(&g_brick_debris, dt);
 }
@@ -11388,7 +11561,10 @@ void draw_scene(PlayerState *render_p) {
     draw_flashlight_beam(render_p);
     brick_world_frame();
     bullet_holes_observe(render_p->scene_id);
+    spray_paint_observe(render_p->scene_id, SDL_GetTicks());
     draw_spray_decals(render_p->scene_id);
+    draw_spray_paint(render_p->scene_id);
+    if (!render_p->third_person) draw_spray_cone(render_p, 1);
     draw_bullet_holes(render_p->scene_id);
     draw_brick_debris();
     draw_voxel_chunks(&world_lighting);
@@ -11428,6 +11604,7 @@ void draw_scene(PlayerState *render_p) {
         if (p->id == render_p->id) continue;
         draw_player_3rd(p);
         draw_flashlight_beam(p); /* other players' own beam cones are now visible too, not just yours */
+        draw_spray_cone(p, 0);
     }
     shield_fx_observe(render_p, now_ms);   /* #539-541: detect shield hits/breaks/pickups, then draw the effects over the players */
     draw_shield_packs(now_ms);
@@ -12175,6 +12352,8 @@ UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoo
     if(ability) cmd.buttons |= BTN_ABILITY_1;
     if(bike) cmd.buttons |= BTN_VEHICLE_2;
     if(pheromone) cmd.buttons |= BTN_PHEROMONE;
+    if(g_input_paint_next) cmd.buttons |= BTN_PAINT_NEXT;
+    if(g_input_paint_prev) cmd.buttons |= BTN_PAINT_PREV;
     /* Real, found-live reconciliation bug (founder real-time: "reconciliation jitter including
        gun jitter gun to knife when a gun is equip"): cmd.weapon_idx was set AFTER this cmd got
        stored into client_cmd_hist (the reconciliation replay buffer, client_reconcile_local_player
@@ -12297,6 +12476,7 @@ static void client_reconcile_local_player(unsigned int ack_seq, float auth_x, fl
     int saved_ability_cooldown = p->ability_cooldown;
     int saved_katana_slash_timer = p->katana_slash_timer;
     int saved_dash_timer = p->dash_timer;
+    int saved_paint_btn_prev = p->paint_btn_prev;
 
     /* Dash rubber-banding fix: the replay below starts from the server's state at ack_seq, but
        p->dash_timer/dash_v* hold the client's LIVE (several ticks newer) values -- so the
@@ -12340,6 +12520,7 @@ static void client_reconcile_local_player(unsigned int ack_seq, float auth_x, fl
     p->storm_charges = saved_storm_charges;
     p->ability_cooldown = saved_ability_cooldown;
     p->katana_slash_timer = saved_katana_slash_timer;
+    p->paint_btn_prev = saved_paint_btn_prev;
     p->dash_timer = saved_dash_timer;
     if (saved_dash_timer > 0) {
         p->dash_vx = net_dash_vx; p->dash_vy = net_dash_vy; p->dash_vz = net_dash_vz;
@@ -13879,6 +14060,8 @@ int main(int argc, char* argv[]) {
             int bike = in_heli ? k[SDL_SCANCODE_Q] : 0;
             int use = k[SDL_SCANCODE_F];
             int ability = in_heli ? k[SDL_SCANCODE_E] : k[SDL_SCANCODE_E];
+            g_input_paint_next = k[SDL_SCANCODE_RIGHTBRACKET] ? 1 : 0;
+            g_input_paint_prev = k[SDL_SCANCODE_LEFTBRACKET] ? 1 : 0;
             int pheromone = k[SDL_SCANCODE_G]; /* MODE_ZOMBIES/MODE_SURVIVAL pheromone throw, BIG_O/
                 NORTHSTAR.md section 10's own G-key convention */
             if (g_shank_pad) {
@@ -13911,6 +14094,7 @@ int main(int argc, char* argv[]) {
                 if(k[SDL_SCANCODE_3]) wpn_req=2; if(k[SDL_SCANCODE_4]) wpn_req=3; if(k[SDL_SCANCODE_5]) wpn_req=4; if(k[SDL_SCANCODE_6]) wpn_req=5;
                 if(k[SDL_SCANCODE_7]) wpn_req=WPN_FLASHLIGHT;
                 if(k[SDL_SCANCODE_8]) wpn_req=WPN_HAMMER;
+                if(k[SDL_SCANCODE_9]) wpn_req=WPN_SPRAYCAN;
             }
 
             int fov_pid = (app_state == STATE_GAME_NET && net_local_pid > 0 && local_state.players[net_local_pid].active)
@@ -13977,6 +14161,8 @@ int main(int argc, char* argv[]) {
                 }
                 local_state.players[0].in_use = input_use;
                 local_state.players[0].in_pheromone = input_pheromone;
+                local_state.players[0].in_paint_next = g_input_paint_next;
+                local_state.players[0].in_paint_prev = g_input_paint_prev;
                 if (input_use && local_state.players[0].vehicle_cooldown == 0 && local_state.transition_timer == 0) {
                     PlayerState *p0 = &local_state.players[0];
                     HelicopterState *near_h = NULL;
