@@ -1638,6 +1638,12 @@ static int net_server_time_sync = 0;
 static int32_t net_server_time_offset_ms = 0;
 static uint32_t net_last_snapshot_server_ts = 0;
 static uint32_t net_last_reconciled_ack = 0;
+/* Katana dash prediction state for reconciliation: the sequence of the cmd that started the
+   locally-predicted dash plus the dash velocity it launched with. Reconciliation replays
+   ack_seq+1..latest from the server's state AT ack_seq, so the dash timer/velocity must be
+   rebuilt for that tick, not taken from the client's (newer) live values. */
+static uint32_t net_dash_start_seq = 0;
+static float net_dash_vx = 0.0f, net_dash_vy = 0.0f, net_dash_vz = 0.0f;
 static uint32_t net_last_corr_decay_ms = 0;
 
 static int net_local_pid = -1;
@@ -1911,6 +1917,7 @@ static void reset_client_render_state_for_net() {
     net_server_time_offset_ms = 0;
     net_last_snapshot_server_ts = 0;
     net_last_reconciled_ack = 0;
+    net_dash_start_seq = 0;
     net_last_corr_decay_ms = 0;
     net_last_cmd_send_ms = 0;
     net_spawn_protect_cmds = 0;
@@ -12186,8 +12193,13 @@ UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoo
 
 static void client_apply_cmd_movement(PlayerState *p, const UserCmd *cmd, unsigned int now_ms) {
     if (!p || !cmd) return;
+    int dash_before = p->dash_timer;
     shankpit_apply_usercmd_inputs(p, cmd);
     shankpit_simulate_movement_tick(p, now_ms);
+    if (dash_before == 0 && p->dash_timer > 0) {
+        net_dash_start_seq = cmd->sequence;
+        net_dash_vx = p->dash_vx; net_dash_vy = p->dash_vy; net_dash_vz = p->dash_vz;
+    }
 }
 
 static float shortest_angle_delta_deg(float from, float to) {
@@ -12286,6 +12298,31 @@ static void client_reconcile_local_player(unsigned int ack_seq, float auth_x, fl
     int saved_katana_slash_timer = p->katana_slash_timer;
     int saved_dash_timer = p->dash_timer;
 
+    /* Dash rubber-banding fix: the replay below starts from the server's state at ack_seq, but
+       p->dash_timer/dash_v* hold the client's LIVE (several ticks newer) values -- so the
+       replayed dash ended early (or never ran) and the replay landed lower than the original
+       prediction, pulling the player down mid blade-dash. Rebuild the dash as it was at ack_seq
+       (server timer after cmd S+k is KATANA_DASH_TIME-k; the cmd that starts it applies no
+       velocity that tick). If the dash started inside the replay window, it hadn't started at
+       ack_seq: clear timer+cooldown so the replayed ability press re-launches it. All restored
+       after the replay with the other timers. */
+    if (net_dash_start_seq != 0 && (saved_dash_timer > 0 || saved_ability_cooldown > 0)) {
+        if (net_dash_start_seq > ack_seq) {
+            p->dash_timer = 0;
+            p->dash_vx = p->dash_vy = p->dash_vz = 0.0f;
+            p->ability_cooldown = 0;
+        } else {
+            int t = KATANA_DASH_TIME - (int)(ack_seq - net_dash_start_seq);
+            if (t > 0) {
+                p->dash_timer = t;
+                p->dash_vx = net_dash_vx; p->dash_vy = net_dash_vy; p->dash_vz = net_dash_vz;
+            } else {
+                p->dash_timer = 0;
+                p->dash_vx = p->dash_vy = p->dash_vz = 0.0f;
+            }
+        }
+    }
+
     int replayed = 0;
     for (unsigned int seq = ack_seq + 1; seq <= net_latest_seq_sent; seq++) {
         UserCmd cmd = client_cmd_hist[seq % CLIENT_RECON_HISTORY];
@@ -12304,6 +12341,11 @@ static void client_reconcile_local_player(unsigned int ack_seq, float auth_x, fl
     p->ability_cooldown = saved_ability_cooldown;
     p->katana_slash_timer = saved_katana_slash_timer;
     p->dash_timer = saved_dash_timer;
+    if (saved_dash_timer > 0) {
+        p->dash_vx = net_dash_vx; p->dash_vy = net_dash_vy; p->dash_vz = net_dash_vz;
+    } else {
+        p->dash_vx = p->dash_vy = p->dash_vz = 0.0f;
+    }
 
     float ex = prev_x - p->x;
     float ey = prev_y - p->y;
