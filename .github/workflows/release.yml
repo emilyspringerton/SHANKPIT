@@ -554,6 +554,10 @@ jobs:
           # Native streaming: ffmpeg is NOT bundled (card #618) -- players install it onto PATH, see docs/FFMPEG_INSTALL.md.
           printf '%s\n' "start ShankPit.exe" > ShankPit_Client/PLAY.bat
           zip -r "ShankPit_Client_${BUILD}.zip" ShankPit_Client
+          # Lite client (card #622): same directory structure (ShankPit_Client/ with exe, DLLs, assets/, CONSTRUCT,
+          # PLAY.bat) but WITHOUT bundled/ (the SHANKPIT OS apps), so it is small enough to iterate on quickly. The
+          # regular zip above still includes everything.
+          zip -r "ShankPit_Client_Lite_${BUILD}.zip" ShankPit_Client -x 'ShankPit_Client/bundled/*'
 
           # Linux client (card SHIP-LINUX-01). Same layout idea as the Windows zip: the binary, the
           # runtime-cwd assets/ tree (every asset load is cwd-relative, see the S470 note above), the
