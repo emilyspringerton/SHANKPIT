@@ -1534,7 +1534,10 @@ void update_entity(PlayerState *p, float dt, void *server_context, unsigned int 
 
     apply_friction(p);
     float g = (p->in_jump) ? GRAVITY_FLOAT : GRAVITY_DROP;
-    if (p->dash_timer <= 0) p->vy -= g; 
+    /* Wall ride (phys_wall_ride_tick): airborne + crouch held against a wall magnets you to it and
+       replaces this tick's gravity; every other state falls through to the original line. */
+    int wall_riding = (p->dash_timer <= 0 && p->state == STATE_ALIVE) ? phys_wall_ride_tick(p) : 0;
+    if (p->dash_timer <= 0 && !wall_riding) p->vy -= g; 
     p->y += p->vy;
     
     resolve_collision(p);

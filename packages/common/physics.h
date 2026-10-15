@@ -3914,6 +3914,78 @@ void resolve_collision(PlayerState *p) {
     }
 }
 
+/* Wall ride (founder real-time 2026-10-15: "holding ctrl for crouch implement wall ride just like
+   lucio from overwatch except momentum with shankpit ... we dont want to change ANYTHING about how
+   that physics currently works, we just want to allow you to magnet to the wall via ctrl crouch
+   slide"). Purely additive: phys_wall_ride_probe only reports a wall; update_entity only consults
+   it for a player who is airborne AND holding crouch, a state that previously had no special
+   handling at all (the crouch-slide checks in apply_friction/accelerate are all on_ground-gated),
+   so every existing ground/air/slide path is bit-for-bit unchanged. */
+#define PHYS_WALL_RIDE_REACH 0.18f      /* how far past the player's own radius a wall still magnets */
+#define PHYS_WALL_RIDE_MIN_SPEED 0.30f  /* slower than this along the wall and you just fall off */
+#define PHYS_WALL_RIDE_PULL 0.03f       /* gentle per-tick pull into the wall to keep contact */
+
+/* Finds the nearest steep, side-on wall face within reach of the player (axis-aligned cubes and
+   rotated/ramped boxes alike). Returns 1 and the horizontal unit normal (pointing from the wall
+   toward the player) if found. Ground tops/ceilings (|n.y| large) never count as walls. */
+static inline int phys_wall_ride_probe(const PlayerState *p, float *out_nx, float *out_nz) {
+    float pw = PLAYER_WIDTH + PHYS_WALL_RIDE_REACH;
+    float ph = p->crouching ? (PLAYER_HEIGHT / 2.0f) : PLAYER_HEIGHT;
+    float best = 1e30f, bnx = 0.0f, bnz = 0.0f;
+    int found = 0;
+    for (int i = 1; i < map_count; i++) {
+        const Box b = map_geo[i];
+        const BoxOrient *bo = phys_box_orient(i);
+        if (bo) {
+            float ys[2] = { ph * 0.35f, ph * 0.75f };
+            for (int k = 0; k < 2; k++) {
+                float n[3], depth;
+                if (!obb_sphere_push(b.x, b.y, b.z, b.w, b.h, b.d, bo, p->x, p->y + ys[k], p->z, pw, n, &depth)) continue;
+                if (fabsf(n[1]) > 0.5f) continue;
+                float hl = sqrtf(n[0] * n[0] + n[2] * n[2]);
+                if (hl < 0.001f) continue;
+                float score = -depth;
+                if (score < best) { best = score; bnx = n[0] / hl; bnz = n[2] / hl; found = 1; }
+            }
+            continue;
+        }
+        if (p->y >= b.y + b.h / 2 || p->y + ph <= b.y - b.h / 2) continue; /* above/below: not a side face */
+        float dx = p->x - b.x, dz = p->z - b.z;
+        float ex = b.w / 2 + pw - fabsf(dx), ez = b.d / 2 + pw - fabsf(dz);
+        if (ex <= 0.0f || ez <= 0.0f) continue;                           /* out of reach */
+        if (fabsf(dx) - b.w / 2 < -pw * 0.5f && fabsf(dz) - b.d / 2 < -pw * 0.5f) continue; /* inside the box */
+        /* nearest face = smaller penetration of the inflated box (same axis choice resolve_collision uses) */
+        float score = (ex < ez) ? -ex : -ez;
+        if (score < best) {
+            best = score; found = 1;
+            if (ex < ez) { bnx = (dx > 0.0f) ? 1.0f : -1.0f; bnz = 0.0f; }
+            else         { bnx = 0.0f; bnz = (dz > 0.0f) ? 1.0f : -1.0f; }
+        }
+    }
+    if (!found) return 0;
+    *out_nx = bnx; *out_nz = bnz;
+    return 1;
+}
+
+/* One wall-ride tick: call after apply_friction, in place of this tick's gravity. Returns 1 if the
+   player is magnetised to a wall (caller then skips gravity). Keeps horizontal momentum (with the
+   same low SLIDE_FRICTION drag the ground crouch-slide uses, so holding ctrl sustains it and it
+   bleeds off to the point you fall), cancels any component into the wall and pulls gently into it. */
+static inline int phys_wall_ride_tick(PlayerState *p) {
+    if (!p->crouching || p->on_ground || p->in_vehicle) return 0;
+    float nx, nz;
+    if (!phys_wall_ride_probe(p, &nx, &nz)) return 0;
+    float into = p->vx * nx + p->vz * nz;
+    float tx = p->vx - into * nx, tz = p->vz - into * nz;   /* velocity along the wall */
+    float speed = sqrtf(tx * tx + tz * tz);
+    if (speed < PHYS_WALL_RIDE_MIN_SPEED) return 0;
+    float keep = 1.0f - SLIDE_FRICTION;
+    p->vx = tx * keep - nx * PHYS_WALL_RIDE_PULL;
+    p->vz = tz * keep - nz * PHYS_WALL_RIDE_PULL;
+    p->vy = 0.0f;
+    return 1;
+}
+
 void phys_respawn(PlayerState *p, unsigned int now) {
     p->active = 1; p->state = STATE_ALIVE;
     p->health = 100; p->shield = 100; p->respawn_time = 0; p->in_vehicle = 0;

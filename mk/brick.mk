@@ -39,6 +39,13 @@ test-third-person:
 		-o /tmp/shankpit_third_person_test -lm
 	/tmp/shankpit_third_person_test
 
+.PHONY: test-wall-ride
+test-wall-ride:
+	gcc -std=gnu99 -Wall -g -fsanitize=address,undefined $(INCLUDES) \
+		packages/common/wall_ride_test.c packages/world/terrain.c \
+		-o /tmp/shankpit_wall_ride_test -lm
+	/tmp/shankpit_wall_ride_test
+
 .PHONY: test-buggy-wall
 test-buggy-wall:
 	gcc -std=gnu99 -Wall -g -fsanitize=address,undefined $(INCLUDES) \
