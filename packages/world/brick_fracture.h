@@ -46,9 +46,12 @@ int on_brick_debris_count(int prev_state, int new_state);
 int on_brick_paper_material(int brick_kind);
 int on_brick_cell_max_hp(int brick_kind);
 
-#define BF_MAX_PARENTS            128
+/* Card #628: was 128 (and BfRec.parent a u8), so in a level with nested/composed objects -- whose walls are
+ * flattened AFTER the root walls, past index 127 -- nothing beyond the first 128 boxes was ever destructible
+ * (no damage, no render). Now matches LEVEL_BOXES_MAX; the wire already carries a u16 parent. */
+#define BF_MAX_PARENTS            2048
 #define BF_MAX_RECORDS            4096
-#define BF_MAX_PIECES             900
+#define BF_MAX_PIECES             900   /* = physics.h CUSTOM_LEVEL_FRACTURE_SLOTS */
 #define BF_MAX_EVENTS             256
 #define BF_MAX_NET_DIRTY          1024
 #define BF_CELL_TARGET            3.0f
@@ -83,7 +86,7 @@ typedef struct {
     unsigned int key;      /* ix | iy << 10 | iz << 20 */
     int next;              /* next record of the same parent, -1 end */
     unsigned char hp;      /* 0 = gone; absent record = full HP */
-    unsigned char parent;
+    unsigned short parent;
 } BfRec;
 
 typedef struct {
@@ -233,7 +236,7 @@ static inline int bf_set_cell_hp(BrickFracture *bf, int parent, unsigned int key
         if (bf->rec_count >= BF_MAX_RECORDS) return -1;
         r = bf->rec_count++;
         bf->rec[r].key = key; bf->rec[r].hp = (unsigned char)pmax;
-        bf->rec[r].parent = (unsigned char)parent;
+        bf->rec[r].parent = (unsigned short)parent;
         bf->rec[r].next = p->first_rec; p->first_rec = r;
     }
     bf->rec[r].hp = (unsigned char)hp;

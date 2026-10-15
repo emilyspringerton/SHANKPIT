@@ -77,6 +77,15 @@ int main(void) {
     CHECK(bf_add_parent(bf, 1, 0, 0, 0, 0.0f, 5.0f, 5.0f) == 0);        /* degenerate refused */
     CHECK(bf_add_parent(bf, 9999, 0, 0, 0, 5.0f, 5.0f, 5.0f) == 0);     /* out-of-range index refused */
 
+    /* 1b. card #628: a parent past index 255 (nested/composed-object walls are flattened after the root walls) must be
+     * destructible and its record must keep the full parent index (BfRec.parent was a u8 -> wrapped at 256) */
+    CHECK(bf_add_parent(bf, 300, 40.0f, 3.0f, 0.0f, 12.0f, 6.0f, 3.0f) == 1);
+    CHECK(bf_set_cell_hp(bf, 300, bf_key(1, 0, 0), 0, 0) > 0);
+    CHECK(bf->rec[bf->rec_count - 1].parent == 300);
+    CHECK(bf->parent[300].removed == 1 && bf->parent[300].active);
+    CHECK(bf_rebuild(bf) && piece_volume_sum(bf, 300) > 0.0f);
+    make_wall(bf);
+
     /* 2. one cell, AR (20 dmg): 10 per hit after 50% resistance. Cell (1,0,0) centre = (-1.5,1.5,0).
           hp: 80,70,60,50,40(<48 CRACKED, debris 1),30,20,10(<20 TORN, debris 2),0 (GONE, debris 4) */
     {

@@ -2,6 +2,7 @@
 
 ## 2026-10-15
 
+- fix(brick): damage now works on walls of nested/composed levels -- `BF_MAX_PARENTS` was 128 (and `BfRec.parent` a u8), but composed-object walls are flattened after the root walls, so anything past box 127 was never destructible (no damage, no carved render, in ZOMBIES etc). Now 2048 (= `LEVEL_BOXES_MAX`), record parent widened to u16 (wire already u16); regression check in `brick_fracture_test.c`. `brick_world_test.c` had pre-existing `-Werror` failures unrelated to this. Not verified in a live nested level (kanban #628).
 - fix(stream): ffmpeg is no longer bundled in the Windows client zip and the exe-dir lookup is gone -- the game uses `ffmpeg` on PATH; new `docs/FFMPEG_INSTALL.md` (robust Windows winget/manual-PATH + troubleshooting, Linux per-distro); in-game message points to it; README updated (kanban #618).
 - fix(levels): re-baked `baked_levels_gen.h` (32 -> 64 levels). The native client serves the baked registry by default and the 2026-10-04 bake predated cube rotation/ramp, so NOCK-rotated cubes never appeared rotated in game (render + physics for rot_*/ramp were already in place).
 - feat(edit-sync): joining a live NOCK edit session (`--edit-session <id>`) loads the session's working level -- the editor's unsaved draft -- instead of the default map, and re-syncs on every NOCK `level` event (hero position kept; local op log dropped, NOCK is authoritative). `edit_sync_fetch_level` in `packages/world/edit_sync.h`. Not compiled/run here (no SDL2 on this box); header + test_edit_sync build clean.
