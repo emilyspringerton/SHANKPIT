@@ -32,6 +32,10 @@ static const BuiltinDef G_BUILTINS[] = {
     {"spawn_prop", EDU_BUILTIN_SPAWN_PROP, 4},
     {"set_entity_pos", EDU_BUILTIN_SET_ENTITY_POS, 4},
     {"set_entity_vel", EDU_BUILTIN_SET_ENTITY_VEL, 4},
+    {"set_state", EDU_BUILTIN_SET_STATE, 2},
+    {"set_reg", EDU_BUILTIN_SET_REG, 2},
+    {"read_sensor", EDU_BUILTIN_READ_SENSOR, 1},
+    {"read_state", EDU_BUILTIN_READ_STATE, 1},
 };
 
 
@@ -64,6 +68,57 @@ static int world_spawn_entity(EduWorldState *w, const char *type_name, float x, 
     e->health = 100;
     snprintf(e->label, sizeof(e->label), "%s", type_name);
     return e->id;
+}
+
+EduWidget *edu_widget_find_id(EduWorldState *w, const char *id) {
+    if (!id || !id[0]) return NULL;
+    for (int i = 0; i < w->widget_count; i++)
+        if (w->widgets[i].active && strcmp(w->widgets[i].id, id) == 0) return &w->widgets[i];
+    return NULL;
+}
+
+EduWidget *edu_widget_find_reg(EduWorldState *w, int reg) {
+    for (int i = 0; i < w->widget_count; i++)
+        if (w->widgets[i].active && w->widgets[i].reg == reg) return &w->widgets[i];
+    return NULL;
+}
+
+int edu_widget_bind(EduWorldState *w, const char *id, int machine_type, int initial_state, int reg,
+                    float x, float y, float z, float radius) {
+    if (!id || !id[0] || strlen(id) >= EDU_WIDGET_ID_MAX) return -1;
+    if (machine_type <= EDU_WIDGET_NONE || machine_type >= EDU_WIDGET_TYPE_COUNT) return -1;
+    EduWidget *e = edu_widget_find_id(w, id);
+    EduWidget *clash = edu_widget_find_reg(w, reg);
+    if (clash && clash != e) return -1; /* two widgets on one register would make read_sensor ambiguous */
+    if (!e) {
+        if (w->widget_count >= EDU_MAX_WIDGETS) return -1;
+        e = &w->widgets[w->widget_count++];
+    }
+    memset(e, 0, sizeof *e);
+    e->active = 1;
+    snprintf(e->id, sizeof e->id, "%s", id);
+    e->machine_type = machine_type;
+    e->initial_state = initial_state ? 1 : 0;
+    e->state = e->initial_state;
+    e->reg = reg;
+    e->x = x; e->y = y; e->z = z; e->radius = radius;
+    return (int)(e - w->widgets);
+}
+
+void edu_widgets_clear(EduWorldState *w) {
+    memset(w->widgets, 0, sizeof w->widgets);
+    w->widget_count = 0;
+}
+
+void edu_widgets_reset(EduWorldState *w) {
+    for (int i = 0; i < w->widget_count; i++) w->widgets[i].state = w->widgets[i].initial_state;
+}
+
+int edu_widget_host_set(EduWorldState *w, const char *id, int state) {
+    EduWidget *e = edu_widget_find_id(w, id);
+    if (!e) return 0;
+    e->state = state ? 1 : 0;
+    return 1;
 }
 
 void world_objects_tick(EduWorldState *w, unsigned int now_ms) {
@@ -260,6 +315,36 @@ int edu_binding_call(EduWorldState *world, int builtin_id, const int *args, int 
             if (!e) EDU_FORBIDDEN("entity id out of range");
             e->vx = (float)args[1]; e->vy = (float)args[2]; e->vz = (float)args[3];
             snprintf(debug_out, (size_t)debug_cap, "set_entity_vel(%d,%d,%d,%d)", args[0], args[1], args[2], args[3]);
+            return 1;
+        }
+        case EDU_BUILTIN_SET_STATE: {
+            const char *id = safe_string(strings, string_count, args[0]);
+            EduWidget *e = edu_widget_find_id(world, id);
+            if (!e) EDU_FORBIDDEN("set_state: no such widget");
+            if (e->machine_type == EDU_WIDGET_PLATE) EDU_FORBIDDEN("set_state: sensors are read-only");
+            e->state = args[1] ? 1 : 0;
+            snprintf(debug_out, (size_t)debug_cap, "set_state(%s,%d)", id, e->state);
+            return 1;
+        }
+        case EDU_BUILTIN_SET_REG: {
+            EduWidget *e = edu_widget_find_reg(world, args[0]);
+            if (!e) EDU_FORBIDDEN("set_reg: no widget on that register");
+            if (e->machine_type == EDU_WIDGET_PLATE) EDU_FORBIDDEN("set_reg: sensors are read-only");
+            e->state = args[1] ? 1 : 0;
+            snprintf(debug_out, (size_t)debug_cap, "set_reg(%d,%d)", args[0], e->state);
+            return 1;
+        }
+        case EDU_BUILTIN_READ_SENSOR: {
+            EduWidget *e = edu_widget_find_reg(world, args[0]);
+            *out_ret = e ? e->state : 0; /* an unwired register reads 0, like floating hardware */
+            snprintf(debug_out, (size_t)debug_cap, "read_sensor(%d) -> %d", args[0], *out_ret);
+            return 1;
+        }
+        case EDU_BUILTIN_READ_STATE: {
+            const char *id = safe_string(strings, string_count, args[0]);
+            EduWidget *e = edu_widget_find_id(world, id);
+            *out_ret = e ? e->state : 0;
+            snprintf(debug_out, (size_t)debug_cap, "read_state(%s) -> %d", id, *out_ret);
             return 1;
         }
         case EDU_BUILTIN_PRINT:

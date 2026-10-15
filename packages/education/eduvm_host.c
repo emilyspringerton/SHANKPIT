@@ -100,6 +100,9 @@ void eduvm_host_reset_world(void) {
     EduScriptSystem *s = eduvm_system();
     EduWorldState keep_caps = s->world;
     memset(&s->world, 0, sizeof s->world);
+    memcpy(s->world.widgets, keep_caps.widgets, sizeof s->world.widgets);
+    s->world.widget_count = keep_caps.widget_count;
+    edu_widgets_reset(&s->world);
     s->world.crate_speed = 1;
     s->world.grounded_test_platform = 1;
     s->world.portal_stability = 25;
@@ -108,4 +111,22 @@ void eduvm_host_reset_world(void) {
     s->world.can_raise_bridge = keep_caps.can_raise_bridge;
     s->world.can_modify_portal = keep_caps.can_modify_portal;
     s->world.can_affect_enemies = keep_caps.can_affect_enemies;
+}
+
+int eduvm_host_widget_bind(const char *id, int machine_type, int initial_state, int reg,
+                           float x, float y, float z, float radius) {
+    return edu_widget_bind(&eduvm_system()->world, id, machine_type, initial_state, reg, x, y, z, radius);
+}
+void eduvm_host_widgets_clear(void) { edu_widgets_clear(&eduvm_system()->world); }
+int eduvm_host_widget_count(void) { return eduvm_system()->world.widget_count; }
+const EduWidget *eduvm_host_widget_at(int i) {
+    EduWorldState *w = &eduvm_system()->world;
+    return (i >= 0 && i < w->widget_count && w->widgets[i].active) ? &w->widgets[i] : NULL;
+}
+int eduvm_host_widget_reg_state(int reg) {
+    EduWidget *e = edu_widget_find_reg(&eduvm_system()->world, reg);
+    return e ? e->state : -1;
+}
+int eduvm_host_widget_set(const char *id, int state) {
+    return edu_widget_host_set(&eduvm_system()->world, id, state);
 }

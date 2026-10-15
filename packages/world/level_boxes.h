@@ -309,6 +309,25 @@ typedef struct {
 
 #define LEVEL_BOXES_MAX_ZONES 16 /* matches IDUNA/internal/shankpit.MaxLevelZones exactly */
 
+/* An author-placed programmable widget (NOCK `edu_widgets` array): a named machine bound to one EduVM
+ * "hardware register", so a script typed into the Architect's Orb can drive the level
+ * (set_state("door_gate_alpha", 1) / set_reg(1, 1) / read_sensor(2)). Pure data carrier like LevelZone --
+ * packages/world stays education-independent; machine_type is a bare int that the lobby hands to
+ * packages/education's EduWidgetType (1 GATE, 2 BRIDGE, 3 PORTAL, 4 CRATE, 5 PLATE/sensor). Not
+ * story-mode-only (SHANKPIT/CLAUDE.md): usable in any mode. */
+typedef struct {
+    char entity_id[32];
+    int machine_type;
+    int initial_state;   /* 0 closed/inactive, 1 open/active */
+    int memory_address;  /* the register read_sensor/set_reg address */
+    float x, y, z;
+    float radius;        /* sensor reach for PLATE; 0 -> host default */
+    int box_index;       /* GATE/BRIDGE: index into boxes[] this widget raises/lowers like a story door
+                            (physics + render); -1 = purely a register, no geometry attached */
+} LevelEduWidget;
+
+#define LEVEL_BOXES_MAX_EDU_WIDGETS 16 /* == EDU_MAX_WIDGETS in packages/education/edu_bindings.h */
+
 typedef struct {
     char name[LEVEL_BOXES_MAX_NAME];
     float width, height, depth; /* the editor's own real authored level dimensions -- NOT read
@@ -343,6 +362,8 @@ typedef struct {
     int level_exit_count;
     LevelZone zones[LEVEL_BOXES_MAX_ZONES]; /* BIG_O engine merge phase 7c */
     int zone_count;
+    LevelEduWidget edu_widgets[LEVEL_BOXES_MAX_EDU_WIDGETS]; /* programmable widgets -> EduVM */
+    int edu_widget_count;
     /* next_level_id (S473) -- 0 is the real "no next level" sentinel (matches this loader's own
        established "0/absent is a real, honest sentinel, not an error" convention elsewhere --
        IDUNA's own real primary keys start at 1, so 0 never collides with a real level id). */
@@ -1063,6 +1084,48 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
                     }
                     out->zone_count++;
                     zncursor = znobj_end + 1;
+                }
+            }
+        }
+    }
+
+    // Programmable widgets ("edu_widgets"). Absent key = none authored, not an error. A malformed entry
+    // (no entity_id, or a machine_type outside 1..5) is skipped, never half-loaded.
+    out->edu_widget_count = 0;
+    const char *ew_arr_key = level_boxes_find_key(buf, end, "edu_widgets");
+    if (ew_arr_key) {
+        const char *ew_arr = level_boxes_skip_ws(ew_arr_key);
+        if (*ew_arr == '[') {
+            const char *ew_arr_end = level_boxes_find_array_end(ew_arr, end);
+            if (ew_arr_end) {
+                const char *ewc = ew_arr + 1;
+                while (ewc < ew_arr_end && out->edu_widget_count < LEVEL_BOXES_MAX_EDU_WIDGETS) {
+                    ewc = level_boxes_skip_ws(ewc);
+                    if (ewc >= ew_arr_end) break;
+                    if (*ewc != '{') { ewc++; continue; }
+                    const char *eo_start = ewc;
+                    const char *eo_end = strchr(eo_start, '}');
+                    if (!eo_end || eo_end > ew_arr_end) break;
+                    LevelEduWidget tmp;
+                    memset(&tmp, 0, sizeof tmp);
+                    tmp.box_index = -1;
+                    const char *ev;
+                    float f = 0.0f;
+                    int ok = 0;
+                    if ((ev = level_boxes_find_key(eo_start, eo_end, "entity_id")))
+                        ok = level_boxes_parse_string(ev, tmp.entity_id, sizeof tmp.entity_id) > 0 && tmp.entity_id[0];
+                    if ((ev = level_boxes_find_key(eo_start, eo_end, "machine_type")) && level_boxes_parse_number(ev, &f)) tmp.machine_type = (int)f;
+                    if ((ev = level_boxes_find_key(eo_start, eo_end, "initial_state")) && level_boxes_parse_number(ev, &f)) tmp.initial_state = f != 0.0f;
+                    if ((ev = level_boxes_find_key(eo_start, eo_end, "memory_address")) && level_boxes_parse_number(ev, &f)) tmp.memory_address = (int)f;
+                    if ((ev = level_boxes_find_key(eo_start, eo_end, "x"))) level_boxes_parse_number(ev, &tmp.x);
+                    if ((ev = level_boxes_find_key(eo_start, eo_end, "y"))) level_boxes_parse_number(ev, &tmp.y);
+                    if ((ev = level_boxes_find_key(eo_start, eo_end, "z"))) level_boxes_parse_number(ev, &tmp.z);
+                    if ((ev = level_boxes_find_key(eo_start, eo_end, "radius"))) level_boxes_parse_number(ev, &tmp.radius);
+                    if ((ev = level_boxes_find_key(eo_start, eo_end, "box_index")) && level_boxes_parse_number(ev, &f)) tmp.box_index = (int)f;
+                    if (tmp.box_index >= out->count) tmp.box_index = -1;
+                    if (ok && tmp.machine_type >= 1 && tmp.machine_type <= 5)
+                        out->edu_widgets[out->edu_widget_count++] = tmp;
+                    ewc = eo_end + 1;
                 }
             }
         }

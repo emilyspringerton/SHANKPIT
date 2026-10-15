@@ -15,6 +15,15 @@ int eduvm_host_slot_compiled(int slot);
 int eduvm_host_world(int which);
 void eduvm_host_reset_world(void);
 
+/* level widgets (NOCK edu_widgets). reg_state: -1 when nothing is wired to that register. */
+int eduvm_host_widget_bind(const char *id, int machine_type, int initial_state, int reg,
+                           float x, float y, float z, float radius);
+void eduvm_host_widgets_clear(void);
+int eduvm_host_widget_count(void);
+const EduWidget *eduvm_host_widget_at(int i);
+int eduvm_host_widget_reg_state(int reg);
+int eduvm_host_widget_set(const char *id, int state);
+
 /* generated mod entry points (eduvm_mod.c) */
 int edu_trial_step(int slot);
 int edu_trial_complete(int gate, int bridge, int portal_open, int stability);

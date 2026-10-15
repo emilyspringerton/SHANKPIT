@@ -586,6 +586,21 @@ A tiny scripting language you write in-game that drives physical machines, porte
 - Limits: single-player only; the machine bay is fixed props, and snippets attach to the one `ORB` widget (per-placed-widget attachment is not built);
   the Orb is also an ORB app on the BIG_O phone (press P in MODE_STORY or MODE_ZOMBIES, ENTER on ORB; headless-verified in ZOMBIES).
 
+### Programmable level widgets (2026-10-15, card #660)
+
+A NOCK level can carry an `edu_widgets` array: named machines (gate, bridge, portal, crate, or a pressure-plate **sensor**) each bound
+to one numeric EduVM register. Scripts in the Orb drive the level: `set_state("gate_1", 1)`, `set_reg(2, 1)`, `read_sensor(1)`,
+`read_state("gate_1")` (an unwired register reads 0; scripts can never write a plate, only the host does, from a player standing on it).
+A widget with `box_index` moves that wall out of the way when its state is 1, exactly like a story door (physics and render). Stand next
+to a non-plate widget and press **E** to open the Orb; levels with widgets get a ready-made "Gate Sequencer" `while` loop in slot 8.
+Try it: `examples/programmable/TUTORIAL_PROGRAMMABLE.json` (plate + three gates; see its README).
+- Layout: schema in `packages/world/level_boxes.h` (`LevelEduWidget`), VM side in `packages/education/edu_bindings.c`, host wiring in
+  `apps/lobby/src/main.c` (`lobby_edu_widgets_*`). `make test-edu-widgets` (VM builtins, sequencer loop, plate read-only, schema parser).
+- **Verified:** VM builtins and loader headless; the lobby wiring (bind, plate sensing, door-style box moves, E-radius, world reset)
+  ran in a stubbed harness against the real EduVM. **Not verified:** the actual lobby has not been built or run here (no SDL2/GLU), so
+  drawing and the E key are untested live. Not built: NOCK editor UI / IDUNA store support for `edu_widgets` (levels are authored in JSON
+  by hand today), networked play (the Orb is local-only), destructible-brick barriers in the tutorial.
+
 ## Menu: SETTINGS, CUSTOMIZE, baked levels (2026-10-02)
 
 The last main-menu tile is **CUSTOMIZE** (SKINS, SPRAYS); a **SETTINGS** button under the APPS toggle opens

@@ -1,0 +1,142 @@
+{
+ "version": 1,
+ "name": "TUTORIAL_PROGRAMMABLE",
+ "width": 60,
+ "height": 10,
+ "depth": 60,
+ "ground_plane_enabled": true,
+ "ground_plane_squares": 20,
+ "walls": [
+  {
+   "x": -4,
+   "y": 2,
+   "z": 20,
+   "sx": 1,
+   "sy": 4,
+   "sz": 40,
+   "r": 0.35,
+   "g": 0.35,
+   "b": 0.4,
+   "friction": 1.0
+  },
+  {
+   "x": 4,
+   "y": 2,
+   "z": 20,
+   "sx": 1,
+   "sy": 4,
+   "sz": 40,
+   "r": 0.35,
+   "g": 0.35,
+   "b": 0.4,
+   "friction": 1.0
+  },
+  {
+   "x": 0,
+   "y": 2,
+   "z": 16,
+   "sx": 7,
+   "sy": 4,
+   "sz": 1,
+   "r": 0.8,
+   "g": 0.25,
+   "b": 0.25,
+   "friction": 1.0
+  },
+  {
+   "x": 0,
+   "y": 2,
+   "z": 24,
+   "sx": 7,
+   "sy": 4,
+   "sz": 1,
+   "r": 0.8,
+   "g": 0.25,
+   "b": 0.25,
+   "friction": 1.0
+  },
+  {
+   "x": 0,
+   "y": 2,
+   "z": 32,
+   "sx": 7,
+   "sy": 4,
+   "sz": 1,
+   "r": 0.8,
+   "g": 0.25,
+   "b": 0.25,
+   "friction": 1.0
+  },
+  {
+   "x": 0,
+   "y": 2,
+   "z": 40.5,
+   "sx": 9,
+   "sy": 4,
+   "sz": 1,
+   "r": 0.3,
+   "g": 0.6,
+   "b": 0.35,
+   "friction": 1.0
+  }
+ ],
+ "materials": [
+  {
+   "name": "brick",
+   "shader_name": "standard",
+   "specular": 0.04,
+   "shininess": 6.0
+  }
+ ],
+ "spawners": [
+  {
+   "x": 0,
+   "y": 1,
+   "z": 2,
+   "yaw": 0,
+   "team": -1
+  }
+ ],
+ "edu_widgets": [
+  {
+   "entity_id": "plate_start",
+   "machine_type": 5,
+   "initial_state": 0,
+   "memory_address": 1,
+   "x": 0,
+   "y": 0,
+   "z": 8,
+   "radius": 1.8
+  },
+  {
+   "entity_id": "gate_1",
+   "machine_type": 1,
+   "initial_state": 0,
+   "memory_address": 2,
+   "x": 0,
+   "y": 2,
+   "z": 16,
+   "box_index": 2
+  },
+  {
+   "entity_id": "gate_2",
+   "machine_type": 1,
+   "initial_state": 0,
+   "memory_address": 3,
+   "x": 0,
+   "y": 2,
+   "z": 24,
+   "box_index": 3
+  },
+  {
+   "entity_id": "gate_3",
+   "machine_type": 1,
+   "initial_state": 0,
+   "memory_address": 4,
+   "x": 0,
+   "y": 2,
+   "z": 32,
+   "box_index": 4
+  }
+ ]
+}

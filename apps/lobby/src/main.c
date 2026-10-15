@@ -2554,6 +2554,7 @@ typedef struct {
 static LobbyDoorRuntime g_lobby_doors[LOBBY_DOORS_MAX];
 static int g_lobby_door_count = 0;
 
+static void lobby_edu_widgets_init(const CustomLevelData *lvl); /* defined with the Architect's Orb below */
 static void lobby_doors_init(const CustomLevelData *lvl) {
     g_lobby_door_count = 0;
     for (int i = 0; i < lvl->door_count && g_lobby_door_count < LOBBY_DOORS_MAX; i++) {
@@ -2779,6 +2780,7 @@ static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
     }
     phys_set_custom_level_spawners(sp_x, sp_y, sp_z, sp_team, sp_id, lvl->spawner_count);
     lobby_doors_init(lvl);
+    lobby_edu_widgets_init(lvl); // programmable NOCK widgets -> EduVM registers
     story_buttons_init(lvl); // S485, REFLUX pub/sub buttons -- dlfcn-free, real in local single-player too
 
     // S477, real fix (founder real-time, live playtest: "i walk over to the block where the
@@ -9251,6 +9253,108 @@ static void orb_load_slots(void) {
     edu_snippets_load_into(eduvm_system(), sn, n);
 }
 
+
+/* ---- programmable level widgets (NOCK `edu_widgets` -> EduVM) ----
+ * Each authored widget is a named machine on one EduVM register. Scripts in the Architect's Orb drive them
+ * (set_state/set_reg/read_sensor/read_state); this block is the host half: bind from the level, let PLATE
+ * sensors read the players, move any attached box like a story door, draw the machines, E to open the Orb. */
+#define LOBBY_EDU_PLATE_DEFAULT_RADIUS 1.6f
+#define LOBBY_EDU_USE_RADIUS 3.5f
+static int g_edu_widget_box[EDU_MAX_WIDGETS];      /* box_index per widget slot, -1 none */
+static int g_edu_widget_applied[EDU_MAX_WIDGETS];  /* last state pushed to physics (-1 = never) */
+
+static const char *const EDU_TUTORIAL_SCRIPT =
+    "let r = 2;\n"
+    "while r < 5 {\n"
+    "  if read_sensor(1) {\n"
+    "    set_reg(r, 1);\n"
+    "  }\n"
+    "  r = r + 1;\n"
+    "}\n"
+    "print(read_sensor(1));\n";
+
+static void lobby_edu_install_template(void) {
+    EduScriptSystem *es = eduvm_system();
+    EduScriptSlot *sl = &es->slots[EDU_MAX_SCRIPTS - 1];
+    snprintf(sl->name, sizeof sl->name, "Gate Sequencer");
+    snprintf(sl->source, sizeof sl->source, "%s", EDU_TUTORIAL_SCRIPT);
+    sl->source_len = (int)strlen(sl->source);
+    sl->compile_ok = 0;
+    es->active_slot = EDU_MAX_SCRIPTS - 1;
+}
+
+static void lobby_edu_widgets_init(const CustomLevelData *lvl) {
+    eduvm_host_widgets_clear();
+    for (int i = 0; i < EDU_MAX_WIDGETS; i++) { g_edu_widget_box[i] = -1; g_edu_widget_applied[i] = -1; }
+    for (int i = 0; i < lvl->edu_widget_count; i++) {
+        const LevelEduWidget *w = &lvl->edu_widgets[i];
+        float rad = w->radius > 0.0f ? w->radius : LOBBY_EDU_PLATE_DEFAULT_RADIUS;
+        int slot = eduvm_host_widget_bind(w->entity_id, w->machine_type, w->initial_state, w->memory_address,
+                                          w->x, w->y, w->z, rad);
+        if (slot < 0) { SDL_Log("edu widget '%s' rejected (full, bad type, or register clash)", w->entity_id); continue; }
+        g_edu_widget_box[slot] = w->box_index;
+    }
+    if (g_orb_seeded && eduvm_host_widget_count() > 0) lobby_edu_install_template();
+}
+
+static void lobby_edu_widgets_tick(void) {
+    int n = eduvm_host_widget_count();
+    for (int i = 0; i < n; i++) {
+        const EduWidget *w = eduvm_host_widget_at(i);
+        if (!w) continue;
+        if (w->machine_type == EDU_WIDGET_PLATE) {
+            int on = 0;
+            for (int pi = 0; pi < MAX_CLIENTS && !on; pi++) {
+                const PlayerState *p = &local_state.players[pi];
+                if (!p->active || p->state == STATE_DEAD) continue;
+                float dx = p->x - w->x, dz = p->z - w->z, dy = p->y - w->y;
+                if (dx * dx + dz * dz <= w->radius * w->radius && dy > -2.0f && dy < 3.0f) on = 1;
+            }
+            eduvm_host_widget_set(w->id, on);
+            w = eduvm_host_widget_at(i);
+        }
+        if (g_edu_widget_box[i] >= 0 && g_edu_widget_applied[i] != w->state) {
+            phys_set_custom_level_box_y(g_edu_widget_box[i], w->state); /* state 1 = geometry moved away (open) */
+            g_edu_widget_applied[i] = w->state;
+        }
+    }
+}
+
+static const EduWidget *lobby_edu_nearest_widget(void) {
+    const PlayerState *h = &local_state.players[0];
+    const EduWidget *best = NULL;
+    float bd = LOBBY_EDU_USE_RADIUS * LOBBY_EDU_USE_RADIUS;
+    for (int i = 0; i < eduvm_host_widget_count(); i++) {
+        const EduWidget *w = eduvm_host_widget_at(i);
+        if (!w || w->machine_type == EDU_WIDGET_PLATE) continue;
+        float dx = h->x - w->x, dy = h->y - w->y, dz = h->z - w->z;
+        float d = dx * dx + dy * dy + dz * dz;
+        if (d <= bd) { bd = d; best = w; }
+    }
+    return best;
+}
+
+static void draw_edu_widgets(unsigned int now_ms) {
+    int n = eduvm_host_widget_count();
+    if (n <= 0) return;
+    float t = (float)now_ms * 0.001f;
+    glDisable(GL_TEXTURE_2D);
+    for (int i = 0; i < n; i++) {
+        const EduWidget *w = eduvm_host_widget_at(i);
+        if (!w) continue;
+        float r, g, b, h, sx, sz;
+        if (w->machine_type == EDU_WIDGET_PLATE) {
+            r = w->state ? 0.3f : 0.55f; g = w->state ? 0.95f : 0.5f; b = w->state ? 0.4f : 0.2f;
+            h = w->state ? 0.04f : 0.1f; sx = sz = w->radius * 1.6f;
+        } else {
+            r = w->state ? 0.25f : 0.95f; g = w->state ? 0.9f : 0.3f; b = w->state ? 0.55f : 0.35f;
+            h = 0.35f + 0.05f * sinf(t * 3.0f + (float)i); sx = sz = 0.35f;
+        }
+        float yoff = (w->machine_type == EDU_WIDGET_PLATE) ? 0.05f : 2.4f;
+        glPushMatrix(); glTranslatef(w->x, w->y + yoff, w->z); glColor3f(r, g, b); draw_box(sx, h, sz); glPopMatrix();
+    }
+}
+
 static int orb_available(void) {
     return app_state == STATE_GAME_LOCAL && local_state.game_mode != MODE_QUEUE;
 }
@@ -9262,6 +9366,7 @@ static void orb_toggle(void) {
         for (int i = 0; i < EDU_MAX_SCRIPTS; i++) edu_seed_slot(i, i < 4 ? i : 4);
         es->active_slot = 0;
         orb_load_slots();
+        if (eduvm_host_widget_count() > 0) lobby_edu_install_template();
         SDL_Thread *t = SDL_CreateThread(orb_remote_worker, "orb_snippets", NULL);
         if (t) SDL_DetachThread(t);
     }
@@ -11622,6 +11727,7 @@ void draw_scene(PlayerState *render_p) {
     draw_projectiles();
     if (local_state.game_mode == MODE_SURVIVAL) { draw_gun_items(SDL_GetTicks()); draw_chests(); }
     draw_orb_world(SDL_GetTicks());
+    draw_edu_widgets(SDL_GetTicks());
     draw_lab_world(SDL_GetTicks());
     if ((render_p->in_vehicle && render_p->vehicle_type != VEH_BUGGY) || render_p->third_person || g_cam_override.active) draw_player_3rd(render_p);
     for(int i=0; i<MAX_CLIENTS; i++) {
@@ -13867,6 +13973,10 @@ int main(int argc, char* argv[]) {
                     if (g_lab_active && app_state == STATE_GAME_LOCAL && !g_story_phone.open && !g_orb_open && e.key.keysym.sym == SDLK_e) {
                         lab_interact(SDL_GetTicks());   /* SECTION 592: LAB stations; E is also the normal use key, harmless */
                     }
+                    if (app_state == STATE_GAME_LOCAL && !g_paused && !g_story_phone.open && !g_orb_open &&
+                        e.key.keysym.sym == SDLK_e && orb_available() && lobby_edu_nearest_widget()) {
+                        orb_toggle();   /* E at a programmable widget opens the Orb on its script slot */
+                    }
                     if (g_paused) {
                         if (e.key.keysym.sym == SDLK_ESCAPE) {
                             g_paused = 0;
@@ -14307,6 +14417,7 @@ int main(int argc, char* argv[]) {
                     lobby_tyler_scene_tick(now_ms);
                 }
                 lobby_doors_tick();
+                lobby_edu_widgets_tick();
             }
                 accumulator -= TICK_DT;
             }

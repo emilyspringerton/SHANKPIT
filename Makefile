@@ -255,6 +255,12 @@ test-spray-decal:
 	$(CC) -std=c99 -O2 -Wall -Wextra -pedantic -Werror -Ipackages/common -o /tmp/spray_decal_test packages/common/spray_decal_test.c
 	/tmp/spray_decal_test
 
+test-edu-widgets:
+	$(CC) -O1 -Wall -Wextra -Ipackages/education packages/education/edu_widgets_test.c packages/education/edu_lexer.c packages/education/edu_bytecode.c packages/education/edu_parser.c packages/education/edu_vm.c packages/education/edu_bindings.c -o $(BIN_DIR)/edu_widgets_test
+	$(BIN_DIR)/edu_widgets_test
+	$(CC) -O1 -Wall -Wextra packages/world/level_boxes_edu_widgets_test.c -o $(BIN_DIR)/level_boxes_edu_widgets_test
+	$(BIN_DIR)/level_boxes_edu_widgets_test
+
 test-queue-level:
 	$(CC) -std=c99 -O2 -Wall -Wextra -pedantic -Werror -Ipackages/common -o /tmp/queue_level_test packages/common/queue_level_test.c
 	/tmp/queue_level_test
