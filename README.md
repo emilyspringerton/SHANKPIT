@@ -54,6 +54,17 @@ Internally, the client also recognizes additional local mode IDs such as `battle
 
 ---
 
+## OS menu = HTML + CSS (2026-10-15)
+
+The lobby's tile grid is no longer hand-placed GL rectangles: each page is a small generated HTML document with a
+plain stylesheet (`packages/pellegrino_embed/os_menu_embed.c`), laid out and painted by PELLEGRINO -- the PARENA
+browser engine -- into an offscreen surface that the lobby draws as one textured quad. Clicks go through the
+engine's link hit-test back to the tile index. `make test-os-menu` (headless) and `make test-os-menu-gl` (needs a GL
+display) check it; `SHANKPIT_OS_MENU=classic` selects the old grid. Regenerate the vendored engine with
+`scripts/gen_pellegrino_embed.sh` (needs sibling `../PELLEGRINO` and a built `../PARENA/parena`). Status: tested in
+isolation; the whole lobby has not been built/run with it on the dev box yet, and the skin/level/spray overlays,
+title and the small corner buttons are still hand-drawn GL.
+
 ## Apps page (2026-09-22, platform pivot)
 
 The lobby menu now has a second page — a small "APPS >" button next to the title flips from the

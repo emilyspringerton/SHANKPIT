@@ -53,6 +53,7 @@
 #include "../../../packages/reflux/reflux_mod_host.h"
 #include "../../../packages/world/level_boxes.h"
 #include "../../../packages/iduna_login/iduna_login.h" /* #623: IDUNA SSO login (native loopback profile) */
+#include "../../../packages/pellegrino_embed/os_menu_gl.h" /* #627: OS menu = HTML+CSS painted by PELLEGRINO */
 #include <sys/stat.h>
 #ifdef _WIN32
 #include <direct.h>
@@ -11526,6 +11527,25 @@ static int lobby_hit_test(float mx, float my, int menu_count, const LobbyLayout 
                          (double)layout->row_gap, (double)layout->icon_size);
 }
 
+// ---- OS menu on HTML + CSS (kanban #627, 2026-10-15: "THE INTERFACE IS JANK UPDATE SHANKPIT OS MENU SYSTEM
+// TO USE BASIC HTML AND CSS AND UPDATE SHANKPIT TO USE PELLEGRINO BASED RENDERING") ----
+// The tile grid (every lobby page: GAMES / APPS / CUSTOMIZE / MODES / SETTINGS) is a generated HTML document
+// with a plain stylesheet, laid out and painted by PELLEGRINO (PARENA) into an offscreen ARGB8888 surface and
+// drawn as one GL quad (packages/pellegrino_embed/os_menu_gl.h). Only DRAWING and HIT-TESTING moved: tile index
+// == the index lobby_start_action / lobby_nav_move already use, and the double-click / rename timing is
+// untouched (a link activation just supplies `hit`). Falls back to the classic glRectf grid if the surface
+// cannot be created or SHANKPIT_OS_MENU=classic.
+static int lobby_osm_ready(void) { return osm_ready(); }
+
+static void lobby_osm_draw(int menu_count) {
+    const char *labels[24];
+    int n = menu_count < 24 ? menu_count : 24;
+    for (int i = 0; i < n; i++) labels[i] = lobby_menu_label(i);
+    osm_draw(labels, n, lobby_selection);
+}
+
+static int lobby_osm_hit(float mx, float my, int menu_count) { return osm_hit(mx, my, menu_count); }
+
 // lobby_page_toggle_rect / _draw / _hit_test -- the real "second page" affordance itself: a
 // small, always-visible button near the title, independent of the main button grid (and its
 // numeric LobbyAction/AppsAction indices, which stay untouched by this) so flipping pages can
@@ -13475,7 +13495,7 @@ int main(int argc, char* argv[]) {
                     }
 
                     int menu_count = lobby_menu_count();
-                    int hit = lobby_hit_test(mx, my, menu_count, &LOBBY_LAYOUT);
+                    int hit = lobby_osm_ready() ? lobby_osm_hit(mx, my, menu_count) : lobby_hit_test(mx, my, menu_count, &LOBBY_LAYOUT);
                     if (hit >= 0) {
                         unsigned int now = SDL_GetTicks();
                         /* card #483: double-click timing from PARENA's ui/menu (250 ms activate, 700 ms secondary) */
@@ -13770,7 +13790,8 @@ int main(int argc, char* argv[]) {
                  draw_string(app_launch_status, 1040.0f, 80.0f, 3);
              }
              int menu_count = lobby_menu_count();
-             draw_lobby_buttons(menu_count, &LOBBY_LAYOUT);
+             if (lobby_osm_ready()) lobby_osm_draw(menu_count);
+             else draw_lobby_buttons(menu_count, &LOBBY_LAYOUT);
              if (skin_menu_open) {
                  draw_skin_chooser_overlay();
              }

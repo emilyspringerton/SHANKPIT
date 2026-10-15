@@ -16,6 +16,7 @@ cc_binary(
         "//packages/audio",
         "//packages/common:common_headers",
         "//packages/goldenband",
+        "//packages/pellegrino_embed",
         "//packages/render",
         "//packages/simulation",
         "//packages/simulation:day_night_clock",

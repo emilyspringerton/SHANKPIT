@@ -1,0 +1,20 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# SHANKPIT OS menu through PELLEGRINO (kanban #627). One translation unit: os_menu_embed.c #includes the
+# generated engine (pellegrino_gen.inc), the vendored PARENA runtime and pg_rename.h itself, so the sources are
+# deliberately all in `srcs` and only the API header is public. Written alongside the Makefile build (which is
+# the verified one -- `make test-os-menu`); this Bazel target has NOT been built.
+cc_library(
+    name = "pellegrino_embed",
+    srcs = [
+        "os_menu_embed.c",
+        "pellegrino_gen.inc",
+        "pg_rename.h",
+        "runtime/parena_runtime.c",
+        "runtime/parena_runtime.h",
+        "runtime/aead/monocypher.h",
+    ],
+    hdrs = ["os_menu_embed.h"],
+    linkopts = ["-lSDL2"],
+    visibility = ["//visibility:public"],
+)
