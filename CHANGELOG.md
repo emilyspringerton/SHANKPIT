@@ -1,5 +1,9 @@
 ## 2026-10-16
 
+- fix(heli): momentum now follows the nose (founder: "if i rotate the helicopter i am no longer going forward via the helicopters rotation ... the forward keeps the helicopter moving in the direction it was previously rotated towards"). Horizontal velocity is swung round with 90% of each tick's yaw change in `heli_simulate_step_rules` (`net_sim.h`), so a turn carries the speed with it instead of sliding on in the old heading. New regression check in `heli_flight_test.c` (fails on the old code: velocity/nose dot 0.51, passes now). Not feel-tested in a live match.
+
+## 2026-10-16
+
 - fix(heli): chase camera pointed UP instead of down, so the helicopter sat below the screen (founder: "its below the screen ... should be much closer to the orbit and hero cams"). The boom pitch sign was inverted against the normal cam convention (negative pitch = look down). Also pulled in from 32/13 to 20/7.5 (between director Hero 11/4.5 and Orbit 28/9). `apps/lobby/src/main.c`; not compiled/feel-tested on this box (no GLU/display).
 
 ## 2026-10-16

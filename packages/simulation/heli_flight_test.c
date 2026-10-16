@@ -78,6 +78,15 @@ int main(void) {
     float vs = sqrtf(h.vx*h.vx + h.vz*h.vz);
     CHECK(vs > 0.5f && (h.vx * fx + h.vz * fz) / vs > 0.97f, "velocity not along the nose: dot=%.3f", (h.vx*fx + h.vz*fz) / (vs > 0 ? vs : 1));
 
+    /* turning at speed with the stick held: momentum swings with the nose -- it must NOT keep sliding along
+       the old heading (founder: "forward keeps the helicopter moving in the direction it was previously
+       rotated towards"). Fly 150 ticks at yaw 0, then 45 ticks of right pedal (~90 deg) still on the stick. */
+    h = fresh(100.0f); h.input.forward = 1.0f; run(&h, 150);
+    h.input.yaw = 1.0f; run(&h, 45);
+    fx = -sinf(h.yaw * 0.0174533f); fz = -cosf(h.yaw * 0.0174533f);
+    vs = sqrtf(h.vx*h.vx + h.vz*h.vz);
+    CHECK(vs > 0.5f && (h.vx * fx + h.vz * fz) / vs > 0.8f, "mid-turn velocity left behind the nose: dot=%.3f", (h.vx*fx + h.vz*fz) / (vs > 0 ? vs : 1));
+
     /* on the skids sticks/pedals are dead */
     h = fresh(20.0f); h.input.descend = 1;                  /* pilot lowers the lever and sets it down */
     run(&h, 300);
