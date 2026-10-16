@@ -240,7 +240,10 @@ ea-windows: $(BIN_DIR) $(EDITOR_GAME_OBJS_WIN)
 	# into $(SDL2_MINGW_PREFIX) -- same one PITVIPER/IDUNA.GAME/EDITOR.GAME's own standalone
 	# Windows builds already fetch (see .github/workflows/release.yml's own "Install Dependencies"
 	# step); the base SDL2 mingw devel kit alone does not ship it.
-	x86_64-w64-mingw32-gcc $(CFLAGS) $(INCLUDES) -I$(SDL2_MINGW_PREFIX)/include $(LOBBY_SRC) $(EDITOR_GAME_OBJS_WIN) packages/pellegrino_browser_embed/phone_browser_stub.c \
+	# Real in-phone PELLEGRINO browser if scripts/build_pgb_windows.sh succeeds (needs ../PELLEGRINO), else the stub.
+	-bash scripts/build_pgb_windows.sh $(SDL2_MINGW_PREFIX)
+	x86_64-w64-mingw32-gcc $(CFLAGS) $(INCLUDES) -I$(SDL2_MINGW_PREFIX)/include $(LOBBY_SRC) $(EDITOR_GAME_OBJS_WIN) \
+		$(if $(wildcard $(BIN_DIR)/pgb_win/phone_browser_embed.o),$(BIN_DIR)/pgb_win/phone_browser_embed.o $(BIN_DIR)/pgb_win/monocypher.o $(wildcard $(BIN_DIR)/pgb_win/mbed/*.o) -lbcrypt,packages/pellegrino_browser_embed/phone_browser_stub.c) \
 		-o $(BIN_DIR)/shank_lobby.exe \
 		-L$(SDL2_MINGW_PREFIX)/lib -lSDL2 -lSDL2_ttf -lopengl32 -lglu32 -lm -static-libgcc \
 		-lws2_32 -ldinput8 -ldxguid -ldxerr8 -luser32 -lgdi32 -lwinmm -limm32 -lole32 -loleaut32 -lshell32 -lsetupapi -lversion -luuid
@@ -248,6 +251,7 @@ ea-windows: $(BIN_DIR) $(EDITOR_GAME_OBJS_WIN)
 	@mkdir -p dist/ea-windows
 	@cp $(BIN_DIR)/shank_go_server.exe dist/ea-windows/
 	@cp $(BIN_DIR)/shank_lobby.exe dist/ea-windows/
+	@[ -f $(BIN_DIR)/pgb_win/cacert.pem ] && cp $(BIN_DIR)/pgb_win/cacert.pem dist/ea-windows/ || true
 	@cp docs/EA_BUILD.md dist/ea-windows/README.txt
 	@echo "✅ Windows EA build ready at dist/ea-windows/"
 

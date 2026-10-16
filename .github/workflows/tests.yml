@@ -410,6 +410,12 @@ jobs:
           repository: emilyspringerton/EDITOR.GAME
           path: EDITOR.GAME
 
+      - name: Checkout PELLEGRINO (in-phone browser; Windows build falls back to a stub if it fails)
+        uses: actions/checkout@v4
+        with:
+          repository: emilyspringerton/PELLEGRINO
+          path: PELLEGRINO
+
       - name: Normalize merged layout
         shell: bash
         run: |

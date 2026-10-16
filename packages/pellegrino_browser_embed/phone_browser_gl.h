@@ -19,7 +19,7 @@ static int g_pbg_have_tex = 0;
 static int pbg_ready(void) {
     if (g_pbg_state < 0) {
         g_pbg_state = (phone_browser_open(PBG_W, PBG_H) == 0) ? 1 : 0;
-        if (!g_pbg_state) fprintf(stderr, "[phone-browser] PELLEGRINO embed surface unavailable\n");
+        if (!g_pbg_state) fprintf(stderr, "[phone-browser] PELLEGRINO embed surface unavailable (this build links the stub; Windows needs the PELLEGRINO checkout at build time)\n");
         else phone_browser_navigate("https://example.com/");
     }
     return g_pbg_state == 1;

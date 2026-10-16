@@ -249,9 +249,15 @@ jobs:
           # (`make -s print-lobby-src` / `print-server-src`), so LOBBY_SRC/SERVER_SRC are the ONE
           # source of truth -- add a new packages/*.c there and CI picks it up. Do not paste a
           # file list back in here.
+          # Real in-phone PELLEGRINO browser (mingw) if it builds, else the stub (soft-fail, see the script).
+          if bash scripts/build_pgb_windows.sh ./sdl2_mingw; then
+            PGB_LINK="bin/pgb_win/phone_browser_embed.o bin/pgb_win/monocypher.o $(ls bin/pgb_win/mbed/*.o | tr '\n' ' ') -lbcrypt"
+          else
+            PGB_LINK="packages/pellegrino_browser_embed/phone_browser_stub.c"
+          fi
           x86_64-w64-mingw32-gcc $(make -s print-lobby-src) \
             /tmp/editor_full.o /tmp/editor_runtime.o /tmp/editor_pf_arena.o /tmp/editor_pf_fmt.o /tmp/editor_pf_bridge.o \
-            packages/pellegrino_browser_embed/phone_browser_stub.c \
+            $PGB_LINK \
             -o ShankPit.exe \
             -O2 -static-libgcc \
             -I./sdl2_mingw/include \
@@ -542,6 +548,7 @@ jobs:
           mkdir -p ShankPit_Client
           cp ShankPit.exe ShankPit_Client/
           cp sdl2_mingw/bin/SDL2.dll ShankPit_Client/
+          [ -f bin/pgb_win/cacert.pem ] && cp bin/pgb_win/cacert.pem ShankPit_Client/ || true
           # SDL2_ttf.dll: the lobby/client links -lSDL2_ttf now (EDITOR.GAME in-process widget, S559) --
           # without it next to the exe Windows refuses to start it (missing-DLL error).
           cp sdl2_mingw/bin/SDL2_ttf.dll ShankPit_Client/
