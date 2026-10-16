@@ -102,3 +102,9 @@ test-glass-render:
 	gcc -std=gnu99 -Wall -g $(INCLUDES) packages/render/glass_render_test.c packages/render/gl_shader.c \
 		-o /tmp/shankpit_glass_render_test -lSDL2 -lGL -lm
 	xvfb-run -a -s "-screen 0 640x480x24" env LIBGL_ALWAYS_SOFTWARE=1 /tmp/shankpit_glass_render_test
+
+# Pheromone thrower: the canister's physics (mass, arc, bounce, rest) and the infighting it sets off.
+.PHONY: test-pheromone-grenade
+test-pheromone-grenade: | $(BIN_DIR)
+	$(CC) -g -O1 -fsanitize=address,undefined -Wall $(INCLUDES) packages/simulation/pheromone_grenade_test.c $(WAI_TEST_SRC) -o $(BIN_DIR)/pheromone_grenade_test $(LIBS_M)
+	./$(BIN_DIR)/pheromone_grenade_test

@@ -9,6 +9,7 @@
 #include "witness_live.h"
 #include "giant_bug_values.h"
 #include "avian_values.h"
+#include "pheromone_grenade.h" /* PgGrenade: the thrown canister the marker rides on */
 #include "../common/pheromone.h" /* PheromoneMarker, pheromone_claim_slot/expire/find_nearest -- pure
     targeting primitive, BIG_O engine merge phase 5, no live consumer until this pass */
 #include "../reflux/reflux_runtime.h" /* REFLUX_ACTION_ZOMBIE_SPAWNED/HARVESTED/MOOD_ESCALATED, WITNESS_ESCALATED */
@@ -27,6 +28,7 @@ typedef struct {
     int player_id;
     int npc_index;   /* index into g_sim.n[] */
     NpcBrain brain;
+    unsigned int last_melee_ms; /* The Men only: cooldown for fighting zombies off */
     int men_last_target_pid; /* The Men only (brain.archetype == NPC_ARCHETYPE_THE_MEN): the
         player_id this Man was hunting as of last tick, or -1. Lets the dispatch loop fire
         REFLUX_ACTION_MEN_DISPATCHED once per real new-target edge instead of every tick a Man
@@ -46,6 +48,11 @@ typedef struct {
     float wander_yaw;
     int wander_pause;            /* this leg is a stand-still */
     unsigned char harvested_reported; /* REFLUX_ACTION_ZOMBIE_HARVESTED fired once for this corpse */
+    int prey_pid1;               /* infighting: player_id+1 of what this zombie is eating, 0 = none */
+    unsigned int prey_until_ms;  /* gives up (re-picks) at this time */
+    int grudge_pid1;             /* player_id+1 of whoever bit this zombie last (fights back), 0 = none */
+    unsigned int grudge_until_ms;
+    unsigned int last_prey_bite_ms;
 } WitnessAiZombie;
 
 /* Giant Zombie Bug -- founder real-time, 2026-09-22: "add giant zombie bugs (feral AI units)."
@@ -117,6 +124,8 @@ static int g_have_last_sim_tick;
  * unlimited-range summon. */
 #define WITNESS_AI_PHEROMONE_DETECTION_RADIUS 60.0f
 static PheromoneMarker g_pheromone_markers[PHEROMONE_MAX];
+static PgGrenade g_pheromone_grenades[PHEROMONE_MAX]; /* slot i is the canister carrying marker i */
+static unsigned int g_pheromone_last_step_ms;
 static unsigned int g_pheromone_next_throw_ms[MAX_CLIENTS];
 
 /* Player-zone trespass state ("full phone app parity, costume changes, add The Men" follow-up).
@@ -271,6 +280,8 @@ void witness_ai_reset(unsigned int seed, unsigned int now_ms) {
     g_lab_deliveries = 0;
     g_distraction_until_ms = 0;
     memset(g_pheromone_markers, 0, sizeof(g_pheromone_markers));
+    memset(g_pheromone_grenades, 0, sizeof(g_pheromone_grenades));
+    g_pheromone_last_step_ms = 0;
     memset(g_pheromone_next_throw_ms, 0, sizeof(g_pheromone_next_throw_ms));
 }
 
@@ -424,15 +435,59 @@ int witness_ai_lab_deliveries(void) {
     return g_lab_deliveries;
 }
 
-/* witness_ai_try_throw_pheromone -- the real consumer pheromone.h's own doc comment named as
- * "phase 7" and still didn't have as of this pass. Self-rate-limited per player_id (so the caller
- * never needs its own edge-trigger state, see protocol.h's own in_pheromone doc comment), throws a
- * marker at the player's current position plus a fixed distance along their own facing (same
- * degrees-to-radians, sin=x/cos=z convention this file's own zombie-chase block already uses when
- * it sets zp->yaw from atan2f). Returns 1 if a marker was actually thrown, 0 on cooldown or an
- * inactive/dead/out-of-range player_id -- matching witness_ai_try_pickup's own real/honest
- * "nothing happened" return convention (that one uses -1, this uses 0, since 0 is never itself a
- * valid "thrown" outcome here, unlike a player_id where 0 is the hero and a real value). */
+/* Level collision for the canister: every map box after the floor slab (index 0, the ground plane
+ * is handled analytically), axis-aligned like the rest of this file's AI geometry. */
+static int wai_grenade_push(void *user, const float c[3], float r, float nrm[3], float *pen) {
+    (void)user;
+    const WaiBox *mg; int mc = wai_map(&mg);
+    float best = 0.0f; int hit = 0;
+    for (int i = 1; i < mc; i++) {
+        const WaiBox *b = &mg[i];
+        if (b->w <= 0.0f || b->h <= 0.0f || b->d <= 0.0f) continue;
+        float n[3], d;
+        if (pg_sphere_aabb(c, r, b->x, b->y, b->z, b->w, b->h, b->d, n, &d) && d > best) {
+            best = d; nrm[0] = n[0]; nrm[1] = n[1]; nrm[2] = n[2]; hit = 1;
+        }
+    }
+    *pen = best;
+    return hit;
+}
+
+/* Shared non-hero damage: citizens, The Men and zombies all take hits through here (zombie-on-
+ * zombie, zombie-on-citizen, Man-on-zombie). Death is the same permanent corpse a shot kill leaves
+ * (local_game.h: dead i>0 players never respawn in MODE_ZOMBIES/SURVIVAL). Returns 1 if it killed. */
+static int wai_npc_damage(ServerState *s, int victim_pid, int dmg, float away_x, float away_z, unsigned int now_ms) {
+    if (victim_pid <= 0 || victim_pid >= MAX_CLIENTS) return 0;
+    PlayerState *v = &s->players[victim_pid];
+    if (!v->active || v->state == STATE_DEAD) return 0;
+    v->health -= dmg;
+    v->hit_feedback = dmg < 15 ? 15 : (dmg > 30 ? 30 : dmg);
+    if (v->health > 0) return 0;
+    v->health = 0;
+    v->state = STATE_DEAD;
+    v->in_shoot = v->in_reload = v->in_use = v->in_jump = v->in_ability = 0;
+    v->is_shooting = 0;
+    v->dash_timer = 0;
+    v->death_time_ms = now_ms;
+    v->death_duration_ms = 2000u;
+    v->respawn_time = 0;
+    float al = sqrtf(away_x * away_x + away_z * away_z);
+    v->death_dir_x = al > 0.0001f ? away_x / al : 0.0f;
+    v->death_dir_z = al > 0.0001f ? away_z / al : 1.0f;
+    v->vx = v->death_dir_x * 0.30f;
+    v->vz = v->death_dir_z * 0.30f;
+    v->vy = 0.12f;
+    return 1;
+}
+
+/* witness_ai_try_throw_pheromone -- the pheromone thrower. Self-rate-limited per player_id (so the
+ * caller never needs its own edge-trigger state, see protocol.h's own in_pheromone doc comment).
+ * It lobs a real canister (pheromone_grenade.h: mass, ballistic arc, bounces off floor and walls,
+ * rolls to rest) from the thrower's hand along their view, inheriting their own velocity. The
+ * marker zombies chase is bound to the canister: it follows the canister through the air and every
+ * bounce, so the horde tracks it live, and the lifetime clock starts when it comes to rest
+ * (witness_ai_pheromone_step). Returns 1 if one was thrown, 0 on cooldown or an inactive/dead
+ * player_id. */
 int witness_ai_try_throw_pheromone(ServerState *s, int player_id, unsigned int now_ms) {
     if (!s || player_id < 0 || player_id >= MAX_CLIENTS) return 0;
     PlayerState *p = &s->players[player_id];
@@ -443,15 +498,71 @@ int witness_ai_try_throw_pheromone(ServerState *s, int player_id, unsigned int n
     pheromone_marker_expire(g_pheromone_markers, PHEROMONE_MAX, now_ms);
     int slot = pheromone_claim_slot(g_pheromone_markers, PHEROMONE_MAX);
     float rad = p->yaw * 3.14159f / 180.0f;
+    float org[3] = { p->x + sinf(rad) * 1.6f, p->y + 4.6f, p->z + cosf(rad) * 1.6f };
+    float inh[3] = { p->vx * 60.0f, 0.0f, p->vz * 60.0f }; /* per-tick velocity -> units/s (64 Hz ~ 60) */
+    pg_throw(&g_pheromone_grenades[slot], org, p->yaw, p->pitch, inh, PG_MASS_KG, PG_THROW_IMPULSE);
     g_pheromone_markers[slot].active = 1;
-    g_pheromone_markers[slot].x = p->x + sinf(rad) * WITNESS_AI_PHEROMONE_THROW_RANGE;
-    g_pheromone_markers[slot].z = p->z + cosf(rad) * WITNESS_AI_PHEROMONE_THROW_RANGE;
-    g_pheromone_markers[slot].expires_at_ms = now_ms + WITNESS_AI_PHEROMONE_MARKER_LIFETIME_MS;
+    g_pheromone_markers[slot].x = org[0];
+    g_pheromone_markers[slot].z = org[2];
+    g_pheromone_markers[slot].expires_at_ms = now_ms + (unsigned int)(PG_MAX_FLIGHT * 1000.0f) + WITNESS_AI_PHEROMONE_MARKER_LIFETIME_MS;
+    g_pheromone_last_step_ms = g_pheromone_last_step_ms ? g_pheromone_last_step_ms : now_ms;
 
-    printf("[PHEROMONE] player=%d threw marker slot=%d at (%.1f, %.1f)\n",
-           player_id, slot, g_pheromone_markers[slot].x, g_pheromone_markers[slot].z);
+    printf("[PHEROMONE] player=%d threw canister slot=%d mass=%.2fkg speed=%.1f\n",
+           player_id, slot, PG_MASS_KG, pg_launch_speed(PG_MASS_KG, PG_THROW_IMPULSE));
     reflux_dispatch(REFLUX_ACTION_PHEROMONE_THROWN, player_id, slot, 0);
     return 1;
+}
+
+/* witness_ai_pheromone_step -- advances every canister, keeps its marker glued to it, and on the
+ * tick one comes to rest starts the marker's real lifetime and startles every zombie in detection
+ * range (the thud is a stimulus), so they turn and come. */
+static void witness_ai_pheromone_step(ServerState *s, unsigned int now_ms) {
+    float dt = g_pheromone_last_step_ms ? (float)(now_ms - g_pheromone_last_step_ms) / 1000.0f : 0.0f;
+    if (dt < 0.0f) dt = 0.0f;
+    if (dt > 0.25f) dt = 0.25f;
+    g_pheromone_last_step_ms = now_ms;
+    for (int i = 0; i < PHEROMONE_MAX; i++) {
+        PgGrenade *g = &g_pheromone_grenades[i];
+        if (!g->active) continue;
+        if (!g_pheromone_markers[i].active) { g->active = 0; continue; } /* expired or evicted */
+        if (pg_step(g, dt, wai_grenade_push, NULL, 0.0f)) {
+            g_pheromone_markers[i].expires_at_ms = now_ms + WITNESS_AI_PHEROMONE_MARKER_LIFETIME_MS;
+            for (int zi = 0; zi < WITNESS_AI_MAX_ZOMBIES; zi++) {
+                WitnessAiZombie *z = &g_zombies[zi];
+                if (!z->active) continue;
+                PlayerState *zp = &s->players[z->player_id];
+                if (zp->state == STATE_DEAD) continue;
+                float dx = g->pos[0] - zp->x, dz = g->pos[2] - zp->z;
+                if (dx * dx + dz * dz <= WITNESS_AI_PHEROMONE_DETECTION_RADIUS * WITNESS_AI_PHEROMONE_DETECTION_RADIUS)
+                    zombie_get_agitated(&z->zstate, now_ms);
+            }
+            printf("[PHEROMONE] canister %d at rest at (%.1f, %.1f) after %d bounces\n", i, g->pos[0], g->pos[2], g->bounces);
+        }
+        g_pheromone_markers[i].x = g->pos[0];
+        g_pheromone_markers[i].z = g->pos[2];
+    }
+}
+
+int witness_ai_pheromone_view(int i, WitnessAiPheromoneView *out) {
+    if (i < 0 || i >= PHEROMONE_MAX || !out || !g_pheromone_markers[i].active) return 0;
+    const PgGrenade *g = &g_pheromone_grenades[i];
+    if (!g->active) return 0;
+    out->x = g->pos[0]; out->y = g->pos[1]; out->z = g->pos[2];
+    out->spin = g->spin;
+    out->landed = g->landed;
+    out->age_s = g->age;
+    out->trail_n = g->trail_n;
+    for (int k = 0; k < g->trail_n; k++) { /* oldest first */
+        const float *t = g->trail[(g->trail_head - g->trail_n + k + PG_TRAIL * 2) % PG_TRAIL];
+        out->trail[k][0] = t[0]; out->trail[k][1] = t[1]; out->trail[k][2] = t[2];
+    }
+    out->detect_radius = WITNESS_AI_PHEROMONE_DETECTION_RADIUS;
+    return 1;
+}
+
+unsigned int witness_ai_pheromone_cooldown_ms(int player_id, unsigned int now_ms) {
+    if (player_id < 0 || player_id >= MAX_CLIENTS) return 0;
+    return now_ms < g_pheromone_next_throw_ms[player_id] ? g_pheromone_next_throw_ms[player_id] - now_ms : 0;
 }
 
 int witness_ai_spawn_zombie(ServerState *s, float x, float y, float z, unsigned int now_ms) {
@@ -997,9 +1108,49 @@ static void wai_avoid_walls(PlayerState *p, int id, int relentless) {
     p->in_fwd = 0.0f; /* boxed in: stand, don't grind into the wall */
 }
 
+/* wai_find_prey -- the nearest living thing a starving zombie will bite: any other zombie, citizen
+ * or Man in its scene within `radius`. A grudge target (whoever bit it last) wins if it is in reach.
+ * Returns the victim's player_id or -1. */
+static int wai_find_prey(ServerState *s, int self_pid, int grudge_pid, float radius) {
+    PlayerState *me = &s->players[self_pid];
+    float best = radius * radius; int pick = -1;
+    if (grudge_pid > 0 && grudge_pid < MAX_CLIENTS) {
+        PlayerState *g = &s->players[grudge_pid];
+        float dx = g->x - me->x, dz = g->z - me->z;
+        if (g->active && g->state != STATE_DEAD && g->scene_id == me->scene_id && dx * dx + dz * dz <= radius * radius) return grudge_pid;
+    }
+    for (int i = 0; i < WITNESS_AI_MAX_ZOMBIES; i++) {
+        if (!g_zombies[i].active || g_zombies[i].player_id == self_pid) continue;
+        PlayerState *o = &s->players[g_zombies[i].player_id];
+        if (o->state == STATE_DEAD || o->scene_id != me->scene_id) continue;
+        float dx = o->x - me->x, dz = o->z - me->z, d2 = dx * dx + dz * dz;
+        if (d2 <= best) { best = d2; pick = g_zombies[i].player_id; }
+    }
+    for (int i = 0; i < WITNESS_AI_MAX_CITIZENS; i++) {
+        if (!g_citizens[i].active) continue;
+        PlayerState *o = &s->players[g_citizens[i].player_id];
+        if (o->state == STATE_DEAD || o->scene_id != me->scene_id) continue;
+        float dx = o->x - me->x, dz = o->z - me->z, d2 = dx * dx + dz * dz;
+        if (d2 <= best) { best = d2; pick = g_citizens[i].player_id; }
+    }
+    return pick;
+}
+
+static WitnessAiZombie *wai_zombie_by_pid(int pid) {
+    for (int i = 0; i < WITNESS_AI_MAX_ZOMBIES; i++)
+        if (g_zombies[i].active && g_zombies[i].player_id == pid) return &g_zombies[i];
+    return NULL;
+}
+
+int witness_ai_zombie_has_prey(int player_id) {
+    WitnessAiZombie *z = wai_zombie_by_pid(player_id);
+    return z && z->prey_pid1 != 0;
+}
+
 void witness_ai_tick(ServerState *s, unsigned int now_ms) {
     if (!s) return;
     g_wai_now = now_ms;
+    witness_ai_pheromone_step(s, now_ms);
 
     if (!g_have_last_sim_tick || now_ms - g_last_sim_tick_ms >= WITNESS_AI_SIM_TICK_INTERVAL_MS) {
         witness_sim_tick(&g_sim, 1);
@@ -1086,6 +1237,42 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
                 has_target = 1;
             }
         }
+        /* Hunger infighting: with the hero out of sense, a STARVING zombie (or one that was just
+           bitten) goes for the nearest zombie / citizen / Man instead of wandering. It holds that
+           prey for up to 10 s, bites on contact (feeding itself), and the victim fights back. A
+           prey inside arm's reach beats a pheromone pull -- a horde piled on a canister turns on
+           itself. */
+        int targeting_prey = 0;
+        if (wander_mode && !targeting_hero) {
+            int starving = z->zstate.hunger >= WITNESS_AI_ZOMBIE_STARVING_HUNGER;
+            int grudge = z->grudge_pid1 && (int)(z->grudge_until_ms - now_ms) > 0;
+            if (!grudge) z->grudge_pid1 = 0;
+            if (z->prey_pid1) {
+                PlayerState *pp = &s->players[z->prey_pid1 - 1];
+                float ddx = pp->x - zp->x, ddz = pp->z - zp->z;
+                int keep = pp->active && pp->state != STATE_DEAD && pp->scene_id == zp->scene_id &&
+                           ddx * ddx + ddz * ddz <= (WITNESS_AI_ZOMBIE_PREY_RADIUS * 1.5f) * (WITNESS_AI_ZOMBIE_PREY_RADIUS * 1.5f) &&
+                           (int)(z->prey_until_ms - now_ms) > 0;
+                if (!keep) z->prey_pid1 = 0;
+            }
+            if (!z->prey_pid1 && (starving || grudge)) {
+                int pid = wai_find_prey(s, z->player_id, grudge ? z->grudge_pid1 - 1 : -1, WITNESS_AI_ZOMBIE_PREY_RADIUS);
+                if (pid > 0) {
+                    z->prey_pid1 = pid + 1;
+                    z->prey_until_ms = now_ms + 10000u;
+                    zombie_get_agitated(&z->zstate, now_ms);
+                }
+            }
+            if (z->prey_pid1) {
+                PlayerState *pp = &s->players[z->prey_pid1 - 1];
+                float pdx = pp->x - zp->x, pdz = pp->z - zp->z, pd = sqrtf(pdx * pdx + pdz * pdz);
+                if (!has_target || pd <= WITNESS_AI_ZOMBIE_MELEE_RANGE * 2.0f) {
+                    hdx = pdx; hdz = pdz; hdist = pd;
+                    has_target = 1;
+                    targeting_prey = 1;
+                }
+            }
+        }
         {
             float dt = z->last_tick_ms ? (float)(now_ms - z->last_tick_ms) / 1000.0f : 0.05f;
             if (dt > 1.0f) dt = 1.0f;
@@ -1113,6 +1300,16 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
                 if (hero_live && hunger >= 0.4f && (int)((h >> 17) % 100u) < (int)(hunger * 100.0f)) {
                     z->wander_yaw = atan2f(hdx, hdz) * (180.0f / 3.14159f) + (float)((int)((h >> 5) % 61u) - 30);
                     z->wander_pause = 0;
+                }
+                else if (hunger >= WITNESS_AI_ZOMBIE_STARVING_HUNGER) {
+                    /* starving: smell the nearest zombie / citizen / Man much further out than it
+                       can bite, and drift toward it (a wider "scent" than the 45-unit hunt radius) */
+                    int sp = wai_find_prey(s, z->player_id, -1, WITNESS_AI_ZOMBIE_PREY_RADIUS * 3.0f);
+                    if (sp > 0) {
+                        z->wander_yaw = atan2f(s->players[sp].x - zp->x, s->players[sp].z - zp->z) * (180.0f / 3.14159f) +
+                                        (float)((int)((h >> 5) % 41u) - 20);
+                        z->wander_pause = 0;
+                    }
                 }
                 z->wander_until_ms = now_ms + 3000u + (h >> 20) % 4000u;
             }
@@ -1150,6 +1347,35 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
             z->zstate.hunger -= WITNESS_AI_ZOMBIE_FEED_HUNGER; /* ...and a feeding one */
             if (z->zstate.hunger < 0.0f) z->zstate.hunger = 0.0f;
             witness_ai_hero_melee_hit(s, hero_p, WITNESS_AI_ZOMBIE_MELEE_DAMAGE, hdx, hdz, now_ms);
+        }
+    }
+
+    /* Infighting bites -- resolved after movement so every zombie's chase this tick is in. */
+    for (int i = 0; i < WITNESS_AI_MAX_ZOMBIES; i++) {
+        WitnessAiZombie *z = &g_zombies[i];
+        if (!z->active || !z->prey_pid1) continue;
+        PlayerState *zp = &s->players[z->player_id], *pp = &s->players[z->prey_pid1 - 1];
+        if (zp->state == STATE_DEAD || pp->state == STATE_DEAD) { z->prey_pid1 = 0; continue; }
+        if (z->zstate.mood != ZOMBIE_MOOD_HUNTING && z->zstate.mood != ZOMBIE_MOOD_FRENZIED) continue;
+        float dx = pp->x - zp->x, dz = pp->z - zp->z;
+        if (dx * dx + dz * dz > WITNESS_AI_ZOMBIE_MELEE_RANGE * WITNESS_AI_ZOMBIE_MELEE_RANGE) continue;
+        if (now_ms - z->last_prey_bite_ms < WITNESS_AI_ZOMBIE_ATTACK_COOLDOWN_MS) continue;
+        z->last_prey_bite_ms = now_ms;
+        z->zstate.hunger -= WITNESS_AI_ZOMBIE_PREY_FEED;
+        if (z->zstate.hunger < 0.0f) z->zstate.hunger = 0.0f;
+        int vpid = z->prey_pid1 - 1;
+        int killed = wai_npc_damage(s, vpid, WITNESS_AI_ZOMBIE_PREY_DAMAGE, dx, dz, now_ms);
+        printf("[INFIGHT] zombie %d bit %d%s\n", z->player_id, vpid, killed ? " (killed)" : "");
+        WitnessAiZombie *vz = wai_zombie_by_pid(vpid);
+        if (vz && !killed) { /* a bitten zombie turns on its attacker */
+            vz->grudge_pid1 = z->player_id + 1;
+            vz->grudge_until_ms = now_ms + 8000u;
+            zombie_get_agitated(&vz->zstate, now_ms);
+        }
+        if (killed) {
+            z->prey_pid1 = 0;
+            z->zstate.hunger -= 0.3f;
+            if (z->zstate.hunger < 0.0f) z->zstate.hunger = 0.0f;
         }
     }
 
@@ -1350,6 +1576,41 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
         if (!man->active || man->brain.archetype != NPC_ARCHETYPE_THE_MEN) continue;
         PlayerState *mp = &s->players[man->player_id];
         if (mp->state == STATE_DEAD) { mp->in_fwd = 0.0f; continue; }
+
+        /* The Men fight zombies off: the nearest live zombie within WITNESS_AI_MEN_FIGHT_RADIUS is
+           closed on and hit in melee. Takes priority over the memory-wipe sweep below. The zombie
+           is angered at the Man (grudge) so it fights back. */
+        {
+            int zbest = -1; float zd2 = WITNESS_AI_MEN_FIGHT_RADIUS * WITNESS_AI_MEN_FIGHT_RADIUS;
+            for (int zi = 0; zi < WITNESS_AI_MAX_ZOMBIES; zi++) {
+                if (!g_zombies[zi].active) continue;
+                PlayerState *zq = &s->players[g_zombies[zi].player_id];
+                if (zq->state == STATE_DEAD || zq->scene_id != mp->scene_id) continue;
+                float dx = zq->x - mp->x, dz = zq->z - mp->z, d2 = dx * dx + dz * dz;
+                if (d2 <= zd2) { zd2 = d2; zbest = zi; }
+            }
+            if (zbest >= 0) {
+                PlayerState *zq = &s->players[g_zombies[zbest].player_id];
+                float dx = zq->x - mp->x, dz = zq->z - mp->z;
+                mp->yaw = atan2f(dx, dz) * (180.0f / 3.14159f);
+                if (zd2 > WITNESS_AI_ZOMBIE_MELEE_RANGE * WITNESS_AI_ZOMBIE_MELEE_RANGE) {
+                    mp->in_fwd = 0.8f;
+                } else {
+                    mp->in_fwd = 0.0f;
+                    if (now_ms - man->last_melee_ms >= WITNESS_AI_ZOMBIE_ATTACK_COOLDOWN_MS) {
+                        man->last_melee_ms = now_ms;
+                        int killed = wai_npc_damage(s, g_zombies[zbest].player_id, WITNESS_AI_MEN_MELEE_DAMAGE, dx, dz, now_ms);
+                        printf("[INFIGHT] Man %d hit zombie %d%s\n", man->player_id, g_zombies[zbest].player_id, killed ? " (killed)" : "");
+                        if (!killed) {
+                            g_zombies[zbest].grudge_pid1 = man->player_id + 1;
+                            g_zombies[zbest].grudge_until_ms = now_ms + 8000u;
+                            zombie_get_agitated(&g_zombies[zbest].zstate, now_ms);
+                        }
+                    }
+                }
+                continue;
+            }
+        }
 
         int target_ci = -1;
         float best_d2 = WITNESS_AI_MEN_RESPONSE_RADIUS * WITNESS_AI_MEN_RESPONSE_RADIUS;

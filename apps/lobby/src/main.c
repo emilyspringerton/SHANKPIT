@@ -11343,6 +11343,108 @@ static void draw_zombies_awareness_hud(void) {
     glEnable(GL_DEPTH_TEST);
 }
 
+/* draw_pheromone_world -- the pheromone thrower's visuals: the tumbling canister with a motion streak while it is
+   in the air, and once it is down a pulsing ground ring + rising scent wisps + a faint ring at the distance
+   zombies can smell it from. Starving zombies get a pulsing red diamond over their head (they will turn on
+   each other). All flat colour, additive blend, no textures. */
+static void draw_octa(float r) {
+    glBegin(GL_TRIANGLES);
+    const float v[6][3] = { { r, 0, 0 }, { -r, 0, 0 }, { 0, r, 0 }, { 0, -r, 0 }, { 0, 0, r }, { 0, 0, -r } };
+    const int f[8][3] = { { 0, 2, 4 }, { 2, 1, 4 }, { 1, 3, 4 }, { 3, 0, 4 }, { 2, 0, 5 }, { 1, 2, 5 }, { 3, 1, 5 }, { 0, 3, 5 } };
+    for (int i = 0; i < 8; i++) for (int k = 0; k < 3; k++) glVertex3fv(v[f[i][k]]);
+    glEnd();
+}
+static void draw_ring3(float cx, float y, float cz, float r, int seg, int dashed) {
+    glBegin(GL_LINES);
+    for (int i = 0; i < seg; i++) {
+        if (dashed && (i & 1)) continue;
+        float a0 = 6.2831853f * (float)i / (float)seg, a1 = 6.2831853f * (float)(i + 1) / (float)seg;
+        glVertex3f(cx + cosf(a0) * r, y, cz + sinf(a0) * r);
+        glVertex3f(cx + cosf(a1) * r, y, cz + sinf(a1) * r);
+    }
+    glEnd();
+}
+static void draw_pheromone_world(void) {
+    if (local_state.game_mode != MODE_ZOMBIES && local_state.game_mode != MODE_SURVIVAL) return;
+    float tsec = (float)SDL_GetTicks() * 0.001f;
+    glPushAttrib(GL_ENABLE_BIT | GL_CURRENT_BIT | GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_LINE_BIT);
+    glDisable(GL_TEXTURE_2D); glDisable(GL_LIGHTING); glDepthMask(GL_FALSE);
+    glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    glLineWidth(2.0f);
+    for (int i = 0; i < 4; i++) {
+        WitnessAiPheromoneView v;
+        if (!witness_ai_pheromone_view(i, &v)) continue;
+        float pulse = 0.5f + 0.5f * sinf(tsec * 5.0f);
+        if (!v.landed) {
+            glBegin(GL_LINE_STRIP);                       /* streak, oldest -> newest */
+            for (int k = 0; k < v.trail_n; k++) {
+                glColor4f(0.95f, 0.25f, 0.85f, 0.75f * (float)(k + 1) / (float)(v.trail_n + 1));
+                glVertex3f(v.trail[k][0], v.trail[k][1], v.trail[k][2]);
+            }
+            glColor4f(1.0f, 0.5f, 0.95f, 0.9f); glVertex3f(v.x, v.y, v.z);
+            glEnd();
+        }
+        glPushMatrix();
+        glTranslatef(v.x, v.y, v.z);
+        glRotatef(v.spin * 57.2958f, 0.6f, 0.3f, 0.7f);
+        glColor4f(0.95f, 0.3f, 0.85f, 0.95f); draw_octa(0.55f);
+        glColor4f(1.0f, 0.8f, 1.0f, 0.35f + 0.25f * pulse); draw_octa(0.9f + 0.15f * pulse);   /* glow shell */
+        glPopMatrix();
+        if (v.landed) {
+            float gy = v.y - 0.5f;
+            for (int w = 0; w < 3; w++) {                  /* expanding pulse rings */
+                float ph = fmodf(tsec * 0.7f + (float)w / 3.0f, 1.0f);
+                glColor4f(0.95f, 0.3f, 0.85f, 0.7f * (1.0f - ph));
+                draw_ring3(v.x, gy + 0.08f, v.z, 1.0f + ph * 9.0f, 40, 0);
+            }
+            glColor4f(0.9f, 0.3f, 0.8f, 0.10f);            /* how far it can be smelled */
+            draw_ring3(v.x, gy + 0.08f, v.z, v.detect_radius, 72, 1);
+            glBegin(GL_LINES);                             /* scent wisps */
+            for (int k = 0; k < 6; k++) {
+                float a = 1.047f * (float)k + tsec * 0.4f, ph = fmodf(tsec * 0.6f + 0.17f * (float)k, 1.0f);
+                float x0 = v.x + cosf(a) * (0.8f + ph), z0 = v.z + sinf(a) * (0.8f + ph);
+                glColor4f(0.95f, 0.4f, 0.9f, 0.5f * (1.0f - ph)); glVertex3f(x0, gy + ph * 6.0f, z0);
+                glColor4f(0.95f, 0.4f, 0.9f, 0.0f);               glVertex3f(x0 + cosf(a + 1.0f) * 0.6f, gy + ph * 6.0f + 1.4f, z0 + sinf(a + 1.0f) * 0.6f);
+            }
+            glEnd();
+        }
+    }
+    /* hunger: starving zombies (about to fight each other / the crowd) wear a red diamond */
+    for (int i = 1; i < MAX_CLIENTS; i++) {
+        const PlayerState *zp = &local_state.players[i];
+        if (!zp->active || zp->state == STATE_DEAD) continue;
+        float h = witness_ai_zombie_hunger(i);
+        if (h < WITNESS_AI_ZOMBIE_STARVING_HUNGER) continue;
+        float pulse = 0.5f + 0.5f * sinf(tsec * (witness_ai_zombie_has_prey(i) ? 14.0f : 6.0f) + (float)i);
+        glPushMatrix();
+        glTranslatef(zp->x, zp->y + 7.7f, zp->z);
+        glRotatef(tsec * 90.0f, 0, 1, 0);
+        glColor4f(1.0f, 0.15f, 0.1f, 0.55f + 0.4f * pulse); draw_octa(0.45f);
+        glPopMatrix();
+    }
+    glLineWidth(1.0f);
+    glPopAttrib();
+}
+
+/* draw_pheromone_hud -- G-key readiness, bottom centre: READY, or a cooldown bar filling up. */
+static void draw_pheromone_hud(void) {
+    if (local_state.game_mode != MODE_ZOMBIES && local_state.game_mode != MODE_SURVIVAL) return;
+    unsigned int cd = witness_ai_pheromone_cooldown_ms(0, SDL_GetTicks());
+    float frac = 1.0f - (float)cd / 2000.0f; if (frac < 0.0f) frac = 0.0f; if (frac > 1.0f) frac = 1.0f;
+    glDisable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f(0.04f, 0.04f, 0.06f, 0.74f); glRectf(540.0f, 8.0f, 740.0f, 44.0f);
+    glColor4f(0.95f, 0.3f, 0.85f, cd ? 0.45f : 0.9f); glRectf(546.0f, 12.0f, 546.0f + 188.0f * frac, 18.0f);
+    glDisable(GL_BLEND);
+    glColor3f(cd ? 0.6f : 0.95f, cd ? 0.55f : 0.35f, cd ? 0.6f : 0.9f);
+    draw_string(cd ? "G  PHEROMONE ..." : "G  PHEROMONE  READY", 552, 24, 3);
+    glMatrixMode(GL_MODELVIEW); glPopMatrix();
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glEnable(GL_DEPTH_TEST);
+}
+
 static void draw_disconnect_overlay(void) {
     glDisable(GL_DEPTH_TEST);
     glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
@@ -12009,6 +12111,7 @@ void draw_scene(PlayerState *render_p) {
     draw_bullet_holes(render_p->scene_id);
     draw_brick_debris();
     draw_brick_bodies();
+    draw_pheromone_world();
     draw_voxel_chunks(&world_lighting);
     draw_team_map_markers(local_state.scene_id, local_state.game_mode);
     draw_garage_vehicle_pads();
@@ -12063,6 +12166,7 @@ void draw_scene(PlayerState *render_p) {
     draw_tdmb_match_over_overlay();
     draw_survival_hud();
     draw_zombies_awareness_hud();
+    draw_pheromone_hud();
     draw_editmap_hud();
     if (app_state == STATE_GAME_NET && net_diag.server_disconnected) draw_disconnect_overlay();
     if (g_paused) draw_pause_overlay();

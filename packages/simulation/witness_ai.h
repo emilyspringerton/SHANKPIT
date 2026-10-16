@@ -474,4 +474,27 @@ float witness_ai_bug_speed(int player_id);
  * thrown, 0 if on cooldown or player_id doesn't resolve to an active, alive player. */
 int witness_ai_try_throw_pheromone(ServerState *s, int player_id, unsigned int now_ms);
 
+/* Renderer view of one pheromone canister (slot i in 0..3): position, tumble angle, a short motion
+ * trail (oldest first), whether it has come to rest, and the radius zombies can smell it from.
+ * Returns 0 if that slot has nothing live. */
+typedef struct {
+    float x, y, z, spin, age_s, detect_radius;
+    int landed, trail_n;
+    float trail[10][3];
+} WitnessAiPheromoneView;
+int witness_ai_pheromone_view(int i, WitnessAiPheromoneView *out);
+/* Milliseconds until this player can throw again (0 = ready), for the HUD. */
+unsigned int witness_ai_pheromone_cooldown_ms(int player_id, unsigned int now_ms);
+
+/* Hunger infighting (MODE_ZOMBIES/MODE_SURVIVAL): a zombie whose hunger reaches
+ * WITNESS_AI_ZOMBIE_STARVING_HUNGER with the hero out of sense turns on the nearest zombie,
+ * citizen or Man in range and bites; whoever it bites fights back. 1 = this zombie is hunting prey. */
+#define WITNESS_AI_ZOMBIE_STARVING_HUNGER 0.70f
+#define WITNESS_AI_ZOMBIE_PREY_RADIUS 45.0f
+#define WITNESS_AI_ZOMBIE_PREY_DAMAGE 16
+#define WITNESS_AI_ZOMBIE_PREY_FEED 0.06f /* per bite: a meal is many bites, not one */
+#define WITNESS_AI_MEN_FIGHT_RADIUS 14.0f
+#define WITNESS_AI_MEN_MELEE_DAMAGE 22
+int witness_ai_zombie_has_prey(int player_id);
+
 #endif
