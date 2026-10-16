@@ -69,10 +69,12 @@ title and the small corner buttons are still hand-drawn GL.
 
 The lobby menu now has a second page — a small "APPS >" button next to the title flips from the
 GAMES grid above to an APPS grid listing other EINHORN_INDUSTRIAL games as launchable entries:
-DEADWEIGHT, PITVIPER, IDUNA (IDUNA.GAME), REDGARDEN, EDITOR (EDITOR.GAME), and ZOMBIES. Selecting
-one (same double-click-to-activate convention the GAMES page already uses) launches that game's
-own real, unmodified native binary as a child process — SHANKPIT never reimplements another
-game's UI, it just launches it. ZOMBIES is the one exception: it isn't a separate game, it's this
+DEADWEIGHT, PITVIPER, IDUNA (IDUNA.GAME), REDGARDEN, EDITOR (EDITOR.GAME), PELLEGRINO, and
+ZOMBIES. Selecting one (same double-click-to-activate convention the GAMES page already uses)
+launches that game's own real, unmodified native binary as a child process — SHANKPIT never
+reimplements another game's UI, it just launches it; PELLEGRINO's own real keybinds (address
+bar, link navigation, CSS/markdown toggles, scroll/quit — see `PELLEGRINO/README.md`'s own "Keys"
+section) carry over unmodified for the same reason. ZOMBIES is the one exception: it isn't a separate game, it's this
 same `shank_lobby` client self-relaunched (`/proc/self/exe` on Linux, `GetModuleFileNameA` on the
 Windows cross-build) with `--host 127.0.0.1 --port 6971` so it lands pointed at the zombie
 sandbox server (`shankpit-zombie.service`) instead of the default queue port 6969 — you still
@@ -85,7 +87,11 @@ Founder real-time: "the shankpit os apps dont work - can we get it building with
 binaries for all the apps even tho we dont have the signing set up yet." `release.yml` now
 checks out all five sibling app repos (DEADWEIGHT, PITVIPER, IDUNA.GAME, REDGARDEN, EDITOR.GAME —
 all real, public, separate repos), cross-compiles each for Windows, and ships them in
-`ShankPit_Client_*.zip`'s own `bundled/` directory — the exact real path
+`ShankPit_Client_*.zip`'s own `bundled/` directory. **PELLEGRINO is not yet in that CI list** —
+wired into the lobby's launcher and dev sibling-repo path (2026-10-16), and real-verified by hand
+(Linux build, no Bazel, under Xvfb) in that session, but `release.yml` still only cross-compiles
+the original five; adding PELLEGRINO to CI's checkout/build/bundle steps is real, named follow-up
+work, not done here. `bundled/` is the exact real path
 `lobby_app_binary_path` already looked for. Verified for real: a byte-identical local dry run of
 the workflow's own embedded build script (same commands, same directory layout, same SDL2/
 SDL2_ttf mingw devel kit CI downloads) produced all five working Windows `.exe`s clean. The dev

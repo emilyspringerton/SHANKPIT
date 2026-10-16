@@ -2674,6 +2674,7 @@ typedef enum {
     APP_REDGARDEN,
     APP_EDITOR_GAME,
     APP_ZOMBIES,
+    APP_PELLEGRINO,
     APP_COUNT
 } AppsAction;
 
@@ -2684,6 +2685,7 @@ static const char *APPS_LABELS[APP_COUNT] = {
     "REDGARDEN",
     "EDITOR",
     "ZOMBIES",
+    "PELLEGRINO",
 };
 
 // lobby_page -- 0 = GAMES (the original single page, untouched), 1 = APPS (new), 2 = CUSTOMIZE
@@ -4788,6 +4790,24 @@ static void lobby_launch_app(AppsAction app) {
             // it still needs a real --ticket/matchmaker connection to actually play (see
             // REDGARDEN_GUI_NORTHSTAR.md), same as running it by hand would.
             dev_relative_path = "../../REDGARDEN/build/red_garden_arena";
+            break;
+        case APP_PELLEGRINO:
+            display_name = "PELLEGRINO";
+#ifdef _WIN32
+            bundled_name = "pellegrino.exe";
+#else
+            bundled_name = "pellegrino";
+#endif
+            // PELLEGRINO (streaming text browser/terminal shell, pure PARENA + a slim C host,
+            // see PELLEGRINO/NORTHSTAR.md) -- launched the same "real, unmodified native binary
+            // as a child process" way as PITVIPER/IDUNA.GAME above, never reimplemented inside
+            // SHANKPIT. Its own keybinds (`:` address bar, Tab/Shift+Tab link select, Enter/
+            // Space follow, F11/`p` markdown toggle, F12/`x` CSS toggle, Esc/q quit, Shift+J/L/
+            // I/K window move, PageUp/PageDown/Home/End + mouse wheel scroll -- see PELLEGRINO/
+            // README.md "Keys") are not re-mapped here for the same reason: spawning the real
+            // binary carries them over automatically. The PARENA source builds straight to the
+            // repo root (`pellegrino`), same convention as PITVIPER/IDUNA.GAME's own Makefiles.
+            dev_relative_path = "../../PELLEGRINO/pellegrino";
             break;
         case APP_EDITOR_GAME:
             // Deeply integrated as an in-process widget (2026-09-25, founder real-time: "the
