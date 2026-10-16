@@ -43,6 +43,10 @@ typedef enum {
        ARPANET archive, tech-tree shell. Host feeds them; this header stays pure/no-network. */
     BP_APP_GFD, BP_APP_IDUNA, BP_APP_ARPANET, BP_APP_TECHTREE,
     BP_APP_MISSION,   /* Act I Mission 1 tracker (mission.h): SELECT performs the highlighted step */
+    BP_APP_PELLEGRINO, /* SHANKPIT-PELLEGRINO-APP-02: the real embedded browser (phone_browser_embed.h,
+                          packages/pellegrino_browser_embed/) -- host-only, same "no network in this
+                          header" rule as every other app; the host special-cases app==BP_APP_PELLEGRINO
+                          the same way it already special-cases BP_APP_GFD's text terminal. */
     BP_APP_COUNT
 } BpApp;
 
@@ -98,7 +102,7 @@ static const char *const BP_WEATHER_NAMES[4] = { "CLEAR", "OVERCAST", "RAIN", "S
 #define BP_MSG_THORNE_BRIEF 6   /* client message table id: Dr. Thorne's A1M1 reprimand; unlocks him in Contacts */
 
 static const char *const BP_APP_NAMES[BP_APP_COUNT] = {
-    "MESSAGES", "CONTACTS", "MAP", "CAMERA", "NOTES", "LAB", "CARGO", "SKILLS", "LOADOUT", "WARDROBE", "STATUS", "ORB", "GFD", "IDUNA", "ARPANET", "TECHTREE", "MISSION"
+    "MESSAGES", "CONTACTS", "MAP", "CAMERA", "NOTES", "LAB", "CARGO", "SKILLS", "LOADOUT", "WARDROBE", "STATUS", "ORB", "GFD", "IDUNA", "ARPANET", "TECHTREE", "MISSION", "PELLEGRINO"
 };
 
 static const char *const BP_MISSION_ROW_NAMES[BP_MISSION_ROWS] = {

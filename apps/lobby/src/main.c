@@ -54,6 +54,7 @@
 #include "../../../packages/world/level_boxes.h"
 #include "../../../packages/iduna_login/iduna_login.h" /* #623: IDUNA SSO login (native loopback profile) */
 #include "../../../packages/pellegrino_embed/os_menu_gl.h" /* #627: OS menu = HTML+CSS painted by PELLEGRINO */
+#include "../../../packages/pellegrino_browser_embed/phone_browser_gl.h" /* SHANKPIT-PELLEGRINO-APP-02: real embedded browser phone app */
 #include <sys/stat.h>
 #ifdef _WIN32
 #include <direct.h>
@@ -1413,6 +1414,11 @@ static void draw_phone_app(const Phone *p) {
         glColor3f(0.6f, 0.72f, 0.82f);
         draw_string("EDUVM SCRIPT TERMINAL", col_x, row_y - row_h, 2.4f);
         draw_string("[ENTER] OPEN   (BACKQUOTE ALSO OPENS)", col_x, row_y - 2 * row_h, 2.2f);
+    } else if (p->app == BP_APP_PELLEGRINO) {
+        /* SHANKPIT-PELLEGRINO-APP-02: a REAL embedded browser (TLS/HTTP-3 included), not a static
+           mockup -- see packages/pellegrino_browser_embed/phone_browser_gl.h. Pumps+draws one real
+           frame of whatever page is currently loading/loaded every time the phone is open on this app. */
+        pbg_draw(PHONE_PANEL_X0, PHONE_PANEL_Y1);
     } else {
         int n = bp_rows(p);
         for (int i = 0; i < n && i < 10; i++) {
@@ -14131,6 +14137,10 @@ int main(int argc, char* argv[]) {
                     for (const char *c = e.text.text; *c; c++) phone_term_char(&g_story_phone, *c);
                     continue;
                 }
+                if (g_story_phone.open && g_story_phone.app == BP_APP_PELLEGRINO && e.type == SDL_TEXTINPUT) {
+                    for (const char *c = e.text.text; *c; c++) phone_browser_text(*c);
+                    continue;
+                }
                 if (g_orb_open && e.type == SDL_KEYDOWN) { orb_key(e.key.keysym.sym); continue; }
                 if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_BACKQUOTE && orb_available() && !g_chat_open && !g_paused) {
                     orb_toggle(); continue;
@@ -14169,6 +14179,16 @@ int main(int argc, char* argv[]) {
                        use), and mouse-look is frozen at that same cutscene precedent's own mouse-
                        motion gate, so nothing about this needs its own new freeze mechanism. */
                     if (g_story_phone.open) {
+                        if (g_story_phone.app == BP_APP_PELLEGRINO) {
+                            /* SHANKPIT-PELLEGRINO-APP-02: the real embedded browser owns every key
+                               entirely (address bar, link tab/select, scroll, form fields) via
+                               PELLEGRINO's own real on-key dispatch -- a "quit" result (Esc/q outside
+                               any text-entry/form-field mode) is the only thing that closes this app
+                               and returns to the phone's home grid, same BACK affordance every other
+                               phone app already has. */
+                            if (phone_browser_key(e.key.keysym.sym)) g_story_phone.app = -1;
+                            continue;
+                        }
                         if (e.key.keysym.sym == SDLK_UP) phone_input(&g_story_phone, BP_UP, 0);
                         else if (e.key.keysym.sym == SDLK_DOWN) phone_input(&g_story_phone, BP_DOWN, 0);
                         else if (e.key.keysym.sym == SDLK_LEFT) phone_input(&g_story_phone, BP_LEFT, 0);

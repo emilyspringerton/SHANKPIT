@@ -1,0 +1,4849 @@
+/* parena_runtime.h — the minimal C runtime VS0-emitted programs link
+ * against. Deliberately a separate file from src/arena.h, even though
+ * the bump-allocator mechanics are identical: src/arena.h's own header
+ * comment explicitly distinguishes "the compiler's own implementation-
+ * language (C) memory management" from "Parena-the-language's own
+ * :region/scratch and :region/buffer regions (a target-language
+ * concept)" -- this file IS that target-language concept's real C
+ * representation, so it gets its own identity rather than reusing the
+ * compiler-internal one, honoring that documented boundary.
+ */
+#ifndef PARENA_RUNTIME_H
+#define PARENA_RUNTIME_H
+
+/* PARENA_FREESTANDING (auto-on for any __wasm__ target, 2026-10-15, V16 WASM spike): the
+ * host-glue families that need a real OS -- BSD sockets/net-stream, pty, serial, process, signals,
+ * mmap -- are compiled out, leaving arena/Vec/Bytes/F32/string/slot cores plus the WASI-safe file
+ * helpers. A freestanding build also drops the 64-bit-pointer assumption Vec used to make (see
+ * ParenaVecSlot below). */
+#if defined(__wasm__) && !defined(PARENA_FREESTANDING)
+#define PARENA_FREESTANDING 1
+#endif
+#if defined(PARENA_FREESTANDING) && !defined(PARENA_NO_GRAPHICS)
+#define PARENA_NO_GRAPHICS 1 /* no SDL2 in a freestanding build */
+#endif
+
+/* _POSIX_C_SOURCE must be defined before any system header is
+ * included: under -std=c99 (this project's own strict ISO build
+ * flag, not -std=gnu99), glibc hides getaddrinfo/struct addrinfo and
+ * the rest of the POSIX-only surface behind this feature-test macro.
+ * Found for real (not assumed) getting stdlib/net/tcp.prn's new
+ * tcp_connect_impl to actually gcc-compile -- a plain #include
+ * <netdb.h> alone was not enough. 200112L = POSIX.1-2001, the version
+ * that defines getaddrinfo.
+ *
+ * Guarded with #ifndef (S508e, found live): a host program that already defines
+ * _POSIX_C_SOURCE to something else before including this header (DEADWEIGHT's own core/net.h
+ * defines 200809L, a real, higher POSIX version and strict superset of 200112L's own surface,
+ * before core/http.c pulls this header in) would otherwise get it silently clobbered to this
+ * lower value, tripping glibc's own "_POSIX_C_SOURCE redefined" hard error under -Werror. Only
+ * define it here if nothing already has. */
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200112L
+#endif
+/* _DEFAULT_SOURCE alongside _POSIX_C_SOURCE (both may coexist under glibc,
+ * unlike _POSIX_C_SOURCE alone) -- needed for pty_open_impl below:
+ * forkpty/openpty are a real glibc/BSD extension declared in <pty.h>, not
+ * POSIX-standard, and glibc hides them when _POSIX_C_SOURCE is defined
+ * without this. Found for real getting stdlib/pty.prn's pty_open_impl to
+ * actually see forkpty's declaration, the same "define the feature-test
+ * macro before any system header, verify by actually compiling" discipline
+ * tcp_connect_impl's own header comment above already documents. */
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE
+#endif
+
+#ifdef _WIN32
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0601
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#endif
+#include <stddef.h>
+#include <string.h>
+#include <math.h>   /* F32 elementwise primitives (tensor/nn.prn) */
+#include <ctype.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <dirent.h>
+#include <time.h>
+#include <errno.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#ifndef PARENA_FREESTANDING
+#include <signal.h>
+#endif
+/* Real cross-platform split (2026-08-26, founder: "ensure editor
+ * binaries for windows linux and mac are released"): everything below
+ * this point -- BSD sockets (net/tcp.prn), POSIX ptys (pty.prn),
+ * fork/exec (process.prn) -- is genuinely platform-specific and has no
+ * real Windows equivalent in the same shape (WinSock2 and ConPTY are
+ * different APIs entirely, not drop-in replacements); macOS/BSD's own
+ * pty API lives in <util.h>, not Linux glibc's <pty.h>. Guarded so a
+ * program that doesn't call into net/tcp, pty, or process (editor-demo
+ * is the real, concrete case that needed this) can still build clean
+ * on a real Windows runner -- programs that DO need those stay
+ * Linux/macOS-only, an honest, pre-existing limitation (pty.prn's own
+ * header comment already documented Windows ConPTY as real, separate,
+ * unstarted work; this doesn't change that, just stops it from ALSO
+ * blocking unrelated Windows builds). */
+#if !defined(_WIN32) && !defined(PARENA_FREESTANDING)
+#include <sys/wait.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <netinet/in.h>
+#include <netdb.h>
+#include <arpa/inet.h>
+#include <termios.h>
+#include <sys/ioctl.h>
+#include <poll.h>
+#include <strings.h>
+#include <sys/mman.h>
+#if defined(__linux__)
+#include <pty.h>
+#elif defined(__APPLE__)
+#include <util.h>
+#endif
+/* AF_PACKET (net/l2socket.prn, 2026-09-08, the Nexmon-targeting thread's own real link-layer
+ * raw-frame-injection primitive) is Linux-specific -- no BSD/macOS equivalent exists (that world
+ * uses BPF devices instead, a real, separate, unattempted API). Real, honest, standing scope: a
+ * real 802.11 monitor-mode interface itself only exists on Linux in this monorepo's own real
+ * target hardware (Raspberry Pi + Nexmon), so this isn't a real capability loss on any platform
+ * this feature actually needs to run on. */
+#if defined(__linux__)
+#include <linux/if_packet.h>
+#include <net/if.h>
+#include <net/ethernet.h>
+#endif
+/* linux/spi/spidev.h (stdlib/hw/spi.prn, 2026-09-09, the SPI gap
+ * docs/UART_SERIAL_NORTHSTAR.md itself named explicitly out of scope --
+ * the Adafruit Feather's own likely RFM9x LoRa radio talks SPI, not
+ * UART) is real, genuinely Linux-only, same honest boundary AF_PACKET
+ * above already draws: macOS/BSD have no spidev-equivalent userspace
+ * character-device API at all (Apple's own IOKit SPI access is a
+ * different, kernel-extension-based story, not a drop-in). This
+ * monorepo's own real target hardware for this (Raspberry Pi) is
+ * Linux-only anyway, so this is not a real capability loss on any
+ * platform this feature actually needs to run on. */
+#if defined(__linux__)
+#include <linux/spi/spidev.h>
+#endif
+/* linux/i2c-dev.h (stdlib/hw/i2c.prn, 2026-09-09, same day) -- real,
+ * genuinely Linux-only userspace I2C API, same honest boundary
+ * spidev.h/AF_PACKET above already draw: macOS/BSD have no
+ * `/dev/i2c-N`-equivalent character-device API. This box's own real
+ * `/dev/i2c-0` (Intel SMBus controller, `i2c_i801`) is root-owned
+ * system hardware -- real, deliberately NOT opened/probed by anything
+ * in this runtime or its own tests (see stdlib/hw/i2c.prn's own header
+ * comment): an SMBus commonly carries real battery/thermal/RAM-SPD
+ * traffic, and issuing an unreviewed transaction against it from this
+ * sandbox is a real, unnecessary risk this stdlib work doesn't need to
+ * take to be real and correct. */
+#if defined(__linux__)
+#include <linux/i2c-dev.h>
+#endif
+#endif
+/* SDL2 -- built-in, same tier as core (STDLIB.md's own "sdl2" section:
+ * "SDL2 is built in... no (import sdl2) line needed"), so its header is
+ * unconditionally available here rather than gated behind a feature
+ * macro. Real, honest dependency this adds to every build of this
+ * runtime, not silently glossed over: any environment building PARENA
+ * programs needs libsdl2-dev installed (confirmed present on this box).
+ * Harmless for a program that never calls into stdlib/sdl2.prn -- every
+ * sdl2_*_impl function below is `static inline`, so an unreferenced one
+ * emits no symbol at all, no -lSDL2 needed unless something actually
+ * calls one.
+ *
+ * Real, honest exception carved out here (2026-09-03, kanban priority-queue
+ * card PARENA-0001, "smallest vertical slice to make PARENA work with the
+ * OS... alpine? debian?"): a headless/embedded/musl-static build target
+ * (real, live-checked motivating case -- Alpine's own real SDL2 dev headers
+ * are built against musl, not this box's glibc-linked libsdl2-dev, so
+ * mixing them fails; a real target with zero SDL2 in its own `.prn` source
+ * at all, like `sip/message.prn` or `pentest/pcap.prn`, shouldn't need SDL2
+ * headers present just to compile) can define `PARENA_NO_GRAPHICS` before
+ * including this header to skip SDL2/SDL2_ttf entirely. Default (undefined)
+ * behavior is unchanged -- every existing consumer still gets SDL2
+ * unconditionally, exactly as before. */
+#ifndef PARENA_NO_GRAPHICS
+#include <SDL2/SDL.h>
+/* SDL2_ttf -- real text rendering, the concrete next real extension
+ * flagged when sdl2.prn's own renderer/draw calls were closed (2026-08-26):
+ * "the next real extension once an editor loop actually needs to render
+ * text." Same "unconditionally available, harmless if unused" reasoning
+ * as SDL2 itself above -- confirmed libsdl2-ttf-dev present on this box. */
+#ifndef PARENA_NO_TTF
+#include <SDL2/SDL_ttf.h>
+#endif /* PARENA_NO_TTF -- define to build against SDL2 only (no SDL2_ttf headers/DLL); the font
+        * entry points below become stubs returning -1. Added 2026-10-14 for PELLEGRINO. */
+#endif /* PARENA_NO_GRAPHICS */
+
+/* net/tls.prn's own real host glue (S508e, 2026-09-21) -- mbedTLS, opt-IN via PARENA_WITH_TLS
+ * (the inverse of PARENA_NO_GRAPHICS's opt-out shape above, deliberately): unlike sockets
+ * (always in libc) or SDL2 (already established as "unconditionally available, harmless if
+ * unused" on this box), mbedTLS is a real, heavier third-party dependency most PARENA consumers
+ * (BIG_O/SPIDERBEETLE/etc.'s own scalar game-logic .prn files, which never touch the network at
+ * all) have no reason to pull in just to compile. A consumer that DOES want TLS (DEADWEIGHT's
+ * own client, talking to IDUNA over the public internet) defines PARENA_WITH_TLS before
+ * including this header. Requires libmbedtls-dev (Debian/Ubuntu package name; real, present on
+ * this box, extracted without root via `apt-get download` + `dpkg-deb -x` for this session's own
+ * live verification -- see sudo-queue/ for the permanent system-wide install). */
+#ifdef PARENA_WITH_TLS
+#include <mbedtls/net_sockets.h>
+#include <mbedtls/ssl.h>
+#include <mbedtls/entropy.h>
+#include <mbedtls/ctr_drbg.h>
+#include <mbedtls/x509_crt.h>
+#include <mbedtls/error.h>
+/* Deliberately NOT <poll.h> here -- unlike the tcp.prn/udp.prn socket block elsewhere in this
+ * file (real, pre-existing, Linux/macOS-only by design, guarded under #ifndef _WIN32), this TLS
+ * block is meant to also build for the Windows/mingw cross-target (S508f) where <poll.h> doesn't
+ * exist at all. mbedtls_net_poll (declared in net_sockets.h above) is mbedTLS's own real,
+ * already-cross-platform idle-wait primitive -- wrapping select()/WSAPoll internally per
+ * platform -- used below instead of a raw POSIX poll() call. */
+#endif /* PARENA_WITH_TLS */
+
+/* Post-quantum ML-DSA-44 (FIPS 204) support -- EMILY/BACKLOG.md SECTION 536 follow-up, BIG_O/
+ * NORTHSTAR.md §29. Same real opt-in shape PARENA_WITH_TLS already establishes just above: a
+ * consumer that wants crypto/mldsa.prn defines PARENA_WITH_MLDSA before including this header,
+ * AND compiles+links every runtime/mldsa .c file (excluding nistkat/ and test/, real NIST-KAT/
+ * self-test harnesses, not part of the real library) into its own final binary -- these are real .c
+ * translation units (the vendored CRYSTALS-Dilithium reference), not header-only static inline
+ * functions like the rest of this runtime, so they can't just live entirely in this one header.
+ * See runtime/mldsa/'s own attribution header for full provenance (CC0/public domain, vendored
+ * byte-for-byte from pq-crystals/dilithium). Consumers who don't need post-quantum crypto (the
+ * overwhelming majority of PARENA's own scalar game-logic .prn files) pay nothing. */
+#ifdef PARENA_WITH_MLDSA
+#include "mldsa/api.h"
+#include "mldsa/sign.h"
+#endif /* PARENA_WITH_MLDSA */
+
+typedef struct ParenaArenaBlock {
+    struct ParenaArenaBlock *next;
+    size_t used;
+    size_t capacity;
+    /* 64-byte aligned so the first allocation of every block starts on a cache line. */
+    unsigned char data[] __attribute__((aligned(64)));
+} ParenaArenaBlock;
+
+typedef struct {
+    ParenaArenaBlock *head;
+} Arena;
+
+void arena_init(Arena *a);
+void *arena_alloc(Arena *a, size_t size);
+/* Same as arena_alloc but the returned pointer is `align`-byte aligned (power of two <= 64).
+ * Vec uses 64 so a growing array never straddles a cache line at its start. */
+void *arena_alloc_aligned(Arena *a, size_t size, size_t align);
+
+/* Block provider -- where arena blocks come from. Default (unless the runtime is built with
+ * -DPARENA_NO_MALLOC) is malloc/free. Under -DPARENA_NO_MALLOC the default is a static,
+ * 64-byte-aligned pool of PARENA_STATIC_POOL_BYTES (default 1 MiB) carved into
+ * PARENA_STATIC_BLOCK_BYTES (default 8 KiB) granules, first-fit over a bitmap; the runtime
+ * then contains no heap call at all. A host may install its own provider at startup
+ * (before the first arena_alloc). `alloc` returns NULL on exhaustion; the runtime then calls
+ * the OOM hook if set (it may return a replacement block) and otherwise exits, as before.
+ * Block sizes passed to alloc/free are the exact byte size requested. */
+typedef void *(*ParenaBlockAllocFn)(size_t bytes);
+typedef void (*ParenaBlockFreeFn)(void *block, size_t bytes);
+void parena_set_block_provider(ParenaBlockAllocFn alloc_fn, ParenaBlockFreeFn free_fn);
+/* Bytes currently handed out by the static pool / high-water mark (0 when malloc-backed). */
+size_t parena_static_pool_used(void);
+size_t parena_static_pool_high_water(void);
+char *arena_strdup(Arena *a, const char *src, size_t len);
+
+/* arena_free_all — also used directly as a GCC/Clang cleanup attribute
+ * function (`Arena x __attribute__((cleanup(arena_free_all)));`), which
+ * is exactly why its signature is `void (Arena *)`, matching what the
+ * cleanup attribute requires without a wrapper. This is the real C
+ * emission target for every `with-arena` block: the arena is torn down
+ * automatically at the end of its own C block scope, mirroring
+ * NORTHSTAR.md's own memory-model description verbatim ("reclaimed
+ * when its region ends"). */
+void arena_free_all(Arena *a);
+
+/* Result/Option — the real C representation VS0's own `match` emission
+ * targets. NORTHSTAR.md's own "Zero-allocation pattern matching" section
+ * names `Option T`/`Result T E` as core, `match`-destructured tagged
+ * unions -- this is their real C shape: `tag` distinguishes Ok/Some
+ * (1) from Err/None (0), `value` carries the payload as `void *`. Real,
+ * honest limitation: one shared `void *value` field for both variants
+ * (rather than a real, separately-typed union) is a genuine loss of
+ * C-level type safety, matching VS0's own already-stated "no function-
+ * signature table / full type-checking pass yet" gap elsewhere in this
+ * emitter -- not pretended solved here either. */
+typedef struct {
+    int tag; /* 1 = Ok, 0 = Err */
+    void *value;
+} Result;
+
+typedef struct {
+    int tag; /* 1 = Some, 0 = None */
+    void *value;
+} Option;
+
+static inline Result result_ok(void *v) {
+    Result r;
+    r.tag = 1;
+    r.value = v;
+    return r;
+}
+static inline Result result_err(void *v) {
+    Result r;
+    r.tag = 0;
+    r.value = v;
+    return r;
+}
+static inline Option option_some(void *v) {
+    Option o;
+    o.tag = 1;
+    o.value = v;
+    return o;
+}
+static inline Option option_none(void) {
+    Option o;
+    o.tag = 0;
+    o.value = NULL;
+    return o;
+}
+
+/* result_unwrap_check / option_unwrap_check -- the real runtime half of
+ * VS0's `unwrap` (see emit.c's own `is_call_named(expr, "unwrap")`
+ * handling for the full real reasoning): Rust's own well-known
+ * `.unwrap()` semantics -- pass through unchanged on Ok/Some, abort
+ * with a real stderr message on Err/None, rather than silently
+ * dereferencing a NULL `.value` (undefined behavior) or a stale one.
+ * Pass-through-by-value (not void) so the call site can chain `.value`
+ * straight off the return, evaluating the checked expression exactly
+ * once -- the same real reason g_box_helpers' own generated helpers
+ * are real functions, not a GNU statement-expression (rejected under
+ * this project's own `-pedantic -Werror` build). */
+static inline Result result_unwrap_check(Result r) {
+    if (!r.tag) {
+        fprintf(stderr, "parena: unwrap called on an Err result\n");
+        abort();
+    }
+    return r;
+}
+static inline Option option_unwrap_check(Option o) {
+    if (!o.tag) {
+        fprintf(stderr, "parena: unwrap called on a None option\n");
+        abort();
+    }
+    return o;
+}
+
+/* OK / ERR -- the real no-payload success/failure shorthand a real,
+ * multi-file convention in stdlib's own #target inline-c bodies already
+ * assumes exists (gfd.prn, thread.prn, io.prn, sdl2.prn, editor/
+ * buffer.prn, pentest/pcap.prn -- 18 real call sites across 6 files, the
+ * common `some_c_call(...) == 0 ? OK : ERR` shape for a `Result Unit
+ * SomeError`-typed function whose real payload is Unit, not a value
+ * worth carrying). Missing until now -- caught by actually compiling
+ * gfd.prn's own real emitted C with gcc rather than trusting that
+ * `parena build`'s own success (it doesn't validate inline-c content,
+ * by design -- that's the whole point of the FFI trust boundary) meant
+ * the result was real, working C. Defined as macros, not `static
+ * inline` functions like `result_ok`/`result_err` above, since they
+ * need to be usable as bare ternary-branch expressions the way every
+ * real call site above already writes them. */
+#define OK (result_ok(NULL))
+#define ERR (result_err(NULL))
+
+/* Vec -- STDLIB.md's own "vec — no dependencies, generic over T" design
+ * (new/push!/get/len), erased to `void *` items the same real, honest
+ * way Result/Option erase their own payload above (no generics/real
+ * type-checking pass yet). Deliberately arena-allocated, not
+ * malloc/realloc'd: STDLIB.md's own `vec/new` signature takes a `dest :
+ * Arena @ Region` for a real reason -- every other allocation in this
+ * language ties its lifetime to a region, and a `Vec` growing via
+ * malloc/free underneath a language with no manual free anywhere else
+ * would be a real, silent exception to that model. Growing means
+ * bump-allocating a fresh, larger backing array from the same arena and
+ * copying the old items over -- the old block is simply abandoned
+ * inside the arena (never freed individually, matching every other
+ * bump-allocator tradeoff `arena_alloc` already makes elsewhere), not
+ * reclaimed until the whole arena itself is. Function names below are
+ * written to already match `mangle()`'s own real output for `vec/new`/
+ * `vec/push!`/`vec/get`/`vec/len` (`/`s and the trailing `!` both become
+ * `_`) -- emit_call()'s generic call path needs no special-casing to
+ * reach these, the same way it reaches any other stdlib function. */
+/* Vec layout (rewritten for cache locality):
+ *
+ *   items[] is ONE contiguous, 64-byte-aligned array. Scalar elements (I32/F64, boxed via
+ *   vec_box_i32/vec_box_f64) are stored INLINE in their slot -- no per-element cell, no
+ *   pointer chase, no arena growth per push/set. Pointer elements (String/struct pointers)
+ *   are stored in the slot exactly as before. `scalar` records which regime a Vec is in
+ *   (set by the first scalar push/set); vec_get returns the address of the slot for scalar
+ *   Vecs and the stored pointer otherwise, so the emitter's `*(double *)vec_get(v, i)` /
+ *   `*(int *)vec_get(v, i)` / `*(T **)...` idioms are unchanged.
+ *
+ *   Contract change worth knowing: a pointer returned by vec_get on a scalar Vec points
+ *   INTO the array and is invalidated by a later push that grows it (it used to point at a
+ *   stable boxed cell). Generated code dereferences immediately, so this is not observable
+ *   there. Needs a little-endian target for the int-in-slot read (slots are 8 bytes
+ *   everywhere, wasm32 included).
+ *
+ *   `tmp` is the single-slot staging cell vec_box_* hand back so the existing
+ *   `vec_push_(v, vec_box_f64(v, x))` call shape keeps working.
+ */
+/* One Vec slot is always 8 bytes wide (pointer, F64 or I32), NOT sizeof(void *): on wasm32 a
+ * pointer is 4 bytes, so a pointer-sized slot could not hold a scalar F64 element. On the 64-bit
+ * hosts this is byte-for-byte the old layout. */
+typedef union { void *p; double f; int i; } ParenaVecSlot;
+
+typedef struct {
+    Arena *arena;
+    ParenaVecSlot *items;
+    size_t count;
+    size_t capacity;
+    int scalar;
+    union { double f; int i; void *p; } tmp;
+} Vec;
+
+typedef char parena_vec_slot_holds_double_[(sizeof(ParenaVecSlot) >= sizeof(double)) ? 1 : -1];
+
+static inline Vec vec_new(Arena *dest) {
+    Vec v;
+    v.arena = dest;
+    v.items = NULL;
+    v.count = 0;
+    v.capacity = 0;
+    v.scalar = 0;
+    v.tmp.p = NULL;
+    return v;
+}
+
+static inline void vec_reserve_(Vec *v, size_t want) {
+    if (want > v->capacity) {
+        size_t new_cap = v->capacity == 0 ? 8 : v->capacity;
+        ParenaVecSlot *new_items;
+        size_t i;
+        while (new_cap < want) new_cap *= 2;
+        new_items = (ParenaVecSlot *)arena_alloc_aligned(v->arena, new_cap * sizeof(ParenaVecSlot), 64);
+        for (i = 0; i < v->count; i++) new_items[i] = v->items[i];
+        v->items = new_items;
+        v->capacity = new_cap;
+    }
+}
+
+/* vec_reserve -- optional presize so a hot loop never regrows (and never abandons the old
+ * array in the bump arena). Not required for correctness. */
+static inline void vec_reserve(Vec *v, int n) {
+    if (n > 0) vec_reserve_(v, (size_t)n);
+}
+
+static inline int vec_is_staged_(const Vec *v, const void *item) {
+    return item == (const void *)&v->tmp;
+}
+
+static inline void vec_store_(Vec *v, size_t idx, void *item) {
+    if (vec_is_staged_(v, item)) {
+        v->scalar = 1;
+        memset(&v->items[idx], 0, sizeof(ParenaVecSlot)); /* clear all 8 bytes so an int slot reads back clean */
+        memcpy(&v->items[idx], &v->tmp, sizeof(double));
+    } else {
+        memset(&v->items[idx], 0, sizeof(ParenaVecSlot));
+        v->items[idx].p = item;
+    }
+}
+
+static inline void vec_push_(Vec *v, void *item) {
+    vec_reserve_(v, v->count + 1);
+    vec_store_(v, v->count, item);
+    v->count++;
+}
+
+static inline void *vec_get(Vec *v, int idx) {
+    if (idx < 0 || (size_t)idx >= v->count) return NULL;
+    return v->scalar ? (void *)&v->items[idx] : v->items[idx].p;
+}
+
+static inline int vec_len(Vec *v) {
+    return (int)v->count;
+}
+
+/* vec_set_at_ -- index assignment; silently ignores an out-of-bounds index (same convention
+ * vec_get's NULL return already has). */
+static inline void vec_set_at_(Vec *v, int idx, void *value) {
+    if (idx < 0 || (size_t)idx >= v->count) return;
+    vec_store_(v, (size_t)idx, value);
+}
+
+/* vec_box_i32 / vec_box_f64 -- stage the scalar in the Vec's own `tmp` cell and return its
+ * address; vec_push_/vec_set_at_ recognise that address and copy the value INLINE into the
+ * slot. Zero allocation. */
+static inline void *vec_box_i32(Vec *v, int value) {
+    v->tmp.p = NULL;
+    v->tmp.i = value;
+    return &v->tmp;
+}
+static inline void *vec_box_f64(Vec *v, double value) {
+    v->tmp.f = value;
+    return &v->tmp;
+}
+
+/* vec_truncate_ -- shrink a Vec's logical length (never grows; capacity and the arena bytes are
+ * untouched, exactly like every other Vec operation never returning memory). Added 2026-10-15 for
+ * the V16 engine's Array.prototype.pop. Name matches mangle("vec/truncate!"). */
+static inline void vec_truncate_(Vec *v, int n) {
+    if (n < 0) n = 0;
+    if ((size_t)n < v->count) v->count = (size_t)n;
+}
+
+/* Bytes -- a real, second core-language base type alongside String,
+ * added 2026-09-09 to close the embedded-NUL-byte gap `hw/spi.prn`/
+ * `hw/i2c.prn`/`hw/serial.prn` all independently found and named the
+ * same day: every raw host primitive that speaks `String` treats it as
+ * a NUL-terminated C string (`strlen`-based), so a binary payload with
+ * a real, ordinary embedded `0x00` (an SPI/I2C register address of
+ * `0x00` is completely normal — the RFM9x's own `RegFifo` register IS
+ * address `0x00`) silently truncates. `Bytes` is the same real idea as
+ * `String` (a real, non-generic, always-there base type recognized
+ * directly by `resolve_base_type_name` in `src/emit.c`, exactly like
+ * `String`/`Arena` already are — NOT a user `defstruct`, and NOT
+ * `Vec`'s own generic, per-element-boxed machinery, which is real
+ * overkill for a fixed-element-type byte buffer and would cost one
+ * `arena_alloc` per byte) but carries its own explicit length instead
+ * of relying on a sentinel byte, so a `0x00` in the middle of real data
+ * is just data.
+ *
+ * Real, deliberate v0 scope, matching every other base type this
+ * runtime added the same day: allocate/length/indexed get/set and
+ * String interop (`bytes_from_string_impl`/`bytes_to_string_lossy_impl`, the
+ * latter honestly named — converting BACK to a NUL-terminated String
+ * still truncates at the first embedded `0x00`, exactly the same
+ * limitation this type exists to let real binary DATA avoid, just not
+ * pretended away when a caller genuinely needs a `String` on the other
+ * end). No slicing/concat/comparison operations yet — real, separate,
+ * additive follow-up if a real caller needs them, matching this
+ * runtime's own established "close the gap that's actually blocking
+ * something, name the rest honestly" discipline (`hw/serial.prn`'s own
+ * unused `ReadFailed` variant is the same judgment call in miniature).
+ *
+ * `ensure_box_helper` in `src/emit.c` needs no `Bytes`-specific code at
+ * all to box this into a `(Result Bytes SomeError)`/`(Option Bytes)`
+ * payload — confirmed by reading that function directly before writing
+ * this: it already works generically off any C type STRING that
+ * doesn't end in `*` (real struct-by-value boxing, `*p = v; return
+ * p;`), the exact same generic path `SpiDevice`/`SerialPort`/
+ * `I2cDevice` (real `defstruct`s, not base types) already go through
+ * successfully. `Bytes` needs its own `resolve_base_type_name` entry
+ * for the same real reason `Arena` has one (a base type with no
+ * `defstruct` registration behind it), nothing more. */
+typedef struct {
+    unsigned char *data;
+    int len;
+} Bytes;
+
+/* bytes_alloc_impl -- a real, honest zero-length buffer for a negative or
+ * zero request (never a NULL `data` pointer -- `arena_alloc(dest, 1)`
+ * for a zero-length buffer keeps `bytes_get_impl`'s own out-of-bounds check
+ * the only thing callers need, not a separate NULL check first). */
+static inline Bytes bytes_alloc_impl(Arena *dest, int len) {
+    Bytes b;
+    b.len = len > 0 ? len : 0;
+    b.data = (unsigned char *)arena_alloc(dest, (size_t)(b.len > 0 ? b.len : 1));
+    return b;
+}
+
+static inline int bytes_len_impl(Bytes b) {
+    return b.len;
+}
+
+/* bytes_get_impl/bytes_set_impl -- same real, honest out-of-bounds discipline
+ * vec_get/vec_set_at_ above already establish (silently return a
+ * sentinel / silently no-op, no abort, no real error-reporting channel
+ * a scalar-returning or void-returning runtime function has to use
+ * here). `-1` is a real, valid sentinel specifically because it can
+ * never be a genuine byte value (0-255), unlike vec_get's own NULL
+ * (which works there because Vec's items are already pointers). */
+static inline int bytes_get_impl(Bytes b, int idx) {
+    if (idx < 0 || idx >= b.len) return -1;
+    return (int)b.data[idx];
+}
+
+static inline void bytes_set_impl(Bytes b, int idx, int value) {
+    if (idx < 0 || idx >= b.len) return;
+    b.data[idx] = (unsigned char)value;
+}
+
+/* bytes_from_string_impl -- real, byte-perfect copy of a String's own
+ * current bytes (via strlen, so a String that's ALREADY been truncated
+ * upstream by some other NUL-terminated primitive stays truncated --
+ * this only helps once the data enters the system as real Bytes from
+ * the start, e.g. a future spi-transfer-bytes/i2c-write-bytes sibling,
+ * not un-truncate something already lost). Real, honest, named
+ * boundary, not silently assumed solved. */
+static inline Bytes bytes_from_string_impl(Arena *dest, const char *s) {
+    size_t len = strlen(s);
+    Bytes b = bytes_alloc_impl(dest, (int)len);
+    if (len > 0) memcpy(b.data, s, len);
+    return b;
+}
+
+/* bytes_to_string_lossy_impl -- real, honestly-named conversion back to a
+ * NUL-terminated String: stops at the first embedded 0x00 byte (or at
+ * `len`, whichever comes first) -- the exact same real limitation this
+ * whole type exists to let real binary DATA avoid, surfaced plainly in
+ * the function's own name rather than called a plain `bytes_to_string`
+ * that would quietly re-introduce it for any caller who round-trips
+ * through this. */
+static inline char *bytes_to_string_lossy_impl(Bytes b, Arena *dest) {
+    int n = 0;
+    while (n < b.len && b.data[n] != 0) n++;
+    char *out = (char *)arena_alloc(dest, (size_t)n + 1);
+    if (n > 0) memcpy(out, b.data, (size_t)n);
+    out[n] = '\0';
+    return out;
+}
+
+/* bytes_slice_impl -- real, additive extension to bytes.prn's own v0 (that file's own doc
+ * comment explicitly names "No slicing/concat/comparison operations yet -- real, separate,
+ * additive follow-up if a real caller needs them" -- crypto/mldsa.prn is that real caller,
+ * EMILY/BACKLOG.md SECTION 536 follow-up, BIG_O/NORTHSTAR.md §29: ML-DSA keygen produces a real,
+ * matched pubkey+seckey pair from ONE underlying call -- see this file's own mldsa_keygen_impl
+ * below -- and a `#target` inline-c body can only return one plain scalar/String/Bytes value
+ * (pty.prn's own 2026-08-26 rewrite established this same real rule for String; it applies
+ * identically to Bytes), so splitting the real, single concatenated output into two real halves
+ * has to happen in ordinary PARENA code, which needs a real slice primitive to do it with). Same
+ * real, honest out-of-bounds discipline bytes_get_impl/bytes_set_impl already establish: a
+ * request outside [0, b.len] clamps rather than reading/writing out of bounds, never aborts. */
+static inline Bytes bytes_slice_impl(Bytes b, int start, int end, Arena *dest) {
+    if (start < 0) start = 0;
+    if (end > b.len) end = b.len;
+    int n = end > start ? end - start : 0;
+    Bytes out = bytes_alloc_impl(dest, n);
+    if (n > 0) memcpy(out.data, b.data + start, (size_t)n);
+    return out;
+}
+
+/* ---- F32 buffers (stdlib/tensor/f32.prn, stdlib/tensor/conv.prn) -----------------------------------
+ *
+ * Founder real-time, 2026-10-01: "dive into the TTS stuff with parena some kind of edge tts model" +
+ * the standing rule "always implement core deps in PARENA first". A neural-inference engine (the
+ * Piper/VITS port, docs/TTS_VITS_PORT_PLAN.md) needs packed float32 tensors and a few hot bulk
+ * kernels; PARENA's scalar type is F64 and its Vec is per-element boxed, so the substrate is a plain
+ * `Bytes` buffer read/written as float32 (4 bytes/element, host byte order -- see f32_load_le_impl
+ * for the portable file reader) plus a handful of FUSED primitives for the inner loops. The outer
+ * loops (channels, taps, time) stay ordinary PARENA loop/recur. Measured (tests/bench_tensor_conv.c,
+ * conv1d 64x64 k=7 L=4096, `make bench-tensor`): with the innermost axpy as one primitive the PARENA-driven
+ * kernel ran at parity with hand-written C on an idle machine (~2.9 GMAC/s, an earlier prototype run) and at
+ * ~2.2 vs ~4.7 GMAC/s (about half) on a heavily loaded one -- so treat "within 2x of hand-written C" as the
+ * honest claim and re-measure on an idle box before quoting a number.
+ *
+ * Contract (same honest discipline as bytes_get_impl/bytes_set_impl): every index/range is validated
+ * ONCE up front; anything outside the buffers makes the call a silent no-op (reads return 0), it
+ * never reads or writes out of bounds and never aborts. Element offsets are in FLOATS, not bytes.
+ * Determinism: no fast-math, fixed accumulation order (the dot product uses 8 fixed partial sums);
+ * build with -ffp-contract=off for bit-reproducibility across machines/compilers (an FMA changes
+ * rounding). Misaligned buffers fall back to a memcpy path, so a Bytes slice is always safe. */
+static inline int f32_len_impl(Bytes b) { return b.len / 4; }
+
+static inline Bytes f32_alloc_impl(Arena *dest, int n) {
+    if (n <= 0 || n > 0x1FFFFFFF) return bytes_alloc_impl(dest, 0);
+    Bytes b = bytes_alloc_impl(dest, n * 4);
+    memset(b.data, 0, (size_t)b.len);
+    return b;
+}
+
+static inline double f32_get_impl(Bytes b, int i) {
+    if (i < 0 || i >= b.len / 4) return 0.0;
+    float v;
+    memcpy(&v, b.data + (size_t)i * 4u, 4);
+    return (double)v;
+}
+
+static inline void f32_set_impl(Bytes b, int i, double v) {
+    if (i < 0 || i >= b.len / 4) return;
+    float f = (float)v;
+    memcpy(b.data + (size_t)i * 4u, &f, 4);
+}
+
+static inline int f32_range_ok_(Bytes b, int off, int n) {
+    return n > 0 && off >= 0 && off <= b.len / 4 && n <= b.len / 4 - off;
+}
+
+static inline int f32_aligned_(Bytes b) { return (((size_t)b.data) & 3u) == 0; }
+
+static inline void f32_fill_impl(Bytes b, int off, int n, double v) {
+    if (!f32_range_ok_(b, off, n)) return;
+    float f = (float)v;
+    for (int i = 0; i < n; i++) memcpy(b.data + ((size_t)off + (size_t)i) * 4u, &f, 4);
+}
+
+static inline void f32_copy_impl(Bytes dst, int doff, Bytes src, int soff, int n) {
+    if (!f32_range_ok_(dst, doff, n) || !f32_range_ok_(src, soff, n)) return;
+    memmove(dst.data + (size_t)doff * 4u, src.data + (size_t)soff * 4u, (size_t)n * 4u);
+}
+
+/* y[yo+i] += a * x[xo+i]  -- the conv/matmul inner loop. y and x may be the same buffer only if the
+ * ranges do not overlap. */
+/* The -O2 "very-cheap" vectorizer cost model refuses loops whose trip count is unknown (it would need an
+ * epilogue); this one is THE hot loop of every conv/matmul, so ask for the full vectorizer on it. */
+#if defined(__GNUC__) && !defined(__clang__)
+#define PARENA_F32_HOT __attribute__((optimize("O3")))
+#else
+#define PARENA_F32_HOT
+#endif
+PARENA_F32_HOT
+static inline void f32_axpy_impl(Bytes y, int yo, Bytes x, int xo, double a, int n) {
+    if (!f32_range_ok_(y, yo, n) || !f32_range_ok_(x, xo, n)) return;
+    const float av = (float)a;
+    if (f32_aligned_(y) && f32_aligned_(x)) {
+        float *restrict yp = (float *)y.data + yo;          /* restrict: the contract above forbids overlap, and it is what */
+        const float *restrict xp = (const float *)x.data + xo; /* lets the compiler vectorize this loop */
+        for (int i = 0; i < n; i++) yp[i] += av * xp[i];
+    } else {
+        for (int i = 0; i < n; i++) {
+            float yv, xv;
+            memcpy(&yv, y.data + ((size_t)yo + (size_t)i) * 4u, 4);
+            memcpy(&xv, x.data + ((size_t)xo + (size_t)i) * 4u, 4);
+            yv += av * xv;
+            memcpy(y.data + ((size_t)yo + (size_t)i) * 4u, &yv, 4);
+        }
+    }
+}
+
+/* y[yo + i*ys] += a * x[xo+i], i in [0,n): the transposed-convolution scatter. ys may be any positive
+ * stride; the whole strided range is validated first. */
+static inline void f32_axpy_strided_impl(Bytes y, int yo, int ys, Bytes x, int xo, double a, int n) {
+    if (ys <= 0 || n <= 0 || !f32_range_ok_(x, xo, n)) return;
+    long last = (long)yo + (long)(n - 1) * (long)ys;
+    if (yo < 0 || last >= (long)(y.len / 4)) return;
+    const float av = (float)a;
+    for (int i = 0; i < n; i++) {
+        float yv, xv;
+        memcpy(&yv, y.data + ((size_t)yo + (size_t)i * (size_t)ys) * 4u, 4);
+        memcpy(&xv, x.data + ((size_t)xo + (size_t)i) * 4u, 4);
+        yv += av * xv;
+        memcpy(y.data + ((size_t)yo + (size_t)i * (size_t)ys) * 4u, &yv, 4);
+    }
+}
+
+/* sum_i x[xo+i] * y[yo+i], eight fixed partial sums combined in a fixed order (deterministic, and
+ * wide enough for the compiler to keep the lanes busy without fast-math). Accumulates in float32 like
+ * the reference runtime does; the final value is returned as F64. */
+static inline double f32_dot_impl(Bytes x, int xo, Bytes y, int yo, int n) {
+    if (!f32_range_ok_(x, xo, n) || !f32_range_ok_(y, yo, n)) return 0.0;
+    float acc[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+    int i = 0;
+    for (; i + 8 <= n; i += 8) {
+        for (int l = 0; l < 8; l++) {
+            float xv, yv;
+            memcpy(&xv, x.data + ((size_t)xo + (size_t)(i + l)) * 4u, 4);
+            memcpy(&yv, y.data + ((size_t)yo + (size_t)(i + l)) * 4u, 4);
+            acc[l] += xv * yv;
+        }
+    }
+    float tail = 0.0f;
+    for (; i < n; i++) {
+        float xv, yv;
+        memcpy(&xv, x.data + ((size_t)xo + (size_t)i) * 4u, 4);
+        memcpy(&yv, y.data + ((size_t)yo + (size_t)i) * 4u, 4);
+        tail += xv * yv;
+    }
+    return (double)(((acc[0] + acc[4]) + (acc[1] + acc[5])) + ((acc[2] + acc[6]) + (acc[3] + acc[7])) + tail);
+}
+
+/* y[yo+i] *= a, i in [0,n) */
+static inline void f32_scale_impl(Bytes y, int yo, int n, double a) {
+    if (!f32_range_ok_(y, yo, n)) return;
+    const float av = (float)a;
+    for (int i = 0; i < n; i++) {
+        float v; memcpy(&v, y.data + ((size_t)yo + (size_t)i) * 4u, 4);
+        v *= av; memcpy(y.data + ((size_t)yo + (size_t)i) * 4u, &v, 4);
+    }
+}
+
+/* f32_load_le_impl -- decode `n` little-endian IEEE-754 float32 values starting at byte `byte_off` of a
+ * NUL-agnostic byte source (a String over an mmap'd weights file, see io/mmap.prn: strlen is never
+ * used, the caller passes the real length) into a fresh F32 buffer. Portable: assembles each float from
+ * four bytes, so it is correct on any host byte order. Out-of-range requests clamp to what exists. */
+static inline Bytes f32_load_le_impl(Arena *dest, const char *src, int src_len, int byte_off, int n) {
+    if (!src || n <= 0 || byte_off < 0 || byte_off > src_len) return bytes_alloc_impl(dest, 0);
+    int avail = (src_len - byte_off) / 4;
+    if (n > avail) n = avail;
+    Bytes b = f32_alloc_impl(dest, n);
+    for (int i = 0; i < n; i++) {
+        const unsigned char *p = (const unsigned char *)src + byte_off + (size_t)i * 4u;
+        unsigned int u = (unsigned int)p[0] | ((unsigned int)p[1] << 8) | ((unsigned int)p[2] << 16) | ((unsigned int)p[3] << 24);
+        float f; memcpy(&f, &u, 4);
+        memcpy(b.data + (size_t)i * 4u, &f, 4);
+    }
+    return b;
+}
+
+/* ---- F32 elementwise / normalisation primitives (stdlib/tensor/nn.prn) -----------------------------------
+ * Same contract as the F32 block above: float offsets, ranges validated once, out-of-range = silent no-op.
+ * f32_unary_impl kinds: 0 RELU  1 LEAKY_RELU(p = negative slope)  2 TANH  3 SIGMOID  4 GELU_ERF (exact erf form,
+ * x * 0.5 * (1 + erf(x/sqrt 2)) -- NOT the tanh approximation, which moves a duration-predictor logit enough to flip a
+ * ceil)  5 EXP  6 NEG  7 SQRT  8 SOFTPLUS  9 RECIP  10 ADD_CONST(p)  11 MUL_CONST(p)  12 CLAMP_ABS(p = bound)
+ * Transcendentals come from libm (exp/tanh/erf): correct to ~1 ulp but not bit-identical across libm versions; bit-exact
+ * cross-machine audio would need PARENA-native replacements (tracked in docs/TTS_VITS_PORT_PLAN.md). */
+static inline void f32_unary_impl(Bytes y, int yo, int n, int kind, double p) {
+    if (!f32_range_ok_(y, yo, n)) return;
+    for (int i = 0; i < n; i++) {
+        float f; memcpy(&f, y.data + ((size_t)yo + (size_t)i) * 4u, 4);
+        double v = (double)f, r;
+        switch (kind) {
+            case 0: r = v > 0.0 ? v : 0.0; break;
+            case 1: r = v > 0.0 ? v : v * p; break;
+            case 2: r = tanh(v); break;
+            case 3: r = 1.0 / (1.0 + exp(-v)); break;
+            case 4: r = v * 0.5 * (1.0 + erf(v * 0.70710678118654752440)); break;
+            case 5: r = exp(v); break;
+            case 6: r = -v; break;
+            case 7: r = v > 0.0 ? sqrt(v) : 0.0; break;
+            case 8: r = v > 20.0 ? v : log(1.0 + exp(v)); break;
+            case 9: r = v != 0.0 ? 1.0 / v : 0.0; break;
+            case 10: r = v + p; break;
+            case 11: r = v * p; break;
+            case 12: r = v > p ? p : (v < -p ? -p : v); break;
+            default: return;
+        }
+        f = (float)r;
+        memcpy(y.data + ((size_t)yo + (size_t)i) * 4u, &f, 4);
+    }
+}
+
+/* y[yo+i] *= x[xo+i] */
+static inline void f32_mul_impl(Bytes y, int yo, Bytes x, int xo, int n) {
+    if (!f32_range_ok_(y, yo, n) || !f32_range_ok_(x, xo, n)) return;
+    for (int i = 0; i < n; i++) {
+        float a, b;
+        memcpy(&a, y.data + ((size_t)yo + (size_t)i) * 4u, 4);
+        memcpy(&b, x.data + ((size_t)xo + (size_t)i) * 4u, 4);
+        a *= b;
+        memcpy(y.data + ((size_t)yo + (size_t)i) * 4u, &a, 4);
+    }
+}
+
+/* In-place softmax over each of `rows` rows of length `cols` starting at float offset `off` (max-subtracted, so large
+ * logits cannot overflow). */
+static inline void f32_softmax_rows_impl(Bytes y, int off, int rows, int cols) {
+    if (rows <= 0 || cols <= 0 || off < 0 || off > y.len / 4 || (long)rows * (long)cols > (long)(y.len / 4 - off)) return;
+    for (int r = 0; r < rows; r++) {
+        size_t base = ((size_t)off + (size_t)r * (size_t)cols) * 4u;
+        float mx = -3.402823466e38f;
+        for (int c = 0; c < cols; c++) { float v; memcpy(&v, y.data + base + (size_t)c * 4u, 4); if (v > mx) mx = v; }
+        double sum = 0.0;
+        for (int c = 0; c < cols; c++) {
+            float v; memcpy(&v, y.data + base + (size_t)c * 4u, 4);
+            double e = exp((double)v - (double)mx); sum += e;
+            float ef = (float)e; memcpy(y.data + base + (size_t)c * 4u, &ef, 4);
+        }
+        for (int c = 0; c < cols; c++) {
+            float v; memcpy(&v, y.data + base + (size_t)c * 4u, 4);
+            v = (float)((double)v / sum); memcpy(y.data + base + (size_t)c * 4u, &v, 4);
+        }
+    }
+}
+
+/* Channel LayerNorm on a channel-first tensor x[C][T] (what a VITS/HiFi-GAN stack stores): for every time step t,
+ * normalise over the C channels with a biased variance, then scale by gamma[c] and shift by beta[c]:
+ *   y[c][t] = (x[c][t] - mean_t) / sqrt(var_t + eps) * gamma[c] + beta[c]
+ * (the form VITS uses for all its LayerNorms; "not nn.prn's whole-array layernorm"). Accumulates in double. */
+static inline void f32_layernorm_ct_impl(Bytes x, int off, int channels, int t_len, Bytes gamma, Bytes beta, double eps) {
+    if (channels <= 0 || t_len <= 0 || off < 0 || off > x.len / 4 || (long)channels * (long)t_len > (long)(x.len / 4 - off)) return;
+    if (gamma.len / 4 < channels || beta.len / 4 < channels) return;
+    for (int t = 0; t < t_len; t++) {
+        double mean = 0.0, var = 0.0;
+        for (int c = 0; c < channels; c++) { float v; memcpy(&v, x.data + ((size_t)off + (size_t)c * (size_t)t_len + (size_t)t) * 4u, 4); mean += (double)v; }
+        mean /= (double)channels;
+        for (int c = 0; c < channels; c++) { float v; memcpy(&v, x.data + ((size_t)off + (size_t)c * (size_t)t_len + (size_t)t) * 4u, 4); double d = (double)v - mean; var += d * d; }
+        var /= (double)channels;
+        double inv = 1.0 / sqrt(var + eps);
+        for (int c = 0; c < channels; c++) {
+            size_t pos = ((size_t)off + (size_t)c * (size_t)t_len + (size_t)t) * 4u;
+            float v, g, b; memcpy(&v, x.data + pos, 4); memcpy(&g, gamma.data + (size_t)c * 4u, 4); memcpy(&b, beta.data + (size_t)c * 4u, 4);
+            v = (float)(((double)v - mean) * inv * (double)g + (double)b);
+            memcpy(x.data + pos, &v, 4);
+        }
+    }
+}
+
+/* y[yo+i] = sum_{j<=i} x[xo+j]  (inclusive prefix sum, accumulated in double) */
+static inline void f32_cumsum_impl(Bytes y, int yo, Bytes x, int xo, int n) {
+    if (!f32_range_ok_(y, yo, n) || !f32_range_ok_(x, xo, n)) return;
+    double acc = 0.0;
+    for (int i = 0; i < n; i++) {
+        float v; memcpy(&v, x.data + ((size_t)xo + (size_t)i) * 4u, 4);
+        acc += (double)v;
+        float f = (float)acc; memcpy(y.data + ((size_t)yo + (size_t)i) * 4u, &f, 4);
+    }
+}
+
+/* Same-padding helper: dst[c][pad_l + t] = src[c][t], zeros elsewhere, for `channels` rows of length `t_len`, into rows of
+ * length t_len + pad_l + pad_r. dst must hold channels*(t_len+pad_l+pad_r) floats. */
+static inline void f32_pad_rows_impl(Bytes dst, Bytes src, int channels, int t_len, int pad_l, int pad_r) {
+    if (channels <= 0 || t_len <= 0 || pad_l < 0 || pad_r < 0) return;
+    long lp = (long)t_len + pad_l + pad_r;
+    if (lp > 0x7fffffffL || (long)channels * lp > (long)(dst.len / 4) || (long)channels * (long)t_len > (long)(src.len / 4)) return;
+    for (int c = 0; c < channels; c++) {
+        size_t db = (size_t)c * (size_t)lp * 4u;
+        memset(dst.data + db, 0, (size_t)lp * 4u);
+        memcpy(dst.data + db + (size_t)pad_l * 4u, src.data + (size_t)c * (size_t)t_len * 4u, (size_t)t_len * 4u);
+    }
+}
+
+#ifdef PARENA_WITH_MLDSA
+/* mldsa_keygen_impl/mldsa_sign_impl/mldsa_verify_impl -- real host glue for crypto/mldsa.prn,
+ * calling straight into the vendored, unmodified (except for attribution) CRYSTALS-Dilithium
+ * reference (runtime/mldsa/sign.c's own real crypto_sign_keypair/crypto_sign_signature/
+ * crypto_sign_verify, mode 2 = ML-DSA-44). EMILY/BACKLOG.md SECTION 536 follow-up, BIG_O/
+ * NORTHSTAR.md §29.
+ *
+ * mldsa_keygen_impl returns pubkey||seckey concatenated as ONE real Bytes value (real, checked
+ * fixed sizes: CRYPTO_PUBLICKEYBYTES=1312, CRYPTO_SECRETKEYBYTES=2560, from runtime/mldsa/
+ * params.h) -- a #target inline-c body can only return one plain scalar/String/Bytes value
+ * (pty.prn's own 2026-08-26 rewrite established this rule for String; identical for Bytes), and a
+ * real ML-DSA keypair is genuinely ONE matched pair from ONE underlying call, not independently
+ * derivable by calling twice. crypto/mldsa.prn's own real mldsa-keygen splits this back into two
+ * real halves via bytes-slice (bytes.prn, extended in this same pass for exactly this need). */
+static inline Bytes mldsa_keygen_impl(Arena *dest) {
+    Bytes out = bytes_alloc_impl(dest, CRYPTO_PUBLICKEYBYTES + CRYPTO_SECRETKEYBYTES);
+    crypto_sign_keypair(out.data, out.data + CRYPTO_PUBLICKEYBYTES);
+    return out;
+}
+
+/* mldsa_sign_impl -- real ML-DSA-44 signature over msg's own real bytes (msg.len, not strlen --
+ * Bytes carries its own explicit length, so an embedded 0x00 in a real message is genuinely fine,
+ * unlike this runtime's own String-based primitives). Hedged/randomized signing
+ * (DILITHIUM_RANDOMIZED_SIGNING, runtime/mldsa/config.h's own real default, unchanged from
+ * upstream) -- two real signatures over the same message under the same key are NOT byte-
+ * identical, by design. No application context string (crypto_sign_signature's own real ctx/
+ * ctxlen params passed as NULL/0) -- a real, deliberately-narrow v0, same scope PARENA's own
+ * pty/tcp primitives already keep. Real, checked, fixed real output size (CRYPTO_BYTES=2420) --
+ * observed fixed in practice across a real 10000-round self-test, not just an upper bound. */
+static inline Bytes mldsa_sign_impl(Bytes msg, Bytes seckey, Arena *dest) {
+    Bytes out = bytes_alloc_impl(dest, CRYPTO_BYTES);
+    size_t siglen = 0;
+    crypto_sign_signature(out.data, &siglen, msg.data, (size_t)msg.len, NULL, 0, seckey.data);
+    out.len = (int)siglen;
+    return out;
+}
+
+/* mldsa_verify_impl -- 0 = real, valid signature; nonzero = real, honest reject. Mirrors the
+ * vendored crypto_sign_verify's own real contract exactly, no reinterpretation. */
+static inline int mldsa_verify_impl(Bytes sig, Bytes msg, Bytes pubkey) {
+    return crypto_sign_verify(sig.data, (size_t)sig.len, msg.data, (size_t)msg.len, NULL, 0, pubkey.data);
+}
+#endif /* PARENA_WITH_MLDSA */
+
+#ifdef PARENA_WITH_MLKEM
+#include <stdint.h> /* uint8_t in the prototypes below; not guaranteed by earlier includes on mingw */
+/* mlkem_*_impl -- real host glue for crypto/mlkem.prn: ML-KEM-768 (FIPS 203), calling straight into
+ * the vendored, unmodified pq-crystals/kyber `standard` branch reference (runtime/mlkem/, CC0 /
+ * Apache-2.0). Cross-verified against Go's independent crypto/mlkem in both directions
+ * (100 rounds + implicit-rejection check; see tests/mlkem_interop/).
+ *
+ * Prototypes are declared here, NOT via mlkem/api.h: that header shares the `API_H` include guard
+ * with mldsa/api.h, so including both would silently drop one. Link note: mlkem/randombytes.c and
+ * mldsa/randombytes.c both define plain `randombytes` with identical signatures -- a consumer
+ * linking both libraries must compile only one of them.
+ *
+ * Fixed ML-KEM-768 sizes (FIPS 203): ek 1184, dk 2400, ct 1088, shared secret 32. Every impl
+ * validates input lengths and returns a zero-length Bytes on a mismatch (never reads out of bounds
+ * on a short caller-supplied buffer). */
+extern int pqcrystals_kyber768_ref_keypair(uint8_t *pk, uint8_t *sk);
+extern int pqcrystals_kyber768_ref_enc(uint8_t *ct, uint8_t *ss, const uint8_t *pk);
+extern int pqcrystals_kyber768_ref_dec(uint8_t *ss, const uint8_t *ct, const uint8_t *sk);
+#define MLKEM768_PK_BYTES 1184
+#define MLKEM768_SK_BYTES 2400
+#define MLKEM768_CT_BYTES 1088
+#define MLKEM768_SS_BYTES 32
+
+/* ek||dk as ONE Bytes (a #target body returns one value; same shape as mldsa_keygen_impl). */
+static inline Bytes mlkem_keygen_impl(Arena *dest) {
+    Bytes out = bytes_alloc_impl(dest, MLKEM768_PK_BYTES + MLKEM768_SK_BYTES);
+    pqcrystals_kyber768_ref_keypair(out.data, out.data + MLKEM768_PK_BYTES);
+    return out;
+}
+/* ct||ss, or zero-length if ek is not exactly 1184 bytes. */
+static inline Bytes mlkem_encaps_impl(Bytes ek, Arena *dest) {
+    if (ek.len != MLKEM768_PK_BYTES) return bytes_alloc_impl(dest, 0);
+    Bytes out = bytes_alloc_impl(dest, MLKEM768_CT_BYTES + MLKEM768_SS_BYTES);
+    pqcrystals_kyber768_ref_enc(out.data, out.data + MLKEM768_CT_BYTES, ek.data);
+    return out;
+}
+/* ss (32 bytes), or zero-length on wrong-sized ct/dk. A well-sized but tampered ct does NOT fail:
+ * FIPS 203 implicit rejection returns a pseudorandom secret, so the two sides simply disagree. */
+static inline Bytes mlkem_decaps_impl(Bytes ct, Bytes dk, Arena *dest) {
+    if (ct.len != MLKEM768_CT_BYTES || dk.len != MLKEM768_SK_BYTES) return bytes_alloc_impl(dest, 0);
+    Bytes out = bytes_alloc_impl(dest, MLKEM768_SS_BYTES);
+    pqcrystals_kyber768_ref_dec(out.data, ct.data, dk.data);
+    return out;
+}
+#endif /* PARENA_WITH_MLKEM */
+
+#ifdef PARENA_WITH_AEAD
+#include <stdint.h>
+/* aead_*_impl -- real host glue for crypto/aead.prn: XChaCha20-Poly1305 (draft-irtf-cfrg-xchacha,
+ * 24-byte nonce so random nonces are safe), via the vendored, unmodified Monocypher 4.0.2
+ * (runtime/aead/, CC0 / BSD-2). Same design judgment as crypto/mlkem.prn: no hand-rolled crypto.
+ * Independently cross-checked against Go golang.org/x/crypto/chacha20poly1305 (tests/test_aead.c's
+ * known-answer vector was produced by Go's NewX).
+ * Wire shape: seal -> ciphertext||mac(16); open takes that same shape. Key 32, nonce 24 bytes
+ * (wrong sizes -> zero-length Bytes, no OOB). open failing (bad tag / too short) -> zero-length
+ * Bytes, so a legitimately EMPTY plaintext is indistinguishable from failure: callers must not
+ * seal empty payloads (secure_channel frames always carry a header byte). */
+#include "aead/monocypher.h"
+#define AEAD_KEY_BYTES 32
+#define AEAD_NONCE_BYTES 24
+#define AEAD_MAC_BYTES 16
+static inline Bytes aead_seal_impl(Bytes key, Bytes nonce, Bytes ad, Bytes plain, Arena *dest) {
+    if (key.len != AEAD_KEY_BYTES || nonce.len != AEAD_NONCE_BYTES) return bytes_alloc_impl(dest, 0);
+    Bytes out = bytes_alloc_impl(dest, plain.len + AEAD_MAC_BYTES);
+    crypto_aead_lock(out.data, out.data + plain.len, key.data, nonce.data,
+                     ad.data, (size_t)ad.len, plain.data, (size_t)plain.len);
+    return out;
+}
+static inline Bytes aead_open_impl(Bytes key, Bytes nonce, Bytes ad, Bytes sealed, Arena *dest) {
+    if (key.len != AEAD_KEY_BYTES || nonce.len != AEAD_NONCE_BYTES || sealed.len <= AEAD_MAC_BYTES)
+        return bytes_alloc_impl(dest, 0);
+    int n = sealed.len - AEAD_MAC_BYTES;
+    Bytes out = bytes_alloc_impl(dest, n);
+    if (crypto_aead_unlock(out.data, sealed.data + n, key.data, nonce.data,
+                           ad.data, (size_t)ad.len, sealed.data, (size_t)n) != 0)
+        return bytes_alloc_impl(dest, 0);
+    return out;
+}
+/* aead_kdf_impl -- 32-byte BLAKE2b of secret||label (Monocypher). Domain-separated key derivation
+ * for the secure channel: one ML-KEM shared secret -> an independent key per direction. The
+ * secret is already uniformly random (ML-KEM output), so a plain hash is a sound KDF here;
+ * label must be distinct per use. Also used as the 32-byte key fingerprint. */
+static inline Bytes aead_kdf_impl(Bytes secret, Bytes label, Arena *dest) {
+    Bytes out = bytes_alloc_impl(dest, 32);
+    Bytes buf = bytes_alloc_impl(dest, secret.len + label.len);
+    if (secret.len) memcpy(buf.data, secret.data, (size_t)secret.len);
+    if (label.len) memcpy(buf.data + secret.len, label.data, (size_t)label.len);
+    crypto_blake2b(out.data, 32, buf.data, (size_t)buf.len);
+    return out;
+}
+#endif /* PARENA_WITH_AEAD */
+
+#ifdef PARENA_WITH_QUIC_CRYPTO
+/* quic_*_impl -- host glue for crypto/quic_crypto.prn: exactly the three primitives QUIC v1 packet
+ * protection (RFC 9001) needs, over mbedTLS (the same audited library net/tls.prn and PELLEGRINO already
+ * link; no hand-rolled crypto). Everything else (HKDF-Expand-Label, nonce, header protection, packet
+ * assembly) is PARENA on top of these. STOPGAP-NOTE: SHA-256/AES are FFI, same stance as crypto/hash.prn;
+ * a PARENA-native implementation is blocked on unsigned-32 integer ops (see crypto/aead.prn).
+ * Failure -> zero-length Bytes (wrong key/iv sizes, bad tag), never OOB. Link mbedcrypto. */
+#include <mbedtls/md.h>
+#include <mbedtls/gcm.h>
+#include <mbedtls/aes.h>
+/* HMAC-SHA256(key, data) -> 32 bytes. */
+static inline Bytes quic_hmac_sha256_impl(Bytes key, Bytes data, Arena *dest) {
+    Bytes out = bytes_alloc_impl(dest, 32);
+    const mbedtls_md_info_t *mi = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    if (!mi || mbedtls_md_hmac(mi, key.data, (size_t)key.len, data.data, (size_t)data.len, out.data) != 0)
+        return bytes_alloc_impl(dest, 0);
+    return out;
+}
+/* AES-128-GCM seal: key 16, iv 12 -> ciphertext||tag(16). */
+static inline Bytes quic_aes128gcm_seal_impl(Bytes key, Bytes iv, Bytes ad, Bytes plain, Arena *dest) {
+    if (key.len != 16 || iv.len != 12) return bytes_alloc_impl(dest, 0);
+    Bytes out = bytes_alloc_impl(dest, plain.len + 16);
+    mbedtls_gcm_context g; mbedtls_gcm_init(&g);
+    int rc = mbedtls_gcm_setkey(&g, MBEDTLS_CIPHER_ID_AES, key.data, 128);
+    if (rc == 0)
+        rc = mbedtls_gcm_crypt_and_tag(&g, MBEDTLS_GCM_ENCRYPT, (size_t)plain.len, iv.data, 12,
+                                       ad.data, (size_t)ad.len, plain.data, out.data, 16, out.data + plain.len);
+    mbedtls_gcm_free(&g);
+    return rc == 0 ? out : bytes_alloc_impl(dest, 0);
+}
+/* AES-128-GCM open: ciphertext||tag -> plaintext; bad tag / too short -> zero-length (so a legitimately
+ * empty plaintext is indistinguishable from failure; QUIC packets always carry >= 1 frame byte). */
+static inline Bytes quic_aes128gcm_open_impl(Bytes key, Bytes iv, Bytes ad, Bytes sealed, Arena *dest) {
+    if (key.len != 16 || iv.len != 12 || sealed.len <= 16) return bytes_alloc_impl(dest, 0);
+    int n = sealed.len - 16;
+    Bytes out = bytes_alloc_impl(dest, n);
+    mbedtls_gcm_context g; mbedtls_gcm_init(&g);
+    int rc = mbedtls_gcm_setkey(&g, MBEDTLS_CIPHER_ID_AES, key.data, 128);
+    if (rc == 0)
+        rc = mbedtls_gcm_auth_decrypt(&g, (size_t)n, iv.data, 12, ad.data, (size_t)ad.len,
+                                      sealed.data + n, 16, sealed.data, out.data);
+    mbedtls_gcm_free(&g);
+    return rc == 0 ? out : bytes_alloc_impl(dest, 0);
+}
+/* AES-128-ECB on one 16-byte block (the header-protection mask primitive, RFC 9001 s5.4.3). */
+static inline Bytes quic_aes128_ecb_impl(Bytes key, Bytes block, Arena *dest) {
+    if (key.len != 16 || block.len != 16) return bytes_alloc_impl(dest, 0);
+    Bytes out = bytes_alloc_impl(dest, 16);
+    mbedtls_aes_context c; mbedtls_aes_init(&c);
+    int rc = mbedtls_aes_setkey_enc(&c, key.data, 128);
+    if (rc == 0) rc = mbedtls_aes_crypt_ecb(&c, MBEDTLS_AES_ENCRYPT, block.data, out.data);
+    mbedtls_aes_free(&c);
+    return rc == 0 ? out : bytes_alloc_impl(dest, 0);
+}
+/* SHA-256(data) -> 32 bytes (TLS 1.3 transcript hash). */
+static inline Bytes quic_sha256_impl(Bytes data, Arena *dest) {
+    Bytes out = bytes_alloc_impl(dest, 32);
+    const mbedtls_md_info_t *mi = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    if (!mi || mbedtls_md(mi, data.data, (size_t)data.len, out.data) != 0) return bytes_alloc_impl(dest, 0);
+    return out;
+}
+/* X25519 via the vendored Monocypher (runtime/aead/, link monocypher.c): public key from a 32-byte
+ * secret, and the ECDH shared secret. A low-order peer point (all-zero result) -> zero-length. */
+#include "aead/monocypher.h"
+static inline Bytes quic_x25519_public_impl(Bytes secret, Arena *dest) {
+    if (secret.len != 32) return bytes_alloc_impl(dest, 0);
+    Bytes out = bytes_alloc_impl(dest, 32);
+    crypto_x25519_public_key(out.data, secret.data);
+    return out;
+}
+static inline Bytes quic_x25519_shared_impl(Bytes secret, Bytes peer, Arena *dest) {
+    if (secret.len != 32 || peer.len != 32) return bytes_alloc_impl(dest, 0);
+    Bytes out = bytes_alloc_impl(dest, 32);
+    crypto_x25519(out.data, secret.data, peer.data);
+    unsigned char acc = 0;
+    for (int i = 0; i < 32; i++) acc |= out.data[i];
+    return acc ? out : bytes_alloc_impl(dest, 0);
+}
+/* n cryptographically random bytes (mbedTLS entropy: getrandom / BCryptGenRandom). n <= 4096.
+ * With PARENA_WITH_TLS the generator is net/stream's own CTR_DRBG (defined below, after its statics): a
+ * second, independently initialised entropy context must not exist, because under the static-heap
+ * allocator (PARENA_TLS_STATIC_HEAP) anything initialised before the heap is installed and freed after
+ * it dies with "mbedtls_free() outside of managed space". */
+#include <mbedtls/entropy.h>
+#ifndef PARENA_WITH_TLS
+static inline Bytes quic_random_impl(int n, Arena *dest) {
+    static mbedtls_entropy_context ent;
+    static int ent_ready = 0;
+    if (n < 0 || n > 4096) return bytes_alloc_impl(dest, 0);
+    if (!ent_ready) { mbedtls_entropy_init(&ent); ent_ready = 1; }
+    Bytes out = bytes_alloc_impl(dest, n);
+    for (int off = 0; off < n; off += 32) {
+        size_t c = (size_t)(n - off) < 32 ? (size_t)(n - off) : 32;
+        if (mbedtls_entropy_func(&ent, out.data + off, c) != 0) return bytes_alloc_impl(dest, 0);
+    }
+    return out;
+}
+#endif /* !PARENA_WITH_TLS */
+#endif /* PARENA_WITH_QUIC_CRYPTO */
+
+/* Hosts that embed PELLEGRINO's generated code (SHANKPIT's lobby, tests) without HTTP/3 support compile and link
+ * unchanged: without PARENA_WITH_QUIC_CRYPTO every primitive below reports failure (zero-length Bytes), so a
+ * QUIC connection attempt fails at its first step instead of the build breaking. Nothing here weakens a check. */
+#ifndef PARENA_WITH_QUIC_CRYPTO
+static inline Bytes quic_hmac_sha256_impl(Bytes key, Bytes data, Arena *dest) { (void)key; (void)data; return bytes_alloc_impl(dest, 0); }
+static inline Bytes quic_aes128gcm_seal_impl(Bytes key, Bytes iv, Bytes ad, Bytes plain, Arena *dest) { (void)key; (void)iv; (void)ad; (void)plain; return bytes_alloc_impl(dest, 0); }
+static inline Bytes quic_aes128gcm_open_impl(Bytes key, Bytes iv, Bytes ad, Bytes sealed, Arena *dest) { (void)key; (void)iv; (void)ad; (void)sealed; return bytes_alloc_impl(dest, 0); }
+static inline Bytes quic_aes128_ecb_impl(Bytes key, Bytes block, Arena *dest) { (void)key; (void)block; return bytes_alloc_impl(dest, 0); }
+static inline Bytes quic_sha256_impl(Bytes data, Arena *dest) { (void)data; return bytes_alloc_impl(dest, 0); }
+static inline Bytes quic_x25519_public_impl(Bytes secret, Arena *dest) { (void)secret; return bytes_alloc_impl(dest, 0); }
+static inline Bytes quic_x25519_shared_impl(Bytes secret, Bytes peer, Arena *dest) { (void)secret; (void)peer; return bytes_alloc_impl(dest, 0); }
+static inline Bytes quic_random_impl(int n, Arena *dest) { (void)n; return bytes_alloc_impl(dest, 0); }
+#endif /* !PARENA_WITH_QUIC_CRYPTO */
+
+/* One static connection block for hosts that run under -DPARENA_NO_MALLOC (PELLEGRINO): a page stream is a
+ * single connection at a time, so net/quic_client's `quic-connect-static` lays its state block over this
+ * instead of an arena (an arena block would never be freed and a few navigations would exhaust the pool).
+ * 100 KiB of fixed state + 2 x body-cap; default fits a 4 MiB body. Zeroed on every connect. */
+#ifndef PARENA_QUIC_STATIC_BYTES
+#define PARENA_QUIC_STATIC_BYTES (9u * 1024u * 1024u)
+#endif
+static unsigned char g_quic_static[PARENA_QUIC_STATIC_BYTES] __attribute__((aligned(16)));
+static int g_quic_static_len = 0;
+static inline Bytes quic_static_block_impl(int size) {
+    Bytes b;
+    if (size <= 0 || (unsigned)size > PARENA_QUIC_STATIC_BYTES) { b.data = NULL; b.len = 0; g_quic_static_len = 0; return b; }
+    memset(g_quic_static, 0, (size_t)size);
+    g_quic_static_len = size;
+    b.data = g_quic_static; b.len = size;
+    return b;
+}
+static inline Bytes quic_static_current_impl(void) {
+    Bytes b; b.data = g_quic_static_len ? g_quic_static : NULL; b.len = g_quic_static_len; return b;
+}
+static inline int quic_static_capacity_impl(void) { return (int)PARENA_QUIC_STATIC_BYTES; }
+
+/* string_concat -- real, minimal `string/concat` implementation
+ * (STDLIB.md's own "string" package design), found genuinely missing
+ * (not just designed) while getting firefly.prn's own `skip` to
+ * actually gcc-compile (it calls `(string/concat "SKIP: " reason
+ * dest)`). Allocates a real, arena-backed buffer sized to both inputs'
+ * combined length + a null terminator, copies both, returns a real
+ * `char *`. Real, honest, narrow scope: exactly two strings + a
+ * destination arena, matching the one real call site that surfaced
+ * this gap -- not a variadic/N-argument concat. */
+static inline char *string_concat(const char *a, const char *b, Arena *dest) {
+    size_t la = strlen(a);
+    size_t lb = strlen(b);
+    char *out = (char *)arena_alloc(dest, la + lb + 1);
+    memcpy(out, a, la);
+    memcpy(out + la, b, lb);
+    out[la + lb] = '\0';
+    return out;
+}
+
+/* string_contains_ci_impl -- real, portable case-insensitive substring
+ * search for stdlib/string.prn's own contains-ci?. Originally called
+ * glibc's own strcasestr directly inline -- real, genuinely portable
+ * everywhere this runtime had been verified before (Linux) -- but a
+ * glibc/BSD extension, not standard, and not what MinGW/Windows
+ * provides (found for real cross-compiling editor-demo under
+ * x86_64-w64-mingw32-gcc, 2026-08-26: a real "implicit declaration of
+ * function 'strcasestr'" warning/link risk, not assumed). A real,
+ * hand-written O(n*m) scan instead -- correct on every real platform
+ * this runtime targets, and haystack/needle here are real editor-sized
+ * strings (grammar keywords, file paths), not a hot path that needs a
+ * faster real algorithm. */
+/* ---- stdlib/math/math.prn real host glue (2026-09-07) ----------------
+ * math/random's own body was a real, honest, never-evaluated placeholder
+ * (`0.0`) for the C target -- the TypeScript emitter recognizes the
+ * qualified `math/random` call name directly and lowers it to a real
+ * `Math.random()`, but nothing analogous existed for C. Fixed the real,
+ * established way this stdlib already does host glue for the C target
+ * (see tcp_connect_impl/pty_open_impl above): a real `_impl` function
+ * here, math.prn's own `random` body becomes a one-line
+ * `#target {:c (inline-c "math_random_impl()")}` call to it -- no
+ * compiler (src/emit.c) change needed at all.
+ *
+ * Real, found-live correctness issue fixed here, not left as a known gap:
+ * plain `rand()` with no seed always starts from the SAME internal state
+ * every process run (`srand`'s own documented default is `srand(1)`) --
+ * a real PAPERCRAFT mod calling this for "random" NPC spawn positions
+ * would get the identical sequence on every server restart, indistin-
+ * guishable from a real bug. Seeded lazily, once, on first call via an
+ * ordinary function-local `static` (real C99 statements are fine inside
+ * this REAL function body -- the "inline-c must be a single expression"
+ * constraint datetime.prn's own header documents applies only to the
+ * literal text substituted directly into a PARENA function body, not to
+ * a real, separate runtime function called BY one). */
+static inline double math_random_impl(void) {
+    static int seeded = 0;
+    if (!seeded) {
+        srand((unsigned int)time(NULL));
+        seeded = 1;
+    }
+    return (double)rand() / ((double)RAND_MAX + 1.0);
+}
+
+static inline int string_contains_ci_impl(const char *haystack, const char *needle) {
+    size_t hlen = strlen(haystack);
+    size_t nlen = strlen(needle);
+    if (nlen == 0) return 1;
+    if (nlen > hlen) return 0;
+    for (size_t i = 0; i + nlen <= hlen; i++) {
+        size_t j = 0;
+        while (j < nlen && tolower((unsigned char)haystack[i + j]) == tolower((unsigned char)needle[j])) {
+            j++;
+        }
+        if (j == nlen) return 1;
+    }
+    return 0;
+}
+
+/* ---- stdlib/io.prn real host glue (2026-08-24) ----------------------
+ * Raw POSIX fd-based primitives only -- every Result/Option/FileHandle
+ * value io.prn itself constructs is built with ordinary PARENA syntax
+ * (Ok/Err/{:field val}), not here. Real, honest, narrow scope: each
+ * function below returns a plain scalar or string, no boxing -- see
+ * io.prn's own header comment for the full reasoning on why the split
+ * is drawn exactly here. */
+/* O_BINARY (2026-08-27, real, confirmed-live bug: founder opened a
+ * real, plain CRLF .bat file in the editor and got the "looks like a
+ * binary file" placeholder). O_BINARY only exists on Windows -- on
+ * POSIX there's no text/binary distinction and open() never needs it,
+ * so this is a real no-op #define there, not a behavior change.
+ * Without it, MinGW's own CRT opens every file in TEXT mode by
+ * default: CRLF is silently collapsed to LF on read (and LF silently
+ * expanded back to CRLF on write), and a raw 0x1A byte is treated as
+ * an early EOF marker. Every real Windows-authored text file this
+ * session has actually looked at (build_win.bat, PLAY.bat, ...) is
+ * CRLF-terminated -- read in text mode, the returned String is
+ * shorter than the real on-disk stat() size by exactly its own
+ * newline count, which is precisely the mismatch looks_like_binary
+ * checks for. Same real bug class on the WRITE side too: saving would
+ * have silently rewritten a real file's own line endings. Applied
+ * unconditionally (read/write/append all get it) so this editor
+ * always treats a file's bytes as its own, not the CRT's translated
+ * view of them -- matches this whole session's own "byte-exact,
+ * stat-size-vs-strlen must actually mean something" discipline. */
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
+
+static inline int raw_open_impl(const char *path, int mode_tag) {
+    int flags;
+    switch (mode_tag) {
+        case 0: flags = O_RDONLY | O_BINARY; break;                      /* Read */
+        case 1: flags = O_WRONLY | O_CREAT | O_TRUNC | O_BINARY; break;  /* Write */
+        case 2: flags = O_WRONLY | O_CREAT | O_APPEND | O_BINARY; break; /* Append */
+        default: flags = O_RDONLY | O_BINARY; break;
+    }
+    return open(path, flags, 0644);
+}
+
+static inline int raw_write_impl(int fd, const char *s) {
+    size_t len = strlen(s);
+    size_t written = 0;
+    while (written < len) {
+        ssize_t n = write(fd, s + written, len - written);
+        if (n < 0) return -1;
+        written += (size_t)n;
+    }
+    return 0;
+}
+
+/* raw_read_all_impl -- reads every remaining byte from fd (from its
+ * current position) into one arena-allocated, NUL-terminated buffer.
+ *
+ * Real, confirmed-live bug fixed here (2026-08-27, founder actually
+ * dropping a real large file onto the PARENA editor: "it crashed...
+ * if we try to open a too large file it just chokes"): this used to
+ * grow in FIXED 4096-byte chunks, reallocating (not resizing in
+ * place -- this is a bump arena, the old buffer is never freed) and
+ * copying the ENTIRE buffer so far on every single grow step. For an
+ * N-byte file that's N/4096 grow steps, each copying up to N bytes --
+ * real O(N^2) copy work, and since every intermediate buffer stays
+ * permanently allocated (arena, not a real realloc), real O(N^2)
+ * WASTED memory too: a 100MB file needs roughly 1.2TB of total arena
+ * allocations across every intermediate step, not the 100MB anyone
+ * would expect -- the real, confirmed root cause of "chokes"/crashes
+ * on a large file, not a vague performance concern.
+ *
+ * Fixed with the real, obvious right answer for a REGULAR FILE
+ * specifically (raw-read-all's only real caller, io.prn's own
+ * read-string, is documented as FileHandle-only): fstat(2) the real
+ * file size up front and allocate that in ONE shot -- zero grow
+ * steps, zero wasted intermediate buffers, for the real common case.
+ * fstat can still be wrong (the file grows while being read, or a
+ * non-regular fd somehow reaches here) -- real doubling growth (not
+ * the old fixed +4096) is kept as the real fallback for exactly that
+ * case, so this stays correct even when the size hint is, not just
+ * fast when it's right.
+ *
+ * Real, confirmed-live SECOND bug found and fixed here (2026-08-28,
+ * founder real-time: "when i open a large file its dog shit slow we
+ * dont want to load the whole thing into memory"): the fast path
+ * above (fstat succeeded) was STILL silently paying for a full extra
+ * copy of the whole file. Root cause, confirmed via direct
+ * instrumentation against a real 119MB test file (cap ended up
+ * EXACTLY 2x the real file size -- one full, needless doubling, not
+ * the "zero grow steps" the fstat fast path was supposed to
+ * guarantee): a real EOF can only ever be detected by actually
+ * calling read() with a NONZERO size and getting 0 back -- there is
+ * no way to know "the file has no more bytes" without asking. A cap
+ * sized to EXACTLY st_size+1 leaves no room left for that one
+ * confirming call once every real content byte has been read, so the
+ * old code (any version that tries to guarantee room for a real
+ * read() request right up to the exact byte) is forced to grow the
+ * WHOLE buffer just to make room for one call that's going to return
+ * 0 bytes anyway.
+ *
+ * Real fix: size `cap` with `st_size + 4097` instead of `st_size + 1`
+ * -- the real content, PLUS one full extra 4096-byte read-chunk's
+ * worth of headroom (so the loop can always make one more real,
+ * nonzero-sized read attempt right at the true end and get back a
+ * real EOF signal without ever needing to grow first), PLUS 1 for the
+ * NUL terminator. 4096 bytes of slack is negligible next to any file
+ * large enough for this to matter (0.003% of the 119MB test file),
+ * and the growth check itself (`len + 4096 >= cap`) can never fire
+ * while reading real content anymore, since cap is always at least
+ * 4096 bytes ahead of the real file size. A real `grew` flag (not an
+ * exact `cap == len + 1` size comparison, which the 4097-byte slack
+ * would always fail even in the genuinely no-growth case) tracks
+ * whether a real overshoot doubling ever actually happened -- only
+ * then is the trim-copy below real, needed work; the ordinary case
+ * (fstat right, file didn't grow mid-read) skips it entirely. */
+static inline char *raw_read_all_impl(int fd, Arena *dest) {
+    size_t cap = 4096;
+    int have_size_hint = 0;
+    struct stat st;
+    if (fstat(fd, &st) == 0 && st.st_size > 0) {
+        cap = (size_t)st.st_size + 4097;
+        have_size_hint = 1;
+    }
+    size_t len = 0;
+    char *buf = (char *)arena_alloc(dest, cap);
+    int grew = 0;
+    for (;;) {
+        if (len + 4096 >= cap) {
+            size_t new_cap = cap * 2;
+            char *grown = (char *)arena_alloc(dest, new_cap);
+            memcpy(grown, buf, len);
+            buf = grown;
+            cap = new_cap;
+            grew = 1;
+        }
+        size_t want = cap - len - 1; /* leave room for the trailing NUL */
+        if (want > 4096) want = 4096;
+        ssize_t n = read(fd, buf + len, want);
+        if (n <= 0) break;
+        len += (size_t)n;
+    }
+    if (!grew && have_size_hint) {
+        buf[len] = '\0';
+        return buf;
+    }
+    char *out = (char *)arena_alloc(dest, len + 1);
+    memcpy(out, buf, len);
+    out[len] = '\0';
+    return out;
+}
+
+/* ---- buffered line reading (2026-08-25) ------------------------------
+ * Real root cause found, not guessed: strace on the original byte-at-a-
+ * time raw_at_eof_impl/raw_read_line_impl (turbogrep against 50 real
+ * files) showed 2,699,542 real read() syscalls, 98.87% of total
+ * runtime -- process startup (execve/mmap/mprotect) was a rounding
+ * error (<0.001s combined). One read() syscall per BYTE is the actual
+ * cost, not "the runtime is big" or any startup effect. Fix: a small,
+ * real, per-fd buffer -- refilled via one real read() per IO_BUF_CAP
+ * bytes instead of one per byte, cutting the syscall count by roughly
+ * that factor. IO_MAX_HANDLES bounds concurrent buffered file handles
+ * (real, honest, bounded, matching this whole codebase's own MAX_*
+ * table conventions elsewhere) -- more than that degrades to the
+ * original unbuffered behavior rather than failing outright, a real
+ * but rare case (this stdlib's own real consumers, e.g. grep.prn, only
+ * ever hold one file open at a time).
+ *
+ * Real, honest, narrow limitation NOT solved here: this buffer is only
+ * ever filled/drained by raw_at_eof_impl/raw_read_line_impl -- mixing
+ * read-line and read-string (raw_read_all_impl, which reads the real
+ * fd directly, bypassing this buffer entirely) against the SAME open
+ * FileHandle would silently drop or duplicate whatever's sitting in
+ * the buffer. Not a problem for any real caller today (grep.prn only
+ * ever uses read-line), flagged rather than solved with a bigger
+ * unified-buffering rewrite this fix doesn't need yet. */
+#define IO_BUF_CAP 4096
+#define IO_MAX_HANDLES 32
+
+typedef struct {
+    int used;
+    int fd;
+    unsigned char buf[IO_BUF_CAP];
+    size_t pos;
+    size_t len;
+} IoBufState;
+
+static IoBufState g_io_bufs[IO_MAX_HANDLES]; /* zero-initialized (BSS): every
+                                                 `used` starts false, real and
+                                                 correct with no explicit
+                                                 init code needed. */
+
+static IoBufState *io_buf_for(int fd) {
+    for (int i = 0; i < IO_MAX_HANDLES; i++) {
+        if (g_io_bufs[i].used && g_io_bufs[i].fd == fd) return &g_io_bufs[i];
+    }
+    for (int i = 0; i < IO_MAX_HANDLES; i++) {
+        if (!g_io_bufs[i].used) {
+            g_io_bufs[i].used = 1;
+            g_io_bufs[i].fd = fd;
+            g_io_bufs[i].pos = 0;
+            g_io_bufs[i].len = 0;
+            return &g_io_bufs[i];
+        }
+    }
+    return NULL; /* real, rare fallback -- see header comment above */
+}
+
+/* io_buf_release -- called from raw_close_impl. Real, load-bearing
+ * correctness fix, not just cleanup: the OS is free to reuse a closed
+ * fd's own integer value for the very next open() call in the same
+ * process (turbogrep's own real usage pattern -- open/read/close one
+ * file, then the next, in a loop) -- leaving a stale buffer keyed by
+ * that fd number around would silently serve a NEW file's read-line
+ * calls from the OLD file's leftover buffered bytes. */
+static void io_buf_release(int fd) {
+    for (int i = 0; i < IO_MAX_HANDLES; i++) {
+        if (g_io_bufs[i].used && g_io_bufs[i].fd == fd) {
+            g_io_bufs[i].used = 0;
+            return;
+        }
+    }
+}
+
+static inline int raw_close_impl(int fd) {
+    io_buf_release(fd);
+    return close(fd) == 0 ? 0 : -1;
+}
+
+/* raw_at_eof_impl -- checks (and, if needed, refills) this fd's own
+ * buffer; real EOF only once a real read() returns 0. Real, honest,
+ * narrow scope carried over from the original unbuffered version:
+ * correct for seekable regular files (real grep/sed/awk targets), not
+ * pipes/sockets/terminals -- those never worked with the original
+ * lseek-based peek either, not a regression. */
+static inline int raw_at_eof_impl(int fd) {
+    IoBufState *b = io_buf_for(fd);
+    if (!b) {
+        /* IO_MAX_HANDLES exceeded -- real, rare, honest fallback to the
+         * original unbuffered peek rather than failing outright. */
+        char c;
+        ssize_t n = read(fd, &c, 1);
+        if (n <= 0) return 1;
+        lseek(fd, -1, SEEK_CUR);
+        return 0;
+    }
+    if (b->pos < b->len) return 0;
+    ssize_t n = read(fd, b->buf, IO_BUF_CAP);
+    if (n <= 0) return 1;
+    b->pos = 0;
+    b->len = (size_t)n;
+    return 0;
+}
+
+/* raw_read_line_impl -- reads from the already-primed buffer
+ * (raw_at_eof_impl always runs first per io.prn's own read-line, so a
+ * refill has already happened if one was needed), refilling again
+ * mid-line via one more real read() only when the buffer runs dry
+ * before the line does. Same real trailing-'\n'-consumed-not-included
+ * convention as the original (Go's bufio.Scanner, Python's
+ * str.splitlines default); a final line with no trailing newline
+ * still returns everything read so far, same as a text editor
+ * treating a missing trailing newline as still a real last line. */
+static inline char *raw_read_line_impl(int fd, Arena *dest) {
+    IoBufState *b = io_buf_for(fd);
+    size_t cap = 128;
+    size_t len = 0;
+    char *out = (char *)arena_alloc(dest, cap);
+    for (;;) {
+        char c;
+        if (b) {
+            if (b->pos >= b->len) {
+                ssize_t n = read(fd, b->buf, IO_BUF_CAP);
+                if (n <= 0) break;
+                b->pos = 0;
+                b->len = (size_t)n;
+            }
+            c = (char)b->buf[b->pos++];
+        } else {
+            ssize_t n = read(fd, &c, 1);
+            if (n <= 0) break;
+        }
+        if (c == '\n') break;
+        if (len + 1 > cap) {
+            size_t new_cap = cap * 2;
+            char *grown = (char *)arena_alloc(dest, new_cap);
+            memcpy(grown, out, len);
+            out = grown;
+            cap = new_cap;
+        }
+        out[len++] = c;
+    }
+    char *result = (char *)arena_alloc(dest, len + 1);
+    memcpy(result, out, len);
+    result[len] = '\0';
+    return result;
+}
+
+/* raw_read_f64_impl -- gpt2.c's own real weight-file shape: 4-byte
+ * float32 on disk, widened to PARENA's own only real float type (F64/
+ * double) on read, matching io.prn's own read-floats real intent
+ * (loaded weights are immediately reshaped/matmul'd as F64 downstream,
+ * same as gpt2.c's own fread_or_fail). Short-read/EOF/error all
+ * silently return 0.0 -- read-floats' own caller is expected to pass a
+ * real, correct `n`, matching this whole file's "narrow, not
+ * defensive beyond what's needed" scope. */
+static inline double raw_read_f64_impl(int fd) {
+    float f = 0.0f;
+    ssize_t n = read(fd, &f, sizeof(float));
+    (void)n;
+    return (double)f;
+}
+
+/* Real BSD sockets (net/tcp.prn) and real POSIX ptys (pty.prn) below --
+ * both genuinely unavailable on Windows (see this file's own top-of-
+ * file header comment on the include split for the full reasoning),
+ * guarded so a program that doesn't need either (editor-demo) can
+ * still build clean there. */
+#if !defined(_WIN32) && !defined(PARENA_FREESTANDING)
+
+/* ---- stdlib/net/tcp.prn real host glue (2026-08-25) ------------------
+ * Real BSD sockets -- net/tcp.prn's own #target bodies previously
+ * declared `tcp_listen`/`tcp_accept`/`tcp_connect`/`tcp_read`/
+ * `tcp_write` but this runtime never actually implemented any of them
+ * ("FFI declared, host implementation not written yet", the exact same
+ * class of gap io.prn's own 2026-08-24 rewrite closed for file I/O —
+ * see that section's header comment above for the full reasoning this
+ * mirrors). Closed here for real, first real network I/O anywhere in
+ * this language: net/tcp.prn itself was also carrying io.prn's
+ * pre-fix bug (a `#target` body declared to return `Result`/`TcpStream`
+ * directly, which VS0 never auto-boxes -- see emit.c's own
+ * find_target_c_src comment) until this same pass fixed it to match
+ * io.prn's now-established shape: raw primitives return a plain
+ * scalar/string here, Result/Option/struct construction happens in
+ * ordinary PARENA source in net/tcp.prn itself.
+ *
+ * Real, honest, narrow limitation, stated plainly rather than silently
+ * assumed away: tcp_read_impl below reads until the peer closes the
+ * connection or a read() error, the same one-shot shape
+ * raw_read_all_impl above already uses for files. That is CORRECT for
+ * a server that closes after responding (HTTP/1.0-style, or HTTP/1.1
+ * with a `Connection: close` request header -- which is exactly why
+ * net/http.prn's own request builder sends one) and WRONG for a
+ * keep-alive connection the peer intends to reuse -- reading would
+ * simply block forever waiting for an EOF that never comes. No
+ * Content-Length-aware early stop or chunked-encoding support exists
+ * yet; a real future gap, not this pass's scope. */
+static inline int tcp_connect_impl(const char *host, int port) {
+    struct addrinfo hints, *res, *rp;
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    char portstr[16];
+    snprintf(portstr, sizeof portstr, "%d", port);
+    if (getaddrinfo(host, portstr, &hints, &res) != 0) return -1;
+    int fd = -1;
+    for (rp = res; rp != NULL; rp = rp->ai_next) {
+        fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (fd < 0) continue;
+        if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) break;
+        close(fd);
+        fd = -1;
+    }
+    freeaddrinfo(res);
+    return fd;
+}
+
+static inline int tcp_listen_impl(int port) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    int opt = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof opt);
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof addr);
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons((uint16_t)port);
+    if (bind(fd, (struct sockaddr *)&addr, sizeof addr) < 0) { close(fd); return -1; }
+    if (listen(fd, 16) < 0) { close(fd); return -1; }
+    return fd;
+}
+
+/* ---- stdlib/net/udp.prn real host glue (2026-09-11) -------------------
+ * Real BSD UDP sockets -- closes the same real "FFI declared, host
+ * implementation not written yet" gap class tcp_*_impl above already
+ * closed once for TCP, found here live (gcc-compiling net/udp.prn's own
+ * generated C for the first time, `udp_bind`/`udp_recv_from` were
+ * referenced but never defined anywhere in this runtime -- see
+ * net/udp.prn's own header comment for the full, real bug list this
+ * rewrite fixes, not just the missing symbols).
+ *
+ * udp_send_to_impl takes plain host/port scalars and builds a real
+ * `struct sockaddr_in` itself via `inet_pton` -- the real fix for the
+ * genuine FFI-representation mismatch net/udp.prn's own prior version
+ * left unresolved (casting a PARENA `SocketAddr` struct directly to
+ * `struct sockaddr*`, which is not the same memory layout). Same real
+ * "the host builds the real OS struct, PARENA only ever sees plain
+ * scalars" discipline tcp_connect_impl already uses via getaddrinfo.
+ *
+ * udp_recv_from_impl deliberately takes `char **out_host, int *out_port`
+ * rather than a `SocketAddr *` -- this header is `#include`d at the TOP
+ * of every generated .c file, before that file's own PARENA-emitted
+ * struct typedefs exist yet (confirmed live against a real generated
+ * file), so a function defined HERE can never reference a PARENA
+ * `defstruct` type by name. Plain `char**`/`int*` sidesteps that
+ * ordering problem entirely; net/udp.prn's own PARENA-side wrapper
+ * passes `&(get-field !out-addr :host)`/`&(get-field !out-addr :port)`,
+ * the same real field-address-of convention `stdlib/set.prn`'s own
+ * `maybe-insert!` already establishes for "write into a field the
+ * caller owns." */
+static inline int udp_bind_impl(int port) {
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return -1;
+    int opt = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof opt);
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof addr);
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons((uint16_t)port);
+    if (bind(fd, (struct sockaddr *)&addr, sizeof addr) < 0) { close(fd); return -1; }
+    return fd;
+}
+
+static inline int udp_send_to_impl(int fd, const char *host, int port, const char *data) {
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof addr);
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((uint16_t)port);
+    if (inet_pton(AF_INET, host, &addr.sin_addr) != 1) return -1;
+    ssize_t n = sendto(fd, data, strlen(data), 0, (struct sockaddr *)&addr, sizeof addr);
+    return (n < 0) ? -1 : (int)n;
+}
+
+/* udp_recv_from_impl -- blocks; a real server owns its own poll loop
+ * around this, same as arena_server's own real recvfrom loop (and
+ * tcp_read_impl's own doc comment above, same reasoning). Fills
+ * out_addr->host (arena-allocated) / out_addr->port on success, NULL on
+ * error/timeout -- see net/udp.prn's own header comment (findings #4 and
+ * the "still open" section) for why the sender's address is an
+ * out-parameter here instead of part of a Result tuple, and for the
+ * real, accepted zero-length-datagram-vs-error ambiguity this leaves. */
+static inline char *udp_recv_from_impl(int fd, Arena *dest, char **out_host, int *out_port) {
+    char buf[65536];
+    struct sockaddr_in src;
+    socklen_t src_len = sizeof src;
+    ssize_t n = recvfrom(fd, buf, sizeof buf, 0, (struct sockaddr *)&src, &src_len);
+    if (n < 0) return NULL;
+    char ipbuf[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &src.sin_addr, ipbuf, sizeof ipbuf);
+    char *host_out = (char *)arena_alloc(dest, strlen(ipbuf) + 1);
+    strcpy(host_out, ipbuf);
+    *out_host = host_out;
+    *out_port = ntohs(src.sin_port);
+    char *data_out = (char *)arena_alloc(dest, (size_t)n + 1);
+    memcpy(data_out, buf, (size_t)n);
+    data_out[n] = '\0';
+    return data_out;
+}
+
+/* ---- stdlib/net/rawsocket.prn real host glue (2026-09-07) ------------
+ * Real answer to the founder's own pasted proposal ("Raw Socket Protocol
+ * Overrides — IP_HDRINCL: tell the kernel not to auto-generate the IP
+ * header; the stdlib has manually crafted the raw bytes"). Every real
+ * socket primitive so far (tcp_*_impl above, udp_send_to_impl above)
+ * lets the KERNEL build the IP header — genuinely no way to hand-craft
+ * one before this. `rawsocket_open_impl` opens a real
+ * `SOCK_RAW` socket for a caller-chosen IP protocol number (see
+ * net/rawsocket.prn's own `ipproto-*` constants); `rawsocket_hdrincl_impl`
+ * is the literal, separate `IP_HDRINCL` setsockopt call kept as its own
+ * real primitive (not folded into open) so a caller can also open a raw
+ * socket that does NOT want kernel header suppression (e.g. a raw ICMP
+ * read socket) — genuine flexibility, not just ceremony.
+ *
+ * Real, honest, standing limitation: SOCK_RAW itself requires
+ * CAP_NET_RAW (root, or that specific capability) on every real POSIX
+ * kernel — a real, unavoidable OS-level gate this runtime cannot lift.
+ * `tests/test_net_rawsocket.c` asserts the real, deterministic EPERM
+ * failure path this sandbox's own actual privilege level produces
+ * (matching `pentest/pcap.prn`'s own already-established "assert the
+ * real outcome for THIS sandbox's real privilege, don't fake success"
+ * convention) — the success path is real, structurally complete code,
+ * exercised automatically the moment this runs with real CAP_NET_RAW/
+ * root. */
+static inline int rawsocket_open_impl(int protocol) {
+    return socket(AF_INET, SOCK_RAW, protocol);
+}
+
+static inline int rawsocket_hdrincl_impl(int fd) {
+    int one = 1;
+    return setsockopt(fd, IPPROTO_IP, IP_HDRINCL, &one, sizeof one);
+}
+
+/* rawsocket_sendto_impl — sends `len` real, already-fully-crafted bytes
+ * (IP header included, when IP_HDRINCL is set) to `dest_ip` (a real
+ * dotted-quad string, e.g. "192.0.2.1"). Real, honest, deliberate v0
+ * limitation: an invalid `dest_ip` (inet_pton failure) reports -1 the
+ * same as any other send failure, rather than a distinct error code —
+ * a real, separate refinement, not attempted here. */
+static inline long rawsocket_sendto_impl(int fd, const char *data, int len, const char *dest_ip) {
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof addr);
+    addr.sin_family = AF_INET;
+    if (inet_pton(AF_INET, dest_ip, &addr.sin_addr) != 1) return -1;
+    return (long)sendto(fd, data, (size_t)len, 0, (struct sockaddr *)&addr, sizeof addr);
+}
+
+/* rawsocket_recvfrom_impl -- (S498, founder real-time: "double down on all the unix socket stuff
+ * and raw socket stuff") the real, missing READ side of a SOCK_RAW socket this SAME process
+ * already opened/sent from -- distinct from `pentest/pcap.prn`'s own promiscuous capture (a
+ * SEPARATE listening path over a whole interface); this is the ordinary "read back whatever the
+ * kernel delivered on MY OWN raw socket" call a raw ICMP ping primitive genuinely needs to read
+ * its own echo reply. Blocks; same real "caller owns its own poll loop" contract
+ * `udp_recv_from_impl` above already established, mirrored here rather than shared since a raw
+ * IPv4 socket's payload already includes the kernel-prepended IP header on receive (even when
+ * IP_HDRINCL suppressed it on SEND -- HDRINCL only ever affects outbound framing, a real, easy-to-
+ * miss asymmetry named here explicitly), which UDP's own payload never has. Fills out_src_ip
+ * (arena-allocated dotted-quad) on success, NULL on error -- same real, accepted
+ * zero-length-datagram-vs-error ambiguity `udp_recv_from_impl` already names. */
+static inline char *rawsocket_recvfrom_impl(int fd, Arena *dest, char **out_src_ip) {
+    char buf[65536];
+    struct sockaddr_in src;
+    socklen_t src_len = sizeof src;
+    ssize_t n = recvfrom(fd, buf, sizeof buf, 0, (struct sockaddr *)&src, &src_len);
+    if (n < 0) return NULL;
+    char ipbuf[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &src.sin_addr, ipbuf, sizeof ipbuf);
+    char *ip_out = (char *)arena_alloc(dest, strlen(ipbuf) + 1);
+    strcpy(ip_out, ipbuf);
+    *out_src_ip = ip_out;
+    char *data_out = (char *)arena_alloc(dest, (size_t)n + 1);
+    memcpy(data_out, buf, (size_t)n);
+    data_out[n] = '\0';
+    return data_out;
+}
+
+static inline int rawsocket_close_impl(int fd) {
+    return close(fd);
+}
+
+#if defined(__linux__)
+/* ---- stdlib/net/l2socket.prn real host glue (2026-09-08) --------------
+ * Real answer to the Nexmon-targeting thread ("what stdlibs are missing... fill in the gaps"):
+ * `net/rawsocket.prn` above is IPv4/`IP_HDRINCL` -- network layer. Real 802.11 frame injection
+ * over a monitor-mode interface needs a real LINK-layer raw socket (`AF_PACKET`), sending
+ * already-fully-crafted bytes (a real Radiotap header + 802.11 frame, `pentest/dot11.prn`'s own
+ * future build-side counterpart to its existing parse-side) directly onto the wire with the
+ * kernel doing zero interpretation -- the same real primitive `aircrack-ng`'s own `osdep/
+ * linux.c` uses for real packet injection. Linux-only: `AF_PACKET` has no BSD/macOS equivalent
+ * (that world uses BPF devices, a real, separate, unattempted API) -- matches this whole
+ * feature's own real, standing scope (a real 802.11 monitor interface only exists in this
+ * monorepo's own real target hardware, Raspberry Pi + Nexmon, itself Linux-only).
+ *
+ * Real, honest, standing limitation: same as `net/rawsocket.prn` above, `AF_PACKET`/`SOCK_RAW`
+ * itself requires `CAP_NET_RAW`/root on every real Linux kernel -- this runtime cannot lift that
+ * gate. `l2socket_bind_impl`'s own real, distinct `-2` return (vs. a plain `-1`) lets the real
+ * PARENA-level `l2-bind` distinguish "no such interface" (a real, resolvable, honest usage
+ * error) from a genuine `bind(2)` failure (most commonly the same real `CAP_NET_RAW` gate). */
+static inline int l2socket_open_impl(void) {
+    return socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+}
+
+static inline int l2socket_bind_impl(int fd, const char *iface) {
+    unsigned int ifindex = if_nametoindex(iface);
+    if (ifindex == 0) return -2; /* real, distinct "no such interface" signal */
+    struct sockaddr_ll sll;
+    memset(&sll, 0, sizeof sll);
+    sll.sll_family = AF_PACKET;
+    sll.sll_protocol = htons(ETH_P_ALL);
+    sll.sll_ifindex = (int)ifindex;
+    return bind(fd, (struct sockaddr *)&sll, sizeof sll) < 0 ? -1 : 0;
+}
+
+/* l2socket_send_impl -- a real, already-bound AF_PACKET socket sends directly via send(2), no
+ * per-call destination address needed (unlike rawsocket_sendto_impl's own IPv4 sendto, which
+ * genuinely needs one every call) -- the bind(2) above already fixed this socket's own real,
+ * single destination interface. */
+static inline long l2socket_send_impl(int fd, const char *data, int len) {
+    return (long)send(fd, data, (size_t)len, 0);
+}
+
+/* l2socket_recv_impl -- (S498) the real, missing READ side of an already-open/bound AF_PACKET
+ * socket, same real gap class as rawsocket_recvfrom_impl above, one link layer down: a raw
+ * 802.11/Ethernet frame this socket's own bind(2) interface delivers, no sender-address
+ * out-parameter needed (unlike rawsocket_recvfrom_impl's IPv4 sendto/recvfrom pairing, a bound
+ * AF_PACKET socket's own recv(2) needs no per-call source the way IPv4 does -- the full raw frame
+ * bytes it returns already carry both MAC addresses in their own header, if the caller wants
+ * them). Blocks; same caller-owns-its-own-poll-loop contract as every other *_recv_impl here. */
+static inline char *l2socket_recv_impl(int fd, Arena *dest) {
+    char buf[65536];
+    ssize_t n = recv(fd, buf, sizeof buf, 0);
+    if (n < 0) return NULL;
+    char *data_out = (char *)arena_alloc(dest, (size_t)n + 1);
+    memcpy(data_out, buf, (size_t)n);
+    data_out[n] = '\0';
+    return data_out;
+}
+
+static inline int l2socket_close_impl(int fd) {
+    return close(fd);
+}
+#endif
+
+/* ---- stdlib/net/unixsocket.prn real host glue (2026-09-18, S498) ------
+ * Founder real-time: "double down on all the unix socket stuff and raw socket stuff." Checked
+ * reality first: this runtime had `AF_INET`-only stream/datagram sockets (`net/tcp.prn`,
+ * `net/udp.prn`) plus `AF_INET`/`AF_PACKET` raw sockets (`net/rawsocket.prn`/`net/l2socket.prn`)
+ * -- genuinely zero `AF_UNIX` support anywhere, a real, clean gap, not a partial one. Stream-only
+ * (`SOCK_STREAM`) v0, mirroring `net/tcp.prn`'s own already-established connect/listen/accept/
+ * read/write/close shape exactly -- `SOCK_DGRAM` AF_UNIX is a real, separate, still-open v1 gap,
+ * named rather than silently added on top (the read/write side would need `udp.prn`'s own
+ * sendto/recvfrom shape instead of this file's plain send/recv, a genuinely different API).
+ *
+ * unixsocket_listen_impl deliberately does NOT unconditionally unlink(path) before bind(2) --
+ * that would silently steal the path out from under a real, live, already-listening peer process.
+ * A first draft tried to actively PROBE whether an existing socket file was stale (connect(2) to
+ * it; ECONNREFUSED means no live listener owns it, safe to unlink and retry) -- found live, by
+ * this file's own real end-to-end test, to have a genuinely worse real bug than the one it was
+ * solving: if the path IS live, that probe's own connect(2) call itself creates a real, completed
+ * connection sitting in the LIVE listener's own accept(2) backlog queue, immediately abandoned
+ * (the probe closes right after) -- the live listener's next real accept(2) call gets this
+ * spurious, instant-EOF connection instead of (or ahead of) a genuine client's, corrupting real
+ * FIFO accept order for a process this runtime has no business ever touching. There is no way to
+ * check "is anything listening on this Unix domain path" without EITHER unlinking blind (steals a
+ * live path) OR forming a real connection as a side effect (pollutes a live listener's backlog) --
+ * genuinely not solvable cleanly at this layer. Real, honest, deliberately SIMPLER v0 instead:
+ * bind(2) either succeeds or it doesn't; on EADDRINUSE this just fails, honestly, as
+ * AddressInUse. A caller that KNOWS a path is stale (e.g. its own prior clean-shutdown left the
+ * file behind) is responsible for unlink(path)-ing it itself before calling unix-listen again --
+ * a real, named, deliberate scope cut, not a silently-missing feature. */
+static inline int unixsocket_connect_impl(const char *path) {
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof addr);
+    addr.sun_family = AF_UNIX;
+    if (strlen(path) >= sizeof(addr.sun_path)) { close(fd); return -1; }
+    strcpy(addr.sun_path, path);
+    if (connect(fd, (struct sockaddr *)&addr, sizeof addr) < 0) { close(fd); return -1; }
+    return fd;
+}
+
+static inline int unixsocket_listen_impl(const char *path) {
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof addr);
+    addr.sun_family = AF_UNIX;
+    if (strlen(path) >= sizeof(addr.sun_path)) { close(fd); return -1; }
+    strcpy(addr.sun_path, path);
+    if (bind(fd, (struct sockaddr *)&addr, sizeof addr) < 0) { close(fd); return -1; }
+    if (listen(fd, 16) < 0) { close(fd); return -1; }
+    return fd;
+}
+
+static inline int unixsocket_accept_impl(int listener_fd) {
+    return accept(listener_fd, NULL, NULL);
+}
+
+/* unixsocket_read_impl -- deliberately the SAME simple, one-shot-recv-up-to-64KB shape
+ * `udp_recv_from_impl` above uses, NOT `tcp_read_impl`'s own read-until-EOF-or-Content-Length
+ * loop -- a Unix domain stream socket is byte-stream-shaped like TCP, but this v0's real intended
+ * use (a local IPC control/request-response channel, the standard real reason to reach for
+ * AF_UNIX over AF_INET loopback) doesn't need HTTP-style framing awareness, and reusing tcp_read_
+ * impl's own HTTP-specific Content-Length parsing here would be actively wrong for a non-HTTP
+ * payload. A real, honest v1 gap for a caller that needs multi-recv-call message reassembly,
+ * named rather than silently assumed away. */
+static inline char *unixsocket_read_impl(int fd, Arena *dest) {
+    char buf[65536];
+    ssize_t n = recv(fd, buf, sizeof buf, 0);
+    if (n < 0) return NULL;
+    char *data_out = (char *)arena_alloc(dest, (size_t)n + 1);
+    memcpy(data_out, buf, (size_t)n);
+    data_out[n] = '\0';
+    return data_out;
+}
+
+static inline long unixsocket_write_impl(int fd, const char *data) {
+    return (long)send(fd, data, strlen(data), 0);
+}
+
+static inline int unixsocket_close_impl(int fd) {
+    return close(fd);
+}
+
+/* ---- stdlib/coreutils/pwd.prn real host glue (2026-09-08) -------------
+ * Real getcwd(3) call for the PARENA-powered busybox's own `pwd` applet
+ * (PARENA_COREUTILS_NORTHSTAR.md). A dedicated helper, not a bare
+ * inline-c expression, for the same real reason every other multi-step
+ * host-glue function in this file is one: a GNU statement-expression
+ * (`({ ... })`) would be needed to declare a local buffer inline, and
+ * this whole project's own S223-02 saga already confirmed live that
+ * GNU statement-expressions fail a real -pedantic build. Returns the
+ * same 4096-byte arena-allocated buffer getcwd(3) itself wrote into on
+ * success, or "" on a real getcwd(3) failure (e.g. the current
+ * directory was removed out from under the process) -- an honest
+ * failure signal, not a garbage/partial string. */
+static inline char *coreutils_getcwd_impl(Arena *dest) {
+    char *buf = (char *)arena_alloc(dest, 4096);
+    return getcwd(buf, 4096) ? buf : "";
+}
+
+/* ---- stdlib/coreutils/sh.prn real host glue (2026-09-08) ----------------
+ * Real getenv(3) call for the PARENA-powered busybox's own `sh` applet.
+ * A dedicated helper rather than a bare inline-c expression, same real
+ * reason coreutils_getcwd_impl above already is one: a GNU
+ * statement-expression would be needed otherwise, and this project's
+ * own S223-02 saga already confirmed live that fails a real -pedantic
+ * build. Returns "" (never NULL) for an unset variable, matching real
+ * shell expansion semantics. */
+static inline char *coreutils_getenv_impl(const char *name) {
+    char *v = getenv(name);
+    return v ? v : (char *)"";
+}
+
+/* ---- stdlib/io/mmap.prn real host glue (2026-09-07) -------------------
+ * Real answer to the founder's own pasted proposal: "Raw Disk / Memory-
+ * Mapped File Primitives (mmap): low-level memory map abstractions that
+ * treat massive raw memory dumps or binary file streams directly as
+ * flat arrays in PARENA memory space." Every real file-reading
+ * primitive before this (`raw_read_all_impl` above) read()s the whole
+ * file into one arena-allocated COPY -- correct for ordinary files, but
+ * a real, needless double-hold-in-memory cost for a genuinely massive
+ * dump, and no way to let the OS lazily page in only the bytes actually
+ * touched. `mmap_open_impl` is the real fix: a real `mmap(2)` call
+ * whose returned pointer is handed back to PARENA-side code AS A
+ * STRING/`char *` directly (zero-copy -- `net/dns.prn`'s own header
+ * comment already establishes "String is already a real char*, no
+ * extra unboxing needed", so every existing String-based helper in
+ * this stdlib -- `char-at`, `net/wire/raw-byte`, `ldap/ber`'s own TLV
+ * walkers, `pentest/x509.prn` -- works directly against the real,
+ * OS-paged mapped bytes with no copy at all).
+ *
+ * Real, deliberate design choice, matching `pentest/pcap.prn`'s own
+ * established "Capture's own handle is a table index, never a raw host
+ * pointer exposed to PARENA-side code" precedent for the HANDLE itself
+ * (`MmapFile`'s own `handle : I32` field): PARENA's `I32` cannot safely
+ * hold a real 64-bit pointer value (real truncation risk on any real
+ * 64-bit host), so `mmap_open_impl` returns a small, fixed table index,
+ * NOT the raw mapping address -- that address is only ever handed out
+ * separately, as a real `char *`, via `mmap_ptr_impl` below.
+ *
+ * Real, honest, standing caveat, named directly rather than hidden: the
+ * `char *` `mmap_ptr_impl` returns becomes a real dangling pointer the
+ * instant `mmap_close_impl` (`munmap(2)`) runs on the same handle -- no
+ * region-lifetime enforcement of "used after unmap" exists (the same
+ * real class of caution `pentest/pcap.prn`'s own header comment already
+ * names for its own captured-packet buffers, though that file chose to
+ * defensively COPY -- deliberately NOT done here, since copying would
+ * defeat the entire real point of `mmap` in the first place). A real
+ * caller must not touch the returned String after closing its handle.
+ *
+ * Real, honest v0 limitation: `mmap_len_impl` returns the real file
+ * size as a plain `I32` -- PARENA has no `I64` yet (the same real,
+ * standing limitation `pentest/procmaps.prn`'s own header comment
+ * already names), so a real file over ~2GB reports a wrapped/incorrect
+ * length here; a real, separate, later fix once PARENA gets a 64-bit
+ * integer type. */
+#define MMAP_MAX_HANDLES 16
+static void *g_mmap_ptrs[MMAP_MAX_HANDLES];
+static long g_mmap_lens[MMAP_MAX_HANDLES];
+static int g_mmap_used[MMAP_MAX_HANDLES];
+
+static inline int mmap_open_impl(const char *path) {
+    int slot = -1;
+    for (int i = 0; i < MMAP_MAX_HANDLES; i++) {
+        if (!g_mmap_used[i]) { slot = i; break; }
+    }
+    if (slot < 0) return -1;
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return -1;
+    struct stat st;
+    if (fstat(fd, &st) != 0 || st.st_size <= 0) { close(fd); return -1; }
+    void *ptr = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    close(fd); /* real, standard mmap idiom: the fd itself isn't needed after mmap succeeds --
+                * the mapping stays valid until munmap regardless of the fd's own lifetime. */
+    if (ptr == MAP_FAILED) return -1;
+    g_mmap_ptrs[slot] = ptr;
+    g_mmap_lens[slot] = (long)st.st_size;
+    g_mmap_used[slot] = 1;
+    return slot;
+}
+
+static inline char *mmap_ptr_impl(int handle) {
+    if (handle < 0 || handle >= MMAP_MAX_HANDLES || !g_mmap_used[handle]) return NULL;
+    return (char *)g_mmap_ptrs[handle];
+}
+
+static inline int mmap_len_impl(int handle) {
+    if (handle < 0 || handle >= MMAP_MAX_HANDLES || !g_mmap_used[handle]) return -1;
+    return (int)g_mmap_lens[handle];
+}
+
+static inline int mmap_close_impl(int handle) {
+    if (handle < 0 || handle >= MMAP_MAX_HANDLES || !g_mmap_used[handle]) return -1;
+    int rc = munmap(g_mmap_ptrs[handle], (size_t)g_mmap_lens[handle]);
+    g_mmap_used[handle] = 0;
+    g_mmap_ptrs[handle] = NULL;
+    g_mmap_lens[handle] = 0;
+    return rc;
+}
+
+static inline int tcp_accept_impl(int listener_fd) {
+    return accept(listener_fd, NULL, NULL);
+}
+
+/* find_body_length_from_headers -- scans `buf[0..have)` for the real
+ * header/body boundary ("\r\n\r\n") and, once found, a real
+ * case-insensitive "Content-Length:" header within the header block.
+ * Returns -1 if the boundary hasn't arrived yet (caller should keep
+ * reading), -2 if the boundary arrived but no real Content-Length header
+ * was found (caller should fall back to read-until-EOF/timeout), or the
+ * real, parsed Content-Length value (>= 0) with *header_end_out set to the
+ * byte offset where the real body starts. */
+static inline long find_body_length_from_headers(const char *buf, size_t have, size_t *header_end_out) {
+    const char *boundary = NULL;
+    for (size_t i = 0; i + 3 < have; i++) {
+        if (buf[i] == '\r' && buf[i + 1] == '\n' && buf[i + 2] == '\r' && buf[i + 3] == '\n') {
+            boundary = buf + i;
+            break;
+        }
+    }
+    if (!boundary) return -1;
+    size_t header_len = (size_t)(boundary - buf);
+    *header_end_out = header_len + 4;
+    for (size_t i = 0; i + 15 <= header_len; i++) {
+        if (strncasecmp(buf + i, "Content-Length:", 15) == 0) {
+            long v = strtol(buf + i + 15, NULL, 10);
+            return v >= 0 ? v : -2;
+        }
+    }
+    return -2;
+}
+
+/* tcp_read_impl -- same grow-by-4096-and-copy shape as
+ * raw_read_all_impl above, deliberately not shared code: that one is
+ * documented as the io.prn-specific real host glue, this one is
+ * net/tcp.prn's own, and the two stdlib files are never combined in
+ * the same real build (net/tcp.prn's own header comment already
+ * documents an identical reason for NetError's own duplication) so
+ * keeping them textually separate costs nothing and avoids coupling
+ * either file's future changes to the other's.
+ *
+ * Content-Length-aware since 2026-09-02 (see PARENA's own CHANGELOG for the
+ * real trace): a real WebDriver server (chromedriver) sends a real
+ * Content-Length header but does NOT actually close the TCP connection
+ * after responding, despite its own response advertising
+ * "Connection:close" -- confirmed live two ways: a byte-identical request
+ * sent over a plain shell /dev/tcp socket also blocks forever waiting for
+ * an EOF that never comes, and a raw C reproduction calling this exact
+ * function directly (bypassing every other layer) hung the same way.
+ * Reading strictly until EOF -- this function's entire previous behavior
+ * -- therefore hung forever on every single real request to a real
+ * WebDriver server, not a webdriver.prn-specific bug. Fixed generically
+ * here (every real net/tcp.prn caller benefits, not just http.prn): once
+ * the header/body boundary is seen and a real Content-Length value is
+ * found, stop reading the moment that many body bytes have arrived,
+ * without waiting for the peer to close. Falls back to the original
+ * read-until-EOF behavior when no Content-Length header is present (a
+ * real, honestly-scoped limitation for chunked/close-delimited responses,
+ * unchanged from before). A bounded 30s idle-read timeout (via poll) is a
+ * real, cheap safety net against ever hanging forever again on a response
+ * shape this function's own parsing can't make sense of. */
+static inline char *tcp_read_impl(int fd, Arena *dest) {
+    size_t cap = 4096;
+    size_t len = 0;
+    char *buf = (char *)arena_alloc(dest, cap);
+    long content_length = -1; /* -1 = not yet known (boundary not seen, or no Content-Length header) */
+    size_t header_end = 0;
+    for (;;) {
+        if (content_length >= 0 && len >= header_end + (size_t)content_length) break;
+        if (len + 4096 > cap) {
+            size_t new_cap = cap + 4096;
+            char *grown = (char *)arena_alloc(dest, new_cap);
+            memcpy(grown, buf, len);
+            buf = grown;
+            cap = new_cap;
+        }
+        struct pollfd pfd;
+        pfd.fd = fd;
+        pfd.events = POLLIN;
+        int pr = poll(&pfd, 1, 30000);
+        if (pr <= 0) break; /* timeout or poll error -- return whatever's been read so far */
+        ssize_t n = read(fd, buf + len, 4096);
+        if (n <= 0) break;
+        len += (size_t)n;
+        if (content_length < 0) {
+            long cl = find_body_length_from_headers(buf, len, &header_end);
+            if (cl >= 0) content_length = cl;
+            /* cl == -2 (boundary seen, no real Content-Length): keep the
+               original read-until-EOF/timeout behavior. cl == -1
+               (boundary not seen yet): keep reading. */
+        }
+    }
+    char *out = (char *)arena_alloc(dest, len + 1);
+    memcpy(out, buf, len);
+    out[len] = '\0';
+    return out;
+}
+
+/* tcp_write_impl -- byte-for-byte the same loop as string_concat's
+ * sibling raw_write_impl above (write() is write() whether the fd is a
+ * file or a socket); kept as its own real, distinctly-named function
+ * rather than reused across the file/socket boundary, matching this
+ * runtime's own established preference for names that say what they
+ * are (net/tcp.prn's own header comment on NetError draws the same
+ * file/socket line for the identical reason). */
+static inline int tcp_write_impl(int fd, const char *s) {
+    size_t len = strlen(s);
+    size_t written = 0;
+    while (written < len) {
+        ssize_t n = write(fd, s + written, len - written);
+        if (n < 0) return -1;
+        written += (size_t)n;
+    }
+    return 0;
+}
+
+static inline int tcp_close_impl(int fd) {
+    return close(fd) == 0 ? 0 : -1;
+}
+
+#endif /* !_WIN32 -- end of net/tcp.prn real host glue. Nothing
+        * cross-platform currently includes net/tcp.prn (editor-demo's
+        * own file list never has), so it stays exactly as it was --
+        * genuinely absent on Windows, not stubbed. */
+
+#ifdef PARENA_WITH_TLS
+/* net/tls.prn real host glue (S508e, 2026-09-21) -- founder real-time, DEADWEIGHT's C client had
+ * zero TLS support and defaulted to a plaintext IDUNA URL, a real shipping bug for a client that
+ * has to reach the public internet. Explicit, deliberate pushback given and accepted before this
+ * was written: never hand-roll TLS crypto in an immature DSL with no cryptographic primitives --
+ * this FFI-binds the real, audited mbedTLS library instead (same "wrap a real library via FFI,
+ * never reimplement it" discipline this monorepo already applies elsewhere, e.g. MIXFORGE's own
+ * planned FFI-bound libsqlite3 rather than a hand-rolled SQL engine).
+ *
+ * Live-verified end to end against the real production server (https://okemily.com, real
+ * ECDSA/TLS1.2 handshake, real Strict-Transport-Security response) BEFORE this code was written,
+ * via a standalone throwaway C harness -- confirmed both that a valid handshake succeeds AND that
+ * verification genuinely rejects a wrong hostname (verify_flags nonzero), not just that "a
+ * handshake completed."
+ *
+ * Handle shape: PARENA has no I64/pointer scalar type (STDLIB.md's own documented gap), so unlike
+ * tcp_connect_impl's bare OS fd, tls_connect_impl returns a small I32 INDEX into a fixed-size
+ * table of heap-resident mbedTLS context bundles here in the runtime -- the same "opaque small
+ * integer handle, not a raw pointer" shape a real OS file descriptor already is, just
+ * runtime-managed instead of kernel-managed. TLS_MAX_HANDLES=64 is a real, deliberate cap (a game
+ * client needs at most a small handful of concurrent HTTPS calls to IDUNA), not a load-bearing
+ * production server limit -- a long-running multi-tenant service embedding this would need a
+ * dynamically-grown table, real, separate, not-yet-needed scope.
+ *
+ * The CA trust store is loaded ONCE, lazily, shared read-only across every handle (parsing the
+ * ~180KB system bundle on every single connect would be real, wasteful, avoidable work) -- never
+ * skip verification (MBEDTLS_SSL_VERIFY_REQUIRED is hardcoded, not a caller-controlled parameter)
+ * to make this impossible to accidentally ship without cert checking. */
+#define TLS_MAX_HANDLES 64
+typedef struct {
+    int in_use;
+    mbedtls_net_context net;
+    mbedtls_ssl_context ssl;
+    mbedtls_ssl_config conf;
+    mbedtls_ctr_drbg_context ctr_drbg;
+    mbedtls_entropy_context entropy;
+} ParenaTlsHandle;
+static ParenaTlsHandle g_parena_tls_handles[TLS_MAX_HANDLES];
+static mbedtls_x509_crt g_parena_tls_cacert;
+static int g_parena_tls_cacert_loaded = 0;
+
+/* CA bundle loading: two real strategies, chosen at compile time.
+ *
+ * Default (Linux/macOS): load from a file path (Debian/Ubuntu's own ca-certificates package
+ * convention). PARENA_TLS_CA_BUNDLE_PATH overridable below.
+ *
+ * PARENA_TLS_CA_BUNDLE_EMBEDDED (S508f): Windows has no equivalent single-file CA bundle at a
+ * fixed path, so a consumer targeting Windows instead defines this macro AND provides two real
+ * symbols before including this header: `dw_ca_bundle_data` (a `const unsigned char[]`) and
+ * `dw_ca_bundle_len` (its length, INCLUDING the trailing NUL mbedtls_x509_crt_parse's own buffer
+ * form requires) -- DEADWEIGHT's own scripts/gen_ca_bundle.sh generates exactly this shape from a
+ * real system CA bundle (core/runtime/ca_bundle_data.h, checked in, same "generated file, checked
+ * in" convention core/card_rules.c already establishes) for the mingw cross-build specifically --
+ * the native Linux build keeps using the file-path strategy below, unaffected. */
+#ifdef PARENA_TLS_CA_BUNDLE_EMBEDDED
+/* dw_ca_bundle_data/dw_ca_bundle_len must already be declared by the consumer (via #include
+ * before this header) when this macro is defined -- no fallback declaration here, a missing one
+ * is a real, loud link/compile error rather than a silently-empty trust store. */
+#else
+#ifndef PARENA_TLS_CA_BUNDLE_PATH
+#define PARENA_TLS_CA_BUNDLE_PATH "/etc/ssl/certs/ca-certificates.crt"
+#endif
+#endif
+
+static inline int tls_connect_impl(const char *host, int port) {
+    int slot = -1;
+    for (int i = 0; i < TLS_MAX_HANDLES; i++) if (!g_parena_tls_handles[i].in_use) { slot = i; break; }
+    if (slot < 0) return -1; /* table full */
+    ParenaTlsHandle *h = &g_parena_tls_handles[slot];
+    mbedtls_net_init(&h->net);
+    mbedtls_ssl_init(&h->ssl);
+    mbedtls_ssl_config_init(&h->conf);
+    mbedtls_ctr_drbg_init(&h->ctr_drbg);
+    mbedtls_entropy_init(&h->entropy);
+
+    const char *pers = "parena_tls";
+    if (mbedtls_ctr_drbg_seed(&h->ctr_drbg, mbedtls_entropy_func, &h->entropy,
+                               (const unsigned char *)pers, strlen(pers)) != 0) {
+        return -1;
+    }
+    if (!g_parena_tls_cacert_loaded) {
+        mbedtls_x509_crt_init(&g_parena_tls_cacert);
+#ifdef PARENA_TLS_CA_BUNDLE_EMBEDDED
+        if (mbedtls_x509_crt_parse(&g_parena_tls_cacert, dw_ca_bundle_data, dw_ca_bundle_len) < 0) {
+            return -1;
+        }
+#else
+        if (mbedtls_x509_crt_parse_file(&g_parena_tls_cacert, PARENA_TLS_CA_BUNDLE_PATH) < 0) {
+            return -1; /* CA bundle missing/unreadable -- fail closed, never connect without it */
+        }
+#endif
+        g_parena_tls_cacert_loaded = 1;
+    }
+    char portstr[16];
+    snprintf(portstr, sizeof portstr, "%d", port);
+    if (mbedtls_net_connect(&h->net, host, portstr, MBEDTLS_NET_PROTO_TCP) != 0) return -1;
+    if (mbedtls_ssl_config_defaults(&h->conf, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM,
+                                     MBEDTLS_SSL_PRESET_DEFAULT) != 0) {
+        return -1;
+    }
+    mbedtls_ssl_conf_ca_chain(&h->conf, &g_parena_tls_cacert, NULL);
+    mbedtls_ssl_conf_authmode(&h->conf, MBEDTLS_SSL_VERIFY_REQUIRED); /* hardcoded, not optional */
+    mbedtls_ssl_conf_rng(&h->conf, mbedtls_ctr_drbg_random, &h->ctr_drbg);
+    if (mbedtls_ssl_setup(&h->ssl, &h->conf) != 0) return -1;
+    if (mbedtls_ssl_set_hostname(&h->ssl, host) != 0) return -1; /* also drives SNI */
+    mbedtls_ssl_set_bio(&h->ssl, &h->net, mbedtls_net_send, mbedtls_net_recv, NULL);
+
+    int ret;
+    while ((ret = mbedtls_ssl_handshake(&h->ssl)) != 0) {
+        if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) return -1;
+    }
+    if (mbedtls_ssl_get_verify_result(&h->ssl) != 0) return -1; /* real cert/hostname check */
+    h->in_use = 1;
+    return slot;
+}
+
+/* tls_read_impl -- deliberately narrower than tcp_read_impl's own Content-Length-aware parsing:
+ * this returns whatever is available up to a single mbedtls_ssl_read() call per invocation
+ * (poll-gated with the same 30s idle timeout tcp_read_impl uses, on the real underlying socket
+ * fd via h->net.fd), leaving HTTP framing (Content-Length, chunked, connection-close) to the
+ * PARENA-side net/tls.prn caller to loop on -- tcp_read_impl's own single-shot-to-EOF shape
+ * doesn't apply here since a TLS record boundary and an HTTP body boundary are unrelated; looping
+ * belongs one layer up, not baked into this primitive. */
+static inline char *tls_read_impl(int handle, Arena *dest) {
+    if (handle < 0 || handle >= TLS_MAX_HANDLES || !g_parena_tls_handles[handle].in_use) {
+        char *out = (char *)arena_alloc(dest, 1);
+        out[0] = '\0';
+        return out;
+    }
+    ParenaTlsHandle *h = &g_parena_tls_handles[handle];
+    int pr = mbedtls_net_poll(&h->net, MBEDTLS_NET_POLL_READ, 30000);
+    if (pr <= 0) {
+        char *out = (char *)arena_alloc(dest, 1);
+        out[0] = '\0';
+        return out;
+    }
+    size_t cap = 4096;
+    unsigned char *buf = (unsigned char *)arena_alloc(dest, cap);
+    int n = mbedtls_ssl_read(&h->ssl, buf, cap - 1);
+    if (n < 0) n = 0;
+    buf[n] = '\0';
+    return (char *)buf;
+}
+
+/* tls_read_into_impl -- buffer-oriented sibling of tls_read_impl above, for a real C host (like
+ * DEADWEIGHT's own core/http.c) that wants raw TLS I/O without pulling in PARENA's Arena/String
+ * machinery -- same "take only the real FFI primitive, not the rest of the runtime" discipline
+ * PARENA_NO_GRAPHICS already establishes for SDL2 elsewhere in this file. Writes up to cap-1
+ * bytes into buf (NUL-terminated), returns bytes read, 0 on timeout/idle, -1 on a real error. */
+static inline int tls_read_into_impl(int handle, char *buf, size_t cap) {
+    if (handle < 0 || handle >= TLS_MAX_HANDLES || !g_parena_tls_handles[handle].in_use) return -1;
+    ParenaTlsHandle *h = &g_parena_tls_handles[handle];
+    int pr = mbedtls_net_poll(&h->net, MBEDTLS_NET_POLL_READ, 30000);
+    if (pr <= 0) return 0;
+    int n = mbedtls_ssl_read(&h->ssl, (unsigned char *)buf, cap - 1);
+    if (n < 0) return (n == MBEDTLS_ERR_SSL_TIMEOUT || n == MBEDTLS_ERR_SSL_WANT_READ) ? 0 : -1;
+    buf[n] = '\0';
+    return n;
+}
+
+static inline int tls_write_impl(int handle, const char *s) {
+    if (handle < 0 || handle >= TLS_MAX_HANDLES || !g_parena_tls_handles[handle].in_use) return -1;
+    ParenaTlsHandle *h = &g_parena_tls_handles[handle];
+    size_t len = strlen(s);
+    size_t written = 0;
+    while (written < len) {
+        int n = mbedtls_ssl_write(&h->ssl, (const unsigned char *)s + written, len - written);
+        if (n < 0) {
+            if (n == MBEDTLS_ERR_SSL_WANT_READ || n == MBEDTLS_ERR_SSL_WANT_WRITE) continue;
+            return -1;
+        }
+        written += (size_t)n;
+    }
+    return 0;
+}
+
+static inline int tls_close_impl(int handle) {
+    if (handle < 0 || handle >= TLS_MAX_HANDLES || !g_parena_tls_handles[handle].in_use) return -1;
+    ParenaTlsHandle *h = &g_parena_tls_handles[handle];
+    mbedtls_ssl_close_notify(&h->ssl);
+    mbedtls_net_free(&h->net);
+    mbedtls_ssl_free(&h->ssl);
+    mbedtls_ssl_config_free(&h->conf);
+    mbedtls_ctr_drbg_free(&h->ctr_drbg);
+    mbedtls_entropy_free(&h->entropy);
+    h->in_use = 0;
+    return 0;
+}
+#endif /* PARENA_WITH_TLS */
+
+/* pty.prn gets its OWN guard, separate from net/tcp.prn's above
+ * (2026-08-27, real CI break found live: the editor's new terminal-
+ * toggle feature added stdlib/pty.prn + stdlib/shell.prn to
+ * editor-demo's own file list, which DOES build cross-platform --
+ * Windows Build Editor job failed with "implicit declaration of
+ * function 'pty_open_impl'" etc. once pty.prn's functions were
+ * expected to exist there too, since the old shared #ifndef _WIN32
+ * block simply didn't define them on Windows at all). Real Windows
+ * ConPTY support is still genuinely unstarted (pty.prn's own header
+ * comment already says so) -- the #else stubs below let the terminal-
+ * toggle FEATURE compile and link cleanly cross-platform and fail
+ * HONESTLY at runtime (a real, visible SpawnFailed the editor already
+ * shows as "(terminal not spawned...)", not a silent lie or a crash)
+ * rather than breaking the whole cross-platform editor build over one
+ * genuinely POSIX-only backend. */
+#if !defined(_WIN32) && !defined(PARENA_FREESTANDING)
+
+/* ---- stdlib/pty.prn real host glue (2026-08-26) ------------------------
+ * The concrete "PARENA eats PITVIPER" dogfooding step NORTHSTAR.md's own
+ * strangler-fig section names -- a real, direct generalization of
+ * PITVIPER's own shipped internal/pty/pty_linux.go (openpty(3)-based; the
+ * Windows ConPTY half PITVIPER also has is real, separate, unstarted host
+ * glue here, same honest boundary this file already draws elsewhere for
+ * anything not reachable from this box). Closes the same real gap class
+ * tcp_*_impl above already closed for net/tcp.prn: pty.prn's own
+ * previous version declared its #target bodies to return Result/Pty
+ * directly, which VS0 never auto-boxes -- these are the raw
+ * scalar-returning primitives pty.prn's rewrite calls instead, Result/
+ * struct construction happens in ordinary PARENA source there.
+ *
+ * Real, honest, narrow limitation, stated plainly: no pid is tracked or
+ * returned -- same deliberate scope process.prn's own real host glue
+ * already carries ("fork+exec, detached -- no pipe/wait plumbing"). A
+ * caller can read/write/resize/close the pty by fd, but can't waitpid or
+ * signal the child shell directly; a real future gap if PITVIPER's own
+ * port ever needs to detect "the shell process itself exited" instead of
+ * inferring it from read() returning EOF. */
+static inline int pty_open_impl(const char *shell, int cols, int rows) {
+    struct winsize ws;
+    memset(&ws, 0, sizeof ws);
+    ws.ws_col = (unsigned short)cols;
+    ws.ws_row = (unsigned short)rows;
+    int master_fd;
+    pid_t pid = forkpty(&master_fd, NULL, NULL, &ws);
+    if (pid < 0) return -1;
+    if (pid == 0) {
+        setenv("TERM", "xterm-256color", 1);
+        execlp(shell, shell, (char *)NULL);
+        _exit(127);
+    }
+    return master_fd;
+}
+
+/* Same grow-by-4096-and-copy shape as tcp_read_impl above, kept as its
+ * own distinctly-named function rather than shared -- same reasoning
+ * tcp_read_impl's own header comment already gives for not sharing with
+ * raw_read_all_impl (io.prn), applied one boundary further out. */
+static inline char *pty_read_impl(int fd, Arena *dest) {
+    size_t cap = 4096;
+    size_t len = 0;
+    char *buf = (char *)arena_alloc(dest, cap);
+    for (;;) {
+        if (len + 4096 > cap) {
+            size_t new_cap = cap + 4096;
+            char *grown = (char *)arena_alloc(dest, new_cap);
+            memcpy(grown, buf, len);
+            buf = grown;
+            cap = new_cap;
+        }
+        ssize_t n = read(fd, buf + len, 4096);
+        if (n <= 0) break;
+        len += (size_t)n;
+    }
+    char *out = (char *)arena_alloc(dest, len + 1);
+    memcpy(out, buf, len);
+    out[len] = '\0';
+    return out;
+}
+
+/* pty_poll_read_impl -- real, new, NON-blocking sibling to
+ * pty_read_impl above (2026-08-27, real gap found integrating pty.prn
+ * into the PARENA editor's own terminal panel, founder real-time:
+ * "toggle between terminal and editor... work just like pitviper").
+ * pty_read_impl's own real, documented contract ("reads until the
+ * peer side closes") is exactly right for a "run one command, wait
+ * for it to finish" caller (test_shell.c's own real usage) but wrong
+ * for an interactive, long-lived shell a UI render loop polls every
+ * frame -- calling a blocking read() against an idle shell sitting at
+ * its next prompt would freeze the WHOLE editor, not just the
+ * terminal, until the user's next keystroke produced output.
+ *
+ * Deliberately does NOT set O_NONBLOCK on the fd itself (which would
+ * have silently changed pty_read_impl's own existing, tested
+ * blocking behavior for every caller, including test_shell.c's own
+ * real "write a command, read until EOF" check -- a real regression
+ * risk, not a safe change to make to a shared fd's own mode). Instead
+ * uses a real, standard poll(2) with a ZERO timeout to check "is
+ * there data ready right now" before ever calling read() at all --
+ * read() itself is only reached when poll confirms data (or EOF) is
+ * actually pending, so it can never block. Returns a real, valid
+ * (often empty) String either way -- "" is the correct, honest
+ * "nothing new this frame" signal, not an error. */
+static inline char *pty_poll_read_impl(int fd, Arena *dest) {
+    struct pollfd pfd;
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+    int pr = poll(&pfd, 1, 0);
+    if (pr <= 0 || !(pfd.revents & (POLLIN | POLLHUP | POLLERR))) {
+        char *out = (char *)arena_alloc(dest, 1);
+        out[0] = '\0';
+        return out;
+    }
+    char buf[4096];
+    ssize_t n = read(fd, buf, sizeof buf);
+    if (n <= 0) {
+        char *out = (char *)arena_alloc(dest, 1);
+        out[0] = '\0';
+        return out;
+    }
+    char *out = (char *)arena_alloc(dest, (size_t)n + 1);
+    memcpy(out, buf, (size_t)n);
+    out[n] = '\0';
+    return out;
+}
+
+static inline int pty_write_impl(int fd, const char *s) {
+    size_t len = strlen(s);
+    size_t written = 0;
+    while (written < len) {
+        ssize_t n = write(fd, s + written, len - written);
+        if (n < 0) return -1;
+        written += (size_t)n;
+    }
+    return 0;
+}
+
+static inline int pty_resize_impl(int fd, int cols, int rows) {
+    struct winsize ws;
+    memset(&ws, 0, sizeof ws);
+    ws.ws_col = (unsigned short)cols;
+    ws.ws_row = (unsigned short)rows;
+    return ioctl(fd, TIOCSWINSZ, &ws) == 0 ? 0 : -1;
+}
+
+static inline int pty_close_impl(int fd) {
+    return close(fd) == 0 ? 0 : -1;
+}
+
+#else /* _WIN32 -- real Windows ConPTY backend genuinely not written
+       * yet (see this block's own opening comment above). These
+       * stubs exist purely so a cross-platform target that includes
+       * pty.prn compiles and links on Windows; every real caller goes
+       * through pty-open first (stdlib/pty.prn), which turns this -1
+       * into a real Err(SpawnFailed) the editor's own terminal-toggle
+       * feature already handles and reports honestly -- these never
+       * silently claim success. */
+static inline int pty_open_impl(const char *shell, int cols, int rows) {
+    (void)shell; (void)cols; (void)rows;
+    return -1;
+}
+
+static inline char *pty_read_impl(int fd, Arena *dest) {
+    (void)fd;
+    char *out = (char *)arena_alloc(dest, 1);
+    out[0] = '\0';
+    return out;
+}
+
+static inline char *pty_poll_read_impl(int fd, Arena *dest) {
+    (void)fd;
+    char *out = (char *)arena_alloc(dest, 1);
+    out[0] = '\0';
+    return out;
+}
+
+static inline int pty_write_impl(int fd, const char *s) {
+    (void)fd; (void)s;
+    return -1;
+}
+
+static inline int pty_resize_impl(int fd, int cols, int rows) {
+    (void)fd; (void)cols; (void)rows;
+    return -1;
+}
+
+static inline int pty_close_impl(int fd) {
+    (void)fd;
+    return -1;
+}
+#endif /* _WIN32 -- end of pty.prn real host glue / Windows stub */
+
+/* ---- stdlib/hw/serial.prn real host glue (2026-09-09) ------------------
+ * Real answer to `docs/UART_SERIAL_NORTHSTAR.md` (kanban cards HW-001/
+ * HW-003, "UART STDLIBS... FOR HARDWARE PLATFORMS ARDUINO EQUIVALENT" /
+ * "SERIAL STDLIBS") -- that doc's own research-and-planning pass named
+ * exactly one genuinely new primitive needed beyond what io.prn already
+ * has (plain open/read/write/close on a device-file fd): a real termios
+ * configuration step, since opening /dev/ttyUSB0 with a bare open() lands
+ * in canonical/echoing mode at whatever baud the device was last left at,
+ * not the raw 8N1 framing and specific baud rate (9600/115200 v0 scope,
+ * covering the large majority of real Arduino-class boards) a real
+ * microcontroller link needs. Own guard, separate from net/tcp.prn/
+ * pty.prn above, same real reason pty.prn got its own (2026-08-27's CI
+ * break comment above): a cross-platform target could pull in
+ * stdlib/hw/serial.prn without pulling in pty.prn or net/tcp.prn, and a
+ * real Windows COM-port backend is a genuinely different API (no
+ * termios, no /dev/ttyUSB*) -- unstarted here, same honest boundary
+ * ConPTY already carries above.
+ *
+ * Real, deliberate departure from the NORTHSTAR doc's own rough API
+ * sketch, found while actually implementing rather than transcribing it
+ * verbatim: that sketch's `serial-read` shape (a plain Result-wrapped
+ * read, no stated blocking behavior) would inherit tcp_read_impl's/
+ * raw_read_all_impl's real "read until the peer closes" contract if
+ * implemented the same way pty_read_impl originally was -- which is
+ * exactly WRONG here, the identical bug class pty_poll_read_impl's own
+ * header comment above already found and fixed for a long-lived
+ * interactive shell: a real, connected microcontroller never closes its
+ * side of the link, so a blocking read would hang forever waiting for an
+ * EOF that isn't coming. serial_read_impl below is written directly as
+ * the non-blocking, poll(2)-gated shape from the start (a literal reuse
+ * of pty_poll_read_impl's own real technique), not the blocking shape
+ * fixed up later after a live hang -- applying that already-learned
+ * lesson up front instead of re-discovering it. */
+#if !defined(_WIN32) && !defined(PARENA_FREESTANDING)
+
+/* serial_baud_to_speed_impl -- the real, small, named lookup table the
+ * NORTHSTAR doc calls out by name ("baud-to-speed-constant"), mapping
+ * the plain I32 baud rate a caller passes to the real POSIX `speed_t`
+ * constant cfsetispeed/cfsetospeed actually need. Real, deliberate v0
+ * boundary matching that doc exactly: only 9600 and 115200 (the large
+ * majority of real Arduino-class boards) -- extended later only if a
+ * real device needs a baud rate not yet listed here, not every real
+ * POSIX speed_t constant up front. Returns -1 (never a real POSIX speed_t
+ * value) for anything else, so serial_configure_impl below can fail
+ * honestly on an unsupported baud rather than silently picking one. */
+static inline int serial_baud_to_speed_impl(int baud) {
+    switch (baud) {
+        case 9600: return B9600;
+        case 115200: return B115200;
+        default: return -1;
+    }
+}
+
+/* serial_raw_open_impl -- opens the device file with the real, standard
+ * serial-port flags (O_NOCTTY: this fd must never become the process's
+ * controlling terminal, the real reason a plain io.prn raw-open isn't
+ * reused here; O_NDELAY: don't block waiting for the modem control
+ * lines/DCD a real USB-serial adapter may never assert). Deliberately
+ * NOT reusing io.prn's own raw_open_impl -- that function's mode_tag
+ * switch has no case that produces this exact flag combination, and
+ * bending its meaning would blur a file-open call and a serial-port-open
+ * call under the same primitive, the same file/socket line net/tcp.prn's
+ * own NetError header comment already draws for the identical reason. */
+static inline int serial_raw_open_impl(const char *path) {
+    return open(path, O_RDWR | O_NOCTTY | O_NDELAY);
+}
+
+/* serial_configure_impl(fd, baud) -- the one genuinely new runtime
+ * primitive the NORTHSTAR doc named. Real, standard Linux serial-port
+ * termios sequence: tcgetattr to seed a real starting struct (not a
+ * zeroed one -- some fields this doesn't touch, like c_cc entries beyond
+ * VMIN/VTIME, are best left at their real driver-reported defaults),
+ * cfmakeraw to drop canonical/echo/signal-generating mode, explicit 8N1
+ * framing (CS8, no PARENB, no CSTOPB -- the real, standard framing every
+ * Arduino-class board's own default sketch expects), CLOCAL|CREAD to
+ * ignore modem control lines and enable the receiver, VMIN=0/VTIME=0 so
+ * a real blocking read() call against this fd (if one were ever made)
+ * returns immediately with whatever's available rather than waiting for
+ * a fixed byte count -- consistent with serial_read_impl's own
+ * non-blocking, poll-gated design below, not load-bearing for it (poll()
+ * already gates every real read() call this file makes), but real,
+ * correct, and cheap insurance against a future caller adding a direct
+ * read never routed through serial_read_impl. Returns 0 on success, -1
+ * on an unsupported baud rate or any real termios call failing. */
+static inline int serial_configure_impl(int fd, int baud) {
+    int speed = serial_baud_to_speed_impl(baud);
+    if (speed < 0) return -1;
+
+    struct termios tty;
+    if (tcgetattr(fd, &tty) != 0) return -1;
+
+    cfmakeraw(&tty);
+    cfsetispeed(&tty, (speed_t)speed);
+    cfsetospeed(&tty, (speed_t)speed);
+
+    tty.c_cflag |= (CLOCAL | CREAD);
+    tty.c_cflag &= ~PARENB;
+    tty.c_cflag &= ~CSTOPB;
+    tty.c_cflag &= ~CSIZE;
+    tty.c_cflag |= CS8;
+
+    tty.c_cc[VMIN] = 0;
+    tty.c_cc[VTIME] = 0;
+
+    if (tcsetattr(fd, TCSANOW, &tty) != 0) return -1;
+
+    /* Real, deliberate un-set of the O_NDELAY serial_raw_open_impl opened
+     * with above -- this fd stays in ordinary blocking mode from here on
+     * (matching pty_poll_read_impl's own real fd, which also stays
+     * blocking; poll() with a zero timeout is what actually keeps
+     * serial_read_impl below from ever blocking, not the fd's own
+     * O_NONBLOCK flag). Leaving O_NDELAY set would also make
+     * serial_write_impl's write() calls return EAGAIN under real
+     * backpressure instead of blocking briefly to drain, a real, worse
+     * failure mode this avoids. */
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags >= 0) fcntl(fd, F_SETFL, flags & ~O_NDELAY);
+
+    return 0;
+}
+
+/* serial_read_impl -- see this section's own opening header comment for
+ * the real reasoning: a literal reuse of pty_poll_read_impl's own
+ * technique (a zero-timeout poll(2) gate before ever calling read()),
+ * not the blocking read-until-close shape tcp_read_impl/pty_read_impl
+ * use, because a real connected microcontroller never closes its side.
+ * Returns a real, valid (often empty) String either way -- "" is the
+ * correct, honest "nothing new since the last read" signal, not an
+ * error, same real contract pty_poll_read_impl's own header comment
+ * already documents. */
+static inline char *serial_read_impl(int fd, Arena *dest) {
+    struct pollfd pfd;
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+    int pr = poll(&pfd, 1, 0);
+    if (pr <= 0 || !(pfd.revents & (POLLIN | POLLHUP | POLLERR))) {
+        char *out = (char *)arena_alloc(dest, 1);
+        out[0] = '\0';
+        return out;
+    }
+    char buf[4096];
+    ssize_t n = read(fd, buf, sizeof buf);
+    if (n <= 0) {
+        char *out = (char *)arena_alloc(dest, 1);
+        out[0] = '\0';
+        return out;
+    }
+    char *out = (char *)arena_alloc(dest, (size_t)n + 1);
+    memcpy(out, buf, (size_t)n);
+    out[n] = '\0';
+    return out;
+}
+
+static inline int serial_write_impl(int fd, const char *s) {
+    size_t len = strlen(s);
+    size_t written = 0;
+    while (written < len) {
+        ssize_t n = write(fd, s + written, len - written);
+        if (n < 0) return -1;
+        written += (size_t)n;
+    }
+    return 0;
+}
+
+/* serial_read_bytes_impl/serial_write_bytes_impl -- real, byte-perfect
+ * siblings of serial_read_impl/serial_write_impl above (2026-09-09, the
+ * same real, named Bytes retrofit spi_transfer_bytes_impl/
+ * i2c_read_bytes_impl/i2c_write_bytes_impl do for SPI/I2C). Identical
+ * real poll-gated, non-blocking mechanics to serial_read_impl -- a
+ * genuine embedded `0x00` byte from a real connected device now
+ * round-trips correctly via the returned Bytes's own explicit length,
+ * for any caller that uses this sibling instead of the original
+ * String-based one, which stays unchanged. */
+static inline Bytes serial_read_bytes_impl(int fd, Arena *dest) {
+    struct pollfd pfd;
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+    int pr = poll(&pfd, 1, 0);
+    if (pr <= 0 || !(pfd.revents & (POLLIN | POLLHUP | POLLERR))) {
+        return bytes_alloc_impl(dest, 0);
+    }
+    Bytes b = bytes_alloc_impl(dest, 4096);
+    ssize_t n = read(fd, b.data, 4096);
+    if (n < 0) n = 0;
+    b.len = (int)n;
+    return b;
+}
+
+static inline int serial_write_bytes_impl(int fd, Bytes data) {
+    int written = 0;
+    while (written < data.len) {
+        ssize_t n = write(fd, data.data + written, (size_t)(data.len - written));
+        if (n < 0) return -1;
+        written += (int)n;
+    }
+    return 0;
+}
+
+static inline int serial_close_impl(int fd) {
+    return close(fd) == 0 ? 0 : -1;
+}
+
+#else /* _WIN32 -- real Windows COM-port backend genuinely not written
+       * yet (no termios, no /dev/ttyUSB* -- a real, separate API this
+       * pass doesn't attempt, same honest boundary pty.prn's own Windows
+       * ConPTY stub already carries above). These stubs exist purely so
+       * a cross-platform target that includes stdlib/hw/serial.prn
+       * compiles and links on Windows; every real caller goes through
+       * serial-open first (stdlib/hw/serial.prn), which turns this -1
+       * into a real Err(OpenFailed) -- never a silent lie or a crash. */
+static inline int serial_raw_open_impl(const char *path) {
+    (void)path;
+    return -1;
+}
+
+static inline int serial_configure_impl(int fd, int baud) {
+    (void)fd; (void)baud;
+    return -1;
+}
+
+static inline char *serial_read_impl(int fd, Arena *dest) {
+    (void)fd;
+    char *out = (char *)arena_alloc(dest, 1);
+    out[0] = '\0';
+    return out;
+}
+
+static inline int serial_write_impl(int fd, const char *s) {
+    (void)fd; (void)s;
+    return -1;
+}
+
+static inline Bytes serial_read_bytes_impl(int fd, Arena *dest) {
+    (void)fd;
+    return bytes_alloc_impl(dest, 0);
+}
+
+static inline int serial_write_bytes_impl(int fd, Bytes data) {
+    (void)fd; (void)data;
+    return -1;
+}
+
+static inline int serial_close_impl(int fd) {
+    (void)fd;
+    return -1;
+}
+#endif /* _WIN32 -- end of stdlib/hw/serial.prn real host glue / Windows stub */
+
+/* ---- stdlib/hw/spi.prn real host glue (2026-09-09) ----------------------
+ * Real answer to the SPI gap docs/UART_SERIAL_NORTHSTAR.md itself named
+ * explicitly out of scope: the Adafruit Feather's own likely RFM9x LoRa
+ * radio talks SPI, not UART. Linux's real spidev(4) userspace API: open
+ * a real `/dev/spidevB.C` device file (B = bus number, C = chip-select
+ * line -- the kernel driver toggles the real CS GPIO automatically per
+ * transfer, so no separate manual-CS primitive is needed for v0),
+ * configure real mode/bits-per-word/max-speed-hz via three
+ * `SPI_IOC_WR_*` ioctls, then run a transfer via `SPI_IOC_MESSAGE` -- a
+ * real, full-duplex operation: ONE ioctl call simultaneously clocks
+ * `tx_buf` out and `rx_buf` in, the same `len` bytes each. This is the
+ * real, structural reason spi.prn's own API has one `spi-transfer`
+ * function rather than net/tcp.prn/pty.prn/hw/serial.prn's own
+ * `-read`/`-write` pair -- correct SPI semantics, not an arbitrary
+ * departure from their shape. Guarded with its own top-level
+ * `#if defined(__linux__) ... #else ... #endif` (NOT nested inside the
+ * file's pre-existing `#ifndef _WIN32` block, unlike net/tcp.prn/
+ * pty.prn/hw/serial.prn above -- those three are genuinely POSIX-wide;
+ * this one is Linux-only even among POSIX systems, since macOS/BSD have
+ * no spidev-equivalent userspace API either, so a plain `#ifndef _WIN32`
+ * would wrongly compile these against headers that don't exist there).
+ * The `#else` branch below is real, honest Windows/macOS/BSD stubs,
+ * same shape as pty.prn's own ConPTY stub -- every real caller goes
+ * through spi-open first, which turns a stub's -1 into a real
+ * Err(OpenFailed), never a silent lie, a crash, or a link error.
+ *
+ * SPI mode 0-3 needs no lookup table the way serial's baud rate does --
+ * `SPI_MODE_0`..`SPI_MODE_3` are already defined as the literal integers
+ * 0-3 (they ARE the raw `SPI_CPOL`/`SPI_CPHA` bit combination), so the
+ * mode I32 a caller passes is used directly.
+ *
+ * Real, honest, named limitation, found directly while implementing
+ * this (not assumed, and not previously written down anywhere in this
+ * runtime despite being real and already present): every raw primitive
+ * in this file treats a String as a NUL-terminated C string
+ * (`strlen`-based), not a length-prefixed byte buffer -- a real,
+ * pre-existing constraint every String-based host primitive above
+ * already silently carries (`tcp_write_impl`, `pty_write_impl`,
+ * `serial_write_impl` included), never previously surfaced explicitly
+ * because none of their real payloads (HTTP text, shell commands,
+ * terminal output) are likely to contain an embedded 0x00 byte.
+ * `spi_transfer_impl` below is the first real binary-transfer primitive
+ * in this runtime where that's a live, expected case, not a
+ * theoretical one -- register address 0x00 is real and commonly
+ * addressed on real SPI devices (the RFM9x's own `RegFifo` IS address
+ * 0x00). This primitive is real and correct for any payload with no
+ * embedded NUL byte; a payload that genuinely needs one cannot
+ * round-trip through it today. Fixing this for real needs a
+ * length-explicit byte-buffer type at the PARENA core-language level
+ * (`compress/lz4.prn`'s own pure-PARENA `(Vec I32)` byte buffer is the
+ * real, existing precedent for that shape, but plugging one directly
+ * into a raw syscall `#target` body has no established calling-
+ * convention precedent anywhere in this runtime yet -- a real,
+ * separate, un-derisked piece of work, not attempted in this pass).
+ * Named here plainly rather than silently shipped as a hidden landmine.
+ *
+ * Real, honest, named limitation, second: a failed `SPI_IOC_MESSAGE`
+ * ioctl is not distinguished from "the device legitimately returned all
+ * zero bytes" -- `spi_transfer_impl` zeroes its own receive buffer
+ * before the ioctl and does not check the ioctl's return value, the
+ * same coarser-signal judgment this runtime already makes for
+ * `tcp_read_impl`/`pty_read_impl`/`serial_read_impl` (none of which
+ * distinguish a real read() error from "no more data" either) --
+ * `TransferFailed` on `SpiError` is real and honestly named for
+ * symmetry with `OpenFailed`, but genuinely unreachable through this
+ * path, matching `hw/serial.prn`'s own already-documented `ReadFailed`
+ * and `net/tcp.prn`'s own unused `NetError::Timeout`. Untestable to a
+ * finer grain in this sandbox anyway -- no physical SPI device exists
+ * here to fail a real transfer against. */
+#if defined(__linux__)
+
+/* spi_open_impl -- opens the device file and applies all three real
+ * spidev mode/bits-per-word/speed ioctls in one primitive (unlike
+ * hw/serial.prn's own deliberate open-then-configure split, there is no
+ * other real caller that would ever want an SPI device file open but
+ * unconfigured, so this follows tcp_listen_impl's own established
+ * precedent of combining multiple syscalls behind one raw fd-or-(-1)
+ * primitive instead). Closes the fd it opened before returning -1 on
+ * any configuration failure, so a caller never gets back a "valid" fd
+ * that's actually misconfigured. */
+static inline int spi_open_impl(const char *path, int mode, int speed_hz, int bits_per_word) {
+    int fd = open(path, O_RDWR);
+    if (fd < 0) return -1;
+
+    __u8 m = (__u8)mode;
+    __u8 bpw = (__u8)bits_per_word;
+    __u32 speed = (__u32)speed_hz;
+
+    if (ioctl(fd, SPI_IOC_WR_MODE, &m) < 0 ||
+        ioctl(fd, SPI_IOC_WR_BITS_PER_WORD, &bpw) < 0 ||
+        ioctl(fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed) < 0) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+/* spi_transfer_impl -- see this section's own opening header comment for
+ * the full real reasoning on both named limitations. `(unsigned long)`
+ * casts for tx_buf/rx_buf match the standard, well-known idiom real
+ * spidev sample code uses (e.g. the kernel tree's own
+ * Documentation/spi/spidev_test.c) -- correct on both 32- and 64-bit
+ * Linux, no extra `<stdint.h>`/`uintptr_t` dependency needed. */
+static inline char *spi_transfer_impl(int fd, const char *tx, Arena *dest) {
+    size_t len = strlen(tx);
+    char *rx = (char *)arena_alloc(dest, len + 1);
+    memset(rx, 0, len + 1);
+
+    if (len > 0) {
+        struct spi_ioc_transfer tr;
+        memset(&tr, 0, sizeof tr);
+        tr.tx_buf = (unsigned long)tx;
+        tr.rx_buf = (unsigned long)rx;
+        tr.len = (__u32)len;
+        ioctl(fd, SPI_IOC_MESSAGE(1), &tr);
+    }
+    return rx;
+}
+
+/* spi_transfer_bytes_impl -- real, byte-perfect sibling of
+ * spi_transfer_impl above (2026-09-09, the real, named follow-up
+ * docs/BYTES_NORTHSTAR.md's own "Phase 2 — not started" section
+ * pointed at: retrofitting the actual hardware-facing consumer, not
+ * just the core Bytes type). Identical real ioctl mechanics, but `tx`
+ * carries its own explicit length (`Bytes.len`) instead of `strlen`,
+ * and the returned `rx` is a real `Bytes` of that same exact length --
+ * a genuine embedded `0x00` on EITHER side of a real transfer (a
+ * register address of `0x00`, or a device response byte that happens
+ * to be `0x00`) now round-trips correctly, closing both of
+ * spi_transfer_impl's own real, named limitations (the write-side
+ * truncation AND the read-side truncation) for any caller that uses
+ * this sibling instead. `spi_transfer_impl` itself is UNCHANGED --
+ * this is a real, additive addition, not a breaking replacement,
+ * exactly as `docs/BYTES_NORTHSTAR.md` said this retrofit would be. */
+static inline Bytes spi_transfer_bytes_impl(int fd, Bytes tx, Arena *dest) {
+    Bytes rx = bytes_alloc_impl(dest, tx.len);
+    if (tx.len > 0) {
+        struct spi_ioc_transfer tr;
+        memset(&tr, 0, sizeof tr);
+        tr.tx_buf = (unsigned long)tx.data;
+        tr.rx_buf = (unsigned long)rx.data;
+        tr.len = (__u32)tx.len;
+        ioctl(fd, SPI_IOC_MESSAGE(1), &tr);
+    }
+    return rx;
+}
+
+static inline int spi_close_impl(int fd) {
+    return close(fd) == 0 ? 0 : -1;
+}
+
+#else /* not Linux -- real spidev(4) genuinely does not exist on any
+       * other platform (see this section's own opening header comment).
+       * These stubs exist purely so a cross-platform target that
+       * includes stdlib/hw/spi.prn compiles and links elsewhere; every
+       * real caller goes through spi-open first (stdlib/hw/spi.prn),
+       * which turns this -1 into a real Err(OpenFailed) -- never a
+       * silent lie or a crash. */
+static inline int spi_open_impl(const char *path, int mode, int speed_hz, int bits_per_word) {
+    (void)path; (void)mode; (void)speed_hz; (void)bits_per_word;
+    return -1;
+}
+
+static inline char *spi_transfer_impl(int fd, const char *tx, Arena *dest) {
+    (void)fd; (void)tx;
+    char *out = (char *)arena_alloc(dest, 1);
+    out[0] = '\0';
+    return out;
+}
+
+static inline Bytes spi_transfer_bytes_impl(int fd, Bytes tx, Arena *dest) {
+    (void)fd; (void)tx;
+    return bytes_alloc_impl(dest, 0);
+}
+
+static inline int spi_close_impl(int fd) {
+    (void)fd;
+    return -1;
+}
+#endif /* __linux__ -- end of stdlib/hw/spi.prn real host glue / non-Linux stub */
+
+/* ---- stdlib/hw/i2c.prn real host glue (2026-09-09, same day) ------------
+ * Third real hardware bus in the same session (UART/serial, SPI, now
+ * I2C) -- the third of the three buses any real Arduino-class or
+ * Raspberry-Pi-class hobby sensor overwhelmingly uses. Linux's real
+ * `i2c-dev(4)` userspace API, its own simple/most common convention
+ * (the same one Python's `smbus`/`smbus2` and most simple C I2C
+ * libraries use): `ioctl(fd, I2C_SLAVE, addr)` fixes ONE target device
+ * address for the lifetime of the open fd, after which plain
+ * `read()`/`write()` calls talk to that address -- no per-call address
+ * parameter needed, matching how a real caller actually uses I2C (open
+ * one fd per physical device you're talking to, not per bus).
+ *
+ * Real, structural distinction from SPI, worth naming directly: I2C is
+ * addressed and half-duplex-per-direction (a real caller writes a
+ * register address, then separately reads back a value) -- much closer
+ * to net/tcp.prn's/hw/serial.prn's own `-read`/`-write` stream shape
+ * than to SPI's necessarily-simultaneous `-transfer`. `i2c-read` takes
+ * an explicit length (unlike tcp-read/serial-read's own "whatever's
+ * available" shape) because that's how real I2C reads actually work --
+ * a caller reads a specific, already-known number of bytes for the
+ * register/command it just addressed, not an open-ended stream.
+ *
+ * Real, honest, DELIBERATE non-hardware-verification here, distinct
+ * from "genuinely untestable" (SPI's own real situation): this actual
+ * physical box has a REAL, live `/dev/i2c-0` (an Intel SMBus controller,
+ * confirmed via `lsmod`'s own `i2c_i801` entry) -- unlike SPI, a real
+ * device technically exists to test against. It is root-owned
+ * (`crw------- root root`) and deliberately left untouched by this
+ * runtime and its own tests: an SMBus commonly carries real system
+ * traffic (battery, thermal, RAM SPD), and this stdlib work does not
+ * need to risk an unreviewed real transaction against real system
+ * hardware to be correct -- the same honest write-side embedded-NUL
+ * limitation SPI/serial/tcp already carry (see hw/spi.prn's own header
+ * comment) applies here too, unfixed for the same real reason. */
+#if defined(__linux__)
+
+/* i2c_open_impl -- opens the device file and fixes the target slave
+ * address in one primitive, matching spi_open_impl's own precedent of
+ * combining open+configure behind one raw fd-or-(-1) primitive (there
+ * is no real caller that wants an I2C device file open without a fixed
+ * target address). Rolls back (closes) the fd on a failed I2C_SLAVE
+ * ioctl, same discipline as spi_open_impl. */
+static inline int i2c_open_impl(const char *path, int addr) {
+    int fd = open(path, O_RDWR);
+    if (fd < 0) return -1;
+    if (ioctl(fd, I2C_SLAVE, addr) < 0) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+/* i2c_read_impl -- real, honest short-read handling: NUL-terminates at
+ * whatever `n` bytes read() actually returned (0 on EOF/error, treated
+ * the same as "nothing available" rather than distinguished -- the same
+ * coarser-signal judgment tcp_read_impl/pty_read_impl/serial_read_impl/
+ * spi_transfer_impl above already make), never blocks trying to fill
+ * the full requested `len`. */
+static inline char *i2c_read_impl(int fd, int len, Arena *dest) {
+    if (len < 0) len = 0;
+    char *buf = (char *)arena_alloc(dest, (size_t)len + 1);
+    ssize_t n = (len > 0) ? read(fd, buf, (size_t)len) : 0;
+    if (n < 0) n = 0;
+    buf[n] = '\0';
+    return buf;
+}
+
+static inline int i2c_write_impl(int fd, const char *s) {
+    size_t len = strlen(s);
+    size_t written = 0;
+    while (written < len) {
+        ssize_t n = write(fd, s + written, len - written);
+        if (n < 0) return -1;
+        written += (size_t)n;
+    }
+    return 0;
+}
+
+/* i2c_read_bytes_impl/i2c_write_bytes_impl -- real, byte-perfect
+ * siblings of i2c_read_impl/i2c_write_impl above (2026-09-09, the same
+ * real, named Bytes retrofit spi_transfer_bytes_impl above does for
+ * SPI). A genuine embedded `0x00` register value now round-trips
+ * correctly on both directions for any caller that uses these instead
+ * of the original String-based pair, which stay unchanged. */
+static inline Bytes i2c_read_bytes_impl(int fd, int len, Arena *dest) {
+    if (len < 0) len = 0;
+    Bytes b = bytes_alloc_impl(dest, len);
+    ssize_t n = (len > 0) ? read(fd, b.data, (size_t)len) : 0;
+    if (n < 0) n = 0;
+    b.len = (int)n; /* real, honest short-read length, not the originally requested one */
+    return b;
+}
+
+static inline int i2c_write_bytes_impl(int fd, Bytes data) {
+    int written = 0;
+    while (written < data.len) {
+        ssize_t n = write(fd, data.data + written, (size_t)(data.len - written));
+        if (n < 0) return -1;
+        written += (int)n;
+    }
+    return 0;
+}
+
+static inline int i2c_close_impl(int fd) {
+    return close(fd) == 0 ? 0 : -1;
+}
+
+#else /* not Linux -- real i2c-dev(4) genuinely does not exist on any
+       * other platform (see this section's own opening header comment).
+       * Real, honest stubs, same shape spi.prn's own non-Linux stub
+       * uses -- every real caller goes through i2c-open first, which
+       * turns this -1 into a real Err(OpenFailed). */
+static inline int i2c_open_impl(const char *path, int addr) {
+    (void)path; (void)addr;
+    return -1;
+}
+
+static inline char *i2c_read_impl(int fd, int len, Arena *dest) {
+    (void)fd; (void)len;
+    char *out = (char *)arena_alloc(dest, 1);
+    out[0] = '\0';
+    return out;
+}
+
+static inline int i2c_write_impl(int fd, const char *s) {
+    (void)fd; (void)s;
+    return -1;
+}
+
+static inline Bytes i2c_read_bytes_impl(int fd, int len, Arena *dest) {
+    (void)fd; (void)len;
+    return bytes_alloc_impl(dest, 0);
+}
+
+static inline int i2c_write_bytes_impl(int fd, Bytes data) {
+    (void)fd; (void)data;
+    return -1;
+}
+
+static inline int i2c_close_impl(int fd) {
+    (void)fd;
+    return -1;
+}
+#endif /* __linux__ -- end of stdlib/hw/i2c.prn real host glue / non-Linux stub */
+
+/* ---- stdlib/shell.prn real host glue (2026-08-26) ----------------------
+ * A real, direct port of PITVIPER's own shell-resolution policy
+ * (internal/pty/pty_windows.go's Open()/isWslStub/findGitBash). Every
+ * function here is a genuinely irreducible raw OS primitive (env read,
+ * PATH search, file existence) -- the real decision chain (explicit >
+ * $SHELL > Git Bash off PATH > Git Bash well-known paths > platform
+ * fallback) is real PARENA `match`/`cond` logic in shell.prn itself, not
+ * hidden in here, matching that file's own stated design intent.
+ *
+ * Each function returns a plain empty string ("") as its "not found"
+ * sentinel rather than NULL -- consistent with this runtime's own
+ * established "raw primitives return a plain scalar/string, Option/
+ * Result construction happens in ordinary PARENA source" convention
+ * (tcp_read_impl et al. above), and avoids the caller ever having to
+ * null-check a raw C pointer from PARENA source directly. */
+static inline char *env_get_impl(const char *name, Arena *dest) {
+    const char *v = getenv(name);
+    if (v == NULL) v = "";
+    size_t len = strlen(v);
+    char *out = (char *)arena_alloc(dest, len + 1);
+    memcpy(out, v, len + 1);
+    return out;
+}
+
+/* exec_lookpath_impl -- real, portable PATH search, mirrors Go's own
+ * exec.LookPath (checked for X_OK on POSIX; Windows PATHEXT resolution
+ * is real, separate, unstarted host glue here, same honest "not
+ * reachable from this box" boundary pty_open_impl's own header comment
+ * already draws -- this box is Linux). */
+static inline char *exec_lookpath_impl(const char *name, Arena *dest) {
+    const char *path_env = getenv("PATH");
+    if (path_env == NULL || path_env[0] == '\0') {
+        char *out = (char *)arena_alloc(dest, 1);
+        out[0] = '\0';
+        return out;
+    }
+    size_t path_len = strlen(path_env);
+    char path_copy[4096];
+    if (path_len >= sizeof path_copy) path_len = sizeof path_copy - 1u;
+    memcpy(path_copy, path_env, path_len);
+    path_copy[path_len] = '\0';
+    char *saveptr = NULL;
+    char *dir = strtok_r(path_copy, ":", &saveptr);
+    char candidate[4096];
+    while (dir != NULL) {
+        snprintf(candidate, sizeof candidate, "%s/%s", dir, name);
+        if (access(candidate, X_OK) == 0) {
+            size_t len = strlen(candidate);
+            char *out = (char *)arena_alloc(dest, len + 1);
+            memcpy(out, candidate, len + 1);
+            return out;
+        }
+        dir = strtok_r(NULL, ":", &saveptr);
+    }
+    char *out = (char *)arena_alloc(dest, 1);
+    out[0] = '\0';
+    return out;
+}
+
+static inline int file_exists_impl(const char *path) {
+    return access(path, F_OK) == 0 ? 1 : 0;
+}
+
+/* list_dir_impl -- real, portable directory listing (2026-08-27,
+ * founder real-time: "we are going to need to do the nerd tree style
+ * implementation to display a tree of files"). Returns a real,
+ * newline-joined list of entry names in `path` (both files and
+ * subdirectories, "." and ".." skipped), or an empty string on any
+ * error (path doesn't exist, not a directory, permission denied) --
+ * same "empty string on failure, not NULL" convention env_get_impl/
+ * exec_lookpath_impl above already establish; stdlib/io.prn's own
+ * list-dir wrapper splits this on "\n" via the already-real
+ * string/split, special-casing "" to a real empty Vec rather than a
+ * Vec holding one blank entry (string/split's own real, documented
+ * behavior on an empty input string). dirent.h's opendir/readdir/
+ * closedir are genuinely portable here -- MinGW-w64 ships a real
+ * dirent.h emulation (backed by FindFirstFile/FindNextFile
+ * internally), confirmed via a real local mingw cross-compile, so
+ * this needs no #ifdef _WIN32 split unlike net/tcp.prn's sockets or
+ * pty.prn's forkpty elsewhere in this file. Real, honest v0: one flat
+ * level only, not recursive -- a real tree view expanding a
+ * subdirectory is separate, deferred UI work the file-tree sidebar
+ * built on top of this doesn't have yet either. */
+static inline char *list_dir_impl(const char *path, Arena *dest) {
+    DIR *d = opendir(path);
+    if (d == NULL) {
+        char *out = (char *)arena_alloc(dest, 1);
+        out[0] = '\0';
+        return out;
+    }
+    size_t cap = 4096;
+    size_t len = 0;
+    char *buf = (char *)arena_alloc(dest, cap);
+    struct dirent *ent;
+    int first = 1;
+    while ((ent = readdir(d)) != NULL) {
+        const char *name = ent->d_name;
+        if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
+        size_t nlen = strlen(name);
+        size_t need = nlen + (first ? 0 : 1);
+        if (len + need + 1 > cap) {
+            size_t new_cap = cap;
+            while (len + need + 1 > new_cap) new_cap += 4096;
+            char *grown = (char *)arena_alloc(dest, new_cap);
+            memcpy(grown, buf, len);
+            buf = grown;
+            cap = new_cap;
+        }
+        if (!first) buf[len++] = '\n';
+        memcpy(buf + len, name, nlen);
+        len += nlen;
+        first = 0;
+    }
+    closedir(d);
+    buf[len] = '\0';
+    return buf;
+}
+
+/* is_dir_impl -- real, portable directory test (2026-08-27, closing
+ * the file-tree sidebar's own honest v0.83.0 gap: "clicking a
+ * subdirectory entry currently opens it as if it were a file").
+ * Deliberately reuses opendir()'s own real success/failure rather than
+ * a separate stat()/GetFileAttributes call -- one real portable
+ * primitive already proven to work cross-platform (list_dir_impl
+ * above), not a second one; real, honest false on anything that isn't
+ * a real, openable directory (nonexistent path, a regular file, a
+ * permission-denied directory all alike -- this repo's own
+ * path-exists? already covers plain existence). */
+static inline int is_dir_impl(const char *path) {
+    DIR *d = opendir(path);
+    if (d == NULL) return 0;
+    closedir(d);
+    return 1;
+}
+
+/* ---- stdlib/process.prn real host glue (2026-08-25) -------------------
+ * Real fork+exec, detached (no pipe/wait plumbing -- this stdlib's own
+ * real, narrow scope is "start an external helper process and later
+ * kill it by pid", the exact shape a test harness spawning a fixture
+ * server needs, not a general subprocess/IPC library). A double-fork
+ * is deliberately NOT used: the child stays this process's direct
+ * child so process_kill_impl's real pid is meaningful and a stray
+ * child is visible to `ps` rooted at this process, matching the "start
+ * it, kill it yourself" contract callers get -- no orphan-and-forget
+ * daemonization semantics assumed.
+ *
+ * Guarded on Windows (2026-08-26, same reasoning as the net/tcp.prn +
+ * pty.prn block above): fork()/execl()/pid_t/kill() are genuinely
+ * POSIX-only, no drop-in Windows equivalent (CreateProcess/
+ * TerminateProcess are a different shape entirely) -- a real, separate,
+ * unstarted port, not attempted here since editor-demo (the real
+ * Windows build this guard exists for) doesn't need process.prn at
+ * all. */
+#if !defined(_WIN32) && !defined(PARENA_FREESTANDING)
+static int g_run_capture_last_exit_code = 0;
+
+static inline int spawn_detached_impl(const char *path, const char *arg1) {
+    pid_t pid = fork();
+    if (pid < 0) return -1;
+    if (pid == 0) {
+        /* Child: replace this process image entirely. execl only
+         * returns on failure. */
+        execl(path, path, arg1, (char *)NULL);
+        _exit(127);
+    }
+    return (int)pid;
+}
+
+static inline int process_kill_impl(int pid) {
+    return kill((pid_t)pid, SIGTERM) == 0 ? 0 : -1;
+}
+
+/* run_capture_impl -- real, general "run a shell command, capture its stdout" primitive, added
+ * 2026-09-02 filling in process.prn's own header comment's already-named "real, separate, future
+ * scope: captured stdout/stderr" gap (LO/FRAMEWORK_NORTHSTAR.md's own event-sourcing extension:
+ * SQL projectors shell out to real DB CLI clients -- sqlite3/mysql/psql -- rather than binding
+ * each one's own native C client library via FFI). Real, deliberate choice: `popen`, not
+ * `spawn_detached_impl`'s own fork+exec -- this needs to capture a pipe and wait synchronously
+ * for exit, the opposite of spawn's own "detached, caller kills it later" contract; `popen` is
+ * the real, standard, portable-enough (POSIX + Windows' own `_popen`, though this file's own
+ * guard doesn't currently extend that far -- see below) libc primitive for exactly this.
+ *
+ * Real, honest, named limitations, not silently glossed over:
+ * - `cmd` runs through `/bin/sh -c` -- any caller building `cmd` by concatenating untrusted
+ *   data (a user-supplied field value with a shell metacharacter in it) has a real shell-
+ *   injection risk. This file's own callers (SQL projectors) are responsible for either shell-
+ *   escaping interpolated values or avoiding shell interpolation entirely (e.g. via each CLI
+ *   tool's own `--defaults-extra-file`/parameterized-input mechanism) -- not solved generically
+ *   here, named as a real, separate, security-relevant follow-up.
+ * - stderr is NOT captured (shares the caller's own stderr) -- a real, separate follow-up if a
+ *   caller ever needs it multiplexed or suppressed.
+ * - The real exit code is stashed in a static (matching this file's own established "last
+ *   operation status" side-channel convention, e.g. raw_errno_impl) rather than returned
+ *   directly, since this function's own return type is the captured text -- read back via
+ *   run_capture_last_exit_code_impl. Deliberately NOT re-run to learn the exit code separately:
+ *   re-running a side-effecting command (a SQL write) to check its own status would be a real,
+ *   silent double-execution bug, not just wasteful.
+ * - Windows-guarded the same as this section's own existing spawn_detached_impl/
+ *   process_kill_impl, even though `popen`/`_popen` themselves exist on Windows too -- because
+ *   WIFEXITED/WEXITSTATUS (sys/wait.h) are POSIX-only; `_pclose`'s own real Windows return value
+ *   is already the raw exit code with no macro unwrapping needed, a real, separate, un-started
+ *   port if this framework ever needs to run on Windows. */
+static inline char *run_capture_impl(const char *cmd, Arena *dest) {
+    FILE *p = popen(cmd, "r");
+    if (p == NULL) {
+        g_run_capture_last_exit_code = -1;
+        char *out = (char *)arena_alloc(dest, 1);
+        out[0] = '\0';
+        return out;
+    }
+    size_t cap = 4096;
+    size_t len = 0;
+    char *buf = (char *)arena_alloc(dest, cap);
+    char chunk[4096];
+    size_t n;
+    while ((n = fread(chunk, 1, sizeof(chunk), p)) > 0) {
+        if (len + n + 1 > cap) {
+            size_t new_cap = cap * 2;
+            while (len + n + 1 > new_cap) new_cap *= 2;
+            char *new_buf = (char *)arena_alloc(dest, new_cap);
+            memcpy(new_buf, buf, len);
+            buf = new_buf;
+            cap = new_cap;
+        }
+        memcpy(buf + len, chunk, n);
+        len += n;
+    }
+    buf[len] = '\0';
+    int status = pclose(p);
+    g_run_capture_last_exit_code = (status >= 0 && WIFEXITED(status)) ? WEXITSTATUS(status) : -1;
+    return buf;
+}
+
+static inline int run_capture_last_exit_code_impl(void) {
+    return g_run_capture_last_exit_code;
+}
+#endif /* !_WIN32 -- end of process.prn real host glue */
+
+/* ---- real `(current-arena)` builtin (2026-08-25) -----------------------
+ * See src/emit.c's own `is_call_named(expr, "current-arena")` comment
+ * for the full real reasoning. g_process_arena is zero-initialized by
+ * plain C static-storage rules -- `{a->head = NULL}` is arena_init's
+ * own entire body, so no explicit init call or constructor is needed
+ * here at all. Never freed (a process-lifetime Arena, by design). */
+static Arena g_process_arena;
+
+static inline Arena *parena_current_arena(void) {
+    return &g_process_arena;
+}
+
+#ifndef PARENA_NO_GRAPHICS
+/* ---- stdlib/sdl2.prn real host glue (2026-08-26) ------------------------
+ * The concrete "next real extension" STDLIB.md's own `sdl2` section
+ * already flagged as pending ("full renderer/texture calls... left out
+ * of this pass... the next real extension once a renderer-owning
+ * program actually needs it") -- this is that program: the first real
+ * slice of a PARENA-authored editor shell, PITVIPER's own real
+ * SDL_CreateRenderer/SetDrawColor/Clear/FillRect/Copy/Present call shape
+ * (cmd/pitviper/main.go's own renderFrame) ported one real primitive at
+ * a time, cell-background rendering first (Copy/glyph-texture blitting
+ * is real, separate, deferred follow-up work -- needs font/texture
+ * loading this pass doesn't add).
+ *
+ * Window/Renderer are real opaque handle tables (a small fixed array of
+ * real SDL_Window pointers and SDL_Renderer pointers, indexed by a plain
+ * I32 handle), not a raw pointer carried through PARENA source directly
+ * -- a deliberate,
+ * pragmatic choice: this stdlib's own established struct convention
+ * (Pty{fd:I32}, FileHandle{fd:I32}) already proves I32-handle structs
+ * work end-to-end through VS0's real Result/Option boxing; a struct
+ * field holding a raw C pointer is untested territory in this compiler
+ * and not worth risking on this pass. */
+#define SDL2_MAX_WINDOWS 8
+#define SDL2_MAX_RENDERERS 8
+static SDL_Window *g_sdl2_windows[SDL2_MAX_WINDOWS];
+static int g_sdl2_window_count = 0;
+static SDL_Renderer *g_sdl2_renderers[SDL2_MAX_RENDERERS];
+static int g_sdl2_renderer_count = 0;
+static SDL_Surface *g_sdl2_renderer_surfaces[SDL2_MAX_RENDERERS]; /* non-NULL = offscreen software renderer (embed use) */
+
+static inline int sdl2_init_impl(void) {
+    /* Real, confirmed-live bug fix (2026-08-27, founder real-time,
+     * actively testing on real Windows: "drag to select doesnt work" +
+     * "click to insert cursor doesnt work" -- BOTH core mouse features
+     * broken together, not two separate bugs, pointed straight at a
+     * real, systemic mouse-COORDINATE problem). SDL2's own real,
+     * documented default on Windows is DPI-UNAWARE (SDL_HINT_WINDOWS_
+     * DPI_AWARENESS defaults to "" -- "do not change the DPI
+     * awareness"): on any real display with non-100% scaling (very
+     * common on real Windows laptops), Windows silently virtualizes/
+     * scales a DPI-unaware app's window, and the mouse coordinates SDL2
+     * then reports can mismatch this editor's own fixed-pixel rendering
+     * math (LINE_HEIGHT, the real x=12 left margin, etc., all assume
+     * un-scaled real pixels) -- exactly the real, well-documented SDL2-
+     * on-Windows gotcha this matches. Set BEFORE SDL_Init, a real,
+     * standard SDL2 hint (a real, harmless no-op on Linux/macOS, so
+     * left unconditional rather than #ifdef _WIN32-gated -- one fewer
+     * platform-specific branch for identical real behavior everywhere
+     * it doesn't apply). "permonitorv2" is SDL2's own documented
+     * "preferred" level (Windows 10 1607+, falls back automatically to
+     * the best available match on older Windows per SDL2's own docs). */
+    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+    return SDL_Init(SDL_INIT_VIDEO) == 0 ? 0 : -1;
+}
+
+/* Real, confirmed-live bug fixed here (2026-08-27, founder real-time,
+ * actually double-clicking a real file in the editor's own file-tree
+ * sidebar: "no double click on nerd tree should open a new window it
+ * just doesnt actually open the real file"). Traced end to end,
+ * confirmed live, not guessed: spawn_new_instance's own real
+ * fork+execl DOES correctly re-exec with the real target file as its
+ * own argv[1] (verified directly -- the child's own real "editor:
+ * loaded from <path>" line prints correctly). The real bug is here:
+ * every window this program EVER creates -- the original one AND
+ * every spawned instance -- used SDL_WINDOWPOS_CENTERED for both x
+ * and y, so a second, spawned window opens in the EXACT same screen
+ * position as the still-open first one, perfectly overlapping it.
+ * Whether the new window lands behind or on top of the old one is
+ * down to the window manager's own real stacking policy, but either
+ * way it reads exactly like "nothing happened" -- the file WAS opened
+ * in a real, correctly-loaded new window, just invisibly stacked
+ * under (or indistinguishable from) the one already there. Fixed with
+ * SDL_WINDOWPOS_UNDEFINED, the real, standard way to ask the window
+ * manager for its OWN default placement instead of forcing dead
+ * center -- every real desktop WM already staggers/cascades
+ * successive undefined-position windows so they don't perfectly
+ * overlap, the same real behavior every other multi-window desktop
+ * app already relies on. */
+static inline int sdl2_create_window_impl(const char *title, int w, int h) {
+    if (g_sdl2_window_count >= SDL2_MAX_WINDOWS) return -1;
+    SDL_Window *win = SDL_CreateWindow(title, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
+                                        w, h, SDL_WINDOW_SHOWN);
+    if (win == NULL) return -1;
+    int handle = g_sdl2_window_count++;
+    g_sdl2_windows[handle] = win;
+    return handle;
+}
+
+/* sdl2_create_window_borderless_impl -- same as sdl2_create_window_impl but SDL_WINDOW_BORDERLESS
+ * (no title bar/frame, shows on the glass without waiting on window-manager decoration). Added
+ * 2026-10-14 for PELLEGRINO's v0 ("WE NEED v0 WITH THE BORDERLESS SDL"). */
+static inline int sdl2_create_window_borderless_impl(const char *title, int w, int h) {
+    if (g_sdl2_window_count >= SDL2_MAX_WINDOWS) return -1;
+    SDL_Window *win = SDL_CreateWindow(title, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
+                                        w, h, SDL_WINDOW_SHOWN | SDL_WINDOW_BORDERLESS);
+    if (win == NULL) return -1;
+    int handle = g_sdl2_window_count++;
+    g_sdl2_windows[handle] = win;
+    return handle;
+}
+
+/* sdl2_move_window_impl -- shift a window by (dx, dy) pixels from where it is now (PELLEGRINO's
+ * Shift+J/K/L/I: a borderless window has no title bar to drag). Returns 0, or -1 for a bad handle. */
+static inline int sdl2_move_window_impl(int handle, int dx, int dy) {
+    int x = 0, y = 0;
+    if (handle < 0 || handle >= g_sdl2_window_count || g_sdl2_windows[handle] == NULL) return -1;
+    SDL_GetWindowPosition(g_sdl2_windows[handle], &x, &y);
+    SDL_SetWindowPosition(g_sdl2_windows[handle], x + dx, y + dy);
+    return 0;
+}
+
+static inline void sdl2_destroy_window_impl(int handle) {
+    if (handle >= 0 && handle < g_sdl2_window_count && g_sdl2_windows[handle] != NULL) {
+        SDL_DestroyWindow(g_sdl2_windows[handle]);
+        g_sdl2_windows[handle] = NULL;
+    }
+}
+
+static inline int sdl2_create_renderer_impl(int window_handle) {
+    if (window_handle < 0 || window_handle >= g_sdl2_window_count
+        || g_sdl2_windows[window_handle] == NULL) return -1;
+    if (g_sdl2_renderer_count >= SDL2_MAX_RENDERERS) return -1;
+    /* Accelerated first, software fallback -- this box's own real
+     * Xvfb-backed verification run has no GPU, matching any other real
+     * headless CI runner this might build on later. */
+    SDL_Renderer *ren = SDL_CreateRenderer(g_sdl2_windows[window_handle], -1,
+                                            SDL_RENDERER_ACCELERATED);
+    if (ren == NULL) {
+        ren = SDL_CreateRenderer(g_sdl2_windows[window_handle], -1, SDL_RENDERER_SOFTWARE);
+    }
+    if (ren == NULL) return -1;
+    int handle = g_sdl2_renderer_count++;
+    g_sdl2_renderers[handle] = ren;
+    return handle;
+}
+
+/* Offscreen software renderer (2026-10-15, PELLEGRINO embed / SHANKPIT OS menu): a renderer that draws into
+ * a w*h ARGB8888 SDL_Surface instead of a window, for hosts that own their own window and GL context (the
+ * lobby is fixed-function OpenGL, so a second SDL_Renderer cannot share its window). The host reads the
+ * pixels back with sdl2_surface_renderer_pixels_impl and uploads them however it likes. Returns a renderer
+ * handle usable with every sdl2_*_impl draw call, or -1. */
+static inline int sdl2_create_surface_renderer_impl(int w, int h) {
+    if (w <= 0 || h <= 0 || g_sdl2_renderer_count >= SDL2_MAX_RENDERERS) return -1;
+    SDL_Surface *surf = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ARGB8888);
+    if (surf == NULL) return -1;
+    SDL_Renderer *ren = SDL_CreateSoftwareRenderer(surf);
+    if (ren == NULL) { SDL_FreeSurface(surf); return -1; }
+    int handle = g_sdl2_renderer_count++;
+    g_sdl2_renderers[handle] = ren;
+    g_sdl2_renderer_surfaces[handle] = surf;
+    return handle;
+}
+
+/* Pixel base (w*h 32-bit ARGB8888, pitch = w*4) of a surface renderer, or NULL for any other handle. */
+static inline void *sdl2_surface_renderer_pixels_impl(int handle) {
+    if (handle < 0 || handle >= g_sdl2_renderer_count || g_sdl2_renderer_surfaces[handle] == NULL) return NULL;
+    return g_sdl2_renderer_surfaces[handle]->pixels;
+}
+
+static inline void sdl2_destroy_renderer_impl(int handle) {
+    if (handle >= 0 && handle < g_sdl2_renderer_count && g_sdl2_renderers[handle] != NULL) {
+        SDL_DestroyRenderer(g_sdl2_renderers[handle]);
+        g_sdl2_renderers[handle] = NULL;
+        if (g_sdl2_renderer_surfaces[handle] != NULL) { SDL_FreeSurface(g_sdl2_renderer_surfaces[handle]); g_sdl2_renderer_surfaces[handle] = NULL; }
+    }
+}
+
+static inline int sdl2_set_draw_color_impl(int renderer_handle, int r, int g, int b, int a) {
+    if (renderer_handle < 0 || renderer_handle >= g_sdl2_renderer_count
+        || g_sdl2_renderers[renderer_handle] == NULL) return -1;
+    return SDL_SetRenderDrawColor(g_sdl2_renderers[renderer_handle],
+                                   (Uint8)r, (Uint8)g, (Uint8)b, (Uint8)a) == 0 ? 0 : -1;
+}
+
+static inline int sdl2_render_clear_impl(int renderer_handle) {
+    if (renderer_handle < 0 || renderer_handle >= g_sdl2_renderer_count
+        || g_sdl2_renderers[renderer_handle] == NULL) return -1;
+    return SDL_RenderClear(g_sdl2_renderers[renderer_handle]) == 0 ? 0 : -1;
+}
+
+static inline int sdl2_render_fill_rect_impl(int renderer_handle, int x, int y, int w, int h) {
+    if (renderer_handle < 0 || renderer_handle >= g_sdl2_renderer_count
+        || g_sdl2_renderers[renderer_handle] == NULL) return -1;
+    SDL_Rect rect;
+    rect.x = x; rect.y = y; rect.w = w; rect.h = h;
+    return SDL_RenderFillRect(g_sdl2_renderers[renderer_handle], &rect) == 0 ? 0 : -1;
+}
+
+/* sdl2_render_set_scale_impl -- real Ctrl+Zoom support (2026-08-27,
+ * founder real-time: "ctrl plus and ctrl minus and ctrl mous wheel
+ * scoll should zoom just like pitviper" -- PITVIPER's own real,
+ * already-shipped zoom feature, cmd/pitviper/main.go's zoomScale +
+ * SDL_RenderSetScale, is the real, explicit model). `scale_percent`
+ * (not a plain float) matches this whole runtime's own real "I32
+ * everywhere at the PARENA-source boundary" convention -- 100 = real
+ * 1.0x, 150 = real 1.5x -- converted to the real float SDL_
+ * RenderSetScale actually wants only here, at the host-glue boundary. */
+static inline int sdl2_render_set_scale_impl(int renderer_handle, int scale_percent) {
+    if (renderer_handle < 0 || renderer_handle >= g_sdl2_renderer_count
+        || g_sdl2_renderers[renderer_handle] == NULL) return -1;
+    float scale = (float)scale_percent / 100.0f;
+    return SDL_RenderSetScale(g_sdl2_renderers[renderer_handle], scale, scale) == 0 ? 0 : -1;
+}
+
+static inline void sdl2_render_present_impl(int renderer_handle) {
+    if (renderer_handle >= 0 && renderer_handle < g_sdl2_renderer_count
+        && g_sdl2_renderers[renderer_handle] != NULL) {
+        SDL_RenderPresent(g_sdl2_renderers[renderer_handle]);
+    }
+}
+
+/* poll-event -- v1 (2026-08-26, real keyboard-driven editing: founder
+ * "continue working on parena editor"). Codes: 0 = no event pending,
+ * 1 = Quit, 2 = KeyDown, 3 = TextInput, 4 = Other (every other real
+ * SDL_EventType this program doesn't distinguish yet -- mouse motion,
+ * window resize, real, separate, deferred follow-up once an editor loop
+ * actually needs to react to them individually).
+ *
+ * A raw primitive can only return one plain scalar (no tuples -- VS0's
+ * emitter doesn't support them, confirmed live), so KeyDown's real
+ * keysym and TextInput's real typed text are read via two SEPARATE
+ * follow-up raw calls (sdl2_last_event_key_impl/
+ * sdl2_last_event_text_impl) right after poll-event reports which kind
+ * fired -- the same "check a side-channel immediately after the call
+ * that set it" shape io.prn's own raw-errno already establishes for
+ * this exact reason. PITVIPER's own cmd/pitviper/main.go is the real
+ * precedent for using BOTH SDL_KEYDOWN (special keys: backspace,
+ * arrows, enter) and SDL_TEXTINPUT (real typed characters, correctly
+ * handling shift/IME/etc. -- the actually-correct way to do text input
+ * in SDL2, not raw keysym-to-ASCII mapping) together. */
+static int g_sdl2_last_event_key = 0;
+static char g_sdl2_last_event_text[32];
+static int g_sdl2_last_mouse_x = 0;
+static int g_sdl2_last_mouse_y = 0;
+static char g_sdl2_last_drop_path[1024];
+static int g_sdl2_last_wheel_delta = 0;
+
+/* codes 5/6/7 -- real mouse event plumbing (2026-08-27, real mouse-
+ * driven selection: click-to-position-cursor, click-drag-to-select --
+ * the last real gap on this editor's own "still not done" list besides
+ * redo-coalescing/glyph-atlas/macOS-dylib-bundling). Only SDL_BUTTON_
+ * LEFT is reported as a real MouseDown/MouseUp -- right/middle-click
+ * are a real, separate, deferred follow-up (this editor has no context
+ * menu or paste-on-middle-click yet). x/y read via the same real
+ * "two separate follow-up raw calls" shape KeyDown/TextInput already
+ * establish (a raw primitive can only return one plain scalar). */
+static inline int sdl2_poll_event_impl(void) {
+    SDL_Event e;
+    if (!SDL_PollEvent(&e)) return 0;
+    if (e.type == SDL_QUIT) return 1;
+    if (e.type == SDL_KEYDOWN) {
+        g_sdl2_last_event_key = (int)e.key.keysym.sym;
+        return 2;
+    }
+    if (e.type == SDL_TEXTINPUT) {
+        size_t n = sizeof(g_sdl2_last_event_text) - 1;
+        strncpy(g_sdl2_last_event_text, e.text.text, n);
+        g_sdl2_last_event_text[n] = '\0';
+        return 3;
+    }
+    if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+        g_sdl2_last_mouse_x = e.button.x;
+        g_sdl2_last_mouse_y = e.button.y;
+        return 5;
+    }
+    if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
+        g_sdl2_last_mouse_x = e.button.x;
+        g_sdl2_last_mouse_y = e.button.y;
+        return 6;
+    }
+    if (e.type == SDL_MOUSEMOTION) {
+        g_sdl2_last_mouse_x = e.motion.x;
+        g_sdl2_last_mouse_y = e.motion.y;
+        return 7;
+    }
+    /* code 8 -- real drag-and-drop-a-file-onto-the-window support
+     * (2026-08-27, founder real-time: "i need an easy way to actually
+     * open the files drag and drop onto the window"). e.drop.file is a
+     * real SDL-malloc'd string the CALLER must free with SDL_free() --
+     * copied out to a real, fixed-size buffer here (matching this
+     * file's own established g_sdl2_last_event_text convention) and
+     * freed immediately, so no SDL-owned pointer ever escapes into
+     * PARENA code. SDL_DROPTEXT/DROPBEGIN/DROPCOMPLETE are real,
+     * separate, deferred follow-ups (a real, honest v0: only real
+     * FILE drops are handled, not a dragged text selection or the
+     * begin/complete bracket events around a real multi-file drop --
+     * each dropped file in a real multi-file drag still fires its own
+     * real SDL_DROPFILE, so multi-file drops already work file-by-file
+     * even without those). */
+    if (e.type == SDL_DROPFILE) {
+        size_t n = sizeof(g_sdl2_last_drop_path) - 1;
+        strncpy(g_sdl2_last_drop_path, e.drop.file, n);
+        g_sdl2_last_drop_path[n] = '\0';
+        SDL_free(e.drop.file);
+        return 8;
+    }
+    /* code 9 -- real mouse-wheel scroll support (2026-08-27, founder
+     * real-time, actively using the editor: "mouse wheel scroll does
+     * not work" -- scrolling had never been implemented at all, so any
+     * real file taller than the window had no way to see past the
+     * first screenful). e.wheel.y is real SDL2 convention: positive
+     * "away from the user" (a real, physical wheel-forward/up motion),
+     * negative "toward the user" -- handed straight through as a real
+     * signed delta, the real scroll-direction convention decision
+     * lives in the editor's own event-loop code, not here. */
+    if (e.type == SDL_MOUSEWHEEL) {
+        g_sdl2_last_wheel_delta = e.wheel.y;
+        return 9;
+    }
+    return 4;
+}
+
+static inline int sdl2_last_event_key_impl(void) {
+    return g_sdl2_last_event_key;
+}
+
+static inline char *sdl2_last_event_text_impl(Arena *dest) {
+    size_t len = strlen(g_sdl2_last_event_text);
+    char *out = (char *)arena_alloc(dest, len + 1);
+    memcpy(out, g_sdl2_last_event_text, len + 1);
+    return out;
+}
+
+static inline int sdl2_last_event_mouse_x_impl(void) {
+    return g_sdl2_last_mouse_x;
+}
+
+static inline int sdl2_last_event_mouse_y_impl(void) {
+    return g_sdl2_last_mouse_y;
+}
+
+static inline char *sdl2_last_event_drop_path_impl(Arena *dest) {
+    size_t len = strlen(g_sdl2_last_drop_path);
+    char *out = (char *)arena_alloc(dest, len + 1);
+    memcpy(out, g_sdl2_last_drop_path, len + 1);
+    return out;
+}
+
+static inline int sdl2_last_event_wheel_delta_impl(void) {
+    return g_sdl2_last_wheel_delta;
+}
+
+static inline void sdl2_start_text_input_impl(void) {
+    SDL_StartTextInput();
+}
+
+static inline void sdl2_stop_text_input_impl(void) {
+    SDL_StopTextInput();
+}
+
+/* Real SDL keysym constants an editor's own keyboard loop actually
+ * needs to distinguish -- SDLK_* values exposed as plain I32-returning
+ * functions rather than PARENA-level constants (this language has no
+ * const/#define-equivalent yet), matching the "thin FFI wrapper, not a
+ * redesigned API" philosophy this whole file already follows. Narrow,
+ * real set: whatever a real single-line text-edit loop needs
+ * (backspace, enter, left/right for cursor movement) -- more added when
+ * a real feature needs them, not speculatively here. */
+static inline int sdl2_key_backspace_impl(void) { return SDLK_BACKSPACE; }
+static inline int sdl2_key_return_impl(void) { return SDLK_RETURN; }
+static inline int sdl2_key_left_impl(void) { return SDLK_LEFT; }
+static inline int sdl2_key_right_impl(void) { return SDLK_RIGHT; }
+/* Up/Down (2026-08-27, real, confirmed-live gap -- founder actually
+ * using the editor: "left and right arrow work in the editor but up
+ * down doesnt work with arrow keys" -- neither key was ever wired up
+ * before this, only Left/Right/Home/End). */
+static inline int sdl2_key_up_impl(void) { return SDLK_UP; }
+static inline int sdl2_key_down_impl(void) { return SDLK_DOWN; }
+/* Home/End/Delete (2026-08-26, real editor loop growth): the next real
+ * keys a single-line edit loop needs once Left/Right cursor movement
+ * exists -- jump to the start/end of the line, delete the character
+ * AHEAD of the cursor (Backspace already covers behind it). */
+static inline int sdl2_key_home_impl(void) { return SDLK_HOME; }
+static inline int sdl2_key_end_impl(void) { return SDLK_END; }
+static inline int sdl2_key_delete_impl(void) { return SDLK_DELETE; }
+/* Tab (2026-08-27, founder real-time, actively using the editor: "tab
+ * to indent doesnt work" -- SDL2 doesn't fire a real SDL_TEXTINPUT for
+ * Tab (a real, standard GUI-toolkit convention: Tab is a navigation/
+ * control key, not insertable text), so it needed its own real
+ * KeyDown handling, same as Backspace/Return/Delete. */
+static inline int sdl2_key_tab_impl(void) { return SDLK_TAB; }
+/* F2/F3 -- real save/load keys (2026-08-26), a plain function-key
+ * shortcut rather than a Ctrl+S-style modifier combo: real modifier-key
+ * detection (SDL_Keymod) isn't wired up anywhere in this stdlib yet, a
+ * real, separate, deferred feature, not needed for this real, honest v0. */
+static inline int sdl2_key_f2_impl(void) { return SDLK_F2; }
+static inline int sdl2_key_f3_impl(void) { return SDLK_F3; }
+
+/* shift_held -- real modifier-key detection (2026-08-26, founder:
+ * "continue working on parena editor" -- real text SELECTION, which
+ * needs Shift+Left/Right). The gap flagged in the F2/F3 comment above
+ * is closed here, but only for Shift, and via SDL_GetModState() (a
+ * live query of the current keyboard state) rather than threading a
+ * modifier field through poll-event's own KeyDown payload -- a raw
+ * primitive can only return one plain scalar (no tuples), and
+ * SDL_GetModState() is the real, standard SDL2 way to ask "is this
+ * held right now" independent of which specific event just fired. */
+static inline int sdl2_shift_held_impl(void) {
+    return (SDL_GetModState() & KMOD_SHIFT) != 0;
+}
+
+/* ctrl_held / clipboard -- real clipboard integration (2026-08-27,
+ * founder: "continue" -- the natural next real increment after text
+ * SELECTION just shipped: copy/cut/paste). Same live-query shape as
+ * shift_held above (SDL_GetModState() & KMOD_CTRL). Closes this file's
+ * own sdl2.prn header comment's already-flagged "get-clipboard-text...
+ * real, honest, NOT closed in this pass" gap.
+ *
+ * SDL_GetClipboardText() returns a real, SDL-malloc'd C string (never
+ * NULL per SDL2's own docs -- an empty "" on no/unavailable clipboard
+ * content, not a null pointer) that the CALLER must free with
+ * SDL_free(); copied into the real PARENA arena here (matching every
+ * other string-returning raw primitive in this file) and freed
+ * immediately after, so no SDL-owned pointer ever escapes into PARENA
+ * code. */
+static inline int sdl2_ctrl_held_impl(void) {
+    return (SDL_GetModState() & KMOD_CTRL) != 0;
+}
+
+/* gui_held -- real Cmd-key detection (2026-08-27, founder real-time:
+ * Spotlight quick-open needs to fire on Ctrl+T on Windows/Linux OR
+ * Cmd+T on macOS). SDL2's own KMOD_GUI is the real, portable modifier
+ * mask for "the OS meta key" -- Cmd on macOS, the Windows/Super key
+ * elsewhere -- same live SDL_GetModState() shape ctrl_held/shift_held
+ * above already establish, not a new pattern.
+ */
+static inline int sdl2_gui_held_impl(void) {
+    return (SDL_GetModState() & KMOD_GUI) != 0;
+}
+
+static inline void sdl2_set_clipboard_text_impl(const char *text) {
+    SDL_SetClipboardText(text);
+}
+
+static inline char *sdl2_get_clipboard_text_impl(Arena *dest) {
+    char *sdl_text = SDL_GetClipboardText();
+    size_t len = sdl_text ? strlen(sdl_text) : 0;
+    char *out = (char *)arena_alloc(dest, len + 1);
+    if (len > 0) memcpy(out, sdl_text, len);
+    out[len] = '\0';
+    if (sdl_text) SDL_free(sdl_text);
+    return out;
+}
+
+static inline int sdl2_get_ticks_impl(void) {
+    return (int)SDL_GetTicks();
+}
+
+static inline void sdl2_delay_impl(int ms) {
+    SDL_Delay((Uint32)ms);
+}
+
+static inline void sdl2_quit_impl(void) {
+    SDL_Quit();
+}
+
+/* ---- stdlib/sdl2.prn real TEXT host glue (2026-08-26) -------------------
+ * The concrete "next real extension once an editor loop actually needs
+ * to render text" flagged when the renderer/draw-call gap was closed
+ * earlier the same day -- real glyph/string rendering via SDL2_ttf,
+ * PITVIPER's own real font backend (cmd/pitviper/main.go's shinyTexture,
+ * "F11 shiny font... real JetBrains Mono via SDL2_ttf"). Font is a real
+ * opaque I32 handle into a real host-side table, same reasoning as
+ * Window/Renderer's own header comment above (a raw TTF_Font pointer
+ * carried as a struct field is untested territory in this compiler, not
+ * risked here).
+ *
+ * render-text is deliberately NOT a glyph-atlas/texture-cache system --
+ * a real, honest v0: render the whole string to a fresh surface, blit
+ * it, free both surface and texture immediately, every call. Correct,
+ * simple, and reuses zero state across frames; real future work once an
+ * editor loop's own frame budget actually needs per-glyph texture
+ * caching (PITVIPER's own buildGlyphAtlas is the real precedent for
+ * that, not attempted here). */
+#ifdef PARENA_NO_TTF
+static inline int sdl2_ttf_init_impl(void) { return -1; }
+static inline void sdl2_ttf_quit_impl(void) {}
+static inline int sdl2_open_font_impl(const char *path, int point_size) { (void)path; (void)point_size; return -1; }
+static inline void sdl2_close_font_impl(int handle) { (void)handle; }
+static inline int sdl2_render_text_impl(int renderer_handle, int font_handle, const char *text,
+                                         int x, int y, int r, int g, int b) {
+    (void)renderer_handle; (void)font_handle; (void)text; (void)x; (void)y; (void)r; (void)g; (void)b; return -1;
+}
+static inline int sdl2_measure_text_width_impl(int font_handle, const char *text) { (void)font_handle; (void)text; return -1; }
+static inline int sdl2_measure_text_height_impl(int font_handle, const char *text) { (void)font_handle; (void)text; return -1; }
+#else
+#define SDL2_MAX_FONTS 8
+static TTF_Font *g_sdl2_fonts[SDL2_MAX_FONTS];
+static int g_sdl2_font_count = 0;
+
+static inline int sdl2_ttf_init_impl(void) {
+    return TTF_Init() == 0 ? 0 : -1;
+}
+
+static inline void sdl2_ttf_quit_impl(void) {
+    TTF_Quit();
+}
+
+static inline int sdl2_open_font_impl(const char *path, int point_size) {
+    if (g_sdl2_font_count >= SDL2_MAX_FONTS) return -1;
+    TTF_Font *f = TTF_OpenFont(path, point_size);
+    if (f == NULL) return -1;
+    int handle = g_sdl2_font_count++;
+    g_sdl2_fonts[handle] = f;
+    return handle;
+}
+
+static inline void sdl2_close_font_impl(int handle) {
+    if (handle >= 0 && handle < g_sdl2_font_count && g_sdl2_fonts[handle] != NULL) {
+        TTF_CloseFont(g_sdl2_fonts[handle]);
+        g_sdl2_fonts[handle] = NULL;
+    }
+}
+
+/* render-text -- renders `text` in `(r,g,b)` at `(x,y)` into the given
+ * renderer, using the given font. Empty string is a real, honest no-op
+ * (0, not an error) -- TTF_RenderUTF8_Blended itself fails on an empty
+ * string, which is real SDL2_ttf behavior, not a bug this wrapper should
+ * paper over as a fake success OR a fake failure; treating "nothing to
+ * draw" as Ok matches how a real editor loop would want to call this
+ * unconditionally per line, blank lines included, without a caller-side
+ * special case. */
+static inline int sdl2_render_text_impl(int renderer_handle, int font_handle, const char *text,
+                                         int x, int y, int r, int g, int b) {
+    if (renderer_handle < 0 || renderer_handle >= g_sdl2_renderer_count
+        || g_sdl2_renderers[renderer_handle] == NULL) return -1;
+    if (font_handle < 0 || font_handle >= g_sdl2_font_count
+        || g_sdl2_fonts[font_handle] == NULL) return -1;
+    if (text[0] == '\0') return 0;
+    SDL_Color color;
+    color.r = (Uint8)r; color.g = (Uint8)g; color.b = (Uint8)b; color.a = 255;
+    SDL_Surface *surf = TTF_RenderUTF8_Blended(g_sdl2_fonts[font_handle], text, color);
+    if (surf == NULL) return -1;
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(g_sdl2_renderers[renderer_handle], surf);
+    int w = surf->w, h = surf->h;
+    SDL_FreeSurface(surf);
+    if (tex == NULL) return -1;
+    SDL_Rect dst;
+    dst.x = x; dst.y = y; dst.w = w; dst.h = h;
+    int ok = SDL_RenderCopy(g_sdl2_renderers[renderer_handle], tex, NULL, &dst) == 0 ? 0 : -1;
+    SDL_DestroyTexture(tex);
+    return ok;
+}
+
+/* measure-text-width/height -- real glyph-cell sizing (PITVIPER's own
+ * font.GlyphW/GlyphH, the numbers a real monospace terminal grid needs
+ * to lay cells out correctly). No tuple return here -- VS0's emitter
+ * does not support tuple return types yet (confirmed live: a real
+ * "unsupported return type form" error trying one, not assumed), so
+ * width and height are two separate real calls instead of one. */
+static inline int sdl2_measure_text_width_impl(int font_handle, const char *text) {
+    if (font_handle < 0 || font_handle >= g_sdl2_font_count || g_sdl2_fonts[font_handle] == NULL) return -1;
+    int w = 0, h = 0;
+    if (TTF_SizeUTF8(g_sdl2_fonts[font_handle], text, &w, &h) != 0) return -1;
+    return w;
+}
+
+static inline int sdl2_measure_text_height_impl(int font_handle, const char *text) {
+    if (font_handle < 0 || font_handle >= g_sdl2_font_count || g_sdl2_fonts[font_handle] == NULL) return -1;
+    int w = 0, h = 0;
+    if (TTF_SizeUTF8(g_sdl2_fonts[font_handle], text, &w, &h) != 0) return -1;
+    return h;
+}
+#endif /* PARENA_NO_TTF */
+#endif /* PARENA_NO_GRAPHICS */
+
+#ifndef PARENA_FREESTANDING /* sockets/TLS: no wasm story (see PARENA_FREESTANDING) */
+/* ---- net/stream: cross-platform TCP *client* streaming primitives (2026-10-14, PELLEGRINO) -----
+ * What net/tcp.prn's own tcp_read_impl is not: incremental. That one blocks until the peer closes
+ * (or Content-Length is satisfied); a browser that wants to paint bytes AS THEY ARRIVE needs
+ * "give me whatever has landed, don't wait". Also Windows: net/tcp's host glue above is
+ * POSIX-only (#ifndef _WIN32); this section is the winsock2 + BSD-socket common subset, so a
+ * Windows PARENA program can open a TCP connection at all.
+ *
+ * Shape (deliberately primitive, no Result boxing -- plain scalars like io.prn's raw_* functions):
+ *   stream_connect_impl(host, port) -> fd >= 0, or -1   (non-blocking after connect; 5 s connect timeout)
+ *   stream_send_impl(fd, s)         -> 0 or -1
+ *   stream_pull_impl(fd)            -> n>0 bytes appended, 0 nothing yet, -1 closed/error, -2 buffer full
+ *   stream_buf_impl()/stream_len_impl()/stream_reset_impl() -- the received bytes live in ONE static,
+ *     NUL-terminated buffer (PARENA_STREAM_MAX, default 16 MiB, in BSS: no malloc), so PARENA code can
+ *     read it as an ordinary String while it keeps growing.
+ *   stream_close_impl(fd)
+ * Plus a small static line-input buffer (linebuf_*) for address-bar style text entry, since PARENA
+ * Strings are immutable. Honest limits: blocking getaddrinfo (DNS) and blocking TLS handshake,
+ * one stream at a time.
+ *
+ * HTTPS (2026-10-14): stream_connect_tls_impl(host, port) opens the same kind of handle but speaks
+ * TLS (mbedTLS, opt-in via PARENA_WITH_TLS -- see net/tls.prn's own header for why FFI to an
+ * audited library and never hand-rolled crypto). stream_send/pull/close then dispatch on the
+ * handle, so the caller's read loop is identical for http and https. Certificate verification is
+ * REQUIRED and hostname-checked, always: there is no switch that turns it off. CA roots come from
+ * SSL_CERT_FILE, else the system bundle, else a cacert.pem next to the executable (the shipped
+ * bundle; Windows has no system file) -- never the current directory. With -DPARENA_TLS_STATIC_HEAP mbedTLS allocates from one
+ * static buffer (PARENA_TLS_HEAP_BYTES) via its own buffer allocator, so a NO_MALLOC build stays
+ * heap-free (requires MBEDTLS_MEMORY_BUFFER_ALLOC_C + MBEDTLS_PLATFORM_MEMORY in the mbedTLS
+ * config). Failures are classified: stream_tls_code_impl() -> 1 connect, 2 handshake, 3 certificate
+ * untrusted/mismatched, 4 no CA bundle; stream_tls_error_impl() -> short human text.
+ * A TLS handle is NOT a raw descriptor number: it carries PARENA_TLS_HANDLE_BIT plus a per-session
+ * generation, so a closed or superseded handle can never alias a descriptor that reuses the
+ * number -- send/pull/close on a stale handle just return -1 and touch nothing.
+ * stream_pull on TLS ends with -1 after an authenticated close_notify, or -3 when the stream ended
+ * WITHOUT one (TCP EOF, reset, alert): the body may be truncated. Connect and handshake waits run
+ * against a monotonic deadline (5 s TCP, PARENA_TLS_HANDSHAKE_MS TLS), not a count of timeouts. */
+#ifdef _WIN32
+typedef SOCKET parena_sock_t;
+#define PARENA_BAD_SOCK INVALID_SOCKET
+#define parena_sock_close closesocket
+#else
+typedef int parena_sock_t;
+#define PARENA_BAD_SOCK (-1)
+#define parena_sock_close close
+#endif
+#ifndef PARENA_STREAM_MAX
+#define PARENA_STREAM_MAX (16u * 1024u * 1024u)
+#endif
+static char g_stream_buf[PARENA_STREAM_MAX + 1];
+static size_t g_stream_len = 0;
+/* Bank 1 (stream_bank_impl(1)): a second, smaller receive buffer so a sub-resource (an <img>) can be fetched
+ * after the page stream closed without clobbering the page bytes. pull/buf/len/reset act on the selected bank. */
+#ifndef PARENA_IMAGE_MAX
+#define PARENA_IMAGE_MAX (2u * 1024u * 1024u)
+#endif
+static char g_stream_img_buf[PARENA_IMAGE_MAX + 1];
+static size_t g_stream_img_len = 0;
+static int g_stream_bank = 0;
+static inline char *stream_cur_buf(void) { return g_stream_bank ? g_stream_img_buf : g_stream_buf; }
+static inline size_t stream_cur_len(void) { return g_stream_bank ? g_stream_img_len : g_stream_len; }
+static inline size_t stream_cur_max(void) { return g_stream_bank ? (size_t)PARENA_IMAGE_MAX : (size_t)PARENA_STREAM_MAX; }
+static inline void stream_cur_set_len(size_t n) {
+    if (g_stream_bank) { g_stream_img_len = n; g_stream_img_buf[n] = '\0'; }
+    else { g_stream_len = n; g_stream_buf[n] = '\0'; }
+}
+static inline int stream_bank_impl(int b) { int old = g_stream_bank; g_stream_bank = b ? 1 : 0; return old; }
+
+static inline int stream_set_nonblocking(parena_sock_t s) {
+#ifdef _WIN32
+    u_long mode = 1;
+    return ioctlsocket(s, FIONBIO, &mode) == 0 ? 0 : -1;
+#else
+    int fl = fcntl(s, F_GETFL, 0);
+    return (fl >= 0 && fcntl(s, F_SETFL, fl | O_NONBLOCK) == 0) ? 0 : -1;
+#endif
+}
+
+/* monotonic milliseconds: waits are bounded by a wall-clock deadline, so a peer that trickles a
+ * byte at a time (select() keeps returning ready) cannot stretch a wait past its budget */
+static inline long long stream_now_ms(void) {
+#ifdef _WIN32
+    return (long long)GetTickCount64();
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long long)ts.tv_sec * 1000 + (long long)(ts.tv_nsec / 1000000);
+#endif
+}
+
+/* a descriptor select()/FD_SET can address. Negative, or >= FD_SETSIZE on POSIX, would index
+ * outside the fd_set (glibc aborts under fortify, a stack write without). */
+static inline int stream_fd_ok(int fd) {
+#ifdef _WIN32
+    return fd >= 0;
+#else
+    return fd >= 0 && fd < FD_SETSIZE;
+#endif
+}
+
+/* TLS handles: PARENA_TLS_HANDLE_BIT | generation << 16 | descriptor. Plain descriptors are < 1024
+ * (FD_SETSIZE) so they can never carry the bit. */
+#define PARENA_TLS_HANDLE_BIT 0x40000000
+static inline int stream_tls_is_handle(int h) { return h >= 0 && (h & PARENA_TLS_HANDLE_BIT) != 0; }
+
+static inline int stream_connect_impl(const char *host, int port) {
+#ifdef _WIN32
+    static int wsa_ready = 0;
+    if (!wsa_ready) {
+        WSADATA wsa;
+        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return -1;
+        wsa_ready = 1;
+    }
+#else
+    /* a peer that closes mid-write must not kill the whole browser with SIGPIPE */
+    static int sigpipe_ignored = 0;
+    if (!sigpipe_ignored) {
+        signal(SIGPIPE, SIG_IGN);
+        sigpipe_ignored = 1;
+    }
+#endif
+    struct addrinfo hints, *res = NULL, *rp;
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    char portstr[16];
+    snprintf(portstr, sizeof portstr, "%d", port);
+    if (getaddrinfo(host, portstr, &hints, &res) != 0 || res == NULL) return -1;
+    parena_sock_t sock = PARENA_BAD_SOCK;
+    for (rp = res; rp != NULL; rp = rp->ai_next) {
+        sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (sock == PARENA_BAD_SOCK) continue;
+        if (!stream_fd_ok((int)sock) || stream_set_nonblocking(sock) != 0) {
+            parena_sock_close(sock);
+            sock = PARENA_BAD_SOCK;
+            continue;
+        }
+        int c = connect(sock, rp->ai_addr, (int)rp->ai_addrlen);
+        int ok = (c == 0);
+        if (!ok) {
+#ifdef _WIN32
+            int inprog = (WSAGetLastError() == WSAEWOULDBLOCK);
+#else
+            int inprog = (errno == EINPROGRESS);
+#endif
+            if (inprog) {
+                long long deadline = stream_now_ms() + 5000;
+                for (;;) {
+                    long long left = deadline - stream_now_ms();
+                    if (left <= 0) break;
+                    /* Winsock reports a FAILED non-blocking connect through exceptfds, not writefds
+                     * (POSIX marks the socket writable and sets SO_ERROR): without watching it a
+                     * refused or unreachable address would cost the whole 5 s on Windows. */
+                    fd_set wf, ef;
+                    FD_ZERO(&wf);
+                    FD_ZERO(&ef);
+                    FD_SET(sock, &wf);
+                    FD_SET(sock, &ef);
+                    struct timeval tv;
+                    tv.tv_sec = (long)(left / 1000);
+                    tv.tv_usec = (long)((left % 1000) * 1000);
+                    int sr = select((int)sock + 1, NULL, &wf, &ef, &tv);
+#ifndef _WIN32
+                    if (sr < 0 && errno == EINTR) continue; /* a signal is not a failed connect */
+#endif
+                    if (sr > 0) {
+                        int err = 0;
+                        socklen_t el = (socklen_t)sizeof err;
+                        if (getsockopt(sock, SOL_SOCKET, SO_ERROR, (char *)&err, &el) == 0 && err == 0 &&
+                            FD_ISSET(sock, &wf))
+                            ok = 1;
+                    }
+                    break;
+                }
+            }
+        }
+        if (ok) break;
+        parena_sock_close(sock);
+        sock = PARENA_BAD_SOCK;
+    }
+    freeaddrinfo(res);
+    return sock == PARENA_BAD_SOCK ? -1 : (int)sock;
+}
+
+/* ---- QUIC client datagram socket (binary-safe, non-blocking, connected UDP) -------------------
+ * crypto/quic_crypto + net/quic_client talk through these. Unlike udp_*_impl above, payloads are Bytes
+ * (embedded NULs are the norm in QUIC) and nothing here ever blocks except quic_udp_wait_impl. */
+static inline int quic_udp_open_impl(const char *host, int port) {
+#ifdef _WIN32
+    { static int wsa_up = 0; if (!wsa_up) { WSADATA w; if (WSAStartup(MAKEWORD(2, 2), &w) != 0) return -1; wsa_up = 1; } }
+#endif
+    struct addrinfo hints, *res = NULL, *rp;
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+    char portstr[16];
+    snprintf(portstr, sizeof portstr, "%d", port);
+    if (getaddrinfo(host, portstr, &hints, &res) != 0 || res == NULL) return -1;
+    parena_sock_t sock = PARENA_BAD_SOCK;
+    for (rp = res; rp != NULL; rp = rp->ai_next) {
+        sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (sock == PARENA_BAD_SOCK) continue;
+        if (!stream_fd_ok((int)sock) || stream_set_nonblocking(sock) != 0 ||
+            connect(sock, rp->ai_addr, (int)rp->ai_addrlen) != 0) {
+            parena_sock_close(sock);
+            sock = PARENA_BAD_SOCK;
+            continue;
+        }
+        break;
+    }
+    freeaddrinfo(res);
+    return sock == PARENA_BAD_SOCK ? -1 : (int)sock;
+}
+static inline int quic_udp_send_impl(int fd, Bytes data) {
+    if (!stream_fd_ok(fd) || data.len <= 0) return -1;
+    return (int)send((parena_sock_t)fd, (const char *)data.data, (size_t)data.len, 0);
+}
+/* An ICMP "port unreachable" surfaces on a connected UDP socket as ECONNREFUSED (POSIX) / WSAECONNRESET
+ * (Winsock) on the next recv: remembered here so the engine can fail in milliseconds instead of waiting out
+ * its deadline when nothing listens on the QUIC port (e.g. a stale Alt-Svc). */
+static int g_quic_udp_refused = 0;
+/* One datagram, or zero-length Bytes if none is pending (or on error). */
+static inline Bytes quic_udp_recv_impl(int fd, Arena *dest) {
+    unsigned char buf[2048];
+    if (!stream_fd_ok(fd)) return bytes_alloc_impl(dest, 0);
+    int n = (int)recv((parena_sock_t)fd, (char *)buf, sizeof buf, 0);
+#ifdef _WIN32
+    if (n < 0 && WSAGetLastError() == WSAECONNRESET) g_quic_udp_refused = 1;
+#else
+    if (n < 0 && errno == ECONNREFUSED) g_quic_udp_refused = 1;
+#endif
+    if (n <= 0) return bytes_alloc_impl(dest, 0);
+    Bytes out = bytes_alloc_impl(dest, n);
+    memcpy(out.data, buf, (size_t)n);
+    return out;
+}
+/* 1 if a datagram is readable within ms milliseconds, else 0. */
+static inline int quic_udp_wait_impl(int fd, int ms) {
+    if (!stream_fd_ok(fd)) return 0;
+    fd_set f;
+    FD_ZERO(&f);
+    FD_SET((parena_sock_t)fd, &f);
+    struct timeval tv;
+    tv.tv_sec = ms / 1000;
+    tv.tv_usec = (ms % 1000) * 1000;
+    return select(fd + 1, &f, NULL, NULL, &tv) > 0 ? 1 : 0;
+}
+static inline void quic_udp_close_impl(int fd) { if (stream_fd_ok(fd)) parena_sock_close((parena_sock_t)fd); }
+/* 1 once an ICMP port-unreachable was seen on the QUIC socket; the flag is cleared on read. */
+static inline int quic_udp_refused_impl(void) { int r = g_quic_udp_refused; g_quic_udp_refused = 0; return r; }
+static inline int quic_now_ms_impl(void) { return (int)(stream_now_ms() & 0x3fffffff); }
+
+/* ---- TLS half of net/stream (see the header comment above) ---------------------------------- */
+#ifdef PARENA_WITH_TLS
+#ifdef PARENA_TLS_STATIC_HEAP
+#include <mbedtls/memory_buffer_alloc.h>
+#endif
+#if defined(MBEDTLS_PSA_CRYPTO_C)
+#include <psa/crypto.h>
+#endif
+#ifndef PARENA_TLS_HEAP_BYTES
+#define PARENA_TLS_HEAP_BYTES (2u * 1024u * 1024u)
+#endif
+#ifndef PARENA_TLS_HANDSHAKE_MS
+#define PARENA_TLS_HANDSHAKE_MS 10000
+#endif
+
+typedef struct {
+    int active;
+    int fd;     /* the raw descriptor, private to the runtime */
+    int handle; /* what the caller holds: PARENA_TLS_HANDLE_BIT | generation << 16 | fd */
+    mbedtls_net_context net;
+    mbedtls_ssl_context ssl;
+    mbedtls_ssl_config conf;
+} ParenaStreamTls;
+static ParenaStreamTls g_stream_tls;
+static mbedtls_ctr_drbg_context g_stream_tls_drbg;
+static mbedtls_entropy_context g_stream_tls_entropy;
+static mbedtls_x509_crt g_stream_tls_ca;
+static int g_stream_tls_ready = 0;
+static int g_stream_tls_gen = 0;
+static int g_stream_tls_code = 0;
+static char g_stream_tls_err[256];
+#ifdef PARENA_TLS_STATIC_HEAP
+static unsigned char g_stream_tls_heap[PARENA_TLS_HEAP_BYTES] __attribute__((aligned(16)));
+#endif
+
+static inline int stream_tls_fail(int code, const char *msg) {
+    g_stream_tls_code = code;
+    snprintf(g_stream_tls_err, sizeof g_stream_tls_err, "%s", msg);
+    return -1;
+}
+
+static inline int stream_tls_fail_rc(int code, const char *what, int rc) {
+    char em[128];
+    mbedtls_strerror(rc, em, sizeof em);
+    snprintf(g_stream_tls_err, sizeof g_stream_tls_err, "%s: %s (-0x%04x)", what, em, (unsigned)-rc);
+    g_stream_tls_code = code;
+    return -1;
+}
+
+static int g_stream_tls_ca_rc = 0; /* set once a CA parse ran out of heap: tells "heap too small" from "no file" */
+
+static inline int stream_tls_try_ca(const char *path) {
+    if (path == NULL || path[0] == '\0') return -1;
+    mbedtls_x509_crt_free(&g_stream_tls_ca);
+    mbedtls_x509_crt_init(&g_stream_tls_ca);
+    int r = mbedtls_x509_crt_parse_file(&g_stream_tls_ca, path);
+    /* >0 means some certificates in the file did not parse; usable as long as one did */
+    if (r < 0 || g_stream_tls_ca.raw.p == NULL) {
+        if (r == MBEDTLS_ERR_X509_ALLOC_FAILED || r == MBEDTLS_ERR_PK_ALLOC_FAILED) g_stream_tls_ca_rc = r;
+        return -1;
+    }
+    return 0;
+}
+
+#ifdef _WIN32
+#ifndef PARENA_TLS_CA_FILE_BYTES
+#define PARENA_TLS_CA_FILE_BYTES (1024u * 1024u) /* largest CA bundle file read on Windows */
+#endif
+static unsigned char g_stream_tls_cabuf[PARENA_TLS_CA_FILE_BYTES];
+/* like stream_tls_try_ca, but the path is UTF-16: the file is read with _wfopen and parsed from memory */
+static inline int stream_tls_try_ca_w(const wchar_t *wpath) {
+    FILE *f = _wfopen(wpath, L"rb");
+    if (f == NULL) return -1;
+    size_t n = fread(g_stream_tls_cabuf, 1, sizeof g_stream_tls_cabuf - 1, f);
+    int more = (fgetc(f) != EOF); /* did not fit: refuse rather than trust half a bundle */
+    fclose(f);
+    if (n == 0 || more) return -1;
+    g_stream_tls_cabuf[n] = '\0'; /* PEM is parsed as text: length includes the NUL */
+    mbedtls_x509_crt_free(&g_stream_tls_ca);
+    mbedtls_x509_crt_init(&g_stream_tls_ca);
+    int r = mbedtls_x509_crt_parse(&g_stream_tls_ca, g_stream_tls_cabuf, n + 1);
+    if (r < 0 || g_stream_tls_ca.raw.p == NULL) {
+        if (r == MBEDTLS_ERR_X509_ALLOC_FAILED || r == MBEDTLS_ERR_PK_ALLOC_FAILED) g_stream_tls_ca_rc = r;
+        return -1;
+    }
+    return 0;
+}
+#endif
+
+static inline int stream_tls_load_ca(void) {
+    const char *env = getenv("SSL_CERT_FILE");
+    if (env != NULL && env[0] != '\0') {
+        /* an explicit override that cannot be loaded fails closed -- never silently falls back */
+        if (stream_tls_try_ca(env) == 0) return 0;
+        if (g_stream_tls_ca_rc == MBEDTLS_ERR_X509_ALLOC_FAILED || g_stream_tls_ca_rc == MBEDTLS_ERR_PK_ALLOC_FAILED)
+            return stream_tls_fail(4, "CA bundle does not fit the TLS heap (raise PARENA_TLS_HEAP_BYTES)");
+        return stream_tls_fail(4, "SSL_CERT_FILE is set but not a readable certificate bundle");
+    }
+#if !defined(_WIN32) && !defined(PARENA_TLS_SKIP_SYSTEM_BUNDLES)
+    /* PARENA_TLS_SKIP_SYSTEM_BUNDLES only ever NARROWS trust (tests use it to simulate a machine
+     * with no system store, e.g. Windows); it cannot weaken verification. */
+    static const char *sys[] = {
+        "/etc/ssl/certs/ca-certificates.crt",
+        "/etc/pki/tls/certs/ca-bundle.crt",
+        "/etc/ssl/ca-bundle.pem",
+        "/etc/ssl/cert.pem",
+        NULL};
+    for (int i = 0; sys[i] != NULL; i++) {
+        if (stream_tls_try_ca(sys[i]) == 0) return 0;
+    }
+#endif
+#ifdef _WIN32
+    {
+        wchar_t wexe[1024];
+        DWORD wn = GetModuleFileNameW(NULL, wexe, (DWORD)(sizeof wexe / sizeof wexe[0]));
+        if (wn > 0 && wn < sizeof wexe / sizeof wexe[0]) {
+            wchar_t *wslash = NULL;
+            for (wchar_t *c = wexe; *c; c++) if (*c == L'\\' || *c == L'/') wslash = c;
+            static const wchar_t name[] = L"cacert.pem";
+            if (wslash != NULL && (size_t)(wslash - wexe) + 1 + (sizeof name / sizeof name[0]) <=
+                                      sizeof wexe / sizeof wexe[0]) {
+                memcpy(wslash + 1, name, sizeof name);
+                if (stream_tls_try_ca_w(wexe) == 0) return 0;
+            }
+        }
+    }
+#else
+    {
+        char exe[1024];
+        exe[0] = '\0';
+        ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
+        if (n > 0) exe[n] = '\0';
+        char *slash = NULL;
+        for (char *c = exe; *c; c++) if (*c == '/') slash = c;
+        if (slash != NULL) {
+            slash[1] = '\0';
+            char cand[1100];
+            snprintf(cand, sizeof cand, "%scacert.pem", exe);
+            if (stream_tls_try_ca(cand) == 0) return 0;
+        }
+    }
+#endif
+    /* deliberately NOT the current directory: anyone who can drop a file there would become a
+     * trusted root for every site. Fail closed instead. */
+    if (g_stream_tls_ca_rc == MBEDTLS_ERR_X509_ALLOC_FAILED || g_stream_tls_ca_rc == MBEDTLS_ERR_PK_ALLOC_FAILED)
+        return stream_tls_fail(4, "CA bundle does not fit the TLS heap (raise PARENA_TLS_HEAP_BYTES)");
+    return stream_tls_fail(4, "no CA bundle found (set SSL_CERT_FILE, or put cacert.pem next to the program)");
+}
+
+static inline int stream_tls_global_init(void) {
+    if (g_stream_tls_ready) return 0;
+#ifdef PARENA_TLS_STATIC_HEAP
+    mbedtls_memory_buffer_alloc_init(g_stream_tls_heap, sizeof g_stream_tls_heap);
+#endif
+#if defined(MBEDTLS_PSA_CRYPTO_C)
+    {
+        psa_status_t ps = psa_crypto_init();
+        if (ps != PSA_SUCCESS) return stream_tls_fail(2, "psa_crypto_init failed");
+    }
+#endif
+    mbedtls_entropy_init(&g_stream_tls_entropy);
+    mbedtls_ctr_drbg_init(&g_stream_tls_drbg);
+    static const char pers[] = "parena_stream_tls";
+    int rc = mbedtls_ctr_drbg_seed(&g_stream_tls_drbg, mbedtls_entropy_func, &g_stream_tls_entropy,
+                                   (const unsigned char *)pers, sizeof pers - 1);
+    if (rc != 0) return stream_tls_fail_rc(2, "random generator seed failed", rc);
+    mbedtls_x509_crt_init(&g_stream_tls_ca);
+    if (stream_tls_load_ca() != 0) return -1;
+    g_stream_tls_ready = 1;
+    return 0;
+}
+
+static inline int stream_tls_wait(int fd, int want_write, int ms) {
+    if (!stream_fd_ok(fd)) return -1;
+    fd_set f;
+    FD_ZERO(&f);
+    FD_SET((parena_sock_t)fd, &f);
+    struct timeval tv;
+    tv.tv_sec = ms / 1000;
+    tv.tv_usec = (ms % 1000) * 1000;
+    return select(fd + 1, want_write ? NULL : &f, want_write ? &f : NULL, NULL, &tv);
+}
+
+/* free the live session (idempotent). mbedtls_net_free also shuts down and closes the socket. */
+static inline void stream_tls_teardown(void) {
+    if (g_stream_tls.active) mbedtls_ssl_close_notify(&g_stream_tls.ssl);
+    mbedtls_net_free(&g_stream_tls.net);
+    mbedtls_ssl_free(&g_stream_tls.ssl);
+    mbedtls_ssl_config_free(&g_stream_tls.conf);
+    g_stream_tls.active = 0;
+    g_stream_tls.fd = -1;
+    g_stream_tls.handle = -1;
+}
+
+static inline int stream_connect_tls_impl(const char *host, int port) {
+    g_stream_tls_code = 0;
+    g_stream_tls_err[0] = '\0';
+    if (g_stream_tls.active) stream_tls_teardown();
+    if (stream_tls_global_init() != 0) return -1;
+    int fd = stream_connect_impl(host, port);
+    if (fd < 0) return stream_tls_fail(1, "could not connect (DNS or TCP, 5 s timeout)");
+    if (fd > 0xFFFF) { /* would not fit the handle encoding */
+        parena_sock_close((parena_sock_t)fd);
+        return stream_tls_fail(1, "socket descriptor out of range");
+    }
+    mbedtls_net_init(&g_stream_tls.net);
+    mbedtls_ssl_init(&g_stream_tls.ssl);
+    mbedtls_ssl_config_init(&g_stream_tls.conf);
+    g_stream_tls.net.fd = fd;
+    g_stream_tls.fd = fd;
+    int rc = mbedtls_ssl_config_defaults(&g_stream_tls.conf, MBEDTLS_SSL_IS_CLIENT,
+                                         MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT);
+    if (rc != 0) { stream_tls_fail_rc(2, "TLS config", rc); goto fail; }
+    mbedtls_ssl_conf_authmode(&g_stream_tls.conf, MBEDTLS_SSL_VERIFY_REQUIRED); /* never optional */
+    mbedtls_ssl_conf_ca_chain(&g_stream_tls.conf, &g_stream_tls_ca, NULL);
+    mbedtls_ssl_conf_rng(&g_stream_tls.conf, mbedtls_ctr_drbg_random, &g_stream_tls_drbg);
+    rc = mbedtls_ssl_setup(&g_stream_tls.ssl, &g_stream_tls.conf);
+    if (rc != 0) { stream_tls_fail_rc(2, "TLS setup", rc); goto fail; }
+    rc = mbedtls_ssl_set_hostname(&g_stream_tls.ssl, host); /* SNI and the verified name */
+    if (rc != 0) { stream_tls_fail_rc(2, "TLS hostname", rc); goto fail; }
+    mbedtls_ssl_set_bio(&g_stream_tls.ssl, &g_stream_tls.net, mbedtls_net_send, mbedtls_net_recv, NULL);
+    {
+        /* a wall-clock deadline: charged on every wait, so a peer dripping a byte every few ms
+         * cannot keep the (single-threaded, UI-blocking) handshake alive past the budget */
+        long long deadline = stream_now_ms() + PARENA_TLS_HANDSHAKE_MS;
+        for (;;) {
+            rc = mbedtls_ssl_handshake(&g_stream_tls.ssl);
+            if (rc == 0) break;
+            if (rc == MBEDTLS_ERR_SSL_WANT_READ || rc == MBEDTLS_ERR_SSL_WANT_WRITE) {
+                long long left = deadline - stream_now_ms();
+                if (left <= 0) {
+                    stream_tls_fail(2, "TLS handshake timed out");
+                    goto fail;
+                }
+                int w = stream_tls_wait(fd, rc == MBEDTLS_ERR_SSL_WANT_WRITE, left > 50 ? 50 : (int)left);
+#ifndef _WIN32
+                if (w < 0 && errno == EINTR) continue; /* a signal is not a failed handshake */
+#endif
+                if (w < 0) { stream_tls_fail(2, "TLS handshake: socket error"); goto fail; }
+                continue;
+            }
+            if (rc == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED) {
+                uint32_t flags = mbedtls_ssl_get_verify_result(&g_stream_tls.ssl);
+                char vi[200];
+                vi[0] = '\0';
+                mbedtls_x509_crt_verify_info(vi, sizeof vi, "", flags);
+                /* verify_info lines end in '\n'; flatten to one short line */
+                for (char *c = vi; *c; c++) if (*c == '\n') *c = ' ';
+                snprintf(g_stream_tls_err, sizeof g_stream_tls_err, "certificate rejected: %s", vi);
+                g_stream_tls_code = 3;
+                goto fail;
+            }
+            stream_tls_fail_rc(2, "TLS handshake failed", rc);
+            goto fail;
+        }
+    }
+    /* belt and braces: VERIFY_REQUIRED already aborts the handshake, but never trust a flag we can
+     * re-check for free */
+    {
+        uint32_t flags = mbedtls_ssl_get_verify_result(&g_stream_tls.ssl);
+        if (flags != 0) {
+            stream_tls_fail(3, "certificate rejected after handshake");
+            goto fail;
+        }
+    }
+    g_stream_tls_gen = (g_stream_tls_gen + 1) & 0x3FFF;
+    g_stream_tls.handle = PARENA_TLS_HANDLE_BIT | (g_stream_tls_gen << 16) | fd;
+    g_stream_tls.active = 1;
+    return g_stream_tls.handle;
+fail:
+    stream_tls_teardown();
+    return -1;
+}
+
+/* is `h` the handle of the live session (a tagged but stale handle is NOT, and is never a descriptor) */
+static inline int stream_tls_owns(int h) { return g_stream_tls.active && g_stream_tls.handle == h; }
+
+/* "TLSv1.3 TLS1-3-AES-256-GCM-SHA384" for the live session, "" otherwise (static, valid until next call) */
+static inline char *stream_tls_info_impl(void) {
+    static char info[128];
+    info[0] = '\0';
+    if (g_stream_tls.active)
+        snprintf(info, sizeof info, "%s %s", mbedtls_ssl_get_version(&g_stream_tls.ssl),
+                 mbedtls_ssl_get_ciphersuite(&g_stream_tls.ssl));
+    return info;
+}
+
+static inline int stream_tls_send(const char *s) {
+    size_t len = strlen(s), off = 0;
+    int spins = 0;
+    while (off < len) {
+        int n = mbedtls_ssl_write(&g_stream_tls.ssl, (const unsigned char *)s + off, len - off);
+        if (n > 0) { off += (size_t)n; spins = 0; continue; }
+        if (n != MBEDTLS_ERR_SSL_WANT_WRITE && n != MBEDTLS_ERR_SSL_WANT_READ) return -1;
+        if (++spins > 2000) return -1;
+        stream_tls_wait(g_stream_tls.fd, n == MBEDTLS_ERR_SSL_WANT_WRITE, 1);
+    }
+    return 0;
+}
+
+static inline int stream_tls_pull(void) {
+    if (stream_cur_len() >= stream_cur_max()) return -2;
+    if (mbedtls_ssl_get_bytes_avail(&g_stream_tls.ssl) == 0) {
+        int r = stream_tls_wait(g_stream_tls.fd, 0, 0);
+        if (r < 0) return -1;
+        if (r == 0) return 0;
+    }
+    size_t room = stream_cur_max() - stream_cur_len();
+    if (room > 16384) room = 16384; /* one TLS record */
+    for (int tries = 0; tries < 4; tries++) {
+        int n = mbedtls_ssl_read(&g_stream_tls.ssl, (unsigned char *)stream_cur_buf() + stream_cur_len(), room);
+        if (n > 0) {
+            stream_cur_set_len(stream_cur_len() + (size_t)n);
+            return n;
+        }
+        if (n == MBEDTLS_ERR_SSL_WANT_READ || n == MBEDTLS_ERR_SSL_WANT_WRITE) return 0;
+#ifdef MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET
+        if (n == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET) continue; /* TLS 1.3 post-handshake */
+#endif
+        if (n == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) return -1; /* authenticated end of data */
+        return -3; /* TCP EOF (0 / CONN_EOF), reset or alert without a close_notify: may be truncated */
+    }
+    return 0;
+}
+#else /* !PARENA_WITH_TLS */
+static inline int stream_connect_tls_impl(const char *host, int port) { (void)host; (void)port; return -1; }
+static inline int stream_tls_owns(int h) { (void)h; return 0; }
+static inline char *stream_tls_info_impl(void) { return ""; }
+static inline int stream_tls_send(const char *s) { (void)s; return -1; }
+static inline int stream_tls_pull(void) { return -1; }
+static inline void stream_tls_teardown(void) {}
+#endif /* PARENA_WITH_TLS */
+
+#if defined(PARENA_WITH_TLS) && defined(PARENA_WITH_QUIC_CRYPTO)
+#include <mbedtls/ctr_drbg.h>
+static inline Bytes quic_random_impl(int n, Arena *dest) {
+    if (n < 0 || n > 4096) return bytes_alloc_impl(dest, 0);
+    if (stream_tls_global_init() != 0) return bytes_alloc_impl(dest, 0);
+    Bytes out = bytes_alloc_impl(dest, n);
+    if (n > 0 && mbedtls_ctr_drbg_random(&g_stream_tls_drbg, out.data, (size_t)n) != 0) return bytes_alloc_impl(dest, 0);
+    return out;
+}
+/* QUIC's TLS 1.3 handshake runs in PARENA (net/quic_tls.prn); only certificate-chain validation and the
+ * CertificateVerify signature check are delegated to mbedTLS x509/pk -- never hand-rolled. Trust roots,
+ * heap and entropy are exactly net/stream's TLS half's (SSL_CERT_FILE / system bundle / cacert.pem next to
+ * the exe); verification and hostname checking are always on, there is no switch. */
+#include <mbedtls/pk.h>
+#include <mbedtls/x509_crt.h>
+#include <mbedtls/rsa.h>
+/* chain = repeated [u24 big-endian length][DER certificate], leaf first. Returns 0 only for a chain that
+ * verifies to a trusted root AND matches `host`. Non-zero otherwise (never an exception to fail open). */
+static inline int quic_cert_chain_verify_impl(Bytes chain, const char *host) {
+    if (stream_tls_global_init() != 0) return 1;
+    mbedtls_x509_crt crt;
+    mbedtls_x509_crt_init(&crt);
+    int p = 0, n = 0, rc = 1;
+    while (p + 3 <= chain.len) {
+        int l = (chain.data[p] << 16) | (chain.data[p + 1] << 8) | chain.data[p + 2];
+        p += 3;
+        if (l <= 0 || p + l > chain.len) { rc = 2; goto out; }
+        if (mbedtls_x509_crt_parse_der(&crt, chain.data + p, (size_t)l) != 0) { rc = 3; goto out; }
+        p += l;
+        n++;
+    }
+    if (n == 0 || p != chain.len || host == NULL || host[0] == '\0') { rc = 4; goto out; }
+    {
+        uint32_t flags = 0;
+        rc = mbedtls_x509_crt_verify(&crt, &g_stream_tls_ca, NULL, host, &flags, NULL, NULL) == 0 && flags == 0 ? 0 : 5;
+    }
+out:
+    mbedtls_x509_crt_free(&crt);
+    return rc;
+}
+/* Verifies a TLS 1.3 CertificateVerify signature by the leaf of `chain` over `content`.
+ * schemes: 0x0403 ecdsa_secp256r1_sha256, 0x0503 ecdsa_secp384r1_sha384, 0x0804 rsa_pss_rsae_sha256,
+ * 0x0805 rsa_pss_rsae_sha384. Anything else -> failure. Returns 0 if the signature is valid. */
+static inline int quic_cert_sig_verify_impl(Bytes chain, int scheme, Bytes content, Bytes sig) {
+    if (chain.len < 4) return 1;
+    int l = (chain.data[0] << 16) | (chain.data[1] << 8) | chain.data[2];
+    if (l <= 0 || 3 + l > chain.len) return 1;
+    mbedtls_md_type_t md;
+    int pss;
+    switch (scheme) {
+        case 0x0403: md = MBEDTLS_MD_SHA256; pss = 0; break;
+        case 0x0503: md = MBEDTLS_MD_SHA384; pss = 0; break;
+        case 0x0804: md = MBEDTLS_MD_SHA256; pss = 1; break;
+        case 0x0805: md = MBEDTLS_MD_SHA384; pss = 1; break;
+        default: return 1;
+    }
+    const mbedtls_md_info_t *mi = mbedtls_md_info_from_type(md);
+    unsigned char h[64];
+    if (!mi || mbedtls_md(mi, content.data, (size_t)content.len, h) != 0) return 1;
+    mbedtls_x509_crt crt;
+    mbedtls_x509_crt_init(&crt);
+    int rc = 1;
+    if (mbedtls_x509_crt_parse_der(&crt, chain.data + 3, (size_t)l) != 0) goto out;
+    if (pss) {
+        mbedtls_pk_rsassa_pss_options o;
+        o.mgf1_hash_id = md;
+        o.expected_salt_len = (int)mbedtls_md_get_size(mi);
+        rc = mbedtls_pk_verify_ext(MBEDTLS_PK_RSASSA_PSS, &o, &crt.pk, md, h, mbedtls_md_get_size(mi),
+                                   sig.data, (size_t)sig.len) == 0 ? 0 : 1;
+    } else {
+        rc = mbedtls_pk_can_do(&crt.pk, MBEDTLS_PK_ECDSA) &&
+             mbedtls_pk_verify(&crt.pk, md, h, mbedtls_md_get_size(mi), sig.data, (size_t)sig.len) == 0 ? 0 : 1;
+    }
+out:
+    mbedtls_x509_crt_free(&crt);
+    return rc;
+}
+#endif /* PARENA_WITH_TLS && PARENA_WITH_QUIC_CRYPTO */
+#if !(defined(PARENA_WITH_TLS) && defined(PARENA_WITH_QUIC_CRYPTO))
+/* no TLS / no QUIC crypto in this build: a certificate can never be accepted (fail closed). */
+static inline int quic_cert_chain_verify_impl(Bytes chain, const char *host) { (void)chain; (void)host; return 1; }
+static inline int quic_cert_sig_verify_impl(Bytes chain, int scheme, Bytes content, Bytes sig) { (void)chain; (void)scheme; (void)content; (void)sig; return 1; }
+#endif
+
+static inline int stream_tls_code_impl(void) {
+#ifdef PARENA_WITH_TLS
+    return g_stream_tls_code;
+#else
+    return 5; /* this build has no TLS */
+#endif
+}
+
+static inline char *stream_tls_error_impl(void) {
+#ifdef PARENA_WITH_TLS
+    return g_stream_tls_err;
+#else
+    return (char *)"this build has no TLS support";
+#endif
+}
+
+/* A ready-to-render HTML error page (static buffer) for the last TLS failure: headline by class,
+ * then the specific reason. PELLEGRINO draws it in place of the page. */
+static inline char *stream_tls_page_impl(void) {
+    static char page[704];
+    const char *title;
+    switch (stream_tls_code_impl()) {
+        case 1: title = "could not connect"; break;
+        case 3: title = "certificate rejected"; break;
+        case 4: title = "no trusted certificate authorities"; break;
+        case 5: title = "https is not available in this build"; break;
+        default: title = "secure connection failed"; break;
+    }
+    snprintf(page, sizeof page,
+             "<h1>%s</h1>\n<p>%s</p>\n<p>Certificates and hostnames are always verified; there is no "
+             "override. Press : and type another URL.</p>\n",
+             title, stream_tls_error_impl());
+    return page;
+}
+
+/* bytes of the static TLS heap that have ever been in use at once. 0 unless the consumer defines
+ * PARENA_TLS_HEAP_STATS (and builds mbedTLS with MBEDTLS_MEMORY_DEBUG, which exposes the mark). */
+static inline int stream_tls_heap_peak_impl(void) {
+#if defined(PARENA_WITH_TLS) && defined(PARENA_TLS_STATIC_HEAP) && defined(PARENA_TLS_HEAP_STATS)
+    size_t max_used = 0, max_blocks = 0;
+    mbedtls_memory_buffer_alloc_max_get(&max_used, &max_blocks);
+    return (int)max_used;
+#else
+    return 0;
+#endif
+}
+
+static inline int stream_send_impl(int fd, const char *s) {
+    if (stream_tls_is_handle(fd)) return stream_tls_owns(fd) ? stream_tls_send(s) : -1;
+    if (!stream_fd_ok(fd)) return -1;
+    size_t len = strlen(s), off = 0;
+    int spins = 0;
+    while (off < len) {
+        int n = (int)send((parena_sock_t)fd, s + off, (int)(len - off), 0);
+        if (n > 0) { off += (size_t)n; spins = 0; continue; }
+        if (++spins > 2000) return -1; /* ~2 s of EWOULDBLOCK on a fresh connection: give up */
+        fd_set wf;
+        FD_ZERO(&wf);
+        FD_SET((parena_sock_t)fd, &wf);
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 1000;
+        select(fd + 1, NULL, &wf, NULL, &tv);
+    }
+    return 0;
+}
+
+static inline int stream_pull_impl(int fd) {
+    if (stream_tls_is_handle(fd)) return stream_tls_owns(fd) ? stream_tls_pull() : -1;
+    if (!stream_fd_ok(fd)) return -1;
+    if (stream_cur_len() >= stream_cur_max()) return -2;
+    fd_set rf;
+    FD_ZERO(&rf);
+    FD_SET((parena_sock_t)fd, &rf);
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 0;
+    int r = select(fd + 1, &rf, NULL, NULL, &tv);
+    if (r < 0) return -1;
+    if (r == 0) return 0;
+    size_t room = stream_cur_max() - stream_cur_len();
+    if (room > 65536) room = 65536;
+    int n = (int)recv((parena_sock_t)fd, stream_cur_buf() + stream_cur_len(), (int)room, 0);
+    if (n <= 0) return -1;
+    stream_cur_set_len(stream_cur_len() + (size_t)n);
+    return n;
+}
+
+static inline char *stream_buf_impl(void) { return stream_cur_buf(); }
+static inline int stream_len_impl(void) { return (int)stream_cur_len(); }
+static inline void stream_reset_impl(void) { stream_cur_set_len(0); }
+/* Append src[off, off+n) to the selected bank's received bytes (no partial append: -1 and nothing written if it
+ * would not fit or the range is bad). Lets a non-socket transport (HTTP/3, net/quic_client) hand its response
+ * to the same page pipeline the TCP/TLS path fills. Returns n, or -1. */
+static inline int stream_append_bytes_impl(Bytes src, int off, int n) {
+    if (off < 0 || n < 0 || off > src.len || n > src.len - off) return -1;
+    size_t cur = stream_cur_len();
+    if (cur + (size_t)n > stream_cur_max()) return -1;
+    if (n > 0) memcpy(stream_cur_buf() + cur, src.data + off, (size_t)n);
+    stream_cur_set_len(cur + (size_t)n);
+    return n;
+}
+/* Bytes copy of the selected bank from `off` to its current length (binary-safe; zero-length when out of range). */
+static inline Bytes stream_copy_bytes_impl(Arena *dest, int off) {
+    size_t n = stream_cur_len();
+    if (off < 0 || (size_t)off > n) return bytes_alloc_impl(dest, 0);
+    Bytes b = bytes_alloc_impl(dest, (int)(n - (size_t)off));
+    if (b.len > 0) memcpy(b.data, stream_cur_buf() + off, (size_t)b.len);
+    return b;
+}
+
+/* ---- css store (2026-10-15, PELLEGRINO external stylesheets): fetched <link rel=stylesheet> / @import text must outlive
+ * the shared image bank it arrived in (the next <img> fetch resets that), so it is appended here: one static,
+ * NUL-terminated buffer (PARENA_CSS_MAX, default 256 KiB, BSS: no malloc) that PARENA code reads as an ordinary String.
+ * css_append_impl(off, maxlen) copies the SELECTED stream bank from byte `off` to its end (at most `maxlen` bytes;
+ * -1 = no limit), followed by a newline, and returns the start offset of the copy in the store (the copy is silently
+ * truncated at either cap, and -1 is returned when the store is full already); css_len_impl() is the store's length; css_reset_impl() empties it. */
+#ifndef PARENA_CSS_MAX
+#define PARENA_CSS_MAX (256u * 1024u)
+#endif
+static char g_css_buf[PARENA_CSS_MAX + 1];
+static size_t g_css_len = 0;
+static inline int css_append_impl(int off, int maxlen) {
+    size_t n = stream_cur_len();
+    if (off < 0 || (size_t)off > n) return -1;
+    size_t take = n - (size_t)off;
+    if (maxlen >= 0 && take > (size_t)maxlen) take = (size_t)maxlen;
+    if (g_css_len + 1 >= PARENA_CSS_MAX) return -1;
+    if (g_css_len + take + 1 > PARENA_CSS_MAX) take = PARENA_CSS_MAX - g_css_len - 1;
+    int start = (int)g_css_len;
+    memcpy(g_css_buf + g_css_len, stream_cur_buf() + off, take);
+    g_css_len += take;
+    g_css_buf[g_css_len++] = '\n';
+    g_css_buf[g_css_len] = '\0';
+    return start;
+}
+static inline char *css_buf_impl(void) { return g_css_buf; }
+static inline int css_len_impl(void) { return (int)g_css_len; }
+static inline void css_reset_impl(void) { g_css_len = 0; g_css_buf[0] = '\0'; }
+
+/* ---- image store (2026-10-15, PELLEGRINO <img>): decoded RGBA pixels that must outlive the arena they were
+ * decoded in. One static pool + a small id table; ids are plain ints so they fit a slot. No malloc.
+ * img_px_impl returns 0xRRGGBB, or -1 for a (mostly) transparent pixel / out of range. */
+#ifndef PARENA_IMG_STORE_BYTES
+#define PARENA_IMG_STORE_BYTES (8u * 1024u * 1024u)
+#endif
+#define PARENA_IMG_MAX_IDS 32
+static unsigned char g_img_pool[PARENA_IMG_STORE_BYTES];
+static size_t g_img_used = 0;
+static struct { size_t off; int w, h; } g_img_tab[PARENA_IMG_MAX_IDS];
+static int g_img_n = 0;
+static inline int img_store_impl(Bytes rgba, int w, int h) {
+    if (w <= 0 || h <= 0 || g_img_n >= PARENA_IMG_MAX_IDS) return -1;
+    if ((long long)w * h > 0x1FFFFFFF / 4) return -1;
+    size_t need = (size_t)w * (size_t)h * 4u;
+    if ((size_t)rgba.len < need || g_img_used + need > PARENA_IMG_STORE_BYTES) return -1;
+    memcpy(g_img_pool + g_img_used, rgba.data, need);
+    g_img_tab[g_img_n].off = g_img_used;
+    g_img_tab[g_img_n].w = w;
+    g_img_tab[g_img_n].h = h;
+    g_img_used += need;
+    return g_img_n++;
+}
+static inline int img_w_impl(int id) { return (id >= 0 && id < g_img_n) ? g_img_tab[id].w : 0; }
+static inline int img_h_impl(int id) { return (id >= 0 && id < g_img_n) ? g_img_tab[id].h : 0; }
+static inline int img_px_impl(int id, int x, int y) {
+    if (id < 0 || id >= g_img_n) return -1;
+    if (x < 0 || y < 0 || x >= g_img_tab[id].w || y >= g_img_tab[id].h) return -1;
+    const unsigned char *p = g_img_pool + g_img_tab[id].off + ((size_t)y * (size_t)g_img_tab[id].w + (size_t)x) * 4u;
+    if (p[3] < 128) return -1;
+    return (p[0] << 16) | (p[1] << 8) | p[2];
+}
+static inline int img_reset_impl(void) { g_img_n = 0; g_img_used = 0; return 0; }
+
+static inline int stream_close_impl(int fd) {
+    if (stream_tls_is_handle(fd)) {
+        if (!stream_tls_owns(fd)) return -1; /* stale (closed or superseded): nothing to close, and
+                                              * crucially no close() of a descriptor that reuses the number */
+        stream_tls_teardown(); /* also closes the socket */
+        return 0;
+    }
+    if (fd < 0) return -1;
+    return parena_sock_close((parena_sock_t)fd) == 0 ? 0 : -1;
+}
+
+#endif /* !PARENA_FREESTANDING -- end of net/stream */
+
+/* linebuf -- one small static line-input buffer (address bar / command bar). */
+#define PARENA_LINEBUF_MAX 1024
+static char g_linebuf[PARENA_LINEBUF_MAX];
+static int g_linebuf_len = 0;
+static inline void linebuf_append_impl(const char *s) {
+    while (*s && g_linebuf_len < PARENA_LINEBUF_MAX - 1) g_linebuf[g_linebuf_len++] = *s++;
+    g_linebuf[g_linebuf_len] = '\0';
+}
+static inline void linebuf_backspace_impl(void) {
+    if (g_linebuf_len > 0) g_linebuf[--g_linebuf_len] = '\0';
+}
+static inline void linebuf_clear_impl(void) { g_linebuf_len = 0; g_linebuf[0] = '\0'; }
+static inline char *linebuf_get_impl(void) { return g_linebuf; }
+static inline int linebuf_len_impl(void) { return g_linebuf_len; }
+
+/* cururl -- one static "current URL" string (set by the program, read back for display/redirects). */
+static char g_cururl[PARENA_LINEBUF_MAX];
+static inline int cururl_set_impl(const char *s) {
+    size_t n = strlen(s);
+    if (n >= sizeof g_cururl) n = sizeof g_cururl - 1;
+    memcpy(g_cururl, s, n);
+    g_cururl[n] = '\0';
+    return 0;
+}
+static inline char *cururl_get_impl(void) { return g_cururl; }
+
+/* slots -- PARENA_SLOTS static int cells (default 4096; was 32, 1024, then 2048, as PELLEGRINO's CSS rule table, style
+ * stack, images and form fields needed room): tiny mutable UI/navigation state for PARENA programs (loop/recur can't carry a dozen
+ * values through function calls, and PARENA functions return one scalar). Out-of-range reads are 0. */
+#ifndef PARENA_SLOTS
+#define PARENA_SLOTS 4096
+#endif
+static int g_slots[PARENA_SLOTS];
+static inline int slot_get_impl(int k) { return (k >= 0 && k < PARENA_SLOTS) ? g_slots[k] : 0; }
+static inline int slot_set_impl(int k, int v) { if (k >= 0 && k < PARENA_SLOTS) g_slots[k] = v; return v; }
+
+/* ---- stdlib/json.prn's own real host-glue forward declaration (2026-08-28) --------------
+ * json.prn's own json-unescape #target body calls host_json_unescape -- a real, per-HOST-
+ * PROGRAM implementation (not a runtime primitive; the actual escape-decoding logic lives
+ * entirely in whichever C program links json.prn in, same real division tests/test_json.c's
+ * own header comment already documents), same real shape every mod's own `_host.h` file
+ * already establishes for a callback INTO host code. Declared HERE (not in a separate
+ * `_host.h`, unlike the REDGARDEN/ECOWAR mod convention) because every generated .c file
+ * already `#include`s this header at its own top regardless of build shape -- a host program
+ * that concatenates generated code AHEAD of its own real implementation (examples/
+ * editor_main.c's own `cat gen.c editor_main.c`) needs this declaration reachable before that
+ * real implementation appears later in the same translation unit, and this header is the one
+ * real place guaranteed to already be there first. A host program that never links json.prn's
+ * generated code never triggers a real "undefined reference" for this at link time -- a bare
+ * forward declaration costs nothing there. Real implementations: examples/editor_main.c,
+ * tests/test_json.c, tests/test_webdriver.c. */
+extern char *host_json_unescape(char *s, int start, int end, char *out);
+
+#endif /* PARENA_RUNTIME_H */
