@@ -419,24 +419,8 @@ static inline void brick_world_shard_half(int kind, double h[3]) {
  * simply drop with the same deterministic scatter. */
 static inline void brick_world_spawn_bodies(void) {
     brick_world_bodies_init();
-    for (int i = 0; i < g_brick.shard_count; i++) {
-        const BfShard *sh = &g_brick.shard[i];
-        const BfParent *p = &g_brick.parent[sh->parent];
-        unsigned int seed = brick_world_hash((unsigned int)(int)(sh->x * 16.0f) * 73856093u ^ (unsigned int)(int)(sh->y * 16.0f) * 19349663u ^
-                                              (unsigned int)(int)(sh->z * 16.0f) * 83492791u ^ (unsigned int)i);
-        double half[3]; brick_world_shard_half(p->kind, half);
-        double mass = (double)p->density * 8.0 * half[0] * half[1] * half[2];
-        for (int k = 0; k < sh->count; k++) {
-            double pos[3] = { sh->x + (brick_world_h01(&seed) - 0.5) * p->cell[0] * 0.6,
-                              sh->y + (brick_world_h01(&seed) - 0.5) * p->cell[1] * 0.6,
-                              sh->z + (brick_world_h01(&seed) - 0.5) * p->cell[2] * 0.6 };
-            double vel[3] = { sh->vx + (brick_world_h01(&seed) - 0.5) * 3.0,
-                              sh->vy + 1.0 + brick_world_h01(&seed) * 2.5,
-                              sh->vz + (brick_world_h01(&seed) - 0.5) * 3.0 };
-            double om[3] = { (brick_world_h01(&seed) - 0.5) * 14.0, (brick_world_h01(&seed) - 0.5) * 14.0, (brick_world_h01(&seed) - 0.5) * 14.0 };
-            bb_spawn(&g_brick_bodies, p->kind, 0, mass, pos, half, vel, om);
-        }
-    }
+    /* shot-out cells shed the cheap flakes (brick_debris.h, driven by the lobby from the event queue); only
+       cut-off chunks become bodies */
     g_brick.shard_count = 0;
     for (int ci = 0; ci < g_brick.chunk_count; ci++) {
         const BfChunk *ch = &g_brick.chunk[ci];

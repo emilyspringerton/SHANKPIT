@@ -1,40 +1,24 @@
 #ifndef SHANKPIT_BRICK_BODIES_H
 #define SHANKPIT_BRICK_BODIES_H
 
-/* brick_bodies.h -- physical broken brick: pieces of destructible wall become real rigid bodies on
- * GOLDEN BAND's XPBD solver (packages/goldenband/grb.{c,h}), with mass, orientation and angular
- * velocity, instead of the old massless cosmetic flakes (brick_debris.h).
- *
- * Two kinds of body feed this pool (both come from packages/world/brick_fracture.h):
- *   - SHARDS: a cell that was shot / blasted out spawns a small box (0.2 m) of that cell's material.
- *     Mass = material density x volume: a brick shard is 1900 kg/m^3 x 0.008 m^3 ~= 15 kg, concrete
- *     19, wood 5, glass a thin 0.24x0.24x0.06 plate ~8 kg. It inherits a fraction of the impact
- *     velocity (a bullet's direction / a blast's radial outward) -- see brick_world.h.
- *   - CHUNKS: cells cut off from everything (bf_detect_detached) fall as one body shaped like the
- *     chunk's bounding box, mass = sum of its cells' density x volume (a 3 m wall cell really is
- *     tonnes; the glass disc shot out of a pane really is heavier than a brick).
- *
- * Collision. grb solves body vs the ground plane (with friction, restitution and full torque). This
- * module adds, once per fixed 64 Hz tick after the grb step: the 8 corners of each body against the
- * level's static geometry (a host callback, so oriented boxes and RAMPS work -- brick_world.h backs
- * it with physics.h's obb_sphere_push) resolved as real impulses at the contact point (so bodies
- * tumble and slide down a ramp, not just stop), and shard-vs-shard sphere contacts so shards pile
- * up instead of interpenetrating on the floor.
- *
- * Named v0 limits: grb has no body-vs-body (shards use spheres here; chunks do not collide with
- * other bodies), chunk shape is its bounding box, only body-corner-into-geometry is detected (a
- * static edge poking into a face is not), no sleeping in grb (a calm body is simply held still).
- * Bodies never feed back into gameplay or the network: the server only decides which cells are
- * gone. Deterministic (fixed step, no rand, no wall clock): same inputs -> same bodies.
- */
+/* brick_bodies.h -- falling cut-off geometry, FAKED cheaply. When a shot or blast leaves a piece of wall or
+ * pane connected to nothing (packages/world/brick_fracture.h detach), it must not hang in the air: it
+ * becomes one "chunk" that falls under gravity with a seeded tumble, bounces once, and lies flat on
+ * whatever it lands on (the floor plane or a level box, found with one probe per chunk per tick), then
+ * lingers a few seconds. No solver, no body-vs-body, no piling -- it only has to look right and cost almost
+ * nothing (16 chunks max, one level scan each). Mass (material density x volume) is still carried so the
+ * NOCK `density` setting means something to tooling and tests; it does not drive the motion.
+ * Shot-out cells are NOT bodies any more: they shed the old cheap flakes (brick_debris.h).
+ * Deterministic: fixed step, no rand, no wall clock. */
 
 #include "../goldenband/grb.h"
 
-#define BB_MAX            96           /* <= GRB_MAX_BODIES */
+#define BB_MAX            32           /* <= GRB_MAX_BODIES */
 #define BB_HZ             64
-#define BB_GRAVITY        19.62        /* 2 g: reads right at SHANKPIT's scale; tunable */
+#define BB_GRAVITY        30.0         /* level units/s^2 (a cell is 3 units): snappy, tunable */
 #define BB_SHARD_HALF     0.10         /* shard box half extent (m) */
-#define BB_MAX_AGE        120.0        /* seconds before a body is retired */
+#define BB_MAX_AGE        20.0         /* seconds before a body is retired, however it is doing */
+#define BB_LINGER         5.0          /* seconds a landed chunk stays before it goes */
 
 /* kinds mirror BF_KIND_* (brick, concrete, wood, glass) */
 typedef struct {
@@ -42,7 +26,9 @@ typedef struct {
     int kind;
     int big;                           /* a chunk: no shard-vs-shard sphere contacts */
     double half[3];
-    double calm, age;
+    double calm, age;                  /* calm > 0: landed (seconds since) */
+    int bounced;
+    double settle_q[4], rest_y;
 } BbSlot;
 
 /* Static-geometry query: is the sphere (c, r) penetrating the level? 1 = yes, with the exit normal

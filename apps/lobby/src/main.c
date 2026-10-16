@@ -11379,8 +11379,7 @@ static void brick_world_frame(void) {
     brick_world_tick(now);
     if (!g_opt_brick_debris) bb_clear(&g_brick_bodies);
     for (int i = 0; i < n; i++) {
-        /* a GONE cell is now a physical shard, not a massless flake; cracks and tears still shed flakes */
-        if (g_opt_brick_debris && ev[i].debris > 0 && ev[i].state != BF_STATE_GONE) {
+        if (g_opt_brick_debris && ev[i].debris > 0) {
             unsigned int seed = (unsigned int)ev[i].parent * 7919u + (unsigned int)ev[i].state * 131u +
                                 (unsigned int)(int)(ev[i].x * 8.0f) * 31u + (unsigned int)(int)(ev[i].z * 8.0f) * 17u +
                                 (unsigned int)(int)(ev[i].y * 8.0f);

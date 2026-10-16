@@ -129,8 +129,8 @@ static void glass_chunk_test(void) {
         double y_start = gb->pos[1];
         for (int i = 0; i < 40; i++) brick_world_tick(5016u + 16u * (unsigned)(i + 1));
         CHECK(gb->pos[1] < y_start - 0.5);                       /* falling */
-        for (int i = 0; i < 400; i++) brick_world_tick(5700u + 16u * (unsigned)i);
-        CHECK(gb->pos[1] > 0.0 && gb->pos[1] < 2.5);             /* landed on the floor, not through it, not hovering */
+        for (int i = 0; i < 150; i++) brick_world_tick(5700u + 16u * (unsigned)i);
+        CHECK(fabs(gb->pos[1] - 3.3) < 0.05);                   /* lies flat ON the pane's surviving bottom row (top y=3, half thickness 0.3): supported, not hovering */
         printf("glass chunk: %.0f kg, spawned spinning %.2f rad/s, fell from y=%.1f to rest at y=%.2f\n",
                bb_slot_mass(&g_brick_bodies, chunk_slot), w0, y_start, gb->pos[1]);
     }
@@ -188,23 +188,12 @@ int main(void) {
         CHECK(fabsf(vol + (float)wp->removed * cell - 60.0f * 20.0f * 6.0f) < 60.0f * 20.0f * 6.0f * 1e-3f);
     }
 
-    /* 2b. physical broken brick: the cells that went gone queued shards, brick_world_tick turns them into
-           GOLDEN BAND bodies (brick = 1900 kg/m^3 x a 0.2 m cube ~ 15 kg) that inherit part of the shot */
+    /* 2b. shot-out cells shed the cheap flakes (lobby side), not bodies: brick_world_tick queues nothing */
     {
         CHECK(g_brick.shard_count > 0);
-        float sp = sqrtf(g_brick.shard[0].vx * g_brick.shard[0].vx + g_brick.shard[0].vy * g_brick.shard[0].vy + g_brick.shard[0].vz * g_brick.shard[0].vz);
-        CHECK(fabsf(sp - BRICK_BULLET_SPEED * BRICK_INHERIT_FRACTION) < 0.05f);
-        int queued = g_brick.shard_count;
         brick_world_tick(1000u);
         CHECK(g_brick.shard_count == 0);
-        CHECK(bb_active_count(&g_brick_bodies) == queued * 2);
-        CHECK(fabs(bb_slot_mass(&g_brick_bodies, 0) - 15.2) < 0.1);
-        for (int i = 0; i < 180; i++) brick_world_tick(1000u + 17u * (unsigned)(i + 1));   /* ~3 s of frames */
-        int sane = 1;
-        for (int i = 0; i < BB_MAX; i++)
-            if (g_brick_bodies.slot[i].active) { const GrbBody *gb = &g_brick_bodies.world.bodies[i]; if (!(gb->pos[1] > -1.0) || !isfinite(gb->pos[0])) sane = 0; }
-        CHECK(sane);
-        printf("shards: %d bodies from %d breached cells, first one %.1f kg\n", bb_active_count(&g_brick_bodies), queued, bb_slot_mass(&g_brick_bodies, 0));
+        CHECK(bb_active_count(&g_brick_bodies) == 0);
     }
 
     /* 3. a missile blast on the face of an undamaged stretch: carves a crater, not a pinhole */

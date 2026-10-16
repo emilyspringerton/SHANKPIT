@@ -1,71 +1,15 @@
-/* brick_bodies.c -- see brick_bodies.h. */
+/* brick_bodies.c -- see brick_bodies.h. A deliberately FAKE fall: gravity, a spin that dies on landing, a
+ * floor/wall probe and a flat settle. No solver, no pairs. One level scan per chunk per tick. */
 #include "brick_bodies.h"
 
 #include <math.h>
 #include <string.h>
 
 #define BB_TICK (1.0 / BB_HZ)
-#define BB_CORNER_R 0.03
-#define BB_MU 0.45
-#define BB_REST_SPEED 0.08
-#define BB_REST_SPIN 0.25
-#define BB_REST_TIME 0.6
+#define BB_TERMINAL 17.0
+#define BB_SETTLE_T 0.18     /* seconds to ease from the landing tilt to lying flat */
 
-static double dot3(const double a[3], const double b[3]) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
-static void cross3(const double a[3], const double b[3], double o[3]) {
-    o[0] = a[1] * b[2] - a[2] * b[1]; o[1] = a[2] * b[0] - a[0] * b[2]; o[2] = a[0] * b[1] - a[1] * b[0];
-}
 static int finite3(const double v[3]) { return isfinite(v[0]) && isfinite(v[1]) && isfinite(v[2]); }
-
-/* world-space I^-1 * v */
-static void inv_i_apply(const GrbBody *b, const double v[3], double o[3]) {
-    double c[4], l[3];
-    grb_quat_conj(b->rot, c);
-    grb_quat_rotate(c, v, l);
-    l[0] *= b->inv_inertia[0]; l[1] *= b->inv_inertia[1]; l[2] *= b->inv_inertia[2];
-    grb_quat_rotate(b->rot, l, o);
-}
-
-/* one impulse along dir at lever arm r; returns the impulse magnitude */
-static double impulse(GrbBody *b, const double r[3], const double dir[3], double target_vn, double lo, double hi) {
-    double wr[3], vp[3];
-    cross3(b->omega, r, wr);
-    for (int a = 0; a < 3; a++) vp[a] = b->vel[a] + wr[a];
-    double vn = dot3(vp, dir);
-    double rn[3], irn[3], t[3];
-    cross3(r, dir, rn);
-    inv_i_apply(b, rn, irn);
-    cross3(irn, r, t);
-    double denom = b->inv_mass + dot3(t, dir);
-    if (denom < 1e-12) return 0.0;
-    double j = (target_vn - vn) / denom;
-    if (j < lo) j = lo;
-    if (j > hi) j = hi;
-    for (int a = 0; a < 3; a++) b->vel[a] += dir[a] * j * b->inv_mass;
-    for (int a = 0; a < 3; a++) b->omega[a] += irn[a] * j;
-    return j;
-}
-
-static void contact(GrbBody *b, const double pt[3], const double n[3]) {
-    double r[3] = { pt[0] - b->pos[0], pt[1] - b->pos[1], pt[2] - b->pos[2] };
-    double wr[3], vp[3];
-    cross3(b->omega, r, wr);
-    for (int a = 0; a < 3; a++) vp[a] = b->vel[a] + wr[a];
-    double vn = dot3(vp, n);
-    if (vn >= 0.0) return;
-    double target = (vn < -2.0) ? -vn * b->restitution : 0.0;   /* no micro-bounce at rest */
-    double jn = impulse(b, r, n, target, 0.0, 1e30);
-    cross3(b->omega, r, wr);
-    for (int a = 0; a < 3; a++) vp[a] = b->vel[a] + wr[a];
-    double vn2 = dot3(vp, n);
-    double tv[3] = { vp[0] - n[0] * vn2, vp[1] - n[1] * vn2, vp[2] - n[2] * vn2 };
-    double tl = sqrt(dot3(tv, tv));
-    if (tl > 1e-6) {
-        double td[3] = { tv[0] / tl, tv[1] / tl, tv[2] / tl };
-        double lim = b->friction * jn;
-        impulse(b, r, td, 0.0, -lim, lim);
-    }
-}
 
 static void deactivate(BrickBodies *bb, int i) {
     GrbBody *b = &bb->world.bodies[i];
@@ -80,10 +24,8 @@ void bb_init(BrickBodies *bb, BbPushFn push, void *user) {
     bb->push = push;
     bb->user = user;
     grb_world_init(&bb->world, 0.0, -BB_GRAVITY, 0.0);
-    bb->world.substeps = 8;
-    grb_world_add_plane(&bb->world, 0.0, 1.0, 0.0, bb->ground_y);
     const double p[3] = { 0, -1.0e4, 0 }, q[4] = { 0, 0, 0, 1 };
-    for (int i = 0; i < BB_MAX; i++) grb_body_add(&bb->world, 0.0, NULL, p, q);   /* inert placeholders, activated in place */
+    for (int i = 0; i < BB_MAX; i++) grb_body_add(&bb->world, 0.0, NULL, p, q);   /* storage for pos/rot/mass only */
 }
 
 void bb_clear(BrickBodies *bb) {
@@ -109,134 +51,126 @@ int bb_spawn(BrickBodies *bb, int kind, int big, double mass, const double pos[3
     if (!(half[0] > 1e-4 && half[1] > 1e-4 && half[2] > 1e-4)) return -1;
     int s = -1;
     for (int i = 0; i < BB_MAX; i++) if (!bb->slot[i].active) { s = i; break; }
-    if (s < 0) {
-        /* Pool full: retire the oldest SHARD (a calm one first) -- never a falling chunk while a shard
-           can go instead, or a pane's disc would vanish mid-fall the moment someone keeps shooting. */
+    if (s < 0) {   /* pool full: retire the one that has been down longest */
         double best = -1.0;
         for (int i = 0; i < BB_MAX; i++) {
-            const BbSlot *o = &bb->slot[i];
-            double score = o->age + (o->calm > BB_REST_TIME ? 1000.0 : 0.0) + (o->big ? -5000.0 : 0.0);
+            double score = bb->slot[i].calm * 100.0 + bb->slot[i].age;
             if (best < 0.0 || score > best) { best = score; s = i; }
         }
-        if (bb->slot[s].big && !big) return -1;   /* only chunks left and this is a mere shard: drop the shard */
     }
     GrbBody *b = &bb->world.bodies[s];
     memset(b, 0, sizeof *b);
     for (int a = 0; a < 3; a++) { b->pos[a] = pos[a]; b->vel[a] = vel[a]; b->omega[a] = omega[a]; }
     b->rot[3] = 1.0;
-    double I[3];
-    grb_inertia_box(mass, half[0], half[1], half[2], I);
     b->inv_mass = 1.0 / mass;
-    for (int a = 0; a < 3; a++) b->inv_inertia[a] = 1.0 / I[a];
-    grb_body_set_box(b, half[0], half[1], half[2]);
-    b->friction = BB_MU;
-    b->restitution = (kind == 3) ? 0.10 : (kind == 2) ? 0.25 : 0.15;
     BbSlot *sl = &bb->slot[s];
     sl->active = 1; sl->kind = kind; sl->big = big;
     for (int a = 0; a < 3; a++) sl->half[a] = half[a];
     sl->calm = 0.0; sl->age = 0.0;
+    sl->bounced = 0;
     return s;
 }
 
-static void collide_static(BrickBodies *bb, int si) {
-    if (!bb->push) return;
-    GrbBody *b = &bb->world.bodies[si];
-    const BbSlot *sl = &bb->slot[si];
-    /* broadphase: one sphere around the whole body. If it touches no geometry no corner can, so a body
-       in free flight costs 1 level scan per tick instead of 8. */
-    {
-        double R = sqrt(sl->half[0] * sl->half[0] + sl->half[1] * sl->half[1] + sl->half[2] * sl->half[2]) + BB_CORNER_R;
-        double n0[3], p0;
-        if (!bb->push(bb->user, b->pos, R, n0, &p0) || p0 <= 0.0) return;
-    }
-    for (int corner = 0; corner < 8; corner++) {
-        double lp[3] = { (corner & 1) ? sl->half[0] : -sl->half[0], (corner & 2) ? sl->half[1] : -sl->half[1],
-                         (corner & 4) ? sl->half[2] : -sl->half[2] };
-        double off[3], wp[3], n[3], pen;
-        grb_quat_rotate(b->rot, lp, off);
-        for (int a = 0; a < 3; a++) wp[a] = b->pos[a] + off[a];
-        if (!bb->push(bb->user, wp, BB_CORNER_R, n, &pen) || pen <= 0.0) continue;
-        double push = pen > 0.25 ? 0.25 : pen;
-        for (int a = 0; a < 3; a++) { b->pos[a] += n[a] * push; wp[a] += n[a] * push; }
-        contact(b, wp, n);
-    }
+/* world-space half extent of the box along y, from its current orientation */
+static double ext_y(const BbSlot *sl, const double q[4]) {
+    double x = q[0], y = q[1], z = q[2], w = q[3];
+    double r10 = 2 * (x * y + z * w), r11 = 1 - 2 * (x * x + z * z), r12 = 2 * (y * z - x * w);   /* row y of R */
+    return fabs(r10) * sl->half[0] + fabs(r11) * sl->half[1] + fabs(r12) * sl->half[2];
 }
 
-/* Shard-vs-shard: each shard stands in as a world-aligned cube (a deliberate fake -- stable stacking is
- * what makes a heap, and a sphere cannot do it; the rendered rotation is free). Resolved along the axis
- * of least overlap with a position split by inverse mass, a normal impulse and Coulomb friction. */
-static void collide_pairs(BrickBodies *bb) {
-    for (int i = 0; i < BB_MAX; i++) {
-        if (!bb->slot[i].active || bb->slot[i].big) continue;
-        GrbBody *a = &bb->world.bodies[i];
-        double ra = fmax(bb->slot[i].half[0], fmax(bb->slot[i].half[1], bb->slot[i].half[2]));
-        for (int j = i + 1; j < BB_MAX; j++) {
-            if (!bb->slot[j].active || bb->slot[j].big) continue;
-            GrbBody *b = &bb->world.bodies[j];
-            double rb = fmax(bb->slot[j].half[0], fmax(bb->slot[j].half[1], bb->slot[j].half[2]));
-            double d[3] = { a->pos[0] - b->pos[0], a->pos[1] - b->pos[1], a->pos[2] - b->pos[2] };
-            double rr = ra + rb, ov[3];
-            int axis = 0, skip = 0;
-            for (int k = 0; k < 3; k++) { ov[k] = rr - fabs(d[k]); if (ov[k] <= 0.0) skip = 1; }
-            if (skip) continue;
-            for (int k = 1; k < 3; k++) if (ov[k] < ov[axis]) axis = k;
-            double n[3] = { 0, 0, 0 };
-            n[axis] = d[axis] >= 0.0 ? 1.0 : -1.0;
-            double pen = ov[axis];
-            double wsum = a->inv_mass + b->inv_mass;
-            if (wsum <= 0.0) continue;
-            for (int k = 0; k < 3; k++) { a->pos[k] += n[k] * pen * a->inv_mass / wsum; b->pos[k] -= n[k] * pen * b->inv_mass / wsum; }
-            double vr[3] = { a->vel[0] - b->vel[0], a->vel[1] - b->vel[1], a->vel[2] - b->vel[2] };
-            double vn = dot3(vr, n);
-            if (vn >= 0.0) continue;
-            double j2 = -vn / wsum;
-            for (int k = 0; k < 3; k++) { a->vel[k] += n[k] * j2 * a->inv_mass; b->vel[k] -= n[k] * j2 * b->inv_mass; }
-            double tv[3] = { vr[0] - n[0] * vn, vr[1] - n[1] * vn, vr[2] - n[2] * vn };
-            double tl = sqrt(dot3(tv, tv));
-            if (tl > 1e-9) {
-                double jt = tl / wsum, lim = BB_MU * j2;
-                if (jt > lim) jt = lim;
-                for (int k = 0; k < 3; k++) { a->vel[k] -= tv[k] / tl * jt * a->inv_mass; b->vel[k] += tv[k] / tl * jt * b->inv_mass; }
-            }
-            for (int k = 0; k < 3; k++) { a->omega[k] *= 0.97; b->omega[k] *= 0.97; }   /* slump, don't roll forever */
-        }
+/* the orientation that lays the box's thinnest axis along world y */
+static void flat_target(const BbSlot *sl, const double q[4], double out[4]) {
+    int k = 0;
+    for (int a = 1; a < 3; a++) if (sl->half[a] < sl->half[k]) k = a;
+    double yaw_axis[3] = { 0, 1, 0 }, qy[4], qf[4];
+    double fwd[3] = { 1, 0, 0 }, f[3];
+    grb_quat_rotate(q, fwd, f);
+    grb_quat_from_axis_angle(yaw_axis, atan2(-f[2], f[0]), qy);   /* keep the heading it fell with */
+    if (k == 1) { memcpy(qf, qy, sizeof qf); }
+    else {
+        double ax[3] = { 0, 0, 0 }, qt[4];
+        if (k == 0) ax[2] = 1.0; else ax[0] = 1.0;                /* x-thin: roll about z; z-thin: pitch about x */
+        grb_quat_from_axis_angle(ax, 1.5707963267948966, qt);
+        grb_quat_mul(qy, qt, qf);
     }
+    memcpy(out, qf, sizeof qf);
+}
+
+static void land(BrickBodies *bb, int i, double support_y) {
+    GrbBody *b = &bb->world.bodies[i];
+    BbSlot *sl = &bb->slot[i];
+    if (-b->vel[1] > 5.0 && !sl->bounced) {   /* one small bounce, then it is done */
+        sl->bounced = 1;
+        b->vel[1] = -b->vel[1] * 0.18;
+        b->vel[0] *= 0.55; b->vel[2] *= 0.55;
+        for (int a = 0; a < 3; a++) b->omega[a] *= 0.4;
+        b->pos[1] = support_y + ext_y(sl, b->rot);
+        return;
+    }
+    flat_target(sl, b->rot, sl->settle_q);
+    b->vel[0] = b->vel[1] = b->vel[2] = 0.0;
+    b->omega[0] = b->omega[1] = b->omega[2] = 0.0;
+    int k = 0;
+    for (int a = 1; a < 3; a++) if (sl->half[a] < sl->half[k]) k = a;
+    sl->rest_y = support_y + sl->half[k];
+    sl->calm = 1e-6;                           /* landed */
 }
 
 static void tick(BrickBodies *bb) {
-    bb->world.planes[0].offset = bb->ground_y;
-    grb_world_step(&bb->world, BB_TICK);
-    for (int i = 0; i < BB_MAX; i++) {
-        if (!bb->slot[i].active) continue;
-        GrbBody *b = &bb->world.bodies[i];
-        if (!finite3(b->pos) || !finite3(b->vel) || !finite3(b->omega) || b->pos[1] < -300.0) { deactivate(bb, i); continue; }
-        /* sleeping (the cheap half of "only disturbed geometry costs anything"): a body that has been calm
-           for a while skips the static-geometry scan, re-checking its support only every 16th tick */
-        if (bb->slot[i].calm > BB_REST_TIME && ((bb->ticks + (unsigned int)i) & 15u) != 0u) continue;
-        collide_static(bb, i);
-    }
-    bb->ticks++;
-    collide_pairs(bb);
     for (int i = 0; i < BB_MAX; i++) {
         BbSlot *sl = &bb->slot[i];
         if (!sl->active) continue;
         GrbBody *b = &bb->world.bodies[i];
-        grb_quat_normalize(b->rot);
         sl->age += BB_TICK;
-        if (sl->age > BB_MAX_AGE) { deactivate(bb, i); continue; }
-        double sp = dot3(b->vel, b->vel), sw = dot3(b->omega, b->omega);
-        if (sp < BB_REST_SPEED * BB_REST_SPEED && sw < BB_REST_SPIN * BB_REST_SPIN) {
+        if (!finite3(b->pos) || b->pos[1] < -300.0 || sl->age > BB_MAX_AGE || sl->calm > BB_LINGER) { deactivate(bb, i); continue; }
+        if (sl->calm > 0.0) {                  /* landed: ease flat, then sit */
             sl->calm += BB_TICK;
-            if (sl->calm > BB_REST_TIME) { b->vel[0] = b->vel[1] = b->vel[2] = 0.0; b->omega[0] = b->omega[1] = b->omega[2] = 0.0; }
-        } else {
-            sl->calm = 0.0;
+            if (sl->calm < BB_SETTLE_T) {
+                double t = sl->calm / BB_SETTLE_T, q[4], n = 0.0;
+                for (int a = 0; a < 4; a++) { q[a] = b->rot[a] * (1.0 - t) + sl->settle_q[a] * t; n += q[a] * q[a]; }
+                double d = b->rot[0] * sl->settle_q[0] + b->rot[1] * sl->settle_q[1] + b->rot[2] * sl->settle_q[2] + b->rot[3] * sl->settle_q[3];
+                if (d < 0.0) for (int a = 0; a < 4; a++) q[a] = b->rot[a] * (1.0 - t) - sl->settle_q[a] * t;
+                (void)n;
+                memcpy(b->rot, q, sizeof q); grb_quat_normalize(b->rot);
+                b->pos[1] += (sl->rest_y - b->pos[1]) * t;
+            } else {
+                memcpy(b->rot, sl->settle_q, sizeof b->rot);
+                b->pos[1] = sl->rest_y;
+            }
+            continue;
+        }
+        b->vel[1] -= BB_GRAVITY * BB_TICK;
+        if (b->vel[1] < -BB_TERMINAL) b->vel[1] = -BB_TERMINAL;   /* a step stays under the probe radius: no tunnelling */
+        for (int a = 0; a < 3; a++) b->pos[a] += b->vel[a] * BB_TICK;
+        {   /* q += 0.5 dt (omega, 0) * q */
+            const double *o = b->omega, *q = b->rot;
+            double dq[4] = { 0.5 * BB_TICK * (o[0] * q[3] + o[1] * q[2] - o[2] * q[1]),
+                             0.5 * BB_TICK * (o[1] * q[3] + o[2] * q[0] - o[0] * q[2]),
+                             0.5 * BB_TICK * (o[2] * q[3] + o[0] * q[1] - o[1] * q[0]),
+                             0.5 * BB_TICK * (-o[0] * q[0] - o[1] * q[1] - o[2] * q[2]) };
+            for (int a = 0; a < 4; a++) b->rot[a] += dq[a];
+            grb_quat_normalize(b->rot);
+        }
+        double ey = ext_y(sl, b->rot);
+        if (b->pos[1] - ey <= bb->ground_y) { b->pos[1] = bb->ground_y + ey; land(bb, i, bb->ground_y); continue; }
+        if (bb->push && b->vel[1] <= 0.0) {    /* one probe under the chunk's footprint: a platform / box top */
+            double rp = sl->half[0] < sl->half[1] ? sl->half[0] : sl->half[1];
+            if (sl->half[2] < rp) rp = sl->half[2];
+            if (rp < 0.15) rp = 0.15;
+            double c[3] = { b->pos[0], b->pos[1] - ey + rp, b->pos[2] }, n[3], pen;
+            if (bb->push(bb->user, c, rp, n, &pen) && pen > 0.0 && n[1] > 0.6) {
+                double support = c[1] + n[1] * pen - rp;
+                b->pos[1] = support + ey;
+                land(bb, i, support);
+            }
         }
     }
+    bb->ticks++;
 }
 
 void bb_step(BrickBodies *bb, double dt) {
     if (!(dt > 0.0)) return;
     bb->acc += dt;
-    if (bb->acc > 2.0 * BB_TICK) bb->acc = 2.0 * BB_TICK; /* never spiral: a slow frame drops sim time, not frame rate */
+    if (bb->acc > 2.0 * BB_TICK) bb->acc = 2.0 * BB_TICK;
     while (bb->acc >= BB_TICK) { tick(bb); bb->acc -= BB_TICK; }
 }
