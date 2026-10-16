@@ -316,6 +316,8 @@ void witness_ai_set_player_costume(int costume);
  * zombie placement already set) calls witness_sim_enter on the player's behalf when they cross
  * into it, which is what actually moves this number. Raw WitnessPlayer.decorum and its BAND_* per
  * witness_sim_decorum_band, respectively. */
+/* The owned WitnessSim (live NPC witnesses + player slot 0) -- for mission.h to run against. */
+WitnessSim *witness_ai_sim(void);
 int witness_ai_player_decorum(void);
 int witness_ai_player_decorum_band(void);
 

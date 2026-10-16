@@ -76,6 +76,10 @@
 #include "../../../packages/render/retro_lighting.h"
 #include "../../../packages/simulation/day_night_clock.h"
 #include "../../../packages/common/phone.h"
+#include "../../../packages/simulation/mission.h"      /* BIG_O unification: Act I Mission 1 on the phone */
+#include "../../../packages/simulation/party.h"        /* ... party XP split */
+#include "../../../packages/simulation/chat_say.h"     /* ... say length/range rules for the GFD terminal */
+#include "../../../packages/simulation/hoverboard.h"   /* ... hoverboards (H) */
 #include "../../../packages/simulation/world_alert_bridge.h"
 #include "../../../packages/simulation/food_pickup.h"
 #include "../../../packages/simulation/lab_station_host.h"
@@ -1161,6 +1165,16 @@ static SkyWeather g_sky_weather = {0};
 // its first real, player-VISIBLE day/night turn boundary (a DAYBREAK/NIGHTFALL/STORM WARNING
 // banner) without building the full phone UI to get there.
 static Phone g_story_phone = {0};
+/* BIG_O unification state (see bigo_wiring_tick below) */
+static int   g_board = BOARD_NONE;
+static float g_board_vx = 0.0f, g_board_vz = 0.0f;
+static Mission g_mission;
+static int   g_mission_live = 0;
+static int   g_mission_seen_state = M_INACTIVE;
+static unsigned int g_mission_last_ms = 0;
+static ShankParty g_party;
+static unsigned int g_party_refresh_ms = 0;
+static int   g_xp = 0;
 /* SECTION 592 (card #508): the LAB level -- INTERRIOR_1 cloned + lab widgets (IDUNA cmd/shankpit-lab-builder). While
    g_lab_active the BIG_O phone works like in ZOMBIES, and lab_<kind> tiles are interactive stations (E). */
 static int g_lab_active = 0;
@@ -1321,6 +1335,8 @@ static void draw_phone_app(const Phone *p) {
         draw_string(buf, col_x, row_y - row_h, 2.6f);
         snprintf(buf, sizeof(buf), "PHOTOS TAKEN: %d", p->photos);
         draw_string(buf, col_x, row_y - 2 * row_h, 2.6f);
+        snprintf(buf, sizeof(buf), "XP: %d   BOARD: %s   PARTY: %d", g_xp, BOARD_NAMES[g_board], party_size(&g_party));
+        draw_string(buf, col_x, row_y - 3 * row_h, 2.6f);
     } else if (p->app == BP_APP_GFD) {
         /* BIG_O GFD terminal merged in: scrollback + live input line. */
         for (int i = 0; i < p->term_line_count; i++) {
@@ -1379,6 +1395,17 @@ static void draw_phone_app(const Phone *p) {
                 glColor3f(i == p->cursor ? 1.0f : 0.6f, i == p->cursor ? 1.0f : 0.72f, i == p->cursor ? 1.0f : 0.82f);
                 draw_string(buf, col_x, row_y - i * row_h, 2.4f);
             }
+        }
+    } else if (p->app == BP_APP_MISSION) {
+        char hdr[96];
+        snprintf(hdr, sizeof(hdr), "CLEAN UP YOUR MATH  [%s]  PHASE %d  T+%dm  PCT %d", g_mission_live ? mission_state_name(g_mission.state) : "INACTIVE",
+                 g_mission_live ? mission_phase(&g_mission) : 0, g_mission.minutes, g_mission.transfer_pct);
+        glColor3f(0.85f, 0.92f, 0.97f);
+        draw_string(hdr, col_x, row_y, 2.0f);
+        for (int i = 0; i < BP_MISSION_ROWS; i++) {
+            int sel = (i == p->cursor);
+            glColor3f(sel ? 1.0f : 0.6f, sel ? 1.0f : 0.72f, sel ? 1.0f : 0.82f);
+            draw_string(BP_MISSION_ROW_NAMES[i], col_x, row_y - (i + 1) * 28.0f, 2.2f);
         }
     } else if (p->app == BP_APP_ORB) {
         glColor3f(0.85f, 0.92f, 0.97f);
@@ -2164,6 +2191,126 @@ static void chat_pane_push(const char *msg) {
     if (!msg) return;
     snprintf(g_chat.lines[g_chat.head], CHAT_LINE_MAX, "%s", msg);
     g_chat.head = (g_chat.head + 1) % CHAT_CAPACITY;
+}
+
+/* ---- BIG_O unification wiring (EMILY/BACKLOG.md SHANKPIT-BIGO-UNIFY-01, founder: "wire it all into the
+ * gameplay"). Hoverboard (H), party XP split on every AI kill, Act I Mission 1 as the phone's MISSION
+ * app, and the GFD terminal's say gate. State is plain statics (no heap). ---- */
+
+static int bigo_wiring_active(void) {
+    return app_state == STATE_GAME_LOCAL &&
+           (PHONE_SANDBOX() ||
+            ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
+             local_state.story_phase == STORY_PHASE_PLAYING));
+}
+
+static void bigo_board_cycle(void) {
+    g_board = (g_board + 1) % (board_count() + 1);
+    g_board_vx = g_board_vz = 0.0f;
+    char m[48]; snprintf(m, sizeof(m), "HOVERBOARD: %s", BOARD_NAMES[g_board]);
+    chat_pane_push(m);
+}
+
+/* One sim tick of board glide on top of the on-foot move, collision-resolved by the engine's own
+   resolve_collision. Wish direction is the same yaw basis the shared movement code uses. */
+static void bigo_board_tick(PlayerState *p, float fwd, float str, float dt) {
+    if (g_board == BOARD_NONE || p->state != STATE_ALIVE || p->in_vehicle) { g_board_vx = g_board_vz = 0.0f; return; }
+    YawBasis b = shankpit_yaw_basis_from_deg(p->yaw);
+    float wx = b.fwd_x * fwd + b.right_x * str;
+    float wz = b.fwd_z * fwd + b.right_z * str;
+    hoverboard_tick(g_board, wx, wz, dt, &g_board_vx, &g_board_vz);
+    p->x += g_board_vx * dt;
+    p->z += g_board_vz * dt;
+    resolve_collision(p);
+}
+
+static void bigo_party_refresh(unsigned int now_ms) {
+    if (now_ms - g_party_refresh_ms < 1000) return;
+    g_party_refresh_ms = now_ms;
+    party_init(&g_party);
+    for (int i = 1; i < MAX_CLIENTS; i++) {
+        if (!local_state.players[i].active) continue;
+        if (witness_ai_role_for_player(i) != WITNESS_AI_ROLE_NONE) continue;   /* AI population are not crew */
+        party_invite(&g_party, 0, i);
+    }
+}
+
+/* Award xp for a kill at (x,z): split among party members within 60 m; the hero's share is banked. */
+static void bigo_award_xp(int total, float kx, float kz, const char *what) {
+    int dist[1 + 8]; int out[1 + 8];
+    bigo_party_refresh(SDL_GetTicks());
+    if (!g_party.active) { g_xp += total; goto say; }
+    {
+        int n = party_size(&g_party); if (n > 9) n = 9;
+        for (int i = 0; i < n; i++) {
+            int slot = i == 0 ? g_party.leader_slot : g_party.members[i - 1];
+            const PlayerState *q = &local_state.players[slot];
+            float dx = q->x - kx, dz = q->z - kz;
+            dist[i] = (int)(sqrtf(dx * dx + dz * dz) * 100.0f);
+        }
+        party_xp_split(&g_party, total, dist, 6000, out);
+        g_xp += out[0];
+        total = out[0];
+    }
+say:;
+    char m[64]; snprintf(m, sizeof(m), "+%d XP (%s) total %d", total, what, g_xp);
+    chat_pane_push(m);
+}
+
+static void bigo_mission_report(void) {
+    if (g_mission.state == g_mission_seen_state) return;
+    g_mission_seen_state = g_mission.state;
+    if (g_mission.state == M_COMPLETE) { chat_pane_push("MISSION COMPLETE: Clean Up Your Math"); g_xp += 500; }
+    else if (g_mission.state == M_FAILED) {
+        char m[96]; snprintf(m, sizeof(m), "MISSION FAILED: %s", g_mission.fail_reason); chat_pane_push(m);
+    }
+}
+
+static void bigo_mission_act(int row) {
+    WitnessSim *sim = witness_ai_sim();
+    sim->p[0].present = 1;
+    if (!g_mission_live) { chat_pane_push("MISSION: not active (story mode only)"); return; }
+    int rc = 0;
+    switch (row) {
+    case 0: rc = witness_sim_enter(sim, 0, ZONE_GENERATOR) < 0 ? -1 : 0; snprintf(g_mission.last_msg, sizeof g_mission.last_msg, "in the maintenance hallway"); break;
+    case 1: rc = mission_acquire_smock(&g_mission, sim, 0); break;
+    case 2: rc = mission_enter_sector2(&g_mission, sim, 0); break;
+    case 3: rc = mission_surf(&g_mission, sim, 0); break;
+    case 4: rc = mission_supervisor(&g_mission, sim, !g_mission.supervisor_present); break;
+    case 5: rc = mission_insert_drive(&g_mission, sim, 0); break;
+    case 6: rc = mission_swap_drive(&g_mission, sim, 0); break;
+    case 7: rc = mission_grab_mop(&g_mission, sim, 0); break;
+    case 8: rc = mission_exit(&g_mission, sim, 0); break;
+    case 9: rc = mission_upload(&g_mission, sim, 0); break;
+    default: return;
+    }
+    char m[128];
+    if (rc != 0) snprintf(m, sizeof m, "MISSION: %s", g_mission.last_msg[0] ? g_mission.last_msg : "rejected");
+    else snprintf(m, sizeof m, "MISSION: %s done (phase %d)", BP_MISSION_ROW_NAMES[row], mission_phase(&g_mission));
+    g_mission.last_msg[0] = '\0';
+    chat_pane_push(m);
+    bigo_mission_report();
+}
+
+/* Called every sim tick from the local loop: lazy-starts the mission when story play begins, ticks it
+   once per 2 real seconds (240 ticks = a 4 minute night shift), and drops it when story ends. */
+static void bigo_wiring_tick(unsigned int now_ms) {
+    int story = (local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
+                local_state.story_phase == STORY_PHASE_PLAYING && app_state == STATE_GAME_LOCAL;
+    if (!story) { g_mission_live = 0; return; }
+    if (!g_mission_live) {
+        WitnessSim *sim = witness_ai_sim();
+        sim->p[0].present = 1;
+        mission_start(&g_mission);
+        g_mission_live = 1; g_mission_seen_state = M_ACTIVE; g_mission_last_ms = now_ms;
+        chat_pane_push("MISSION: Clean Up Your Math -- open the phone (P) > MISSION");
+        return;
+    }
+    if (g_mission.state == M_ACTIVE && now_ms - g_mission_last_ms >= 2000) {
+        g_mission_last_ms = now_ms;
+        mission_tick(&g_mission, witness_ai_sim(), 1);
+        bigo_mission_report();
+    }
 }
 
 static const char *overlay_mode_name(OverlayMode mode) {
@@ -7994,6 +8141,9 @@ static void rd_frame(float dt_ms) {
             g_story_phone.samples[base]++;
             printf("[HARVEST] sample %d (now %d)\n", base, g_story_phone.samples[base]);
         }
+        if (role != WITNESS_AI_ROLE_NONE && bigo_wiring_active())
+            bigo_award_xp(role == WITNESS_AI_ROLE_ZOMBIE ? 10 : role == WITNESS_AI_ROLE_CITIZEN ? 5 : 25, p->x, p->z,
+                          role == WITNESS_AI_ROLE_ZOMBIE ? "zombie" : role == WITNESS_AI_ROLE_CITIZEN ? "citizen" : "the men");
         int slot = ragdoll_pool_spawn(&g_rd_pool, &sp);
         g_rd_slot[i] = slot;
         if (slot >= 0) { RagdollInfo inf; if (ragdoll_pool_info(&g_rd_pool, slot, &inf)) g_rd_seq[i] = inf.seq; }
@@ -14015,10 +14165,13 @@ int main(int argc, char* argv[]) {
                                 char say[BP_TERM_INPUT_MAX + 1];
                                 int n = phone_term_take(&g_story_phone, say, BP_TERM_INPUT_MAX);
                                 say[n] = '\0';
+                                if (!chat_say_len_ok(n)) { phone_term_line(&g_story_phone, "(message rejected: length)"); continue; }
                                 char echo[BP_TERM_LINE_LEN];
                                 snprintf(echo, sizeof(echo), "you: %s", say);
                                 phone_term_line(&g_story_phone, echo);
                                 chat_pane_push(say);
+                            } else if (fx.kind == BP_FX_MISSION_ACT) {
+                                bigo_mission_act(fx.arg);
                             } else if (fx.kind == BP_FX_IDUNA_START || fx.kind == BP_FX_IDUNA_POLL) {
                                 /* Honest gap: the lobby has no in-process device-auth HTTP job yet
                                    (IDUNA.GAME's own prompt does it). Say so rather than fake a code. */
@@ -14048,6 +14201,10 @@ int main(int argc, char* argv[]) {
                         phone_toggle(&g_story_phone);
                         continue;
                       }
+                    }
+                    if (e.key.keysym.sym == SDLK_h && !g_paused && !g_story_phone.open && !g_orb_open && !g_chat_open &&
+                        !g_edit_active && bigo_wiring_active()) {
+                        bigo_board_cycle();   /* BIG_O hoverboards: none -> speedster -> tank -> glider */
                     }
                     if (g_edit_active && app_state == STATE_GAME_LOCAL && !g_paused) { edit_key(e.key.keysym.sym); edit_key_sync(e.key.keysym.sym); }
                     if (g_lab_active && app_state == STATE_GAME_LOCAL && !g_story_phone.open && !g_orb_open && e.key.keysym.sym == SDLK_e) {
@@ -14491,6 +14648,8 @@ int main(int argc, char* argv[]) {
                 if (local_state.players[0].third_person)
                     lobby_third_person_aim(&local_state.players[0], cam_yaw, cam_pitch, &local_aim_yaw, &local_aim_pitch);
                 local_update(input_fwd, input_str, local_aim_yaw, local_aim_pitch, input_shoot, wpn_req, input_jump, input_crouch, input_reload, input_ability, input_bike, NULL, now_ms);
+                if (bigo_wiring_active() && !g_story_phone.open) bigo_board_tick(&local_state.players[0], (float)input_fwd, (float)input_str, TICK_DT);
+                bigo_wiring_tick(now_ms);
                 lobby_check_story_level_exits(now_ms);
                 if (local_state.game_mode == MODE_SURVIVAL) lobby_survival_guns_tick();
                 if (local_state.game_mode == MODE_TYLER) {

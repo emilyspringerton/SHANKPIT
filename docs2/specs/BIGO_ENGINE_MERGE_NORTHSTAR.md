@@ -645,10 +645,21 @@ missing and is now ported, each with its BIG_O tests (`make test-bigo-merge`, al
   drifted: `snoop-conspicuousness`).
 - **Avian live glue** (`avian_live.h`): the birds "observe the observer" over citizens/The Men/zombies.
 
-**Not yet wired into the running lobby/server** (same precedent as phases 2-5): party/chat/hoverboard/
-mission/avian-live are tested primitives with no gameplay caller; wiring them needs the lobby build,
-which cannot be compiled in this sandbox (no SDL2 headers) — the phone-draw change was verified by
-compiling the draw functions against stubs, not by running the client. Still unported: `bigo_npc_visual.h`
+**Wired into the lobby (same day, "wire it all into the gameplay")** -- ZOMBIES/LAB sandbox and MODE_STORY play:
+- **Hoverboards:** `H` cycles none/speedster/tank/glider; board momentum (`hoverboard_tick`) glides the hero on top
+  of on-foot movement and is collision-resolved by `resolve_collision`. Glider's gravity scale is *not* applied.
+- **Party XP:** every AI kill (zombie 10 / citizen 5 / The Men 25) is split by `party_xp_split` among the
+  hero + other active non-AI local players within 60 m; XP shows in STATUS and the chat pane. Local play only --
+  no networked party, and with no allies the party is just the hero.
+- **Mission:** MODE_STORY play auto-starts Act I Mission 1 against `witness_ai`'s live `WitnessSim`
+  (`witness_ai_sim()`); phone MISSION app rows perform the steps (zone travel is abstracted to a row), ticks 1
+  mission-minute per 2 s, completion/failure reported in chat, +500 XP on win.
+- **GFD terminal say:** gated by `chat_say_len_ok`; local echo + chat pane (not a networked say, no range effect).
+- **Avian live glue:** `witness_ai.c` already runs the full 3-channel coalition inline (its own comment says so), so
+  `avian_live.h` stays a tested, redundant reference -- nothing to wire.
+Verified: lobby TUs and all LOBBY_SRC compile and link without duplicate symbols against real SDL2 headers; the
+binary was **not run** (no GL/display), so none of the above has been seen live.
+Still unported: `bigo_npc_visual.h`
 (needs `papercraft_protocol.h`), `bigo_lab.h`/server-authoritative lab, `bigo_gfd_bridge.h`.
 
 ## 3. Not landed this pass — named, phased into `EMILY/BACKLOG.md` SECTION 536

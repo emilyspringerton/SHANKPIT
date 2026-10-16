@@ -22,6 +22,7 @@ typedef struct {
     int drive_in, transfer_pct, data_stolen;
     int escaped;                /* left via the service elevator with the data */
     char fail_reason[64];
+    char last_msg[96];          /* last reject reason / success line, for a host UI (the log sink may be NULL) */
 } Mission;
 
 void mission_start(Mission *m);

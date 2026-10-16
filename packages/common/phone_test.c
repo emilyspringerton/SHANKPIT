@@ -90,6 +90,8 @@ int main(void) {
     phone_input(&p, BP_BACK, 0); CHECK(!p.detail && p.app == BP_APP_ARPANET);
     go(&p, BP_APP_TECHTREE);
     { const char *n[2] = { "WALLS", "TURRETS" }; int u[2] = { 1, 0 }; phone_set_tech(&p, n, u, 2); CHECK(p.tech_count == 2); phone_set_tech(&p, NULL, NULL, 5); CHECK(p.tech_count == 0); }
+    go(&p, BP_APP_MISSION); phone_input(&p, BP_DOWN, 0); phone_input(&p, BP_DOWN, 0);
+    fx = phone_input(&p, BP_SELECT, 0); CHECK(fx.kind == BP_FX_MISSION_ACT && fx.arg == 2);
     go(&p, BP_APP_WARDROBE); phone_input(&p, BP_DOWN, 0); fx = phone_input(&p, BP_SELECT, 0);
     CHECK(fx.kind == BP_FX_COSTUME_SET && fx.arg == 1);
     printf(fails ? "PHONE TEST FAILED\n" : "PHONE TEST OK\n");

@@ -42,6 +42,7 @@ typedef enum {
        the phone all the subsystems"): free-text GFD chat terminal, IDUNA device-auth, read-only
        ARPANET archive, tech-tree shell. Host feeds them; this header stays pure/no-network. */
     BP_APP_GFD, BP_APP_IDUNA, BP_APP_ARPANET, BP_APP_TECHTREE,
+    BP_APP_MISSION,   /* Act I Mission 1 tracker (mission.h): SELECT performs the highlighted step */
     BP_APP_COUNT
 } BpApp;
 
@@ -59,6 +60,7 @@ typedef enum {
     BP_FX_COSTUME_SET,      /* arg = new costume index -> server-authoritative costume */
     BP_FX_CHAT_SEND,        /* arg = pending say length; text in p->term_input -- host calls phone_term_take() */
     BP_FX_IDUNA_START,      /* SELECT on idle/error IDUNA screen -> host starts /auth/device/start */
+    BP_FX_MISSION_ACT,      /* arg = mission row 0..BP_MISSION_ROWS-1 (see BP_MISSION_ROW_NAMES) */
     BP_FX_IDUNA_POLL        /* SELECT on pending IDUNA screen -> host runs one /auth/device/poll */
 } BpEffectKind;
 
@@ -70,6 +72,7 @@ typedef struct { BpEffectKind kind; int arg; } BpEffect;
 #define BP_CONTACTS 5
 #define BP_CLONES 8
 #define BP_TERM_INPUT_MAX 95
+#define BP_MISSION_ROWS 10
 #define BP_TERM_LINES 6
 #define BP_TERM_LINE_LEN 80
 #define BP_ARPANET_NODES 17
@@ -95,7 +98,12 @@ static const char *const BP_WEATHER_NAMES[4] = { "CLEAR", "OVERCAST", "RAIN", "S
 #define BP_MSG_THORNE_BRIEF 6   /* client message table id: Dr. Thorne's A1M1 reprimand; unlocks him in Contacts */
 
 static const char *const BP_APP_NAMES[BP_APP_COUNT] = {
-    "MESSAGES", "CONTACTS", "MAP", "CAMERA", "NOTES", "LAB", "CARGO", "SKILLS", "LOADOUT", "WARDROBE", "STATUS", "ORB", "GFD", "IDUNA", "ARPANET", "TECHTREE"
+    "MESSAGES", "CONTACTS", "MAP", "CAMERA", "NOTES", "LAB", "CARGO", "SKILLS", "LOADOUT", "WARDROBE", "STATUS", "ORB", "GFD", "IDUNA", "ARPANET", "TECHTREE", "MISSION"
+};
+
+static const char *const BP_MISSION_ROW_NAMES[BP_MISSION_ROWS] = {
+    "GO: MAINTENANCE HALL", "TAKE LAB SMOCK", "ENTER SECTOR-2", "SHOULDER-SURF PIN", "SUPERVISOR BREAK",
+    "INSERT DRIVE", "SWAP DRIVE", "GRAB MOP", "SERVICE ELEVATOR", "UPLOAD IN BASEMENT"
 };
 
 /* Contacts: trust ladder observer -> witness -> bound -> documented (spec). Preset replies advance it. */
@@ -220,6 +228,7 @@ static inline int bp_rows(const Phone *p) {
     case BP_APP_IDUNA: return 1;
     case BP_APP_ARPANET: return BP_ARPANET_NODES;
     case BP_APP_TECHTREE: return p->tech_count > 0 ? p->tech_count : 1;
+    case BP_APP_MISSION: return BP_MISSION_ROWS;
     case BP_APP_SKILLS: return 5;
     case BP_APP_LOADOUT: return 6;
     case BP_APP_WARDROBE: return BP_COSTUMES;
@@ -455,6 +464,9 @@ static inline BpEffect phone_input(Phone *p, BpAction a, int unspent_points) {
         break;
     case BP_APP_ARPANET:
         if (a == BP_SELECT) p->detail = !p->detail;
+        break;
+    case BP_APP_MISSION:
+        if (a == BP_SELECT) { fx.kind = BP_FX_MISSION_ACT; fx.arg = p->cursor; }
         break;
     case BP_APP_ORB:
         if (a == BP_SELECT) fx.kind = BP_FX_OPEN_ORB;

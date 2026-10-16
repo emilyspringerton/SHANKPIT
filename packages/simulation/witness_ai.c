@@ -351,6 +351,8 @@ void witness_ai_set_player_costume(int costume) {
     witness_sim_set_costume(&g_sim, 0, costume);
 }
 
+WitnessSim *witness_ai_sim(void) { return &g_sim; }
+
 int witness_ai_player_decorum(void) {
     return g_sim.p[0].decorum;
 }

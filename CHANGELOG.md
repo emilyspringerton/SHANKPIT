@@ -1,5 +1,6 @@
 ## 2026-10-16
 
+- **feat(lobby): BIG_O systems wired into gameplay** (founder: "wire it all into the gameplay"): `H` hoverboards, party XP split on AI kills, Act I Mission 1 + MISSION phone app in story play, GFD say gate; new `witness_ai_sim()` accessor; mission/party/chat/hoverboard rules added to LOBBY_SRC. Compiles+links against SDL2 headers; not run (no display).
 - **feat(bigo-merge): unify BIG_O into SHANKPIT** (founder: "we really need to unify shankpit and BIG_O ... the phone all the subsystems"): phone.h gains GFD terminal / IDUNA / ARPANET / TECHTREE apps + costume fx (lobby draws and routes input); ported party, say-chat, hoverboard, mission (a1m1), avian-live with BIG_O's tests (`make test-bigo-merge`); witness_sim gains `snoop`, witness_rules re-synced from PARENA. Not wired into lobby gameplay yet; lobby not compiled here (no SDL2). See docs2/specs/BIGO_ENGINE_MERGE_NORTHSTAR.md §2p.
 
 ## 2026-10-15

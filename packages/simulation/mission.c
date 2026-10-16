@@ -12,7 +12,7 @@ static void sim_log(FILE *out, const char *fmt, ...) {
 
 static int reject(Mission *m, WitnessSim *s, const char *what, const char *why) {
     SIM_LOG(s, "MISSION rejected %s: %s\n", what, why);
-    (void)m;
+    snprintf(m->last_msg, sizeof(m->last_msg), "%s: %s", what, why);
     return -1;
 }
 static void fail(Mission *m, WitnessSim *s, const char *why) {
