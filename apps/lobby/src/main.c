@@ -3394,7 +3394,17 @@ static int lobby_start_tyler_mode(void) {
 // registry's "nextown", else the checked-in var/zombie/nextown_zombies.json. Destruction made in
 // the sandbox saves back to the zombies repository (g_snap_zombies), so a wrecked city becomes the
 // next ZOMBIES level. The day/night lifecycle and the population are witness_ai_zombies_tick's job.
+static int lobby_zombies_find_level_impl(CustomLevelData *lvl);
 static int lobby_zombies_find_level(CustomLevelData *lvl) {
+    /* NOCK's "Set for ZOMBIES" only exists on the server; the baked table never sees it. Always ask the
+       network here (baked stays the offline fallback) regardless of the LIVE LEVELS setting. */
+    int saved = level_boxes_live_download;
+    level_boxes_set_live_download(1);
+    int ok = lobby_zombies_find_level_impl(lvl);
+    level_boxes_set_live_download(saved);
+    return ok;
+}
+static int lobby_zombies_find_level_impl(CustomLevelData *lvl) {
     LevelRegistryEntry entries[LEVEL_REGISTRY_MAX_ENTRIES];
     int count = level_boxes_fetch_registry_list_in("zombies", entries, LEVEL_REGISTRY_MAX_ENTRIES);
     for (int i = 0; i < count; i++) {
