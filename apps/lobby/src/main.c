@@ -1256,6 +1256,8 @@ static void draw_phone_home_grid(const Phone *p) {
     draw_string("[ARROWS] MOVE  [ENTER] OPEN  [P] CLOSE", PHONE_PANEL_X0 + 20.0f, PHONE_PANEL_Y0 + 16.0f, 2.0f);
 }
 
+static void phone_iduna_pump(void);
+static void phone_iduna_start(void);
 static void draw_phone_app(const Phone *p) {
     draw_phone_panel_bg(BP_APP_NAMES[p->app]);
     float row_y = PHONE_PANEL_Y1 - 90.0f;
@@ -11878,6 +11880,7 @@ void draw_scene(PlayerState *render_p) {
            behavior for free. */
         world_alert_bridge_tick(&g_story_alert_bridge, &local_state.story_clock, &g_story_phone, now_ms);
         phone_tick(&g_story_phone, now_ms);
+        phone_iduna_pump();
 
         /* BIG_O basic food system (founder real-time, 2026-09-22): real, live, walk-over pickup
            -- auto-collects into CARGO, same arcade-original convention food_pickup.h's own doc
@@ -12181,6 +12184,21 @@ static int lobby_iduna_login_btn_hit_test(float mx, float my) {
     float x, y, w, h;
     lobby_iduna_login_btn_rect(&x, &y, &w, &h);
     return (mx >= x && mx <= x + w && my >= y && my <= y + h);
+}
+
+/* Phone IDUNA app: drives the legacy LOGIN IDUNA loopback flow (lobby_iduna_login_*) and mirrors its
+   state into the phone. The loopback poll is ticked here too so it advances while a match is running. */
+static void phone_iduna_start(void) {
+    lobby_iduna_login_start();
+    if (g_iduna_login_active) phone_iduna_set_pending(&g_story_phone, "BROWSER", "FINISH LOGIN IN YOUR BROWSER");
+    else phone_iduna_set_error(&g_story_phone, g_iduna_status);
+}
+static void phone_iduna_pump(void) {
+    if (g_iduna_login_active) lobby_iduna_login_tick();
+    if (g_story_phone.iduna_stage == BP_IDUNA_PENDING && !g_iduna_login_active) {
+        if (g_iduna_token[0]) phone_iduna_set_linked(&g_story_phone, g_iduna_name[0] ? g_iduna_name : "PLAYER");
+        else phone_iduna_set_error(&g_story_phone, g_iduna_status[0] ? g_iduna_status : "LOGIN FAILED");
+    }
 }
 
 // SETTINGS button -- directly under the APPS/< GAMES toggle (card #480).
@@ -14228,9 +14246,9 @@ int main(int argc, char* argv[]) {
                             } else if (fx.kind == BP_FX_MISSION_ACT) {
                                 bigo_mission_act(fx.arg);
                             } else if (fx.kind == BP_FX_IDUNA_START || fx.kind == BP_FX_IDUNA_POLL) {
-                                /* Honest gap: the lobby has no in-process device-auth HTTP job yet
-                                   (IDUNA.GAME's own prompt does it). Say so rather than fake a code. */
-                                phone_iduna_set_error(&g_story_phone, "USE IDUNA.GAME APP TO LOG IN (NOT WIRED HERE YET)");
+                                /* Same real flow as the legacy menu's LOGIN IDUNA button. */
+                                if (fx.kind == BP_FX_IDUNA_START) phone_iduna_start();
+                                else phone_iduna_pump();
                             }
                         }
                         else if (e.key.keysym.sym == SDLK_BACKSPACE) {
