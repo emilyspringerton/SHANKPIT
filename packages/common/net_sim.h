@@ -99,15 +99,6 @@ static inline void heli_simulate_step_rules(HelicopterState *h, float dt) {
                                             R->yaw_target_milli(heli_permille_of(pedal))) * 0.001f;
     h->yaw = norm_yaw_deg(h->yaw - h->yaw_rate);
 
-    /* Momentum follows the nose: swing the horizontal velocity round with the airframe (90% of the yaw
-       change) so "forward" after a turn goes where the helicopter now points instead of sliding on in the
-       old heading. Without this a 90-degree pedal turn left all the speed pointed the old way. */
-    {
-        float d = h->yaw_rate * 0.0174533f * 0.9f, c = cosf(d), sn = sinf(d);
-        float nvx = h->vx * c - h->vz * sn, nvz = h->vz * c + h->vx * sn;
-        h->vx = nvx; h->vz = nvz;
-    }
-
     float yaw_rad = -h->yaw * 0.0174533f;
     float fx = sinf(yaw_rad), fz = -cosf(yaw_rad);
     float rx = cosf(yaw_rad), rz = sinf(yaw_rad);
