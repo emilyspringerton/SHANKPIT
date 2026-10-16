@@ -1,5 +1,9 @@
 ## 2026-10-16
 
+- fix(heli): chase camera pointed UP instead of down, so the helicopter sat below the screen (founder: "its below the screen ... should be much closer to the orbit and hero cams"). The boom pitch sign was inverted against the normal cam convention (negative pitch = look down). Also pulled in from 32/13 to 20/7.5 (between director Hero 11/4.5 and Orbit 28/9). `apps/lobby/src/main.c`; not compiled/feel-tested on this box (no GLU/display).
+
+## 2026-10-16
+
 - **feat(lobby): BIG_O systems wired into gameplay** (founder: "wire it all into the gameplay"): `H` hoverboards, party XP split on AI kills, Act I Mission 1 + MISSION phone app in story play, GFD say gate; new `witness_ai_sim()` accessor; mission/party/chat/hoverboard rules added to LOBBY_SRC. Compiles+links against SDL2 headers; not run (no display).
 - **feat(bigo-merge): unify BIG_O into SHANKPIT** (founder: "we really need to unify shankpit and BIG_O ... the phone all the subsystems"): phone.h gains GFD terminal / IDUNA / ARPANET / TECHTREE apps + costume fx (lobby draws and routes input); ported party, say-chat, hoverboard, mission (a1m1), avian-live with BIG_O's tests (`make test-bigo-merge`); witness_sim gains `snoop`, witness_rules re-synced from PARENA. Not wired into lobby gameplay yet; lobby not compiled here (no SDL2). See docs2/specs/BIGO_ENGINE_MERGE_NORTHSTAR.md §2p.
 

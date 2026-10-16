@@ -11696,7 +11696,7 @@ void draw_scene(PlayerState *render_p) {
                (no lag), so turning right swings the view right and you see what is over there. Only the
                height is eased (so landing/climbing doesn't jerk). Far and high enough that the whole
                helicopter is readable; the pitch is derived from the boom so the heli stays framed. */
-            const float HELI_CAM_DIST = 32.0f, HELI_CAM_HEIGHT = 13.0f;
+            const float HELI_CAM_DIST = 20.0f, HELI_CAM_HEIGHT = 7.5f;   /* between the director Hero (11/4.5) and Orbit (28/9) cams */
             cam_yaw = hh->yaw;
             float rr = -cam_yaw * 0.01745f;
             float tx = hh->x - sinf(rr) * HELI_CAM_DIST;   /* behind: forward is (sin rr, -cos rr) (#542) */
@@ -11706,7 +11706,10 @@ void draw_scene(PlayerState *render_p) {
             if (fabsf(ty - heli_cam_y) > 40.0f) heli_cam_y = ty;   /* new heli / teleport: snap */
             heli_cam_y += (ty - heli_cam_y) * 0.12f;
             heli_cam_x = tx; heli_cam_z = tz;
-            float boom_pitch = atan2f(heli_cam_y - hh->y, HELI_CAM_DIST) * 57.2958f;   /* look down at the heli */
+            /* Same convention as the normal cam (glRotatef(-pitch)): negative pitch looks DOWN. The boom sits
+               ABOVE the heli so the pitch must be negative; it was positive, which tilted the lens UP and
+               pushed the airframe off the bottom of the screen. */
+            float boom_pitch = -atan2f(heli_cam_y - hh->y, HELI_CAM_DIST) * 57.2958f;
             glRotatef(-boom_pitch, 1, 0, 0);
             glRotatef(-cam_yaw, 0, 1, 0);
             glTranslatef(-heli_cam_x, -heli_cam_y, -heli_cam_z);
