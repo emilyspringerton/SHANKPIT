@@ -9,6 +9,7 @@
 - **feat(phone): PELLEGRINO in-phone browser now builds and runs.** `make lobby` links `packages/pellegrino_browser_embed` (mbedTLS + monocypher + embed objects, `PGB_OBJS`, kept out of `LOBBY_SRC`). Verified live under Xvfb `--zombies`: page renders in the phone panel, URL typing navigates, Esc returns to the home grid. Open: mouse, in-game `h3://` check, Windows/CI wiring. README updated.
 
 ## 2026-10-16
+- fix(edit-map): live-edit X/B now send the box geometry so NOCK removes/adds the same wall; F5 in a live session asks NOCK to save. F5's local `SAVE FAILED` was a missing `var/` dir (now created). Built; not driven against the live NOCK.
 - fix(phone): `:` (and every typed character) now reaches the in-phone PELLEGRINO browser and the GFD terminal. SDL only emits text events while text input is started and nothing started it for the phone, so the address bar never opened; the lobby now starts/stops it with the open phone app. Built; not driven live. (boot straight into zombies)
 - `shank_lobby` with no mode flag now skips the title/main menu and drops straight into MODE_ZOMBIES; Esc leaves to the legacy lobby menu (same exit as pause > QUIT, autosaves). `--menu` boots the legacy menu instead. Verified live under Xvfb (boot -> zombies city, Esc -> lobby).
 

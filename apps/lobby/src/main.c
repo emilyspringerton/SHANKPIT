@@ -3575,6 +3575,7 @@ static int edit_crosshair(float *hx, float *hy, float *hz, float *nx, float *ny,
     return trace_map(ex, ey, ez, ex + fx * 200.0f, ey + fy * 200.0f, ez + fz * 200.0f, hx, hy, hz, nx, ny, nz);
 }
 
+static int g_es_on;
 static void es_enqueue(const char *kind, const char *data);
 
 static void edit_key(SDL_Keycode k) {
@@ -3582,12 +3583,15 @@ static void edit_key(SDL_Keycode k) {
     float hx, hy, hz, nx, ny, nz;
     if (k == SDLK_F5) {
 #ifdef _WIN32
-        _mkdir("var/maps");
+        _mkdir("var"); _mkdir("var/maps");
 #else
-        mkdir("var/maps", 0755);
+        mkdir("var", 0755); mkdir("var/maps", 0755);   /* "var" may not exist next to the binary: that was the SAVE FAILED */
 #endif
         char path[320]; snprintf(path, sizeof path, "var/maps/%s.edits.json", g_edit_name);
-        edit_say(edit_map_save(&g_edit_log, g_edit_name, path) ? "saved edits" : "SAVE FAILED");
+        int ok = edit_map_save(&g_edit_log, g_edit_name, path);
+        /* in a live session NOCK owns the working level and the login: ask it to persist (its own Save) */
+        if (g_es_on) { es_enqueue("save", "{}"); edit_say(ok ? "saved edits, NOCK asked to save" : "NOCK asked to save (local copy FAILED)"); }
+        else edit_say(ok ? "saved edits" : "SAVE FAILED");
         return;
     }
     if (k != SDLK_b && k != SDLK_x && k != SDLK_m) return;
@@ -3605,10 +3609,12 @@ static void edit_key(SDL_Keycode k) {
         op.kind = EDIT_OP_MOVE_SPAWNER; op.index = 0; op.x = hx; op.y = hy; op.z = hz;
         op.yaw = g_edit_lvl->spawner_count ? g_edit_lvl->spawners[0].yaw : 0.0f;
     }
+    LevelBox gone_box; memset(&gone_box, 0, sizeof gone_box);
+    if (op.kind == EDIT_OP_DEL_BOX && op.index >= 0 && op.index < g_edit_lvl->count) gone_box = g_edit_lvl->boxes[op.index];
     if (edit_map_do(&g_edit_log, g_edit_lvl, &op)) {
         char d[200];
         if (op.kind == EDIT_OP_ADD_BOX) { snprintf(d, sizeof d, "{\"id\":%d,\"x\":%.2f,\"y\":%.2f,\"z\":%.2f,\"sx\":%.2f,\"sy\":%.2f,\"sz\":%.2f}", 100000 + g_edit_log.n, op.x, op.y, op.z, op.w, op.h, op.d); es_enqueue("box_add", d); }
-        else if (op.kind == EDIT_OP_DEL_BOX) { snprintf(d, sizeof d, "{\"id\":-1,\"index\":%d}", op.index); es_enqueue("box_del", d); }
+        else if (op.kind == EDIT_OP_DEL_BOX) { snprintf(d, sizeof d, "{\"id\":-1,\"index\":%d,\"x\":%.2f,\"y\":%.2f,\"z\":%.2f,\"sx\":%.2f,\"sy\":%.2f,\"sz\":%.2f}", op.index, gone_box.x, gone_box.y, gone_box.z, gone_box.w, gone_box.h, gone_box.d); es_enqueue("box_del", d); }
         else { snprintf(d, sizeof d, "{\"x\":%.2f,\"y\":%.2f,\"z\":%.2f,\"yaw\":%.2f}", op.x, op.y, op.z, op.yaw); es_enqueue("spawner", d); }
         edit_reapply(); edit_say(k == SDLK_b ? "box placed" : k == SDLK_x ? "box deleted" : "spawner moved"); }
     else edit_say("edit rejected (limit or no spawner)");
