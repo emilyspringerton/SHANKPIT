@@ -109,7 +109,17 @@ int bb_spawn(BrickBodies *bb, int kind, int big, double mass, const double pos[3
     if (!(half[0] > 1e-4 && half[1] > 1e-4 && half[2] > 1e-4)) return -1;
     int s = -1;
     for (int i = 0; i < BB_MAX; i++) if (!bb->slot[i].active) { s = i; break; }
-    if (s < 0) { s = bb->cursor; bb->cursor = (bb->cursor + 1) % BB_MAX; }   /* recycle the oldest-ish */
+    if (s < 0) {
+        /* Pool full: retire the oldest SHARD (a calm one first) -- never a falling chunk while a shard
+           can go instead, or a pane's disc would vanish mid-fall the moment someone keeps shooting. */
+        double best = -1.0;
+        for (int i = 0; i < BB_MAX; i++) {
+            const BbSlot *o = &bb->slot[i];
+            double score = o->age + (o->calm > BB_REST_TIME ? 1000.0 : 0.0) + (o->big ? -5000.0 : 0.0);
+            if (best < 0.0 || score > best) { best = score; s = i; }
+        }
+        if (bb->slot[s].big && !big) return -1;   /* only chunks left and this is a mere shard: drop the shard */
+    }
     GrbBody *b = &bb->world.bodies[s];
     memset(b, 0, sizeof *b);
     for (int a = 0; a < 3; a++) { b->pos[a] = pos[a]; b->vel[a] = vel[a]; b->omega[a] = omega[a]; }
@@ -132,6 +142,13 @@ static void collide_static(BrickBodies *bb, int si) {
     if (!bb->push) return;
     GrbBody *b = &bb->world.bodies[si];
     const BbSlot *sl = &bb->slot[si];
+    /* broadphase: one sphere around the whole body. If it touches no geometry no corner can, so a body
+       in free flight costs 1 level scan per tick instead of 8. */
+    {
+        double R = sqrt(sl->half[0] * sl->half[0] + sl->half[1] * sl->half[1] + sl->half[2] * sl->half[2]) + BB_CORNER_R;
+        double n0[3], p0;
+        if (!bb->push(bb->user, b->pos, R, n0, &p0) || p0 <= 0.0) return;
+    }
     for (int corner = 0; corner < 8; corner++) {
         double lp[3] = { (corner & 1) ? sl->half[0] : -sl->half[0], (corner & 2) ? sl->half[1] : -sl->half[1],
                          (corner & 4) ? sl->half[2] : -sl->half[2] };
@@ -220,6 +237,6 @@ static void tick(BrickBodies *bb) {
 void bb_step(BrickBodies *bb, double dt) {
     if (!(dt > 0.0)) return;
     bb->acc += dt;
-    if (bb->acc > 4.0 * BB_TICK) bb->acc = 4.0 * BB_TICK;
+    if (bb->acc > 2.0 * BB_TICK) bb->acc = 2.0 * BB_TICK; /* never spiral: a slow frame drops sim time, not frame rate */
     while (bb->acc >= BB_TICK) { tick(bb); bb->acc -= BB_TICK; }
 }

@@ -30,7 +30,7 @@
 
 #include "../goldenband/grb.h"
 
-#define BB_MAX            120          /* <= GRB_MAX_BODIES */
+#define BB_MAX            96           /* <= GRB_MAX_BODIES */
 #define BB_HZ             64
 #define BB_GRAVITY        19.62        /* 2 g: reads right at SHANKPIT's scale; tunable */
 #define BB_SHARD_HALF     0.10         /* shard box half extent (m) */
@@ -65,7 +65,7 @@ void bb_clear(BrickBodies *bb);
 /* Spawns a body (box of the given half extents) with `mass` kg, velocity and spin. Returns the slot or -1. */
 int bb_spawn(BrickBodies *bb, int kind, int big, double mass, const double pos[3], const double half[3],
              const double vel[3], const double omega[3]);
-/* Advances by dt seconds in fixed 1/64 s ticks (catch-up capped at 4 ticks). */
+/* Advances by dt seconds in fixed 1/64 s ticks (catch-up capped at 2 ticks). */
 void bb_step(BrickBodies *bb, double dt);
 int bb_active_count(const BrickBodies *bb);
 double bb_slot_mass(const BrickBodies *bb, int slot);

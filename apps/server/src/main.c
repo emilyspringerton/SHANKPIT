@@ -1988,7 +1988,7 @@ int main(int argc, char *argv[]) {
         }
 
         update_projectiles(now);
-        brick_world_tick(now);   // physical broken brick: shards + falling chunks (GOLDEN BAND bodies), see brick_bodies.h
+        brick_world_discard_bodies();   // broken brick bodies are visual-only: the server skips them, clients spawn + step them (brick_bodies.h)
         // Story System Phase 1 (docs/STORY_SYSTEM_NORTHSTAR.md Part 2) -- real, once-per-tick
         // door script evaluation, right after the rest of the tick's own physics/state updates
         // and before the snapshot broadcast, so a door's new state is reflected in the very

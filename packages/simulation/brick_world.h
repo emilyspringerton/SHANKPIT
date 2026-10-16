@@ -473,6 +473,14 @@ static inline void brick_world_spawn_bodies(void) {
     g_brick.chunk_count = 0;
 }
 
+/* brick_world_discard_bodies -- the dedicated server: broken brick bodies are purely visual (they never feed
+ * back into gameplay or the network), so it only empties the queue the fracture engine fills and spends
+ * nothing simulating them. Clients do the spawning and stepping. */
+static inline void brick_world_discard_bodies(void) {
+    g_brick.shard_count = 0;
+    g_brick.chunk_count = 0;
+}
+
 /* brick_world_tick -- once per frame / server tick with a monotonic millisecond clock: spawn what the
  * fracture engine queued and step the bodies. */
 static inline void brick_world_tick(unsigned int now_ms) {
