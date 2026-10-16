@@ -78,6 +78,7 @@ cc_library(
     srcs = [
         "ai_nav.c",
         "brick_mod.c",  # PARENA-generated (scripts/gen_brick_mod.sh): destructible brick decisions, lobby + server both
+        "brick_bodies.c",  # physical broken brick on GOLDEN BAND grb (brick_bodies.h), lobby + server both
         "humanness.c",
         "story_ai.c",
     ],
@@ -86,6 +87,7 @@ cc_library(
         "bot_ai.h",
         "brain_weights.h",
         "brick_world.h",  # destructible brick glue, header-only, included by both app mains
+        "brick_bodies.h",
         "game_physics.h",
         "humanness.h",
         "local_game.h",
@@ -97,6 +99,7 @@ cc_library(
     deps = [
         "//packages/common:common_headers",
         "//packages/reflux",
+        "//packages/goldenband:grb_physics",  # brick_bodies.c: GOLDEN BAND XPBD rigid bodies
         ":witness_ai",  # local_game.h's own real #include "witness_ai.h"
     ],
     visibility = ["//visibility:public"],

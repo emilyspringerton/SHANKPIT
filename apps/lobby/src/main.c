@@ -11358,8 +11358,13 @@ static void brick_world_frame(void) {
     brick_world_set_authority(app_state != STATE_GAME_NET);
     BfEvent ev[64];
     int n = brick_world_drain_events(ev, 64);
+    /* Physical broken brick: shot-out cells become mass-carrying GOLDEN BAND bodies and cut-off geometry
+       falls as rigid chunks (packages/simulation/brick_bodies.h). With the option off nothing is kept. */
+    brick_world_tick(now);
+    if (!g_opt_brick_debris) bb_clear(&g_brick_bodies);
     for (int i = 0; i < n; i++) {
-        if (g_opt_brick_debris && ev[i].debris > 0) {
+        /* a GONE cell is now a physical shard, not a massless flake; cracks and tears still shed flakes */
+        if (g_opt_brick_debris && ev[i].debris > 0 && ev[i].state != BF_STATE_GONE) {
             unsigned int seed = (unsigned int)ev[i].parent * 7919u + (unsigned int)ev[i].state * 131u +
                                 (unsigned int)(int)(ev[i].x * 8.0f) * 31u + (unsigned int)(int)(ev[i].z * 8.0f) * 17u +
                                 (unsigned int)(int)(ev[i].y * 8.0f);
@@ -11397,6 +11402,49 @@ static void draw_brick_debris(void) {
         glVertex3f(-0.5f, -0.5f, 0.5f); glVertex3f(0.5f, -0.5f, 0.5f); glVertex3f(0.5f, 0.5f, 0.5f); glVertex3f(-0.5f, 0.5f, 0.5f);
         glVertex3f(-0.5f, -0.5f, -0.5f); glVertex3f(0.5f, -0.5f, -0.5f); glVertex3f(0.5f, 0.5f, -0.5f); glVertex3f(-0.5f, 0.5f, -0.5f);
         glColor3f(r * 0.85f, g * 0.85f, bl * 0.85f);
+        glVertex3f(-0.5f, -0.5f, -0.5f); glVertex3f(-0.5f, -0.5f, 0.5f); glVertex3f(-0.5f, 0.5f, 0.5f); glVertex3f(-0.5f, 0.5f, -0.5f);
+        glVertex3f(0.5f, -0.5f, 0.5f); glVertex3f(0.5f, -0.5f, -0.5f); glVertex3f(0.5f, 0.5f, -0.5f); glVertex3f(0.5f, 0.5f, 0.5f);
+        glEnd();
+        glPopMatrix();
+    }
+    glPopAttrib();
+}
+
+/* draw_brick_bodies -- the physical broken brick (GOLDEN BAND bodies): flat-shaded boxes in the material's
+   colour, glass translucent. Rotation comes straight from the solver's quaternion. */
+static void draw_brick_bodies(void) {
+    if (!g_opt_brick_debris || !g_brick_bodies_ready || bb_active_count(&g_brick_bodies) == 0) return;
+    static const float col[4][3] = { { 0.62f, 0.34f, 0.26f }, { 0.55f, 0.55f, 0.56f }, { 0.58f, 0.42f, 0.24f }, { 0.55f, 0.85f, 0.88f } };
+    glPushAttrib(GL_ENABLE_BIT | GL_CURRENT_BIT | GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glDisable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    for (int i = 0; i < BB_MAX; i++) {
+        const BbSlot *sl = &g_brick_bodies.slot[i];
+        if (!sl->active) continue;
+        const GrbBody *b = &g_brick_bodies.world.bodies[i];
+        double x = b->rot[0], y = b->rot[1], z = b->rot[2], w = b->rot[3];
+        double m[16] = {
+            1 - 2 * (y * y + z * z), 2 * (x * y + z * w),     2 * (x * z - y * w),     0,
+            2 * (x * y - z * w),     1 - 2 * (x * x + z * z), 2 * (y * z + x * w),     0,
+            2 * (x * z + y * w),     2 * (y * z - x * w),     1 - 2 * (x * x + y * y), 0,
+            b->pos[0], b->pos[1], b->pos[2], 1
+        };
+        int kind = sl->kind < 0 || sl->kind > 3 ? 0 : sl->kind;
+        float a = (kind == 3) ? 0.5f : 1.0f;
+        float fade = sl->age > BB_MAX_AGE - 3.0 ? (float)((BB_MAX_AGE - sl->age) / 3.0) : 1.0f;
+        float r = col[kind][0], g = col[kind][1], bl = col[kind][2];
+        glPushMatrix();
+        glMultMatrixd(m);
+        glScalef((float)sl->half[0] * 2.0f, (float)sl->half[1] * 2.0f, (float)sl->half[2] * 2.0f);
+        glBegin(GL_QUADS);
+        glColor4f(r * 1.12f, g * 1.12f, bl * 1.12f, a * fade);
+        glVertex3f(-0.5f, 0.5f, 0.5f); glVertex3f(0.5f, 0.5f, 0.5f); glVertex3f(0.5f, 0.5f, -0.5f); glVertex3f(-0.5f, 0.5f, -0.5f);
+        glColor4f(r * 0.65f, g * 0.65f, bl * 0.65f, a * fade);
+        glVertex3f(-0.5f, -0.5f, 0.5f); glVertex3f(0.5f, -0.5f, 0.5f); glVertex3f(0.5f, -0.5f, -0.5f); glVertex3f(-0.5f, -0.5f, -0.5f);
+        glColor4f(r, g, bl, a * fade);
+        glVertex3f(-0.5f, -0.5f, 0.5f); glVertex3f(0.5f, -0.5f, 0.5f); glVertex3f(0.5f, 0.5f, 0.5f); glVertex3f(-0.5f, 0.5f, 0.5f);
+        glVertex3f(-0.5f, -0.5f, -0.5f); glVertex3f(0.5f, -0.5f, -0.5f); glVertex3f(0.5f, 0.5f, -0.5f); glVertex3f(-0.5f, 0.5f, -0.5f);
+        glColor4f(r * 0.85f, g * 0.85f, bl * 0.85f, a * fade);
         glVertex3f(-0.5f, -0.5f, -0.5f); glVertex3f(-0.5f, -0.5f, 0.5f); glVertex3f(-0.5f, 0.5f, 0.5f); glVertex3f(-0.5f, 0.5f, -0.5f);
         glVertex3f(0.5f, -0.5f, 0.5f); glVertex3f(0.5f, -0.5f, -0.5f); glVertex3f(0.5f, 0.5f, -0.5f); glVertex3f(0.5f, 0.5f, 0.5f);
         glEnd();
@@ -11945,6 +11993,7 @@ void draw_scene(PlayerState *render_p) {
     if (!render_p->third_person) draw_spray_cone(render_p, 1);
     draw_bullet_holes(render_p->scene_id);
     draw_brick_debris();
+    draw_brick_bodies();
     draw_voxel_chunks(&world_lighting);
     draw_team_map_markers(local_state.scene_id, local_state.game_mode);
     draw_garage_vehicle_pads();

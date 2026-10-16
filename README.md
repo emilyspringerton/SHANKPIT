@@ -377,6 +377,26 @@ Two world-reacts-to-your-weapon systems, both in the lobby/server build and both
   hand-built legacy scenes (garage, stadium, ...) are not destructible; melee does not damage brick; one shared
   900-piece geometry budget per level (a damage that would exceed it is refused, never half-applied); damage
   resets with each match.
+- **Physical broken brick and falling geometry (2026-10-16).** Broken brick is no longer massless particles: it is rigid
+  bodies on GOLDEN BAND's XPBD solver (`packages/goldenband/grb.c`, wrapped by `packages/simulation/brick_bodies.{h,c}`).
+  A cell that is shot or blasted out throws two **shards** (0.2 m blocks; glass a thin plate) with `mass = density x volume`
+  (brick ~15 kg) that inherit a fraction of the impact -- a bullet's direction at 3% of 300 m/s, a blast's radial push -- then
+  drop, bounce, tumble, heap up on the floor and slide/tumble down ramps (oriented boxes and ramps collide through `obb.h`).
+  Separately, **geometry that loses every connection to the world falls**: after each change a bounded flood fill
+  (`bf_detect_detached`) checks the cells next to what just went; a region that reaches neither the ground nor any
+  non-destructible solid (floor, frame, metal) is cut off, removed from the static collision at once and becomes one rigid
+  chunk with mass = the sum of its cells -- shoot a circle out of a glass pane and the disc drops, with a seeded sideways drift
+  and tumble (strongest for glass) instead of falling dead straight. Level-author geometry deliberately floated in mid-air
+  keeps its majority (only the minor fragment of a cut falls). Mass is **configurable per NOCK material**: the Materials screen
+  has a Density field (kg/m^3; migration `202610160005_shankpit_materials_density.sql`, exported as `density`; 0 = engine default:
+  brick 1900, concrete 2400, wood 600, glass 2500 -- "made up", editable). The server only decides which cells are gone
+  (the chunk id rides the `PACKET_BRICK_STATE` pad byte); each client simulates its own bodies, so they are cosmetic and
+  not synced between machines. `make test-brick` covers mass, falling, piling, the ramp slide, detachment (ground, frame,
+  floating, client mirror) and a glass chunk through the real engine glue. Honest limits: bodies do not collide with
+  players or push anything; chunk shape is its bounding box and chunk-vs-body collision does not exist (shards pile on each
+  other as cubes, a deliberate fake); chunks over 256 cells stay put; the bodies are cosmetic per client (a late joiner sees
+  none of an earlier fall); not yet confirmed visually in a live match (headless tests only); the Windows build compiles the
+  same code but is CI-only.
 
 ## Broadcast cameras, director and native stream (2026-10-02)
 

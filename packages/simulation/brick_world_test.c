@@ -78,6 +78,64 @@ static void fire(PlayerState *p, int weapon, int ticks) {
 void witness_ai_set_wall_hit_hook(WitnessWallHitFn fn) { (void)fn; }
 void witness_ai_set_map_hook(WitnessMapFn fn) { (void)fn; }
 
+/* A glass pane standing on a floor: knock a ring out of it and the disc left in the middle has lost every
+   connection, so through the REAL glue it must become a rigid chunk body (mass = density x volume) that falls
+   and tumbles instead of hanging in the air. */
+static void glass_chunk_test(void) {
+    memset(&g_lvl, 0, sizeof(g_lvl));
+    snprintf(g_lvl.materials[0].name, LEVEL_BOXES_MAX_NAME, "brick");
+    snprintf(g_lvl.materials[1].name, LEVEL_BOXES_MAX_NAME, "glass");
+    g_lvl.material_count = 2;
+    LevelBox *b = g_lvl.boxes;
+    b[0] = (LevelBox){ 0, -1, 0, 100, 2, 100, 0.6f, 0.6f, 0.6f, 0.3f, 0 };        /* floor slab: the anchor */
+    b[1] = (LevelBox){ 0, 7.5f, 0, 15, 15, 0.6f, 0.6f, 0.8f, 0.9f, 0.3f, 1 };    /* glass pane: 5 x 5 x 1 cells */
+    g_lvl.count = 2;
+    g_lvl.materials[1].density = 0.0f;                                            /* absent in the NOCK export -> engine default */
+    float x[2], y[2], z[2], w[2], h[2], d[2], r[2], g[2], bl[2]; int mi[2];
+    for (int i = 0; i < 2; i++) {
+        x[i] = b[i].x; y[i] = b[i].y; z[i] = b[i].z; w[i] = b[i].w; h[i] = b[i].h; d[i] = b[i].d;
+        r[i] = g[i] = bl[i] = 0.6f; mi[i] = b[i].material_idx;
+    }
+    char names[2][CUSTOM_LEVEL_MATERIAL_NAME_LEN] = { "brick", "glass" };
+    char shaders[2][CUSTOM_LEVEL_MATERIAL_NAME_LEN] = { "standard", "glass" };
+    float spec[2] = { 0, 0 }, shin[2] = { 1, 1 }, fric[2] = { 0.3f, 0.3f };
+    phys_set_custom_level_materials(names, shaders, spec, shin, fric, 2);
+    phys_set_custom_level(x, y, z, w, h, d, r, g, bl, mi, 2, 0, 1);
+    phys_set_scene(SCENE_CUSTOM_LEVEL);
+    brick_world_init_from_level(&g_lvl);
+    brick_world_set_authority(1);
+    CHECK(g_brick_active == 1 && g_brick.parent[1].active && g_brick.parent[1].kind == BF_KIND_GLASS);
+    CHECK(solid_at(0.0f, 7.5f, 0.0f));
+
+    /* the ring: the four cells around the centre one go through the real damage path (a bullet each) */
+    brick_world_tick(5000u);
+    const int ring[4][2] = { { 1, 2 }, { 3, 2 }, { 2, 1 }, { 2, 3 } };
+    for (int i = 0; i < 4; i++) bf_set_cell_hp(&g_brick, 1, bf_key(ring[i][0], ring[i][1], 0), 0, 1);
+    CHECK(brick_world_flush(1) == 1);
+    CHECK(g_brick.chunk_count == 1 && g_brick.chunk[0].n == 1);
+    CHECK(!solid_at(0.0f, 7.5f, 0.0f));                          /* the disc is out of the static collision at once */
+    CHECK(bb_active_count(&g_brick_bodies) == 0);
+    brick_world_tick(5016u);
+    CHECK(g_brick.chunk_count == 0);
+    int chunk_slot = -1;
+    for (int i = 0; i < BB_MAX; i++) if (g_brick_bodies.slot[i].active && g_brick_bodies.slot[i].big) chunk_slot = i;
+    CHECK(chunk_slot >= 0);
+    if (chunk_slot >= 0) {
+        CHECK(fabs(bb_slot_mass(&g_brick_bodies, chunk_slot) - 2500.0 * 3.0 * 3.0 * 0.6) < 1.0);
+        CHECK(g_brick_bodies.slot[chunk_slot].kind == BF_KIND_GLASS);
+        const GrbBody *gb = &g_brick_bodies.world.bodies[chunk_slot];
+        double w0 = fabs(gb->omega[0]) + fabs(gb->omega[1]) + fabs(gb->omega[2]);
+        CHECK(w0 > 0.01);                                        /* it spawns with a tumble, not a dead-straight drop */
+        double y_start = gb->pos[1];
+        for (int i = 0; i < 40; i++) brick_world_tick(5016u + 16u * (unsigned)(i + 1));
+        CHECK(gb->pos[1] < y_start - 0.5);                       /* falling */
+        for (int i = 0; i < 400; i++) brick_world_tick(5700u + 16u * (unsigned)i);
+        CHECK(gb->pos[1] > 0.0 && gb->pos[1] < 2.5);             /* landed on the floor, not through it, not hovering */
+        printf("glass chunk: %.0f kg, spawned spinning %.2f rad/s, fell from y=%.1f to rest at y=%.2f\n",
+               bb_slot_mass(&g_brick_bodies, chunk_slot), w0, y_start, gb->pos[1]);
+    }
+}
+
 int main(void) {
     load_level();
     CHECK(g_brick_active == 1);
@@ -128,6 +186,25 @@ int main(void) {
         const BfParent *wp = &g_brick.parent[0];
         float cell = wp->cell[0] * wp->cell[1] * wp->cell[2];
         CHECK(fabsf(vol + (float)wp->removed * cell - 60.0f * 20.0f * 6.0f) < 60.0f * 20.0f * 6.0f * 1e-3f);
+    }
+
+    /* 2b. physical broken brick: the cells that went gone queued shards, brick_world_tick turns them into
+           GOLDEN BAND bodies (brick = 1900 kg/m^3 x a 0.2 m cube ~ 15 kg) that inherit part of the shot */
+    {
+        CHECK(g_brick.shard_count > 0);
+        float sp = sqrtf(g_brick.shard[0].vx * g_brick.shard[0].vx + g_brick.shard[0].vy * g_brick.shard[0].vy + g_brick.shard[0].vz * g_brick.shard[0].vz);
+        CHECK(fabsf(sp - BRICK_BULLET_SPEED * BRICK_INHERIT_FRACTION) < 0.05f);
+        int queued = g_brick.shard_count;
+        brick_world_tick(1000u);
+        CHECK(g_brick.shard_count == 0);
+        CHECK(bb_active_count(&g_brick_bodies) == queued * 2);
+        CHECK(fabs(bb_slot_mass(&g_brick_bodies, 0) - 15.2) < 0.1);
+        for (int i = 0; i < 180; i++) brick_world_tick(1000u + 17u * (unsigned)(i + 1));   /* ~3 s of frames */
+        int sane = 1;
+        for (int i = 0; i < BB_MAX; i++)
+            if (g_brick_bodies.slot[i].active) { const GrbBody *gb = &g_brick_bodies.world.bodies[i]; if (!(gb->pos[1] > -1.0) || !isfinite(gb->pos[0])) sane = 0; }
+        CHECK(sane);
+        printf("shards: %d bodies from %d breached cells, first one %.1f kg\n", bb_active_count(&g_brick_bodies), queued, bb_slot_mass(&g_brick_bodies, 0));
     }
 
     /* 3. a missile blast on the face of an undamaged stretch: carves a crater, not a pinhole */
@@ -284,6 +361,7 @@ int main(void) {
         CHECK(g_brick.rec_count == rc);
     }
 
+    glass_chunk_test();
     if (g_fail) { printf("brick_world_test: %d FAILED\n", g_fail); return 1; }
     printf("brick_world_test: all checks passed (magnum breach in %d bursts)\n", shots);
     return 0;

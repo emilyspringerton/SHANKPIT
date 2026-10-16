@@ -69,6 +69,9 @@ static void check_exact(BrickFracture *bf, int pi) {
     else bf_rebuild(bf);
 }
 
+/* a frame/wall just right of the 15 m pane at x in [7.5, inf): anchors anything touching its right edge */
+static int probe_frame(float x, float y, float z) { (void)y; (void)z; return x > 7.51f; }
+
 int main(void) {
     BrickFracture *bf = (BrickFracture *)malloc(sizeof(BrickFracture));
     BrickFracture *bf2 = (BrickFracture *)malloc(sizeof(BrickFracture));
@@ -268,6 +271,104 @@ int main(void) {
         }
         CHECK(bf_apply_net(k, 2, bf_key(0, 0, 0), 11) == 0);
         CHECK(bf_apply_net(k, 1, bf_key(0, 0, 0), 120) == 1);
+        free(k);
+    }
+
+    /* ---- disconnected geometry falls (bf_detect_detached) + shards ------------------------------------ */
+    {
+        BrickFracture *k = (BrickFracture *)calloc(1, sizeof(BrickFracture));
+        static int probe_on = 0;
+        #define GONE(par, x, y, z) bf_set_cell_hp(k, (par), bf_key((x), (y), (z)), 0, 1)
+        /* glass pane 15 x 15 x 0.6 standing on the ground: 5 x 5 x 1 cells of 3 m */
+        bf_reset(k);
+        CHECK(bf_add_parent_kind(k, 0, 0.0f, 7.5f, 0.0f, 15.0f, 15.0f, 0.6f, BF_KIND_GLASS) == 1);
+        CHECK(k->parent[0].n[0] == 5 && k->parent[0].n[1] == 5 && k->parent[0].n[2] == 1);
+        CHECK(fabsf(k->parent[0].density - 2500.0f) < 1e-3f);       /* kg/m^3 default for glass */
+        /* a hole that leaves the middle cell with no neighbours: the "circle shot out of glass" */
+        GONE(0, 1, 2, 0); GONE(0, 3, 2, 0); GONE(0, 2, 1, 0); GONE(0, 2, 3, 0);
+        CHECK(bf_detect_detached(k) == 1);
+        CHECK(k->chunk_count == 1 && k->chunk[0].n == 1);
+        CHECK(k->chunk[0].cell[0].key == bf_key(2, 2, 0));
+        CHECK(bf_cell_hp(k, 0, bf_key(2, 2, 0)) == 0);              /* carved from the static geometry too */
+        { int r = bf_find_rec(k, 0, bf_key(2, 2, 0)); CHECK(r >= 0 && k->rec[r].chunk == k->chunk[0].id && k->chunk[0].id != 0); }
+        { int seen = 0; for (int i = 0; i < k->net_count; i++) if (k->net[i].key == bf_key(2, 2, 0)) { seen = 1; CHECK(k->net[i].chunk == k->chunk[0].id && k->net[i].hp == 0); } CHECK(seen); }
+        CHECK(k->fresh_count == 0);
+        /* the chunk fell: no flakes and no shard from its own cell (shards are for shot-out cells only) */
+        { int flakes = 0; for (int i = 0; i < k->ev_count; i++) if (k->ev[i].parent == 0 && k->ev[i].state == BF_STATE_GONE) flakes += k->ev[i].debris; CHECK(flakes > 0); }
+        CHECK(bf_detect_detached(k) == 0);                           /* nothing new -> nothing more */
+
+        /* one cell out of the middle of a supported pane: still connected all round -> nothing falls */
+        bf_reset(k);
+        bf_add_parent_kind(k, 0, 0.0f, 7.5f, 0.0f, 15.0f, 15.0f, 0.6f, BF_KIND_GLASS);
+        GONE(0, 2, 2, 0);
+        CHECK(bf_detect_detached(k) == 0 && k->chunk_count == 0);
+
+        /* knock out the whole bottom row: the 20 cells above lost the ground and fall together */
+        bf_reset(k);
+        bf_add_parent_kind(k, 0, 0.0f, 7.5f, 0.0f, 15.0f, 15.0f, 0.6f, BF_KIND_GLASS);
+        for (int x = 0; x < 5; x++) GONE(0, x, 0, 0);
+        CHECK(bf_detect_detached(k) == 1);
+        CHECK(k->chunk_count == 1 && k->chunk[0].n == 20);
+
+        /* a pane the author left floating mid-air: the disc shot out of it falls... */
+        bf_reset(k);
+        bf_add_parent_kind(k, 0, 0.0f, 30.0f, 0.0f, 15.0f, 15.0f, 0.6f, BF_KIND_GLASS);
+        GONE(0, 1, 2, 0); GONE(0, 3, 2, 0); GONE(0, 2, 1, 0); GONE(0, 2, 3, 0);
+        CHECK(bf_detect_detached(k) == 1 && k->chunk[0].n == 1);
+        /* ... but a nibble out of its corner does not drop the whole authored pane */
+        bf_reset(k);
+        bf_add_parent_kind(k, 0, 0.0f, 30.0f, 0.0f, 15.0f, 15.0f, 0.6f, BF_KIND_GLASS);
+        GONE(0, 0, 0, 0);
+        CHECK(bf_detect_detached(k) == 0 && k->chunk_count == 0);
+
+        /* anchored by a non-destructible neighbour (frame probe) rather than the ground */
+        probe_on = 1;
+        bf_reset(k);
+        k->static_probe = NULL;
+        bf_add_parent_kind(k, 0, 0.0f, 30.0f, 0.0f, 15.0f, 15.0f, 0.6f, BF_KIND_GLASS);
+        (void)probe_on;
+        for (int y = 0; y < 5; y++) GONE(0, 2, y, 0);                /* cut the pane in two: 10 cells | 10 cells (+ 5 gone) */
+        CHECK(bf_detect_detached(k) == 0);                           /* a floating pane split in half: both halves stay */
+
+        /* anchored by a non-destructible neighbour (the frame probe) instead of the ground: cut the pane and
+           the half that is no longer attached to the frame falls, the half still touching it stays */
+        bf_reset(k);
+        k->static_probe = probe_frame;
+        bf_add_parent_kind(k, 0, 0.0f, 30.0f, 0.0f, 15.0f, 15.0f, 0.6f, BF_KIND_GLASS);
+        for (int y = 0; y < 5; y++) GONE(0, 2, y, 0);
+        CHECK(bf_detect_detached(k) == 1);
+        CHECK(k->chunk_count == 1 && k->chunk[0].n == 10);
+        { int left = 1; for (int i = 0; i < k->chunk[0].n; i++) { int ix, iy, iz; bf_unkey(k->chunk[0].cell[i].key, &ix, &iy, &iz); if (ix > 1) left = 0; } CHECK(left); }
+        k->static_probe = NULL;
+
+        /* bf_apply_net_chunk: a client mirroring the same fall -- one chunk, no flakes, refresh never replays it */
+        bf_reset(k);
+        bf_add_parent_kind(k, 0, 0.0f, 7.5f, 0.0f, 15.0f, 15.0f, 0.6f, BF_KIND_GLASS);
+        CHECK(bf_apply_net_chunk(k, 0, bf_key(2, 2, 0), 0, 7) == 1);
+        CHECK(bf_apply_net_chunk(k, 0, bf_key(3, 2, 0), 0, 7) == 1);
+        CHECK(k->chunk_count == 1 && k->chunk[0].id == 7 && k->chunk[0].n == 2);
+        { int flakes = 0; for (int i = 0; i < k->ev_count; i++) flakes += k->ev[i].debris; CHECK(flakes == 0); }
+        CHECK(k->shard_count == 0);
+        CHECK(bf_apply_net_chunk(k, 0, bf_key(2, 2, 0), 0, 7) == 0);  /* a resend changes nothing */
+        CHECK(k->chunk[0].n == 2);
+        { BfNetEntry e; int any = 0; for (int i = 0; i < 4; i++) { CHECK(bf_next_refresh(k, &e) == 1); CHECK(e.chunk == 0); any++; } CHECK(any == 4); }
+
+        /* a shot-out cell throws shards carrying a fraction of the impact; a rolled-back damage forgets them */
+        bf_reset(k);
+        bf_add_parent_kind(k, 0, 0.0f, 7.5f, 0.0f, 15.0f, 15.0f, 3.0f, BF_KIND_BRICK);
+        k->impact_radial = 0; k->impact_dir[0] = 1.0f; k->impact_speed = 9.0f;
+        BfCheckpoint *kcp = (BfCheckpoint *)malloc(sizeof(*kcp));
+        bf_checkpoint(k, kcp);
+        GONE(0, 2, 2, 0);
+        CHECK(k->shard_count == 1 && k->shard[0].count == 2);
+        CHECK(fabsf(k->shard[0].vx - 9.0f) < 1e-4f && fabsf(k->shard[0].vy) < 1e-4f);
+        bf_restore(k, kcp);
+        CHECK(k->shard_count == 0);
+        k->impact_radial = 1; k->impact_c[0] = -3.0f; k->impact_c[1] = 7.5f; k->impact_c[2] = 0.0f; k->impact_radius = 12.0f;
+        GONE(0, 2, 2, 0);                                            /* blast from the left: debris flies away from it (+x) */
+        CHECK(k->shard_count == 1 && k->shard[0].vx > 1.0f && fabsf(k->shard[0].vz) < 1e-3f);
+        free(kcp);
+        #undef GONE
         free(k);
     }
 

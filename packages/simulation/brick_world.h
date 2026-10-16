@@ -25,6 +25,8 @@
 
 #include "witness_ai.h"
 #include "../world/brick_fracture.h"
+#include "brick_bodies.h"
+#include "../common/obb.h"
 #include "../world/level_boxes.h"
 
 #define BRICK_WORLD_RANGE        600.0f   /* how far a hitscan shot is traced for the map */
@@ -38,6 +40,15 @@ static int g_brick_active = 0;       /* a level with at least one destructible p
 static int g_brick_authority = 1;    /* 0 = networked client, mirror only */
 static unsigned int g_brick_rng = 0x9E3779B9u;
 static unsigned int g_brick_commit_serial = 0;   /* bumps whenever the committed geometry changed */
+
+/* Physical broken brick (brick_bodies.h): GOLDEN BAND rigid bodies. Shards inherit a FRACTION of the
+   impact velocity: a bullet's nominal speed x BRICK_INHERIT_FRACTION, a blast's radial push. */
+static BrickBodies g_brick_bodies;
+static int g_brick_bodies_ready = 0;
+#define BRICK_BULLET_SPEED      300.0f
+#define BRICK_INHERIT_FRACTION  0.03f     /* 300 m/s x 0.03 = 9 m/s along the shot */
+#define BRICK_BLAST_SPEED       16.0f
+#define BRICK_CLAW_SPEED        1.5f
 
 typedef struct { BfNetEntry e; unsigned char left; unsigned int next_ms; } BrickResend;
 static BrickResend g_brick_resend[BRICK_RESEND_MAX];
@@ -72,7 +83,11 @@ static inline void brick_world_commit(void) {
  * (a client mirroring the server) a failed rebuild just leaves the last committed geometry alone.
  * Returns 1 if the geometry changed. */
 static inline int brick_world_flush(int have_checkpoint) {
-    if (!g_brick.pieces_dirty) return 0;
+    if (!g_brick.pieces_dirty) { g_brick.fresh_count = 0; return 0; }
+    /* authority only: any cells this change cut off from the world become rigid chunks (set gone here so
+       the rebuild below carves them in the same pass; clients get them over the wire with a chunk id) */
+    if (g_brick_authority) bf_detect_detached(&g_brick);
+    else g_brick.fresh_count = 0;
     if (bf_rebuild(&g_brick)) { brick_world_commit(); return 1; }
     if (have_checkpoint) {
         bf_restore(&g_brick, &g_brick_cp);
@@ -106,6 +121,9 @@ static inline void brick_world_on_hitscan(int scene_id, float ox, float oy, floa
         float hx, hy, hz, nx, ny, nz;
         if (!trace_map(ox, oy, oz, ox + px * BRICK_WORLD_RANGE, oy + py * BRICK_WORLD_RANGE, oz + pz * BRICK_WORLD_RANGE,
                        &hx, &hy, &hz, &nx, &ny, &nz)) continue;
+        g_brick.impact_radial = 0;
+        g_brick.impact_dir[0] = px; g_brick.impact_dir[1] = py; g_brick.impact_dir[2] = pz;
+        g_brick.impact_speed = BRICK_BULLET_SPEED * BRICK_INHERIT_FRACTION;
         bf_hit_surface(&g_brick, hx, hy, hz, nx, ny, nz, weapon, dmg, (cnt > 1) ? 0.7f : 0.9f);
     }
     brick_world_flush(1);
@@ -119,6 +137,10 @@ static inline void brick_world_on_blast(int scene_id, float x, float y, float z,
     y -= g_phys_blast_normal[1] * radius * 0.35f;
     z -= g_phys_blast_normal[2] * radius * 0.35f;
     bf_checkpoint(&g_brick, &g_brick_cp);
+    g_brick.impact_radial = 1;
+    g_brick.impact_c[0] = x; g_brick.impact_c[1] = y; g_brick.impact_c[2] = z;
+    g_brick.impact_radius = radius;
+    g_brick.impact_speed = BRICK_BLAST_SPEED;
     bf_damage_sphere(&g_brick, x, y, z, radius * 0.9f, weapon, damage, -1, 0);
     brick_world_flush(1);
 }
@@ -126,6 +148,9 @@ static inline void brick_world_on_blast(int scene_id, float x, float y, float z,
 static inline void brick_world_on_surface(int scene_id, float hx, float hy, float hz, float nx, float ny, float nz, int damage, int weapon) {
     if (!brick_world_hook_ready(scene_id)) return;
     bf_checkpoint(&g_brick, &g_brick_cp);
+    g_brick.impact_radial = 0;                       /* a claw / melee strike: push the debris into the wall's far side */
+    g_brick.impact_dir[0] = -nx; g_brick.impact_dir[1] = -ny; g_brick.impact_dir[2] = -nz;
+    g_brick.impact_speed = BRICK_CLAW_SPEED;
     bf_hit_surface(&g_brick, hx, hy, hz, nx, ny, nz, weapon, damage, 0.9f);
     brick_world_flush(1);
 }
@@ -134,6 +159,7 @@ static inline void brick_world_on_surface(int scene_id, float hx, float hy, floa
 static inline void brick_world_reset_match(void) {
     if (!g_brick_active) return;
     bf_clear_damage(&g_brick);
+    if (g_brick_bodies_ready) bb_clear(&g_brick_bodies);
     g_brick_resend_n = 0;
     if (bf_rebuild(&g_brick)) brick_world_commit();
 }
@@ -169,10 +195,26 @@ static inline int brick_world_kind_for_material(const char *name) {
     return -1;
 }
 
+/* Non-destructible solid geometry (floors, metal, frames, rotated boxes ...) -- what a wall can hang
+   from. Doors and buttons are excluded: they move. */
+#define BRICK_STATIC_MAX 2048
+static float g_brick_static[BRICK_STATIC_MAX][6];   /* x,y,z,w,h,d */
+static int g_brick_static_n = 0;
+static int brick_world_static_probe(float x, float y, float z) {
+    for (int i = 0; i < g_brick_static_n; i++) {
+        const float *b = g_brick_static[i];
+        if (fabsf(x - b[0]) <= b[3] * 0.5f && fabsf(y - b[1]) <= b[4] * 0.5f && fabsf(z - b[2]) <= b[5] * 0.5f) return 1;
+    }
+    return 0;
+}
+
 static inline void brick_world_init_from_level(const CustomLevelData *lvl) {
     brick_world_install_ai_hooks();
     bf_reset(&g_brick);
+    g_brick.static_probe = brick_world_static_probe;
+    g_brick_static_n = 0;
     g_brick_active = 0;
+    if (g_brick_bodies_ready) bb_clear(&g_brick_bodies);
     g_brick_resend_n = 0;
     g_brick_refresh_next_ms = 0;
     g_brick_commit_serial++;
@@ -186,11 +228,18 @@ static inline void brick_world_init_from_level(const CustomLevelData *lvl) {
     for (int i = 0; i < lvl->count && i < BF_MAX_PARENTS; i++) {
         const LevelBox *b = &lvl->boxes[i];
         /* rotated cubes / ramps are not axis-aligned: fracture pieces would be, so they stay solid */
-        if (excluded[i] || brick_world_box_is_slab(b) || b->ramp || b->rot_x != 0.0f || b->rot_y != 0.0f || b->rot_z != 0.0f) continue;
-        if (b->material_idx < 0 || b->material_idx >= lvl->material_count) continue;
-        int kind = brick_world_kind_for_material(lvl->materials[b->material_idx].name);
-        if (kind < 0) continue;
-        if (bf_add_parent_kind(&g_brick, i, b->x, b->y, b->z, b->w, b->h, b->d, kind)) added++;
+        int fracturable = !(excluded[i] || brick_world_box_is_slab(b) || b->ramp || b->rot_x != 0.0f || b->rot_y != 0.0f || b->rot_z != 0.0f);
+        int kind = -1;
+        if (fracturable && b->material_idx >= 0 && b->material_idx < lvl->material_count)
+            kind = brick_world_kind_for_material(lvl->materials[b->material_idx].name);
+        if (kind >= 0 && bf_add_parent_kind(&g_brick, i, b->x, b->y, b->z, b->w, b->h, b->d, kind)) {
+            float dens = lvl->materials[b->material_idx].density;
+            if (dens > 0.0f) g_brick.parent[i].density = dens;      /* the NOCK material's own mass density */
+            added++;
+        } else if (!excluded[i] && g_brick_static_n < BRICK_STATIC_MAX) {
+            float *sb = g_brick_static[g_brick_static_n++];
+            sb[0] = b->x; sb[1] = b->y; sb[2] = b->z; sb[3] = b->w; sb[4] = b->h; sb[5] = b->d;
+        }
     }
     g_brick_active = (added > 0);
     /* persisted damage from a saved snapshot: restore the records, then rebuild + commit so the
@@ -207,6 +256,7 @@ static inline void brick_world_init_from_level(const CustomLevelData *lvl) {
         }
         if (restored > 0 && bf_rebuild(&g_brick)) brick_world_commit();
     }
+    g_brick.fresh_count = 0;
     g_phys_map_hitscan_hook = brick_world_on_hitscan;
     g_phys_map_blast_hook = brick_world_on_blast;
     g_phys_map_surface_hook = brick_world_on_surface;
@@ -233,7 +283,7 @@ static inline void brick_world_to_wire(const BfNetEntry *e, NetBrickEntry *w) {
     w->key_lo = (unsigned short)(e->key & 0xFFFFu);
     w->key_hi = (unsigned short)(e->key >> 16);
     w->hp = e->hp;
-    w->pad = 0;
+    w->pad = e->chunk;
 }
 
 static inline void brick_world_resend_add(const BfNetEntry *e, unsigned int now_ms) {
@@ -302,7 +352,7 @@ static inline int brick_world_net_apply(const void *buf, int len) {
     if (count > avail) count = avail;
     for (int i = 0; i < count; i++) {
         unsigned int key = (unsigned int)pkt.e[i].key_lo | ((unsigned int)pkt.e[i].key_hi << 16);
-        bf_apply_net(&g_brick, pkt.e[i].parent, key, pkt.e[i].hp);
+        bf_apply_net_chunk(&g_brick, pkt.e[i].parent, key, pkt.e[i].hp, pkt.e[i].pad);
     }
     g_brick.net_count = 0;      /* a mirror never rebroadcasts */
     return brick_world_flush(0);
@@ -315,6 +365,124 @@ static inline int brick_world_drain_events(BfEvent *out, int max) {
     if (n > 0) memcpy(out, g_brick.ev, sizeof(BfEvent) * (size_t)n);
     g_brick.ev_count = 0;
     return n;
+}
+
+/* ---- physical bodies ---------------------------------------------------------------------------- */
+
+/* Static geometry for the bodies: the level's live collision boxes, oriented boxes and RAMPS included
+   (obb.h), so a shard that lands on a ramp slides/tumbles down it. */
+static int brick_world_body_push(void *user, const double c[3], double r, double nrm[3], double *pen) {
+    (void)user;
+    static BoxOrient ident;
+    static int ident_ready = 0;
+    if (!ident_ready) { orient_identity(&ident); ident_ready = 1; }
+    float best = 0.0f; int hit = 0;
+    for (int i = 1; i < map_count; i++) {
+        const Box *b = &map_geo[i];
+        if (b->w <= 0.0f || b->h <= 0.0f || b->d <= 0.0f) continue;
+        float R = (b->w + b->h + b->d) * 0.5f + (float)r;
+        if (fabsf((float)c[0] - b->x) > R || fabsf((float)c[1] - b->y) > R || fabsf((float)c[2] - b->z) > R) continue;
+        const BoxOrient *o = phys_box_orient(i);
+        float n[3], depth;
+        if (!obb_sphere_push(b->x, b->y, b->z, b->w, b->h, b->d, o ? o : &ident,
+                             (float)c[0], (float)c[1], (float)c[2], (float)r, n, &depth)) continue;
+        if (depth > best) { best = depth; nrm[0] = n[0]; nrm[1] = n[1]; nrm[2] = n[2]; hit = 1; }
+    }
+    *pen = best;
+    return hit;
+}
+
+static inline void brick_world_bodies_init(void) {
+    if (g_brick_bodies_ready) return;
+    bb_init(&g_brick_bodies, brick_world_body_push, NULL);
+    g_brick_bodies_ready = 1;
+}
+
+static inline unsigned int brick_world_hash(unsigned int x) {
+    x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; x ^= x >> 16;
+    return x;
+}
+static inline double brick_world_h01(unsigned int *s) {
+    *s = brick_world_hash(*s + 0x9E3779B9u);
+    return (double)(*s & 0xFFFFu) / 65535.0;
+}
+
+/* shard box half extents per material kind: brick/concrete/wood a 0.2 m block, glass a thin plate */
+static inline void brick_world_shard_half(int kind, double h[3]) {
+    if (kind == BF_KIND_GLASS) { h[0] = 0.12; h[1] = 0.03; h[2] = 0.12; }
+    else { h[0] = h[1] = h[2] = BB_SHARD_HALF; }
+}
+
+/* brick_world_spawn_bodies -- everything the fracture engine queued becomes GOLDEN BAND bodies:
+ * shards for shot-out cells, one body per chunk of cells cut off from the world. Safe on every
+ * process (the server, a local match, a mirroring client); a client knows no impact, so its bodies
+ * simply drop with the same deterministic scatter. */
+static inline void brick_world_spawn_bodies(void) {
+    brick_world_bodies_init();
+    for (int i = 0; i < g_brick.shard_count; i++) {
+        const BfShard *sh = &g_brick.shard[i];
+        const BfParent *p = &g_brick.parent[sh->parent];
+        unsigned int seed = brick_world_hash((unsigned int)(int)(sh->x * 16.0f) * 73856093u ^ (unsigned int)(int)(sh->y * 16.0f) * 19349663u ^
+                                              (unsigned int)(int)(sh->z * 16.0f) * 83492791u ^ (unsigned int)i);
+        double half[3]; brick_world_shard_half(p->kind, half);
+        double mass = (double)p->density * 8.0 * half[0] * half[1] * half[2];
+        for (int k = 0; k < sh->count; k++) {
+            double pos[3] = { sh->x + (brick_world_h01(&seed) - 0.5) * p->cell[0] * 0.6,
+                              sh->y + (brick_world_h01(&seed) - 0.5) * p->cell[1] * 0.6,
+                              sh->z + (brick_world_h01(&seed) - 0.5) * p->cell[2] * 0.6 };
+            double vel[3] = { sh->vx + (brick_world_h01(&seed) - 0.5) * 3.0,
+                              sh->vy + 1.0 + brick_world_h01(&seed) * 2.5,
+                              sh->vz + (brick_world_h01(&seed) - 0.5) * 3.0 };
+            double om[3] = { (brick_world_h01(&seed) - 0.5) * 14.0, (brick_world_h01(&seed) - 0.5) * 14.0, (brick_world_h01(&seed) - 0.5) * 14.0 };
+            bb_spawn(&g_brick_bodies, p->kind, 0, mass, pos, half, vel, om);
+        }
+    }
+    g_brick.shard_count = 0;
+    for (int ci = 0; ci < g_brick.chunk_count; ci++) {
+        const BfChunk *ch = &g_brick.chunk[ci];
+        double lo[3] = { 1e30, 1e30, 1e30 }, hi[3] = { -1e30, -1e30, -1e30 };
+        double mass = 0.0, kind_mass[4] = { 0, 0, 0, 0 };
+        unsigned int seed = brick_world_hash((unsigned int)ch->id * 2654435761u);
+        for (int i = 0; i < ch->n; i++) {
+            const BfParent *p = &g_brick.parent[ch->cell[i].parent];
+            int ix, iy, iz; bf_unkey(ch->cell[i].key, &ix, &iy, &iz);
+            float c[3]; bf_cell_center(p, ix, iy, iz, c);
+            for (int a = 0; a < 3; a++) {
+                double l = (double)c[a] - 0.5 * p->cell[a], h = (double)c[a] + 0.5 * p->cell[a];
+                if (l < lo[a]) lo[a] = l;
+                if (h > hi[a]) hi[a] = h;
+            }
+            double m = (double)p->density * p->cell[0] * p->cell[1] * p->cell[2];
+            mass += m;
+            if (p->kind >= 0 && p->kind < 4) kind_mass[p->kind] += m;
+            seed = brick_world_hash(seed ^ ch->cell[i].key);
+        }
+        int kind = 0;
+        for (int k = 1; k < 4; k++) if (kind_mass[k] > kind_mass[kind]) kind = k;
+        double pos[3], half[3];
+        for (int a = 0; a < 3; a++) { pos[a] = 0.5 * (lo[a] + hi[a]); half[a] = 0.5 * (hi[a] - lo[a]); }
+        /* Founder real-time, 2026-10-16: "there should be a bit of rotation so they don't all fall straight
+           down ... you can fake it". A seeded sideways drift + tumble, strongest for light/thin glass. */
+        double wob = (kind == BF_KIND_GLASS) ? 1.0 : 0.55;
+        double vel[3] = { (double)ch->vx + (brick_world_h01(&seed) - 0.5) * 2.4 * wob, (double)ch->vy,
+                          (double)ch->vz + (brick_world_h01(&seed) - 0.5) * 2.4 * wob };
+        double om[3] = { (brick_world_h01(&seed) - 0.5) * 3.2 * wob, (brick_world_h01(&seed) - 0.5) * 1.6 * wob,
+                         (brick_world_h01(&seed) - 0.5) * 3.2 * wob };
+        bb_spawn(&g_brick_bodies, kind, 1, mass, pos, half, vel, om);
+    }
+    g_brick.chunk_count = 0;
+}
+
+/* brick_world_tick -- once per frame / server tick with a monotonic millisecond clock: spawn what the
+ * fracture engine queued and step the bodies. */
+static inline void brick_world_tick(unsigned int now_ms) {
+    static unsigned int last_ms = 0;
+    brick_world_bodies_init();
+    if (g_brick_active) brick_world_spawn_bodies();
+    double dt = last_ms ? (double)(now_ms - last_ms) * 0.001 : 0.0;
+    last_ms = now_ms;
+    if (dt < 0.0 || dt > 1.0) dt = 0.0;
+    if (bb_active_count(&g_brick_bodies) > 0) bb_step(&g_brick_bodies, dt);
 }
 
 #endif

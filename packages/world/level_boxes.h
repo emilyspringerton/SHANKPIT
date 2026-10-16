@@ -63,6 +63,10 @@ typedef struct {
         physics.h-free by design, see this header's own top-of-file doc comment). Absent in a
         pre-S478b export defaults to 0.30, matching physics.h's own tuned global FRICTION
         baseline exactly (see this field's own parse site below). */
+    float density; /* mass per unit volume, made-up units. Founder real-time, 2026-10-16: "calculate mass of the
+        different materials, have it configurable on the NOCK material". Used by packages/world/brick_rigid.h
+        (mass + inertia of geometry that falls away). 0 / absent = use the engine default for the material
+        kind (brick_fracture.h BF_DENSITY_*: brick 1.9, concrete 2.4, wood 0.6, glass 2.5). */
 } LevelBoxMaterial;
 
 #define LEVEL_BOXES_MAX_BRICK_CELLS 4096 /* = brick_fracture.h BF_MAX_RECORDS; IDUNA MaxBrickCells matches */
@@ -642,6 +646,10 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
                     mat->specular = spec_f;
                     mat->shininess = shin_f;
                     mat->friction = fric_f;
+                    float dens_f = 0;
+                    const char *dev = level_boxes_find_key(mobj_start, mobj_end, "density");
+                    if (dev) level_boxes_parse_number(dev, &dens_f);
+                    mat->density = dens_f > 0.0f ? dens_f : 0.0f;
                     if (mat->name[0]) out->material_count++;
                     mcursor = mobj_end + 1;
                 }

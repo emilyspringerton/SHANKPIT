@@ -14,10 +14,26 @@ test-brick-fracture:
 test-brick-world:
 	gcc -std=gnu99 -Wall -g -fsanitize=address,undefined $(INCLUDES) \
 		packages/simulation/brick_world_test.c packages/simulation/brick_mod.c packages/world/terrain.c \
+		packages/simulation/brick_bodies.c packages/goldenband/grb.c \
 		-o /tmp/shankpit_brick_world_test -lm
 	/tmp/shankpit_brick_world_test
 
-test-brick: test-brick-fracture test-brick-world
+# Physical broken brick on GOLDEN BAND grb: mass, falling, piling on the floor, sliding down a ramp.
+.PHONY: test-brick-bodies
+test-brick-bodies:
+	gcc -std=gnu99 -Wall -Wextra -Werror -g -fsanitize=address,undefined -Ipackages/goldenband -Ipackages/simulation \
+		packages/simulation/brick_bodies_test.c packages/simulation/brick_bodies.c packages/goldenband/grb.c \
+		-o /tmp/shankpit_brick_bodies_test -lm
+	/tmp/shankpit_brick_bodies_test
+
+# A NOCK material's density (kg/m^3) parses into the native level loader.
+.PHONY: test-brick-density
+test-brick-density:
+	gcc -std=gnu99 -Wall -Wextra -Werror -g -fsanitize=address,undefined $(INCLUDES) packages/world/level_boxes_density_test.c \
+		-o /tmp/shankpit_level_boxes_density_test -lm
+	/tmp/shankpit_level_boxes_density_test
+
+test-brick: test-brick-fracture test-brick-world test-brick-bodies test-brick-density
 
 # Real server + real packet clients: a shooter destroys a brick cell, a late joiner learns of it.
 # Needs python3 + numpy (scripts/rl_env_packet.py's imports).

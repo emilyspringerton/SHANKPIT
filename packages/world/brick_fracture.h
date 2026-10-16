@@ -64,6 +64,14 @@ int on_brick_cell_max_hp(int brick_kind);
 #define BF_KIND_WOOD     2
 #define BF_KIND_GLASS    3
 
+/* Default material densities, kg per cubic metre (world units are metres) -- roughly real, "make it up
+ * for now" (founder real-time, 2026-10-16). A NOCK material's own "density" overrides these per level
+ * (level_boxes.h LevelBoxMaterial.density). A 0.2 m brick shard is 1900 x 0.008 ~= 15 kg. */
+#define BF_DENSITY_BRICK    1900.0f
+#define BF_DENSITY_CONCRETE 2400.0f
+#define BF_DENSITY_WOOD     600.0f
+#define BF_DENSITY_GLASS    2500.0f
+
 #define BF_STATE_INTACT  0
 #define BF_STATE_CRACKED 1
 #define BF_STATE_TORN    2
@@ -80,12 +88,14 @@ typedef struct {
     int kind;              /* BF_KIND_* */
     int max_hp;            /* full cell HP for this kind (PARENA) */
     int material;          /* PAPER_MATERIAL_* for this kind (PARENA) */
+    float density;         /* mass per unit volume; the NOCK material's value, else the kind default */
 } BfParent;
 
 typedef struct {
     unsigned int key;      /* ix | iy << 10 | iz << 20 */
     int next;              /* next record of the same parent, -1 end */
     unsigned char hp;      /* 0 = gone; absent record = full HP */
+    unsigned char chunk;   /* nonzero: this gone cell fell away as part of rigid chunk `chunk` (not shot out) */
     unsigned short parent;
 } BfRec;
 
@@ -108,7 +118,32 @@ typedef struct {
     unsigned short parent;
     unsigned int key;
     unsigned char hp;
+    unsigned char chunk;      /* rides the wire's spare pad byte; 0 = an ordinary cell change */
 } BfNetEntry;
+
+/* A group of cells that lost every connection to the rest of the world and so becomes a rigid body.
+ * Queued for the host (drained once per frame, like BfEvent); the cells are already GONE in the
+ * static geometry by the time a chunk is queued. */
+#define BF_MAX_CHUNKS      16
+#define BF_CHUNK_CELLS     256
+#define BF_MAX_FRESH       1024
+typedef struct { unsigned short parent; unsigned int key; } BfCellRef;
+typedef struct {
+    int id;
+    int n;
+    float vx, vy, vz;          /* inherited impact velocity (0 on a client that only mirrors) */
+    BfCellRef cell[BF_CHUNK_CELLS];
+} BfChunk;
+
+/* A cell that was shot / blasted out (not one that merely fell with its chunk): the host turns these
+ * into physical shard bodies (packages/simulation/brick_bodies.h) carrying a fraction of the impact. */
+#define BF_MAX_SHARDS 128
+typedef struct {
+    float x, y, z;             /* cell centre */
+    float vx, vy, vz;          /* inherited velocity, m/s */
+    int parent;
+    int count;                 /* shards to throw from this cell */
+} BfShard;
 
 typedef struct {
     BfParent parent[BF_MAX_PARENTS];
@@ -125,7 +160,30 @@ typedef struct {
     int refresh_cursor;        /* rotating cursor over records for the periodic refresh */
     int max_hp;
     int material;
+    BfChunk chunk[BF_MAX_CHUNKS];
+    int chunk_count;
+    int next_chunk_id;
+    BfCellRef fresh[BF_MAX_FRESH];   /* cells that went GONE since the last bf_detect_detached / flush */
+    int fresh_count;
+    int suppress_debris;       /* 1 while detaching: the chunk IS the visual, no flakes */
+    BfShard shard[BF_MAX_SHARDS];
+    int shard_count;
+    /* Impact the NEXT cell changes come from, set by the host right before it applies damage: a bullet
+       (impact_dir, not radial) or a blast (velocity points away from impact_c, fading out by impact_radius). */
+    float impact_c[3], impact_dir[3], impact_speed, impact_radius;
+    int impact_radial;
+    /* host hook: 1 if (x,y,z) lies inside non-destructible solid geometry (an anchor). NULL = only the ground anchors. */
+    int (*static_probe)(float x, float y, float z);
 } BrickFracture;
+
+static inline float bf_default_density(int kind) {
+    switch (kind) {
+        case 1: return BF_DENSITY_CONCRETE;
+        case 2: return BF_DENSITY_WOOD;
+        case 3: return BF_DENSITY_GLASS;
+        default: return BF_DENSITY_BRICK;
+    }
+}
 
 static inline unsigned int bf_key(int ix, int iy, int iz) {
     return (unsigned int)ix | ((unsigned int)iy << 10) | ((unsigned int)iz << 20);
@@ -149,6 +207,9 @@ static inline void bf_clear_damage(BrickFracture *bf) {
     bf->ev_count = 0;
     bf->net_count = 0;
     bf->refresh_cursor = 0;
+    bf->chunk_count = 0;
+    bf->fresh_count = 0;
+    bf->shard_count = 0;
 }
 
 /* bf_add_parent -- registers level box `index` (centre x,y,z; full extents w,h,d) as destructible.
@@ -177,6 +238,7 @@ static inline int bf_add_parent_kind(BrickFracture *bf, int index, float x, floa
     p->kind = kind;
     p->max_hp = on_brick_cell_max_hp(kind);
     p->material = on_brick_paper_material(kind);
+    p->density = bf_default_density(kind);
     return 1;
 }
 
@@ -202,23 +264,66 @@ static inline int bf_cell_hp(const BrickFracture *bf, int parent, unsigned int k
 }
 
 static inline void bf_push_event(BrickFracture *bf, const BfParent *p, int parent, unsigned int key, int state, int debris) {
-    if (bf->ev_count >= BF_MAX_EVENTS) return;
     int ix, iy, iz; bf_unkey(key, &ix, &iy, &iz);
     float c[3]; bf_cell_center(p, ix, iy, iz, c);
+    /* shards first and independent of the (cosmetic) event queue being full: a host that never drains events still gets bodies */
+    if (state == BF_STATE_GONE && !bf->suppress_debris && bf->shard_count < BF_MAX_SHARDS) {
+        BfShard *sh = &bf->shard[bf->shard_count++];
+        sh->x = c[0]; sh->y = c[1]; sh->z = c[2];
+        sh->parent = parent;
+        sh->count = 2;
+        float dir[3] = { bf->impact_dir[0], bf->impact_dir[1], bf->impact_dir[2] };
+        float spd = bf->impact_speed;
+        if (bf->impact_radial) {
+            float d[3] = { c[0] - bf->impact_c[0], c[1] - bf->impact_c[1], c[2] - bf->impact_c[2] };
+            float len = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+            if (len > 1e-4f) { dir[0] = d[0] / len; dir[1] = d[1] / len; dir[2] = d[2] / len; }
+            else { dir[0] = 0.0f; dir[1] = 1.0f; dir[2] = 0.0f; }
+            float t = bf->impact_radius > 1e-4f ? len / bf->impact_radius : 1.0f;
+            if (t > 1.0f) t = 1.0f;
+            spd *= 1.0f - 0.7f * t;
+        }
+        sh->vx = dir[0] * spd; sh->vy = dir[1] * spd; sh->vz = dir[2] * spd;
+    }
+    if (bf->ev_count >= BF_MAX_EVENTS) return;
     BfEvent *e = &bf->ev[bf->ev_count++];
     e->x = c[0]; e->y = c[1]; e->z = c[2];
     e->cw = p->cell[0]; e->ch = p->cell[1]; e->cd = p->cell[2];
-    e->parent = parent; e->state = state; e->debris = debris;
+    e->parent = parent; e->state = state; e->debris = bf->suppress_debris ? 0 : debris;
 }
 
-static inline void bf_push_net(BrickFracture *bf, int parent, unsigned int key, int hp) {
+static inline void bf_push_net_chunk(BrickFracture *bf, int parent, unsigned int key, int hp, int chunk) {
     for (int i = 0; i < bf->net_count; i++)
-        if (bf->net[i].parent == parent && bf->net[i].key == key) { bf->net[i].hp = (unsigned char)hp; return; }
+        if (bf->net[i].parent == parent && bf->net[i].key == key) {
+            bf->net[i].hp = (unsigned char)hp; bf->net[i].chunk = (unsigned char)chunk; return;
+        }
     if (bf->net_count >= BF_MAX_NET_DIRTY) return;   /* the rotating refresh will carry it */
     bf->net[bf->net_count].parent = (unsigned short)parent;
     bf->net[bf->net_count].key = key;
     bf->net[bf->net_count].hp = (unsigned char)hp;
+    bf->net[bf->net_count].chunk = (unsigned char)chunk;
     bf->net_count++;
+}
+static inline void bf_push_net(BrickFracture *bf, int parent, unsigned int key, int hp) {
+    bf_push_net_chunk(bf, parent, key, hp, 0);
+}
+
+/* bf_chunk_note -- add a fallen cell to chunk `id` of this frame's queue (same id = same body). */
+static inline void bf_chunk_note(BrickFracture *bf, int id, int parent, unsigned int key) {
+    BfChunk *c = NULL;
+    for (int i = 0; i < bf->chunk_count; i++) if (bf->chunk[i].id == id) { c = &bf->chunk[i]; break; }
+    if (!c) {
+        if (bf->chunk_count >= BF_MAX_CHUNKS) return;
+        c = &bf->chunk[bf->chunk_count++];
+        c->id = id; c->n = 0;
+        c->vx = bf->impact_dir[0] * bf->impact_speed * 0.5f;     /* a chunk takes half a shard's push */
+        c->vy = bf->impact_dir[1] * bf->impact_speed * 0.5f;
+        c->vz = bf->impact_dir[2] * bf->impact_speed * 0.5f;
+    }
+    if (c->n >= BF_CHUNK_CELLS) return;
+    c->cell[c->n].parent = (unsigned short)parent;
+    c->cell[c->n].key = key;
+    c->n++;
 }
 
 /* bf_compact_records -- the record table is full: forget every merely-damaged (hp>0) cell, keeping
@@ -259,13 +364,21 @@ static inline int bf_set_cell_hp(BrickFracture *bf, int parent, unsigned int key
         r = bf->rec_count++;
         bf->rec[r].key = key; bf->rec[r].hp = (unsigned char)pmax;
         bf->rec[r].parent = (unsigned short)parent;
+        bf->rec[r].chunk = 0;
         bf->rec[r].next = p->first_rec; p->first_rec = r;
     }
     bf->rec[r].hp = (unsigned char)hp;
     int sb = on_paper_fragment_state_for_hp(before, pmax);
     int sa = on_paper_fragment_state_for_hp(hp, pmax);
     if (before == 0 && hp > 0) { p->removed--; bf->pieces_dirty = 1; }
-    if (before > 0 && hp == 0) { p->removed++; bf->pieces_dirty = 1; }
+    if (before > 0 && hp == 0) {
+        p->removed++; bf->pieces_dirty = 1;
+        if (bf->fresh_count < BF_MAX_FRESH) {
+            bf->fresh[bf->fresh_count].parent = (unsigned short)parent;
+            bf->fresh[bf->fresh_count].key = key;
+            bf->fresh_count++;
+        }
+    }
     if (emit_events && sa != sb) bf_push_event(bf, p, parent, key, sa, on_brick_debris_count(sb, sa));
     return 1;
 }
@@ -362,6 +475,179 @@ static inline int bf_hit_surface(BrickFracture *bf, float hx, float hy, float hz
     float depth = 0.25f * cmax;
     return bf_damage_sphere(bf, hx - nx * depth, hy - ny * depth, hz - nz * depth,
                             cmax * radius_scale, weapon, base_damage, pi, key);
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * Disconnected geometry -> rigid chunks
+ *
+ * Founder real-time, 2026-10-16: "if you shoot a circle in glass and it is totally unconnected to
+ * anything the pieces shouldn't float in the air, they should fall with rigid body physics".
+ *
+ * After damage, every surviving cell face-adjacent to a cell that just went gone is flood-filled
+ * (bounded: BF_DET_BUDGET cells, so a big wall costs nothing -- a region that big is simply
+ * supported). A region is ANCHORED if it reaches the ground (y ~ 0) or any non-destructible solid
+ * (bf->static_probe) -- floors, frames, metal -- or runs past the budget. A region that closes up
+ * with no anchor has lost every connection to the world and falls: its cells are set GONE in the
+ * static geometry (so collision/render/network all see the hole at once, on the existing hp
+ * wire) and queued as a BfChunk for the host's rigid-body solver.
+ *
+ * One deliberate exception: geometry the level author floated in mid-air with nothing under it was
+ * already unsupported before the shot. Shooting a hole in it must not drop the whole pane, so for a
+ * region that was ALREADY unanchored before this damage, only a minor fragment (under half of its
+ * pre-damage region) falls -- the disc shot out of the middle drops, the pane it came from stays.
+ * ------------------------------------------------------------------------------------------- */
+
+#define BF_DET_TABLE   16384          /* power of two */
+#define BF_DET_BUDGET  2048
+
+typedef struct { unsigned int key[BF_DET_TABLE]; short par[BF_DET_TABLE]; unsigned short gen[BF_DET_TABLE]; unsigned short cur; int count; } BfSet;
+
+static inline void bf_set_clear(BfSet *s) {
+    for (int i = 0; i < BF_DET_TABLE; i++) s->par[i] = -1;
+    s->count = 0;
+    s->cur = 1;
+}
+/* 1 = newly added, 0 = already present from THIS flood, 2 = present from an EARLIER flood, -1 = table full */
+static inline int bf_set_add(BfSet *s, int parent, unsigned int key) {
+    if (s->count >= BF_DET_TABLE / 2) return -1;
+    unsigned int h = (key * 2654435761u + (unsigned int)parent * 40503u) & (BF_DET_TABLE - 1);
+    while (s->par[h] >= 0) {
+        if (s->par[h] == parent && s->key[h] == key) return s->gen[h] == s->cur ? 0 : 2;
+        h = (h + 1) & (BF_DET_TABLE - 1);
+    }
+    s->par[h] = (short)parent; s->key[h] = key; s->gen[h] = s->cur; s->count++;
+    return 1;
+}
+
+static inline int bf_is_fresh(const BrickFracture *bf, int parent, unsigned int key) {
+    for (int i = 0; i < bf->fresh_count; i++)
+        if (bf->fresh[i].parent == parent && bf->fresh[i].key == key) return 1;
+    return 0;
+}
+
+/* the surviving cell whose volume contains the point; `fresh_alive` counts this frame's gone cells as present */
+static inline int bf_find_cell_at(const BrickFracture *bf, float x, float y, float z, int fresh_alive, unsigned int *key) {
+    float c[3] = { x, y, z };
+    for (int pi = 0; pi < bf->parent_count; pi++) {
+        const BfParent *p = &bf->parent[pi];
+        if (!p->active) continue;
+        int idx[3], inside = 1;
+        for (int a = 0; a < 3; a++) {
+            if (c[a] < p->lo[a] || c[a] > p->lo[a] + p->dim[a]) { inside = 0; break; }
+            int i = (int)floorf((c[a] - p->lo[a]) / p->cell[a]);
+            if (i < 0) i = 0;
+            if (i > p->n[a] - 1) i = p->n[a] - 1;
+            idx[a] = i;
+        }
+        if (!inside) continue;
+        unsigned int k = bf_key(idx[0], idx[1], idx[2]);
+        if (bf_cell_hp(bf, pi, k) <= 0 && !(fresh_alive && bf_is_fresh(bf, pi, k))) continue;
+        *key = k;
+        return pi;
+    }
+    return -1;
+}
+
+/* One face neighbour of a cell. 1 = a present cell (np,nk), 2 = anchored by that face, 0 = air/gone. */
+static inline int bf_neighbor(const BrickFracture *bf, int pi, unsigned int key, int dir, int fresh_alive,
+                              int *np, unsigned int *nk) {
+    const BfParent *p = &bf->parent[pi];
+    int idx[3]; bf_unkey(key, &idx[0], &idx[1], &idx[2]);
+    int a = dir >> 1, sgn = (dir & 1) ? 1 : -1;
+    int ni = idx[a] + sgn;
+    if (ni >= 0 && ni < p->n[a]) {
+        int j[3] = { idx[0], idx[1], idx[2] };
+        j[a] = ni;
+        unsigned int k2 = bf_key(j[0], j[1], j[2]);
+        if (bf_cell_hp(bf, pi, k2) > 0 || (fresh_alive && bf_is_fresh(bf, pi, k2))) { *np = pi; *nk = k2; return 1; }
+        return 0;
+    }
+    float c[3]; bf_cell_center(p, idx[0], idx[1], idx[2], c);
+    c[a] += (float)sgn * (p->cell[a] * 0.5f + 0.04f);
+    if (a == 1 && sgn < 0 && c[1] < 0.02f) return 2;                    /* resting on the ground */
+    unsigned int k3;
+    int q = bf_find_cell_at(bf, c[0], c[1], c[2], fresh_alive, &k3);
+    if (q >= 0) { *np = q; *nk = k3; return 1; }
+    if (bf->static_probe && bf->static_probe(c[0], c[1], c[2])) return 2;
+    return 0;
+}
+
+/* Flood from a start cell already added to `vis`. Returns 1 if anchored (or over budget), 0 if the
+ * region is closed; `out[0..*n)` is the region (complete only when 0 is returned). */
+static inline int bf_flood(const BrickFracture *bf, BfSet *vis, int pi, unsigned int key, int fresh_alive,
+                           BfCellRef *out, int *n) {
+    *n = 0;
+    out[(*n)++] = (BfCellRef){ (unsigned short)pi, key };
+    for (int head = 0; head < *n; head++) {
+        BfCellRef cur = out[head];
+        for (int dir = 0; dir < 6; dir++) {
+            int np; unsigned int nk;
+            int r = bf_neighbor(bf, cur.parent, cur.key, dir, fresh_alive, &np, &nk);
+            if (r == 2) return 1;
+            if (r != 1) continue;
+            int ins = bf_set_add(vis, np, nk);
+            if (ins < 0 || ins == 2) return 1;   /* full, or ran into a region an earlier flood already found supported */
+            if (ins == 0) continue;
+            if (*n >= BF_DET_BUDGET) return 1;
+            out[(*n)++] = (BfCellRef){ (unsigned short)np, nk };
+        }
+    }
+    return 0;
+}
+
+/* bf_detect_detached -- the whole pass; call once per changed frame BEFORE bf_rebuild so detached
+ * cells are carved in the same rebuild. Consumes bf->fresh. Returns the number of chunks made. */
+static inline int bf_detect_detached(BrickFracture *bf) {
+    static BfSet vis, vis2;
+    static BfCellRef cells[BF_DET_BUDGET], cells2[BF_DET_BUDGET];
+    int nf = bf->fresh_count;
+    if (nf <= 0) return 0;
+    bf_set_clear(&vis);
+    int made = 0;
+    for (int fi = 0; fi < nf; fi++) {
+        BfCellRef f = bf->fresh[fi];
+        for (int dir = 0; dir < 6; dir++) {
+            int np; unsigned int nk;
+            if (bf_neighbor(bf, f.parent, f.key, dir, 0, &np, &nk) != 1) continue;
+            vis.cur++;                                                   /* each flood is its own generation */
+            int ins = bf_set_add(&vis, np, nk);
+            if (ins < 0) { fi = nf; break; }
+            if (ins != 1) continue;                                      /* already covered by an earlier flood */
+            int n;
+            if (bf_flood(bf, &vis, np, nk, 0, cells, &n)) continue;      /* supported */
+            if (n > BF_CHUNK_CELLS) continue;                            /* too big to animate: stays put */
+            bf_set_clear(&vis2);
+            bf_set_add(&vis2, cells[0].parent, cells[0].key);
+            int n2;
+            int anch2 = bf_flood(bf, &vis2, cells[0].parent, cells[0].key, 1, cells2, &n2);
+            if (!anch2) {
+                /* authored-floating mass: it keeps its majority. Compare against the cells still standing (the
+                   region before the cut also counted the cells this very cut removed). */
+                int standing = 0;
+                for (int i = 0; i < n2; i++) if (bf_cell_hp(bf, cells2[i].parent, cells2[i].key) > 0) standing++;
+                if (n * 2 >= standing) continue;
+            }
+            /* budget checks: never half-detach */
+            int ok = (bf->rec_count + n <= BF_MAX_RECORDS);
+            for (int i = 0; i < n && ok; i++)
+                if (bf->parent[cells[i].parent].removed + n > BF_MAX_REMOVED_PER_PARENT) ok = 0;
+            if (!ok) continue;
+            int id = ++bf->next_chunk_id;
+            if (id > 255) { bf->next_chunk_id = 1; id = 1; }
+            bf->suppress_debris = 1;
+            for (int i = 0; i < n; i++) {
+                if (bf_set_cell_hp(bf, cells[i].parent, cells[i].key, 0, 1) <= 0) continue;
+                int r = bf_find_rec(bf, cells[i].parent, cells[i].key);
+                if (r >= 0) bf->rec[r].chunk = (unsigned char)id;
+                bf_push_net_chunk(bf, cells[i].parent, cells[i].key, 0, id);
+                bf_chunk_note(bf, id, cells[i].parent, cells[i].key);
+            }
+            bf->suppress_debris = 0;
+            made++;
+        }
+    }
+    bf->fresh_count = 0;
+    return made;
 }
 
 /* ---------------------------------------------------------------------------------------------
@@ -462,7 +748,7 @@ typedef struct {
     int rec_count;
     int first_rec[BF_MAX_PARENTS];
     int removed[BF_MAX_PARENTS];
-    int ev_count, net_count, pieces_dirty;
+    int ev_count, net_count, pieces_dirty, chunk_count, fresh_count, shard_count;
 } BfCheckpoint;
 
 static inline void bf_checkpoint(const BrickFracture *bf, BfCheckpoint *cp) {
@@ -470,6 +756,7 @@ static inline void bf_checkpoint(const BrickFracture *bf, BfCheckpoint *cp) {
     cp->rec_count = bf->rec_count;
     for (int i = 0; i < bf->parent_count; i++) { cp->first_rec[i] = bf->parent[i].first_rec; cp->removed[i] = bf->parent[i].removed; }
     cp->ev_count = bf->ev_count; cp->net_count = bf->net_count; cp->pieces_dirty = bf->pieces_dirty;
+    cp->chunk_count = bf->chunk_count; cp->fresh_count = bf->fresh_count; cp->shard_count = bf->shard_count;
 }
 
 static inline void bf_restore(BrickFracture *bf, const BfCheckpoint *cp) {
@@ -477,6 +764,7 @@ static inline void bf_restore(BrickFracture *bf, const BfCheckpoint *cp) {
     bf->rec_count = cp->rec_count;
     for (int i = 0; i < bf->parent_count; i++) { bf->parent[i].first_rec = cp->first_rec[i]; bf->parent[i].removed = cp->removed[i]; }
     bf->ev_count = cp->ev_count; bf->net_count = cp->net_count; bf->pieces_dirty = cp->pieces_dirty;
+    bf->chunk_count = cp->chunk_count; bf->fresh_count = cp->fresh_count; bf->shard_count = cp->shard_count;
 }
 
 /* ---------------------------------------------------------------------------------------------
@@ -495,13 +783,35 @@ static inline int bf_apply_net(BrickFracture *bf, int parent, unsigned int key, 
     return bf_set_cell_hp(bf, parent, key, hp, 1) > 0;
 }
 
+/* bf_apply_net_chunk -- bf_apply_net for an entry that may carry a chunk id. A cell going GONE that
+ * way is a piece of wall that fell away whole: it is queued as part of that rigid chunk instead of
+ * throwing flakes. (Refresh entries always carry chunk 0, so a late joiner never replays old falls.) */
+static inline int bf_apply_net_chunk(BrickFracture *bf, int parent, unsigned int key, int hp, int chunk) {
+    if (parent < 0 || parent >= bf->parent_count || !bf->parent[parent].active) return 0;
+    int ix, iy, iz; bf_unkey(key, &ix, &iy, &iz);
+    const BfParent *p = &bf->parent[parent];
+    if (ix >= p->n[0] || iy >= p->n[1] || iz >= p->n[2]) return 0;
+    if (key >> 30) return 0;
+    if (hp < 0 || hp > p->max_hp) return 0;
+    int falls = (chunk != 0 && hp == 0 && bf_cell_hp(bf, parent, key) > 0);
+    bf->suppress_debris = falls;
+    int rc = bf_set_cell_hp(bf, parent, key, hp, 1);
+    bf->suppress_debris = 0;
+    if (rc > 0 && falls) {
+        int r = bf_find_rec(bf, parent, key);
+        if (r >= 0) bf->rec[r].chunk = (unsigned char)chunk;
+        bf_chunk_note(bf, chunk, parent, key);
+    }
+    return rc > 0;
+}
+
 /* bf_next_refresh -- walks the damaged/gone records round-robin so the server can re-send the whole
  * damaged set a few entries per packet over time. Returns 0 when there are no records. */
 static inline int bf_next_refresh(BrickFracture *bf, BfNetEntry *out) {
     if (bf->rec_count <= 0) return 0;
     if (bf->refresh_cursor >= bf->rec_count) bf->refresh_cursor = 0;
     const BfRec *r = &bf->rec[bf->refresh_cursor++];
-    out->parent = r->parent; out->key = r->key; out->hp = r->hp;
+    out->parent = r->parent; out->key = r->key; out->hp = r->hp; out->chunk = 0;
     return 1;
 }
 
