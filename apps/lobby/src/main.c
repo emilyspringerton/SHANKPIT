@@ -13952,6 +13952,19 @@ int main(int argc, char* argv[]) {
         accumulator += frame_time;
 
         SDL_Event e;
+        {
+            /* SDL only delivers SDL_TEXTINPUT (the ':' that opens PELLEGRINO's address bar, typed URL
+               characters, the GFD terminal's line) while text input is started; nothing started it for
+               the phone, so those apps never saw a printable key. Mirror the open phone app onto it. */
+            static int phone_text_on = 0;
+            int want = g_story_phone.open &&
+                       (g_story_phone.app == BP_APP_PELLEGRINO || g_story_phone.app == BP_APP_GFD);
+            if (want && !phone_text_on) { SDL_StartTextInput(); phone_text_on = 1; }
+            else if (!want && phone_text_on) {
+                phone_text_on = 0;
+                if (!g_chat_open && !g_orb_open) SDL_StopTextInput();
+            }
+        }
         while(SDL_PollEvent(&e)) {
             if(e.type == SDL_QUIT) { lobby_level_snapshot(0); running = 0; }
             if(e.type == SDL_CONTROLLERDEVICEADDED && !g_shank_pad) {
