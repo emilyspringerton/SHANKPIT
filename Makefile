@@ -123,7 +123,8 @@ $(BIN_DIR)/editor_pf_bridge.win.o: $(EDITOR_GAME_DIR)/runtime/prnfmt_bridge.c | 
 # Pre-built objects linked at the end (NOT in LOBBY_SRC): needs its own mbedTLS copts/includes that
 # the rest of the lobby must never see. mbedTLS source comes from ../PELLEGRINO's pinned fetch script.
 PGB_DIR     := packages/pellegrino_browser_embed
-PGB_MBEDTLS  = $(shell cd ../PELLEGRINO && bash scripts/fetch_mbedtls.sh)
+PELLEGRINO_DIR ?= ../PELLEGRINO
+PGB_MBEDTLS  = $(shell [ -d $(PELLEGRINO_DIR) ] && cd $(PELLEGRINO_DIR) && bash scripts/fetch_mbedtls.sh 2>/dev/null)
 PGB_DEFS    := -DPARENA_WITH_TLS -DPARENA_TLS_STATIC_HEAP -DPARENA_TLS_HEAP_STATS -DPARENA_WITH_QUIC_CRYPTO "-DMBEDTLS_USER_CONFIG_FILE=\"pellegrino_user_config.h\""
 PGB_OBJ_DIR := $(BIN_DIR)/pgb
 PGB_MBED_OBJS = $(patsubst %.c,$(PGB_OBJ_DIR)/mbed_%.o,$(notdir $(wildcard $(PGB_MBEDTLS)/library/*.c)))
@@ -239,7 +240,7 @@ ea-windows: $(BIN_DIR) $(EDITOR_GAME_OBJS_WIN)
 	# into $(SDL2_MINGW_PREFIX) -- same one PITVIPER/IDUNA.GAME/EDITOR.GAME's own standalone
 	# Windows builds already fetch (see .github/workflows/release.yml's own "Install Dependencies"
 	# step); the base SDL2 mingw devel kit alone does not ship it.
-	x86_64-w64-mingw32-gcc $(CFLAGS) $(INCLUDES) -I$(SDL2_MINGW_PREFIX)/include $(LOBBY_SRC) $(EDITOR_GAME_OBJS_WIN) \
+	x86_64-w64-mingw32-gcc $(CFLAGS) $(INCLUDES) -I$(SDL2_MINGW_PREFIX)/include $(LOBBY_SRC) $(EDITOR_GAME_OBJS_WIN) packages/pellegrino_browser_embed/phone_browser_stub.c \
 		-o $(BIN_DIR)/shank_lobby.exe \
 		-L$(SDL2_MINGW_PREFIX)/lib -lSDL2 -lSDL2_ttf -lopengl32 -lglu32 -lm -static-libgcc \
 		-lws2_32 -ldinput8 -ldxguid -ldxerr8 -luser32 -lgdi32 -lwinmm -limm32 -lole32 -loleaut32 -lshell32 -lsetupapi -lversion -luuid
