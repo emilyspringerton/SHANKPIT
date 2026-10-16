@@ -63,6 +63,12 @@ static unsigned int g_rng = 12345u;
 static unsigned int rnd(void) { g_rng = g_rng * 1664525u + 1013904223u; return g_rng >> 8; }
 static float rndf(void) { return (float)(rnd() % 100000u) / 100000.0f; }
 
+/* Exactness invariants hold only for the exact decomposition; over budget the rebuild is coarse. */
+static void check_exact(BrickFracture *bf, int pi) {
+    if (bf_rebuild_at(bf, 0)) check_invariants(bf, pi);
+    else bf_rebuild(bf);
+}
+
 int main(void) {
     BrickFracture *bf = (BrickFracture *)malloc(sizeof(BrickFracture));
     BrickFracture *bf2 = (BrickFracture *)malloc(sizeof(BrickFracture));
@@ -113,7 +119,7 @@ int main(void) {
     CHECK(bf_rebuild(bf) == 1);
     CHECK(bf->piece_count == 3);
     CHECK(fabsf(piece_volume_sum(bf, 0) - 189.0f) < 1e-2f);
-    check_invariants(bf, 0);
+    check_exact(bf, 0);
     CHECK(bf->pieces_dirty == 0);
     /* piece 0 is cell column 0 (x -6..-3), full height, centre (-4.5,3,0) */
     CHECK(fabsf(bf->piece[0].x + 4.5f) < 1e-5f && fabsf(bf->piece[0].h - 6.0f) < 1e-5f);
@@ -144,7 +150,7 @@ int main(void) {
     CHECK(bf_rebuild(bf) == 1);
     CHECK(bf->piece_count == 2);
     CHECK(fabsf(piece_volume_sum(bf, 0) - 2.0f * 3.0f * 6.0f * 3.0f) < 1e-2f);
-    check_invariants(bf, 0);
+    check_exact(bf, 0);
     /* blades and a flashlight do nothing */
     make_wall(bf);
     CHECK(bf_damage_sphere(bf, 0.0f, 3.0f, 0.0f, 9.0f, 0, 200, -1, 0) == 0 && bf->rec_count == 0);
@@ -197,40 +203,42 @@ int main(void) {
         if (bf_rebuild(bf)) {
             accepted++;
             CHECK(bf->piece_count <= BF_MAX_PIECES);
-            if (step % 25 == 0) { check_invariants(bf, 0); check_invariants(bf, 1); }
+            if (step % 25 == 0) { check_exact(bf, 0); check_exact(bf, 1); }
         } else {
             rolled++;
             bf_restore(bf, cp);
             CHECK(bf_rebuild(bf) == 1);
         }
     }
-    check_invariants(bf, 0); check_invariants(bf, 1);
+    check_exact(bf, 0); check_exact(bf, 1);
     CHECK(accepted > 0);
     printf("fuzz: %d accepted, %d rolled back, %d records, %d pieces, %d removed\n", accepted, rolled,
            bf->rec_count, bf->piece_count, bf->parent[0].removed + bf->parent[1].removed);
 
-    /* 10. forced overflow rolls back whole: one-cell craters scattered through a huge parent
-           until the piece budget cannot hold the next one */
+    /* 10. forced overflow degrades, it does not freeze: one-cell craters scattered through a huge
+           parent until the exact piece set no longer fits the budget; the rebuild must then still
+           succeed (coarser blocks) and stay within budget, and destruction keeps being accepted */
     bf_reset(bf);
     CHECK(bf_add_parent(bf, 0, 0.0f, 150.0f, 0.0f, 300.0f, 300.0f, 300.0f) == 1);
-    int overflowed = 0;
-    for (int i = 0; i < 2000 && !overflowed; i++) {
+    int overflowed = 0, after_overflow = 0;
+    for (int i = 0; i < 1100 && after_overflow < 12; i++) {
         float cx = -148.0f + rndf() * 296.0f, cy = 2.0f + rndf() * 296.0f, cz = -148.0f + rndf() * 296.0f;
-        bf_checkpoint(bf, cp);
         unsigned int pk = 0;
         int ppi = bf_find_parent_at(bf, cx, cy, cz, &pk);
         if (ppi < 0) continue;
         bf_damage_sphere(bf, cx, cy, cz, 0.5f, 6, 200, ppi, pk);   /* primary cell: guaranteed gone */
-        if (!bf_rebuild(bf)) {
+        if (!bf_rebuild_at(bf, 0)) {
             overflowed = 1;
-            int removed_during = bf->parent[0].removed;
-            bf_restore(bf, cp);
-            CHECK(bf->parent[0].removed < removed_during);
+            after_overflow++;
             CHECK(bf_rebuild(bf) == 1);
-            check_invariants(bf, 0);
+            CHECK(bf->piece_count > 0 && bf->piece_count <= BF_MAX_PIECES);
+        } else {
+            bf_rebuild(bf);
         }
     }
-    CHECK(overflowed);
+    CHECK(overflowed && after_overflow > 10);
+    bf_rebuild(bf);
+    CHECK(bf->piece_count > 0 && bf->piece_count <= BF_MAX_PIECES);
 
     /* 9. per-parent kinds: concrete / wood / glass walls (same 3x3x3 box each), AR round (20) at
           the cell centre. Hand-derived from brick_rules.prn: wood (mat 1, 20% resist -> 16,

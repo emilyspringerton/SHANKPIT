@@ -3,6 +3,14 @@
 - **feat(lobby): BIG_O systems wired into gameplay** (founder: "wire it all into the gameplay"): `H` hoverboards, party XP split on AI kills, Act I Mission 1 + MISSION phone app in story play, GFD say gate; new `witness_ai_sim()` accessor; mission/party/chat/hoverboard rules added to LOBBY_SRC. Compiles+links against SDL2 headers; not run (no display).
 - **feat(bigo-merge): unify BIG_O into SHANKPIT** (founder: "we really need to unify shankpit and BIG_O ... the phone all the subsystems"): phone.h gains GFD terminal / IDUNA / ARPANET / TECHTREE apps + costume fx (lobby draws and routes input); ported party, say-chat, hoverboard, mission (a1m1), avian-live with BIG_O's tests (`make test-bigo-merge`); witness_sim gains `snoop`, witness_rules re-synced from PARENA. Not wired into lobby gameplay yet; lobby not compiled here (no SDL2). See docs2/specs/BIGO_ENGINE_MERGE_NORTHSTAR.md §2p.
 
+## 2026-10-16
+
+- fix(brick-fracture): destruction no longer stops in busy/complex levels. The shared 900-piece
+  collision budget used to roll every further shot back silently once enough walls were holed
+  (also: 160 removed cells/parent and a 4096-record table). `bf_rebuild` now falls back to
+  progressively coarser blocks instead of failing, removed-per-parent is 1024, the record table is
+  16384 with compaction of merely-cracked cells when full. Test updated (`brick_fracture_test.c`).
+
 ## 2026-10-15
 
 - **feat(edu): programmable NOCK level widgets bound to EduVM** (card #660; founder-pasted plan for "interactive widgets inside the level editor so players can program the world"). New `edu_widgets` level array (`entity_id`, `machine_type` gate/bridge/portal/crate/plate, `initial_state`, `memory_address`, `x/y/z`, `radius`, `box_index`) parsed by `level_boxes.h`; EduVM gains `set_state(id,v)`, `set_reg(reg,v)`, `read_sensor(reg)`, `read_state(id)` over a 16-slot widget table (register clashes rejected, plates host-written only, unwired reads 0, world reset restores authored states). Lobby binds widgets on level load, plates sense players, `box_index` widgets move their wall like a story door, E near a widget opens the Orb on a seeded "Gate Sequencer" slot. New level `examples/programmable/TUTORIAL_PROGRAMMABLE.json`. Verified: `make test-edu-widgets`, existing eduvm/array/zone/baked-level tests, `make server`, stubbed-lobby harness against the real VM. NOT run in a live lobby (no SDL2/GLU); no NOCK editor/IDUNA store support for `edu_widgets` yet. Adapted from the paste: its `level_loader.h` doesn't exist (schema lives in `level_boxes.h`), and ids are strings while registers are ints, so `read_sensor` takes a register and `read_state` takes an id.

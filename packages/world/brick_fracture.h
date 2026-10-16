@@ -50,13 +50,13 @@ int on_brick_cell_max_hp(int brick_kind);
  * flattened AFTER the root walls, past index 127 -- nothing beyond the first 128 boxes was ever destructible
  * (no damage, no render). Now matches LEVEL_BOXES_MAX; the wire already carries a u16 parent. */
 #define BF_MAX_PARENTS            2048
-#define BF_MAX_RECORDS            4096
+#define BF_MAX_RECORDS            16384
 #define BF_MAX_PIECES             900   /* = physics.h CUSTOM_LEVEL_FRACTURE_SLOTS */
 #define BF_MAX_EVENTS             256
 #define BF_MAX_NET_DIRTY          1024
 #define BF_CELL_TARGET            3.0f
 #define BF_AXIS_MAX               1000
-#define BF_MAX_REMOVED_PER_PARENT 160
+#define BF_MAX_REMOVED_PER_PARENT 1024
 #define BF_BRICK_KIND             0
 /* Destructible kinds (PARENA brick_rules.prn on-brick-paper-material / on-brick-cell-max-hp). */
 #define BF_KIND_BRICK    0
@@ -221,6 +221,28 @@ static inline void bf_push_net(BrickFracture *bf, int parent, unsigned int key, 
     bf->net_count++;
 }
 
+/* bf_compact_records -- the record table is full: forget every merely-damaged (hp>0) cell, keeping
+ * all gone cells (those ARE the geometry). Forgotten cells read as undamaged again, so the client
+ * is told via the net queue. Returns how many records were freed. Only gone cells are permanent,
+ * so destruction is bounded by the level's cell count, not by this table. */
+static inline int bf_compact_records(BrickFracture *bf) {
+    int keep = 0, freed = 0;
+    for (int i = 0; i < bf->parent_count; i++) bf->parent[i].first_rec = -1;
+    for (int r = 0; r < bf->rec_count; r++) {
+        BfRec rc = bf->rec[r];
+        if (rc.hp == 0) {
+            bf->rec[keep] = rc;
+            bf->rec[keep].next = bf->parent[rc.parent].first_rec;
+            bf->parent[rc.parent].first_rec = keep++;
+        } else {
+            freed++;
+        }
+    }
+    bf->rec_count = keep;
+    bf->refresh_cursor = 0;
+    return freed;
+}
+
 /* bf_set_cell_hp -- the one place a cell's HP changes. Emits events, queues the network entry and
  * keeps the removed count / dirty flag honest. Returns 1 if anything changed, -1 if there was no
  * room for a record, 0 if unchanged. */
@@ -233,7 +255,7 @@ static inline int bf_set_cell_hp(BrickFracture *bf, int parent, unsigned int key
     int before = (r < 0) ? pmax : (int)bf->rec[r].hp;
     if (before == hp) return 0;
     if (r < 0) {
-        if (bf->rec_count >= BF_MAX_RECORDS) return -1;
+        if (bf->rec_count >= BF_MAX_RECORDS && bf_compact_records(bf) == 0) return -1;
         r = bf->rec_count++;
         bf->rec[r].key = key; bf->rec[r].hp = (unsigned char)pmax;
         bf->rec[r].parent = (unsigned short)parent;
@@ -352,6 +374,7 @@ typedef struct {
     int rem[BF_MAX_REMOVED_PER_PARENT][3];
     int nrem;
     int overflow;
+    int coarse;      /* >0: blocks no larger than this many cells on every axis are emitted/dropped whole */
 } BfBuild;
 
 static inline void bf_emit_piece(BfBuild *b, const int lo[3], const int hi[3]) {
@@ -382,6 +405,13 @@ static inline void bf_bisect(BfBuild *b, const int lo[3], const int hi[3]) {
     }
     if (inside == vol) return;                      /* entirely gone: nothing to emit */
     if (inside == 0) { bf_emit_piece(b, lo, hi); return; }
+    if (b->coarse > 0 && hi[0] - lo[0] <= b->coarse && hi[1] - lo[1] <= b->coarse && hi[2] - lo[2] <= b->coarse) {
+        /* over-budget approximation: a mostly-solid block stays one solid piece, a mostly-gone one
+           is dropped. The exact per-cell damage records are untouched, so geometry sharpens again
+           as soon as the budget frees up (match reset, other walls fully gone). */
+        if (inside * 2 < vol) bf_emit_piece(b, lo, hi);
+        return;
+    }
     int axis = 0, best = hi[0] - lo[0];
     for (int a = 1; a < 3; a++) if (hi[a] - lo[a] > best) { best = hi[a] - lo[a]; axis = a; }
     int mid = lo[axis] + (hi[axis] - lo[axis]) / 2;
@@ -391,13 +421,10 @@ static inline void bf_bisect(BfBuild *b, const int lo[3], const int hi[3]) {
     bf_bisect(b, lo2, hi);
 }
 
-/* bf_rebuild -- recomputes the surviving-volume pieces of every fractured parent, in ascending
- * parent order. Returns 1 on success; 0 if the piece budget overflowed (pieces are then left
- * empty and the caller must roll the damage back -- see bf_checkpoint/bf_restore). */
-static inline int bf_rebuild(BrickFracture *bf) {
+static inline int bf_rebuild_at(BrickFracture *bf, int coarse) {
     bf->piece_count = 0;
     BfBuild b;
-    b.bf = bf; b.overflow = 0;
+    b.bf = bf; b.overflow = 0; b.coarse = coarse;
     for (int pi = 0; pi < bf->parent_count; pi++) {
         const BfParent *p = &bf->parent[pi];
         if (!p->active || p->removed <= 0) continue;
@@ -413,6 +440,19 @@ static inline int bf_rebuild(BrickFracture *bf) {
     }
     bf->pieces_dirty = 0;
     return 1;
+}
+
+/* bf_rebuild -- recomputes the surviving-volume pieces of every fractured parent, in ascending
+ * parent order. Exact first; if the shared piece budget overflows it retries with progressively
+ * coarser blocks (1,2,4,... cells) so destruction keeps working in a busy level instead of
+ * freezing -- the geometry just gets approximate. Returns 1 on success; 0 only if even the
+ * coarsest pass overflows (pieces are then left empty and the caller must roll the damage back --
+ * see bf_checkpoint/bf_restore). */
+static inline int bf_rebuild(BrickFracture *bf) {
+    if (bf_rebuild_at(bf, 0)) return 1;
+    for (int c = 1; c <= BF_AXIS_MAX; c *= 2)
+        if (bf_rebuild_at(bf, c)) return 1;
+    return 0;
 }
 
 /* Checkpoint/restore of the damage state (records + parents), so an over-budget damage call can be
