@@ -8726,9 +8726,14 @@ static void draw_helicopter_model(const HelicopterState *h) {
     if (!h || !h->active) return;
     glPushMatrix();
     glTranslatef(h->x, h->y, h->z);
-    glRotatef(180.0f - norm_yaw_deg(h->yaw), 0, 1, 0);
-    glRotatef(h->roll_visual, 0, 0, 1);
-    glRotatef(h->pitch_visual, 1, 0, 0);
+    /* The model's nose is +Z (canopy at +1.4, tail boom/rotor at -Z). Sim forward is (-sin yaw, -cos yaw), so
+       the model must be turned by 180 + yaw. It used to be 180 - yaw: the mesh turned the MIRROR way from the
+       flight model, so pedals rotated the picture while "forward" kept thrusting along the true heading.
+       Because the nose is +Z, the pitch/roll visuals (defined for a -Z nose) are negated to stay nose-down /
+       bank-right. */
+    glRotatef(180.0f + norm_yaw_deg(h->yaw), 0, 1, 0);
+    glRotatef(-h->roll_visual, 0, 0, 1);
+    glRotatef(-h->pitch_visual, 1, 0, 0);
 
     glColor3f(0.25f, 0.7f, 0.25f); draw_box(3.8f, 1.2f, 6.0f);
     glPushMatrix(); glTranslatef(0.0f, 0.4f, -3.5f); glColor3f(0.2f, 0.6f, 0.2f); draw_box(0.5f, 0.4f, 6.0f); glPopMatrix();

@@ -1,5 +1,9 @@
 ## 2026-10-16
 
+- fix(heli): the helicopter MESH turned the mirror way from the flight model (founder: "rotating the helicopter is visual only ... forward acts as though the nose is still pointed the other direction"). `draw_helicopter_model` rotated by `180 - yaw` but the nose is +Z and sim forward is `(-sin yaw, -cos yaw)`; now `180 + yaw`, and pitch/roll visuals negated for the +Z nose (forward flight was nose-up, right bank dipped the left side). Reverted my wrong earlier change that rotated velocity with the nose (momentum is meant to persist through a turn). Not run live (no GLU/display); math only.
+
+## 2026-10-16
+
 - fix(heli): chase camera pointed UP instead of down, so the helicopter sat below the screen (founder: "its below the screen ... should be much closer to the orbit and hero cams"). The boom pitch sign was inverted against the normal cam convention (negative pitch = look down). Also pulled in from 32/13 to 20/7.5 (between director Hero 11/4.5 and Orbit 28/9). `apps/lobby/src/main.c`; not compiled/feel-tested on this box (no GLU/display).
 
 ## 2026-10-16
