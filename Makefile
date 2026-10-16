@@ -119,12 +119,34 @@ $(BIN_DIR)/editor_pf_fmt.win.o: $(EDITOR_GAME_DIR)/src/fmt.c | $(BIN_DIR)
 $(BIN_DIR)/editor_pf_bridge.win.o: $(EDITOR_GAME_DIR)/runtime/prnfmt_bridge.c | $(BIN_DIR)
 	$(MINGW_CC) -std=c99 -w $(EDITOR_GAME_PRNFMT) -I$(EDITOR_GAME_DIR)/runtime -I$(EDITOR_GAME_DIR)/src -I$(SDL2_MINGW_PREFIX)/include -c $< -o $@
 
+# ---- PELLEGRINO in-phone browser (SHANKPIT-PELLEGRINO-APP-02) ----
+# Pre-built objects linked at the end (NOT in LOBBY_SRC): needs its own mbedTLS copts/includes that
+# the rest of the lobby must never see. mbedTLS source comes from ../PELLEGRINO's pinned fetch script.
+PGB_DIR     := packages/pellegrino_browser_embed
+PGB_MBEDTLS  = $(shell cd ../PELLEGRINO && bash scripts/fetch_mbedtls.sh)
+PGB_DEFS    := -DPARENA_WITH_TLS -DPARENA_TLS_STATIC_HEAP -DPARENA_TLS_HEAP_STATS -DPARENA_WITH_QUIC_CRYPTO "-DMBEDTLS_USER_CONFIG_FILE=\"pellegrino_user_config.h\""
+PGB_OBJ_DIR := $(BIN_DIR)/pgb
+PGB_MBED_OBJS = $(patsubst %.c,$(PGB_OBJ_DIR)/mbed_%.o,$(notdir $(wildcard $(PGB_MBEDTLS)/library/*.c)))
+PGB_OBJS     = $(PGB_OBJ_DIR)/phone_browser_embed.o $(PGB_OBJ_DIR)/monocypher.o $(PGB_MBED_OBJS)
+
+$(PGB_OBJ_DIR):
+	mkdir -p $@
+
+$(PGB_OBJ_DIR)/phone_browser_embed.o: $(PGB_DIR)/phone_browser_embed.c $(PGB_DIR)/pellegrino_gen.inc | $(PGB_OBJ_DIR)
+	$(CC) -std=gnu99 -O2 -w $(PGB_DEFS) -I$(PGB_DIR) -I$(PGB_DIR)/runtime -I$(PGB_MBEDTLS)/include -c $< -o $@
+
+$(PGB_OBJ_DIR)/monocypher.o: $(PGB_DIR)/runtime/aead/monocypher.c | $(PGB_OBJ_DIR)
+	$(CC) -std=gnu99 -O2 -w -c $< -o $@
+
+$(PGB_OBJ_DIR)/mbed_%.o: | $(PGB_OBJ_DIR)
+	$(CC) -std=gnu99 -O2 -w $(PGB_DEFS) -I$(PGB_DIR)/runtime -I$(PGB_MBEDTLS)/include -I$(PGB_MBEDTLS)/library -c $(PGB_MBEDTLS)/library/$*.c -o $@
+
 # ---- CLIENT / LOBBY ----
 lobby: $(LOBBY_BIN)
 
-$(LOBBY_BIN): $(LOBBY_SRC) $(EDITOR_GAME_OBJS) | $(BIN_DIR)
+$(LOBBY_BIN): $(LOBBY_SRC) $(EDITOR_GAME_OBJS) $(PGB_OBJS) | $(BIN_DIR)
 	@echo "🔨 Building Lobby Client..."
-	$(CC) $(CFLAGS) $(INCLUDES) $(LOBBY_SRC) $(EDITOR_GAME_OBJS) -o $@ $(LIBS_GL) -lSDL2_ttf
+	$(CC) $(CFLAGS) $(INCLUDES) $(LOBBY_SRC) $(EDITOR_GAME_OBJS) $(PGB_OBJS) -o $@ $(LIBS_GL) -lSDL2_ttf
 
 # ---- OS menu through PELLEGRINO (kanban #627) ----
 # Headless (SDL_VIDEODRIVER=dummy): builds the HTML menu, paints it with PELLEGRINO, clicks every tile, checks the

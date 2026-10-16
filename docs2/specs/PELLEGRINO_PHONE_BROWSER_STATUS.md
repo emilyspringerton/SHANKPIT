@@ -74,7 +74,17 @@ scratch.**
   production TLS/QUIC flags (`-DPARENA_WITH_TLS -DPARENA_TLS_STATIC_HEAP -DPARENA_TLS_HEAP_STATS
   -DPARENA_WITH_QUIC_CRYPTO`, `mbedtls` headers, no debug macros).
 
-## What's left (real, named, not done)
+## UPDATE 2026-10-16 (finish-line pass)
+
+All three repos were clean/committed (nothing broken). Items 1, 2, 3, 6 below are now DONE: Makefile wiring
+(`PGB_OBJS`) added and `make lobby` links (cloned `../EDITOR.GAME`, installed `libsdl2-ttf-dev`); live Xvfb
+`--zombies` run showed the phone's PELLEGRINO tile rendering real `example.com` content, URL typing
+navigating, and Esc returning to the phone home grid; README/CHANGELOG updated. Still open: 4 (mouse),
+5 (CI/release.yml, Windows/mingw objects), and two observations — `h3://cloudflare-quic.com/` showed
+"could not connect (5 s timeout)" in-game (worked in the standalone harness; maybe sandbox UDP or a
+mistyped URL, unconfirmed), and the example.com page renders washed out (pale text on white).
+
+## What was left (original list; see UPDATE above)
 
 1. **No BUILD.bazel or Makefile wiring for `packages/pellegrino_browser_embed` yet.** The package
    exists and compiles standalone (verified above), but nothing in `SHANKPIT/Makefile`'s `LOBBY_SRC`

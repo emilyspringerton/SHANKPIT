@@ -65,6 +65,20 @@ display) check it; `SHANKPIT_OS_MENU=classic` selects the old grid. Regenerate t
 isolation; the whole lobby has not been built/run with it on the dev box yet, and the skin/level/spray overlays,
 title and the small corner buttons are still hand-drawn GL.
 
+## In-phone PELLEGRINO browser (2026-10-16)
+
+The in-fiction SHANKPHONE (open with `P` during a match) has a `PELLEGRINO` tile that runs a real,
+embedded browser inside the phone panel — not the Apps-page launcher tile above (that one spawns a
+separate window). `packages/pellegrino_browser_embed/` wraps PELLEGRINO's `embed-nav-*` API (TLS 1.2/1.3
+and HTTP/3-over-QUIC; no HTTP/2) and is linked into `shank_lobby` by `make lobby` as pre-built objects
+(mbedTLS fetched via `../PELLEGRINO/scripts/fetch_mbedtls.sh`; needs sibling `../PELLEGRINO`,
+`../PARENA`, `../EDITOR.GAME`, and `libsdl2-ttf-dev`). Regenerate the package with
+`scripts/gen_pellegrino_browser_embed.sh`. Status: verified under Xvfb in `--zombies` — page renders in
+the panel (live `https://example.com/`), typing a URL navigates, Esc returns to the phone home grid.
+Limits: keyboard-only (no mouse), `h3://` not yet confirmed in-game (a standalone harness did fetch
+`h3://cloudflare-quic.com/`), rendering of the example.com page looks washed out, Windows/`release.yml`
+not wired. Details: `docs2/specs/PELLEGRINO_PHONE_BROWSER_STATUS.md`.
+
 ## Apps page (2026-09-22, platform pivot)
 
 The lobby menu now has a second page — a small "APPS >" button next to the title flips from the
