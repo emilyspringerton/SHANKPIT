@@ -1167,3 +1167,7 @@ generated into `packages/simulation/chest_rules.c`; `make regen-chest-rules` / `
 `packages/simulation/chests.c`. Tests: `make test-chests` (headless, hand-derived) and `make test-chest-rules` in PARENA.
 **Honest limits:** headless-tested only, never seen in a live match; client-local (not server-authoritative) like gun pickups;
 NOCK placement of chests, WOTAN rare-drop integration and EDUSCRIPT scripting are NOT built yet.
+
+## GFD phone chat (2026-10-16)
+
+The phone's GFD app is a live chat terminal on IDUNA's cross-game chat bus. Sign in first (phone > IDUNA), then type in GFD and press Enter: every SHANKPIT player's GFD phone sees the line under your IDUNA display name, and so does everyone in the GFD MUD via its `global` (`gc`) command, whose messages show up on the phones as `[GFD] name: ...`. Polling is every 3s, so expect a few seconds of latency. Code: `packages/gfd_chat/gfd_chat.h` (parsing unit-tested). Status: verified with two clients and a simulated MUD against a fake chat-bus server; not yet against the live IDUNA, which needs the new `shankpit` channel deployed. Windows builds have a no-op stub. The name is your IDUNA display name, not a GFD character name.

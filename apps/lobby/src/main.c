@@ -52,6 +52,7 @@
 #include "../../../packages/simulation/tyler_vh04_coldopen.h"
 #include "../../../packages/reflux/reflux_mod_host.h"
 #include "../../../packages/world/level_boxes.h"
+#include "../../../packages/gfd_chat/gfd_chat.h" /* GFD phone app <-> cross-game chat bus (IDUNA /chat/messages) */
 #include "../../../packages/iduna_login/iduna_login.h" /* #623: IDUNA SSO login (native loopback profile) */
 #include "../../../packages/pellegrino_embed/os_menu_gl.h" /* #627: OS menu = HTML+CSS painted by PELLEGRINO */
 #include "../../../packages/pellegrino_browser_embed/phone_browser_gl.h" /* SHANKPIT-PELLEGRINO-APP-02: real embedded browser phone app */
@@ -12157,6 +12158,7 @@ static void lobby_iduna_login_tick(void) {
         snprintf(g_iduna_token, sizeof g_iduna_token, "%s", g_iduna_login.token);
         snprintf(g_iduna_name, sizeof g_iduna_name, "%s", g_iduna_login.display_name);
         snprintf(g_iduna_status, sizeof g_iduna_status, "LOGGED IN: %.60s", g_iduna_name[0] ? g_iduna_name : "PLAYER");
+        { const char *b = getenv("IDUNA_LOGIN_BASE"); if (b && *b) gfd_chat_set_base(b); gfd_chat_set_token(g_iduna_token); }
     } else {
         snprintf(g_iduna_status, sizeof g_iduna_status, "LOGIN TIMED OUT");
     }
@@ -12194,6 +12196,16 @@ static void phone_iduna_start(void) {
     else phone_iduna_set_error(&g_story_phone, g_iduna_status);
 }
 static void phone_iduna_pump(void) {
+    GfdChatMsg gm;
+    while (gfd_chat_take(&gm)) {   /* inbound bus chat -> GFD phone terminal + chat pane */
+        char line[BP_TERM_LINE_LEN + 64];
+        snprintf(line, sizeof line, "%s%.30s: %s", strcmp(gm.source, "shankpit_client") == 0 ? "" : "[GFD] ", gm.name, gm.body);
+        chat_pane_push(line);
+        for (size_t o = 0; o < strlen(line); o += BP_TERM_LINE_LEN - 1) {
+            char seg[BP_TERM_LINE_LEN]; snprintf(seg, sizeof seg, "%.*s", BP_TERM_LINE_LEN - 1, line + o);
+            phone_term_line(&g_story_phone, seg);
+        }
+    }
     if (g_iduna_login_active) lobby_iduna_login_tick();
     if (g_story_phone.iduna_stage == BP_IDUNA_PENDING && !g_iduna_login_active) {
         if (g_iduna_token[0]) phone_iduna_set_linked(&g_story_phone, g_iduna_name[0] ? g_iduna_name : "PLAYER");
@@ -14239,10 +14251,17 @@ int main(int argc, char* argv[]) {
                                 int n = phone_term_take(&g_story_phone, say, BP_TERM_INPUT_MAX);
                                 say[n] = '\0';
                                 if (!chat_say_len_ok(n)) { phone_term_line(&g_story_phone, "(message rejected: length)"); continue; }
+                                /* Cross-game chat bus: posted under the player's IDUNA display name so every other
+                                   SHANKPIT GFD phone (and the GFD MUD's `global` channel) sees it. */
+                                const char *gname = g_iduna_name[0] ? g_iduna_name : "PLAYER";
+                                if (gfd_chat_send(gname, say) != 0) {
+                                    phone_term_line(&g_story_phone, "(sign in first: phone > IDUNA)");
+                                    continue;
+                                }
                                 char echo[BP_TERM_LINE_LEN];
-                                snprintf(echo, sizeof(echo), "you: %s", say);
+                                snprintf(echo, sizeof(echo), "%.30s: %s", gname, say);
                                 phone_term_line(&g_story_phone, echo);
-                                chat_pane_push(say);
+                                chat_pane_push(echo);
                             } else if (fx.kind == BP_FX_MISSION_ACT) {
                                 bigo_mission_act(fx.arg);
                             } else if (fx.kind == BP_FX_IDUNA_START || fx.kind == BP_FX_IDUNA_POLL) {
