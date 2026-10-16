@@ -13670,6 +13670,7 @@ int main(int argc, char* argv[]) {
     int cli_start_survival = 0;
     int cli_start_city = 0;
     int cli_third_person = 0;
+    int cli_legacy_menu = 0;
     for(int i=1; i<argc; i++) {
         if(strcmp(argv[i], "--third") == 0) {
             cli_third_person = 1; /* with --city: start in third person (also toggled in-game with V) */
@@ -13686,6 +13687,8 @@ int main(int argc, char* argv[]) {
             snprintf(cli_edit_session, sizeof cli_edit_session, "new"); cli_start_editmap = 1;
         } else if(strcmp(argv[i], "--lab") == 0) {
             cli_start_lab = 1; /* straight into the BIG_O LAB level */
+        } else if(strcmp(argv[i], "--menu") == 0) {
+            cli_legacy_menu = 1; /* opt out of the straight-into-zombies default: boot to the legacy menu */
         } else if(strcmp(argv[i], "--zombies") == 0) {
             cli_start_zombies = 1; /* straight into the ZOMBIES sandbox (menu tile equivalent) */
         } else if(strcmp(argv[i], "--host") == 0 && i+1<argc) {
@@ -13844,6 +13847,10 @@ int main(int argc, char* argv[]) {
     int running = 1;
     double previous = get_time();
     double accumulator = 0.0;
+    /* No title screen / main menu: with no explicit mode flag, drop straight into ZOMBIES.
+       Esc leaves the match for the legacy menu (see the SDLK_ESCAPE branch in the game keydown). */
+    if (!cli_legacy_menu && !cli_start_zombies && !cli_start_lab && !cli_start_editmap &&
+        !cli_start_survival && !cli_start_city) cli_start_zombies = 1;
     if (cli_start_zombies) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_ZOMBIES); lobby_modes_bypass = 0; }
     if (cli_start_editmap) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_EDITMAP); lobby_modes_bypass = 0; if (cli_edit_session[0]) es_start(strcmp(cli_edit_session, "new") ? cli_edit_session : NULL); }
     if (cli_start_lab) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_LAB); lobby_modes_bypass = 0; }
@@ -14358,6 +14365,14 @@ int main(int argc, char* argv[]) {
                     } else if (e.key.keysym.sym == SDLK_m) {
                         overlay_cycle_mode(&g_overlay);
                         printf("[OVERLAY] mode=%s\n", overlay_mode_name(g_overlay.mode));
+                    } else if (e.key.keysym.sym == SDLK_ESCAPE && app_state == STATE_GAME_LOCAL &&
+                               local_state.game_mode == MODE_ZOMBIES) {
+                        /* zombies is the default boot: Esc goes to the legacy menu (same exit as pause > QUIT) */
+                        g_paused = 0;
+                        lobby_level_snapshot(0);
+                        app_state = STATE_LOBBY;
+                        SDL_SetRelativeMouseMode(SDL_FALSE);
+                        setup_lobby_2d();
                     } else if (e.key.keysym.sym == SDLK_ESCAPE) {
                         g_paused = 1;
                         g_pause_sel = 0;

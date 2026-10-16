@@ -65,6 +65,9 @@ display) check it; `SHANKPIT_OS_MENU=classic` selects the old grid. Regenerate t
 isolation; the whole lobby has not been built/run with it on the dev box yet, and the skin/level/spray overlays,
 title and the small corner buttons are still hand-drawn GL.
 
+## Boot behaviour (2026-10-16)
+`./bin/shank_lobby` has no title screen or main menu: it drops straight into a ZOMBIES game. Esc goes to the legacy menu; `--menu` starts there instead. Explicit flags (`--survival`, `--lab`, `--city`, `--edit-map`) still win.
+
 ## In-phone PELLEGRINO browser (2026-10-16)
 
 The in-fiction SHANKPHONE (open with `P` during a match) has a `PELLEGRINO` tile that runs a real,

@@ -2,6 +2,9 @@
 
 - **feat(phone): PELLEGRINO in-phone browser now builds and runs.** `make lobby` links `packages/pellegrino_browser_embed` (mbedTLS + monocypher + embed objects, `PGB_OBJS`, kept out of `LOBBY_SRC`). Verified live under Xvfb `--zombies`: page renders in the phone panel, URL typing navigates, Esc returns to the home grid. Open: mouse, in-game `h3://` check, Windows/CI wiring. README updated.
 
+## 2026-10-16 (boot straight into zombies)
+- `shank_lobby` with no mode flag now skips the title/main menu and drops straight into MODE_ZOMBIES; Esc leaves to the legacy lobby menu (same exit as pause > QUIT, autosaves). `--menu` boots the legacy menu instead. Verified live under Xvfb (boot -> zombies city, Esc -> lobby).
+
 ## 2026-10-16
 
 - fix(heli): the helicopter MESH turned the mirror way from the flight model (founder: "rotating the helicopter is visual only ... forward acts as though the nose is still pointed the other direction"). `draw_helicopter_model` rotated by `180 - yaw` but the nose is +Z and sim forward is `(-sin yaw, -cos yaw)`; now `180 + yaw`, and pitch/roll visuals negated for the +Z nose (forward flight was nose-up, right bank dipped the left side). Reverted my wrong earlier change that rotated velocity with the nose (momentum is meant to persist through a turn). Not run live (no GLU/display); math only.
