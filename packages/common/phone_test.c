@@ -71,6 +71,27 @@ int main(void) {
     phone_input(&p, BP_BACK, 0); CHECK(!p.detail && p.app == BP_APP_MESSAGES);   /* first back closes the detail */
     phone_input(&p, BP_BACK, 0); CHECK(p.app == -1);
     go(&p, BP_APP_CONTACTS); phone_input(&p, BP_DOWN, 0); phone_input(&p, BP_SELECT, 0); CHECK(p.trust[1] == 1);   /* Thorne replies work */
+    /* merged BIG_O apps: GFD terminal, IDUNA device-auth, ARPANET archive, tech tree, costume fx */
+    phone_init(&p); go(&p, BP_APP_GFD);
+    fx = phone_input(&p, BP_SELECT, 0); CHECK(fx.kind == BP_FX_NONE);   /* nothing typed */
+    { const char *t = "hi"; for (; *t; t++) phone_term_char(&p, *t); phone_term_char(&p, '\n'); }
+    CHECK(p.term_input_len == 2);
+    fx = phone_input(&p, BP_SELECT, 0); CHECK(fx.kind == BP_FX_CHAT_SEND && fx.arg == 2);
+    { char buf[8]; int n = phone_term_take(&p, buf, 8); CHECK(n == 2 && buf[0] == 'h' && p.term_input_len == 0); }
+    for (int i = 0; i < 20; i++) phone_term_line(&p, "line");
+    CHECK(p.term_line_count == BP_TERM_LINES);
+    go(&p, BP_APP_IDUNA);
+    fx = phone_input(&p, BP_SELECT, 0); CHECK(fx.kind == BP_FX_IDUNA_START);
+    phone_iduna_set_pending(&p, "ABCD-EFGH", "https://iam.okemily.com/device");
+    fx = phone_input(&p, BP_SELECT, 0); CHECK(fx.kind == BP_FX_IDUNA_POLL);
+    phone_iduna_set_linked(&p, "emily");
+    fx = phone_input(&p, BP_SELECT, 0); CHECK(fx.kind == BP_FX_NONE && p.iduna_stage == BP_IDUNA_LINKED);
+    go(&p, BP_APP_ARPANET); phone_input(&p, BP_SELECT, 0); CHECK(p.detail);
+    phone_input(&p, BP_BACK, 0); CHECK(!p.detail && p.app == BP_APP_ARPANET);
+    go(&p, BP_APP_TECHTREE);
+    { const char *n[2] = { "WALLS", "TURRETS" }; int u[2] = { 1, 0 }; phone_set_tech(&p, n, u, 2); CHECK(p.tech_count == 2); phone_set_tech(&p, NULL, NULL, 5); CHECK(p.tech_count == 0); }
+    go(&p, BP_APP_WARDROBE); phone_input(&p, BP_DOWN, 0); fx = phone_input(&p, BP_SELECT, 0);
+    CHECK(fx.kind == BP_FX_COSTUME_SET && fx.arg == 1);
     printf(fails ? "PHONE TEST FAILED\n" : "PHONE TEST OK\n");
     return fails != 0;
 }

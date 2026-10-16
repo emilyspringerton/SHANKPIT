@@ -30,7 +30,7 @@
 #define WITNESS_SIM_MAX_NPCS 16
 
 enum { WS_UNAWARE = 0, WS_DENIAL, WS_COMPROMISED, WS_SILENCING, WS_PANIC, WS_ENGAGE };
-enum { DA_SMALL_TALK = 0, DA_SAY_APOCALYPSE, DA_CARRY_GEAR, DA_WRONG_COSTUME, DA_ATTRIBUTED_EVENT, DA_QUIET_TICK };
+enum { DA_SMALL_TALK = 0, DA_SAY_APOCALYPSE, DA_CARRY_GEAR, DA_WRONG_COSTUME, DA_ATTRIBUTED_EVENT, DA_QUIET_TICK, DA_CAUGHT_SNOOPING };
 enum { BAND_OK = 0, BAND_SUSPICION, BAND_HYSTERIC, BAND_CANCELLED };
 enum { COS_SUIT = 0, COS_LAB_SMOCK, COS_JANITOR, COS_STREET };
 enum { ZONE_PUBLIC = 0, ZONE_LAB, ZONE_EXEC, ZONE_GENERATOR, ZONE_VAULT };
@@ -53,6 +53,7 @@ int witness_sim_enter(WitnessSim *s, int pl, int zone);
 int witness_sim_set_costume(WitnessSim *s, int pl, int costume);
 int witness_sim_set_gear(WitnessSim *s, int pl, int gear);
 int witness_sim_set_token(WitnessSim *s, int pl, int token);
+int witness_sim_snoop(WitnessSim *s, int pl);              /* shoulder-surf: bystanders in the zone roll; returns how many caught it */
 int witness_sim_observe(WitnessSim *s, int pl);           /* noticing check for the current costume/zone/gear */
 int witness_sim_say_apocalypse(WitnessSim *s, int pl);
 int witness_sim_talk(WitnessSim *s, int pl);

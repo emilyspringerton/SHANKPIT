@@ -1321,6 +1321,65 @@ static void draw_phone_app(const Phone *p) {
         draw_string(buf, col_x, row_y - row_h, 2.6f);
         snprintf(buf, sizeof(buf), "PHOTOS TAKEN: %d", p->photos);
         draw_string(buf, col_x, row_y - 2 * row_h, 2.6f);
+    } else if (p->app == BP_APP_GFD) {
+        /* BIG_O GFD terminal merged in: scrollback + live input line. */
+        for (int i = 0; i < p->term_line_count; i++) {
+            glColor3f(0.65f, 0.85f, 0.7f);
+            draw_string(p->term_lines[i], col_x, row_y - i * row_h, 2.2f);
+        }
+        char in[BP_TERM_INPUT_MAX + 4];
+        snprintf(in, sizeof(in), "> %s_", p->term_input);
+        glColor3f(1.0f, 1.0f, 1.0f);
+        draw_string(in, col_x, row_y - (BP_TERM_LINES + 1) * row_h, 2.4f);
+    } else if (p->app == BP_APP_IDUNA) {
+        char buf[BP_IDUNA_URL_LEN + 24];
+        glColor3f(0.85f, 0.92f, 0.97f);
+        if (p->iduna_stage == BP_IDUNA_LINKED) {
+            snprintf(buf, sizeof(buf), "LINKED: %s", p->iduna_handle);
+            draw_string(buf, col_x, row_y, 2.6f);
+        } else if (p->iduna_stage == BP_IDUNA_PENDING) {
+            snprintf(buf, sizeof(buf), "CODE: %s", p->iduna_user_code);
+            draw_string(buf, col_x, row_y, 3.0f);
+            draw_string(p->iduna_verification_url, col_x, row_y - row_h, 2.0f);
+            draw_string("[ENTER] CHECK", col_x, row_y - 2 * row_h, 2.2f);
+        } else {
+            draw_string("IDUNA DEVICE LOGIN", col_x, row_y, 2.6f);
+            if (p->iduna_stage == BP_IDUNA_ERROR) { glColor3f(1.0f, 0.5f, 0.4f); draw_string(p->iduna_error, col_x, row_y - row_h, 2.0f); }
+            glColor3f(0.6f, 0.72f, 0.82f);
+            draw_string("[ENTER] START", col_x, row_y - 2 * row_h, 2.2f);
+        }
+    } else if (p->app == BP_APP_ARPANET) {
+        if (p->detail) {
+            glColor3f(0.65f, 0.85f, 0.7f);
+            draw_string(BP_ARPANET_TITLES[p->cursor], col_x, row_y, 2.6f);
+            const char *b = BP_ARPANET_BODIES[p->cursor]; float y = row_y - row_h;
+            char line[96];
+            while (*b && y > PHONE_PANEL_Y0 + 50.0f) {
+                size_t n = strcspn(b, "\n"); if (n >= sizeof(line)) n = sizeof(line) - 1;
+                memcpy(line, b, n); line[n] = '\0';
+                draw_string(line, col_x, y, 2.0f); y -= 24.0f;
+                b += n; if (*b == '\n') b++;
+            }
+        } else {
+            int top = p->cursor > 8 ? p->cursor - 8 : 0;
+            for (int i = top; i < BP_ARPANET_NODES && i < top + 10; i++) {
+                int sel = (i == p->cursor);
+                glColor3f(sel ? 1.0f : 0.55f, sel ? 1.0f : 0.75f, sel ? 1.0f : 0.6f);
+                draw_string(BP_ARPANET_TITLES[i], col_x, row_y - (i - top) * row_h, 2.2f);
+            }
+        }
+    } else if (p->app == BP_APP_TECHTREE) {
+        if (p->tech_count == 0) {
+            glColor3f(0.5f, 0.55f, 0.6f);
+            draw_string("NO TECH NODES YET", col_x, row_y, 2.6f);
+        } else {
+            for (int i = 0; i < p->tech_count; i++) {
+                char buf[BP_TECH_NAME_LEN + 12];
+                snprintf(buf, sizeof(buf), "%s%s", p->tech_names[i], p->tech_unlocked[i] ? "  [OK]" : "");
+                glColor3f(i == p->cursor ? 1.0f : 0.6f, i == p->cursor ? 1.0f : 0.72f, i == p->cursor ? 1.0f : 0.82f);
+                draw_string(buf, col_x, row_y - i * row_h, 2.4f);
+            }
+        }
     } else if (p->app == BP_APP_ORB) {
         glColor3f(0.85f, 0.92f, 0.97f);
         draw_string("ARCHITECT'S ORB", col_x, row_y, 3.0f);
@@ -13890,6 +13949,10 @@ int main(int argc, char* argv[]) {
             } else {
                 /* Architect's Orb (#494): owns text + keys while open */
                 if (g_orb_open && e.type == SDL_TEXTINPUT) { orb_text(e.text.text); continue; }
+                if (g_story_phone.open && g_story_phone.app == BP_APP_GFD && e.type == SDL_TEXTINPUT) {
+                    for (const char *c = e.text.text; *c; c++) phone_term_char(&g_story_phone, *c);
+                    continue;
+                }
                 if (g_orb_open && e.type == SDL_KEYDOWN) { orb_key(e.key.keysym.sym); continue; }
                 if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_BACKQUOTE && orb_available() && !g_chat_open && !g_paused) {
                     orb_toggle(); continue;
@@ -13946,10 +14009,27 @@ int main(int argc, char* argv[]) {
                             } else if (fx.kind == BP_FX_OPEN_ORB) {
                                 phone_toggle(&g_story_phone);   /* close the phone, then open the Orb */
                                 if (!g_orb_open) orb_toggle();
+                            } else if (fx.kind == BP_FX_CHAT_SEND) {
+                                /* BIG_O GFD terminal: local echo + the shared chat pane. Real
+                                   networked "say" routing is the server's chat channel, not wired here. */
+                                char say[BP_TERM_INPUT_MAX + 1];
+                                int n = phone_term_take(&g_story_phone, say, BP_TERM_INPUT_MAX);
+                                say[n] = '\0';
+                                char echo[BP_TERM_LINE_LEN];
+                                snprintf(echo, sizeof(echo), "you: %s", say);
+                                phone_term_line(&g_story_phone, echo);
+                                chat_pane_push(say);
+                            } else if (fx.kind == BP_FX_IDUNA_START || fx.kind == BP_FX_IDUNA_POLL) {
+                                /* Honest gap: the lobby has no in-process device-auth HTTP job yet
+                                   (IDUNA.GAME's own prompt does it). Say so rather than fake a code. */
+                                phone_iduna_set_error(&g_story_phone, "USE IDUNA.GAME APP TO LOG IN (NOT WIRED HERE YET)");
                             }
                         }
-                        else if (e.key.keysym.sym == SDLK_BACKSPACE) phone_input(&g_story_phone, BP_BACK, 0);
-                        else if (e.key.keysym.sym == SDLK_p || e.key.keysym.sym == SDLK_ESCAPE) phone_toggle(&g_story_phone);
+                        else if (e.key.keysym.sym == SDLK_BACKSPACE) {
+                            if (g_story_phone.app == BP_APP_GFD && g_story_phone.term_input_len > 0) phone_term_backspace(&g_story_phone);
+                            else phone_input(&g_story_phone, BP_BACK, 0);
+                        }
+                        else if ((e.key.keysym.sym == SDLK_p && g_story_phone.app != BP_APP_GFD) || e.key.keysym.sym == SDLK_ESCAPE) phone_toggle(&g_story_phone);
                         /* Real, live wiring of WARDROBE's own costume selection into the witness_sim
                            player slot (packages/simulation/witness_ai.c's own witness_ai_set_player_
                            costume) -- cheap and idempotent to re-sync every keypress while open. */

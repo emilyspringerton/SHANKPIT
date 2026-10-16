@@ -36,6 +36,7 @@ int decorum_band(int d);
 int decorum_start(void);
 int zone_access(int costume, int zone, int token);
 int conspicuousness(int allowed, int gear);
+int snoop_conspicuousness(int allowed, int gear);
 int noticed(int vigilance, int conspicuous, int roll);
 
 static const char *WS[] = {"UNAWARE", "DENIAL", "COMPROMISED", "SILENCING", "PANIC", "ENGAGE"};
@@ -116,6 +117,17 @@ int witness_sim_observe(WitnessSim *s, int pl) {
     int seen = anyone_notices(s, p->zone, cons);
     SIM_LOG(s, "  observe p%d allowed=%d gear=%d noticed_by=%d\n", pl, allowed, p->gear, seen);
     if (seen > 0) apply_decorum(s, pl, allowed ? DA_CARRY_GEAR : DA_WRONG_COSTUME, allowed ? "carrying field gear" : "wrong costume for zone");
+    return seen;
+}
+
+/* Reading someone's screen over their shoulder (BIG_O NORTHSTAR §39, synced from BIG_O core/sim.c). */
+int witness_sim_snoop(WitnessSim *s, int pl) {
+    if (!valid_player(s, pl)) return -1;
+    WitnessPlayer *p = &s->p[pl];
+    int allowed = zone_access(p->costume, p->zone, p->token);
+    int seen = anyone_notices(s, p->zone, snoop_conspicuousness(allowed, p->gear));
+    SIM_LOG(s, "  snoop p%d allowed=%d gear=%d noticed_by=%d\n", pl, allowed, p->gear, seen);
+    if (seen > 0) apply_decorum(s, pl, DA_CAUGHT_SNOOPING, "caught reading over a shoulder");
     return seen;
 }
 

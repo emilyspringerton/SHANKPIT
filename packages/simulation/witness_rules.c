@@ -14,6 +14,7 @@ int suspicion_below();
 int hysteric_below();
 int wall_hp_concrete();
 int breach_dps_super();
+int snoop_penalty();
 int effective_witnesses(int, int);
 int witness_state(int, int, int, int);
 int escalation_rank(int);
@@ -27,6 +28,7 @@ int decorum_after(int, int);
 int decorum_band(int);
 int zone_access(int, int, int);
 int conspicuousness(int, int);
+int snoop_conspicuousness(int, int);
 int noticed(int, int, int);
 int move_speed_pct(int);
 int wall_max_hp(int);
@@ -68,6 +70,10 @@ int wall_hp_concrete(void) {
 
 int breach_dps_super(void) {
     return 50;
+}
+
+int snoop_penalty(void) {
+    return 15;
 }
 
 int effective_witnesses(int total __attribute__((unused)), int accomplices __attribute__((unused))) {
@@ -209,7 +215,11 @@ int decorum_delta(int action __attribute__((unused))) {
     if ((action == 5)) {
     return 1;
     } else {
+    if ((action == 6)) {
+    return (0 - 30);
+    } else {
     return 0;
+    }
     }
     }
     }
@@ -280,6 +290,10 @@ int zone_access(int costume __attribute__((unused)), int zone __attribute__((unu
 
 int conspicuousness(int allowed __attribute__((unused)), int gear __attribute__((unused))) {
     return (((allowed == 1) ? 0 : 40) + ((gear == 1) ? 20 : 0));
+}
+
+int snoop_conspicuousness(int allowed __attribute__((unused)), int gear __attribute__((unused))) {
+    return (snoop_penalty() + conspicuousness(allowed, gear));
 }
 
 int noticed(int vigilance __attribute__((unused)), int conspicuous __attribute__((unused)), int roll __attribute__((unused))) {

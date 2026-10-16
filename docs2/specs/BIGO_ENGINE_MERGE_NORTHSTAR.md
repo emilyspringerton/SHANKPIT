@@ -624,6 +624,33 @@ own verification window. The underlying pipeline's correctness is not in questio
 isolation by `world_alert_bridge_test.c`, unchanged) — what's unverified is specifically the new
 `draw_string`/`glRectf` call rendering the way intended, a real, named gap, not glossed over.
 
+## 2p. Unification pass (2026-10-16, founder real-time: "we really need to unify shankpit and BIG_O ... the missing affordances added to shankpit zombies - the phone all the subsystems all of it")
+
+Audited every `BIG_O/day/packages/common/bigo_*.h` and `BIG_O/core/*` module against SHANKPIT; what was
+missing and is now ported, each with its BIG_O tests (`make test-bigo-merge`, all pass):
+
+- **Phone apps merged** into `packages/common/phone.h` (additive; SHANKPIT's own ORB app, food cargo, local
+  clone lab and shadow-war Elo are kept): `BP_APP_GFD` (free-text terminal, `phone_term_*`,
+  `BP_FX_CHAT_SEND`), `BP_APP_IDUNA` (device-auth stage state, `BP_FX_IDUNA_START/POLL`), `BP_APP_ARPANET`
+  (17-node archive), `BP_APP_TECHTREE` (`phone_set_tech`), and `BP_FX_COSTUME_SET` on WARDROBE select.
+  `apps/lobby` draws all four, routes SDL text input to the GFD terminal (Backspace edits, `P` types
+  instead of closing), and echoes a sent line into the chat pane. **Honest gaps:** IDUNA SELECT shows
+  "use IDUNA.GAME app" (the lobby has no in-process device-auth HTTP job); GFD "say" is local echo +
+  chat pane, not the networked say channel; BIG_O's server-authoritative lab fields were *not* merged
+  (SHANKPIT's local clone lab/shadow war stays; reconciling the two lab models is its own decision).
+- **Party** (`party.h`, `party_rules.c` from `PARENA/stdlib/shankpit/party_rules.prn`), **say-chat**
+  (`chat_say.h`, `chat_rules.c`), **hoverboard** (`hoverboard.h`, `hoverboard_rules.c`).
+- **Mission** (`mission.{h,c}`): Act I Mission 1 tracker over `WitnessSim`; replays BIG_O scenarios 20/21/22.
+  Needed `witness_sim_snoop` + `DA_CAUGHT_SNOOPING`, and `witness_rules.prn` re-synced from BIG_O (it had
+  drifted: `snoop-conspicuousness`).
+- **Avian live glue** (`avian_live.h`): the birds "observe the observer" over citizens/The Men/zombies.
+
+**Not yet wired into the running lobby/server** (same precedent as phases 2-5): party/chat/hoverboard/
+mission/avian-live are tested primitives with no gameplay caller; wiring them needs the lobby build,
+which cannot be compiled in this sandbox (no SDL2 headers) — the phone-draw change was verified by
+compiling the draw functions against stubs, not by running the client. Still unported: `bigo_npc_visual.h`
+(needs `papercraft_protocol.h`), `bigo_lab.h`/server-authoritative lab, `bigo_gfd_bridge.h`.
+
 ## 3. Not landed this pass — named, phased into `EMILY/BACKLOG.md` SECTION 536
 
 The founder's own follow-up messages during this pass ("the shaders the way the sun and moon look
