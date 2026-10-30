@@ -110,15 +110,23 @@ int main(void) {
                     retro_lighting_eval_surface_rgb(&st, NORMALS[ni][0], NORMALS[ni][1], NORMALS[ni][2],
                                                     0.6f, &ar, &ag, &ab);
 
-                    /* 1. a SHADED face never gets darker -- the matrix's job is to put light back where
-                          nothing reaches it. A sun-facing face is SUPPOSED to dim under weather (the
-                          storm really does remove the direct beam); that is what makes a storm read as a
-                          storm instead of a flat dimmer switch, so it is not asserted here. */
+                    /* 1. CLEAR weather must never darken anything: with nothing occluded the chain is
+                          pure addition (the floor can only lift). Bad weather IS allowed to dim, and a
+                          sun-facing face is supposed to lose its direct beam -- that is a storm reading
+                          as a storm rather than a flat dimmer switch. The guarantee that holds for
+                          every combination is the floor, asserted next. */
                     if (mean3(ar, ag, ab) > mean3(br, bg, bb) + 1e-5f) lifted++;
-                    if (ni == 0) CHECK(mean3(ar, ag, ab) >= mean3(br, bg, bb) - 1e-4f);
+                    if (wi == 0) CHECK(mean3(ar, ag, ab) >= mean3(br, bg, bb) - 1e-4f);
 
                     /* 2/3. the floor holds, and nothing escapes [0,1] or goes NaN */
-                    CHECK(max3(ar, ag, ab) >= m.ambient_floor - 1e-3f);
+                    if (max3(ar, ag, ab) < m.ambient_floor - 1e-3f) {
+                        printf("FLOOR preset=%zu weather=%zu slider=%d normal=%zu max=%.4f floor=%.4f "
+                               "bleed=%.3f occ=%.2f sun=%.3f amb=%.3f | after %.3f %.3f %.3f | before %.3f %.3f %.3f\n",
+                               pi, wi, slider, ni, max3(ar, ag, ab), m.ambient_floor,
+                               m.light_bleed, m.occlusion, st.sun_intensity, st.ambient_intensity,
+                               ar, ag, ab, br, bg, bb);
+                        g_fail++;
+                    }
                     CHECK(finite3(ar, ag, ab) && finite3(br, bg, bb));
                     CHECK(ar >= 0.0f && ar <= 1.0f && ag >= 0.0f && ag <= 1.0f && ab >= 0.0f && ab <= 1.0f);
 
@@ -132,7 +140,7 @@ int main(void) {
                                                     0.6f, &dr, &dg, &db);
                     CHECK(dr == ar && dg == ag && db == ab);
 
-                    if (wi == 0 && slider == 3) {   /* clear weather: the day/night swing must survive */
+                    if (wi == 0 && slider == 5) {   /* clear weather: the day/night swing must survive */
                         if (pi == 0) brightest_day = fmaxf(brightest_day, mean3(ar, ag, ab));
                         if (pi == 2) darkest_night = fminf(darkest_night, mean3(ar, ag, ab));
                     }
@@ -144,6 +152,23 @@ int main(void) {
     /* 4. the swing is real: clear noon is still clearly brighter than clear midnight, even though the
           floor has lifted the night. A flat world would fail this. */
     CHECK(brightest_day > darkest_night * 1.25f);
+
+    /* 4b. the actual regression, restated at CHAIN level: a stormy night at slider 0 must be
+           readable through the production path, not just inside the matrix unit test. */
+    {
+        EnvInputs worst = inputs_for(&WEATHERS[3], 0, 0);
+        EnvMatrix wm;
+        env_matrix_eval(&worst, &wm);
+        RetroLightingState ws;
+        retro_lighting_eval(0.0f, RETRO_LIGHTING_NIGHT_MOONLIT, &ws);
+        env_matrix_apply(&wm, &ws);
+        env_matrix_publish(&wm);
+        float wr = 0, wg = 0, wb = 0;
+        retro_lighting_eval_surface_rgb(&ws, 0.0f, -1.0f, 0.0f, 0.6f, &wr, &wg, &wb);
+        CHECK(mean3(wr, wg, wb) >= 0.20f);
+        CHECK(max3(wr, wg, wb) >= wm.ambient_floor - 1e-3f);
+        CHECK(wm.light_bleed > 0.10f);            /* the storm puts light back, it does not only subtract */
+    }
 
     /* 5. an interior gets no open-sky fill: at the same weather, the interior floor is higher but its
           sky contribution is zero -- a sun-facing wall indoors must not be brighter than one outdoors

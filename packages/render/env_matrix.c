@@ -153,17 +153,30 @@ void env_matrix_apply_surface(float floor, const float bleed[3], float *r, float
     }
 
     /* THE VISIBILITY FLOOR (founder real-time, 2026-10-30: "it always looks too dark everywhere").
-     * Applied as a deficit fill -- add the shortfall to the brightest channel's level, never clamp
-     * each channel to the floor -- so a face keeps its hue instead of washing flat. The fill is
-     * slightly cool and blue-weighted, which is what atmospheric haze actually looks like. */
+     * Applied as a uniform GAIN (floor / brightest channel), not a per-channel clamp: scaling all
+     * three channels by the same factor preserves hue EXACTLY, where clamping each channel to the
+     * floor would wash a scene flat toward grey. Two earlier drafts are worth recording, because
+     * both were wrong in ways only a sweep over every preset found: adding the raw deficit to every
+     * channel overshoots (three channels all lifted by the same absolute amount washes out hue), and
+     * adding a weighted deficit to each channel (0.85/0.92/1.0) leaves the floor technically
+     * unreached whenever the brightest channel is the one with the smallest weight -- the sweep
+     * caught that at ~1.5% shortfall on red-dominant sunset faces. A gain is the only version that
+     * both reaches the floor exactly and preserves hue. */
     floor = clamp01f(floor);
     if (floor > 0.0f) {
         float m = cr > cg ? (cr > cb ? cr : cb) : (cg > cb ? cg : cb);
-        if (m < floor) {
-            float deficit = floor - m;
-            cr += deficit * 0.85f;
-            cg += deficit * 0.92f;
-            cb += deficit;
+        if (m > 0.0001f) {
+            if (m < floor) {
+                float gain = floor / m;
+                cr *= gain;
+                cg *= gain;
+                cb *= gain;
+            }
+        } else if (m < floor) {
+            /* a completely black face has no hue to preserve: give it the neutral fill */
+            cr = floor * 0.92f;
+            cg = floor * 0.96f;
+            cb = floor;
         }
     }
 

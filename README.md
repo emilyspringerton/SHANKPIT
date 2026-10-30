@@ -275,9 +275,9 @@ own:
 Three ideas carry the fix. **Scatter instead of only subtract**: the bleed is added to every surface
 in the sky's own current colour, so a gloomy sky fills shaded walls rather than just removing the sun --
 which is what the old chain was missing entirely. **A floor, not a taste knob**: `env_matrix_apply_surface`
-lifts a surface's combined ambient term to the floor by adding the *deficit* to its brightest channel
-rather than clamping each channel, so a wall keeps its hue instead of washing flat, and a player at
-slider 0 in a storm still gets readable geometry. **Emitters trade reach for spread**: fog shortens a
+lifts a surface's combined ambient term to the floor with a uniform gain (floor ÷ brightest channel)
+rather than clamping each channel, so a wall keeps its hue exactly instead of washing flat, and a
+player at slider 0 in a storm still gets readable geometry. **Emitters trade reach for spread**: fog shortens a
 beam and the same number widens it, derived from one value so the two can never disagree.
 
 Nothing about this is per-pixel scattering. It is deliberately *not* described as Rayleigh/Mie
