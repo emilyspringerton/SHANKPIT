@@ -155,6 +155,31 @@ These scenes are connected by explicit portal routing. The garage currently serv
 
 ---
 
+## Building levels offline, no IDUNA (2026-10-30)
+
+IDUNA's NOCK editor is still the web level editor, but it is not required to author a map any more.
+`--edit-map` takes a registry level name or a `.json` path, and starts a **new empty level** when that
+path does not exist yet (200x50x200, ground plane on, one brick material, one spawner):
+
+```
+./bin/shank_lobby --edit-map var/maps/mymap.json   # new level (or reopen it next time)
+```
+
+You fly as a spectator: **B** places a box on the surface under the crosshair, **X** deletes the box
+under it, **M** moves spawner 0 there, **F5** saves the op log, **F6** saves the whole level to
+`var/maps/<name>.json`. F6 goes through `level_boxes_save_to_file` (`packages/world/level_boxes.h`),
+which writes every field the loader reads -- walls/materials, spawners, buggy spawns, lab stations,
+doors and buttons, nav nodes, characters, exits, zones, edu widgets, brick damage, `enclosed`, floor
+tint -- so a save/load round-trip cannot silently drop authored objects. A successful F6 also deletes
+the matching `.edits.json`: those ops are baked into the saved file, so replaying the log would apply
+them twice. `make test-level-save` is the round-trip test, and it also re-saves the checked-in
+`var/lab/lab.json`, the story-doors demo and `assets/tyler_levels/*.json` to prove real exports
+survive.
+
+Still NOCK-only: glTF import, the widgets/materials screens, and streaming edits into a shared live
+session (F5 plus `--edit-live`). Anything the in-game keys do not cover yet can be hand-edited in the
+saved JSON.
+
 ## Current visual direction
 
 SHANKPIT is pursuing a deliberately stylized visual identity rather than realism-first rendering.
