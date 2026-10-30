@@ -19,3 +19,6 @@ test-leveltool: leveltool
 	$(LEVELTOOL_BIN) info /tmp/leveltool_smoke.json
 	$(LEVELTOOL_BIN) map /tmp/leveltool_smoke.json >/dev/null
 	$(LEVELTOOL_BIN) map var/lab/lab.json | grep -q '#'
+	$(LEVELTOOL_BIN) map var/lab/lab.json --min-height 10 | grep -q 'tall hidden'
+	$(LEVELTOOL_BIN) map var/lab/lab.json --cell 20 --center 0,0 | grep -q 'zoom window'
+	@test $$($(LEVELTOOL_BIN) map examples/story-doors/demo_level/level.json --cell 1 --center 0,20 | grep -c '#') -gt 5

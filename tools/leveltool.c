@@ -8,7 +8,7 @@
  *
  *   make leveltool
  *   ./bin/leveltool info  var/maps/mymap.json
- *   ./bin/leveltool map   var/maps/mymap.json
+ *   ./bin/leveltool map   var/maps/mymap.json [--cell N] [--min-height N] [--center x,z]
  *   ./bin/leveltool check var/maps/mymap.json
  *   ./bin/leveltool save  var/maps/in.json var/maps/out.json
  *   ./bin/leveltool new   mymap var/maps/mymap.json
@@ -32,7 +32,11 @@ static void usage(void) {
     fprintf(stderr,
             "usage: leveltool <command> [args]\n"
             "  info  <level.json>            print a summary of a level file\n"
-            "  map   <level.json>            print a top-down ASCII view of the level\n"
+            "  map   <level.json> [opts]     print a top-down ASCII view of the level\n"
+            "        --cell <units>            zoom to a fixed units-per-cell (centred on --center,\n"
+            "                                  else spawner 0, else the map's middle)\n"
+            "        --min-height <units>      hide geometry shorter than this (skips floor slabs)\n"
+            "        --center <x,z>            centre for --cell\n"
             "  check <level.json>            prove a save/load round-trip drops nothing\n"
             "  save  <in.json> <out.json>    load a level and write it back out\n"
             "  new   <name> <out.json>       write a new empty level (EDIT MAP's new-level defaults)\n");
@@ -152,26 +156,80 @@ static void map_plot(char grid[MAP_MAX_H][MAP_MAX_W], int w, int h, double x, do
     grid[cz][cx] = ch;
 }
 
-static int cmd_map(const char *path) {
+/* Draw a box's footprint as its outline, sampled at half a cell -- a wall crossing the whole view
+ * must show up along its whole length, not just as its centre and corners (that bug only showed up
+ * once --cell zoom made long walls longer than the window). Sampling is capped at 400 points per
+ * edge so a tiny --cell over a 500-unit slab can't spin. */
+static void map_rect(char grid[MAP_MAX_H][MAP_MAX_W], int w, int h, double x0, double z0,
+                     double x1, double z1, double minx, double minz, double cell) {
+    if (cell <= 0) return;
+    if (x1 < x0) { double t = x0; x0 = x1; x1 = t; }
+    if (z1 < z0) { double t = z0; z0 = z1; z1 = t; }
+    double stepx = cell * 0.5, stepz = cell * 0.5;
+    if ((x1 - x0) / stepx > 400) stepx = (x1 - x0) / 400;
+    if ((z1 - z0) / stepz > 400) stepz = (z1 - z0) / 400;
+    for (double x = x0; x <= x1; x += stepx) {
+        map_plot(grid, w, h, x, z0, minx, minz, cell, '#');
+        map_plot(grid, w, h, x, z1, minx, minz, cell, '#');
+    }
+    for (double z = z0; z <= z1; z += stepz) {
+        map_plot(grid, w, h, x0, z, minx, minz, cell, '#');
+        map_plot(grid, w, h, x1, z, minx, minz, cell, '#');
+    }
+}
+
+static int cmd_map(int argc, char **argv) {
+    /* --cell zooms to a fixed scale; --min-height drops short geometry first, which is how a huge
+       floor slab stops squashing the whole map into a few cells (LAB's floor is 500 units wide and
+       4 tall, its walls are 99 tall). Off-view geometry is simply not drawn. */
+    const char *path = NULL;
+    double cell_req = 0, min_h = 0, cx_req = 0, cz_req = 0;
+    int have_center = 0;
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--cell") == 0 && i + 1 < argc) cell_req = atof(argv[++i]);
+        else if (strcmp(argv[i], "--min-height") == 0 && i + 1 < argc) min_h = atof(argv[++i]);
+        else if (strcmp(argv[i], "--center") == 0 && i + 1 < argc) {
+            if (sscanf(argv[++i], "%lf,%lf", &cx_req, &cz_req) == 2) have_center = 1;
+        } else if (!path) path = argv[i];
+    }
+    if (!path) { usage(); return 2; }
+
     static CustomLevelData l;
     if (!load_or_die(path, &l)) return 1;
 
     double minx = 1e30, maxx = -1e30, minz = 1e30, maxz = -1e30;
+    int drawn = 0;
     for (int i = 0; i < l.count; i++) {
         const LevelBox *b = &l.boxes[i];
+        if ((double)b->h < min_h) continue;
+        drawn++;
         double hx = (double)b->w * 0.5, hz = (double)b->d * 0.5;
         if ((double)b->x - hx < minx) minx = (double)b->x - hx;
         if ((double)b->x + hx > maxx) maxx = (double)b->x + hx;
         if ((double)b->z - hz < minz) minz = (double)b->z - hz;
         if ((double)b->z + hz > maxz) maxz = (double)b->z + hz;
     }
-    if (l.count == 0) { minx = -20; maxx = 20; minz = -20; maxz = 20; }
-    double spanx = maxx - minx, spanz = maxz - minz;
-    if (spanx < 1) spanx = 1;
-    if (spanz < 1) spanz = 1;
-    double cell = spanx / (MAP_MAX_W - 1);
-    if (spanz / (MAP_MAX_H - 1) > cell) cell = spanz / (MAP_MAX_H - 1);
-    int w = (int)(spanx / cell) + 1, h = (int)(spanz / cell) + 1;
+    if (drawn == 0) { minx = -20; maxx = 20; minz = -20; maxz = 20; }
+
+    double cell;
+    if (cell_req > 0) {
+        cell = cell_req;
+        double vx, vz;
+        if (have_center) { vx = cx_req; vz = cz_req; }
+        else if (l.spawner_count > 0) { vx = (double)l.spawners[0].x; vz = (double)l.spawners[0].z; }
+        else { vx = (minx + maxx) * 0.5; vz = (minz + maxz) * 0.5; }
+        minx = vx - cell * (MAP_MAX_W - 1) * 0.5;
+        minz = vz - cell * (MAP_MAX_H - 1) * 0.5;
+        maxx = minx + cell * (MAP_MAX_W - 1);
+        maxz = minz + cell * (MAP_MAX_H - 1);
+    } else {
+        double spanx = maxx - minx, spanz = maxz - minz;
+        if (spanx < 1) spanx = 1;
+        if (spanz < 1) spanz = 1;
+        cell = spanx / (MAP_MAX_W - 1);
+        if (spanz / (MAP_MAX_H - 1) > cell) cell = spanz / (MAP_MAX_H - 1);
+    }
+    int w = (int)((maxx - minx) / cell) + 1, h = (int)((maxz - minz) / cell) + 1;
     if (w > MAP_MAX_W) w = MAP_MAX_W;
     if (h > MAP_MAX_H) h = MAP_MAX_H;
     if (w < 1) w = 1;
@@ -181,12 +239,11 @@ static int cmd_map(const char *path) {
     memset(grid, ' ', sizeof grid);
     for (int i = 0; i < l.count; i++) {
         const LevelBox *b = &l.boxes[i];
+        if ((double)b->h < min_h) continue;
         double hx = (double)b->w * 0.5, hz = (double)b->d * 0.5;
         map_plot(grid, w, h, (double)b->x, (double)b->z, minx, minz, cell, '#');
-        map_plot(grid, w, h, (double)b->x - hx, (double)b->z - hz, minx, minz, cell, '#');
-        map_plot(grid, w, h, (double)b->x + hx, (double)b->z + hz, minx, minz, cell, '#');
-        map_plot(grid, w, h, (double)b->x - hx, (double)b->z + hz, minx, minz, cell, '#');
-        map_plot(grid, w, h, (double)b->x + hx, (double)b->z - hz, minx, minz, cell, '#');
+        map_rect(grid, w, h, (double)b->x - hx, (double)b->z - hz,
+                 (double)b->x + hx, (double)b->z + hz, minx, minz, cell);
     }
     for (int i = 0; i < l.zone_count; i++)
         map_plot(grid, w, h, (double)l.zones[i].x, (double)l.zones[i].z, minx, minz, cell, 'z');
@@ -208,8 +265,11 @@ static int cmd_map(const char *path) {
     }
 
     printf("%s -- top-down, -Z is up/north, Y ignored\n", path);
-    printf("  x %.1f..%.1f   z %.1f..%.1f   %dx%d cells, %.2f units/cell\n",
+    printf("  x %.1f..%.1f   z %.1f..%.1f   %dx%d cells, %.2f units/cell",
            minx, maxx, minz, maxz, w, h, cell);
+    if (min_h > 0) printf("   (walls under %g tall hidden)", min_h);
+    if (cell_req > 0) printf("   (zoom window)");
+    printf("\n");
     putchar('+');
     for (int c = 0; c < w; c++) putchar('-');
     printf("+\n");
@@ -235,7 +295,7 @@ int main(int argc, char **argv) {
         print_summary(argv[2], &lvl);
         return 0;
     }
-    if (strcmp(cmd, "map") == 0) return cmd_map(argv[2]);
+    if (strcmp(cmd, "map") == 0) return cmd_map(argc - 2, argv + 2);
     if (strcmp(cmd, "check") == 0) return cmd_check(argv[2]);
 
     if (strcmp(cmd, "save") == 0) {
