@@ -1,0 +1,212 @@
+;; tools/local_nock.prn -- local NOCK map tools in PARENA: the IDUNA-free authoring server.
+;;
+;; Same wire contract as the IDUNA handler the native client is written against
+;; (packages/world/edit_sync.h <-> IDUNA/internal/http/handlers/shankpit_edit_sessions.go), the same
+;; browser editor (tools/nock_editor.html), and the same levels/*.json committed to git -- but the
+;; server is PARENA, matching this monorepo's standing "core deps are PARENA-first" rule. The missing
+;; stdlib dependency (there was no server-side net/http at all) is real PARENA too:
+;; PARENA/stdlib/net/http_server.prn.
+;;
+;; Real, named parity gap: one live room per run (the actual use is one browser tab plus one game
+;; window), and the event log is returned whole rather than filtered by ?since -- the native client
+;; is idempotent for the events it applies (spawner/teleport/spawn_mode/level), so replaying it just
+;; refetches the working level. Multi-room + since-filtering is real follow-up work, not hidden.
+;;
+;; Host boundary (tools/local_nock_host.c), deliberately thin: the arena, env, the session id and
+;; the session strings that outlive one request -- the emitter has no pointer-typed return and
+;; rejects set! on a top-level def today. Routing, JSON shapes, level validation and the git commit
+;; are PARENA below.
+
+;; STATUS (2026-10-30): parses cleanly (`parena parse`), does NOT emit yet. Verified by running
+;; `parena build` on this file -- the remaining VS0 emitter gaps, each hit in turn:
+;;   1. a reference parameter naming a defstruct defined in an IMPORTED module (`&TcpListener`),
+;;      and a `match` whose scrutinee has that type ('void *') -- net/tcp.prn itself emits fine, so
+;;      this is specifically cross-module;
+;;   2. `: (Arena @ Region)` return types (the host owns the arena for now);
+;;   3. `(set! <top-level-def> v)` (session state goes through the host's ln_state_* accessors).
+;; The request/response half is real and emits: PARENA/stdlib/net/http_server.prn. Shipped and
+;; tested today is tools/local_nock.py (make test-local-nock, 12 checks); this file is the port to
+;; finish once those land, and everything from `handle` down moves over unchanged.
+
+(module local_nock)
+(import string)
+(import net/tcp)
+(import net/http_server)
+(import process)
+
+(export nock-run)
+
+;; ---- host boundary -------------------------------------------------------------------------
+(defn host-port [] : I32
+  #target
+  {:c (inline-c "ln_port()")})
+
+(defn host-new-id [(dest : Arena @ Region)] : String @ Region
+  #target
+  {:c (inline-c "ln_new_id(dest)")})
+
+(defn host-get [(field : String @ Region) (dest : Arena @ Region)] : String @ Region
+  #target
+  {:c (inline-c "ln_state_get(field, dest)")})
+
+(defn host-set [(field : String @ Region) (value : String @ Region)] : I32
+  #target
+  {:c (inline-c "ln_state_set(field, value)")})
+
+(defn host-levels-json [(dest : Arena @ Region)] : String @ Region
+  #target
+  {:c (inline-c "ln_levels_json(dest)")})
+
+(defn host-editor [(dest : Arena @ Region)] : String @ Region
+  #target
+  {:c (inline-c "ln_editor_html(dest)")})
+
+(defn host-read [(path : String @ Region) (dest : Arena @ Region)] : String @ Region
+  #target
+  {:c (inline-c "ln_read_file(path, dest)")})
+
+(defn host-write [(path : String @ Region) (text : String @ Region)] : I32
+  #target
+  {:c (inline-c "ln_write_file(path, text)")})
+
+(defn host-level-path [(name : String @ Region) (dest : Arena @ Region)] : String @ Region
+  #target
+  {:c (inline-c "ln_level_path(name, dest)")})
+
+(defn host-log-event [(body : String @ Region)] : I32
+  #target
+  {:c (inline-c "ln_log_event(body)")})
+
+(defn host-session-json [(dest : Arena @ Region)] : String @ Region
+  #target
+  {:c (inline-c "ln_session_json(dest)")})
+
+;; ---- helpers --------------------------------------------------------------------------------
+(defn has? [(haystack : String @ Region) (needle : String @ Region) (dest : Arena @ Region)] : Bool
+  (>= (http_server/find-sub haystack needle 0 dest) 0))
+
+(defn prefix? [(s : String @ Region) (prefix : String @ Region) (dest : Arena @ Region)] : Bool
+  (if (> (string/length prefix) (string/length s))
+    false
+    (string/str-eq? (string/substring s 0 (string/length prefix) dest) prefix)))
+
+(defn drop-prefix [(s : String @ Region) (prefix : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (string/substring s (string/length prefix) (string/length s) dest))
+
+(defn quote-shell [(s : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (string/concat "'" (string/concat s "'" dest) dest))
+
+(defn commit-msg [(name : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (string/concat "level(" (string/concat name ") from local NOCK" dest) dest))
+
+;; git-commit-level -- stage the level file and commit it. Never pushes (that stays a human step).
+(defn git-commit-level [(name : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (let [add-cmd (string/concat "git -C "
+                  (string/concat (quote-shell (host-get "repo" dest) dest)
+                    (string/concat " add -- "
+                      (string/concat (quote-shell (host-level-path name dest) dest) "" dest) dest) dest) dest)]
+    (do
+      (process/run-capture add-cmd dest)
+      (process/run-capture
+        (string/concat "git -C "
+          (string/concat (quote-shell (host-get "repo" dest) dest)
+            (string/concat " commit -m "
+              (string/concat (quote-shell (commit-msg name dest) dest) "" dest) dest) dest) dest) dest)
+      (if (= (process/run-capture-exit-code) 0)
+        "{\"committed\":true}"
+        "{\"committed\":false,\"detail\":\"nothing to commit\"}"))))
+
+(defn save-level [(name : String @ Region) (body : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (if (has? body "\"walls\"" dest)
+    (if (= (host-write (host-level-path name dest) body) 1)
+      (git-commit-level name dest)
+      "{\"error\":\"cannot write level\"}")
+    "{\"error\":\"level needs a walls array\"}"))
+
+;; ---- routes ---------------------------------------------------------------------------------
+(defn level-read-response [(name : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (let [text (host-read (host-level-path name dest) dest)]
+    (if (string/str-eq? text "")
+      (http_server/text-response 404 "no such level" dest)
+      (http_server/response 200 "application/json" text dest))))
+
+(defn level-save-response [(name : String @ Region) (body : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (let [result (save-level name body dest)]
+    (if (has? result "error" dest)
+      (http_server/json-response 400 result dest)
+      (http_server/json-response 200 result dest))))
+
+(defn route-levels [(method : String @ Region) (path : String @ Region) (body : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (if (and (string/str-eq? method "GET") (string/str-eq? path "/api/levels"))
+    (http_server/json-response 200 (host-levels-json dest) dest)
+    (if (and (string/str-eq? method "PUT") (prefix? path "/api/levels/" dest))
+      (level-save-response (drop-prefix path "/api/levels/" dest) body dest)
+      (if (and (string/str-eq? method "GET") (prefix? path "/api/levels/" dest))
+        (level-read-response (drop-prefix path "/api/levels/" dest) dest)
+        ""))))
+
+(defn route-session [(method : String @ Region) (path : String @ Region) (body : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (if (and (string/str-eq? method "POST") (string/str-eq? path "/api/v1/shankpit-edit-sessions"))
+    (let [id (host-new-id dest)]
+      (do
+        (host-set "id" id)
+        (host-set "log" "")
+        (host-set "draft" "")
+        (http_server/json-response 201
+          (string/concat "{\"id\":\"" (string/concat id "\",\"seq\":0}" dest) dest) dest)))
+    (if (and (string/str-eq? method "POST") (has? path "/events" dest))
+      (do
+        (host-log-event body)
+        (http_server/json-response 200 "{\"ok\":true}" dest))
+      (if (and (string/str-eq? method "PUT") (has? path "/level" dest))
+        (do
+          (host-set "draft" body)
+          (http_server/json-response 200 "{\"rev\":1}" dest))
+        (if (and (string/str-eq? method "GET") (has? path "/level" dest))
+          (let [draft (host-get "draft" dest)]
+            (if (string/str-eq? draft "")
+              (http_server/text-response 404 "this session has no level yet" dest)
+              (http_server/response 200 "application/json" draft dest)))
+          (if (and (string/str-eq? method "GET") (has? path "/api/v1/shankpit-edit-sessions/" dest))
+            (http_server/json-response 200 (host-session-json dest) dest)
+            ""))))))
+
+(defn page-or-route [(method : String @ Region) (path : String @ Region) (body : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (let [levels (route-levels method path body dest)]
+    (if (> (string/length levels) 0)
+      levels
+      (let [session (route-session method path body dest)]
+        (if (> (string/length session) 0)
+          session
+          (if (and (string/str-eq? method "GET") (string/str-eq? path "/"))
+            (http_server/text-response 200 (host-editor dest) dest)
+            (http_server/text-response 404 "not found" dest)))))))
+
+(defn handle [(raw : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (let [method (http_server/parse-method raw dest)]
+    (if (string/str-eq? method "")
+      (http_server/text-response 400 "bad request" dest)
+      (page-or-route method
+        (http_server/parse-path raw dest)
+        (http_server/parse-body raw dest) dest))))
+
+;; ---- accept loop ----------------------------------------------------------------------------
+;; The listener cannot be a parameter here: `&TcpListener` names a defstruct defined in an imported
+;; module, which VS0 rejects for reference targets (verified by building this file). Binding it in
+;; nock-run and recursing with loop/recur keeps it a local value instead.
+(defn nock-run [(dest : Arena @ Region)] : I32
+  (match (net/tcp/tcp-listen (host-port) dest)
+    ((Ok !listener)
+      (do
+        (println "local NOCK (PARENA) listening")
+        (loop [served 0]
+          (let [res (net/tcp/tcp-accept &!listener dest)]
+            (match res
+              ((Ok !stream)
+                (let [raw (match (net/tcp/tcp-read !stream dest) ((Ok !text) !text) ((Err _) ""))]
+                  (do
+                    (net/tcp/tcp-write &mut !stream (handle raw dest) dest)
+                    (net/tcp/tcp-close &mut !stream dest)
+                    (recur (+ served 1)))))
+              ((Err _) 1))))))
+    ((Err _) (do (println "local_nock: cannot bind port") 1))))

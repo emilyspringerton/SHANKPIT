@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>local NOCK — SHANKPIT maps</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+         background: #14161a; color: #d7dae0; display: grid;
+         grid-template-columns: 300px 1fr; height: 100vh; }
+  aside { border-right: 1px solid #2a2f38; padding: 12px; overflow: auto; }
+  h1 { font-size: 15px; margin: 0 0 10px; letter-spacing: .04em; }
+  h1 span { color: #7f8794; font-weight: normal; }
+  h2 { font-size: 11px; text-transform: uppercase; color: #7f8794; margin: 18px 0 6px;
+       letter-spacing: .08em; }
+  button { background: #222833; color: #d7dae0; border: 1px solid #39414f; border-radius: 4px;
+           padding: 4px 8px; cursor: pointer; font: inherit; }
+  button:hover { background: #2b3341; }
+  button.on { background: #2f6f4f; border-color: #3f8f66; }
+  input { background: #1b1f27; color: #d7dae0; border: 1px solid #39414f; border-radius: 4px;
+          padding: 4px 6px; font: inherit; width: 100%; box-sizing: border-box; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { padding: 4px 6px; border-radius: 4px; cursor: pointer; display: flex;
+       justify-content: space-between; gap: 8px; }
+  li:hover { background: #1f242e; }
+  li.sel { background: #2b3a4d; }
+  .dim { color: #7f8794; }
+  .row { display: flex; gap: 6px; margin: 6px 0; }
+  .row button { flex: 1; }
+  #note { font-size: 12px; color: #8b93a1; white-space: pre-wrap; }
+  #log { font-size: 11px; color: #6f7784; white-space: pre-wrap; max-height: 130px; overflow: auto; }
+  main { position: relative; }
+  canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+</style>
+</head>
+<body>
+<aside>
+  <h1>local NOCK <span>maps as code</span></h1>
+
+  <h2>Levels</h2>
+  <ul id="levels"><li class="dim">loading…</li></ul>
+  <div class="row">
+    <button id="newBtn">New level</button>
+    <button id="saveBtn">Save + commit</button>
+  </div>
+  <div id="saveInfo" class="dim"></div>
+
+  <h2>Tools</h2>
+  <div class="row">
+    <button data-tool="add" class="on">Box</button>
+    <button data-tool="delete">Erase</button>
+    <button data-tool="spawner">Spawner</button>
+  </div>
+
+  <h2>Live session</h2>
+  <div class="row">
+    <button id="startBtn">Start</button>
+    <button id="joinBtn">Join</button>
+  </div>
+  <input id="sessionId" placeholder="session id (paste from the game)">
+  <div id="sessionInfo" class="dim"></div>
+
+  <h2>Game side</h2>
+  <div id="note"></div>
+
+  <h2>Log</h2>
+  <div id="log"></div>
+</aside>
+
+<main><canvas id="canvas"></canvas></main>
+
+<script>
+"use strict";
+
+const SESSION_BASE = "/api/v1/shankpit-edit-sessions";
+const el = id => document.getElementById(id);
+const canvas = el("canvas"), ctx = canvas.getContext("2d");
+
+const state = {
+  level: null, name: null, tool: "add",
+  session: null, since: 0, polling: false, pollGen: 0,
+  remote: null,          // {x, z, yaw} of the in-game character
+  undo: [], dirty: false, pushTimer: null,
+};
+
+function log(msg) {
+  const t = new Date().toLocaleTimeString();
+  el("log").textContent = `[${t}] ${msg}\n` + el("log").textContent;
+}
+
+async function api(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: body === undefined ? {} : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await res.text();
+  let json = null;
+  try { json = text ? JSON.parse(text) : null; } catch { /* plain text */ }
+  if (!res.ok) throw new Error((json && json.error) || `${res.status} ${res.statusText}`);
+  return json;
+}
+
+/* ---------- level list / loading ---------- */
+
+async function loadLevelList() {
+  const box = el("levels");
+  try {
+    const { levels } = await api("GET", "/api/levels");
+    box.innerHTML = "";
+    if (!levels.length) { box.innerHTML = '<li class="dim">no levels yet — press New</li>'; return; }
+    for (const l of levels) {
+      const li = document.createElement("li");
+      li.dataset.name = l.name;
+      li.innerHTML = `<span>${l.name}</span><span class="dim">${l.walls} walls</span>`;
+      if (l.name === state.name) li.classList.add("sel");
+      li.onclick = () => openLevel(l.name);
+      box.appendChild(li);
+    }
+  } catch (e) {
+    box.innerHTML = `<li class="dim">cannot list: ${e.message}</li>`;
+  }
+}
+
+async function openLevel(name) {
+  try {
+    const doc = await api("GET", "/api/levels/" + encodeURIComponent(name));
+    setLevel(doc, name);
+    log(`opened ${name} (${(doc.walls || []).length} walls)`);
+  } catch (e) { log("open failed: " + e.message); }
+}
+
+function setLevel(doc, name) {
+  state.level = ensureShape(doc);
+  state.name = name || state.level.name || "untitled";
+  state.level.name = state.name;
+  state.undo = [];
+  state.dirty = false;
+  draw();
+  loadLevelList();
+  pushDraftSoon();
+}
+
+function ensureShape(doc) {
+  doc = doc && typeof doc === "object" ? doc : {};
+  doc.name = doc.name || "untitled";
+  doc.width = doc.width || 200; doc.height = doc.height || 50; doc.depth = doc.depth || 200;
+  if (!Array.isArray(doc.walls)) doc.walls = [];
+  if (typeof doc.ground_plane_enabled !== "boolean") doc.ground_plane_enabled = true;
+  doc.ground_plane_squares = doc.ground_plane_squares || 16;
+  if (!Array.isArray(doc.materials) || !doc.materials.length) {
+    doc.materials = [{ name: "brick", shader_name: "standard", specular: 0.04, shininess: 6, friction: 0.3 }];
+  }
+  if (!Array.isArray(doc.spawners)) doc.spawners = [];
+  if (!doc.spawners.length) {
+    doc.spawners.push({ id: 1, x: 0, y: 1, z: 0, yaw: 0, team: -1 });
+  }
+  return doc;
+}
+
+function newLevel() {
+  const name = (prompt("new level name", "untitled") || "").trim();
+  if (!name) return;
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) { alert("letters, digits, - and _ only"); return; }
+  setLevel({ name, width: 200, height: 50, depth: 200, ground_plane_enabled: true,
+             ground_plane_squares: 16, walls: [], materials: [], spawners: [] }, name);
+  log(`new level ${name} — click to place boxes, then Save`);
+}
+
+/* ---------- canvas ---------- */
+
+function bounds() {
+  const w = state.level ? state.level.walls : [];
+  if (!w.length) return { minx: -30, maxx: 30, minz: -30, maxz: 30 };
+  let minx = 1e9, maxx = -1e9, minz = 1e9, maxz = -1e9;
+  for (const b of w) {
+    const hx = Math.abs(b.sx) / 2, hz = Math.abs(b.sz) / 2;
+    minx = Math.min(minx, b.x - hx); maxx = Math.max(maxx, b.x + hx);
+    minz = Math.min(minz, b.z - hz); maxz = Math.max(maxz, b.z + hz);
+  }
+  const pad = 4;
+  return { minx: minx - pad, maxx: maxx + pad, minz: minz - pad, maxz: maxz + pad };
+}
+
+function view() {
+  const g = bounds();
+  const sx = canvas.width / Math.max(1, g.maxx - g.minx);
+  const sz = canvas.height / Math.max(1, g.maxz - g.minz);
+  const s = Math.min(sx, sz);
+  const ox = (canvas.width - (g.maxx - g.minx) * s) / 2;
+  const oz = (canvas.height - (g.maxz - g.minz) * s) / 2;
+  return { g, s, toPx: (x, z) => [ox + (x - g.minx) * s, oz + (z - g.minz) * s],
+           toWorld: (px, pz) => [g.minx + (px - ox) / s, g.minz + (pz - oz) / s] };
+}
+
+function draw() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth * dpr, h = canvas.clientHeight * dpr;
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!state.level) {
+    ctx.fillStyle = "#7f8794";
+    ctx.font = `${13 * dpr}px monospace`;
+    ctx.fillText("pick a level, or press New level", 20 * dpr, 30 * dpr);
+    return;
+  }
+  const v = view(), W = state.level;
+  for (const b of W.walls || []) {
+    const [x0, z0] = v.toPx(b.x - Math.abs(b.sx) / 2, b.z - Math.abs(b.sz) / 2);
+    const [x1, z1] = v.toPx(b.x + Math.abs(b.sx) / 2, b.z + Math.abs(b.sz) / 2);
+    const shade = Math.max(40, Math.min(150, 60 + (b.sy || 4) * 2));
+    ctx.fillStyle = `rgb(${shade},${shade + 6},${shade + 14})`;
+    ctx.fillRect(x0, z0, Math.max(1, x1 - x0), Math.max(1, z1 - z0));
+  }
+  ctx.strokeStyle = "#9aa3b2"; ctx.lineWidth = 1 * dpr;
+  for (const sp of W.spawners || []) {
+    const [x, z] = v.toPx(sp.x, sp.z);
+    ctx.beginPath(); ctx.arc(x, z, 5 * dpr, 0, Math.PI * 2); ctx.strokeStyle = "#e05c5c"; ctx.stroke();
+  }
+  for (const e of W.level_exits || []) {
+    const [x, z] = v.toPx(e.x, e.z);
+    ctx.beginPath(); ctx.arc(x, z, Math.max(2, (e.radius || 2) * v.s), 0, Math.PI * 2);
+    ctx.strokeStyle = "#5ce08a"; ctx.stroke();
+  }
+  for (const zn of W.zones || []) {
+    const [x, z] = v.toPx(zn.x, zn.z);
+    ctx.beginPath(); ctx.arc(x, z, Math.max(2, (zn.radius || 2) * v.s), 0, Math.PI * 2);
+    ctx.strokeStyle = "#b07cff"; ctx.setLineDash([4 * dpr, 4 * dpr]); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  for (const c of W.characters || []) {
+    const [x, z] = v.toPx(c.x, c.z);
+    ctx.fillStyle = "#5ca8e0"; ctx.fillRect(x - 3 * dpr, z - 3 * dpr, 6 * dpr, 6 * dpr);
+  }
+  if (state.remote) {
+    const [x, z] = v.toPx(state.remote.x, state.remote.z);
+    ctx.fillStyle = "#8de05c";
+    ctx.beginPath(); ctx.arc(x, z, 6 * dpr, 0, Math.PI * 2); ctx.fill();
+    const yaw = (state.remote.yaw || 0) * Math.PI / 180;
+    ctx.strokeStyle = "#8de05c"; ctx.beginPath(); ctx.moveTo(x, z);
+    ctx.lineTo(x - Math.sin(yaw) * 16 * dpr, z - Math.cos(yaw) * 16 * dpr); ctx.stroke();
+  }
+  const g = v.g;
+  ctx.fillStyle = "#7f8794";
+  ctx.font = `${11 * dpr}px monospace`;
+  ctx.fillText(`${state.name || "untitled"}  ·  ${(W.walls || []).length} walls  ·  x ${g.minx.toFixed(1)}..${g.maxx.toFixed(1)}  z ${g.minz.toFixed(1)}..${g.maxz.toFixed(1)}  ·  -Z up`, 12 * dpr, canvas.height - 10 * dpr);
+}
+
+/* ---------- editing ---------- */
+
+function snapshot() {
+  state.undo.push(JSON.stringify(state.level));
+  if (state.undo.length > 60) state.undo.shift();
+}
+
+function undo() {
+  if (!state.undo.length) return;
+  state.level = JSON.parse(state.undo.pop());
+  draw(); pushDraftSoon();
+}
+
+function wallIndexAt(x, z) {
+  const walls = state.level.walls;
+  for (let i = walls.length - 1; i >= 0; i--) {
+    const b = walls[i];
+    if (Math.abs(x - b.x) <= Math.abs(b.sx) / 2 && Math.abs(z - b.z) <= Math.abs(b.sz) / 2) return i;
+  }
+  return -1;
+}
+
+canvas.addEventListener("mousedown", ev => {
+  if (!state.level) return;
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const v = view();
+  const [x, z] = v.toWorld((ev.clientX - rect.left) * dpr, (ev.clientY - rect.top) * dpr);
+  const W = state.level;
+
+  if (state.tool === "add") {
+    snapshot();
+    const mat = (W.materials[0] && W.materials[0].name) || "brick";
+    const box = { x: +x.toFixed(2), y: 2, z: +z.toFixed(2), sx: 4, sy: 4, sz: 4,
+                  r: 0.6, g: 0.6, b: 0.65, friction: 0.8, material: mat };
+    W.walls.push(box);
+    log(`box at ${box.x}, ${box.z}`);
+    post("box_add", { id: W.walls.length, x: box.x, y: box.y, z: box.z,
+                      sx: box.sx, sy: box.sy, sz: box.sz, r: box.r, g: box.g, b: box.b });
+  } else if (state.tool === "delete") {
+    const i = wallIndexAt(x, z);
+    if (i < 0) { log("nothing under the cursor"); return; }
+    snapshot();
+    W.walls.splice(i, 1);
+    log(`deleted wall ${i}`);
+    post("box_del", { id: -1, index: i });
+  } else {
+    snapshot();
+    if (!W.spawners.length) W.spawners.push({ id: 1, x: 0, y: 1, z: 0, yaw: 0, team: -1 });
+    W.spawners[0].x = +x.toFixed(2); W.spawners[0].z = +z.toFixed(2);
+    log(`spawner at ${W.spawners[0].x}, ${W.spawners[0].z}`);
+    post("spawner", { x: W.spawners[0].x, y: W.spawners[0].y, z: W.spawners[0].z,
+                       yaw: W.spawners[0].yaw || 0 });
+  }
+  draw();
+  pushDraftSoon();
+});
+
+document.addEventListener("keydown", ev => {
+  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "z") { ev.preventDefault(); undo(); }
+  if (ev.target.tagName === "INPUT") return;
+  const k = ev.key.toLowerCase();
+  const tool = k === "b" ? "add" : k === "x" ? "delete" : k === "m" ? "spawner" : null;
+  if (tool) selectTool(tool);
+});
+
+function selectTool(tool) {
+  state.tool = tool;
+  for (const b of document.querySelectorAll("[data-tool]"))
+    b.classList.toggle("on", b.dataset.tool === tool);
+}
+
+for (const b of document.querySelectorAll("[data-tool]"))
+  b.onclick = () => selectTool(b.dataset.tool);
+
+/* ---------- saving (file + git commit) ---------- */
+
+async function save() {
+  if (!state.level) return;
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(state.name)) { alert("bad level name"); return; }
+  try {
+    state.level.name = state.name;
+    const r = await api("PUT", "/api/levels/" + encodeURIComponent(state.name), state.level);
+    state.dirty = false;
+    const g = r.git || {};
+    el("saveInfo").textContent = g.committed
+      ? `committed ${g.commit}: ${g.message}`
+      : `saved ${r.file} (${g.detail || "not committed"})`;
+    log(el("saveInfo").textContent);
+    loadLevelList();
+  } catch (e) {
+    el("saveInfo").textContent = "save failed: " + e.message;
+    log("save failed: " + e.message);
+  }
+}
+el("saveBtn").onclick = save;
+el("newBtn").onclick = newLevel;
+
+/* ---------- live session ---------- */
+
+async function startSession() {
+  try {
+    const body = { level_id: 0, level_name: state.name || "" };
+    const r = await api("POST", SESSION_BASE, body);
+    joinSession(r.id);
+    log(`started session ${r.id} — run the game with --edit-session ${r.id}`);
+  } catch (e) { log("start failed: " + e.message); }
+}
+
+function joinSession(id) {
+  if (!/^[0-9a-f]{32}$/.test(id || "")) { log("session id must be 32 hex chars"); return; }
+  state.session = id;
+  state.since = 0;
+  state.pollGen++;
+  el("sessionId").value = id;
+  el("sessionInfo").textContent = "in session " + id;
+  log("joined session " + id);
+  pushDraft();          // hand the game our working level straight away
+  pollLoop(state.pollGen);
+}
+
+el("startBtn").onclick = startSession;
+el("joinBtn").onclick = () => joinSession(el("sessionId").value.trim());
+
+async function post(kind, data) {
+  if (!state.session) return;
+  try {
+    await api("POST", `${SESSION_BASE}/${state.session}/events`, { source: "nock", kind, data });
+  } catch (e) { log(`event ${kind} failed: ${e.message}`); }
+}
+
+let pushTimer = null;
+function pushDraftSoon() {
+  if (!state.session) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(pushDraft, 180);
+}
+
+async function pushDraft() {
+  if (!state.session || !state.level) return;
+  try {
+    const r = await api("PUT", `${SESSION_BASE}/${state.session}/level`, state.level);
+    // "level" tells the native client to fetch the working level (edit_sync.h es_worker)
+    await post("level", { rev: r.rev });
+  } catch (e) { log("draft push failed: " + e.message); }
+}
+
+async function pollLoop(gen) {
+  if (state.polling) return;
+  state.polling = true;
+  try {
+    while (state.session && gen === state.pollGen) {
+      const q = `${SESSION_BASE}/${state.session}?since=${state.since}&wait=10`;
+      let snap;
+      try {
+        snap = await api("GET", q);
+      } catch (e) {
+        log("poll failed: " + e.message + " (session ended?)");
+        state.session = null;
+        el("sessionInfo").textContent = "session lost";
+        break;
+      }
+      if (gen !== state.pollGen) break;
+      applyEvents(snap.events || []);
+      state.since = snap.seq;
+    }
+  } finally {
+    state.polling = false;
+  }
+}
+
+function applyEvents(events) {
+  for (const ev of events) {
+    const d = ev.data || {};
+    if (ev.kind === "spawner" && d.x !== undefined) {
+      const W = state.level;
+      if (W) {
+        if (!W.spawners.length) W.spawners.push({ id: 1, x: 0, y: 1, z: 0, yaw: 0, team: -1 });
+        W.spawners[0].x = d.x; W.spawners[0].y = d.y; W.spawners[0].z = d.z;
+        if (d.yaw !== undefined) W.spawners[0].yaw = d.yaw;
+      }
+    } else if (ev.kind === "avatar" && d.x !== undefined) {
+      state.remote = { x: d.x, z: d.z, yaw: d.yaw || 0 };
+    } else if (ev.kind === "box_add" && d.sx !== undefined) {
+      // placed in-game (B): mirror it here so both views agree
+      const W = state.level;
+      if (W) {
+        W.walls.push({ x: d.x, y: d.y, z: d.z, sx: d.sx, sy: d.sy || 4, sz: d.sz || 4,
+                       r: d.r ?? 0.6, g: d.g ?? 0.6, b: d.b ?? 0.65, friction: 0.8,
+                       material: (W.materials[0] && W.materials[0].name) || "brick" });
+        log("game placed a box");
+      }
+    } else if (ev.kind === "box_del" && d.index !== undefined) {
+      const W = state.level;
+      if (W && d.index >= 0 && d.index < W.walls.length) {
+        W.walls.splice(d.index, 1);
+        log("game deleted a box");
+      }
+    } else if (ev.kind === "save") {
+      log("game asked to save — press Save + commit to land it in git");
+    } else if (ev.kind === "teleport" && d.x !== undefined) {
+      state.remote = { x: d.x, z: d.z, yaw: d.yaw || 0 };
+    }
+  }
+  draw();
+}
+
+/* ---------- boot ---------- */
+
+el("note").textContent =
+  "SHANKPIT_EDIT_SESSIONS_URL=" + location.origin + SESSION_BASE + "\n" +
+  "./bin/shank_lobby --edit-map levels/" + "<name>.json --edit-live\n" +
+  "(or --edit-session <id>)";
+
+loadLevelList().then(() => {
+  const first = document.querySelector("#levels li[data-name]");
+  if (first) openLevel(first.dataset.name);
+  draw();
+});
+window.addEventListener("resize", draw);
+</script>
+</body>
+</html>

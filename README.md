@@ -186,6 +186,35 @@ Still NOCK-only: glTF import, the widgets/materials screens, and streaming edits
 session (F5 plus `--edit-live`). Anything the in-game keys do not cover yet can be hand-edited in the
 saved JSON.
 
+## Local NOCK: browser + game live editing, levels as code (2026-10-30)
+
+The cloud IDUNA/NOCK tooling is not always reachable, so the map editor also runs locally, with no
+network and no database:
+
+```
+make local-nock                                   # http://127.0.0.1:8787
+SHANKPIT_EDIT_SESSIONS_URL=http://127.0.0.1:8787/api/v1/shankpit-edit-sessions \
+  ./bin/shank_lobby --edit-map levels/starter.json --edit-live
+```
+
+The browser editor (`tools/nock_editor.html`, served by the tool) and in-game EDIT MAP join the same
+live session: an edit in the browser pushes the working level (`PUT .../level` plus a `level` event)
+so the game reloads it, and the game's own box / spawner / avatar events show up in the browser.
+Saving writes `levels/<name>.json` -- maps are plain files -- and commits them
+(`level(<name>): N walls from local NOCK`); nothing pushes automatically.
+
+The server is `tools/local_nock.py`, wire-compatible with the IDUNA handler the client was written
+against (`packages/world/edit_sync.h`). `make test-local-nock` covers level save + commit, invalid
+level rejection, session create/post/poll, working-draft push/fetch, long-poll wakeup and 404s (12
+checks). Two honest gaps: one live room per run, and the event log replays whole rather than honouring
+`?since` (the events the client applies are idempotent, so that just refetches the level).
+
+The PARENA port is `tools/local_nock.prn` plus the previously missing dependency
+`PARENA/stdlib/net/http_server.prn` (request parsing + response serialisation, which does emit). The
+tool parses but does not emit yet: VS0 rejects reference parameters and `match` scrutinees naming a
+defstruct imported from another module, pointer-typed returns, and `set!` on a top-level def. Those
+four are the real next compiler work; the Python server stays the runner until they land.
+
 ## Current visual direction
 
 SHANKPIT is pursuing a deliberately stylized visual identity rather than realism-first rendering.

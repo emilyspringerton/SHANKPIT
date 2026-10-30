@@ -1,0 +1,32 @@
+{
+ "version": 1,
+ "name": "starter",
+ "width": 60,
+ "height": 20,
+ "depth": 60,
+ "ground_plane_enabled": true,
+ "ground_plane_squares": 20,
+ "materials": [
+  { "name": "brick", "shader_name": "standard", "specular": 0.04, "shininess": 6, "friction": 0.3, "density": 1.9 }
+ ],
+ "walls": [
+  { "x": -10, "y": 2, "z": 0, "sx": 2, "sy": 4, "sz": 40, "r": 0.6, "g": 0.6, "b": 0.65, "friction": 0.8, "material": "brick" },
+  { "x": 10, "y": 2, "z": 0, "sx": 2, "sy": 4, "sz": 40, "r": 0.6, "g": 0.6, "b": 0.65, "friction": 0.8, "material": "brick" },
+  { "x": 0, "y": 2, "z": -20, "sx": 22, "sy": 4, "sz": 2, "r": 0.6, "g": 0.6, "b": 0.65, "friction": 0.8, "material": "brick" },
+  { "x": 0, "y": 2, "z": 20, "sx": 22, "sy": 4, "sz": 2, "r": 0.6, "g": 0.6, "b": 0.65, "friction": 0.8, "material": "brick" },
+  { "x": 0, "y": 1, "z": 6, "sx": 6, "sy": 2, "sz": 6, "r": 0.7, "g": 0.4, "b": 0.3, "friction": 0.8, "material": "brick" }
+ ],
+ "spawners": [
+  { "id": 1, "x": 0, "y": 1, "z": 14, "yaw": 180, "team": -1 }
+ ],
+ "doors": [],
+ "buttons": [],
+ "nav_nodes": [],
+ "characters": [],
+ "level_exits": [],
+ "zones": [],
+ "edu_widgets": [],
+ "buggy_spawns": [],
+ "lab_stations": [],
+ "brick_damage": []
+}
