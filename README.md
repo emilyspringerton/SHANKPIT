@@ -298,9 +298,17 @@ that keeps it cheap under MMO concurrence instead of syncing lighting around.
 
 Verified: `make test-env-matrix` (the PARENA rules' purity/clamps, the clear-weather no-op, the
 stormy-night regression through the exact surface function the renderer calls, the publish→surface
-wiring, determinism, and the emitter trade-off). Not verified here: `retro_lighting` itself is
-GL-bound and this sandbox has no SDL2 headers, so `make test-ambient-boost` (updated for the new link
-dependency) and the live look could not be built; and `apps2/`'s duplicate tree was left alone.
+wiring, determinism, and the emitter trade-off). `make test-lighting-chain` then sweeps the WHOLE chain — every lighting preset × every weather state ×
+slider 0/5/10 × three face directions — and asserts the invariants that must hold for all of them: a
+shaded face never gets darker, nothing ends below the floor, no result escapes [0,1] or goes NaN, the
+clear-noon-vs-clear-midnight swing survives (the matrix must not flatten the world), and the same
+inputs give bit-identical pixels. Supporting that needed one real cleanup: the sun/fog evaluation
+moved into a GL-free `packages/render/retro_sky_eval.h`, so `retro_lighting.c` no longer drags
+`<SDL2/SDL_opengl.h>` in just to do arithmetic.
+
+Not verified: `retro_sky.c` and the lobby are GL-bound and this sandbox has no SDL2 headers, so
+`make test-ambient-boost` (recipe updated for the new link dependency), the `main.c` wiring and the
+live look could not be built or seen; and `apps2/`'s duplicate tree was left alone.
 
 ## Current visual direction
 

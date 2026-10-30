@@ -99,6 +99,20 @@ test-env-matrix: $(LIGHTING_RULES_C)
 	/tmp/shankpit_env_matrix_test
 
 # The generated PARENA rules must exist; regenerate them if the .prn is newer.
+# test-lighting-chain -- the whole chain end to end (PARENA rules -> env_matrix -> retro_lighting ->
+# the surface term), swept over every preset x weather x slider x face direction. Asserts the
+# invariants that must hold for ALL of them: the matrix only ever adds light, a shaded face never
+# ends below the floor, nothing escapes [0,1], the day/night swing survives, and the result is
+# deterministic. retro_sky.c is GL-bound, so the sun position/colour source is stubbed.
+.PHONY: test-lighting-chain
+test-lighting-chain: $(LIGHTING_RULES_C)
+	gcc -std=gnu99 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
+		-Ipackages/render -Ipackages/simulation -Ipackages/world \
+		packages/render/lighting_chain_test.c packages/render/retro_lighting.c \
+		packages/render/env_matrix.c packages/simulation/lighting_rules.c \
+		packages/world/parena_runtime.c -o /tmp/shankpit_lighting_chain_test -lm
+	/tmp/shankpit_lighting_chain_test
+
 LIGHTING_RULES_PRN ?= ../PARENA/stdlib/shankpit/lighting_rules.prn
 LIGHTING_RULES_C   ?= packages/simulation/lighting_rules.c
 $(LIGHTING_RULES_C): $(LIGHTING_RULES_PRN)

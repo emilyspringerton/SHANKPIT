@@ -3,7 +3,9 @@
 #include <math.h>
 #include <string.h>
 
-#include "retro_sky.h"
+/* retro_sky_eval.h, NOT retro_sky.h: this file only computes light, and retro_sky.h pulls in
+   proc_tex.h's GL header. Keeping it GL-free is what lets the lighting chain be tested headlessly. */
+#include "retro_sky_eval.h"
 #include "env_matrix.h"   /* env_matrix_apply_surface -- shared with the headless env_matrix test */
 
 static float clamp01f(float v) {
