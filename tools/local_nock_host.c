@@ -33,7 +33,27 @@ int ln_draft_reset(void) {
     return 1;
 }
 
+/* ---- command line --------------------------------------------------------------------------
+ * The SHANKPIT NOCK app (apps/lobby, APP_NOCK) spawns this binary as
+ * `<server> --port 8787 --root <shankpit dir>` instead of setting LOCAL_NOCK_* variables: spawning
+ * with an explicit command line is one call on Windows (CreateProcessA), setting an environment
+ * block for a child is not. The variables still work for `make local-nock` / a hand start; flags
+ * win over them. */
+static int g_cli_port = 0;
+static const char *g_cli_repo = NULL;
+static const char *g_cli_levels = NULL;
+static const char *g_cli_editor = NULL;
+static char g_root_levels[1024];
+static char g_root_editor[1024];
+
+static const char *cli_value(int argc, char **argv, const char *flag) {
+    for (int i = 1; i + 1 < argc; i++)
+        if (strcmp(argv[i], flag) == 0) return argv[i + 1];
+    return NULL;
+}
+
 int ln_port(void) {
+    if (g_cli_port > 0) return g_cli_port;
     const char *p = getenv("LOCAL_NOCK_PORT");
     return (p && *p) ? atoi(p) : 8787;
 }
@@ -46,7 +66,11 @@ static char *arena_strdup_local(const char *s, Arena *dest) {
 }
 
 char *ln_env(const char *key, const char *fallback, Arena *dest) {
-    const char *v = key ? getenv(key) : NULL;
+    const char *v = NULL;
+    if (key && strcmp(key, "LOCAL_NOCK_REPO") == 0) v = g_cli_repo;
+    else if (key && strcmp(key, "LOCAL_NOCK_LEVELS") == 0) v = g_cli_levels;
+    else if (key && strcmp(key, "LOCAL_NOCK_EDITOR") == 0) v = g_cli_editor;
+    if ((!v || !*v) && key) v = getenv(key);
     if (!v || !*v) v = fallback ? fallback : "";
     return arena_strdup_local(v, dest);
 }
@@ -178,10 +202,42 @@ char *ln_levels_json(const char *dir, Arena *dest) {
     return out;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     arena_init(&g_arena);
     arena_init(&g_state);
     arena_init(&g_request);
     arena_init(&g_draft);
+
+    const char *port = cli_value(argc, argv, "--port");
+    if (port && *port) g_cli_port = atoi(port);
+    /* --root is the single flag the NOCK app passes: DIR/levels + DIR/tools/nock_editor.html, and
+     * git commits run in DIR, so saved levels land in the SHANKPIT repo the lobby came from. */
+    const char *root = cli_value(argc, argv, "--root");
+    if (root && *root) {
+        g_cli_repo = root;
+        snprintf(g_root_levels, sizeof g_root_levels, "%s/levels", root);
+        snprintf(g_root_editor, sizeof g_root_editor, "%s/tools/nock_editor.html", root);
+        g_cli_levels = g_root_levels;
+        g_cli_editor = g_root_editor;
+    }
+    const char *repo = cli_value(argc, argv, "--repo");
+    if (repo && *repo) g_cli_repo = repo;
+    const char *levels = cli_value(argc, argv, "--levels");
+    if (levels && *levels) g_cli_levels = levels;
+    const char *editor = cli_value(argc, argv, "--editor");
+    if (editor && *editor) g_cli_editor = editor;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            printf("local NOCK -- local map tools server (PARENA)\n"
+                   "  --port N        listen port (default 8787, or LOCAL_NOCK_PORT)\n"
+                   "  --root DIR      DIR/levels + DIR/tools/nock_editor.html; commits run in DIR\n"
+                   "                  (this is what the SHANKPIT NOCK app passes)\n"
+                   "  --repo DIR      git repo saved levels are committed into (default: cwd)\n"
+                   "  --levels DIR    level JSON directory (default: <repo>/levels)\n"
+                   "  --editor FILE   editor HTML served at /\n");
+            return 0;
+        }
+    }
     return nock_run(&g_arena);
 }

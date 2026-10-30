@@ -2684,6 +2684,7 @@ typedef enum {
     APP_EDITOR_GAME,
     APP_ZOMBIES,
     APP_PELLEGRINO,
+    APP_NOCK, /* local NOCK map tools: starts the PARENA server and opens the editor page */
     APP_COUNT
 } AppsAction;
 
@@ -2695,6 +2696,7 @@ static const char *APPS_LABELS[APP_COUNT] = {
     "EDITOR",
     "ZOMBIES",
     "PELLEGRINO",
+    "NOCK",
 };
 
 // lobby_page -- 0 = GAMES (the original single page, untouched), 1 = APPS (new), 2 = CUSTOMIZE
@@ -4759,6 +4761,161 @@ static int lobby_app_binary_path(const char *bundled_name, const char *dev_relat
     return 0;
 }
 
+/* ---- local NOCK app: launch the map-tools server + open the editor page ---------------------
+ * Until now the local NOCK map tools needed a separate `make local-nock` in another terminal (or a
+ * Windows .bat) before the editor was reachable. As an APPS entry, NOCK is one click: it starts the
+ * same server itself and opens http://127.0.0.1:<port>/ in the system browser, and the browser tab
+ * plus the in-game EDIT MAP live session are the same room (levels save to levels/<name>.json and
+ * are committed, exactly as `make local-nock` does).
+ *
+ * The server binary is the PARENA one: bin/local_nock_parena in a dev tree (make local-nock-parena),
+ * or bundled/dw_nock{,.exe} in a packaged build. Everything the server needs is passed as ARGS
+ * (--port/--root) rather than environment variables, because that is what CreateProcessA on Windows
+ * can express without building an environment block.
+ *
+ * Deliberate behaviour: the server is spawned DETACHED, so it outlives the lobby and the editor keeps
+ * working after quitting the game; and if the port already answers (a previous click, or the user's
+ * own `make local-nock`), nothing is spawned -- this just re-opens the tab. */
+#define NOCK_LOCAL_PORT 8787
+
+static int nock_dir_exists(const char *path) {
+    struct stat st;
+    return stat(path, &st) == 0 && (st.st_mode & S_IFDIR) != 0;
+}
+
+/* nock_port_open -- is something already listening on the loopback port? A non-blocking connect with
+ * a 100 ms budget: no DNS, no blocking connect, no sleeping for a fixed time and hoping. */
+static int nock_port_open(int port) {
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof addr);
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((unsigned short)port);
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+#ifdef _WIN32
+    static int wsa_ready = 0;
+    if (!wsa_ready) {
+        WSADATA w;
+        if (WSAStartup(MAKEWORD(2, 2), &w) == 0) wsa_ready = 1;
+    }
+    SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s == INVALID_SOCKET) return 0;
+    u_long nonblocking = 1;
+    ioctlsocket(s, FIONBIO, &nonblocking);
+    int rc = connect(s, (struct sockaddr *)&addr, sizeof addr);
+    if (rc != 0 && WSAGetLastError() != WSAEWOULDBLOCK) { closesocket(s); return 0; }
+    fd_set wr;
+    FD_ZERO(&wr);
+    FD_SET(s, &wr);
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 100000;
+    rc = select(0, NULL, &wr, NULL, &tv);
+    int ok = rc > 0;
+    closesocket(s);
+    return ok;
+#else
+    int s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0) return 0;
+    int flags = fcntl(s, F_GETFL, 0);
+    fcntl(s, F_SETFL, flags | O_NONBLOCK);
+    int rc = connect(s, (struct sockaddr *)&addr, sizeof addr);
+    if (rc == 0) { close(s); return 1; }
+    if (errno != EINPROGRESS) { close(s); return 0; }
+    fd_set wr;
+    FD_ZERO(&wr);
+    FD_SET(s, &wr);
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 100000;
+    rc = select(s + 1, NULL, &wr, NULL, &tv);
+    int ok = rc > 0;
+    if (ok) {
+        int soerr = 0;
+        socklen_t len = sizeof soerr;
+        if (getsockopt(s, SOL_SOCKET, SO_ERROR, &soerr, &len) == 0) ok = (soerr == 0);
+    }
+    close(s);
+    return ok;
+#endif
+}
+
+static void lobby_launch_nock(void) {
+    char base[1024] = "";
+    char *bp = SDL_GetBasePath();
+    if (bp) {
+        snprintf(base, sizeof base, "%s", bp);
+        SDL_free(bp);
+    }
+
+    /* Root = the directory holding levels/ and tools/nock_editor.html. Dev tree: the lobby runs from
+     * bin/, so that is bin/..; a packaged build puts them under bundled/ next to the server. */
+    /* Bigger than `base` on purpose: "%s.." / "%sbundled" must not look truncatable to -Wformat-truncation. */
+    char root[1200];
+    char probe[1400];
+    snprintf(probe, sizeof probe, "%s../levels", base);
+    if (nock_dir_exists(probe)) {
+        snprintf(root, sizeof root, "%s..", base);
+    } else {
+        snprintf(probe, sizeof probe, "%sbundled/levels", base);
+        if (nock_dir_exists(probe)) snprintf(root, sizeof root, "%sbundled", base);
+        else snprintf(root, sizeof root, "%s..", base);
+    }
+
+    char server[1200];
+#ifdef _WIN32
+    const char *bundled_name = "dw_nock.exe";
+#else
+    const char *bundled_name = "dw_nock";
+#endif
+    if (!lobby_app_binary_path(bundled_name, "local_nock_parena", server, sizeof server)) {
+        snprintf(app_launch_status, sizeof app_launch_status,
+                 "NOCK server not found -- run `make local-nock-parena`");
+        return;
+    }
+
+    int started = 0;
+    if (!nock_port_open(NOCK_LOCAL_PORT)) {
+#ifdef _WIN32
+        char cmdline[2800];
+        snprintf(cmdline, sizeof cmdline, "\"%s\" --port %d --root \"%s\"", server, NOCK_LOCAL_PORT, root);
+        STARTUPINFOA si;
+        PROCESS_INFORMATION pi;
+        ZeroMemory(&si, sizeof si);
+        si.cb = sizeof si;
+        ZeroMemory(&pi, sizeof pi);
+        if (CreateProcessA(NULL, cmdline, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+            started = 1;
+        }
+#else
+        pid_t pid = fork();
+        if (pid == 0) {
+            execl(server, server, "--port", "8787", "--root", root, (char *)NULL);
+            _exit(127); /* execl only returns on failure */
+        } else if (pid > 0) {
+            started = 1;
+        }
+#endif
+    }
+
+    /* Wait for the port, bounded (2 s): the browser is opened only once something answers, so a slow
+     * first start shows the editor instead of the browser's connection error page. */
+    for (int i = 0; i < 40 && !nock_port_open(NOCK_LOCAL_PORT); i++) SDL_Delay(50);
+    if (!nock_port_open(NOCK_LOCAL_PORT)) {
+        if (started) snprintf(app_launch_status, sizeof app_launch_status,
+                              "NOCK: server started but port %d never answered", NOCK_LOCAL_PORT);
+        else snprintf(app_launch_status, sizeof app_launch_status, "NOCK: cannot start the server");
+        return;
+    }
+
+    char url[128];
+    snprintf(url, sizeof url, "http://127.0.0.1:%d/", NOCK_LOCAL_PORT);
+    iduna__open_browser(url);
+    snprintf(app_launch_status, sizeof app_launch_status, "NOCK: %s", url);
+}
+/* ---- end local NOCK app -------------------------------------------------------------------- */
+
 // lobby_launch_app -- "all of their interfaces will remain the same" taken literally: spawns the
 // target game's own real, unmodified native binary as a child process. SHANKPIT never regains
 // control of that window; the two run as independent processes side by side (same real relationship
@@ -4803,8 +4960,16 @@ static void lobby_launch_app(AppsAction app) {
 #endif
         return;
     }
+    if (app == APP_NOCK) {
+        lobby_launch_nock();
+        return;
+    }
     const char *bundled_name, *dev_relative_path, *display_name;
     switch (app) {
+        case APP_NOCK:
+            /* handled above (lobby_launch_nock); listed so the enum stays fully covered -- -Wswitch
+             * must not be the thing that tells us a new app was added without a launcher. */
+            return;
         case APP_DEADWEIGHT:
             display_name = "DEADWEIGHT";
 #ifdef _WIN32

@@ -235,6 +235,20 @@ per process and single-threaded, so `wait` is answered immediately and a client 
 checks that a level is an object carrying a `walls` array but not each wall's fields, which the
 Python runner still does.
 
+### NOCK is an APPS entry, not a terminal to keep open
+
+The lobby's APPS page has a **NOCK** tile (`APP_NOCK`): it starts the server itself and opens
+`http://127.0.0.1:8787/` in the system browser, so there is no separate `make local-nock` shell or
+`.bat` to find first. In a dev tree it launches `bin/local_nock_parena` (build it with
+`make local-nock-parena`) with `--root <this checkout>`, which is what makes saves land in
+`levels/` and get committed here; a packaged build looks for `bundled/dw_nock` (`dw_nock.exe`) next
+to `bundled/levels` and `bundled/tools/nock_editor.html`. If the port already answers -- an earlier
+click, or your own `make local-nock` -- nothing is spawned and the tile just re-opens the tab, so
+clicking twice is harmless. The server is spawned detached: it outlives the lobby, so the editor
+keeps working after you quit the game. Window is bounded rather than guessed (the tab opens only
+after the port answers, up to 2 s). Windows has no bundled binary yet, so the tile says
+`NOCK server not found` there instead of pretending it started.
+
 ## Current visual direction
 
 SHANKPIT is pursuing a deliberately stylized visual identity rather than realism-first rendering.
