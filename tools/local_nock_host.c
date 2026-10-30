@@ -5,7 +5,7 @@
  * plain file/directory access (the emitter has no pointer-typed return and rejects set! on a
  * top-level def). Routing, JSON shapes, level validation and the git commit are PARENA.
  */
-#include "parena_runtime.h"
+#include "local_nock_host.h"
 
 #include <dirent.h>
 #include <stdio.h>
@@ -36,7 +36,7 @@ int ln_port(void) {
     return (p && *p) ? atoi(p) : 8787;
 }
 
-const char *ln_new_id(Arena *dest) {
+char *ln_new_id(Arena *dest) {
     static const char *hex = "0123456789abcdef";
     char *out = (char *)arena_alloc(dest, 33);
     srand((unsigned)(time(NULL) ^ (long)getpid()));
@@ -45,7 +45,7 @@ const char *ln_new_id(Arena *dest) {
     return out;
 }
 
-const char *ln_state_get(const char *field, Arena *dest) {
+char *ln_state_get(const char *field, Arena *dest) {
     const char *v = "";
     if (!strcmp(field, "id")) v = g_state.id;
     else if (!strcmp(field, "draft")) v = g_state.draft;
@@ -72,7 +72,7 @@ int ln_state_set(const char *field, const char *value) {
     return 1;
 }
 
-const char *ln_level_path(const char *name, Arena *dest) {
+char *ln_level_path(const char *name, Arena *dest) {
     char buf[1200];
     snprintf(buf, sizeof buf, "%s/%s.json", g_state.levels, name ? name : "");
     size_t n = strlen(buf);
@@ -81,9 +81,9 @@ const char *ln_level_path(const char *name, Arena *dest) {
     return out;
 }
 
-const char *ln_read_file(const char *path, Arena *dest) {
+char *ln_read_file(const char *path, Arena *dest) {
     FILE *f = fopen(path, "rb");
-    if (!f) return "";
+    if (!f) return (char *)"";
     fseek(f, 0, SEEK_END);
     long n = ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -105,7 +105,7 @@ int ln_write_file(const char *path, const char *text) {
     return ok ? 1 : 0;
 }
 
-const char *ln_editor_html(Arena *dest) { return ln_read_file(g_state.editor, dest); }
+char *ln_editor_html(Arena *dest) { return ln_read_file(g_state.editor, dest); }
 
 /* ln_log_event -- append one posted event ({"source":..,"kind":..,"data":..}) to the room's log,
  * injecting its seq. Kept in the host only because the seq counter itself has to outlive a request;
@@ -127,7 +127,7 @@ int ln_log_event(const char *body) {
     return 1;
 }
 
-const char *ln_session_json(Arena *dest) {
+char *ln_session_json(Arena *dest) {
     size_t cap = strlen(g_state.log) + 256;
     char *out = (char *)arena_alloc(dest, cap);
     snprintf(out, cap, "{\"id\":\"%s\",\"seq\":%s,\"events\":[%s]}",
@@ -136,7 +136,7 @@ const char *ln_session_json(Arena *dest) {
 }
 
 /* ln_levels_json -- {"levels":[{"name":..,"file":..,"bytes":N},..]} for the editor's level list. */
-const char *ln_levels_json(Arena *dest) {
+char *ln_levels_json(Arena *dest) {
     size_t cap = 1 << 16, len = 0;
     char *out = (char *)arena_alloc(dest, cap);
     len += (size_t)snprintf(out + len, cap - len, "{\"levels\":[");

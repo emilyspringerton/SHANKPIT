@@ -210,10 +210,19 @@ checks). Two honest gaps: one live room per run, and the event log replays whole
 `?since` (the events the client applies are idempotent, so that just refetches the level).
 
 The PARENA port is `tools/local_nock.prn` plus the previously missing dependency
-`PARENA/stdlib/net/http_server.prn` (request parsing + response serialisation, which does emit). The
-tool parses but does not emit yet: VS0 rejects reference parameters and `match` scrutinees naming a
-defstruct imported from another module, pointer-typed returns, and `set!` on a top-level def. Those
-four are the real next compiler work; the Python server stays the runner until they land.
+`PARENA/stdlib/net/http_server.prn` (request parsing, case-insensitive header lookup, and response
+serialisation). It now emits and runs: `make local-nock-parena` builds it (needs a `../PARENA`
+checkout with `.parena-bootstrap`) and serves the same API as the Python runner, with the host
+boundary in `tools/local_nock_host.c`/`.h` limited to the arena, env, file/directory access and the
+session strings that outlive a request -- routing, JSON, level validation and the git commit are
+PARENA.
+
+Getting there needed four real VS0 emitter fixes (2026-10-30, each verified by compiling the
+generated C with `-std=c99 -pedantic -Wall -Wextra -Werror`): variadic arithmetic (`(+ a b c)`
+left-folds), `set!` on a top-level `(def ...)`, `println`/`print` in the runtime, and `&` on an
+already-pointer-typed value (a match-bound `Ok` payload used to emit a real `void **`). `(< a b c)`
+still fails by design, with a message that says why: a real chained comparison would have to
+evaluate its middle operand twice.
 
 ## Current visual direction
 

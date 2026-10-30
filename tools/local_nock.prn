@@ -1,4 +1,5 @@
-;; tools/local_nock.prn -- local NOCK map tools in PARENA: the IDUNA-free authoring server.
+;; tools/local_nock.prn -- local NOCK map tools in PARENA: the IDUNA-free authoring server (PARENA
+;; entry point; tools/local_nock.py is the same contract with the fuller feature set for now).
 ;;
 ;; Same wire contract as the IDUNA handler the native client is written against
 ;; (packages/world/edit_sync.h <-> IDUNA/internal/http/handlers/shankpit_edit_sessions.go), the same
@@ -12,21 +13,26 @@
 ;; is idempotent for the events it applies (spawner/teleport/spawn_mode/level), so replaying it just
 ;; refetches the working level. Multi-room + since-filtering is real follow-up work, not hidden.
 ;;
-;; Host boundary (tools/local_nock_host.c), deliberately thin: the arena, env, the session id and
-;; the session strings that outlive one request -- the emitter has no pointer-typed return and
-;; rejects set! on a top-level def today. Routing, JSON shapes, level validation and the git commit
-;; are PARENA below.
+;; Host boundary (tools/local_nock_host.c/.h), deliberately thin: the arena, env, file and directory
+;; access, and the session strings that outlive one request. Routing, JSON shapes, level validation
+;; and the git commit are PARENA below. (`set!` on a top-level def now works, so moving the session
+;; id/draft/log into PARENA globals is a real, small follow-up rather than a compiler blocker -- the
+;; host's ln_state_* pair is what remains of that workaround.)
 
-;; STATUS (2026-10-30): parses cleanly (`parena parse`), does NOT emit yet. Verified by running
-;; `parena build` on this file -- the remaining VS0 emitter gaps, each hit in turn:
-;;   1. a reference parameter naming a defstruct defined in an IMPORTED module (`&TcpListener`),
-;;      and a `match` whose scrutinee has that type ('void *') -- net/tcp.prn itself emits fine, so
-;;      this is specifically cross-module;
-;;   2. `: (Arena @ Region)` return types (the host owns the arena for now);
-;;   3. `(set! <top-level-def> v)` (session state goes through the host's ln_state_* accessors).
-;; The request/response half is real and emits: PARENA/stdlib/net/http_server.prn. Shipped and
-;; tested today is tools/local_nock.py (make test-local-nock, 12 checks); this file is the port to
-;; finish once those land, and everything from `handle` down moves over unchanged.
+;; STATUS (2026-10-30): emits and RUNS. `make local-nock-parena` in SHANKPIT builds this file plus
+;; PARENA/stdlib/net/http_server.prn with -std=c99 -pedantic -Wall -Wextra -Werror and serves the
+;; same API as tools/local_nock.py. Verified over loopback: level list, PUT (real git commit), level
+;; read, session create, event post + read-back, draft push/fetch, editor page, 404.
+;;
+;; Getting here closed four real VS0 emitter gaps and one runtime bug, each found by building this
+;; file rather than assumed: variadic operators (`(+ a b c)` folds), `set!` on a top-level `(def ...)`,
+;; `println` (which had no runtime declaration at all), `&` on an already-pointer match payload
+;; (`(tcp-accept &!listener dest)` used to emit `void **`), and `tcp_read_impl` reading a bodyless
+;; request until EOF instead of stopping at the completed header block.
+;;
+;; Still not ported from the Python runner (named, not hidden; see mk/local_nock.mk): ?since filtering,
+;; event-kind validation, falling back to the saved level when a session has no draft, and bumping the
+;; draft revision. Those are the next PARENA steps, not compiler work.
 
 (module local_nock)
 (import string)
