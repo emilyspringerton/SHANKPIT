@@ -315,11 +315,16 @@ jobs:
           mkdir -p bundled
 
           echo "== DEADWEIGHT dw_gui.exe =="
+          # Source list is DEADWEIGHT's own scripts/build.sh GUI_SRC, hand-copied. NINTH occurrence
+          # of this drift class (2026-10-30): core/draft.c (dw_draft_deck_valid / dw_random_deck,
+          # S510 DW_C_DRAFT_RESUME) is in GUI_SRC but was missing here, so the link failed with
+          # undefined references from core/client.c and core/iduna.c. When GUI_SRC changes, this list
+          # changes with it -- the Linux dw_gui step below carries the same copy.
           ( cd os_apps/DEADWEIGHT
             test -f apps/gui/main.c
             x86_64-w64-mingw32-gcc -std=c99 -Wall -Wextra -Werror -Icore -Icore/runtime -DPARENA_NO_GRAPHICS "-DDW_VERSION=\"ci\"" \
               -include card_rules.h -O2 -I"$SDLW/include" -I"$SDLW/include/SDL2" \
-              apps/gui/main.c apps/gui/fx.c apps/gui/sfx.c core/client.c core/policy.c core/protocol.c core/card_rules.c core/fx_rules.c core/card_text.c core/iduna.c core/http.c core/account_rules.c core/runtime/parena_runtime.c \
+              apps/gui/main.c apps/gui/fx.c apps/gui/sfx.c core/client.c core/policy.c core/protocol.c core/card_rules.c core/draft.c core/fx_rules.c core/card_text.c core/iduna.c core/http.c core/account_rules.c core/runtime/parena_runtime.c \
               -o dw_gui.exe -L"$SDLW/lib" -lmingw32 -lSDL2 -lws2_32 -lbcrypt -mwindows )
           cp os_apps/DEADWEIGHT/dw_gui.exe bundled/
 
@@ -467,7 +472,7 @@ jobs:
             test -f apps/gui/main.c
             gcc -std=c99 -Wall -Wextra -Werror -Icore -Icore/runtime -DPARENA_NO_GRAPHICS "-DDW_VERSION=\"ci\"" \
               -include card_rules.h -O2 -I/usr/include/SDL2 \
-              apps/gui/main.c apps/gui/fx.c apps/gui/sfx.c core/client.c core/policy.c core/protocol.c core/card_rules.c core/fx_rules.c core/card_text.c core/iduna.c core/http.c core/account_rules.c core/runtime/parena_runtime.c \
+              apps/gui/main.c apps/gui/fx.c apps/gui/sfx.c core/client.c core/policy.c core/protocol.c core/card_rules.c core/draft.c core/fx_rules.c core/card_text.c core/iduna.c core/http.c core/account_rules.c core/runtime/parena_runtime.c \
               -o dw_gui -lSDL2 -lm )
           mkdir -p bundled_linux
           cp os_apps/DEADWEIGHT/dw_gui bundled_linux/dw_gui
