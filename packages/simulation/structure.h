@@ -73,6 +73,13 @@ typedef struct {
     float x, y, z, w, h, d;   /* centre + FULL extents, physics.h Box convention */
     float density;            /* kg/m^3 (the NOCK material's own value, or PARENA's default) */
     float mass;               /* kg, derived from the volume */
+    /* 0..1: the share of the piece's original cross-section that is still there. A wall shot down to a
+     * stub holds a fraction of what the whole wall held -- without this, a pier missing 90% of its
+     * material carried exactly as much as an intact one until its very last cell went, which is the
+     * single most obvious way a "realistic" collapse can look wrong. Linear in what is left, which is
+     * a defensible approximation for a column and NOT a stress solver: a hollowed-out tube keeps more
+     * of its capacity than this says. */
+    float strength;
     int grounded;             /* rests on the world floor */
     int parent;               /* the host's own id (e.g. a BfParent index), -1 if none */
 } StructNode;
@@ -117,6 +124,7 @@ static inline int structure_add_node(StructureGraph *g, int kind,
     n->w = w; n->h = h; n->d = d;
     n->density = (density > 0.0f) ? density : (float)struct_density(kind);
     n->mass = w * h * d * n->density;
+    n->strength = 1.0f;
     n->parent = parent;
     return g->node_count++;
 }
@@ -265,7 +273,10 @@ static inline void structure_evaluate(StructureGraph *g) {
             /* capacity: compression (kg per m^2) x footprint. The footprint is w x d, which is the
              * horizontal cross-section for a wall or a pillar -- the common shapes here. */
             double area_m2 = (double)g->node[i].w * (double)g->node[i].d;
-            double cap = (double)struct_compression(g->node[i].kind) * area_m2;
+            double strength = (double)g->node[i].strength;
+            if (!(strength > 0.0)) strength = 0.0;               /* NaN-safe: a nonsense share holds nothing */
+            if (strength > 1.0) strength = 1.0;
+            double cap = (double)struct_compression(g->node[i].kind) * area_m2 * strength;
             if (cap > (double)STRUCT_MAX_LOAD_KG) cap = (double)STRUCT_MAX_LOAD_KG;
             int capacity_kg = (int)cap;
 

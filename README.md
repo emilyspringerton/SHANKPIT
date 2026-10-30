@@ -1177,7 +1177,12 @@ existing debris path. A piece too big to be one body falls in **pieces** along i
 300-cell deck becomes two slabs) rather than not at all, and the slab height is chosen so a part stays
 under `BF_CHUNK_CELLS` even with every cell intact. All or nothing still applies: if the chunk queue
 cannot take every part, nothing is detached — a half-fallen wall is worse than a standing one. Piece
-mass follows the damage, so a wall carved down to a stub weighs what is left of it.
+mass follows the damage, so a wall carved down to a stub weighs what is left of it — and so does its
+**strength**: capacity is scaled by the fraction of the piece still there, because a pier missing 90%
+of its material carrying exactly as much as an intact one until its very last cell goes is the most
+obvious way a structural model can look wrong. Linear in what is left, which is defensible for a
+column and explicitly *not* a stress solver (a hollowed-out tube really does keep more capacity than
+this says).
 
 Two rules keep it from demolishing levels on its own:
 

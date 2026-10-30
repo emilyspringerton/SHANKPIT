@@ -144,6 +144,20 @@ static void structure_collapse_test(void) {
     for (int i = 0; i < g_brick.chunk_count; i++) CHECK(g_brick.chunk[i].n <= BF_CHUNK_CELLS);
     CHECK(!solid_at(0.0f, 10.0f, 0.0f) && !solid_at(0.0f, 32.0f, 0.0f));
 
+    /* a support shot down to a stub is a WEAKER support, not one that holds until its last cell goes:
+       the graph's strength (and so its capacity) follows the cells that are left */
+    load_struct_level(1, 0);
+    int post_node = -1;
+    for (int i = 0; i < g_brick_struct.node_count; i++) if (g_brick_struct.node[i].parent == 1) post_node = i;
+    CHECK(post_node >= 0);
+    brick_world_structure_sync();
+    CHECK(g_brick_struct.node[post_node].strength == 1.0f);
+    for (int iy = 1; iy < 7; iy++) bf_set_cell_hp(&g_brick, 1, bf_key(0, iy, 0), 0, 1);   /* leave the base */
+    brick_world_structure_sync();
+    CHECK(fabsf(g_brick_struct.node[post_node].strength - 1.0f / 7.0f) < 1e-4f);
+    brick_world_flush(1);
+    CHECK(!solid_at(0.0f, 23.0f, 0.0f));         /* the deck goes with the pier, whichever layer sees it */
+
     /* the wall-only level has no two touching pieces at all, so the layer stays off and costs nothing */
     load_level();
     CHECK(brick_world_structure_is_active() == 0);

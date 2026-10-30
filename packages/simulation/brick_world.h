@@ -287,9 +287,11 @@ static void brick_world_structure_sync(void) {
         const BfParent *p = &g_brick.parent[pi];
         int total = p->n[0] * p->n[1] * p->n[2];
         int intact = total - p->removed;
-        if (!p->active || total <= 0 || intact <= 0) { n->active = 0; n->mass = 0.0f; continue; }
+        float frac = (total > 0) ? (float)intact / (float)total : 0.0f;
+        if (!p->active || total <= 0 || intact <= 0) { n->active = 0; n->mass = 0.0f; n->strength = 0.0f; continue; }
         n->active = 1;
-        n->mass = p->dim[0] * p->dim[1] * p->dim[2] * n->density * ((float)intact / (float)total);
+        n->mass = p->dim[0] * p->dim[1] * p->dim[2] * n->density * frac;
+        n->strength = frac;      /* a shot-away pier carries only what is left of it */
     }
 }
 

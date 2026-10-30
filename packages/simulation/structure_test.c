@@ -138,6 +138,26 @@ int main(void) {
                g.failed_load_kg[pillar], structure_unsupported_count(&g));
     }
 
+    /* 6b. a support shot down to a stub carries a fraction of what it did. Same slab, same pier --
+          whole it holds, reduced to a fifth of its section it cannot, and the slab stops being held. */
+    {
+        structure_reset(&g);
+        structure_add_node(&g, BF_KIND_CONCRETE, 0, 0.25f, 0, 30.0f, 0.5f, 30.0f, 0.0f, 0);
+        int pier = structure_add_node(&g, BF_KIND_CONCRETE, 0, 2.45f, 0, 0.6f, 4.0f, 0.6f, 0.0f, 1);
+        structure_add_node(&g, BF_KIND_CONCRETE, 0, 4.6f, 0, 15.0f, 0.6f, 15.0f, 0.0f, 2);
+        structure_ground_resting(&g, 0.0f, 0.01f);
+        structure_build_joints(&g, 0.001f);
+        structure_evaluate(&g);
+        CHECK(!g.failed[pier]);                       /* intact: a concrete pier holds 324 t of slab */
+        CHECK(g.support[2]);
+        g.node[pier].strength = 0.2f;                 /* shot down to a fifth of its cross-section */
+        structure_evaluate(&g);
+        CHECK(g.failed[pier]);                        /* now it cannot carry it... */
+        CHECK(!g.support[2]);                         /* ...and the slab is no longer held */
+        printf("weakened pier: %d kg on a fifth of its section -> failed carrying %d kg\n",
+               g.load_kg[pier], g.failed_load_kg[pier]);
+    }
+
     /* 7. determinism: identical graph, identical answer, bit for bit */
     {
         StructureGraph a, b;
