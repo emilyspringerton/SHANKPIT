@@ -78,6 +78,65 @@ static void fire(PlayerState *p, int weapon, int ticks) {
 void witness_ai_set_wall_hit_hook(WitnessWallHitFn fn) { (void)fn; }
 void witness_ai_set_map_hook(WitnessMapFn fn) { (void)fn; }
 
+/* ---- the structural layer (structure.h) through the real glue ----------------------------------
+ * A destructible post carrying a brick deck (nothing else touches it). 3 x 20 x 3 m of wood can hold
+ * 12.6 million kg of column load; the 18 x 6 x 18 brick deck weighs 3,693 tonnes over a 9 m^2
+ * footprint, so PARENA's answer is that this post cannot carry it. Nothing is SHOT here at all --
+ * the cell-level flood has nothing to work with, which is exactly why the piece layer exists. */
+static void load_struct_level(int pillar_material) {
+    memset(&g_lvl, 0, sizeof(g_lvl));
+    snprintf(g_lvl.materials[0].name, LEVEL_BOXES_MAX_NAME, "brick");
+    snprintf(g_lvl.materials[1].name, LEVEL_BOXES_MAX_NAME, "concrete");
+    snprintf(g_lvl.materials[2].name, LEVEL_BOXES_MAX_NAME, "wood");
+    g_lvl.material_count = 3;
+    LevelBox *b = g_lvl.boxes;
+    b[0] = (LevelBox){ 0, -1, 0, 100, 2, 100, 0.6f, 0.6f, 0.6f, 0.3f, 0 };      /* floor slab: the anchor */
+    b[1] = (LevelBox){ 0, 10, 0, 3, 20, 3, 0.6f, 0.6f, 0.6f, 0.3f, pillar_material };  /* the post under it */
+    b[2] = (LevelBox){ 0, 23, 0, 18, 6, 18, 0.7f, 0.5f, 0.4f, 0.3f, 0 };        /* the deck it carries */
+    g_lvl.count = 3;
+
+    float x[3], y[3], z[3], w[3], h[3], d[3], r[3], g[3], bl[3]; int mi[3];
+    for (int i = 0; i < 3; i++) {
+        x[i] = b[i].x; y[i] = b[i].y; z[i] = b[i].z; w[i] = b[i].w; h[i] = b[i].h; d[i] = b[i].d;
+        r[i] = g[i] = bl[i] = 0.6f; mi[i] = b[i].material_idx;
+    }
+    char names[3][CUSTOM_LEVEL_MATERIAL_NAME_LEN] = { "brick", "concrete", "wood" };
+    char shaders[3][CUSTOM_LEVEL_MATERIAL_NAME_LEN] = { "standard", "standard", "standard" };
+    float spec[3] = { 0, 0, 0 }, shin[3] = { 1, 1, 1 }, fric[3] = { 0.3f, 0.3f, 0.3f };
+    phys_set_custom_level_materials(names, shaders, spec, shin, fric, 3);
+    phys_set_custom_level(x, y, z, w, h, d, r, g, bl, mi, 3, 0, 1);
+    phys_set_scene(SCENE_CUSTOM_LEVEL);
+    brick_world_init_from_level(&g_lvl);
+    brick_world_set_authority(1);
+}
+
+static void structure_collapse_test(void) {
+    /* a wood post: the rules say it cannot hold the deck, so the deck comes down with it -- on load,
+       before the first frame, with no damage involved */
+    load_struct_level(2);
+    CHECK(g_brick_active == 1);
+    CHECK(g_brick.parent[1].kind == BF_KIND_WOOD && g_brick.parent[2].kind == BF_KIND_BRICK);
+    CHECK(brick_world_structure_is_active() == 1);
+    CHECK(g_brick_struct.node_count == 2 && g_brick_struct.joint_count == 1);
+    CHECK(g_brick.parent[1].removed == 7);        /* the post: 1 x 7 x 1 cells, all of it */
+    CHECK(g_brick.parent[2].removed == 72);       /* the deck: 6 x 2 x 6 cells, all of it */
+    CHECK(!solid_at(0.0f, 10.0f, 0.0f));          /* neither is standing in the collision world */
+    CHECK(!solid_at(0.0f, 23.0f, 0.0f));
+    CHECK(g_brick.chunk_count == 2);              /* and both fell as rigid chunks, not as dust */
+
+    /* the same deck on a concrete post holds: same geometry, different material, different verdict */
+    load_struct_level(1);
+    CHECK(g_brick.parent[1].kind == BF_KIND_CONCRETE);
+    CHECK(g_brick.parent[1].removed == 0 && g_brick.parent[2].removed == 0);
+    CHECK(solid_at(0.0f, 10.0f, 0.0f) && solid_at(0.0f, 23.0f, 0.0f));
+    CHECK(brick_world_structure_failed() == 0);
+    CHECK(brick_world_structure_unsupported() == 0);
+
+    /* the wall-only level has no two touching pieces at all, so the layer stays off and costs nothing */
+    load_level();
+    CHECK(brick_world_structure_is_active() == 0);
+}
+
 /* A glass pane standing on a floor: knock a ring out of it and the disc left in the middle has lost every
    connection, so through the REAL glue it must become a rigid chunk body (mass = density x volume) that falls
    and tumbles instead of hanging in the air. */
@@ -350,6 +409,7 @@ int main(void) {
         CHECK(g_brick.rec_count == rc);
     }
 
+    structure_collapse_test();
     glass_chunk_test();
     if (g_fail) { printf("brick_world_test: %d FAILED\n", g_fail); return 1; }
     printf("brick_world_test: all checks passed (magnum breach in %d bursts)\n", shots);

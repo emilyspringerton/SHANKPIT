@@ -1169,12 +1169,39 @@ damping, fracture kind, joint strength, load comparison), regenerated with
 `scripts/gen_structure_rules.sh`. `make test-structure` runs the graph headlessly (ASan+UBSan, no GL,
 no display).
 
-**Not modelled, deliberately:** shear flow inside a piece, bending/buckling shape (a pillar holds its
-column load or the node fails — it does not bow), fatigue, and per-cell stress inside one box. Those
-need a solver this engine does not have, and saying so is cheaper than pretending.
+**Wired into the game.** `brick_world.h` builds the graph when a level loads (one node per destructible
+parent, anchored if it sits on the world floor or touches any non-destructible solid) and re-evaluates
+it after a breach, inside `brick_world_flush` — so it costs nothing per tick. A piece the graph can no
+longer justify is dropped whole through the new `bf_detach_parent`, becoming one rigid chunk on the
+existing debris path (budgeted exactly like the cell pass: over 256 cells or over the chunk queue, it
+stays standing rather than half-detaching). Piece mass follows the damage, so a wall carved down to a
+stub weighs what is left of it.
 
-**Not wired yet:** nothing calls this from `brick_world.h`; the graph is built and proven headless,
-and the hookup (a detached piece removing its node and re-evaluating) is the next slice.
+Two rules keep it from demolishing levels on its own:
+
+- **Authored floating decoration is baselined, not collapsed.** A sign hanging over a doorway has no
+  path to the ground at load, so it is marked handled on load and left alone. The baseline is taken on
+  the support flood *before* any load verdict — reading it afterwards would baseline the overloaded
+  support too, and a building the rules say cannot stand would quietly stand forever.
+- **An overloaded support does come down at load.** If the rules say a piece cannot hold what is on
+  it, that is a verdict about geometry you can see, and the cascade runs before the first frame.
+
+```
+3 x 20 x 3 wood post        18 x 6 x 18 brick deck
+12.6M kg column capacity    3,693 tonnes over a 9 m^2 footprint
+        \                          /
+         +------  cannot hold -----+      -> both fall as rigid chunks (no damage involved)
+the same deck on a concrete post: holds
+```
+
+Verified in `make test-brick-world`: the wood-post level loses all 7 post cells and all 72 deck cells at
+load, both pieces stop being solid immediately, and two chunks are queued; the same deck on a concrete
+post survives untouched with zero failures; the wall-only level keeps the layer switched off.
+
+**Not modelled, deliberately:** shear flow inside a piece, bending/buckling shape (a pillar holds its
+column load or the node fails — it does not bow), fatigue, per-cell stress inside one box, and collapse
+*animation* (a dropped piece is one rigid body, not a tumbling pile of brick). Those need a solver this
+engine does not have, and saying so is cheaper than pretending.
 
 ### 4. Local Game Simulation (`packages/simulation/local_game.h`)
 

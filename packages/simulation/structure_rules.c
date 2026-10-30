@@ -153,7 +153,7 @@ int struct_holds_load(int mass_kg __attribute__((unused)), int capacity_kg __att
     if ((capacity_kg < 0)) {
     return 0;
     } else {
-    if (((mass_kg * 1000) <= (capacity_kg * 850))) {
+    if ((mass_kg <= ((capacity_kg / 100) * 85))) {
     return 1;
     } else {
     return 0;

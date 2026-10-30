@@ -650,6 +650,51 @@ static inline int bf_detect_detached(BrickFracture *bf) {
     return made;
 }
 
+/* bf_detach_parent -- drop an ENTIRE destructible parent at once, as one rigid chunk.
+ *
+ * This is the structural layer's escape hatch (packages/simulation/structure.h): the cell-level flood in
+ * bf_detect_detached answers "is this region of cells still attached to something?", but a roof resting
+ * on a pillar two boxes away is attached at PIECE level, not cell level, and bf_detect_detached
+ * deliberately keeps an authored-floating mass. When the piece graph says that roof's support is gone,
+ * this is what makes it fall.
+ *
+ * Budgeted exactly like bf_detect_detached: a parent bigger than BF_CHUNK_CELLS (256 cells), one that
+ * would overflow the record budget or per-parent removal cap, or one arriving after BF_MAX_CHUNKS is
+ * full, stays standing -- the same "too big to animate: stays put" rule the cell pass already uses,
+ * named rather than silently half-detached. Returns the number of cells detached (0 = left standing). */
+static inline int bf_detach_parent(BrickFracture *bf, int parent) {
+    if (parent < 0 || parent >= bf->parent_count) return 0;
+    BfParent *p = &bf->parent[parent];
+    if (!p->active) return 0;
+    int total = p->n[0] * p->n[1] * p->n[2];
+    if (total <= 0) return 0;
+    int intact = total - p->removed;
+    if (intact <= 0) return 0;
+    if (intact > BF_CHUNK_CELLS) return 0;                     /* too big to animate as one body */
+    if (bf->chunk_count >= BF_MAX_CHUNKS) return 0;
+    if (bf->rec_count + intact > BF_MAX_RECORDS) return 0;
+    if (p->removed + intact > BF_MAX_REMOVED_PER_PARENT) return 0;
+
+    int id = ++bf->next_chunk_id;
+    if (id > 255) { bf->next_chunk_id = 1; id = 1; }
+    int n = 0;
+    bf->suppress_debris = 1;
+    for (int ix = 0; ix < p->n[0]; ix++)
+        for (int iy = 0; iy < p->n[1]; iy++)
+            for (int iz = 0; iz < p->n[2]; iz++) {
+                unsigned int key = bf_key(ix, iy, iz);
+                if (bf_cell_hp(bf, parent, key) <= 0) continue;
+                if (bf_set_cell_hp(bf, parent, key, 0, 1) <= 0) continue;
+                int r = bf_find_rec(bf, parent, key);
+                if (r >= 0) bf->rec[r].chunk = (unsigned char)id;
+                bf_push_net_chunk(bf, parent, key, 0, id);
+                bf_chunk_note(bf, id, parent, key);
+                n++;
+            }
+    bf->suppress_debris = 0;
+    return n;
+}
+
 /* ---------------------------------------------------------------------------------------------
  * Piece decomposition
  * ------------------------------------------------------------------------------------------- */

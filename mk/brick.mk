@@ -11,10 +11,11 @@ test-brick-fracture:
 # Through the real engine paths (physics.h update_weapons + custom-level slots + trace_map + the
 # brick_world.h glue): headless, ASan+UBSan.
 .PHONY: test-brick-world test-brick brick-e2e
-test-brick-world:
+test-brick-world: $(STRUCTURE_RULES_C)
 	gcc -std=gnu99 -Wall -g -fsanitize=address,undefined $(INCLUDES) \
 		packages/simulation/brick_world_test.c packages/simulation/brick_mod.c packages/world/terrain.c \
 		packages/simulation/brick_bodies.c packages/goldenband/grb.c \
+		packages/simulation/structure_rules.c packages/world/parena_runtime.c \
 		-o /tmp/shankpit_brick_world_test -lm
 	/tmp/shankpit_brick_world_test
 

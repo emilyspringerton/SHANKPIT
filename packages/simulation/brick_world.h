@@ -26,6 +26,7 @@
 #include "witness_ai.h"
 #include "../world/brick_fracture.h"
 #include "brick_bodies.h"
+#include "structure.h"      /* the piece-level structural layer (joints, support, load cascade) */
 #include "../common/obb.h"
 #include "../world/level_boxes.h"
 
@@ -40,6 +41,18 @@ static int g_brick_active = 0;       /* a level with at least one destructible p
 static int g_brick_authority = 1;    /* 0 = networked client, mirror only */
 static unsigned int g_brick_rng = 0x9E3779B9u;
 static unsigned int g_brick_commit_serial = 0;   /* bumps whenever the committed geometry changed */
+
+/* The structural layer (structure.h), built once when a level loads and re-evaluated after a breach:
+ * which pieces are joined to each other, which still reach the ground, and which support is carrying
+ * more than it can. It is the piece-level companion to the cell-level flood in bf_detect_detached --
+ * the thing that lets a roof resting on a pillar two boxes away actually come down when that pillar
+ * goes, instead of hanging in the air. Zero per-tick cost: it runs on load and on damage only. */
+static StructureGraph g_brick_struct;
+static int g_brick_struct_active = 0;
+#define BRICK_STRUCTURE_WELD 0.05f   /* authored flush faces are joints; a real gap is not */
+/* Defined below, after the static-geometry probe (both are used by the match reset / flush above). */
+static int brick_world_structure_tick(void);
+static void brick_world_structure_reset(void);
 
 /* Physical broken brick (brick_bodies.h): GOLDEN BAND rigid bodies. Shards inherit a FRACTION of the
    impact velocity: a bullet's nominal speed x BRICK_INHERIT_FRACTION, a blast's radial push. */
@@ -86,8 +99,12 @@ static inline int brick_world_flush(int have_checkpoint) {
     if (!g_brick.pieces_dirty) { g_brick.fresh_count = 0; return 0; }
     /* authority only: any cells this change cut off from the world become rigid chunks (set gone here so
        the rebuild below carves them in the same pass; clients get them over the wire with a chunk id) */
-    if (g_brick_authority) bf_detect_detached(&g_brick);
-    else g_brick.fresh_count = 0;
+    if (g_brick_authority) {
+        bf_detect_detached(&g_brick);
+        /* ...and any PIECE whose support that cut took away comes down too. bf_detect_detached only
+           sees cell adjacency; a roof held by a pillar two boxes away is a piece-level fact. */
+        brick_world_structure_tick();
+    } else g_brick.fresh_count = 0;
     if (bf_rebuild(&g_brick)) { brick_world_commit(); return 1; }
     if (have_checkpoint) {
         bf_restore(&g_brick, &g_brick_cp);
@@ -161,6 +178,7 @@ static inline void brick_world_reset_match(void) {
     bf_clear_damage(&g_brick);
     if (g_brick_bodies_ready) bb_clear(&g_brick_bodies);
     g_brick_resend_n = 0;
+    brick_world_structure_reset();
     if (bf_rebuild(&g_brick)) brick_world_commit();
 }
 
@@ -207,6 +225,115 @@ static int brick_world_static_probe(float x, float y, float z) {
     }
     return 0;
 }
+
+/* ---- structural layer (structure.h) ------------------------------------------------------------
+ * level box -> piece node. `anchored` means touching geometry that never moves (the world floor, or
+ * any non-destructible solid: a metal frame, a floor slab): for this purpose resting on it and being
+ * bolted to it are the same thing, because neither it nor the piece can go anywhere on its own. */
+static int brick_world_struct_anchored(const LevelBox *b) {
+    if (b->y - b->h * 0.5f <= 0.02f) return 1;                     /* on the world floor */
+    float hw = b->w * 0.5f, hh = b->h * 0.5f, hd = b->d * 0.5f;
+    for (int i = -1; i <= 1; i++)
+        for (int k = -1; k <= 1; k++)
+            if (brick_world_static_probe(b->x + (float)i * hw * 0.95f, b->y - hh - 0.05f,
+                                         b->z + (float)k * hd * 0.95f)) return 1;   /* sitting on a solid */
+    if (brick_world_static_probe(b->x + hw + 0.05f, b->y, b->z) ||
+        brick_world_static_probe(b->x - hw - 0.05f, b->y, b->z) ||
+        brick_world_static_probe(b->x, b->y, b->z + hd + 0.05f) ||
+        brick_world_static_probe(b->x, b->y, b->z - hd - 0.05f)) return 1; /* bolted into a solid */
+    return 0;
+}
+
+/* brick_world_structure_build -- one pass over the loaded level. Unsupported pieces are baselined as
+ * already handled rather than collapsed: a sign hanging over a doorway is authored decoration, and a
+ * level must not demolish itself the moment it loads. A piece that is CONNECTED but overloaded is a
+ * different verdict -- the rules say it cannot hold what is on it -- so that one is left for the tick
+ * below, which drops it. */
+static void brick_world_structure_build(const CustomLevelData *lvl) {
+    structure_reset(&g_brick_struct);
+    g_brick_struct_active = 0;
+    if (!g_brick_active || !lvl) return;
+    for (int pi = 0; pi < g_brick.parent_count && pi < lvl->count; pi++) {
+        const BfParent *p = &g_brick.parent[pi];
+        if (!p->active) continue;
+        const LevelBox *b = &lvl->boxes[pi];
+        int node = structure_add_node(&g_brick_struct, p->kind,
+                                      p->lo[0] + p->dim[0] * 0.5f, p->lo[1] + p->dim[1] * 0.5f,
+                                      p->lo[2] + p->dim[2] * 0.5f,
+                                      p->dim[0], p->dim[1], p->dim[2], p->density, pi);
+        if (node < 0) continue;
+        if (brick_world_struct_anchored(b)) g_brick_struct.node[node].grounded = 1;
+    }
+    if (g_brick_struct.node_count <= 0) return;
+    structure_build_joints(&g_brick_struct, BRICK_STRUCTURE_WELD);
+    /* Baseline on the SUPPORT FLOOD alone, before any load verdict: a piece with no path to the ground
+       at load is authored decoration and must stay. (Reading it after structure_evaluate would baseline
+       the overloaded support too -- a failed piece is stripped of support by then -- and a building the
+       rules say cannot stand would quietly stand forever.) */
+    structure_flood_support(&g_brick_struct);
+    for (int i = 0; i < g_brick_struct.node_count; i++)
+        if (!g_brick_struct.support[i]) g_brick_struct.dropped[i] = 1;
+    structure_evaluate(&g_brick_struct);
+    g_brick_struct_active = (g_brick_struct.joint_count > 0);
+}
+
+/* Mass follows the damage: a wall that has been carved down to a stub weighs what is left of it, so a
+ * shot-away pillar stops holding up a roof long before its last cell goes. */
+static void brick_world_structure_sync(void) {
+    for (int i = 0; i < g_brick_struct.node_count; i++) {
+        StructNode *n = &g_brick_struct.node[i];
+        int pi = n->parent;
+        if (pi < 0 || pi >= g_brick.parent_count) continue;
+        const BfParent *p = &g_brick.parent[pi];
+        int total = p->n[0] * p->n[1] * p->n[2];
+        int intact = total - p->removed;
+        if (!p->active || total <= 0 || intact <= 0) { n->active = 0; n->mass = 0.0f; continue; }
+        n->active = 1;
+        n->mass = p->dim[0] * p->dim[1] * p->dim[2] * n->density * ((float)intact / (float)total);
+    }
+}
+
+/* brick_world_structure_tick -- re-evaluate the piece graph and drop what it can no longer justify.
+ * Runs up to three passes so a load-time or post-blast cascade completes in one call: the failing
+ * pillar goes, then the roof that was standing on it. Anything the chunk budgets refuse (a parent
+ * bigger than BF_CHUNK_CELLS) is left standing, exactly like the cell pass's own "too big to
+ * animate" rule, rather than half-detached. */
+static int brick_world_structure_tick(void) {
+    if (!g_brick_struct_active) return 0;
+    int total_dropped = 0;
+    for (int pass = 0; pass < 3; pass++) {
+        brick_world_structure_sync();
+        structure_evaluate(&g_brick_struct);
+        int dropped = 0;
+        for (int i = 0; i < g_brick_struct.node_count; i++) {
+            StructNode *n = &g_brick_struct.node[i];
+            if (!n->active || g_brick_struct.dropped[i]) continue;
+            if (g_brick_struct.support[i] && !g_brick_struct.failed[i]) continue;
+            if (n->parent >= 0 && bf_detach_parent(&g_brick, n->parent) > 0) dropped++;
+            g_brick_struct.dropped[i] = 1;
+        }
+        if (dropped <= 0) break;
+        total_dropped += dropped;
+    }
+    if (total_dropped > 0) { brick_world_structure_sync(); structure_evaluate(&g_brick_struct); }
+    return total_dropped;
+}
+
+/* brick_world_structure_reset -- a new match: nothing has failed yet, and the same pieces are
+ * baselined again (authored floating decoration stays decorative). */
+static void brick_world_structure_reset(void) {
+    if (!g_brick_struct_active) return;
+    memset(g_brick_struct.dropped, 0, sizeof g_brick_struct.dropped);
+    brick_world_structure_sync();
+    structure_flood_support(&g_brick_struct);          /* same rule as the load: baseline before verdicts */
+    for (int i = 0; i < g_brick_struct.node_count; i++)
+        if (!g_brick_struct.support[i]) g_brick_struct.dropped[i] = 1;
+    structure_evaluate(&g_brick_struct);
+}
+
+static inline int brick_world_structure_is_active(void) { return g_brick_struct_active; }
+static inline int brick_world_structure_unsupported(void) { return structure_unsupported_count(&g_brick_struct); }
+static inline int brick_world_structure_failed(void) { return structure_failed_count(&g_brick_struct); }
 
 static inline void brick_world_init_from_level(const CustomLevelData *lvl) {
     brick_world_install_ai_hooks();
@@ -256,6 +383,10 @@ static inline void brick_world_init_from_level(const CustomLevelData *lvl) {
         }
         if (restored > 0 && bf_rebuild(&g_brick)) brick_world_commit();
     }
+    /* the piece graph, and one load-time pass: a structure the rules say cannot hold itself comes down
+       now (and is committed before the first frame) instead of hanging there until someone shoots it */
+    brick_world_structure_build(lvl);
+    if (brick_world_structure_tick() > 0 && bf_rebuild(&g_brick)) brick_world_commit();
     g_brick.fresh_count = 0;
     g_phys_map_hitscan_hook = brick_world_on_hitscan;
     g_phys_map_blast_hook = brick_world_on_blast;

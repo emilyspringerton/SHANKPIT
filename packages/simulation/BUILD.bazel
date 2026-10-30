@@ -79,6 +79,7 @@ cc_library(
         "ai_nav.c",
         "brick_mod.c",  # PARENA-generated (scripts/gen_brick_mod.sh): destructible brick decisions, lobby + server both
         "brick_bodies.c",  # physical broken brick on GOLDEN BAND grb (brick_bodies.h), lobby + server both
+        "structure_rules.c",  # PARENA-generated (scripts/gen_structure_rules.sh): joints/support/load cascade over brick, lobby + server both
         "humanness.c",
         "story_ai.c",
     ],

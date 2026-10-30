@@ -52,11 +52,13 @@ int struct_fracture_kind(int kind);
 int struct_joint_strength(int kind_a, int kind_b);
 int struct_holds_load(int mass_kg, int capacity_kg);
 
-#define STRUCT_MAX_NODES   512
-#define STRUCT_MAX_JOINTS  4096
+#define STRUCT_MAX_NODES   2048   /* = BF_MAX_PARENTS */
+#define STRUCT_MAX_JOINTS  8192
 #define STRUCT_MAX_ROUNDS  3
-/* kg; keeps PARENA's integer comparison inside I32 (see the clamp in structure_evaluate). */
-#define STRUCT_MAX_LOAD_KG 2000000
+/* kg: the sanity ceiling on both mass and capacity, so no float-to-int conversion here can wrap. It is
+ * 2 million tonnes on a single piece -- above anything a level can express -- so it never decides a
+ * verdict, it only bounds the arithmetic. */
+#define STRUCT_MAX_LOAD_KG 2000000000
 
 #define STRUCT_JOINT_ANCHOR 1   /* embedded in a stronger master node */
 #define STRUCT_JOINT_PEG    2   /* two crossing pieces, mechanically pegged */
@@ -90,6 +92,10 @@ typedef struct {
     int load_kg[STRUCT_MAX_NODES];            /* mass it is carrying (own + above) */
     unsigned char failed[STRUCT_MAX_NODES];   /* 1 = its support capacity was exceeded */
     int failed_load_kg[STRUCT_MAX_NODES];     /* the mass it was carrying when it failed (0 if it held) */
+    /* Host bookkeeping, not physics: 1 = this piece's failure has already been acted on (dropped, or
+     * was already hanging when the level loaded). Keeps a host from re-dropping the same wall every
+     * frame, and keeps authored floating decoration from collapsing the moment the level loads. */
+    unsigned char dropped[STRUCT_MAX_NODES];
 } StructureGraph;
 
 static inline void structure_reset(StructureGraph *g) {
@@ -127,8 +133,9 @@ static inline int structure_ground_resting(StructureGraph *g, float ground_y, fl
     return n;
 }
 
-/* Overlapping volumes on all three axes. `tol` absorbs level-export float noise: two walls authored
- * flush share a face at exactly the same coordinate, and that is a joint, not a miss. */
+/* Overlapping volumes on all three axes. `tol` is a WELDING DISTANCE, not a fudge: authored geometry
+ * is frequently flush (a roof sitting exactly on a pillar's top face, two walls meeting at a corner)
+ * and shares a face with zero overlap. Those are joints. Anything with a real gap is not. */
 static inline int structure_boxes_meet(const StructNode *a, const StructNode *b, float tol) {
     if (!a || !b) return 0;
     float ax0 = a->x - a->w * 0.5f, ax1 = a->x + a->w * 0.5f;
@@ -140,7 +147,7 @@ static inline int structure_boxes_meet(const StructNode *a, const StructNode *b,
     float ox = (ax1 < bx1 ? ax1 : bx1) - (ax0 > bx0 ? ax0 : bx0);
     float oy = (ay1 < by1 ? ay1 : by1) - (ay0 > by0 ? ay0 : by0);
     float oz = (az1 < bz1 ? az1 : bz1) - (az0 > bz0 ? az0 : bz0);
-    return ox > tol && oy > tol && oz > tol;
+    return ox >= -tol && oy >= -tol && oz >= -tol;
 }
 
 static inline int structure_add_joint(StructureGraph *g, int a, int b, unsigned char kind, unsigned short strength) {
@@ -153,9 +160,9 @@ static inline int structure_add_joint(StructureGraph *g, int a, int b, unsigned 
     return 1;
 }
 
-/* Stage 1: one pass over every pair at load (n <= 512, so this is cheap and runs when a level loads,
- * never per tick). Concrete is the master class that anchors what is sunk into it; everything else is
- * pegged. A pair PARENA rates too weakly to join is simply not joined. */
+/* Stage 1: one pass over every pair at load (n <= 2048, so this is cheap and runs when a level loads
+ * and after a breach, never per tick). Concrete is the master class that anchors what is sunk into
+ * it; everything else is pegged. A pair PARENA rates too weakly to join is simply not joined. */
 static inline int structure_build_joints(StructureGraph *g, float tol) {
     if (!g) return 0;
     g->joint_count = 0;
@@ -241,9 +248,8 @@ static inline void structure_evaluate(StructureGraph *g) {
         for (int oi = 0; oi < n; oi++) {
             int i = order[oi];
             int carried = g->load_kg[i] + (int)(g->node[i].mass + 0.5f);
-            /* Sanity ceiling: PARENA compares mass x 1000 against capacity x 850 in I32, so both
-             * operands stay under 2,000,000 (2,000 tonnes on one piece) and can never overflow. No
-             * level box comes close; clamping both sides equally keeps a real overload a failure. */
+            /* Sanity ceiling only: see STRUCT_MAX_LOAD_KG -- this bounds the conversion, it does not
+             * decide anyone's verdict (PARENA divides the capacity before applying its 15%). */
             if (carried > STRUCT_MAX_LOAD_KG) carried = STRUCT_MAX_LOAD_KG;
             g->load_kg[i] = carried;
 
