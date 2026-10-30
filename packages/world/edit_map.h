@@ -2,11 +2,17 @@
 #define EDIT_MAP_H
 /* edit_map.h -- EDIT MAP mode's pure edit logic (kanban #517/#530 EDIT-2).
  *
- * Edits never rewrite the source level JSON (that format carries doors/characters/widgets/etc.
- * a C round-trip would silently drop). They are an ordered OP LOG: add box / delete box / move
- * spawner. The log is applied to a loaded CustomLevelData, saved as var/maps/<name>.edits.json,
- * and (EDIT-3) streamed as events into an IDUNA edit session, where the admin-gated NOCK editor
- * does the real save. Header-only, no SDL/GL, unit-tested in apps/tests/test_edit_map.c. */
+ * Edits are an ordered OP LOG: add box / delete box / move spawner. The log is applied to a loaded
+ * CustomLevelData, saved as var/maps/<name>.edits.json, and (EDIT-3) streamed as events into an
+ * IDUNA edit session. It stays the streaming format because a live session is an op exchange, not a
+ * document.
+ *
+ * edit_map_save_level below is the offline path (EDIT MAP's F6): the whole working level is written
+ * as a real level JSON, so a map can be built and saved with no IDUNA running at all -- SHANKPIT as
+ * its own source of truth. That's safe only because level_boxes_save_to_file writes every field
+ * this loader parses (doors/characters/zones/widgets included); a partial writer is exactly what
+ * forced the op log to exist before. Header-only, no SDL/GL, unit-tested in
+ * apps/tests/test_edit_map.c and packages/world/level_save_test.c. */
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -84,6 +90,37 @@ static inline int edit_map_save(const EditLog *log, const char *level_name, cons
     }
     fprintf(f, "]}\n");
     return fclose(f) == 0;
+}
+
+/* Write the whole working level as a real level JSON (the shape --edit-map / --level load). The
+ * loaded level is the authority, so the caller should drop any var/maps/<name>.edits.json after a
+ * successful save -- otherwise replaying it would apply the same edits twice. Returns 1 on success. */
+static inline int edit_map_save_level(const CustomLevelData *lvl, const char *path) {
+    return level_boxes_save_to_file(path, lvl);
+}
+
+/* edit_map_init_new -- an empty level to build in from scratch: EDIT MAP started on a .json path
+ * that doesn't exist yet. Sane defaults so F6 has something real to save -- 200x50x200, ground
+ * plane on, one brick material, one spawner at the origin facing -Z. Returns lvl. */
+static inline CustomLevelData *edit_map_init_new(CustomLevelData *lvl, const char *name) {
+    if (!lvl) return NULL;
+    memset(lvl, 0, sizeof(*lvl));
+    snprintf(lvl->name, sizeof lvl->name, "%s", (name && name[0]) ? name : "untitled");
+    lvl->width = 200; lvl->height = 50; lvl->depth = 200;
+    lvl->ground_plane_enabled = 1;
+    lvl->ground_plane_squares = 16;
+    snprintf(lvl->materials[0].name, sizeof lvl->materials[0].name, "%s", LEVEL_BOXES_DEFAULT_MATERIAL);
+    snprintf(lvl->materials[0].shader_name, sizeof lvl->materials[0].shader_name, "standard");
+    lvl->materials[0].specular = 0.04f;
+    lvl->materials[0].shininess = 6.0f;
+    lvl->materials[0].friction = 0.30f;
+    lvl->material_count = 1;
+    lvl->spawners[0].id = 1;
+    lvl->spawners[0].x = 0; lvl->spawners[0].y = 1; lvl->spawners[0].z = 0;
+    lvl->spawners[0].yaw = 0;
+    lvl->spawners[0].team = LEVEL_BOXES_SPAWNER_TEAM_FFA;
+    lvl->spawner_count = 1;
+    return lvl;
 }
 
 /* Replay a saved edits file onto lvl. Returns ops applied, -1 if the file is missing. */

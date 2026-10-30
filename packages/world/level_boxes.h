@@ -28,6 +28,12 @@
 // specular/shininess already work. A Wall's own bare `friction` field stays parsed-but-ignored
 // legacy, not silently dropped -- named here, not a regression):
 //   sx -> w, sy -> h, sz -> d (full extents both sides -- exact match, no unit conversion needed)
+//
+// level_boxes_save_to_file (below) is the reverse direction: a complete JSON writer for a level
+// authored offline in EDIT MAP (F6), covering every field this file parses. That makes SHANKPIT its
+// own level source of truth when IDUNA isn't running -- build in-game, save var/maps/<name>.json,
+// reload it with --edit-map var/maps/<name>.json or --level. Round-trip covered by
+// packages/world/level_save_test.c (`make test-level-save`).
 
 #include <stdio.h>
 #include <string.h>
@@ -433,11 +439,28 @@ static inline int level_boxes_parse_number(const char *p, float *out) {
     return 1;
 }
 
+// level_boxes_parse_string -- reads one JSON string. Handles the standard escapes (\\ \" \/ \n
+// \t \r) because level_boxes_write_json below emits real, escaped JSON: a Windows door
+// script_path comes back as C:\\\\foo\\bar.so and must load as C:\\foo\\bar.so. Any other
+// \\X sequence is read as X (so a hand-written file with a bare backslash still works).
 static inline int level_boxes_parse_string(const char *p, char *out, size_t outsize) {
     if (*p != '"') return 0;
     p++;
     size_t i = 0;
-    while (*p && *p != '"' && i + 1 < outsize) out[i++] = *p++;
+    while (*p && *p != '"') {
+        char c = *p++;
+        if (c == '\\' && *p) {
+            char e = *p++;
+            switch (e) {
+            case 'n': c = '\n'; break;
+            case 't': c = '\t'; break;
+            case 'r': c = '\r'; break;
+            default:  c = e; break;   /* \" \\ \/ and any unknown escape */
+            }
+        }
+        if (i + 1 >= outsize) return 0;   /* real, honest: the value didn't fit */
+        out[i++] = c;
+    }
     out[i] = '\0';
     return *p == '"';
 }
@@ -1151,6 +1174,192 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
  * spawners' own "absent is honest, not an error" convention throughout this file). Overlapping
  * zones are a real, deliberate author error this function does not detect or warn about -- first
  * match wins, same as every other array-scan helper in this file. */
+/* ---- full-level JSON writer (local, IDUNA-free level authoring) ----------------------------
+ * The reverse of level_boxes_parse_json: writes a complete level document in the same flat shape
+ * IDUNA's export endpoint returns, so a level built offline in EDIT MAP (apps/lobby's F6) is a real
+ * level JSON that this loader reads straight back. Every parsed field is written -- doors, buttons,
+ * nav nodes, characters, exits, zones, edu widgets, lab stations, buggy spawns, brick damage -- which
+ * is exactly why edit_map.h's op log existed before: a PARTIAL writer would silently drop those.
+ */
+static inline void level_boxes_put_json_string(FILE *f, const char *s) {
+    fputc('"', f);
+    for (const unsigned char *p = (const unsigned char *)(s ? s : ""); *p; p++) {
+        switch (*p) {
+        case '"':  fputs("\\\"", f); break;
+        case '\\': fputs("\\\\", f); break;
+        case '\n': fputs("\\n", f); break;
+        case '\r': fputs("\\r", f); break;
+        case '\t': fputs("\\t", f); break;
+        default:   if (*p < 0x20) fputc(' ', f); else fputc((int)*p, f); break;
+        }
+    }
+    fputc('"', f);
+}
+
+static inline void level_boxes_write_json(FILE *f, const CustomLevelData *lvl) {
+    if (!f || !lvl) return;
+    fprintf(f, "{\n \"version\": 1,\n \"name\": ");
+    level_boxes_put_json_string(f, lvl->name[0] ? lvl->name : "Untitled");
+    fprintf(f, ",\n \"width\": %.4g,\n \"height\": %.4g,\n \"depth\": %.4g",
+            (double)lvl->width, (double)lvl->height, (double)lvl->depth);
+    fprintf(f, ",\n \"ground_plane_enabled\": %s,\n \"ground_plane_squares\": %d",
+            lvl->ground_plane_enabled ? "true" : "false", lvl->ground_plane_squares);
+    fprintf(f, ",\n \"enclosed\": %s", lvl->enclosed ? "true" : "false");
+    if (lvl->next_level_id) fprintf(f, ",\n \"next_level_id\": %d", lvl->next_level_id);
+    if (lvl->floor_tinted)
+        fprintf(f, ",\n \"floor_tint\": { \"r\": %.4g, \"g\": %.4g, \"b\": %.4g, \"a\": %.4g }",
+                (double)lvl->floor_r, (double)lvl->floor_g, (double)lvl->floor_b, (double)lvl->floor_a);
+
+    fprintf(f, ",\n \"materials\": [");
+    for (int i = 0; i < lvl->material_count; i++) {
+        const LevelBoxMaterial *m = &lvl->materials[i];
+        fprintf(f, "%s\n  { \"name\": ", i ? "," : "");
+        level_boxes_put_json_string(f, m->name);
+        fprintf(f, ", \"shader_name\": ");
+        level_boxes_put_json_string(f, m->shader_name[0] ? m->shader_name : "standard");
+        fprintf(f, ", \"specular\": %.4g, \"shininess\": %.4g, \"friction\": %.4g, \"density\": %.4g }",
+                (double)m->specular, (double)m->shininess, (double)m->friction, (double)m->density);
+    }
+    fprintf(f, "\n ]");
+
+    fprintf(f, ",\n \"walls\": [");
+    for (int i = 0; i < lvl->count; i++) {
+        const LevelBox *b = &lvl->boxes[i];
+        const char *mat = (b->material_idx >= 0 && b->material_idx < lvl->material_count)
+                              ? lvl->materials[b->material_idx].name : LEVEL_BOXES_DEFAULT_MATERIAL;
+        fprintf(f, "%s\n  { \"x\": %.4g, \"y\": %.4g, \"z\": %.4g, \"sx\": %.4g, \"sy\": %.4g, \"sz\": %.4g",
+                i ? "," : "", (double)b->x, (double)b->y, (double)b->z,
+                (double)b->w, (double)b->h, (double)b->d);
+        fprintf(f, ", \"r\": %.4g, \"g\": %.4g, \"b\": %.4g, \"friction\": %.4g, \"material\": ",
+                (double)b->r, (double)b->g, (double)b->b, (double)b->friction);
+        level_boxes_put_json_string(f, mat);
+        if (b->rot_x != 0.0f) fprintf(f, ", \"rot_x\": %.4g", (double)b->rot_x);
+        if (b->rot_y != 0.0f) fprintf(f, ", \"rot_y\": %.4g", (double)b->rot_y);
+        if (b->rot_z != 0.0f) fprintf(f, ", \"rot_z\": %.4g", (double)b->rot_z);
+        if (b->ramp) fprintf(f, ", \"ramp\": true");
+        fprintf(f, " }");
+    }
+    fprintf(f, "\n ]");
+
+    fprintf(f, ",\n \"spawners\": [");
+    for (int i = 0; i < lvl->spawner_count; i++) {
+        const LevelSpawner *s = &lvl->spawners[i];
+        fprintf(f, "%s\n  { \"id\": %d, \"x\": %.4g, \"y\": %.4g, \"z\": %.4g, \"yaw\": %.4g, \"team\": %d }",
+                i ? "," : "", s->id, (double)s->x, (double)s->y, (double)s->z, (double)s->yaw, s->team);
+    }
+    fprintf(f, "\n ]");
+
+    fprintf(f, ",\n \"buggy_spawns\": [");
+    for (int i = 0; i < lvl->buggy_spawn_count; i++) {
+        const LevelBuggySpawn *bs = &lvl->buggy_spawns[i];
+        fprintf(f, "%s\n  { \"x\": %.4g, \"y\": %.4g, \"z\": %.4g, \"yaw\": %.4g }",
+                i ? "," : "", (double)bs->x, (double)bs->y, (double)bs->z, (double)bs->yaw);
+    }
+    fprintf(f, "\n ]");
+
+    fprintf(f, ",\n \"lab_stations\": [");
+    {
+        int n = 0;
+        for (int i = 0; i < lvl->lab_station_count; i++) {
+            const LevelLabStation *ls = &lvl->lab_stations[i];
+            if (ls->kind < 0 || ls->kind >= 7) continue;   /* never invent a station kind */
+            fprintf(f, "%s\n  { \"kind\": ", n++ ? "," : "");
+            level_boxes_put_json_string(f, LEVEL_LAB_STATION_NAMES[ls->kind]);
+            fprintf(f, ", \"x\": %.4g, \"y\": %.4g, \"z\": %.4g }",
+                    (double)ls->x, (double)ls->y, (double)ls->z);
+        }
+    }
+    fprintf(f, "\n ]");
+
+    fprintf(f, ",\n \"doors\": [");
+    for (int i = 0; i < lvl->door_count; i++) {
+        const LevelDoor *d = &lvl->doors[i];
+        fprintf(f, "%s\n  { \"box_index\": %d", i ? "," : "", d->box_index);
+        if (d->subscribe_button_id >= 0) fprintf(f, ", \"subscribe_button_id\": %d", d->subscribe_button_id);
+        if (d->script_path[0]) { fprintf(f, ", \"script_path\": "); level_boxes_put_json_string(f, d->script_path); }
+        if (d->script_url[0]) { fprintf(f, ", \"script_url\": "); level_boxes_put_json_string(f, d->script_url); }
+        fprintf(f, " }");
+    }
+    fprintf(f, "\n ]");
+
+    fprintf(f, ",\n \"buttons\": [");
+    for (int i = 0; i < lvl->button_count; i++) {
+        const LevelButton *btn = &lvl->buttons[i];
+        fprintf(f, "%s\n  { \"box_index\": %d, \"button_id\": %d }",
+                i ? "," : "", btn->box_index, btn->button_id);
+    }
+    fprintf(f, "\n ]");
+
+    fprintf(f, ",\n \"nav_nodes\": [");
+    for (int i = 0; i < lvl->nav_node_count; i++) {
+        const LevelNavNode *nn = &lvl->nav_nodes[i];
+        fprintf(f, "%s\n  { \"x\": %.4g, \"y\": %.4g, \"z\": %.4g, \"is_cover\": %s, \"cover_dir_x\": %.4g, \"cover_dir_z\": %.4g, \"neighbors\": [",
+                i ? "," : "", (double)nn->x, (double)nn->y, (double)nn->z,
+                nn->is_cover ? "true" : "false", (double)nn->cover_dir_x, (double)nn->cover_dir_z);
+        for (int k = 0; k < nn->neighbor_count && k < LEVEL_BOXES_MAX_NAV_NEIGHBORS; k++)
+            fprintf(f, "%s%d", k ? ", " : "", nn->neighbors[k]);
+        fprintf(f, "] }");
+    }
+    fprintf(f, "\n ]");
+
+    fprintf(f, ",\n \"characters\": [");
+    for (int i = 0; i < lvl->character_count; i++) {
+        const LevelCharacter *ch = &lvl->characters[i];
+        fprintf(f, "%s\n  { \"role\": %d, \"kit\": %d, \"x\": %.4g, \"y\": %.4g, \"z\": %.4g }",
+                i ? "," : "", ch->role, ch->kit, (double)ch->x, (double)ch->y, (double)ch->z);
+    }
+    fprintf(f, "\n ]");
+
+    fprintf(f, ",\n \"level_exits\": [");
+    for (int i = 0; i < lvl->level_exit_count; i++) {
+        const LevelExit *le = &lvl->level_exits[i];
+        fprintf(f, "%s\n  { \"x\": %.4g, \"y\": %.4g, \"z\": %.4g, \"radius\": %.4g, \"target_spawner_id\": %d }",
+                i ? "," : "", (double)le->x, (double)le->y, (double)le->z, (double)le->radius, le->target_spawner_id);
+    }
+    fprintf(f, "\n ]");
+
+    fprintf(f, ",\n \"zones\": [");
+    for (int i = 0; i < lvl->zone_count; i++) {
+        const LevelZone *zn = &lvl->zones[i];
+        fprintf(f, "%s\n  { \"x\": %.4g, \"y\": %.4g, \"z\": %.4g, \"radius\": %.4g, \"zone_type\": %d }",
+                i ? "," : "", (double)zn->x, (double)zn->y, (double)zn->z, (double)zn->radius, zn->zone_type);
+    }
+    fprintf(f, "\n ]");
+
+    fprintf(f, ",\n \"edu_widgets\": [");
+    for (int i = 0; i < lvl->edu_widget_count; i++) {
+        const LevelEduWidget *ew = &lvl->edu_widgets[i];
+        fprintf(f, "%s\n  { \"entity_id\": ", i ? "," : "");
+        level_boxes_put_json_string(f, ew->entity_id);
+        fprintf(f, ", \"machine_type\": %d, \"initial_state\": %d, \"memory_address\": %d, \"x\": %.4g, \"y\": %.4g, \"z\": %.4g, \"radius\": %.4g",
+                ew->machine_type, ew->initial_state ? 1 : 0, ew->memory_address,
+                (double)ew->x, (double)ew->y, (double)ew->z, (double)ew->radius);
+        if (ew->box_index >= 0) fprintf(f, ", \"box_index\": %d", ew->box_index);
+        fprintf(f, " }");
+    }
+    fprintf(f, "\n ]");
+
+    fprintf(f, ",\n \"brick_damage\": [");
+    for (int i = 0; i < lvl->brick_damage_count; i++) {
+        const LevelBrickCell *bc = &lvl->brick_damage[i];
+        fprintf(f, "%s\n  { \"wall\": %d, \"key\": %u, \"hp\": %d }",
+                i ? "," : "", bc->wall, bc->key, bc->hp);
+    }
+    fprintf(f, "\n ]\n}\n");
+}
+
+/* level_boxes_save_to_file -- writes lvl as one complete level JSON at path. Returns 1 on success
+ * (a partial write or a bad path returns 0 -- callers must not claim the level was saved). */
+static inline int level_boxes_save_to_file(const char *path, const CustomLevelData *lvl) {
+    if (!path || !lvl) return 0;
+    FILE *f = fopen(path, "wb");
+    if (!f) return 0;
+    level_boxes_write_json(f, lvl);
+    int ok = ferror(f) ? 0 : 1;
+    if (fclose(f) != 0) ok = 0;
+    return ok;
+}
+
 static inline int level_boxes_zone_for_position(const CustomLevelData *level, float x, float y, float z) {
     if (!level) return -1;
     for (int i = 0; i < level->zone_count; i++) {

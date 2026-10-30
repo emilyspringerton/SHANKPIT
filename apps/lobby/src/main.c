@@ -3551,8 +3551,12 @@ static void lobby_survival_guns_tick(void) {
 // ---- EDIT MAP mode (kanban #517/#530 EDIT-2) ----
 // A free-fly (STATE_SPECTATOR wisp) editor on any NOCK registry map or local .json file. B places a
 // box on the surface under the crosshair, X deletes the box under it, M moves spawner 0 there,
-// F5 saves the op log to var/maps/<name>.edits.json (source level JSON is never rewritten -- see
+// F5 saves the op log to var/maps/<name>.edits.json (the source level JSON is never rewritten -- see
 // packages/world/edit_map.h). The same op log is what EDIT-3 streams into a live NOCK session.
+// F6 saves the WHOLE level to var/maps/<name>.json: a real level file, loadable with
+// --edit-map var/maps/<name>.json or --level, so levels can be built offline with no IDUNA at all.
+// A .json path in --edit-map that doesn't exist yet starts a new empty level (edit_map_init_new), so
+// a map can be built from scratch rather than only cloned.
 static int g_edit_active = 0;
 static char g_edit_pick[256] = "";
 static char g_edit_name[LEVEL_BOXES_MAX_NAME] = "";
@@ -3564,7 +3568,21 @@ static char g_edit_msg[96] = "";
 static void edit_say(const char *m) { snprintf(g_edit_msg, sizeof g_edit_msg, "%s", m); SDL_Log("EDIT MAP: %s", m); }
 
 static int edit_load_source(CustomLevelData *lvl) {
-    if (g_edit_pick[0] && strstr(g_edit_pick, ".json")) return level_boxes_load_from_file(g_edit_pick, lvl);
+    if (g_edit_pick[0] && strstr(g_edit_pick, ".json")) {
+        if (level_boxes_load_from_file(g_edit_pick, lvl)) return 1;
+        /* A .json path that doesn't exist yet starts a NEW empty level there, so maps can be built
+           from scratch offline instead of only cloning one that already exists (F6 writes it). */
+        const char *base = g_edit_pick;
+        for (const char *p = g_edit_pick; *p; p++) if (*p == '/' || *p == '\\') base = p + 1;
+        char stem[LEVEL_BOXES_MAX_NAME];
+        snprintf(stem, sizeof stem, "%s", base);
+        char *dot = strrchr(stem, '.');
+        if (dot) *dot = '\0';
+        if (!stem[0]) snprintf(stem, sizeof stem, "untitled");
+        edit_map_init_new(lvl, stem);
+        SDL_Log("EDIT MAP: '%s' does not exist -- starting a new level (%d boxes)", g_edit_pick, lvl->count);
+        return 1;
+    }
     LevelRegistryEntry entries[LEVEL_REGISTRY_MAX_ENTRIES];
     int count = level_boxes_fetch_registry_list(entries, LEVEL_REGISTRY_MAX_ENTRIES);
     for (int i = 0; i < count; i++) {
@@ -3602,6 +3620,26 @@ static void edit_key(SDL_Keycode k) {
         /* in a live session NOCK owns the working level and the login: ask it to persist (its own Save) */
         if (g_es_on) { es_enqueue("save", "{}"); edit_say(ok ? "saved edits, NOCK asked to save" : "NOCK asked to save (local copy FAILED)"); }
         else edit_say(ok ? "saved edits" : "SAVE FAILED");
+        return;
+    }
+    if (k == SDLK_F6) {
+        /* Offline save: the working level (source + every edit replayed/just made) as a real level
+           JSON. This is the IDUNA-free authoring path -- the file it writes is the same shape the
+           registry export returns, so --edit-map/--level load it straight back. */
+#ifdef _WIN32
+        _mkdir("var"); _mkdir("var/maps");
+#else
+        mkdir("var", 0755); mkdir("var/maps", 0755);
+#endif
+        char path[320]; snprintf(path, sizeof path, "var/maps/%s.json", g_edit_name);
+        if (edit_map_save_level(g_edit_lvl, path)) {
+            /* the op log is baked into that file now: drop it so a later replay can't double-apply */
+            char edits[328]; snprintf(edits, sizeof edits, "var/maps/%s.edits.json", g_edit_name);
+            remove(edits);
+            memset(&g_edit_log, 0, sizeof g_edit_log);
+            char msg[96]; snprintf(msg, sizeof msg, "saved level %s (%d boxes)", path, g_edit_lvl->count);
+            edit_say(msg);
+        } else edit_say("SAVE LEVEL FAILED");
         return;
     }
     if (k != SDLK_b && k != SDLK_x && k != SDLK_m) return;
@@ -3809,7 +3847,7 @@ static int lobby_start_editmap_mode(void) {
     phys_respawn(hero, SDL_GetTicks());
     hero->state = STATE_SPECTATOR; hero->third_person = 0;   /* fly cam */
     g_edit_active = 1;
-    SDL_Log("EDIT MAP: '%s' %d boxes, %d edits replayed. B place / X delete / M move spawner / F5 save", lvl->name, lvl->count, replayed < 0 ? 0 : replayed);
+    SDL_Log("EDIT MAP: '%s' %d boxes, %d edits replayed. B place / X delete / M move spawner / F5 save edits / F6 save level JSON", lvl->name, lvl->count, replayed < 0 ? 0 : replayed);
     return 1;
 }
 

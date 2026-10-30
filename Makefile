@@ -39,7 +39,7 @@ EMILY_BOT_BIN := $(BIN_DIR)/emily-bot
 EA_DIR       := dist/ea
 
 # ---- Targets ----
-.PHONY: test-witness-ai-zombies test-bullet-hole test-queue-level test-baked-levels bake-levels all lobby server serverctl clean setup print go-server ea ea-windows emily-bot rigid-ragdoll test-physics test-audio-chain ux-screenshot-test
+.PHONY: test-witness-ai-zombies test-bullet-hole test-queue-level test-baked-levels test-level-save bake-levels all lobby server serverctl clean setup print go-server ea ea-windows emily-bot rigid-ragdoll test-physics test-audio-chain ux-screenshot-test
 
 all: $(LOBBY_BIN) $(SERVER_BIN)
 
@@ -300,6 +300,13 @@ test-shield-packs:
 # bake-levels -- card #479: regenerate packages/world/baked_levels_gen.h from a live IDUNA (review + commit the diff).
 bake-levels:
 	python3 scripts/bake_levels.py
+
+# test-level-save -- EDIT MAP's F6 writes a complete level JSON with no IDUNA: every parsed field
+# (doors, buttons, nav nodes, characters, exits, zones, edu widgets, lab stations, buggy spawns,
+# brick damage) must survive save -> load.
+test-level-save:
+	$(CC) -std=gnu99 -O2 -Wall -Wextra -Werror -Ipackages/world -o /tmp/level_save_test packages/world/level_save_test.c -lm
+	/tmp/level_save_test
 
 # test-baked-levels -- card #479/#480: the baked level table serves the registry + every export offline.
 test-baked-levels:
