@@ -163,6 +163,7 @@ path does not exist yet (200x50x200, ground plane on, one brick material, one sp
 
 ```
 ./bin/shank_lobby --edit-map var/maps/mymap.json   # new level (or reopen it next time)
+./bin/shank_lobby --level    var/maps/mymap.json   # play it (a server needs the same path)
 ```
 
 You fly as a spectator: **B** places a box on the surface under the crosshair, **X** deletes the box
@@ -174,7 +175,9 @@ tint -- so a save/load round-trip cannot silently drop authored objects. A succe
 the matching `.edits.json`: those ops are baked into the saved file, so replaying the log would apply
 them twice. `make test-level-save` is the round-trip test, and it also re-saves the checked-in
 `var/lab/lab.json`, the story-doors demo and `assets/tyler_levels/*.json` to prove real exports
-survive.
+survive. `make leveltool` builds a headless `./bin/leveltool` (`info` / `check` / `save` / `new`), and
+`make check-levels` round-trips every checked-in export through it, so a map can be validated without
+launching the lobby.
 
 Still NOCK-only: glTF import, the widgets/materials screens, and streaming edits into a shared live
 session (F5 plus `--edit-live`). Anything the in-game keys do not cover yet can be hand-edited in the
