@@ -670,27 +670,49 @@ static inline int bf_detach_parent(BrickFracture *bf, int parent) {
     if (total <= 0) return 0;
     int intact = total - p->removed;
     if (intact <= 0) return 0;
-    if (intact > BF_CHUNK_CELLS) return 0;                     /* too big to animate as one body */
-    if (bf->chunk_count >= BF_MAX_CHUNKS) return 0;
     if (bf->rec_count + intact > BF_MAX_RECORDS) return 0;
     if (p->removed + intact > BF_MAX_REMOVED_PER_PARENT) return 0;
+    int slots = BF_MAX_CHUNKS - bf->chunk_count;
+    if (slots <= 0) return 0;
+    /* A piece bigger than one chunk falls in PIECES along its longest axis instead of not at all: a
+     * 300-cell deck becomes two slabs, which is both what a collapsing deck looks like and what stops
+     * the "too big to animate" rule from swallowing every large building. The slab height is chosen so
+     * that a part is under BF_CHUNK_CELLS even with every cell intact. All or nothing: if the chunk
+     * queue cannot take every part, nothing is detached -- a half-fallen wall is worse than a standing
+     * one, and the same rule the cell-level pass already applies. */
+    int axis = 0;
+    for (int a = 1; a < 3; a++) if (p->n[a] > p->n[axis]) axis = a;
+    int axis_len = p->n[axis];
+    int per_layer = axis_len > 0 ? total / axis_len : total;   /* cells in one slab along that axis */
+    int layers_per_part = per_layer > 0 ? BF_CHUNK_CELLS / per_layer : axis_len;
+    if (layers_per_part < 1) layers_per_part = 1;
+    int parts = (axis_len + layers_per_part - 1) / layers_per_part;
+    if (parts < 1) parts = 1;
+    if (parts > slots) return 0;
 
-    int id = ++bf->next_chunk_id;
-    if (id > 255) { bf->next_chunk_id = 1; id = 1; }
     int n = 0;
     bf->suppress_debris = 1;
-    for (int ix = 0; ix < p->n[0]; ix++)
-        for (int iy = 0; iy < p->n[1]; iy++)
-            for (int iz = 0; iz < p->n[2]; iz++) {
-                unsigned int key = bf_key(ix, iy, iz);
-                if (bf_cell_hp(bf, parent, key) <= 0) continue;
-                if (bf_set_cell_hp(bf, parent, key, 0, 1) <= 0) continue;
-                int r = bf_find_rec(bf, parent, key);
-                if (r >= 0) bf->rec[r].chunk = (unsigned char)id;
-                bf_push_net_chunk(bf, parent, key, 0, id);
-                bf_chunk_note(bf, id, parent, key);
-                n++;
-            }
+    for (int part = 0; part < parts; part++) {
+        int a0 = axis_len * part / parts;
+        int a1 = axis_len * (part + 1) / parts;
+        if (a1 <= a0) continue;
+        int id = ++bf->next_chunk_id;
+        if (id > 255) { bf->next_chunk_id = 1; id = 1; }
+        for (int ix = 0; ix < p->n[0]; ix++)
+            for (int iy = 0; iy < p->n[1]; iy++)
+                for (int iz = 0; iz < p->n[2]; iz++) {
+                    int c[3] = { ix, iy, iz };
+                    if (c[axis] < a0 || c[axis] >= a1) continue;
+                    unsigned int key = bf_key(ix, iy, iz);
+                    if (bf_cell_hp(bf, parent, key) <= 0) continue;
+                    if (bf_set_cell_hp(bf, parent, key, 0, 1) <= 0) continue;
+                    int r = bf_find_rec(bf, parent, key);
+                    if (r >= 0) bf->rec[r].chunk = (unsigned char)id;
+                    bf_push_net_chunk(bf, parent, key, 0, id);
+                    bf_chunk_note(bf, id, parent, key);
+                    n++;
+                }
+    }
     bf->suppress_debris = 0;
     return n;
 }

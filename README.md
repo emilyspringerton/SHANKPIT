@@ -1172,10 +1172,12 @@ no display).
 **Wired into the game.** `brick_world.h` builds the graph when a level loads (one node per destructible
 parent, anchored if it sits on the world floor or touches any non-destructible solid) and re-evaluates
 it after a breach, inside `brick_world_flush` — so it costs nothing per tick. A piece the graph can no
-longer justify is dropped whole through the new `bf_detach_parent`, becoming one rigid chunk on the
-existing debris path (budgeted exactly like the cell pass: over 256 cells or over the chunk queue, it
-stays standing rather than half-detaching). Piece mass follows the damage, so a wall carved down to a
-stub weighs what is left of it.
+longer justify is dropped whole through the new `bf_detach_parent`, becoming rigid chunks on the
+existing debris path. A piece too big to be one body falls in **pieces** along its longest axis (a
+300-cell deck becomes two slabs) rather than not at all, and the slab height is chosen so a part stays
+under `BF_CHUNK_CELLS` even with every cell intact. All or nothing still applies: if the chunk queue
+cannot take every part, nothing is detached — a half-fallen wall is worse than a standing one. Piece
+mass follows the damage, so a wall carved down to a stub weighs what is left of it.
 
 Two rules keep it from demolishing levels on its own:
 
@@ -1195,8 +1197,10 @@ the same deck on a concrete post: holds
 ```
 
 Verified in `make test-brick-world`: the wood-post level loses all 7 post cells and all 72 deck cells at
-load, both pieces stop being solid immediately, and two chunks are queued; the same deck on a concrete
-post survives untouched with zero failures; the wall-only level keeps the layer switched off.
+load, both pieces stop being solid immediately, and two chunks are queued; a 288-cell deck (more than
+one chunk) comes down as two slabs of at most 256 cells each, so size is not an escape hatch; the same
+deck on a concrete post survives untouched with zero failures; the wall-only level keeps the layer
+switched off. `make server` also links with the new rules file in `SERVER_SRC`.
 
 **Not modelled, deliberately:** shear flow inside a piece, bending/buckling shape (a pillar holds its
 column load or the node fails — it does not bow), fatigue, per-cell stress inside one box, and collapse
