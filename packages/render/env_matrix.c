@@ -13,6 +13,7 @@ int env_ambient_floor(int occlusion, int ambient_level, int interior);
 int env_emissive_scale(int ambient_permille);
 int env_emitter_range_scale(int visibility);
 int env_emitter_spread_scale(int range_scale);
+int env_flash_boost(int flash);
 
 static float clamp01f(float v) {
     if (!(v > 0.0f)) return 0.0f;   /* also catches NaN */
@@ -59,17 +60,28 @@ void env_matrix_eval(const EnvInputs *in, EnvMatrix *out) {
     out->occlusion = occ * 0.001f;
 
     int bleed = env_light_bleed(occ, interior);
-    out->light_bleed = bleed * 0.001f;
+
+    /* Lightning is a light source, not a screen tint: a strike throws its own scattered light into
+     * the same bleed channel the rest of the atmosphere uses. That is what makes a bolt light the
+     * storm deck and the walls under it instead of only flashing the overlay. */
+    out->flash_boost = env_flash_boost(permille(in->flash)) * 0.001f;
+    out->light_bleed = clamp01f(bleed * 0.001f + out->flash_boost);
+
     /* Scattered light takes the sky's own current colour, so a storm's glow is the storm's colour
-     * rather than a generic grey. A caller that passes no colour gets a neutral cool haze. */
+     * rather than a generic grey. A caller that passes no colour gets a neutral cool haze. A strike
+     * pushes that colour toward white by the same fraction, because a bolt is broadband light. */
     float base_r = (in->fog_r > 0.0f) ? in->fog_r : 0.42f;
     float base_g = (in->fog_g > 0.0f) ? in->fog_g : 0.46f;
     float base_b = (in->fog_b > 0.0f) ? in->fog_b : 0.52f;
+    float whiten = clamp01f(out->flash_boost / 0.30f);
+    base_r += (1.0f - base_r) * whiten;
+    base_g += (1.0f - base_g) * whiten;
+    base_b += (1.0f - base_b) * whiten;
     out->bleed_r = clamp01f(base_r * out->light_bleed);
     out->bleed_g = clamp01f(base_g * out->light_bleed);
     out->bleed_b = clamp01f(base_b * out->light_bleed);
 
-    out->exposure = env_exposure(occ) * 0.001f;
+    out->exposure = env_exposure(occ) * 0.001f + out->flash_boost * 0.5f;
     out->ambient_floor = env_ambient_floor(occ, level, interior) * 0.001f;
 
     /* Emissives are scaled by what the scene actually delivers (the floor), not by the raw ambient

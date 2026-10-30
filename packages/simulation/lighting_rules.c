@@ -12,6 +12,7 @@ int env_light_bleed(int, int);
 int env_exposure(int);
 int env_ambient_floor(int, int, int);
 int env_emissive_scale(int);
+int env_flash_boost(int);
 int env_emitter_range_scale(int);
 int env_emitter_spread_scale(int);
 
@@ -49,6 +50,10 @@ int env_ambient_floor(int occlusion __attribute__((unused)), int ambient_level _
 
 int env_emissive_scale(int ambient_permille __attribute__((unused))) {
     return lr_clamp((1600 - ((lr_clamp(ambient_permille, 0, 1000) * 900) / 1000)), 750, 1600);
+}
+
+int env_flash_boost(int flash __attribute__((unused))) {
+    return ((lr_clamp(flash, 0, 1000) * 300) / 1000);
 }
 
 int env_emitter_range_scale(int visibility __attribute__((unused))) {

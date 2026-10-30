@@ -32,6 +32,7 @@ typedef struct {
     int ambient_level;         /* pause-menu slider, 0..10 (range owned by ambient_rules.prn) */
     int interior;              /* 1 = enclosed custom level (no sky exposure) */
     float fog_r, fog_g, fog_b; /* the sky's current fog colour -- the colour scattered light takes */
+    float flash;               /* 0..1 lightning bolt intensity (SkyWeather.flash), 0 when no strike */
 } EnvInputs;
 
 typedef struct {
@@ -43,6 +44,7 @@ typedef struct {
     float emissive_scale;   /* ~0.75..1.6 for outlines / shield FX, inverse of scene brightness */
     float emitter_range_scale;   /* 0.45..1.0 flashlight/headlight reach, shortened by haze */
     float emitter_spread_scale;  /* 1.0..1.6 the complementary widening */
+    float flash_boost;      /* 0..0.30 extra scattered light a lightning strike throws right now */
 } EnvMatrix;
 
 /* Evaluates the matrix. Never fails: NULL/out-of-range inputs are clamped to a sane, total result. */

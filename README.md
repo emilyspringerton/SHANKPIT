@@ -284,6 +284,13 @@ Nothing about this is per-pixel scattering. It is deliberately *not* described a
 anything -- it models the three things that were actually broken (scattering, the low end, and
 emitter response), not a physical sky model this renderer cannot support.
 
+**Lightning is a light source, not a screen tint.** A bolt used to only flash
+`sky_weather_draw_grade`'s overlay while the world underneath ignored it. `env-flash-boost` turns the
+sky's own already-smoothed bolt intensity into extra scattered light in the same bleed channel (up to
+0.30), whitened because a bolt is broadband, plus a matching exposure lift -- so a strike visibly
+lights the storm deck and the walls beneath it, and stops when the flash decays. No separate state to
+track: it is one more term in the same evaluation.
+
 Cost: one CPU evaluation per frame, a pure function of the day/night clock and weather profile both
 sides already broadcast in the world-clock packet. No server work, no new wire fields, no per-entity
 state -- so every client computes the identical matrix bit for bit (asserted), which is the property

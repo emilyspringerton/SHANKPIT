@@ -28,6 +28,7 @@ int env_ambient_floor(int occlusion, int ambient_level, int interior);
 int env_emissive_scale(int ambient_permille);
 int env_emitter_range_scale(int visibility);
 int env_emitter_spread_scale(int range_scale);
+int env_flash_boost(int flash);
 
 static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #c); g_fail++; } } while (0)
@@ -171,6 +172,32 @@ int main(void) {
     env_matrix_apply_published_surface(&zr, &zg, &zb);
     CHECK(zr == 0.05f && zg == 0.05f && zb == 0.05f);
     env_matrix_publish(&storm_m);
+
+    /* 11c. lightning is a light source, not a screen tint: a strike adds its own scattered light
+           (whitened, because a bolt is broadband) and lifts exposure, then goes away again when
+           the flash decays. flash = 0 must be exactly the no-strike result. */
+    CHECK(env_flash_boost(0) == 0);
+    CHECK(env_flash_boost(1000) > 0 && env_flash_boost(1000) <= 300);
+    CHECK(env_flash_boost(5000) == env_flash_boost(1000));   /* clamped */
+    EnvInputs quiet = storm_in;
+    EnvMatrix quiet_m;
+    env_matrix_eval(&quiet, &quiet_m);
+    EnvInputs bolt = storm_in;
+    bolt.flash = 1.0f;
+    EnvMatrix bolt_m;
+    env_matrix_eval(&bolt, &bolt_m);
+    CHECK(bolt_m.flash_boost > 0.0f);
+    CHECK(bolt_m.light_bleed > quiet_m.light_bleed);
+    CHECK(bolt_m.exposure > quiet_m.exposure);
+    CHECK(bolt_m.bleed_g > quiet_m.bleed_g);                   /* greener-but-dark haze goes whiter */
+    {
+        /* the strike really lands on a dark surface through the production transform */
+        float sr = 0.06f, sg = 0.07f, sb = 0.08f;
+        env_matrix_apply_surface(bolt_m.ambient_floor, (const float[]){ bolt_m.bleed_r, bolt_m.bleed_g, bolt_m.bleed_b }, &sr, &sg, &sb);
+        CHECK(mean3(sr, sg, sb) >= mean3(bolt_m.bleed_r, bolt_m.bleed_g, bolt_m.bleed_b) * 0.99f);
+    }
+    CHECK(bolt_m.flash_boost <= 0.30f);
+    CHECK(quiet_m.flash_boost == 0.0f);
 
     /* 12. the emitters trade reach for spread, and the two never disagree */
     for (int v = 0; v <= 3200; v += 100) {

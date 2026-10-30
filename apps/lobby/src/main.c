@@ -12525,6 +12525,7 @@ void draw_scene(PlayerState *render_p) {
         env_in.storm = g_sky_weather.storm;
         env_in.fog_wash = g_sky_weather.fog_wash;
         env_in.visibility = g_sky_weather.visibility;
+        env_in.flash = g_sky_weather.flash;   /* a lightning strike lights the world, not just the overlay */
         env_in.ambient_level = g_opt_ambient_level;
         env_in.interior = (g_world_lighting_preset == RETRO_LIGHTING_INTERIOR_FLAT);
         env_in.fog_r = g_sky_weather.fog[0];
