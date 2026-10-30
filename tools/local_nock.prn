@@ -1,38 +1,23 @@
-;; tools/local_nock.prn -- local NOCK map tools in PARENA: the IDUNA-free authoring server (PARENA
-;; entry point; tools/local_nock.py is the same contract with the fuller feature set for now).
+;; tools/local_nock.prn -- local NOCK map tools in PARENA: the IDUNA-free authoring server.
 ;;
-;; Same wire contract as the IDUNA handler the native client is written against
-;; (packages/world/edit_sync.h <-> IDUNA/internal/http/handlers/shankpit_edit_sessions.go), the same
-;; browser editor (tools/nock_editor.html), and the same levels/*.json committed to git -- but the
-;; server is PARENA, matching this monorepo's standing "core deps are PARENA-first" rule. The missing
-;; stdlib dependency (there was no server-side net/http at all) is real PARENA too:
-;; PARENA/stdlib/net/http_server.prn.
+;; Same wire contract as IDUNA's handler, the same browser editor (tools/nock_editor.html) and the
+;; same levels/*.json committed to git -- but the server, its session state and its validation are
+;; PARENA. tools/local_nock.py is the same contract with slightly richer input validation (per-wall
+;; field checks) and real long-polling; this one is single-threaded and answers `wait` immediately.
 ;;
-;; Real, named parity gap: one live room per run (the actual use is one browser tab plus one game
-;; window), and the event log is returned whole rather than filtered by ?since -- the native client
-;; is idempotent for the events it applies (spawner/teleport/spawn_mode/level), so replaying it just
-;; refetches the working level. Multi-room + since-filtering is real follow-up work, not hidden.
+;; Host boundary (tools/local_nock_host.c/.h) is only what a program cannot do in PARENA yet or at
+;; all: arenas, env, one id generator, and file/directory access. Session ids, the event log, the
+;; draft, git commits, routing, JSON shapes and every validation rule are PARENA below.
 ;;
-;; Host boundary (tools/local_nock_host.c/.h), deliberately thin: the arena, env, file and directory
-;; access, and the session strings that outlive one request. Routing, JSON shapes, level validation
-;; and the git commit are PARENA below. (`set!` on a top-level def now works, so moving the session
-;; id/draft/log into PARENA globals is a real, small follow-up rather than a compiler blocker -- the
-;; host's ln_state_* pair is what remains of that workaround.)
-
-;; STATUS (2026-10-30): emits and RUNS. `make local-nock-parena` in SHANKPIT builds this file plus
-;; PARENA/stdlib/net/http_server.prn with -std=c99 -pedantic -Wall -Wextra -Werror and serves the
-;; same API as tools/local_nock.py. Verified over loopback: level list, PUT (real git commit), level
-;; read, session create, event post + read-back, draft push/fetch, editor page, 404.
+;; Limits are real and enforced, not decorative: max-body caps any request body, max-event-body caps
+;; one event, max-events trims the oldest event out of the log (the log is also what `?since` reads),
+;; max-name bounds a level name. A dead session id is 404, never "the current room": session routes
+;; compare the id segment against the live id, so a stale game window cannot post into a new room.
 ;;
-;; Getting here closed four real VS0 emitter gaps and one runtime bug, each found by building this
-;; file rather than assumed: variadic operators (`(+ a b c)` folds), `set!` on a top-level `(def ...)`,
-;; `println` (which had no runtime declaration at all), `&` on an already-pointer match payload
-;; (`(tcp-accept &!listener dest)` used to emit `void **`), and `tcp_read_impl` reading a bodyless
-;; request until EOF instead of stopping at the completed header block.
-;;
-;; Still not ported from the Python runner (named, not hidden; see mk/local_nock.mk): ?since filtering,
-;; event-kind validation, falling back to the saved level when a session has no draft, and bumping the
-;; draft revision. Those are the next PARENA steps, not compiler work.
+;; Parity with tools/local_nock.py is verified by the same tools/test_local_nock.py (`--binary` drives
+;; this one; 16 checks). One named limit remains: ONE room per process -- creating a session replaces
+;; the previous one -- and the runner is single-threaded, so `?wait` is answered immediately and a
+;; client polls again instead of the server blocking a thread on it.
 
 (module local_nock)
 (import string)
@@ -42,30 +27,64 @@
 
 (export nock-run)
 
+;; ---- limits --------------------------------------------------------------------------------
+(def max-body 4194304)
+(def max-event-body 65536)
+(def max-events 2000)
+(def max-name 64)
+
+;; ---- state ---------------------------------------------------------------------------------
+;; PARENA-owned now that `set!` on a top-level def works: the id, the level it points at, the event
+;; log, the log's seq/count, the browser's draft and its revision. All of it is allocated in the
+;; host's state arena, which is never reset, so it survives across requests the way a room must.
+(def repo-dir "")
+(def levels-dir "")
+(def editor-path "")
+(def session-id "")
+(def session-level "")
+(def session-level-id 0)
+(def session-seq 0)
+(def session-count 0)
+(def session-rev 0)
+(def session-draft "")
+(def session-log "")
+
 ;; ---- host boundary -------------------------------------------------------------------------
 (defn host-port [] : I32
   #target
   {:c (inline-c "ln_port()")})
 
+(defn host-env [(key : String @ Region) (fallback : String @ Region) (dest : Arena @ Region)] : String @ Region
+  #target
+  {:c (inline-c "ln_env(key, fallback, dest)")})
+
+(defn state-arena [] : Arena @ Region
+  #target
+  {:c (inline-c "ln_state_arena()")})
+
+(defn request-arena [] : Arena @ Region
+  #target
+  {:c (inline-c "ln_request_arena()")})
+
+(defn request-reset [] : I32
+  #target
+  {:c (inline-c "ln_request_reset()")})
+
+(defn draft-arena [] : Arena @ Region
+  #target
+  {:c (inline-c "ln_draft_arena()")})
+
+(defn draft-reset [] : I32
+  #target
+  {:c (inline-c "ln_draft_reset()")})
+
 (defn host-new-id [(dest : Arena @ Region)] : String @ Region
   #target
   {:c (inline-c "ln_new_id(dest)")})
 
-(defn host-get [(field : String @ Region) (dest : Arena @ Region)] : String @ Region
+(defn host-levels-json [(dir : String @ Region) (dest : Arena @ Region)] : String @ Region
   #target
-  {:c (inline-c "ln_state_get(field, dest)")})
-
-(defn host-set [(field : String @ Region) (value : String @ Region)] : I32
-  #target
-  {:c (inline-c "ln_state_set(field, value)")})
-
-(defn host-levels-json [(dest : Arena @ Region)] : String @ Region
-  #target
-  {:c (inline-c "ln_levels_json(dest)")})
-
-(defn host-editor [(dest : Arena @ Region)] : String @ Region
-  #target
-  {:c (inline-c "ln_editor_html(dest)")})
+  {:c (inline-c "ln_levels_json(dir, dest)")})
 
 (defn host-read [(path : String @ Region) (dest : Arena @ Region)] : String @ Region
   #target
@@ -75,23 +94,20 @@
   #target
   {:c (inline-c "ln_write_file(path, text)")})
 
-(defn host-level-path [(name : String @ Region) (dest : Arena @ Region)] : String @ Region
+(defn host-level-path [(dir : String @ Region) (name : String @ Region) (dest : Arena @ Region)] : String @ Region
   #target
-  {:c (inline-c "ln_level_path(name, dest)")})
+  {:c (inline-c "ln_level_path(dir, name, dest)")})
 
-(defn host-log-event [(body : String @ Region)] : I32
-  #target
-  {:c (inline-c "ln_log_event(body)")})
+;; ---- small helpers -------------------------------------------------------------------------
+;; cat3/cat4 exist because string/concat is binary and a JSON response here is 4-6 pieces; the
+;; nested-concat spelling was where a missing closing paren cost a build cycle.
+(defn cat3 [(a : String @ Region) (b : String @ Region) (c : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (string/concat (string/concat a b dest) c dest))
 
-(defn host-session-json [(dest : Arena @ Region)] : String @ Region
-  #target
-  {:c (inline-c "ln_session_json(dest)")})
+(defn cat4 [(a : String @ Region) (b : String @ Region) (c : String @ Region) (d : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (string/concat (cat3 a b c dest) d dest))
 
-;; ---- helpers --------------------------------------------------------------------------------
-(defn has? [(haystack : String @ Region) (needle : String @ Region) (dest : Arena @ Region)] : Bool
-  (>= (http_server/find-sub haystack needle 0 dest) 0))
-
-(defn prefix? [(s : String @ Region) (prefix : String @ Region) (dest : Arena @ Region)] : Bool
+(defn starts-with? [(s : String @ Region) (prefix : String @ Region) (dest : Arena @ Region)] : Bool
   (if (> (string/length prefix) (string/length s))
     false
     (string/str-eq? (string/substring s 0 (string/length prefix) dest) prefix)))
@@ -99,120 +115,374 @@
 (defn drop-prefix [(s : String @ Region) (prefix : String @ Region) (dest : Arena @ Region)] : String @ Region
   (string/substring s (string/length prefix) (string/length s) dest))
 
+(defn has? [(haystack : String @ Region) (needle : String @ Region) (dest : Arena @ Region)] : Bool
+  (>= (http_server/find-sub haystack needle 0 dest) 0))
+
+(defn skip-space [(s : String @ Region) (i : I32)] : I32
+  (if (>= i (string/length s))
+    i
+    (if (or (= (string/char-at s i) 32) (= (string/char-at s i) 9))
+      (skip-space s (+ i 1))
+      i)))
+
+(defn digit? [(c : I32)] : Bool
+  (and (>= c 48) (<= c 57)))
+
+(defn read-int [(s : String @ Region) (i : I32) (end : I32) (acc : I32)] : I32
+  (if (>= i end)
+    acc
+    (let [c (string/char-at s i)]
+      (if (digit? c)
+        (read-int s (+ i 1) end (+ (* acc 10) (- c 48)))
+        acc))))
+
+(defn parse-int-or [(s : String @ Region) (fallback : I32)] : I32
+  (if (string/str-eq? s "")
+    fallback
+    (let [lead (skip-space s 0)]
+      (if (digit? (string/char-at s lead))
+        (read-int s lead (string/length s) 0)
+        fallback))))
+
+;; json-field -- the String value of `"key":"value"` in a request body, "" when absent. Skips
+;; whitespace after the colon, which a hand-written curl body often has and the browser's own
+;; JSON.stringify never does. Deliberately not a JSON parser: this server only ever reads four
+;; string fields (source, kind, level_name) and one number (level_id).
+(defn json-field [(body : String @ Region) (key : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (let [needle (cat3 "\"" key "\":" dest)
+        at (http_server/find-sub body needle 0 dest)]
+    (if (< at 0)
+      ""
+      (let [start (skip-space body (+ at (string/length needle)))]
+        (if (not (= (string/char-at body start) 34))
+          ""
+          (let [end (http_server/find-sub body "\"" (+ start 1) dest)]
+            (if (< end 0) "" (string/substring body (+ start 1) end dest))))))))
+
+(defn json-int [(body : String @ Region) (key : String @ Region) (fallback : I32) (dest : Arena @ Region)] : I32
+  (let [needle (cat3 "\"" key "\":" dest)
+        at (http_server/find-sub body needle 0 dest)]
+    (if (< at 0)
+      fallback
+      (let [start (skip-space body (+ at (string/length needle)))]
+        (if (digit? (string/char-at body start))
+          (read-int body start (string/length body) 0)
+          fallback)))))
+
+;; slug? -- a level name is a file name: 1..64 of [A-Za-z0-9_-]. This is the traversal defence, the
+;; same rule the Python runner enforces, checked before the name ever reaches a path.
+(defn slug-char? [(c : I32)] : Bool
+  (or (and (>= c 65) (<= c 90))
+      (and (>= c 97) (<= c 122))
+      (and (>= c 48) (<= c 57))
+      (= c 45)
+      (= c 95)))
+
+(defn slug? [(name : String @ Region) (i : I32)] : Bool
+  (if (or (= (string/length name) 0) (> (string/length name) max-name))
+    false
+    (if (>= i (string/length name))
+      true
+      (if (slug-char? (string/char-at name i))
+        (slug? name (+ i 1))
+        false))))
+
+;; level-ok? -- what a level body must be for this server to write it: a JSON object whose top
+;; level carries a walls array. The Python runner also checks each wall's x/y/z/sx/sy/sz fields;
+;; this server does not parse JSON deeply yet, so that per-wall check is the one real validation
+;; gap left between the two runners (named in mk/local_nock.mk rather than pretended).
+(defn level-ok? [(body : String @ Region) (dest : Arena @ Region)] : Bool
+  (and (> (string/length body) 2)
+       (= (string/char-at body 0) 123)
+       (has? body "\"walls\"" dest)))
+
+(defn kind-ok? [(kind : String @ Region)] : Bool
+  (or (string/str-eq? kind "spawner")
+      (string/str-eq? kind "avatar")
+      (string/str-eq? kind "spawn_mode")
+      (string/str-eq? kind "teleport")
+      (string/str-eq? kind "box_add")
+      (string/str-eq? kind "box_move")
+      (string/str-eq? kind "box_size")
+      (string/str-eq? kind "box_del")
+      (string/str-eq? kind "hello")
+      (string/str-eq? kind "level")
+      (string/str-eq? kind "save")))
+
+(defn err [(status : I32) (msg : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (http_server/json-response status (cat3 "{\"error\":\"" msg "\"}" dest) dest))
+
+;; ---- git -----------------------------------------------------------------------------------
+;; Saving a level is git add + git commit (never a push: that stays a human step) plus the short
+;; hash, which is what makes "levels as code" reviewable. Nothing is committed when the file's
+;; content did not change -- git's own exit status is the test, not a comparison we invent.
 (defn quote-shell [(s : String @ Region) (dest : Arena @ Region)] : String @ Region
-  (string/concat "'" (string/concat s "'" dest) dest))
+  (cat3 "'" s "'" dest))
 
-(defn commit-msg [(name : String @ Region) (dest : Arena @ Region)] : String @ Region
-  (string/concat "level(" (string/concat name ") from local NOCK" dest) dest))
-
-;; git-commit-level -- stage the level file and commit it. Never pushes (that stays a human step).
 (defn git-commit-level [(name : String @ Region) (dest : Arena @ Region)] : String @ Region
-  (let [add-cmd (string/concat "git -C "
-                  (string/concat (quote-shell (host-get "repo" dest) dest)
-                    (string/concat " add -- "
-                      (string/concat (quote-shell (host-level-path name dest) dest) "" dest) dest) dest) dest)]
-    (do
-      (process/run-capture add-cmd dest)
-      (process/run-capture
-        (string/concat "git -C "
-          (string/concat (quote-shell (host-get "repo" dest) dest)
-            (string/concat " commit -m "
-              (string/concat (quote-shell (commit-msg name dest) dest) "" dest) dest) dest) dest) dest)
-      (if (= (process/run-capture-exit-code) 0)
-        "{\"committed\":true}"
-        "{\"committed\":false,\"detail\":\"nothing to commit\"}"))))
+  (let [repo (state-arena)
+        path (host-level-path levels-dir name dest)
+        add-cmd (cat4 "git -C " (quote-shell repo-dir repo) " add -- " (quote-shell path repo) repo)
+        msg (cat3 "level(" name "): levels saved from local NOCK" repo)
+        commit-cmd (cat4 "git -C " (quote-shell repo-dir repo) " commit -m " (quote-shell msg repo) repo)
+        added (process/run-capture add-cmd repo)
+        committed (process/run-capture commit-cmd repo)
+        code (process/run-capture-exit-code)]
+    (if (= code 0)
+      (cat3 "{\"committed\":true,\"commit\":\""
+            (http_server/trim
+              (process/run-capture (cat3 "git -C " (quote-shell repo-dir repo) " rev-parse --short HEAD" repo) repo)
+              dest)
+            "\"}" dest)
+      "{\"committed\":false,\"detail\":\"nothing to commit\"}")))
 
 (defn save-level [(name : String @ Region) (body : String @ Region) (dest : Arena @ Region)] : String @ Region
-  (if (has? body "\"walls\"" dest)
-    (if (= (host-write (host-level-path name dest) body) 1)
-      (git-commit-level name dest)
-      "{\"error\":\"cannot write level\"}")
-    "{\"error\":\"level needs a walls array\"}"))
+  (if (not (level-ok? body dest))
+    (err 400 "level needs a walls array" dest)
+    (if (= (host-write (host-level-path levels-dir name dest) body) 1)
+      (http_server/json-response 200 (saved-json name dest) dest)
+      (err 500 "cannot write level" dest))))
 
-;; ---- routes ---------------------------------------------------------------------------------
-(defn level-read-response [(name : String @ Region) (dest : Arena @ Region)] : String @ Region
-  (let [text (host-read (host-level-path name dest) dest)]
-    (if (string/str-eq? text "")
-      (http_server/text-response 404 "no such level" dest)
-      (http_server/response 200 "application/json" text dest))))
+;; saved-json -- the save response: the file it wrote plus the git result object. Built in named
+;; steps rather than one nested concat so a missing quote is a compile-time-looking mistake, not a
+;; silently invalid JSON body.
+(defn saved-json [(name : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (let [s1 (string/concat "{\"ok\":true,\"file\":\"levels/" name dest)
+        s2 (string/concat s1 ".json\",\"git\":" dest)
+        s3 (string/concat s2 (git-commit-level name dest) dest)]
+    (string/concat s3 "}" dest)))
 
-(defn level-save-response [(name : String @ Region) (body : String @ Region) (dest : Arena @ Region)] : String @ Region
-  (let [result (save-level name body dest)]
-    (if (has? result "error" dest)
-      (http_server/json-response 400 result dest)
-      (http_server/json-response 200 result dest))))
+;; ---- sessions ------------------------------------------------------------------------------
+(defn session-rest [(path : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (let [prefix "/api/v1/shankpit-edit-sessions/"]
+    (if (starts-with? path prefix dest) (drop-prefix path prefix dest) "")))
 
-(defn route-levels [(method : String @ Region) (path : String @ Region) (body : String @ Region) (dest : Arena @ Region)] : String @ Region
-  (if (and (string/str-eq? method "GET") (string/str-eq? path "/api/levels"))
-    (http_server/json-response 200 (host-levels-json dest) dest)
-    (if (and (string/str-eq? method "PUT") (prefix? path "/api/levels/" dest))
-      (level-save-response (drop-prefix path "/api/levels/" dest) body dest)
-      (if (and (string/str-eq? method "GET") (prefix? path "/api/levels/" dest))
-        (level-read-response (drop-prefix path "/api/levels/" dest) dest)
-        ""))))
+(defn first-seg [(rest : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (if (string/str-eq? rest "")
+    ""
+    (let [i (http_server/find-sub rest "/" 0 dest)]
+      (if (< i 0) rest (string/substring rest 0 i dest)))))
 
-(defn route-session [(method : String @ Region) (path : String @ Region) (body : String @ Region) (dest : Arena @ Region)] : String @ Region
-  (if (and (string/str-eq? method "POST") (string/str-eq? path "/api/v1/shankpit-edit-sessions"))
-    (let [id (host-new-id dest)]
-      (do
-        (host-set "id" id)
-        (host-set "log" "")
-        (host-set "draft" "")
-        (http_server/json-response 201
-          (string/concat "{\"id\":\"" (string/concat id "\",\"seq\":0}" dest) dest) dest)))
-    (if (and (string/str-eq? method "POST") (has? path "/events" dest))
-      (do
-        (host-log-event body)
-        (http_server/json-response 200 "{\"ok\":true}" dest))
-      (if (and (string/str-eq? method "PUT") (has? path "/level" dest))
+(defn tail-seg [(rest : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (let [i (http_server/find-sub rest "/" 0 dest)]
+    (if (< i 0) "" (string/substring rest (+ i 1) (string/length rest) dest))))
+
+;; event-json -- the stored/spooled shape: {"seq":N, ...what the client sent...}. The client's own
+;; object already carries source/kind/data, so its body is spliced in after the seq rather than
+;; re-serialised (the C client reads those keys out of the raw text).
+(defn event-json [(seq : I32) (body : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (let [head (cat3 "{\"seq\":" (string/i32-to-string seq dest) "," dest)]
+    (if (> (string/length body) 0)
+      (string/concat head (string/substring body 1 (string/length body) dest) dest)
+      (string/concat head "}" dest))))
+
+(defn drop-oldest [(state : Arena @ Region)] : I32
+  (let [next (http_server/find-sub session-log "{\"seq\":" 1 state)]
+    (do
+      (if (< next 0)
+        0
         (do
-          (host-set "draft" body)
-          (http_server/json-response 200 "{\"rev\":1}" dest))
-        (if (and (string/str-eq? method "GET") (has? path "/level" dest))
-          (let [draft (host-get "draft" dest)]
-            (if (string/str-eq? draft "")
-              (http_server/text-response 404 "this session has no level yet" dest)
-              (http_server/response 200 "application/json" draft dest)))
-          (if (and (string/str-eq? method "GET") (has? path "/api/v1/shankpit-edit-sessions/" dest))
-            (http_server/json-response 200 (host-session-json dest) dest)
-            ""))))))
+          (set! session-log (string/substring session-log next (string/length session-log) state))
+          (set! session-count (- session-count 1))))
+      0)))
 
-(defn page-or-route [(method : String @ Region) (path : String @ Region) (body : String @ Region) (dest : Arena @ Region)] : String @ Region
-  (let [levels (route-levels method path body dest)]
-    (if (> (string/length levels) 0)
-      levels
-      (let [session (route-session method path body dest)]
-        (if (> (string/length session) 0)
-          session
-          (if (and (string/str-eq? method "GET") (string/str-eq? path "/"))
-            (http_server/text-response 200 (host-editor dest) dest)
+(defn append-event [(body : String @ Region)] : String @ Region
+  (let [state (state-arena)
+        event (event-json session-seq body state)]
+    (do
+      (set! session-log (string/concat session-log event state))
+      (set! session-count (+ session-count 1))
+      (if (> session-count max-events) (drop-oldest state) 0)
+      event)))
+
+;; events-since -- the real ?since filter. The log is a bare concatenation of {"seq":N,...}
+;; objects, so each one's seq is read back and only later events are copied out, comma-joined.
+;; Bounded by max-events, so this scan is bounded too.
+(defn events-from [(log : String @ Region) (since : I32) (pos : I32) (acc : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (if (< pos 0)
+    acc
+    (let [num-start (+ pos 7)
+          num-end (http_server/find-sub log "," num-start dest)
+          seq (read-int log num-start (if (< num-end 0) (string/length log) num-end) 0)
+          next (http_server/find-sub log "{\"seq\":" (+ pos 1) dest)
+          end (if (< next 0) (string/length log) next)
+          seg (string/substring log pos end dest)
+          joined (if (string/str-eq? acc "") seg (string/concat acc (string/concat "," seg dest) dest))]
+      (if (> seq since)
+        (events-from log since next joined dest)
+        (events-from log since next acc dest)))))
+
+(defn snapshot-json [(target : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (let [since (parse-int-or (http_server/query-value target "since" dest) 0)
+        s1 (string/concat "{\"id\":\"" session-id dest)
+        s2 (string/concat s1 "\",\"level_id\":" dest)
+        s3 (string/concat s2 (string/i32-to-string session-level-id dest) dest)
+        s4 (string/concat s3 ",\"level_name\":\"" dest)
+        s5 (string/concat s4 session-level dest)
+        s6 (string/concat s5 "\",\"seq\":" dest)
+        s7 (string/concat s6 (string/i32-to-string session-seq dest) dest)
+        s8 (string/concat s7 ",\"events\":[" dest)
+        s9 (string/concat s8 (events-from session-log since 0 "" dest) dest)
+        s10 (string/concat s9 "],\"level_rev\":" dest)
+        s11 (string/concat s10 (string/i32-to-string session-rev dest) dest)]
+    (string/concat s11 "}" dest)))
+
+(defn create-session [(body : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (let [state (state-arena)
+        name (json-field body "level_name" dest)
+        safe (if (slug? name 0) name "")]
+    (do
+      (set! session-id (host-new-id state))
+      (set! session-level (if (string/str-eq? safe "") "" (string/substring safe 0 (string/length safe) state)))
+      (set! session-level-id (json-int body "level_id" 0 dest))
+      (set! session-log "")
+      (set! session-draft "")
+      (set! session-seq 0)
+      (set! session-count 0)
+      (set! session-rev 0)
+      (let [r1 (string/concat "{\"id\":\"" session-id dest)
+            r2 (string/concat r1 "\",\"level_id\":" dest)
+            r3 (string/concat r2 (string/i32-to-string session-level-id dest) dest)
+            r4 (string/concat r3 ",\"level_name\":\"" dest)
+            r5 (string/concat r4 session-level dest)
+            r6 (string/concat r5 "\",\"seq\":0}" dest)]
+        (http_server/json-response 201 r6 dest)))))
+
+(defn post-event [(body : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (let [source (json-field body "source" dest)
+        kind (json-field body "kind" dest)]
+    (if (not (or (string/str-eq? source "shankpit") (string/str-eq? source "nock")))
+      (err 400 "source must be shankpit or nock" dest)
+      (if (not (kind-ok? kind))
+        (err 400 "unknown event kind" dest)
+        (if (> (string/length body) max-event-body)
+          (err 413 "event too large" dest)
+          (do
+            (set! session-seq (+ session-seq 1))
+            (http_server/json-response 200 (append-event body) dest)))))))
+
+(defn put-draft [(body : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (if (not (level-ok? body dest))
+    (err 400 "level needs a walls array" dest)
+    (do
+      (draft-reset)
+      (set! session-draft (string/substring body 0 (string/length body) (draft-arena)))
+      (set! session-rev (+ session-rev 1))
+      (http_server/json-response 200 (cat3 "{\"rev\":" (string/i32-to-string session-rev dest) "}" dest) dest))))
+
+(defn get-draft [(dest : Arena @ Region)] : String @ Region
+  (if (not (string/str-eq? session-draft ""))
+    (http_server/response 200 "application/json" session-draft dest)
+    (if (not (slug? session-level 0))
+      (err 404 "this session has no level yet" dest)
+      (let [text (host-read (host-level-path levels-dir session-level dest) dest)]
+        (if (string/str-eq? text "")
+          (err 404 "this session has no level yet" dest)
+          (http_server/response 200 "application/json" text dest))))))
+
+;; session-route -- every session route starts by checking the id segment against the LIVE id.
+;; Anything else is 404, so a stale client cannot post into a room it does not own.
+(defn session-route [(method : String @ Region) (target : String @ Region) (path : String @ Region) (body : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (let [rest (session-rest path dest)
+        id (first-seg rest dest)
+        tail (tail-seg rest dest)]
+    (if (not (string/str-eq? id session-id))
+      (err 404 "no such edit session" dest)
+      (if (string/str-eq? tail "")
+        (if (string/str-eq? method "GET")
+          (http_server/json-response 200 (snapshot-json target dest) dest)
+          (err 405 "method not allowed" dest))
+        (if (string/str-eq? tail "events")
+          (if (string/str-eq? method "POST")
+            (post-event body dest)
+            (err 405 "method not allowed" dest))
+          (if (string/str-eq? tail "level")
+            (if (string/str-eq? method "PUT")
+              (put-draft body dest)
+              (if (string/str-eq? method "GET")
+                (get-draft dest)
+                (err 405 "method not allowed" dest)))
+            (err 404 "unknown session route" dest)))))))
+
+;; ---- levels --------------------------------------------------------------------------------
+(defn levels-route [(method : String @ Region) (path : String @ Region) (body : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (let [name (drop-prefix path "/api/levels/" dest)]
+    (if (not (slug? name 0))
+      (err 400 "bad level name (letters, digits, - and _ only)" dest)
+      (if (string/str-eq? method "GET")
+        (let [text (host-read (host-level-path levels-dir name dest) dest)]
+          (if (string/str-eq? text "")
+            (err 404 "no such level" dest)
+            (http_server/response 200 "application/json" text dest)))
+        (if (string/str-eq? method "PUT")
+          (save-level name body dest)
+          (err 405 "method not allowed" dest))))))
+
+(defn status-json [(dest : Arena @ Region)] : String @ Region
+  "{\"levels_dir\":\"levels\",\"sessions\":1,\"commit\":true,\"runner\":\"parena\"}")
+
+;; ---- routing -------------------------------------------------------------------------------
+(defn too-big? [(raw : String @ Region) (dest : Arena @ Region)] : Bool
+  (> (parse-int-or (http_server/header-value raw "Content-Length" dest) 0) max-body))
+
+(defn route [(method : String @ Region) (target : String @ Region) (path : String @ Region) (body : String @ Region) (dest : Arena @ Region)] : String @ Region
+  (if (and (string/str-eq? method "GET")
+           (or (string/str-eq? path "/") (string/str-eq? path "/editor.html")))
+    (http_server/html-response 200 (host-read editor-path dest) dest)
+    (if (and (string/str-eq? method "GET") (string/str-eq? path "/api/local-nock"))
+      (http_server/json-response 200 (status-json dest) dest)
+      (if (and (string/str-eq? method "GET") (string/str-eq? path "/api/levels"))
+        (http_server/json-response 200 (host-levels-json levels-dir dest) dest)
+        (if (starts-with? path "/api/levels/" dest)
+          (levels-route method path body dest)
+          (if (starts-with? path "/api/v1/shankpit-edit-sessions" dest)
+            (if (and (string/str-eq? method "POST") (string/str-eq? path "/api/v1/shankpit-edit-sessions"))
+              (create-session body dest)
+              (session-route method target path body dest))
             (http_server/text-response 404 "not found" dest)))))))
 
 (defn handle [(raw : String @ Region) (dest : Arena @ Region)] : String @ Region
-  (let [method (http_server/parse-method raw dest)]
+  (let [method (http_server/parse-method raw dest)
+        target (http_server/parse-target raw dest)
+        path (http_server/path-only target dest)]
     (if (string/str-eq? method "")
       (http_server/text-response 400 "bad request" dest)
-      (page-or-route method
-        (http_server/parse-path raw dest)
-        (http_server/parse-body raw dest) dest))))
+      (if (too-big? raw dest)
+        (err 413 "body too large" dest)
+        (route method target path (http_server/parse-body raw dest) dest)))))
 
-;; ---- accept loop ----------------------------------------------------------------------------
-;; The listener cannot be a parameter here: `&TcpListener` names a defstruct defined in an imported
-;; module, which VS0 rejects for reference targets (verified by building this file). Binding it in
-;; nock-run and recursing with loop/recur keeps it a local value instead.
+;; ---- accept loop ---------------------------------------------------------------------------
+(defn serve-one [(!stream : &mut TcpStream) (dest : Arena @ Region)] : I32
+  (let [raw (match (net/tcp/tcp-read !stream dest) ((Ok !text) !text) ((Err _) ""))]
+    (do
+      (net/tcp/tcp-write !stream (handle raw (request-arena)) dest)
+      (net/tcp/tcp-close !stream dest)
+      (request-reset)
+      0)))
+
+;; Recursing instead of `loop/recur` keeps the listener a plain local; every request's own arena is
+;; reset after its response is written, so a long-lived server does not grow per request.
+(defn serve-loop [(!listener : &mut TcpListener) (served : I32) (dest : Arena @ Region)] : I32
+  (match (net/tcp/tcp-accept !listener dest)
+    ((Ok !stream)
+      (do
+        (serve-one &mut !stream dest)
+        (serve-loop !listener (+ served 1) dest)))
+    ((Err _) (do (println "local_nock: accept failed") 1))))
+
+(defn setup [] : I32
+  (let [state (state-arena)]
+    (do
+      (set! repo-dir (host-env "LOCAL_NOCK_REPO" "." state))
+      (set! levels-dir (host-env "LOCAL_NOCK_LEVELS" (string/concat repo-dir "/levels" state) state))
+      (set! editor-path (host-env "LOCAL_NOCK_EDITOR" (string/concat repo-dir "/tools/nock_editor.html" state) state))
+      0)))
+
 (defn nock-run [(dest : Arena @ Region)] : I32
   (match (net/tcp/tcp-listen (host-port) dest)
     ((Ok !listener)
       (do
+        (setup)
         (println "local NOCK (PARENA) listening")
-        (loop [served 0]
-          (let [res (net/tcp/tcp-accept &!listener dest)]
-            (match res
-              ((Ok !stream)
-                (let [raw (match (net/tcp/tcp-read !stream dest) ((Ok !text) !text) ((Err _) ""))]
-                  (do
-                    (net/tcp/tcp-write &mut !stream (handle raw dest) dest)
-                    (net/tcp/tcp-close &mut !stream dest)
-                    (recur (+ served 1)))))
-              ((Err _) 1))))))
+        (serve-loop &!listener 0 dest)))
     ((Err _) (do (println "local_nock: cannot bind port") 1))))

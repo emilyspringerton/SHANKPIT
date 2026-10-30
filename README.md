@@ -224,6 +224,17 @@ already-pointer-typed value (a match-bound `Ok` payload used to emit a real `voi
 still fails by design, with a message that says why: a real chained comparison would have to
 evaluate its middle operand twice.
 
+Both runners now pass the same 16 checks (`make test-local-nock`, `make test-local-nock-parena`):
+the PARENA one filters events by `?since`, validates sources and kinds, bumps draft revisions and
+falls back to the saved level. Sessions are hardened on both -- the id segment must match the live
+room (a stale client gets 404 instead of writing into the current one), a level name must be
+slug-shaped before any path is built (the traversal defence), bodies over 4 MiB are 413, wrong
+methods are 405, unknown sources/kinds are 400, and the event log is capped at 2000 entries with the
+oldest dropped. Two limits remain, both named in `mk/local_nock.mk`: the PARENA runner is one room
+per process and single-threaded, so `wait` is answered immediately and a client polls again; and it
+checks that a level is an object carrying a `walls` array but not each wall's fields, which the
+Python runner still does.
+
 ## Current visual direction
 
 SHANKPIT is pursuing a deliberately stylized visual identity rather than realism-first rendering.

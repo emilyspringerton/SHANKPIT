@@ -49,6 +49,7 @@ SLUG_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 SESSION_PREFIX = "/api/v1/shankpit-edit-sessions"
 LEVELS_PREFIX = "/api/levels"
 MAX_BODY = 4 << 20          # a whole level draft; IDUNA's cap for the same reason
+MAX_EVENT_BODY = 64 << 10   # one event is small; keep the log's per-entry cost bounded too
 MAX_EVENTS = 2000
 MAX_WAIT = 25
 EVENT_KINDS = {
@@ -56,6 +57,10 @@ EVENT_KINDS = {
     "box_add", "box_move", "box_size", "box_del", "hello", "level", "save",
 }
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+class BodyTooLarge(Exception):
+    """Raised by Handler._body when Content-Length exceeds the cap (answered as 413)."""
 
 
 def validate_level(doc):
@@ -245,15 +250,27 @@ class Handler(BaseHTTPRequestHandler):
     def _error(self, status, msg):
         self._json(status, {"error": msg})
 
-    def _body(self):
+    def _body(self, limit=MAX_BODY):
         try:
             n = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             n = 0
         if n <= 0:
             return {}
-        if n > MAX_BODY:
-            raise ValueError("body too large")
+        if n > limit:
+            # Drain what the peer is still sending BEFORE answering: replying 413 and closing the
+            # socket mid-upload makes the client fail with a broken pipe instead of reading the
+            # status, which is a real bug found by this file's own oversized-body check. Bounded
+            # by the declared Content-Length, which is all the peer said it would send.
+            remaining = n
+            while remaining > 0:
+                chunk = self.rfile.read(min(1 << 16, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+            # A distinct exception so handlers can answer 413 rather than a vague 400: the same
+            # code the PARENA runner returns for the same request.
+            raise BodyTooLarge(f"body too large (limit {limit} bytes)")
         raw = self.rfile.read(n)
         return json.loads(raw.decode("utf-8")) if raw else {}
 
@@ -306,6 +323,8 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError:
                     return self._error(400, "since/wait must be integers")
                 return self._json(200, s.poll(since, wait))
+            if tail == "events":
+                return self._error(405, "method not allowed")
             if tail == "level":
                 if s.draft is not None:
                     return self._send(200, json.dumps(s.draft))
@@ -322,9 +341,14 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         st = self.server.state
 
+        if path.startswith(LEVELS_PREFIX):
+            return self._error(405, "method not allowed")
+
         if path == SESSION_PREFIX:
             try:
                 body = self._body()
+            except BodyTooLarge as e:
+                return self._error(413, str(e))
             except ValueError as e:
                 return self._error(400, str(e))
             name = str(body.get("level_name") or "")[:120]
@@ -342,7 +366,9 @@ class Handler(BaseHTTPRequestHandler):
             if s is None:
                 return self._error(404, "no such edit session")
             try:
-                body = self._body()
+                body = self._body(limit=MAX_EVENT_BODY)
+            except BodyTooLarge as e:
+                return self._error(413, str(e))
             except ValueError as e:
                 return self._error(400, str(e))
             source = str(body.get("source") or "")[:16]
@@ -371,6 +397,8 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 doc = self._body()
                 result = st.store.write(name, doc)
+            except BodyTooLarge as e:
+                return self._error(413, str(e))
             except ValueError as e:
                 return self._error(400, str(e))
             except OSError as e:
@@ -378,12 +406,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, result)
 
         sid, tail = self._session_route(path)
+        if sid is not None and tail == "events":
+            return self._error(405, "method not allowed")
         if sid is not None and tail == "level":
             s = st.get_session(sid)
             if s is None:
                 return self._error(404, "no such edit session")
             try:
                 doc = validate_level(self._body())
+            except BodyTooLarge as e:
+                return self._error(413, str(e))
             except ValueError as e:
                 return self._error(400, str(e))
             with s.cond:
