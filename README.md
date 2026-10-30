@@ -249,6 +249,52 @@ keeps working after you quit the game. Window is bounded rather than guessed (th
 after the port answers, up to 2 s). Windows has no bundled binary yet, so the tile says
 `NOCK server not found` there instead of pretending it started.
 
+## Lighting: one environment matrix, resolved in PARENA (2026-10-30)
+
+Founder real-time: "we have cool weather effects but it doesnt work with the ambient lighting like it
+always looks too dark everywhere ... we need more of a theory of all the lighting needs to talk to each
+other." That was accurate. Weather (`sky_weather.c`), the day/night preset (`retro_lighting.c`), the
+pause-menu ambient slider (`ambient_rules.prn`) and the emitters each adjusted the scene alone, and
+every one of them could only subtract. A stormy night at slider 0 multiplied down to near-black walls,
+because nothing in the engine ever asked "how much light does the world actually get right now?".
+
+There is now one answer per frame. `PARENA/stdlib/shankpit/lighting_rules.prn` (generated into
+`packages/simulation/lighting_rules.c`, i32 permille in and out, pure and total like every other mod
+here) resolves the atmosphere into six numbers, and every consumer reads them instead of deriving its
+own:
+
+| output | what it means | who uses it |
+|---|---|---|
+| `env-occlusion` | how much sky light the weather actually blocks (capped at 0.78, so a storm at noon is dim daylight, never night) | sun/moon dimming in `env_matrix_apply` |
+| `env-light-bleed` | the share the atmosphere **scatters back** | every surface, via `retro_lighting`'s sky bleed |
+| `env-ambient-floor` | hard minimum for a surface's ambient term | every surface, via `retro_lighting`'s floor |
+| `env-exposure` | low-end compensation for the dimming | diagnostic/lighting state |
+| `env-emissive-scale` | 0.75..1.6, inverse of scene brightness | enemy outlines, shield FX |
+| `env-emitter-range-scale` / `env-emitter-spread-scale` | reach vs. spread under fog | flashlight beam, its per-face lit cone, the litbox spotlight uniforms |
+
+Three ideas carry the fix. **Scatter instead of only subtract**: the bleed is added to every surface
+in the sky's own current colour, so a gloomy sky fills shaded walls rather than just removing the sun --
+which is what the old chain was missing entirely. **A floor, not a taste knob**: `env_matrix_apply_surface`
+lifts a surface's combined ambient term to the floor by adding the *deficit* to its brightest channel
+rather than clamping each channel, so a wall keeps its hue instead of washing flat, and a player at
+slider 0 in a storm still gets readable geometry. **Emitters trade reach for spread**: fog shortens a
+beam and the same number widens it, derived from one value so the two can never disagree.
+
+Nothing about this is per-pixel scattering. It is deliberately *not* described as Rayleigh/Mie
+anything -- it models the three things that were actually broken (scattering, the low end, and
+emitter response), not a physical sky model this renderer cannot support.
+
+Cost: one CPU evaluation per frame, a pure function of the day/night clock and weather profile both
+sides already broadcast in the world-clock packet. No server work, no new wire fields, no per-entity
+state -- so every client computes the identical matrix bit for bit (asserted), which is the property
+that keeps it cheap under MMO concurrence instead of syncing lighting around.
+
+Verified: `make test-env-matrix` (the PARENA rules' purity/clamps, the clear-weather no-op, the
+stormy-night regression through the exact surface function the renderer calls, the publish→surface
+wiring, determinism, and the emitter trade-off). Not verified here: `retro_lighting` itself is
+GL-bound and this sandbox has no SDL2 headers, so `make test-ambient-boost` (updated for the new link
+dependency) and the live look could not be built; and `apps2/`'s duplicate tree was left alone.
+
 ## Current visual direction
 
 SHANKPIT is pursuing a deliberately stylized visual identity rather than realism-first rendering.

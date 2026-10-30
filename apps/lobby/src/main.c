@@ -90,6 +90,7 @@
 #include "../../../packages/simulation/shield_packs.h"
 #include "../../../packages/audio/audio.h"
 #include "../../../packages/render/gl_shader.h"
+#include "../../../packages/render/env_matrix.h"
 #include "../../../packages/render/bloom.h"
 #include "../../../packages/render/material_shaders.h"
 #include "../../../packages/goldenband/gband_mesh_rig.h"
@@ -279,6 +280,15 @@ static void gband_draw_skinned(const float *verts6, int vert_count, const Mat4 *
     gl_use_program(0);
 }
 
+/* ---- unified environment matrix (packages/render/env_matrix.h) --------------------------------
+ * One resolved atmosphere per frame, evaluated in draw_scene and read by everything that lights
+ * anything: surface lighting (through retro_lighting's own floor + sky bleed), world fog, the enemy
+ * outline's emissive strength, and the flashlight's reach/spread. Before this, weather, the day/night
+ * preset and the ambient slider each dimmed the scene alone and every one of them only subtracted --
+ * the founder's "it always looks too dark everywhere". The numbers themselves are PARENA
+ * (PARENA/stdlib/shankpit/lighting_rules.prn); this is only where the result is held. */
+static EnvMatrix g_env;
+
 /* --- ENEMY OUTLINE (kanban #538; founder real-time: "use a shader to add an outline around enemies make them
  * yellow but when they are in combat have the outlines turn red") ---
  * Inverted-hull outline: before the real skinned draw, the same mesh is drawn once more with every vertex pushed
@@ -340,8 +350,12 @@ static void skel_npc_draw_skinned(const float *verts6, int vert_count, const Mat
         /* hull pass first (see the ENEMY OUTLINE comment): yellow, or red with a quick pulse while in combat */
         float t = (float)SDL_GetTicks() * 0.001f;
         float pulse = 0.8f + 0.2f * sinf(t * 14.0f);
-        const float yellow[4] = {1.0f, 0.85f, 0.05f, 1.0f};
-        const float red[4] = {1.0f, 0.10f * pulse, 0.08f * pulse, 1.0f};
+        /* Emissive strength follows the environment matrix: an outline that reads at noon is
+           invisible at midnight and blinds at noon if tuned the other way, so dark scenes push it
+           up and bright scenes tuck it down -- the same reasoning the shield FX uses. */
+        float em = env_emissive_scale();
+        const float yellow[4] = {1.0f * em, 0.85f * em, 0.05f * em, 1.0f};
+        const float red[4] = {1.0f * em, 0.10f * pulse * em, 0.08f * pulse * em, 1.0f};
         GLboolean cull = glIsEnabled(GL_CULL_FACE);
         glDisable(GL_CULL_FACE);
         glDepthMask(GL_FALSE);
@@ -395,6 +409,26 @@ static int g_flashlight_shader_ready = 0;
    the camera made the whole cone vanish at close range instead of just shrinking). The actual
    "bigger area" fix is FLASHLIGHT_HALF_ANGLE_DEG below. */
 #define FLASHLIGHT_APEX_OFFSET 0.15f
+
+/* Emitter reach/spread, from the environment matrix: fog eats a beam's reach and scatters what is
+ * left, so a shrouded flashlight throws a shorter, wider cone. Guarded because g_env is all zeroes
+ * until the first draw_scene evaluation (and in any path that never evaluates it) -- an unevaluated
+ * matrix must mean "exactly the old behaviour", never a zero-length beam. */
+static float env_flashlight_range(void) {
+    float s = g_env.emitter_range_scale;
+    if (!(s > 0.05f)) s = 1.0f;
+    return FLASHLIGHT_RANGE * s;
+}
+static float env_flashlight_half_angle(void) {
+    float s = g_env.emitter_spread_scale;
+    if (!(s > 0.5f)) s = 1.0f;
+    return FLASHLIGHT_HALF_ANGLE_DEG * s;
+}
+static float env_emissive_scale(void) {
+    float s = g_env.emissive_scale;
+    if (!(s > 0.1f)) return 1.0f;
+    return s > 1.6f ? 1.6f : s;
+}
 
 static const char *g_flashlight_vs_src =
     "#version 120\n"
@@ -502,10 +536,12 @@ static void draw_flashlight_beam(const PlayerState *p) {
        to whatever it actually hits, stopping just short of the surface -- the beam now shrinks in
        length as you approach a wall (not just radius) and always terminates AT the surface, never
        behind it, so nothing gets clipped away. */
-    float beam_len = FLASHLIGHT_RANGE;
+    float beam_range = env_flashlight_range();
+    float half_angle = env_flashlight_half_angle();
+    float beam_len = beam_range;
     {
         float hx, hy, hz, hnx, hny, hnz;
-        float tx = eye_x + fx * FLASHLIGHT_RANGE, ty = eye_y + fy * FLASHLIGHT_RANGE, tz = eye_z + fz * FLASHLIGHT_RANGE;
+        float tx = eye_x + fx * beam_range, ty = eye_y + fy * beam_range, tz = eye_z + fz * beam_range;
         if (trace_map(eye_x, eye_y, eye_z, tx, ty, tz, &hx, &hy, &hz, &hnx, &hny, &hnz)) {
             float hdx = hx - eye_x, hdy = hy - eye_y, hdz = hz - eye_z;
             float hit_dist = sqrtf(hdx * hdx + hdy * hdy + hdz * hdz) - 0.5f; /* small clearance so the ring never z-fights the surface it's terminating at */
@@ -513,7 +549,7 @@ static void draw_flashlight_beam(const PlayerState *p) {
             if (hit_dist < beam_len) beam_len = hit_dist;
         }
     }
-    float cone_radius = beam_len * tanf(FLASHLIGHT_HALF_ANGLE_DEG * 0.0174533f);
+    float cone_radius = beam_len * tanf(half_angle * 0.0174533f);
     float verts[GL_SHADER_VBO_FLOATS_PER_VERT * (FLASHLIGHT_SEGMENTS + 2)];
     int vi = 0;
     /* apex */
@@ -569,18 +605,18 @@ typedef struct { float ex, ey, ez, fx, fy, fz; } FlashlightSource;
 static float flashlight_face_boost(const FlashlightSource *sources, int source_count,
                                     float bx, float by, float bz, float nx, float ny, float nz) {
     float total = 0.0f;
-    float cos_half_angle = cosf(FLASHLIGHT_HALF_ANGLE_DEG * 0.0174533f);
+    float cos_half_angle = cosf(env_flashlight_half_angle() * 0.0174533f);
     for (int i = 0; i < source_count; i++) {
         const FlashlightSource *s = &sources[i];
         float dx = bx - s->ex, dy = by - s->ey, dz = bz - s->ez;
         float dist = sqrtf(dx * dx + dy * dy + dz * dz);
-        if (dist < 0.001f || dist > FLASHLIGHT_RANGE) continue;
+        if (dist < 0.001f || dist > env_flashlight_range()) continue;
         float lx = dx / dist, ly = dy / dist, lz = dz / dist; /* source -> surface direction */
         float cos_ang = lx * s->fx + ly * s->fy + lz * s->fz;
         if (cos_ang < cos_half_angle) continue;
         float angle_t = (cos_ang - cos_half_angle) / (1.0f - cos_half_angle); /* 0 at rim, 1 on-axis */
         if (angle_t < 0.0f) angle_t = 0.0f; else if (angle_t > 1.0f) angle_t = 1.0f;
-        float dist_frac = dist / FLASHLIGHT_RANGE;
+        float dist_frac = dist / env_flashlight_range();
         if (dist_frac < 0.0f) dist_frac = 0.0f; else if (dist_frac > 1.0f) dist_frac = 1.0f;
         /* softened inverse-square-ish falloff (squared instead of the old flat linear ramp) so
            it doesn't blow out at point-blank range and fades smoothly with distance */
@@ -724,7 +760,7 @@ static void litbox_upload_lights(const FlashlightSource *fs, int nfs, const Fixt
     float sp[LITBOX_SPOTS_MAX * 4], sd[LITBOX_SPOTS_MAX * 4];
     float pp[LITBOX_POINTS_MAX * 4], pc[LITBOX_POINTS_MAX * 4];
     for (int i = 0; i < nfs; i++) {
-        sp[i*4+0] = fs[i].ex; sp[i*4+1] = fs[i].ey; sp[i*4+2] = fs[i].ez; sp[i*4+3] = FLASHLIGHT_RANGE;
+        sp[i*4+0] = fs[i].ex; sp[i*4+1] = fs[i].ey; sp[i*4+2] = fs[i].ez; sp[i*4+3] = env_flashlight_range();
         sd[i*4+0] = fs[i].fx; sd[i*4+1] = fs[i].fy; sd[i*4+2] = fs[i].fz; sd[i*4+3] = 0.0f;
     }
     for (int j = 0; j < nfx; j++) {
@@ -735,7 +771,7 @@ static void litbox_upload_lights(const FlashlightSource *fs, int nfs, const Fixt
     gl_uniform1i(g_litbox_loc_tex, 0);
     gl_uniform1i(g_litbox_loc_nspot, nfs);
     gl_uniform1i(g_litbox_loc_npoint, nfx);
-    gl_uniform1f(g_litbox_loc_cone, cosf(FLASHLIGHT_HALF_ANGLE_DEG * 0.0174533f));
+    gl_uniform1f(g_litbox_loc_cone, cosf(env_flashlight_half_angle() * 0.0174533f));
     if (nfs > 0) { gl_uniform4fv_n(g_litbox_loc_spot_pos, nfs, sp); gl_uniform4fv_n(g_litbox_loc_spot_dir, nfs, sd); }
     if (nfx > 0) { gl_uniform4fv_n(g_litbox_loc_point_pos, nfx, pp); gl_uniform4fv_n(g_litbox_loc_point_col, nfx, pc); }
     gl_use_program(0);
@@ -12470,6 +12506,34 @@ void draw_scene(PlayerState *render_p) {
        already-smoothed cover/rain/storm/fog state now dims ambient/sun/moon and tightens world
        fog toward the sky's own matching colour, for every mode (lighting isn't story-only). */
     sky_weather_light_state(&g_sky_weather, &world_lighting);
+
+    /* THE UNIFIED ENVIRONMENT MATRIX (founder real-time, 2026-10-30: "we have cool weather effects but
+       it doesnt work with the ambient lighting like it always looks too dark everywhere ... all the
+       lighting needs to talk to each other"). One evaluation per frame, right where the wall lighting
+       is decided, resolving weather + time of day + the player's own slider + interior-ness into a
+       single state: how much sky light survives (occlusion), how much is scattered back (bleed), the
+       hard visibility floor, the emitter trade-off, and the emissive strength outlines/shields use.
+       The numbers are PARENA (stdlib/shankpit/lighting_rules.prn); this only feeds them and applies
+       the result. Costs nothing on the wire or the server: it is a pure function of the day/night
+       clock and weather profile both sides already broadcast, so every client computes the identical
+       matrix -- the property that lets it scale to an MMO client without syncing any of it. */
+    {
+        EnvInputs env_in;
+        memset(&env_in, 0, sizeof env_in);
+        env_in.cover = g_sky_weather.cover;
+        env_in.rain = g_sky_weather.rain;
+        env_in.storm = g_sky_weather.storm;
+        env_in.fog_wash = g_sky_weather.fog_wash;
+        env_in.visibility = g_sky_weather.visibility;
+        env_in.ambient_level = g_opt_ambient_level;
+        env_in.interior = (g_world_lighting_preset == RETRO_LIGHTING_INTERIOR_FLAT);
+        env_in.fog_r = g_sky_weather.fog[0];
+        env_in.fog_g = g_sky_weather.fog[1];
+        env_in.fog_b = g_sky_weather.fog[2];
+        env_matrix_eval(&env_in, &g_env);
+        env_matrix_apply(&g_env, &world_lighting);
+        env_matrix_publish(&g_env);
+    }
 
     /* Weather fog (founder real-time, 2026-09-27: "make the weather effects cause actual realistic
        fog if there is fog in the weather"). The weather profile's fog (plus night and dawn radiation

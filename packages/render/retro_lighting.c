@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "retro_sky.h"
+#include "env_matrix.h"   /* env_matrix_apply_surface -- shared with the headless env_matrix test */
 
 static float clamp01f(float v) {
     if (v < 0.0f) return 0.0f;
@@ -133,6 +134,11 @@ void retro_lighting_eval(float time_sec, RetroLightingPreset preset, RetroLighti
 static float g_ambient_boost = 0.0f;
 void retro_lighting_set_ambient_boost(float boost) { g_ambient_boost = boost < 0.0f ? 0.0f : (boost > 1.0f ? 1.0f : boost); }
 
+/* The environment matrix's floor and sky bleed are owned by env_matrix.c (its own published
+ * state), and retro_lighting_set_ambient_floor/retro_lighting_set_sky_bleed are DEFINED there -- see
+ * this file's header for why: the transform then lives in one translation unit that links and tests
+ * without a GL context. With nothing published both default to 0, i.e. the original look exactly. */
+
 void retro_lighting_eval_surface_rgb(const RetroLightingState *state,
                                      float nx, float ny, float nz,
                                      float ambient_floor,
@@ -184,6 +190,13 @@ void retro_lighting_eval_surface_rgb(const RetroLightingState *state,
         ar += g_ambient_boost;
         ag += g_ambient_boost;
         ab += g_ambient_boost;
+
+        /* Scattered atmosphere light + the hard visibility floor. The transform itself lives in
+           env_matrix.c (env_matrix_apply_surface) so the exact code that lights every wall in the
+           game is also the code the headless test exercises -- this function only hands over the
+           two globals the matrix published. With nothing published (floor 0, bleed 0) the call is
+           a bit-for-bit no-op, so every existing caller and test keeps the original look. */
+        env_matrix_apply_published_surface(&ar, &ag, &ab);
 
         ar = clamp01f(ar);
         ag = clamp01f(ag);

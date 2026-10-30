@@ -46,6 +46,20 @@ void retro_lighting_eval(float time_sec, RetroLightingPreset preset, RetroLighti
 /* Flat fill light (0..~0.4) added to every surface's ambient term -- the pause-menu ambient slider
    (PARENA stdlib/shankpit/ambient_rules.prn maps the slider level to this). 0 = the original look. */
 void retro_lighting_set_ambient_boost(float boost);
+/* Environment floor + sky bleed -- the two the unified environment matrix
+   (packages/simulation/lighting_rules.c, generated from
+   PARENA/stdlib/shankpit/lighting_rules.prn) feeds in once per frame.
+
+   floor: a hard minimum for a surface's combined ambient term. Weather dimming and a low ambient
+   slider used to multiply down into near-black walls; this is the "a storm at noon is dim
+   daylight, never night" guarantee, and it is applied as a deficit fill rather than a per-channel
+   clamp so a face keeps its hue instead of washing flat. 0 = the old behaviour, bit for bit.
+
+   bleed: scattered light from the atmosphere itself (haze/moisture) added to every surface -- real
+   storms glow, they don't just get darker. Set to the sky's own fog colour times the matrix's
+   light_bleed. */
+void retro_lighting_set_ambient_floor(float floor);
+void retro_lighting_set_sky_bleed(float r, float g, float b);
 void retro_lighting_eval_surface_rgb(const RetroLightingState *state,
                                      float nx, float ny, float nz,
                                      float ambient_floor,

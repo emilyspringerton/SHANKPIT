@@ -81,9 +81,28 @@ test-litbox-render:
 .PHONY: test-ambient-boost
 test-ambient-boost:
 	gcc -std=gnu99 -Wall -g -fsanitize=address,undefined $(INCLUDES) packages/render/ambient_boost_test.c \
-		packages/render/retro_lighting.c packages/render/retro_sky.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/sky_weather.c packages/simulation/ambient_rules.c \
+		packages/render/retro_lighting.c packages/render/env_matrix.c packages/render/retro_sky.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/sky_weather.c packages/simulation/ambient_rules.c \
 		packages/world/parena_runtime.c -o /tmp/shankpit_ambient_boost_test -lm -lGL
 	/tmp/shankpit_ambient_boost_test
+
+# test-env-matrix -- the unified environment matrix: the PARENA lighting rules (clamped, pure,
+# total), the host layer's unit conversion, and the regression that started this (a stormy night at
+# ambient slider 0 must not be near-black through the REAL retro_lighting surface path).
+# Also guards the emitter trade-off (fog shortens reach, widens spread) and determinism.
+.PHONY: test-env-matrix
+test-env-matrix: $(LIGHTING_RULES_C)
+	gcc -std=gnu99 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
+		-Ipackages/render -Ipackages/simulation -Ipackages/world \
+		packages/render/env_matrix_test.c packages/render/env_matrix.c \
+		packages/simulation/lighting_rules.c packages/world/parena_runtime.c \
+		-o /tmp/shankpit_env_matrix_test -lm
+	/tmp/shankpit_env_matrix_test
+
+# The generated PARENA rules must exist; regenerate them if the .prn is newer.
+LIGHTING_RULES_PRN ?= ../PARENA/stdlib/shankpit/lighting_rules.prn
+LIGHTING_RULES_C   ?= packages/simulation/lighting_rules.c
+$(LIGHTING_RULES_C): $(LIGHTING_RULES_PRN)
+	./scripts/gen_lighting_rules.sh
 
 .PHONY: test-hammer
 test-hammer:
