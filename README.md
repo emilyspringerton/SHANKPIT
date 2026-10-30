@@ -1137,6 +1137,45 @@ only -- limbs don't collide with each other or with level walls. The new Bazel t
 (`//packages/goldenband:grb_physics`, `//packages/simulation:rigid_ragdoll`) are untested
 (Bazel couldn't be fetched in the authoring sandbox); the Makefile path is the tested one.
 
+### 3c. Structural layer over destructible brick (2026-10-30)
+
+Brick cells answer "did this shot break this cell?". `packages/simulation/structure.h` answers the
+next question up: **is this piece still joined to the ground, and can the thing under it carry it?**
+
+- **Joints at load.** Boxes whose volumes intersect are joined, not merely interpenetrating. A piece
+  sunk into a concrete master is *anchored*; two crossing pieces of equal class are *pegged* (the
+  virtual peg — timber is strong in shear, weak in tension). PARENA decides the strength
+  (`struct_joint_strength`), which is what makes a **glass pane leaning on a brick wall not a joint at
+  all** (150 permille, under the 300 threshold): it is resting, so it falls when the wall goes.
+- **Support flood.** Grounded pieces spread support outward along joints. A piece that loses its last
+  path to the ground is disconnected. Joints hold in both directions — a roof is held by the pillar
+  as much as the pillar is held by the foundation — so only the load cascade follows gravity.
+- **Load cascade.** Mass (volume × density) accumulates downward, each support passes its load to
+  whatever would bear it, and each is compared with its own compression capacity (kg/m² × footprint,
+  15% safety factor). A support that fails stops passing support and the check repeats (≤3 rounds), so
+  a shot-out pillar drops the roof onto the next one instead of leaving it in the air.
+
+```
+[ roof ] ──peg── [ pillar ] ──anchor── [ foundation ] ──► ground
+```
+
+`structure_remove_node(g, i)` then `structure_evaluate(g)` is the whole "this piece is gone, what is
+now falling?" step: pure integer/float arithmetic on a fixed graph (≤512 nodes, ≤4096 joints, indexed
+only at load and after a breach — never per tick, never per entity on the wire), so the server and
+every client compute identical answers.
+
+Rules live in `PARENA/stdlib/shankpit/structure_rules.prn` (density, tensile, compression, shear,
+damping, fracture kind, joint strength, load comparison), regenerated with
+`scripts/gen_structure_rules.sh`. `make test-structure` runs the graph headlessly (ASan+UBSan, no GL,
+no display).
+
+**Not modelled, deliberately:** shear flow inside a piece, bending/buckling shape (a pillar holds its
+column load or the node fails — it does not bow), fatigue, and per-cell stress inside one box. Those
+need a solver this engine does not have, and saying so is cheaper than pretending.
+
+**Not wired yet:** nothing calls this from `brick_world.h`; the graph is built and proven headless,
+and the hookup (a detached piece removing its node and re-evaluating) is the next slice.
+
 ### 4. Local Game Simulation (`packages/simulation/local_game.h`)
 
 **Purpose**: Single-player/bot match logic (referenced but not shown in files)

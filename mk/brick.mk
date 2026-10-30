@@ -113,6 +113,23 @@ test-lighting-chain: $(LIGHTING_RULES_C)
 		packages/world/parena_runtime.c -o /tmp/shankpit_lighting_chain_test -lm
 	/tmp/shankpit_lighting_chain_test
 
+# test-structure -- the structural layer over destructible brick: intersection joints at load
+# (anchor vs peg, and glass rated too weak to join), the support flood, and the load cascade where an
+# overloaded pillar fails and the slab above it stops being supported. Numbers are PARENA
+# (stdlib/shankpit/structure_rules.prn); the graph arithmetic is pixel-free, so this is headless.
+.PHONY: test-structure
+test-structure: $(STRUCTURE_RULES_C)
+	gcc -std=gnu99 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
+		-Ipackages/simulation -Ipackages/world -Ipackages/common \
+		packages/simulation/structure_test.c packages/simulation/structure_rules.c \
+		packages/world/parena_runtime.c -o /tmp/shankpit_structure_test -lm
+	/tmp/shankpit_structure_test
+
+STRUCTURE_RULES_PRN ?= ../PARENA/stdlib/shankpit/structure_rules.prn
+STRUCTURE_RULES_C   ?= packages/simulation/structure_rules.c
+$(STRUCTURE_RULES_C): $(STRUCTURE_RULES_PRN)
+	./scripts/gen_structure_rules.sh
+
 LIGHTING_RULES_PRN ?= ../PARENA/stdlib/shankpit/lighting_rules.prn
 LIGHTING_RULES_C   ?= packages/simulation/lighting_rules.c
 $(LIGHTING_RULES_C): $(LIGHTING_RULES_PRN)
