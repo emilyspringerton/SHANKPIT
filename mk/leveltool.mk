@@ -17,3 +17,5 @@ test-leveltool: leveltool
 	$(LEVELTOOL_BIN) new leveltool-smoke /tmp/leveltool_smoke.json
 	$(LEVELTOOL_BIN) check /tmp/leveltool_smoke.json
 	$(LEVELTOOL_BIN) info /tmp/leveltool_smoke.json
+	$(LEVELTOOL_BIN) map /tmp/leveltool_smoke.json >/dev/null
+	$(LEVELTOOL_BIN) map var/lab/lab.json | grep -q '#'

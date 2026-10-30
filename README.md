@@ -175,9 +175,10 @@ tint -- so a save/load round-trip cannot silently drop authored objects. A succe
 the matching `.edits.json`: those ops are baked into the saved file, so replaying the log would apply
 them twice. `make test-level-save` is the round-trip test, and it also re-saves the checked-in
 `var/lab/lab.json`, the story-doors demo and `assets/tyler_levels/*.json` to prove real exports
-survive. `make leveltool` builds a headless `./bin/leveltool` (`info` / `check` / `save` / `new`), and
-`make check-levels` round-trips every checked-in export through it, so a map can be validated without
-launching the lobby.
+survive. `make leveltool` builds a headless `./bin/leveltool` (`info` / `map` / `check` / `save` / `new`)
+-- `map` prints a top-down ASCII view (`#` walls, `S` spawner, `C` character, `E` exit, `z` zone, `D`
+door, `B` button) so a layout can be eyeballed in a terminal -- and `make check-levels` round-trips
+every checked-in export through it, so a map can be validated without launching the lobby.
 
 Still NOCK-only: glTF import, the widgets/materials screens, and streaming edits into a shared live
 session (F5 plus `--edit-live`). Anything the in-game keys do not cover yet can be hand-edited in the

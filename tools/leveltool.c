@@ -8,6 +8,7 @@
  *
  *   make leveltool
  *   ./bin/leveltool info  var/maps/mymap.json
+ *   ./bin/leveltool map   var/maps/mymap.json
  *   ./bin/leveltool check var/maps/mymap.json
  *   ./bin/leveltool save  var/maps/in.json var/maps/out.json
  *   ./bin/leveltool new   mymap var/maps/mymap.json
@@ -31,6 +32,7 @@ static void usage(void) {
     fprintf(stderr,
             "usage: leveltool <command> [args]\n"
             "  info  <level.json>            print a summary of a level file\n"
+            "  map   <level.json>            print a top-down ASCII view of the level\n"
             "  check <level.json>            prove a save/load round-trip drops nothing\n"
             "  save  <in.json> <out.json>    load a level and write it back out\n"
             "  new   <name> <out.json>       write a new empty level (EDIT MAP's new-level defaults)\n");
@@ -133,6 +135,96 @@ static int cmd_check(const char *path) {
     return 0;
 }
 
+/* ---- top-down preview ----------------------------------------------------------------
+ * A map saved with F6 can't be looked at on a box with no display, which makes "did my geometry
+ * land where I meant" unanswerable. This projects the X/Z footprint into a fixed ASCII grid: walls
+ * as '#', then spawners/characters/exits/zones/doors/buttons on top of them. Deliberately rough
+ * (one cell per (span / 75) units, Y ignored) -- enough to see a layout, not a screenshot. */
+#define MAP_MAX_W 76
+#define MAP_MAX_H 36
+
+static void map_plot(char grid[MAP_MAX_H][MAP_MAX_W], int w, int h, double x, double z,
+                     double minx, double minz, double cell, char ch) {
+    if (cell <= 0) return;
+    int cx = (int)((x - minx) / cell + 0.5);
+    int cz = (int)((z - minz) / cell + 0.5);
+    if (cx < 0 || cx >= w || cz < 0 || cz >= h) return;
+    grid[cz][cx] = ch;
+}
+
+static int cmd_map(const char *path) {
+    static CustomLevelData l;
+    if (!load_or_die(path, &l)) return 1;
+
+    double minx = 1e30, maxx = -1e30, minz = 1e30, maxz = -1e30;
+    for (int i = 0; i < l.count; i++) {
+        const LevelBox *b = &l.boxes[i];
+        double hx = (double)b->w * 0.5, hz = (double)b->d * 0.5;
+        if ((double)b->x - hx < minx) minx = (double)b->x - hx;
+        if ((double)b->x + hx > maxx) maxx = (double)b->x + hx;
+        if ((double)b->z - hz < minz) minz = (double)b->z - hz;
+        if ((double)b->z + hz > maxz) maxz = (double)b->z + hz;
+    }
+    if (l.count == 0) { minx = -20; maxx = 20; minz = -20; maxz = 20; }
+    double spanx = maxx - minx, spanz = maxz - minz;
+    if (spanx < 1) spanx = 1;
+    if (spanz < 1) spanz = 1;
+    double cell = spanx / (MAP_MAX_W - 1);
+    if (spanz / (MAP_MAX_H - 1) > cell) cell = spanz / (MAP_MAX_H - 1);
+    int w = (int)(spanx / cell) + 1, h = (int)(spanz / cell) + 1;
+    if (w > MAP_MAX_W) w = MAP_MAX_W;
+    if (h > MAP_MAX_H) h = MAP_MAX_H;
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+
+    static char grid[MAP_MAX_H][MAP_MAX_W];
+    memset(grid, ' ', sizeof grid);
+    for (int i = 0; i < l.count; i++) {
+        const LevelBox *b = &l.boxes[i];
+        double hx = (double)b->w * 0.5, hz = (double)b->d * 0.5;
+        map_plot(grid, w, h, (double)b->x, (double)b->z, minx, minz, cell, '#');
+        map_plot(grid, w, h, (double)b->x - hx, (double)b->z - hz, minx, minz, cell, '#');
+        map_plot(grid, w, h, (double)b->x + hx, (double)b->z + hz, minx, minz, cell, '#');
+        map_plot(grid, w, h, (double)b->x - hx, (double)b->z + hz, minx, minz, cell, '#');
+        map_plot(grid, w, h, (double)b->x + hx, (double)b->z - hz, minx, minz, cell, '#');
+    }
+    for (int i = 0; i < l.zone_count; i++)
+        map_plot(grid, w, h, (double)l.zones[i].x, (double)l.zones[i].z, minx, minz, cell, 'z');
+    for (int i = 0; i < l.level_exit_count; i++)
+        map_plot(grid, w, h, (double)l.level_exits[i].x, (double)l.level_exits[i].z, minx, minz, cell, 'E');
+    for (int i = 0; i < l.character_count; i++)
+        map_plot(grid, w, h, (double)l.characters[i].x, (double)l.characters[i].z, minx, minz, cell, 'C');
+    for (int i = 0; i < l.spawner_count; i++)
+        map_plot(grid, w, h, (double)l.spawners[i].x, (double)l.spawners[i].z, minx, minz, cell, 'S');
+    for (int i = 0; i < l.door_count; i++) {
+        int bi = l.doors[i].box_index;
+        if (bi >= 0 && bi < l.count)
+            map_plot(grid, w, h, (double)l.boxes[bi].x, (double)l.boxes[bi].z, minx, minz, cell, 'D');
+    }
+    for (int i = 0; i < l.button_count; i++) {
+        int bi = l.buttons[i].box_index;
+        if (bi >= 0 && bi < l.count)
+            map_plot(grid, w, h, (double)l.boxes[bi].x, (double)l.boxes[bi].z, minx, minz, cell, 'B');
+    }
+
+    printf("%s -- top-down, -Z is up/north, Y ignored\n", path);
+    printf("  x %.1f..%.1f   z %.1f..%.1f   %dx%d cells, %.2f units/cell\n",
+           minx, maxx, minz, maxz, w, h, cell);
+    putchar('+');
+    for (int c = 0; c < w; c++) putchar('-');
+    printf("+\n");
+    for (int r = 0; r < h; r++) {
+        putchar('|');
+        fwrite(grid[r], 1, (size_t)w, stdout);
+        printf("|\n");
+    }
+    putchar('+');
+    for (int c = 0; c < w; c++) putchar('-');
+    printf("+\n");
+    printf("  '#' wall  'S' spawner  'C' character  'E' exit  'z' zone  'D' door  'B' button\n");
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc < 3) { usage(); return 2; }
     const char *cmd = argv[1];
@@ -143,6 +235,7 @@ int main(int argc, char **argv) {
         print_summary(argv[2], &lvl);
         return 0;
     }
+    if (strcmp(cmd, "map") == 0) return cmd_map(argv[2]);
     if (strcmp(cmd, "check") == 0) return cmd_check(argv[2]);
 
     if (strcmp(cmd, "save") == 0) {
