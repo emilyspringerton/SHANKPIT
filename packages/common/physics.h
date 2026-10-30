@@ -587,6 +587,11 @@ static inline void phys_set_map_damage_hooks(PhysMapHitscanHook hs, PhysMapBlast
    craters into the next. Declared here (not in local_game.h) so brick_world.h can install it from
    any translation unit that has physics.h. NULL = nothing to reset. */
 static void (*g_local_match_reset_hook)(void) = NULL;
+/* g_fx_explosion_hook -- presentation only, never simulation: local_game.h's explode_splash calls
+ * it once per detonation so a client can draw the fireball. NULL (server, headless tests, any build
+ * with nothing to draw) = exactly the old behaviour. */
+typedef void (*PhysExplosionFxHook)(float x, float y, float z, float radius, int weapon);
+static PhysExplosionFxHook g_fx_explosion_hook = NULL;
 
 // phys_set_custom_level_materials loads the level's own small material-shading table (S459-16) --
 // call this BEFORE phys_set_custom_level so material_idx values passed to that call can already be
@@ -4030,7 +4035,7 @@ void phys_respawn(PlayerState *p, unsigned int now) {
     }
 }
 
-static inline void spawn_projectile(Projectile *projectiles, PlayerState *p, int damage, int bounces, float speed_mult, float splash_radius) {
+static inline void spawn_projectile(Projectile *projectiles, PlayerState *p, int damage, int bounces, float speed_mult, float splash_radius, float gravity, int weapon) {
     for(int i=0; i<MAX_PROJECTILES; i++) {
         if (!projectiles[i].active) {
             Projectile *proj = &projectiles[i];
@@ -4040,6 +4045,8 @@ static inline void spawn_projectile(Projectile *projectiles, PlayerState *p, int
             proj->bounces_left = bounces;
             proj->scene_id = (unsigned char)p->scene_id;
             proj->splash_radius = splash_radius;
+            proj->gravity = gravity;
+            proj->weapon = weapon;
 
             float r = -p->yaw * 0.0174533f; float rp = p->pitch * 0.0174533f;
             float speed = 4.0f * speed_mult;
@@ -4054,7 +4061,7 @@ static inline void spawn_projectile(Projectile *projectiles, PlayerState *p, int
     }
 }
 
-void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectiles, int shoot, int reload, int ability_press, unsigned int now_ms, unsigned int respawn_delay_ms) {
+void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectiles, int shoot, int reload, int ability_press, int ability2_press, unsigned int now_ms, unsigned int respawn_delay_ms) {
     if (p->in_vehicle) return; 
     if (p->reload_timer > 0) p->reload_timer--;
     if (p->attack_cooldown > 0) p->attack_cooldown--;
@@ -4108,7 +4115,12 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
                                          current_weapon == WPN_FLASHLIGHT (equip it, it's on;
                                          switch away, it's off) -- see apps/lobby's own
                                          draw_flashlight_beam. */
-    if (ability_press) {
+    /* Secondary fire (BTN_ABILITY_2: right mouse, controller left trigger) is genuinely a second
+     * input, not a copy of E: the sniper's zoom is the same right mouse button, so folding RMB into
+     * the BTN_ABILITY_1 bit would spend the storm charges every time someone scoped. Only the AR
+     * reads the secondary bit today, and E fires the same grenade, so both reach one cooldown. */
+    int secondary_press = ability2_press && w == WPN_AR;
+    if (ability_press || secondary_press) {
         if (w == WPN_KATANA) {
             katana_try_start_dash(p);
         } else if (w == WPN_SNIPER) {
@@ -4117,26 +4129,26 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
                 p->ability_cooldown = 480;
             }
         } else if (w == WPN_AR && p->ability_cooldown == 0) {
-            /* Frag Toss (S181-05): real splash-damage projectile, same
-             * spawn_projectile/explode_splash pipeline the missile
-             * launcher already uses -- explode_splash fires automatically
-             * for any projectile with splash_radius > 0 (update_projectiles
-             * calls it on impact/expiry), which in turn calls
-             * apply_projectile_damage per hit, which already applies a
-             * brief stun as a universal side effect of any projectile hit
-             * -- no new damage/stun code needed, just real tuning. Lobbed
-             * slower than a straight shot (0.7x speed) to read as a
-             * thrown grenade, not a bullet. First real use: story_ai.c's
-             * Shambler Trooper. */
-            spawn_projectile(projectiles, p, 60, 0, 0.7f, 4.5f);
-            p->ability_cooldown = 260;
+            /* Underbarrel grenade -- the AR's ability on E AND on right mouse / controller LT.
+             * Founder real-time: "the traditional right click thing where it fires a grenade like
+             * if its an m4 or whatever with the grenade powerup attached ... it should be fast like
+             * soldier 76 rocket and it should be a bit of like an arch down like its not so fast
+             * that its instant like a rail gun." The old 0.7x lob read as a thrown rock; 2.2x is
+             * ~9 units/tick (fast, but a real flight you can watch), and AR_GRENADE_GRAVITY pulls
+             * it down every tick in update_projectiles so it arcs. Detonation is the existing
+             * spawn_projectile/explode_splash pipeline: linear falloff on players, and the blast
+             * hook carves destructible brick with WPN_AR's own x2 multiplier (brick_rules.prn)
+             * rather than the missile's x5 -- a grenade should open a hole, not delete a wall. */
+            spawn_projectile(projectiles, p, AR_GRENADE_DAMAGE, 0, AR_GRENADE_SPEED_MULT,
+                             AR_GRENADE_SPLASH_RADIUS, AR_GRENADE_GRAVITY, WPN_AR);
+            p->ability_cooldown = AR_GRENADE_COOLDOWN;
         } else if (w == WPN_SHOTGUN && p->ability_cooldown == 0) {
             /* Ground Slam (S181-05): same real pipeline as Frag Toss above,
              * tuned for a close-range high-damage/bigger-splash burst
              * instead of a lobbed grenade -- matches a tank archetype's
              * melee-range AOE, not a ranged special. First real use:
              * story_ai.c's Gore Brute. */
-            spawn_projectile(projectiles, p, 90, 0, 1.2f, 6.0f);
+            spawn_projectile(projectiles, p, 90, 0, 1.2f, 6.0f, 0.0f, WPN_SHOTGUN);
             p->ability_cooldown = 340;
         } else if (p->ability_cooldown == 0 && p->storm_charges == 0) {
             /* Fallback for any weapon without a dedicated ability above
@@ -4157,7 +4169,7 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
     if (shoot && p->attack_cooldown == 0 && p->reload_timer == 0) {
         if (p->storm_charges > 0 && w == WPN_SNIPER) {
             int storm_damage = (int)(WPN_STATS[w].dmg * 0.7f);
-            spawn_projectile(projectiles, p, storm_damage, 1, 1.5f, 0.0f);
+            spawn_projectile(projectiles, p, storm_damage, 1, 1.5f, 0.0f, 0.0f, WPN_SNIPER);
             p->storm_charges--;
             p->attack_cooldown = 8;
             p->recoil_anim = 0.5f;
@@ -4188,7 +4200,7 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
                 return;
             }
             if (w == WPN_MISSILE) {
-                spawn_projectile(projectiles, p, WPN_STATS[w].dmg, 0, 1.0f, MISSILE_SPLASH_RADIUS);
+                spawn_projectile(projectiles, p, WPN_STATS[w].dmg, 0, 1.0f, MISSILE_SPLASH_RADIUS, 0.0f, WPN_MISSILE);
                 return;
             }
 

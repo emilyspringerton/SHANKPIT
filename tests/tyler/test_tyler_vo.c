@@ -163,7 +163,7 @@ static void test_t6_actors_walk(void) {
     for (int t = 0; t < 4800 && !st.done; t++) {              /* 4800 * 16 ms = 77 s: a bound; the cold open runs ~33 s */
         now += 16;
         tyler_coldopen_tick(&st, now, 23, stub_exit);
-        local_update(0.0f, 0.0f, 0.0f, 0.0f, 0, -1, 0, 0, 0, 0, 0, NULL, now);
+        local_update(0.0f, 0.0f, 0.0f, 0.0f, 0, -1, 0, 0, 0, 0, 0, 0, NULL, now);
         PlayerState *T = &local_state.players[ty], *H = &local_state.players[ha];
         if (fabsf(T->in_fwd) > peak_fwd_tyler) peak_fwd_tyler = fabsf(T->in_fwd);
         if (fabsf(H->in_fwd) > peak_fwd_hana) peak_fwd_hana = fabsf(H->in_fwd);
@@ -220,7 +220,7 @@ static void test_t6c_walks_toward_marker(void) {
     PlayerState *p = &local_state.players[id];
     unsigned int now = 1;
     story_ai_trigger_scripted(id, 0.0f, 0.0f, -30.0f, 5000, now);
-    for (int t = 0; t < 200; t++) { now += 16; local_update(0, 0, 0, 0, 0, -1, 0, 0, 0, 0, 0, NULL, now); }
+    for (int t = 0; t < 200; t++) { now += 16; local_update(0, 0, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0, NULL, now); }
     CHECK(p->z < -15.0f && fabsf(p->x) < 5.0f, "T6c marker at (0,-30): actor ended at (%.1f, %.1f) -- toward it, not away (was z=+50)", p->x, p->z);
     /* ...and it stopped at its arrival radius instead of overshooting */
     CHECK(p->z > -33.0f, "T6c actor did not overshoot the marker (z=%.1f)", p->z);
@@ -446,7 +446,7 @@ static void test_t7_scene_runs_to_exit(const char *label, const char *path, Scen
     for (int t = 0; t < 4800 && !st.done; t++) {
         now += 16;
         tick_fn(&st, now, 23, stub_exit);
-        local_update(0.0f, 0.0f, 0.0f, 0.0f, 0, -1, 0, 0, 0, 0, 0, NULL, now);
+        local_update(0.0f, 0.0f, 0.0f, 0.0f, 0, -1, 0, 0, 0, 0, 0, 0, NULL, now);
         if (st.beat_triggered && st.current_beat != last_beat) {
             if (st.current_beat != last_beat + 1) out_of_order++;
             last_beat = st.current_beat;

@@ -70,7 +70,7 @@ static void fire(PlayerState *p, int weapon, int ticks) {
     p->current_weapon = weapon;
     for (int t = 0; t < ticks; t++) {
         p->ammo[weapon] = 99;
-        update_weapons(p, targets, projectiles, 1, 0, 0, (unsigned int)t * 16u, 3000u);
+        update_weapons(p, targets, projectiles, 1, 0, 0, 0, (unsigned int)t * 16u, 3000u);
     }
 }
 

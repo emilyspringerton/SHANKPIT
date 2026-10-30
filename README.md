@@ -538,6 +538,36 @@ Honest limits: no dedicated hammer sound (reuses the katana swing), the 1p swing
 widget model is boxes (one per Blender mesh object, rotated parts become their bounding box), MAX_WEAPONS went 8 -> 9
 so a server and client must both be on this build, and none of it has been seen in a live match yet.
 
+## Assault rifle grenade (weapon 3, E / right click / controller LT) (2026-10-30)
+
+The AR's ability is an underbarrel grenade, fired by **E**, by **right click**, or by the
+controller's **left trigger** (fire is the right trigger). Right click is a separate input bit
+(`BTN_ABILITY_2`) rather than a copy of E, because right click is also the sniper's zoom -- a shared
+bit would spend the sniper's storm charges every time someone scoped. Both AR inputs share one
+cooldown (260 ticks), so alternating them does not double-fire.
+
+It is a real travelling projectile, tuned by `protocol.h`'s `AR_GRENADE_*` constants: 2.2x the base
+4.0 units/tick (~9 units/tick -- fast like a rocket, but you watch it fly), `AR_GRENADE_GRAVITY`
+0.22 units/tick² so it **arcs down** instead of flying dead straight, 75 damage with linear falloff
+to 40% at the 4.5-unit rim. Detonation goes through the same `explode_splash` path the missile uses,
+and the blast now carries the *firing weapon's own id* (`Projectile.weapon`), so it carves
+destructible brick with the AR's x2 multiplier from `brick_rules.prn` instead of a rocket's x5: a
+grenade opens a hole in a wall, a missile deletes the wall.
+
+Visually it is a real GLSL fireball (`apps/lobby/src/main.c`, same hand-loaded GL 2.0 path the
+flashlight beam uses): one camera-facing billboard per detonation with layered value noise over a
+sphere normal, a white-hot core cooling to orange then smoke, a shockwave ring racing out ahead of
+the flame, a second shell for the first third of a second, a twelve-ember spray, and a fading trail
+on the round in flight. Additive blending, so it lights what it lands on. No shader support degrades
+to an additive glow quad. It is **not** a port of Bedrock Racers' fire -- BR's flames are JS/WebGL2
+particle data in WOTAN, and this renderer is fixed-function GL 1.x -- so the shader was written for
+this pipeline.
+
+Limits, named: net clients still render no projectiles at all (pre-existing: projectiles are not on
+the wire), so in a networked match the grenade is server-side only until that is built; and the look
+of the shader is unverified here (no display/GPU in this sandbox) -- `make test-ar-grenade` covers
+the numbers, not the pixels.
+
 ## Vehicle controls: buggy chase camera + PARENA helicopter flight model (2026-10-02)
 
 - **Buggy is warthog-style.** The camera is a true orbit around the buggy (mouse / right stick swing it, pitch is

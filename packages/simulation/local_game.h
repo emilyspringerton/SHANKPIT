@@ -241,7 +241,7 @@ typedef struct {
 
 static int ctf_enemy_team(int team_id) { return team_id == 0 ? 1 : 0; }
 
-void local_update(float fwd, float str, float yaw, float pitch, int shoot, int weapon_req, int jump, int crouch, int reload, int ability, int bike, void *server_context, unsigned int cmd_time);
+void local_update(float fwd, float str, float yaw, float pitch, int shoot, int weapon_req, int jump, int crouch, int reload, int ability, int ability2, int bike, void *server_context, unsigned int cmd_time);
 void update_entity(PlayerState *p, float dt, void *server_context, unsigned int cmd_time);
 static inline void heli_spawn_defaults(HelicopterState *h, int id, int scene_id, float x, float y, float z);
 static inline void buggy_spawn_defaults(BuggyState *b, int id, int scene_id, float x, float z, float yaw);
@@ -1566,7 +1566,7 @@ void update_entity(PlayerState *p, float dt, void *server_context, unsigned int 
     if (p->recoil_anim < 0) p->recoil_anim = 0;
     if (p->hit_feedback > 0) p->hit_feedback--;
 
-    update_weapons(p, local_state.players, local_state.projectiles, p->in_shoot > 0, p->in_reload > 0, p->in_ability > 0, cmd_time, mode_respawn_delay_ms(local_state.game_mode));
+    update_weapons(p, local_state.players, local_state.projectiles, p->in_shoot > 0, p->in_reload > 0, p->in_ability > 0, p->in_ability2 > 0, cmd_time, mode_respawn_delay_ms(local_state.game_mode));
     scene_safety_check(p);
 }
 
@@ -1606,10 +1606,15 @@ static void apply_projectile_damage(PlayerState *owner, PlayerState *target, int
 /* AOE detonation for splash-radius projectiles (currently only WPN_MISSILE).
  * Point-damage weapons (hitscan storm-charge sniper shot) never set
  * splash_radius, so they never reach this path -- see update_projectiles(). */
-static void explode_splash(float ex, float ey, float ez, unsigned char scene_id, int owner_id, int damage, float splash_radius, unsigned int now_ms) {
+static void explode_splash(float ex, float ey, float ez, unsigned char scene_id, int owner_id, int damage, float splash_radius, int weapon, unsigned int now_ms) {
     /* Destructible brick (packages/simulation/brick_world.h): a blast carves the map as well as
-       hurting players. NULL unless a host installed the hooks, so every other build is unchanged. */
-    if (g_phys_map_blast_hook) g_phys_map_blast_hook((int)scene_id, ex, ey, ez, splash_radius, damage, WPN_MISSILE);
+       hurting players. NULL unless a host installed the hooks, so every other build is unchanged.
+       `weapon` is the projectile's own id, not a hardcoded WPN_MISSILE: PARENA's brick_rules.prn
+       multiplies by weapon (missile x5, AR x2), so an AR grenade opens a hole where a rocket
+       deletes the wall -- which is exactly the difference the two should have. */
+    if (g_phys_map_blast_hook) g_phys_map_blast_hook((int)scene_id, ex, ey, ez, splash_radius, damage, weapon);
+    /* Presentation hook (a client draws the fireball); NULL on the server and in tests. */
+    if (g_fx_explosion_hook) g_fx_explosion_hook(ex, ey, ez, splash_radius, weapon);
     PlayerState *owner = NULL;
     if (owner_id >= 0 && owner_id < MAX_CLIENTS && local_state.players[owner_id].active) {
         owner = &local_state.players[owner_id];
@@ -1637,6 +1642,11 @@ static void update_projectiles(unsigned int now_ms) {
 
         phys_set_scene(p->scene_id);
 
+        /* gravity -- the AR grenade's arc (Projectile.gravity, 0 for every other weapon so their
+           shots stay dead straight exactly as before). Applied before the step so the tick's own
+           trace_map segment bends with it; the map trace still stops it on the first surface. */
+        if (p->gravity != 0.0f) p->vy -= p->gravity;
+
         float next_x = p->x + p->vx;
         float next_y = p->y + p->vy;
         float next_z = p->z + p->vz;
@@ -1654,7 +1664,7 @@ static void update_projectiles(unsigned int now_ms) {
                        wall rather than centring on its surface (reset right after: a proximity
                        detonation has no surface) */
                     g_phys_blast_normal[0] = nx; g_phys_blast_normal[1] = ny; g_phys_blast_normal[2] = nz;
-                    explode_splash(p->x, p->y, p->z, p->scene_id, p->owner_id, p->damage, p->splash_radius, now_ms);
+                    explode_splash(p->x, p->y, p->z, p->scene_id, p->owner_id, p->damage, p->splash_radius, p->weapon, now_ms);
                     g_phys_blast_normal[0] = g_phys_blast_normal[1] = g_phys_blast_normal[2] = 0.0f;
                 } else if (g_phys_map_surface_hook) {
                     /* a point-damage projectile (the storm-charged sniper round) striking the map */
@@ -1698,7 +1708,7 @@ static void update_projectiles(unsigned int now_ms) {
                 float dy = (target->y + EYE_HEIGHT) - p->y;
                 float dz = target->z - p->z;
                 if (dx * dx + dy * dy + dz * dz < 4.0f) {
-                    explode_splash(p->x, p->y, p->z, p->scene_id, p->owner_id, p->damage, p->splash_radius, now_ms);
+                    explode_splash(p->x, p->y, p->z, p->scene_id, p->owner_id, p->damage, p->splash_radius, p->weapon, now_ms);
                     p->active = 0;
                     break;
                 }
@@ -1709,7 +1719,7 @@ static void update_projectiles(unsigned int now_ms) {
     }
 }
 
-void local_update(float fwd, float str, float yaw, float pitch, int shoot, int weapon_req, int jump, int crouch, int reload, int ability, int bike, void *server_context, unsigned int cmd_time) {
+void local_update(float fwd, float str, float yaw, float pitch, int shoot, int weapon_req, int jump, int crouch, int reload, int ability, int ability2, int bike, void *server_context, unsigned int cmd_time) {
     PlayerState *p0 = &local_state.players[0];
     const float dt = SHANKPIT_NET_FIXED_DT;
     if (local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE || local_state.game_mode == MODE_ZOMBIES || local_state.game_mode == MODE_SURVIVAL) {
@@ -1834,6 +1844,7 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
     p0->in_shoot = shoot; p0->in_reload = reload; p0->crouching = crouch;
     p0->in_jump = jump; 
     p0->in_ability = ability;
+    p0->in_ability2 = ability2;   /* BTN_ABILITY_2 (right mouse / controller LT) -- AR grenade only */
     was_holding_jump = jump;
     
     for (int hi = 0; hi < MAX_HELICOPTERS; hi++) {

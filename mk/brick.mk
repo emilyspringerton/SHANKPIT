@@ -91,6 +91,15 @@ test-hammer:
 		-o /tmp/shankpit_hammer_test -lm
 	/tmp/shankpit_hammer_test
 
+# test-ar-grenade -- the assault rifle's underbarrel grenade (E and the right-mouse/LT secondary
+# bit): one real projectile with the grenade's own damage/splash/gravity/owning-weapon, a speed that
+# is faster than a missile but not instant, both inputs against one shared cooldown, and the
+# guarantee that the secondary bit never spends the sniper's storm charges under zoom.
+test-ar-grenade:
+	gcc -std=gnu99 -Wall -g $(INCLUDES) packages/simulation/ar_grenade_test.c packages/world/terrain.c \
+		-o /tmp/shankpit_ar_grenade_test -lm
+	/tmp/shankpit_ar_grenade_test
+
 .PHONY: test-held-model
 test-held-model:
 	gcc -std=gnu99 -Wall -Wextra -g -fsanitize=address,undefined $(INCLUDES) packages/render/held_model_test.c \

@@ -11276,6 +11276,204 @@ static void draw_garage_overlay(PlayerState *p) {
     glMatrixMode(GL_MODELVIEW); glPopMatrix();
 }
 
+/* ---- AR underbarrel grenade FX (fireball + blast) ----------------------------------------------
+ * Presentation only: the detonation is engine-side (local_game.h's explode_splash -> the
+ * g_fx_explosion_hook installed below), so nothing here can change what a weapon does.
+ *
+ * A real GLSL fireball -- same hand-loaded GL 2.0 path the flashlight beam uses (gl_shader.h), so
+ * it works on the Windows mingw build where only GL 1.1 links for free. One camera-facing billboard
+ * per blast; the fragment shader builds the fire procedurally: layered value noise over a sphere
+ * normal (so it reads as volume, not a flat disc), a white-hot core cooling to orange then smoke as
+ * u_age goes 0 -> 1, and a thin shockwave ring racing out ahead of the flame. Blended additively, so
+ * it lights the wall it lands on instead of sitting on top of it like a sprite.
+ *
+ * NOT copied from Bedrock Racers: BR's fire is JS/WebGL2 particle data in WOTAN, and this renderer is
+ * fixed-function GL 1.x with its own hand-loaded shader path -- so this shader is written for this
+ * pipeline rather than pretending a copy across. On a driver with no shader support it degrades to
+ * a plain additive glow quad rather than vanishing. */
+#define FX_BLAST_MAX 24
+#define FX_BLAST_MS 900
+#define FX_SPARK_MAX 12
+
+typedef struct {
+    int active;
+    float x, y, z, radius;
+    unsigned int t0;
+    int weapon;
+} FxBlast;
+
+static FxBlast g_fx_blast[FX_BLAST_MAX];
+static int g_fx_blast_next = 0;
+static GLuint g_fireball_program = 0;
+static DynamicVBO g_fireball_vbo;
+static int g_fireball_ready = 0;
+
+static const char *g_fireball_vs_src =
+    "#version 120\n"
+    "attribute vec3 a_pos;\n"
+    "attribute vec3 a_normal;\n" /* .xy = billboard corner in [-1,1], .z = seed */
+    "uniform mat4 u_mvp;\n"
+    "varying vec2 v_uv;\n"
+    "varying float v_seed;\n"
+    "void main() {\n"
+    "    v_uv = a_normal.xy;\n"
+    "    v_seed = a_normal.z;\n"
+    "    gl_Position = u_mvp * vec4(a_pos, 1.0);\n"
+    "}\n";
+
+static const char *g_fireball_fs_src =
+    "#version 120\n"
+    "uniform float u_age;\n"   /* 0 = just detonated, 1 = gone */
+    "uniform float u_heat;\n"  /* only the fireball rides the font: 0.55 for a rail-like trail, 1.0 for a missile */
+    "varying vec2 v_uv;\n"
+    "varying float v_seed;\n"
+    "float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }\n"
+    "float vnoise(vec2 p) {\n"
+    "    vec2 i = floor(p);\n"
+    "    vec2 f = fract(p);\n"
+    "    vec2 u = f * f * (3.0 - 2.0 * f);\n"
+    "    return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),\n"
+    "               mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);\n"
+    "}\n"
+    "void main() {\n"
+    "    float r = length(v_uv);\n"
+    "    if (r > 1.0) discard;\n"
+    "    float z = sqrt(max(0.0, 1.0 - r * r));\n"
+    "    vec2 sp = v_uv * 2.4 + vec2(v_seed * 13.0, -v_seed * 7.0 - u_age * 4.0);\n"
+    "    float n = vnoise(sp) * 0.55 + vnoise(sp * 2.7 + 5.0) * 0.30 + vnoise(sp * 6.1) * 0.15;\n"
+    "    float core = smoothstep(0.30, 1.0, z) * (1.0 - u_age * 0.8);\n"
+    "    float body = smoothstep(0.0, 0.6, n + 0.4 * z - u_age * 0.5);\n"
+    "    float rim = 1.0 - smoothstep(0.70, 1.0, r);\n"
+    "    float heat = clamp(core * 1.3 + body * 0.85, 0.0, 1.0) * rim * u_heat;\n"
+    "    vec3 col = mix(vec3(0.22, 0.03, 0.0), vec3(1.0, 0.30, 0.02), clamp(heat * 1.7, 0.0, 1.0));\n"
+    "    col = mix(col, vec3(1.0, 0.86, 0.55), clamp(heat * heat * 1.9, 0.0, 1.0));\n"
+    "    float ring = 1.0 - smoothstep(0.02, 0.11, abs(r - (0.30 + u_age * 0.72)));\n"
+    "    col += vec3(1.0, 0.78, 0.42) * ring * (1.0 - u_age) * 1.1;\n"
+    "    float alpha = max(heat * 0.95, ring * (1.0 - u_age) * 0.55 * u_heat);\n"
+    "    alpha *= 1.0 - smoothstep(0.82, 1.0, u_age);\n"
+    "    gl_FragColor = vec4(col, alpha);\n"
+    "}\n";
+
+static void fireball_fx_init(void) {
+    if (!gl_shader_load_extensions()) {
+        SDL_Log("grenade FX: GL extension loading failed -- using the fallback glow");
+        return;
+    }
+    GLuint vs = gl_compile_shader(GL_VERTEX_SHADER, g_fireball_vs_src);
+    GLuint fs = gl_compile_shader(GL_FRAGMENT_SHADER, g_fireball_fs_src);
+    g_fireball_program = gl_link_program(vs, fs);
+    if (!g_fireball_program) {
+        SDL_Log("grenade FX: shader link failed -- using the fallback glow");
+        return;
+    }
+    if (!gl_dynamic_vbo_init(&g_fireball_vbo, 6)) {   /* exactly one billboard */
+        SDL_Log("grenade FX: dynamic VBO init failed -- using the fallback glow");
+        return;
+    }
+    g_fireball_ready = 1;
+}
+
+/* fx_spawn_explosion -- installed as g_fx_explosion_hook (physics.h), called by explode_splash for
+ * every splash detonation. A ring buffer: a burst of simultaneous blasts cycles the slots instead of
+ * growing anything. */
+static void fx_spawn_explosion(float x, float y, float z, float radius, int weapon) {
+    FxBlast *b = &g_fx_blast[g_fx_blast_next];
+    g_fx_blast_next = (g_fx_blast_next + 1) % FX_BLAST_MAX;
+    b->active = 1;
+    b->x = x; b->y = y; b->z = z;
+    b->radius = radius > 0.1f ? radius : 0.1f;
+    b->t0 = SDL_GetTicks();
+    b->weapon = weapon;
+}
+
+/* fireball_draw -- one camera-facing billboard, world-space verts with the camera's own VP, same
+ * contract draw_flashlight_beam already uses. age 0..1, heat scales the whole thing. */
+static void fireball_draw(float x, float y, float z, float size, float age, float heat) {
+    if (size <= 0.0f) return;
+    Mat4 proj, modelview;
+    glGetFloatv(GL_PROJECTION_MATRIX, proj.m);
+    glGetFloatv(GL_MODELVIEW_MATRIX, modelview.m);
+    float rx = modelview.m[0], ry = modelview.m[4], rz = modelview.m[8];   /* camera right */
+    float ux = modelview.m[1], uy = modelview.m[5], uz = modelview.m[9];   /* camera up */
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    glDepthMask(GL_FALSE);
+    if (g_fireball_ready) {
+        Mat4 vp = mat4_multiply(&proj, &modelview);
+        static const float corner[6][2] = { {-1.0f,-1.0f}, {1.0f,-1.0f}, {1.0f,1.0f},
+                                            {-1.0f,-1.0f}, {1.0f,1.0f}, {-1.0f,1.0f} };
+        float verts[36];
+        for (int i = 0; i < 6; i++) {
+            float cu = corner[i][0] * size, cv = corner[i][1] * size;
+            verts[i * 6 + 0] = x + rx * cu + ux * cv;
+            verts[i * 6 + 1] = y + ry * cu + uy * cv;
+            verts[i * 6 + 2] = z + rz * cu + uz * cv;
+            verts[i * 6 + 3] = corner[i][0];
+            verts[i * 6 + 4] = corner[i][1];
+            verts[i * 6 + 5] = 0.37f;   /* seed: one fireball keeps one noise pattern */
+        }
+        gl_use_program(g_fireball_program);
+        gl_uniform_matrix4fv(gl_get_uniform_location(g_fireball_program, "u_mvp"), vp.m);
+        gl_uniform1f(gl_get_uniform_location(g_fireball_program, "u_age"), age);
+        gl_uniform1f(gl_get_uniform_location(g_fireball_program, "u_heat"), heat);
+        gl_dynamic_vbo_draw(&g_fireball_vbo, verts, 6, GL_TRIANGLES);
+        gl_use_program(0);
+    } else {
+        float a = (1.0f - age) * heat * 0.8f;
+        glDisable(GL_TEXTURE_2D);
+        glColor4f(1.0f, 0.42f + 0.35f * (1.0f - age), 0.12f, a);
+        glBegin(GL_QUADS);
+        glVertex3f(x - rx * size - ux * size, y - ry * size - uy * size, z - rz * size - uz * size);
+        glVertex3f(x + rx * size - ux * size, y + ry * size - uy * size, z + rz * size - uz * size);
+        glVertex3f(x + rx * size + ux * size, y + ry * size + uy * size, z + rz * size + uz * size);
+        glVertex3f(x - rx * size + ux * size, y - ry * size + uy * size, z - rz * size + uz * size);
+        glEnd();
+    }
+    glDepthMask(GL_TRUE);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDisable(GL_BLEND);
+}
+
+/* draw_explosions -- ages every live blast: the fireball grows and cools over FX_BLAST_MS, a second
+ * thinner shell flashes for the first third of it, and a ring of embers is thrown out and falls. */
+static void draw_explosions(void) {
+    unsigned int now = SDL_GetTicks();
+    for (int i = 0; i < FX_BLAST_MAX; i++) {
+        FxBlast *b = &g_fx_blast[i];
+        if (!b->active) continue;
+        unsigned int age_ms = now - b->t0;
+        if (age_ms >= FX_BLAST_MS) { b->active = 0; continue; }
+        float t = (float)age_ms / (float)FX_BLAST_MS;
+        float heat = (b->weapon == WPN_MISSILE) ? 1.0f : 0.85f;   /* a rocket is the bigger fireball */
+        float size = b->radius * (0.45f + 0.85f * sqrtf(t));
+        fireball_draw(b->x, b->y, b->z, size, t, heat);
+        if (t < 0.34f) fireball_draw(b->x, b->y, b->z, size * (0.55f + t), t * 2.9f, heat * 0.6f);
+
+        glDisable(GL_TEXTURE_2D);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+        glDepthMask(GL_FALSE);
+        glPointSize(3.0f + 4.0f * (1.0f - t));
+        glBegin(GL_POINTS);
+        for (int s = 0; s < FX_SPARK_MAX; s++) {
+            float ang = (float)s * 2.399963f;   /* golden angle: an even spray, no RNG */
+            float up = 0.35f + 0.65f * (float)((s * 37) % 11) / 11.0f;
+            float rad = size * (0.6f + 0.9f * t) * (0.55f + 0.45f * (float)((s * 53) % 7) / 7.0f);
+            float fade = 1.0f - t;
+            glColor4f(1.0f, 0.72f - 0.40f * t, 0.25f - 0.20f * t, fade);
+            glVertex3f(b->x + cosf(ang) * rad,
+                       b->y + up * size * (0.5f + 1.6f * t) - 2.5f * t * t,
+                       b->z + sinf(ang) * rad);
+        }
+        glEnd();
+        glDepthMask(GL_TRUE);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDisable(GL_BLEND);
+    }
+}
+/* ---- end AR underbarrel grenade FX ------------------------------------------------------------ */
+
 void draw_projectiles() {
     glDisable(GL_TEXTURE_2D);
     glPointSize(6.0f);
@@ -12342,6 +12540,7 @@ void draw_scene(PlayerState *render_p) {
         }
     }
     draw_projectiles();
+    draw_explosions();
     if (local_state.game_mode == MODE_SURVIVAL) { draw_gun_items(SDL_GetTicks()); draw_chests(); }
     draw_orb_world(SDL_GetTicks());
     draw_edu_widgets(SDL_GetTicks());
@@ -13115,7 +13314,7 @@ void net_connect() {
     }
 }
 
-UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoot, int jump, int crouch, int reload, int use, int ability, int bike, int pheromone, int wpn_idx) {
+UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoot, int jump, int crouch, int reload, int use, int ability, int secondary, int bike, int pheromone, int wpn_idx) {
     UserCmd cmd;
     memset(&cmd, 0, sizeof(UserCmd));
     cmd.sequence = ++net_cmd_seq; cmd.timestamp = SDL_GetTicks();
@@ -13126,6 +13325,7 @@ UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoo
     if(reload) cmd.buttons |= BTN_RELOAD;
     if(use) cmd.buttons |= BTN_USE;
     if(ability) cmd.buttons |= BTN_ABILITY_1;
+    if(secondary) cmd.buttons |= BTN_ABILITY_2;
     if(bike) cmd.buttons |= BTN_VEHICLE_2;
     if(pheromone) cmd.buttons |= BTN_PHEROMONE;
     if(g_input_paint_next) cmd.buttons |= BTN_PAINT_NEXT;
@@ -14181,6 +14381,8 @@ int main(int argc, char* argv[]) {
     }
     gband_shader_and_mesh_init();
     flashlight_shader_init();
+    fireball_fx_init();
+    g_fx_explosion_hook = fx_spawn_explosion;
     outline_shader_init();
     shield_fx_init();
     litbox_shader_init();
@@ -14259,7 +14461,7 @@ int main(int argc, char* argv[]) {
     if (cli_start_city) { lobby_start_city(); if (cli_third_person) local_state.players[0].third_person = 1; }
     int prev_app_state = STATE_LOBBY;
     float input_fwd = 0.0f, input_str = 0.0f;
-    int input_jump = 0, input_crouch = 0, input_shoot = 0, input_reload = 0, input_use = 0, input_ability = 0, input_bike = 0, input_pheromone = 0;
+    int input_jump = 0, input_crouch = 0, input_shoot = 0, input_reload = 0, input_use = 0, input_ability = 0, input_secondary = 0, input_bike = 0, input_pheromone = 0;
     while(running) {
         double now = get_time();
         double frame_time = now - previous;
@@ -14929,6 +15131,11 @@ int main(int argc, char* argv[]) {
             int bike = in_heli ? (k[SDL_SCANCODE_Q] || k[SDL_SCANCODE_J]) : 0;   /* heli bank left: Q or J */
             int use = k[SDL_SCANCODE_F];
             int ability = in_heli ? (k[SDL_SCANCODE_E] || k[SDL_SCANCODE_L]) : k[SDL_SCANCODE_E];   /* heli bank right: E or L */
+            /* Secondary fire (BTN_ABILITY_2): the right mouse button, the traditional "attach a
+               grenade launcher to the M4" control, plus the controller's LEFT trigger below.
+               Separate from `ability` on purpose -- RMB is also the sniper's zoom, and E must not be
+               duplicated there or scoping would spend the storm charges. */
+            int secondary = (SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_RIGHT)) ? 1 : 0;
             g_input_paint_next = k[SDL_SCANCODE_RIGHTBRACKET] ? 1 : 0;
             g_input_paint_prev = k[SDL_SCANCODE_LEFTBRACKET] ? 1 : 0;
             int pheromone = k[SDL_SCANCODE_G]; /* MODE_ZOMBIES/MODE_SURVIVAL pheromone throw, BIG_O/
@@ -14950,14 +15157,16 @@ int main(int argc, char* argv[]) {
                 reload = reload || (!in_heli && SDL_GameControllerGetButton(g_shank_pad, SDL_CONTROLLER_BUTTON_X));
                 use = use || SDL_GameControllerGetButton(g_shank_pad, SDL_CONTROLLER_BUTTON_Y);
                 ability = ability || SDL_GameControllerGetButton(g_shank_pad, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER);
+                Sint16 lt = SDL_GameControllerGetAxis(g_shank_pad, SDL_CONTROLLER_AXIS_TRIGGERLEFT);
+                secondary = secondary || (lt > 8000);   /* left trigger = the same secondary fire */
                 float move_len2 = sqrtf(fwd * fwd + str * str);
                 if (move_len2 > 1.0f) { fwd /= move_len2; str /= move_len2; }
             }
             if (g_paused) {
-                fwd = 0.0f; str = 0.0f; jump = 0; crouch = 0; shoot = 0; reload = 0; use = 0; ability = 0; bike = 0; pheromone = 0;
+                fwd = 0.0f; str = 0.0f; jump = 0; crouch = 0; shoot = 0; reload = 0; use = 0; ability = 0; secondary = 0; bike = 0; pheromone = 0;
             }
             input_fwd = fwd; input_str = str;
-            input_jump = jump; input_crouch = crouch; input_shoot = shoot; input_reload = reload; input_use = use; input_ability = ability; input_bike = bike; input_pheromone = pheromone;
+            input_jump = jump; input_crouch = crouch; input_shoot = shoot; input_reload = reload; input_use = use; input_ability = ability; input_secondary = secondary; input_bike = bike; input_pheromone = pheromone;
             if (!g_paused) {
                 if(k[SDL_SCANCODE_1]) wpn_req=0; if(k[SDL_SCANCODE_2]) wpn_req=1;
                 if(k[SDL_SCANCODE_3]) wpn_req=2; if(k[SDL_SCANCODE_4]) wpn_req=3; if(k[SDL_SCANCODE_5]) wpn_req=4; if(k[SDL_SCANCODE_6]) wpn_req=5;
@@ -15001,7 +15210,7 @@ int main(int argc, char* argv[]) {
                         float net_aim_yaw = cam_yaw, net_aim_pitch = cam_pitch;
                         if (local_state.players[net_local_pid].third_person)
                             lobby_third_person_aim(&local_state.players[net_local_pid], cam_yaw, cam_pitch, &net_aim_yaw, &net_aim_pitch);
-                        UserCmd cmd = client_create_cmd(input_fwd, input_str, net_aim_yaw, net_aim_pitch, input_shoot, input_jump, input_crouch, input_reload, input_use, input_ability, input_bike, input_pheromone, wpn_req);
+                        UserCmd cmd = client_create_cmd(input_fwd, input_str, net_aim_yaw, net_aim_pitch, input_shoot, input_jump, input_crouch, input_reload, input_use, input_ability, input_secondary, input_bike, input_pheromone, wpn_req);
                         client_apply_cmd_movement(&local_state.players[net_local_pid], &cmd, now_ms);
                         net_send_cmd(cmd);
                         net_last_cmd_send_ms = now_ms;
@@ -15026,7 +15235,7 @@ int main(int argc, char* argv[]) {
                      g_story_phone.open) || g_orb_open ||
                     (PHONE_SANDBOX() && g_story_phone.open)) {
                     input_fwd = 0.0f; input_str = 0.0f;
-                    input_jump = 0; input_crouch = 0; input_shoot = 0; input_reload = 0; input_use = 0; input_ability = 0; input_pheromone = 0;
+                    input_jump = 0; input_crouch = 0; input_shoot = 0; input_reload = 0; input_use = 0; input_ability = 0; input_secondary = 0; input_pheromone = 0;
                 }
                 local_state.players[0].in_use = input_use;
                 local_state.players[0].in_pheromone = input_pheromone;
@@ -15131,7 +15340,7 @@ int main(int argc, char* argv[]) {
                 float local_aim_yaw = cam_yaw, local_aim_pitch = cam_pitch;
                 if (local_state.players[0].third_person)
                     lobby_third_person_aim(&local_state.players[0], cam_yaw, cam_pitch, &local_aim_yaw, &local_aim_pitch);
-                local_update(input_fwd, input_str, local_aim_yaw, local_aim_pitch, input_shoot, wpn_req, input_jump, input_crouch, input_reload, input_ability, input_bike, NULL, now_ms);
+                local_update(input_fwd, input_str, local_aim_yaw, local_aim_pitch, input_shoot, wpn_req, input_jump, input_crouch, input_reload, input_ability, input_secondary, input_bike, NULL, now_ms);
                 if (bigo_wiring_active() && !g_story_phone.open) bigo_board_tick(&local_state.players[0], (float)input_fwd, (float)input_str, TICK_DT);
                 bigo_wiring_tick(now_ms);
                 lobby_check_story_level_exits(now_ms);

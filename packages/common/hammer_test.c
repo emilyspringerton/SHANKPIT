@@ -39,14 +39,14 @@ int main(void) {
     static PlayerState ps[MAX_CLIENTS];
     setup(ps);
     ps[1].x = 0; ps[1].y = 0; ps[1].z = -3.0f;                       /* attacker at origin, yaw 0 faces -Z */
-    update_weapons(&ps[0], ps, NULL, 1, 0, 0, 1000, 3000);
+    update_weapons(&ps[0], ps, NULL, 1, 0, 0, 0, 1000, 3000);
     CHECK(ps[1].health == 100 - WPN_STATS[WPN_HAMMER].dmg);
     CHECK(ps[0].attack_cooldown == WPN_STATS[WPN_HAMMER].rof);
     CHECK(ps[0].ammo[WPN_HAMMER] == 0 && ps[0].reload_timer == 0);
 
     /* 2. cooldown: an immediate second swing does nothing */
     int hp = ps[1].health;
-    update_weapons(&ps[0], ps, NULL, 1, 0, 0, 1016, 3000);
+    update_weapons(&ps[0], ps, NULL, 1, 0, 0, 0, 1016, 3000);
     CHECK(ps[1].health == hp);
 
     /* 3. the wall: a box 5 units ahead is struck through the surface hook with the hammer's weapon id */
@@ -56,7 +56,7 @@ int main(void) {
     map_geo = wall_near; map_count = 2;
     g_hook_calls = 0;
     phys_set_map_damage_hooks(NULL, NULL, surface_hook);
-    update_weapons(&ps[0], ps, NULL, 1, 0, 0, 2000, 3000);
+    update_weapons(&ps[0], ps, NULL, 1, 0, 0, 0, 2000, 3000);
     CHECK(g_hook_calls == 1);
     CHECK(g_hook_weapon == WPN_HAMMER);
     CHECK(g_hook_damage == WPN_STATS[WPN_HAMMER].dmg);
@@ -68,14 +68,14 @@ int main(void) {
     wall_far[1] = (Box){0, 2, -20.0f - 0.5f, 20, 10, 1.0f};
     map_geo = wall_far; map_count = 2;
     g_hook_calls = 0;
-    update_weapons(&ps[0], ps, NULL, 1, 0, 0, 3000, 3000);
+    update_weapons(&ps[0], ps, NULL, 1, 0, 0, 0, 3000, 3000);
     CHECK(g_hook_calls == 0);
 
     /* 5. no hook installed (a client): swinging at a wall is just a swing, not a crash */
     phys_set_map_damage_hooks(NULL, NULL, NULL);
     setup(ps);
     map_geo = wall_near; map_count = 2;
-    update_weapons(&ps[0], ps, NULL, 1, 0, 0, 4000, 3000);
+    update_weapons(&ps[0], ps, NULL, 1, 0, 0, 0, 4000, 3000);
     CHECK(ps[0].attack_cooldown == WPN_STATS[WPN_HAMMER].rof);
 
     if (g_fail) { printf("hammer_test: %d FAILED\n", g_fail); return 1; }

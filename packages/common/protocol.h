@@ -175,6 +175,19 @@ typedef struct {
  * the storm-charge shot (splash_radius left at 0) is untouched. */
 #define MISSILE_SPLASH_RADIUS 6.0f
 
+/* Assault rifle (WPN_AR) underbarrel grenade -- the AR's ability on E and on BTN_ABILITY_2. Tuned
+ * against the 4.0 units/tick base speed spawn_projectile starts from: 2.2x is ~9 units/tick, i.e.
+ * fast like a rocket but still visibly in flight (a rail gun would be instant), and
+ * AR_GRENADE_GRAVITY drops it ~0.2 units/tick each tick so it arcs down over ~10 ticks (~0.16 s)
+ * instead of flying dead straight. Damage sits between the old 60-point Frag Toss and a missile's
+ * 130; the splash radius is the missile's 6.0 minus a margin, since a rifle grenade is the smaller
+ * package. */
+#define AR_GRENADE_DAMAGE 75
+#define AR_GRENADE_SPEED_MULT 2.2f
+#define AR_GRENADE_SPLASH_RADIUS 4.5f
+#define AR_GRENADE_GRAVITY 0.22f
+#define AR_GRENADE_COOLDOWN 260
+
 typedef struct {
     int active;
     unsigned int last_heard_ms;
@@ -269,6 +282,12 @@ typedef struct {
 
 #define BTN_PAINT_NEXT 512   /* ']' -- next spray-can colour (edge-detected in update_weapons) */
 #define BTN_PAINT_PREV 1024  /* '[' -- previous spray-can colour */
+#define BTN_ABILITY_2 2048   /* secondary fire -- right mouse button, and the controller's LEFT
+    trigger (fire is the right trigger, so the left one was the only unclaimed shoulder/shoulder-
+    adjacent control). Deliberately its own bit rather than reusing BTN_ABILITY_1: the sniper's zoom
+    IS the right mouse button, so folding RMB into the E bit would spend the sniper's storm charges
+    every time someone scoped. Only the assault rifle reads this bit today (underbarrel grenade,
+    update_weapons in physics.h); any future secondary gets it for free. */
 
 #define VEH_NONE  0
 #define VEH_BUGGY 1
@@ -322,6 +341,14 @@ typedef struct {
     int damage;
     unsigned char scene_id;
     float splash_radius; /* 0 = point damage (existing behavior); >0 = AOE detonation, see explode_splash() */
+    /* gravity -- units/tick^2 pulling the projectile down, 0 = dead straight (every weapon but the
+     * AR underbarrel grenade). Integrated in update_projectiles (local_game.h) so the arc is the
+     * same on every host that runs the sim. */
+    float gravity;
+    /* weapon -- which weapon fired it, handed to explode_splash so the blast carries the right id
+     * into the map-damage hook: an AR grenade carves brick with the AR multiplier, a missile with
+     * the rocket multiplier (PARENA/stdlib/shankpit/brick_rules.prn). */
+    int weapon;
 } Projectile;
 
 typedef struct {
@@ -463,6 +490,7 @@ typedef struct {
         in_use's own story-button consumer needs a rising edge for, this doesn't). */
     int use_was_down; int bike_was_down;
     int in_ability;
+    int in_ability2; /* BTN_ABILITY_2 -- secondary fire (AR underbarrel grenade) */
     int in_paint_next; int in_paint_prev; int paint_btn_prev; /* spray can colour cycle, see WPN_SPRAYCAN */
     int current_weapon; int ammo[MAX_WEAPONS];
     int reload_timer; int attack_cooldown;
