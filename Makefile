@@ -24,7 +24,12 @@ SERVERCTL_SRC:= apps/server/serverctl.c
 # pipeline (2026-09-28..10-01) -- so they now expand these two targets instead:
 #   gcc $(make -s print-server-src) ...        x86_64-w64-mingw32-gcc $(make -s print-lobby-src) ...
 # A new packages/*.c added to LOBBY_SRC/SERVER_SRC above is now picked up by CI automatically.
-.PHONY: print-lobby-src print-server-src test-os-menu test-os-menu-gl
+.PHONY: print-lobby-src print-server-src test-os-menu test-os-menu-gl check-windows
+
+# Compile every Windows-client source under mingw-w64 (no link, so no .a/.dll objects needed). Catches
+# compile-only breakage that otherwise waits for a release job -- see the script's own header comment.
+check-windows:
+	bash scripts/check_windows_build.sh
 print-lobby-src:
 	@echo $(LOBBY_SRC)
 print-server-src:

@@ -289,6 +289,20 @@ static void gband_draw_skinned(const float *verts6, int vert_count, const Mat4 *
  * (PARENA/stdlib/shankpit/lighting_rules.prn); this is only where the result is held. */
 static EnvMatrix g_env;
 
+/* Forward declarations for the environment-matrix read helpers, which are DEFINED further down (next to
+ * the shader sources) but READ by the enemy-outline pass above them. Without these, C infers an implicit
+ * `int f()` at the first call and then rejects the real `static float f(void)` definition below as a
+ * conflicting type -- which is exactly what broke the Windows client build (and would have broken any
+ * native `make lobby` too; it was never compiled in the Linux sandbox, so only mingw caught it).
+ *
+ * The outline helper is named ..._outline_emissive_scale, not env_emissive_scale, on purpose: PARENA's
+ * lighting rules already export `int env_emissive_scale(int ambient_permille)` and that .c is linked into
+ * this same binary, so reusing the name would shadow the rules function inside this translation unit and
+ * make a future call to the rules version silently resolve to the local one. */
+static float env_flashlight_range(void);
+static float env_flashlight_half_angle(void);
+static float env_outline_emissive_scale(void);
+
 /* --- ENEMY OUTLINE (kanban #538; founder real-time: "use a shader to add an outline around enemies make them
  * yellow but when they are in combat have the outlines turn red") ---
  * Inverted-hull outline: before the real skinned draw, the same mesh is drawn once more with every vertex pushed
@@ -353,7 +367,7 @@ static void skel_npc_draw_skinned(const float *verts6, int vert_count, const Mat
         /* Emissive strength follows the environment matrix: an outline that reads at noon is
            invisible at midnight and blinds at noon if tuned the other way, so dark scenes push it
            up and bright scenes tuck it down -- the same reasoning the shield FX uses. */
-        float em = env_emissive_scale();
+        float em = env_outline_emissive_scale();
         const float yellow[4] = {1.0f * em, 0.85f * em, 0.05f * em, 1.0f};
         const float red[4] = {1.0f * em, 0.10f * pulse * em, 0.08f * pulse * em, 1.0f};
         GLboolean cull = glIsEnabled(GL_CULL_FACE);
@@ -424,7 +438,7 @@ static float env_flashlight_half_angle(void) {
     if (!(s > 0.5f)) s = 1.0f;
     return FLASHLIGHT_HALF_ANGLE_DEG * s;
 }
-static float env_emissive_scale(void) {
+static float env_outline_emissive_scale(void) {
     float s = g_env.emissive_scale;
     if (!(s > 0.1f)) return 1.0f;
     return s > 1.6f ? 1.6f : s;
