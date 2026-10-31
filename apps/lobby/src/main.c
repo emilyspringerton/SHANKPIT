@@ -7177,6 +7177,151 @@ void draw_buggy_model(PlayerState *p) {
     glPopAttrib();
 }
 
+/* THE BEDROCK RACERS CAR ------------------------------------------------------------------------
+ * Founder 2026-10-31: "it should have the same geometry ... as bedrock racers wasm". That geometry is
+ * PARENA/stdlib/bedrockracers/web/br_mesh.prn's build-car!, ported here section for section rather
+ * than approximated: seven cross-sections from nose to tail, six points round each (bottom, beltline,
+ * roof edge and their mirrors), the same body-pal mapping (paint, a darker shade for the sills, smoked
+ * glass, carbon underside, warm headlights, tail lights), the same four nozzle pods where the wheels
+ * would be and the same nozzle mouths under them. BR's car is 15.2 long and 8.8 wide (its collision
+ * spheres are radius 4, 3.6 fore and aft); SHANKPIT's buggy body is 7.0 x 4.0, so the profile is
+ * scaled by RC_SCALE into the buggy's own footprint. Only the LOOK is ported -- the handling is
+ * physics.h's simulate_rocket_car_state.
+ *
+ * Flat-shaded with a fixed key light rather than GL_LIGHTING, the way the drone and the C-110 are
+ * drawn: br_mesh's own car is flat-shaded per face, and this keeps it readable in a night storm. */
+#define RC_SCALE 0.45f
+static const float RC_Z[7]    = {  7.6f,  4.4f,  1.9f, -0.3f, -3.0f, -5.4f, -7.6f };
+static const float RC_WBOT[7] = {  2.6f,  3.5f,  3.6f,  3.6f,  3.6f,  3.5f,  3.1f };
+static const float RC_YBOT[7] = { -2.1f, -2.5f, -2.6f, -2.6f, -2.6f, -2.6f, -2.2f };
+static const float RC_WB[7]   = {  3.3f,  4.3f,  4.4f,  4.4f,  4.4f,  4.3f,  3.9f };
+static const float RC_YB[7]   = { -1.5f, -1.0f, -0.7f, -0.5f, -0.4f, -0.4f, -0.6f };
+static const float RC_WT[7]   = {  2.5f,  3.5f,  3.3f,  2.7f,  2.8f,  3.4f,  3.3f };
+static const float RC_YT[7]   = { -1.0f, -0.1f,  0.5f,  2.2f,  2.0f,  0.8f,  0.4f };
+
+/* br_mesh's cs-x / cs-y: k 0 bottom, 1 beltline, 2 roof edge, 3..5 the mirror of 2..0 */
+static void rc_pt(int s, int k, float *px, float *py, float *pz) {
+    const float w = (k == 0 || k == 5) ? RC_WBOT[s] : ((k == 1 || k == 4) ? RC_WB[s] : RC_WT[s]);
+    const float y = (k == 0 || k == 5) ? RC_YBOT[s] : ((k == 1 || k == 4) ? RC_YB[s] : RC_YT[s]);
+    *px = (k < 3 ? w : -w) * RC_SCALE;
+    *py = y * RC_SCALE;
+    *pz = RC_Z[s] * RC_SCALE;
+}
+
+/* a quad, flat-shaded: br_mesh's cquad! turns the face normal away from an inside point, then lights
+ * the face once. Same idea, one fixed key light plus the sky fill. */
+static void rc_face(const float *p0, const float *p1, const float *p2, const float *p3,
+                    float r, float g, float b) {
+    float ax = p2[0] - p0[0], ay = p2[1] - p0[1], az = p2[2] - p0[2];
+    float bx = p3[0] - p1[0], by = p3[1] - p1[1], bz = p3[2] - p1[2];
+    float nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
+    const float len = sqrtf(nx * nx + ny * ny + nz * nz);
+    float shade = 0.55f;
+    if (len > 0.0001f) {
+        nx /= len; ny /= len; nz /= len;
+        /* outward = away from the car's middle (its inside point sits 0.4 below the origin) */
+        const float mx = 0.25f * (p0[0] + p1[0] + p2[0] + p3[0]);
+        const float my = 0.25f * (p0[1] + p1[1] + p2[1] + p3[1]) + 0.4f * RC_SCALE;
+        const float mz = 0.25f * (p0[2] + p1[2] + p2[2] + p3[2]);
+        if (nx * mx + ny * my + nz * mz < 0.0f) { nx = -nx; ny = -ny; nz = -nz; }
+        float lam = nx * 0.36f + ny * 0.78f + nz * 0.51f;
+        if (lam < 0.0f) lam = 0.0f;
+        shade = 0.55f + 0.45f * lam;
+    }
+    glColor3f(r * shade, g * shade, b * shade);
+    glBegin(GL_QUADS);
+    glVertex3fv(p0); glVertex3fv(p1); glVertex3fv(p2); glVertex3fv(p3);
+    glEnd();
+}
+
+/* body-pal (br_mesh.prn): 1 paint, 2 paint darker, 3 glass, 4 carbon */
+static void rc_body_col(int s, int k, float *r, float *g, float *b) {
+    if (k == 5) { *r = 0.09f; *g = 0.09f; *b = 0.10f; return; }            /* the underside */
+    if (k == 0 || k == 4) { *r = 0.30f; *g = 0.05f; *b = 0.05f; return; }  /* the sills */
+    if (k == 2) {                                                         /* the top */
+        if (s == 2 || s == 4) { *r = 0.11f; *g = 0.13f; *b = 0.17f; return; }  /* windscreen, rear window */
+        *r = 0.66f; *g = 0.12f; *b = 0.10f; return;                       /* hood, roof, deck */
+    }
+    if (s >= 2 && s <= 4) { *r = 0.11f; *g = 0.13f; *b = 0.17f; return; }  /* the side windows */
+    *r = 0.66f; *g = 0.12f; *b = 0.10f;
+}
+
+static void rc_bay_face(int s, int k) {
+    float q[4][3];
+    float r, g, b;
+    const int k2 = (k + 1) % 6;
+    rc_pt(s, k, &q[0][0], &q[0][1], &q[0][2]);
+    rc_pt(s, k2, &q[1][0], &q[1][1], &q[1][2]);
+    rc_pt(s + 1, k2, &q[2][0], &q[2][1], &q[2][2]);
+    rc_pt(s + 1, k, &q[3][0], &q[3][1], &q[3][2]);
+    rc_body_col(s, k, &r, &g, &b);
+    rc_face(q[0], q[1], q[2], q[3], r, g, b);
+}
+
+static void rc_section_face(int s, int k0, int k1, int k2, int k3, float r, float g, float b) {
+    float q[4][3];
+    rc_pt(s, k0, &q[0][0], &q[0][1], &q[0][2]);
+    rc_pt(s, k1, &q[1][0], &q[1][1], &q[1][2]);
+    rc_pt(s, k2, &q[2][0], &q[2][1], &q[2][2]);
+    rc_pt(s, k3, &q[3][0], &q[3][1], &q[3][2]);
+    rc_face(q[0], q[1], q[2], q[3], r, g, b);
+}
+
+static void draw_rocket_car_model(const BuggyState *b) {
+    (void)b;
+    const GLboolean lit_was_on = glIsEnabled(GL_LIGHTING); /* same save/restore as the other vehicles */
+    glDisable(GL_LIGHTING);
+    glDisable(GL_TEXTURE_2D);
+
+    for (int s = 0; s < 6; s++)
+        for (int k = 0; k < 6; k++) rc_bay_face(s, k);
+
+    /* the nose and the tail, each in two quads (low and high) */
+    rc_section_face(0, 0, 1, 4, 5, 0.30f, 0.05f, 0.05f);
+    rc_section_face(0, 1, 2, 3, 4, 0.30f, 0.05f, 0.05f);
+    rc_section_face(6, 0, 1, 4, 5, 0.30f, 0.05f, 0.05f);
+    rc_section_face(6, 1, 2, 3, 4, 0.30f, 0.05f, 0.05f);
+
+    /* headlights and tail lights, standing just proud of the nose and the tail (pal 5 and 6) */
+    glColor3f(1.00f, 0.95f, 0.84f);
+    glBegin(GL_QUADS);
+    glVertex3f(-2.3f * RC_SCALE, -1.12f * RC_SCALE, 7.63f * RC_SCALE);
+    glVertex3f( 2.3f * RC_SCALE, -1.12f * RC_SCALE, 7.63f * RC_SCALE);
+    glVertex3f( 2.1f * RC_SCALE, -1.42f * RC_SCALE, 7.63f * RC_SCALE);
+    glVertex3f(-2.1f * RC_SCALE, -1.42f * RC_SCALE, 7.63f * RC_SCALE);
+    glEnd();
+    glColor3f(0.95f, 0.22f, 0.16f);
+    glBegin(GL_QUADS);
+    glVertex3f(-3.4f * RC_SCALE, -0.25f * RC_SCALE, -7.63f * RC_SCALE);
+    glVertex3f( 3.4f * RC_SCALE, -0.25f * RC_SCALE, -7.63f * RC_SCALE);
+    glVertex3f( 3.2f * RC_SCALE,  0.15f * RC_SCALE, -7.63f * RC_SCALE);
+    glVertex3f(-3.2f * RC_SCALE,  0.15f * RC_SCALE, -7.63f * RC_SCALE);
+    glEnd();
+
+    /* the four nozzle pods where the wheels would be, and the nozzles' mouths under them */
+    for (int i = 0; i < 4; i++) {
+        const float px = ((i & 1) ? 3.35f : -3.35f) * RC_SCALE;
+        const float pz = ((i & 2) ? -4.5f : 4.7f) * RC_SCALE;
+        glColor3f(0.09f, 0.09f, 0.10f);
+        glPushMatrix();
+        glTranslatef(px, -2.75f * RC_SCALE, pz);
+        draw_box_solid(0.95f * RC_SCALE, 0.80f * RC_SCALE, 1.45f * RC_SCALE);
+        glPopMatrix();
+        glColor3f(0.34f, 0.46f, 0.60f);
+        glPushMatrix();
+        glTranslatef(px, -3.57f * RC_SCALE, pz);
+        glBegin(GL_QUADS);
+        glVertex3f(-0.60f * RC_SCALE, 0.0f,  0.90f * RC_SCALE);
+        glVertex3f( 0.60f * RC_SCALE, 0.0f,  0.90f * RC_SCALE);
+        glVertex3f( 0.60f * RC_SCALE, 0.0f, -0.90f * RC_SCALE);
+        glVertex3f(-0.60f * RC_SCALE, 0.0f, -0.90f * RC_SCALE);
+        glEnd();
+        glPopMatrix();
+    }
+
+    if (lit_was_on) glEnable(GL_LIGHTING);
+}
+
 static void draw_buggy_entity(const BuggyState *b) {
     if (!b || !b->active) return;
     PlayerState style_driver;
@@ -7187,7 +7332,8 @@ static void draw_buggy_entity(const BuggyState *b) {
     glRotatef(180.0f - norm_yaw_deg(b->yaw), 0, 1, 0);
     glRotatef(b->roll, 0, 0, 1);
     glRotatef(b->pitch, 1, 0, 0);
-    draw_buggy_model(&style_driver);
+    if (b->rocket) draw_rocket_car_model(b);
+    else draw_buggy_model(&style_driver);
     if (b->rocket) {
         /* The Bedrock Racers car's read is its NOZZLES: four cold-gas lift jets underneath it and a
            rear booster, both brighter the more air is left (br_phys.prn: "four lift nozzles under it
@@ -7208,22 +7354,22 @@ static void draw_buggy_entity(const BuggyState *b) {
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE);
         for (int i = 0; i < 4; i++) {
-            float nx = (i & 1) ? 1.25f : -1.25f;
-            float nz = (i & 2) ? 1.9f : -1.9f;
+            float nx = (i & 1) ? 1.51f : -1.51f;
+            float nz = (i & 2) ? -2.03f : 2.12f;
             glPushMatrix();
-            glTranslatef(nx, -0.78f, nz);
+            glTranslatef(nx, -1.61f, nz);
             glBegin(GL_QUADS);
             glColor4f(0.45f, 0.85f, 1.0f, 0.55f * hot);
-            glVertex3f(-0.34f, -1.10f, 0.0f);
-            glVertex3f(0.34f, -1.10f, 0.0f);
+            glVertex3f(-0.27f, -0.55f, 0.0f);
+            glVertex3f(0.27f, -0.55f, 0.0f);
             glColor4f(0.10f, 0.28f, 0.90f, 0.0f);
-            glVertex3f(0.12f, 0.0f, 0.0f);
-            glVertex3f(-0.12f, 0.0f, 0.0f);
+            glVertex3f(0.10f, 0.0f, 0.0f);
+            glVertex3f(-0.10f, 0.0f, 0.0f);
             glEnd();
             glPopMatrix();
         }
         glPushMatrix();
-        glTranslatef(0.0f, 0.30f, -3.55f);
+        glTranslatef(0.0f, 0.02f, -3.44f);
         glBegin(GL_QUADS);
         glColor4f(0.95f, 0.72f, 0.35f, 0.60f * hot);
         glVertex3f(-0.55f, -0.30f, 0.0f);
@@ -16802,6 +16948,13 @@ int main(int argc, char* argv[]) {
                     const Uint8 *roll_keys = SDL_GetKeyboardState(NULL);
                     local_state.players[0].in_roll = (roll_keys[SDL_SCANCODE_J] || roll_keys[SDL_SCANCODE_LEFT]) ? -1
                                                    : ((roll_keys[SDL_SCANCODE_L] || roll_keys[SDL_SCANCODE_RIGHT]) ? 1 : 0);
+                    /* ROCKET CAR: Space is LIFT (the four nozzles) and Shift is BOOST (the rear one),
+                       the bindings br_input.prn gives them. Local only, exactly like in_roll above:
+                       local_game.h's buggy tick reads them, and what replicates is the attitude and
+                       the air the car ends up with, not the keypress. Harmless while on foot -- only a
+                       car with b->rocket reads them. */
+                    local_state.players[0].in_lift = roll_keys[SDL_SCANCODE_SPACE] ? 1 : 0;
+                    local_state.players[0].in_boost = (roll_keys[SDL_SCANCODE_LSHIFT] || roll_keys[SDL_SCANCODE_RSHIFT]) ? 1 : 0;
                 }
                 local_update(input_fwd, input_str, local_aim_yaw, local_aim_pitch, input_shoot, wpn_req, input_jump, input_crouch, input_reload, input_ability, input_secondary, input_bike, NULL, now_ms);
                 if (bigo_wiring_active() && !g_story_phone.open) bigo_board_tick(&local_state.players[0], (float)input_fwd, (float)input_str, TICK_DT);

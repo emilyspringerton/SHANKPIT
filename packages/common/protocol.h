@@ -573,6 +573,10 @@ typedef struct {
                         LOCAL input only: it is read by local_game.h's airplane tick, not carried in
                         UserCmd/snapshots. A networked match rolls on the pilot's screen and the
                         attitude is what replicates, not the keypress. */
+    int in_lift;     /* the ROCKET CAR's four lift nozzles (Space). LOCAL input only, exactly like
+                        in_roll: it is read by local_game.h's buggy tick and never carried in
+                        UserCmd/snapshots -- what replicates is where the car ends up, not the key. */
+    int in_boost;    /* the ROCKET CAR's rear nozzle (Shift). LOCAL input only, same reasoning. */
     int in_paint_next; int in_paint_prev; int paint_btn_prev; /* spray can colour cycle, see WPN_SPRAYCAN */
     int current_weapon; int ammo[MAX_WEAPONS];
     int reload_timer; int attack_cooldown;

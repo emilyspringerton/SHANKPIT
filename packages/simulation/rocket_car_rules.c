@@ -17,6 +17,8 @@ int rocket_hover_height_milli();
 int clamp(int, int, int);
 int rocket_boost_permille(int);
 int rocket_hover_accel_milli(int);
+int rocket_lift_accel_milli();
+int rocket_boost_accel_milli();
 int rocket_tank_step(int, int);
 int rocket_tank_fill(int, int);
 
@@ -74,6 +76,14 @@ int rocket_boost_permille(int tank __attribute__((unused))) {
 
 int rocket_hover_accel_milli(int err __attribute__((unused))) {
     return clamp(-900, 1200, ((err * 3000) / 1000));
+}
+
+int rocket_lift_accel_milli(void) {
+    return 230;
+}
+
+int rocket_boost_accel_milli(void) {
+    return 100;
 }
 
 int rocket_tank_step(int tank __attribute__((unused)), int spend __attribute__((unused))) {

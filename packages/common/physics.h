@@ -3737,7 +3737,11 @@ static inline void buggy_move_xz_blocked(BuggyState *b, float dx, float dz) {
    steering, same as the buggy) and no wall driving, so what is ported is the part that makes that car
    feel like that car: ONE AIR TANK that pays for everything (lift 26/s, boost 22/s, refills 34/s, and
    48/s on a surface), the rear-nozzle boost that scales with what is left in it, and the fan
-   suspension that holds the belly off the surface instead of riding wheels.
+   suspension that holds the belly off the surface instead of riding wheels. Its two COMMANDS are
+   ported too, because without them it cannot do what that car does: LIFT (the four nozzles climb
+   while the key is held) and BOOST (the rear nozzle, on its own key, with its own ceiling). Only
+   the strafe and attitude axes are missing, and only because this chassis has no axes for them:
+   the driver's camera is the steering, exactly as it is for the buggy.
    Every number is a PARENA mod again (PARENA/stdlib/shankpit/rocket_car_rules.prn, generated into
    packages/simulation/rocket_car_rules.c, installed by rocket_car_rules_host.h) -- same convention as
    the buggy handling above: with nothing installed the built-in defaults here are used, so every test
@@ -3756,6 +3760,9 @@ typedef struct {
     int (*hover_accel_milli)(int err_milli);
     int (*tank_step)(int tank, int spend);
     int (*tank_fill)(int tank, int gain);
+    /* appended -- keep these LAST, in the order rocket_car_rules_host.h's initializer lists them */
+    int (*lift_accel_milli)(void);
+    int (*boost_accel_milli)(void);
 } PhysRocketRules;
 static const PhysRocketRules *g_phys_rocket_rules = NULL;
 static inline void phys_set_rocket_rules(const PhysRocketRules *r) { g_phys_rocket_rules = r; }
@@ -3765,6 +3772,10 @@ static inline void phys_set_rocket_rules(const PhysRocketRules *r) { g_phys_rock
 #define ROCKET_DRIVE 1.7f               /* drive-force multiplier over the buggy's base */
 #define ROCKET_TANK_MAX 10000           /* centi-units of air */
 #define ROCKET_HOVER_HEIGHT 2.6f        /* belly height above the surface the fans hold */
+#define ROCKET_LIFT_ACCEL 0.23f         /* units/tick of climb from the four lift nozzles at full */
+#define ROCKET_BOOST_ACCEL 0.10f        /* units/tick the rear nozzle adds on the boost key */
+#define ROCKET_BOOST_TOP 1.35f          /* the boost's own ceiling, as a multiple of the top speed */
+#define ROCKET_CLIMB_CAP 1.4f           /* units/tick -- the nozzles are rate-limited, not a missile */
 
 static inline int phys_rocket_tank_max(void) {
     if (g_phys_rocket_rules && g_phys_rocket_rules->tank_max) {
@@ -3800,6 +3811,20 @@ static inline float phys_rocket_hover_height(void) {
         if (v > 0.1f) return v;
     }
     return ROCKET_HOVER_HEIGHT;
+}
+static inline float phys_rocket_lift_accel(void) {
+    if (g_phys_rocket_rules && g_phys_rocket_rules->lift_accel_milli) {
+        float v = (float)g_phys_rocket_rules->lift_accel_milli() * 0.001f;
+        if (v > 0.01f) return v;
+    }
+    return ROCKET_LIFT_ACCEL;
+}
+static inline float phys_rocket_boost_accel(void) {
+    if (g_phys_rocket_rules && g_phys_rocket_rules->boost_accel_milli) {
+        float v = (float)g_phys_rocket_rules->boost_accel_milli() * 0.001f;
+        if (v > 0.005f) return v;
+    }
+    return ROCKET_BOOST_ACCEL;
 }
 static inline int phys_rocket_boost_permille(int tank) {
     if (g_phys_rocket_rules && g_phys_rocket_rules->boost_permille) return g_phys_rocket_rules->boost_permille(tank);
@@ -3850,7 +3875,8 @@ static inline int phys_rocket_refill_gain(int surface, int dt_scale_milli) {
    plus the tank and the fan suspension. An empty tank leaves the car sitting on its belly at the
    ordinary buggy clearance instead of hovering -- the br_phys "never helpless, but not a rocket"
    rule; it refills and floats again a couple of seconds later. */
-static inline void simulate_rocket_car_state(BuggyState *b, float throttle, float steer, float dt, int apply_input) {
+static inline void simulate_rocket_car_state(BuggyState *b, float throttle, float steer, float dt, int apply_input,
+                                             float lift_cmd, int boost_cmd) {
     if (throttle > 1.0f) throttle = 1.0f;
     if (throttle < -1.0f) throttle = -1.0f;
     if (steer > 1.0f) steer = 1.0f;
@@ -3859,20 +3885,33 @@ static inline void simulate_rocket_car_state(BuggyState *b, float throttle, floa
     if (dt_scale < 0.0f) dt_scale = 0.0f;
     int dts_milli = (int)(dt_scale * 1000.0f + 0.5f);
     if (!apply_input) { throttle = 0.0f; steer = 0.0f; }
+    /* LIFT and BOOST are BR's own two commands (br_phys.prn: "Space: LIFT, the four nozzles" and
+       "boost: the rear nozzle, along the car's forward axis"). A car with nobody in it has neither. */
+    float lift = (apply_input && lift_cmd > 0.0f) ? (lift_cmd > 1.0f ? 1.0f : lift_cmd) : 0.0f;
+    int boost = (apply_input && boost_cmd) ? 1 : 0;
 
     float r = -b->yaw * (3.14159265358979323846f / 180.0f);
     float fwd_x = sinf(r), fwd_z = -cosf(r);
     float right_x = cosf(r), right_z = sinf(r);
     float forward_speed = b->vx * fwd_x + b->vz * fwd_z;
     float lateral_speed = b->vx * right_x + b->vz * right_z;
-    float top = phys_rocket_top_speed();
+    /* the rear nozzle's boost opens the ceiling as well as the thrust: br_phys's boosted top speed
+       is 340 against the car's 190. */
+    float top = phys_rocket_top_speed() * (boost ? ROCKET_BOOST_TOP : 1.0f);
     float speed_norm = fabsf(forward_speed) / top;
     if (speed_norm > 1.0f) speed_norm = 1.0f;
 
-    /* the tank pays for the drive: nozzles burn while the throttle is open, air refills when it is not */
+    /* the tank pays for the drive: the rear nozzle burns while the throttle is open OR the boost key
+       is down (22/s, br_phys's own boost spend), and air refills when it is not. had_air is the tank
+       as the tick found it: br_phys's air-tick! will not START a burn from an empty tank, however
+       much has trickled back in by the time the nozzle is asked for. */
+    const int had_air = (b->tank > 0);
+    int burning = (throttle > 0.01f || (boost && had_air)) && had_air;
     float thrust_scale = 1.0f;
-    if (throttle > 0.01f && b->tank > 0) {
+    if (burning) {
         b->tank = phys_rocket_tank_step(b->tank, phys_rocket_boost_drain(dts_milli));
+        /* the booster is its own nozzle: holding it open on top of the throttle burns it wider */
+        if (boost && b->tank > 0) b->tank = phys_rocket_tank_step(b->tank, phys_rocket_boost_drain(dts_milli));
         thrust_scale += (float)phys_rocket_boost_permille(b->tank) * 0.001f;
     } else {
         b->tank = phys_rocket_tank_fill(b->tank, phys_rocket_refill_gain(b->grounded, dts_milli));
@@ -3895,6 +3934,13 @@ static inline void simulate_rocket_car_state(BuggyState *b, float throttle, floa
     } else if (forward_speed > 0.0f) {
         forward_speed -= BUGGY_COAST_FRICTION * dt_scale * 0.55f;   /* it coasts: the fans don't drag */
         if (forward_speed < 0.0f) forward_speed = 0.0f;
+    }
+
+    /* BOOST: the rear nozzle, straight along the nose (br_phys fly-sub!'s 270, drive-sub!'s 285).
+       It is a separate key from the throttle because it is a separate nozzle: throttle is the drive,
+       boost is the shove. An empty tank has nothing to shove with. */
+    if (boost && had_air && forward_speed < top) {
+        forward_speed += phys_rocket_boost_accel() * dt_scale;
     }
 
     if (forward_speed > top) forward_speed = top;
@@ -3923,13 +3969,24 @@ static inline void simulate_rocket_car_state(BuggyState *b, float throttle, floa
     float support_avg = (heights[0] + heights[1] + heights[2] + heights[3]) * 0.25f;
     float rest = support_avg + phys_rocket_hover_height();
 
-    /* the fans: lift out of the tank, a spring on the height error, damped so it settles */
-    if (b->tank > 0) b->tank = phys_rocket_tank_step(b->tank, phys_rocket_lift_drain(dts_milli));
+    /* THE FANS hold the belly at the hover height, free -- in br_phys only the nozzles, the jets and
+       the boost cost air, the fans are what they are called. THE FOUR LIFT NOZZLES are the commanded
+       part: with the lift key held and air left, they climb instead of holding (the spring is off, so
+       the car leaves the surface the way BR's car does) and pay 26/s out of the tank; released, the
+       spring catches it again and settles it back down. */
+    const int lifting = (lift > 0.02f && b->tank > 0);
+    if (lifting) b->tank = phys_rocket_tank_step(b->tank, phys_rocket_lift_drain(dts_milli));
     float err_milli = (rest - b->y) * 1000.0f;
     float fan = (b->tank > 0) ? 1.0f : 0.0f;
-    float accel = (float)phys_rocket_hover_accel_milli((int)err_milli) * 0.001f * fan;
+    float accel;
+    if (lifting) {
+        accel = phys_rocket_lift_accel() * lift * fan;
+    } else {
+        accel = (float)phys_rocket_hover_accel_milli((int)err_milli) * 0.001f * fan;
+    }
     b->vy += accel - BUGGY_GRAVITY * 0.55f * dt_scale;
     b->vy *= 0.86f;
+    if (b->vy > ROCKET_CLIMB_CAP) b->vy = ROCKET_CLIMB_CAP;
     b->y += b->vy;
 
     float floor_y = support_avg + BUGGY_CHASSIS_CLEARANCE;
@@ -3950,9 +4007,13 @@ static inline void simulate_rocket_car_state(BuggyState *b, float throttle, floa
     b->roll += (target_roll - b->roll) * 0.35f;
 }
 
-static inline void simulate_buggy_state(BuggyState *b, float throttle, float steer, float dt, int apply_input) {
+/* simulate_buggy_state_ex -- the full signature: lift is the four nozzles' command (0..1) and boost is
+   the rear nozzle's key. Only the rocket profile reads them today; the ordinary buggy ignores both,
+   so a caller that has no such keys can keep using the five-argument form below. */
+static inline void simulate_buggy_state_ex(BuggyState *b, float throttle, float steer, float dt, int apply_input,
+                                           float lift, int boost) {
     if (!b || !b->active) return;
-    if (b->rocket) { simulate_rocket_car_state(b, throttle, steer, dt, apply_input); return; }
+    if (b->rocket) { simulate_rocket_car_state(b, throttle, steer, dt, apply_input, lift, boost); return; }
 
     if (throttle > 1.0f) throttle = 1.0f;
     if (throttle < -1.0f) throttle = -1.0f;
@@ -4058,6 +4119,12 @@ static inline void simulate_buggy_state(BuggyState *b, float throttle, float ste
         b->pitch *= 0.995f;
         b->roll *= 0.995f;
     }
+}
+
+/* every existing caller (the server's cars, the heli tests, the buggy wall test) drives with throttle
+   and steer alone; they get the five-argument form and no lift or boost. */
+static inline void simulate_buggy_state(BuggyState *b, float throttle, float steer, float dt, int apply_input) {
+    simulate_buggy_state_ex(b, throttle, steer, dt, apply_input, 0.0f, 0);
 }
 
 /* buggy_chase_steer_intent -- warthog-style steering (#542): the buggy rotates toward the camera heading

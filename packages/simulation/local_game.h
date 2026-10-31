@@ -528,6 +528,8 @@ static inline void buggy_tick_all(unsigned int now_ms) {
         if (!b->active) continue;
         float throttle = 0.0f;
         float steer_intent = 0.0f;
+        float lift = 0.0f;
+        int boost = 0;
         if (b->occupant_player_id >= 0 && b->occupant_player_id < MAX_CLIENTS) {
             PlayerState *occ = &local_state.players[b->occupant_player_id];
             b->scene_id = occ->scene_id;
@@ -536,11 +538,16 @@ static inline void buggy_tick_all(unsigned int now_ms) {
                - b->yaw is the buggy body yaw */
             throttle = occ->in_fwd;
             steer_intent = buggy_chase_steer_intent(b, throttle, occ->yaw);
+            /* The rocket car's own two keys (br_phys.prn's lift and boost). The ordinary buggy
+               ignores both, so this is safe for every car in the list. */
+            lift = occ->in_lift ? 1.0f : 0.0f;
+            boost = occ->in_boost;
         } else {
             b->occupant_player_id = -1;
         }
         phys_set_scene(b->scene_id);
-        simulate_buggy_state(b, throttle, steer_intent, SHANKPIT_NET_FIXED_DT, b->occupant_player_id >= 0);
+        simulate_buggy_state_ex(b, throttle, steer_intent, SHANKPIT_NET_FIXED_DT,
+                                b->occupant_player_id >= 0, lift, boost);
         {
             /* Seeded from the car's own id, so its flicker and fuse are that car's on every host.
                Reset on a respawned/replacement car rather than inheriting a dead one's burn. */

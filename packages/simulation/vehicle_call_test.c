@@ -310,6 +310,62 @@ int main(void) {
                carspd, plainsm, drained, car.tank);
     }
 
+    /* ---- FLYABILITY: the four nozzles climb while the lift key is held (br_phys fly-sub!'s lift),
+       the fans catch the car again when it is let go, and the climb is paid for out of the tank ---- */
+    {
+        BuggyState car = flight(20.0f, 1);
+        for (int i = 0; i < 180; i++) simulate_buggy_state(&car, 0.0f, 0.0f, SHANKPIT_NET_FIXED_DT, 1);
+        const float hovered = car.y;
+        const int tank_before = car.tank;
+        for (int i = 0; i < 45; i++)
+            simulate_buggy_state_ex(&car, 0.0f, 0.0f, SHANKPIT_NET_FIXED_DT, 1, 1.0f, 0);
+        const float climbed = car.y;
+        CHECK(climbed > hovered + 2.0f, "holding lift did not climb: %.2f -> %.2f", hovered, climbed);
+        CHECK(car.tank < tank_before, "the lift nozzles burned no air: %d -> %d", tank_before, car.tank);
+        for (int i = 0; i < 300; i++)
+            simulate_buggy_state_ex(&car, 0.0f, 0.0f, SHANKPIT_NET_FIXED_DT, 1, 0.0f, 0);
+        CHECK(car.y < climbed - 2.0f, "the car did not come down after the lift was released: %.2f", car.y);
+        CHECK(fabsf(car.y - hovered) < 0.6f,
+              "the fans did not settle it back at the hover height: %.2f vs %.2f", car.y, hovered);
+        printf("PASS: lift climbs %.2f -> %.2f, the fans settle it back to %.2f\n", hovered, climbed, car.y);
+    }
+
+    /* ---- BOOST: the rear nozzle's own key -- faster than the throttle alone, and it spends air;
+       an empty tank has nothing to shove with (br_phys's "never helpless, but not a rocket") ---- */
+    {
+        BuggyState plain = flight(20.0f, 1);
+        BuggyState boosted = flight(20.0f, 1);
+        for (int i = 0; i < 240; i++) {
+            simulate_buggy_state(&plain, 1.0f, 0.0f, SHANKPIT_NET_FIXED_DT, 1);
+            simulate_buggy_state_ex(&boosted, 1.0f, 0.0f, SHANKPIT_NET_FIXED_DT, 1, 0.0f, 1);
+        }
+        const float pspd = sqrtf(plain.vx * plain.vx + plain.vz * plain.vz);
+        const float bspd = sqrtf(boosted.vx * boosted.vx + boosted.vz * boosted.vz);
+        CHECK(bspd > pspd + 1.0f, "boost %.2f is not faster than the throttle alone %.2f", bspd, pspd);
+        /* the tank is shared with the throttle, so the spend is measured over a burn short enough
+           that neither car runs it dry (240 ticks flattens both to the same puddle) */
+        BuggyState short_plain = flight(20.0f, 1);
+        BuggyState short_boost = flight(20.0f, 1);
+        for (int i = 0; i < 12; i++) {
+            simulate_buggy_state(&short_plain, 1.0f, 0.0f, SHANKPIT_NET_FIXED_DT, 1);
+            simulate_buggy_state_ex(&short_boost, 1.0f, 0.0f, SHANKPIT_NET_FIXED_DT, 1, 0.0f, 1);
+        }
+        CHECK(short_boost.tank < short_plain.tank, "boost spent no extra air: %d vs %d",
+              short_boost.tank, short_plain.tank);
+
+        /* empty, it cannot START a burn (br_phys air-tick!) -- judged on the tick that found the tank
+           empty, not after the idle refill has put something back in it */
+        BuggyState dry = flight(20.0f, 1);
+        BuggyState dry_boosted = flight(20.0f, 1);
+        dry.tank = 0;
+        dry_boosted.tank = 0;
+        simulate_buggy_state(&dry, 1.0f, 0.0f, SHANKPIT_NET_FIXED_DT, 1);
+        simulate_buggy_state_ex(&dry_boosted, 1.0f, 0.0f, SHANKPIT_NET_FIXED_DT, 1, 0.0f, 1);
+        CHECK(fabsf(dry.vx - dry_boosted.vx) < 0.0001f && fabsf(dry.vz - dry_boosted.vz) < 0.0001f,
+              "an empty tank boosted on the tick that found it empty");
+        printf("PASS: boost %.2f vs %.2f, it burns its own air, and an empty tank cannot start one\n", bspd, pspd);
+    }
+
     /* ---- an empty tank drops it onto its belly instead of leaving a rocket that never runs out ---- */
     {
         BuggyState dry = flight(20.0f, 1);
