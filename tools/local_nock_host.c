@@ -7,12 +7,24 @@
 #include "local_nock_host.h"
 
 #include <ctype.h>
-#include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
+/* Platform split, the same one PARENA's own runtime makes for tcp/process: this host is otherwise
+ * POSIX-only, and the bundled dw_nock.exe (make local-nock-win) needs the same server. */
+#ifdef _WIN32
+  #include <winsock2.h>
+  #include <windows.h>
+  #include <io.h>
+  #include <process.h>
+  #include <direct.h>
+  #define ln_getpid() ((int)_getpid())
+#else
+  #include <dirent.h>
+  #include <unistd.h>
+  #define ln_getpid() ((int)getpid())
+#endif
 
 static Arena g_arena;
 static Arena g_state;
@@ -82,7 +94,7 @@ char *ln_new_id(Arena *dest) {
     static int seeded = 0;
     static const char *hex = "0123456789abcdef";
     if (!seeded) {
-        srand((unsigned)(time(NULL) ^ (long)getpid()));
+        srand((unsigned)(time(NULL) ^ (long)ln_getpid()));
         seeded = 1;
     }
     char *out = (char *)arena_alloc(dest, 33);
@@ -126,11 +138,59 @@ int ln_write_file(const char *path, const char *text) {
     size_t wrote = fwrite(text, 1, n, f);
     int ok = (wrote == n);
     if (fclose(f) != 0) ok = 0;
-    if (ok && rename(tmp, path) != 0) ok = 0;
+    if (ok) {
+#ifdef _WIN32
+        /* POSIX rename() replaces an existing target, Windows's MoveFileEx needs to be told to. */
+        ok = MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING) ? 1 : 0;
+#else
+        ok = (rename(tmp, path) == 0);
+#endif
+    }
     if (!ok) remove(tmp);
     free(tmp);
     return ok ? 1 : 0;
 }
+
+/* ln_dir_names -- every plain file name in `dir` (never . or ..), one per LN_NAME_MAX slot.
+ * POSIX: readdir. Windows: FindFirstFileA. The listing rule is the host's job precisely because
+ * it is the one thing that cannot be expressed the same way on both platforms. */
+#ifdef _WIN32
+int ln_dir_names(const char *dir, char (*names)[LN_NAME_MAX], int max, Arena *dest) {
+    char pattern[2048];
+    WIN32_FIND_DATAA fd;
+    HANDLE h;
+    int n = 0;
+    (void)dest;
+    snprintf(pattern, sizeof pattern, "%s/*", dir);
+    h = FindFirstFileA(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    do {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        if (n >= max) break;
+        snprintf(names[n], LN_NAME_MAX, "%s", fd.cFileName);
+        n++;
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+    return n;
+}
+#else
+int ln_dir_names(const char *dir, char (*names)[LN_NAME_MAX], int max, Arena *dest) {
+    DIR *d;
+    struct dirent *e;
+    int n = 0;
+    (void)dest;
+    d = opendir(dir);
+    if (!d) return 0;
+    while ((e = readdir(d)) != NULL) {
+        if (n >= max) break;
+        if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) continue;
+        snprintf(names[n], LN_NAME_MAX, "%s", e->d_name);
+        n++;
+    }
+    closedir(d);
+    return n;
+}
+#endif
 
 /* count_walls -- the number of top-level objects in the "walls" array. A directory listing that
  * claims a wall count has to count the array, not the file's every "sx": doors and other boxes
@@ -173,30 +233,31 @@ static int valid_name(const char *name) {
 char *ln_levels_json(const char *dir, Arena *dest) {
     size_t cap = 1 << 16, len = 0;
     char *out = (char *)arena_alloc(dest, cap);
-    len += (size_t)snprintf(out + len, cap - len, "{\"levels\":[");
-    DIR *d = opendir(dir);
+    char (*names)[LN_NAME_MAX] = (char (*)[LN_NAME_MAX])arena_alloc(dest, (size_t)LN_MAX_FILES * LN_NAME_MAX);
+    int nfiles, fi;
     int first = 1;
-    if (d) {
-        struct dirent *e;
-        while ((e = readdir(d)) != NULL) {
-            size_t m = strlen(e->d_name);
-            if (m < 6 || strcmp(e->d_name + m - 5, ".json") != 0) continue;
-            char stem[512];
-            if (m - 5 >= sizeof stem) continue;
-            memcpy(stem, e->d_name, m - 5);
-            stem[m - 5] = 0;
-            if (!valid_name(stem)) continue;
-            char path[2048];
-            snprintf(path, sizeof path, "%s/%s", dir, e->d_name);
-            char *text = ln_read_file(path, dest);
-            size_t bytes = strlen(text);
-            if (len + 512 > cap) break;
-            len += (size_t)snprintf(out + len, cap - len,
-                                    "%s{\"name\":\"%s\",\"file\":\"levels/%s\",\"walls\":%d,\"bytes\":%zu}",
-                                    first ? "" : ",", stem, e->d_name, count_walls(text), bytes);
-            first = 0;
-        }
-        closedir(d);
+    len += (size_t)snprintf(out + len, cap - len, "{\"levels\":[");
+    nfiles = names ? ln_dir_names(dir, names, LN_MAX_FILES, dest) : 0;
+    for (fi = 0; fi < nfiles; fi++) {
+        const char *fname = names[fi];
+        size_t m = strlen(fname);
+        char stem[512];
+        char path[2048];
+        char *text;
+        size_t bytes;
+        if (m < 6 || strcmp(fname + m - 5, ".json") != 0) continue;
+        if (m - 5 >= sizeof stem) continue;
+        memcpy(stem, fname, m - 5);
+        stem[m - 5] = 0;
+        if (!valid_name(stem)) continue;
+        snprintf(path, sizeof path, "%s/%s", dir, fname);
+        text = ln_read_file(path, dest);
+        bytes = strlen(text);
+        if (len + 512 > cap) break;
+        len += (size_t)snprintf(out + len, cap - len,
+                                "%s{\"name\":\"%s\",\"file\":\"levels/%s\",\"walls\":%d,\"bytes\":%zu}",
+                                first ? "" : ",", stem, fname, count_walls(text), bytes);
+        first = 0;
     }
     snprintf(out + len, cap - len, "]}");
     return out;

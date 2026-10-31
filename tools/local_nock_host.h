@@ -34,6 +34,14 @@ char *ln_new_id(Arena *dest);
 char *ln_level_path(const char *dir, const char *name, Arena *dest);
 char *ln_read_file(const char *path, Arena *dest);
 int ln_write_file(const char *path, const char *text);
+
+/* Directory listing, the one place this host has to branch by platform: POSIX readdir, Windows
+ * FindFirstFileA. Same caller shape either way -- every plain file name in `dir`, one per
+ * LN_NAME_MAX slot, skipping . and .. -- so ln_levels_json builds its JSON once, not twice. */
+#define LN_NAME_MAX 512
+#define LN_MAX_FILES 256
+int ln_dir_names(const char *dir, char (*names)[LN_NAME_MAX], int max, Arena *dest);
+
 char *ln_levels_json(const char *dir, Arena *dest);
 
 /* nock_run -- the PARENA entry point this host calls from main(). */
