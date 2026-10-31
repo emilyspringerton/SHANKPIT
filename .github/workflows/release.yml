@@ -307,12 +307,54 @@ jobs:
           repository: emilyspringerton/EDITOR.GAME
           path: os_apps/EDITOR.GAME
 
+      # Go module + build cache for the two Go OS apps (PITVIPER, IDUNA.GAME). Their modules are not
+      # vendored in this repo, so without this every release re-downloads go-sdl2 / x-image / x-sys /
+      # x-crypto from scratch -- which is exactly where "the build hangs on the shankpit apps" came
+      # from. Keyed on their go.sum files, so a dependency change invalidates it and nothing else does.
+      - name: Cache Go modules (OS apps)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-osapps-${{ runner.os }}-${{ hashFiles('os_apps/**/go.sum') }}
+          restore-keys: |
+            go-osapps-${{ runner.os }}-
+
       - name: Build SHANKPIT OS Apps (Windows)
         shell: bash
         run: |
           set -euo pipefail
           SDLW="$(pwd)/sdl2_mingw"
           mkdir -p bundled
+
+          # ---- the Go apps: bounded, cached, and never allowed to hang the release -----------------
+          # Founder real-time: "the shankpit os build is like hanging on the shankpit apps ... go:
+          # downloading github.com/veandco/go-sdl2 ...". `go build` has no timeout of its own, so a
+          # slow or unreachable module proxy parks the whole Windows job here indefinitely and every
+          # artifact waits on it. PITVIPER and IDUNA.GAME are sibling repos whose modules are not
+          # vendored in this tree, so: refuse the auto-toolchain download (GOTOOLCHAIN=local, which
+          # would otherwise fetch a Go distribution too), bound BOTH the download and the build, and
+          # if a module still cannot be fetched, skip that one app with a loud line and keep going --
+          # the lobby's APPS button already reports an unbundled app honestly, and a network hiccup
+          # must not hold up the client, server and world that ARE in this repo.
+          go_os_app() {   # dir, package-dir (relative), output name
+            local dir="$1" pkg="$2" out="$3"
+            if [ ! -f "$dir/$pkg/main.go" ]; then
+              echo "!! $dir: no $pkg/main.go, skipping $out"
+              return 1
+            fi
+            ( cd "$dir"
+              export GOWORK=off GOTOOLCHAIN=local GOFLAGS=-mod=mod
+              export CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc
+              export CGO_CFLAGS="-I$SDLW/include" CGO_LDFLAGS="-L$SDLW/lib"
+              echo "   modules: $(grep -c '' go.sum 2>/dev/null || echo 0) go.sum entries (cached unless they changed)"
+              if ! timeout 240 go mod download; then
+                echo "!! $dir: module download failed or timed out after 240s -- skipping $out"
+                exit 1
+              fi
+              timeout 420 go build -o "$out" "./$pkg" ) || { echo "!! $out: not built (see above) -- release continues without it"; return 1; }
+          }
 
           echo "== DEADWEIGHT dw_gui.exe =="
           # Source list is DEADWEIGHT's own scripts/build.sh GUI_SRC, hand-copied. NINTH occurrence
@@ -329,20 +371,14 @@ jobs:
           cp os_apps/DEADWEIGHT/dw_gui.exe bundled/
 
           echo "== PITVIPER pitviper.exe =="
-          ( cd os_apps/PITVIPER
-            test -f cmd/pitviper/main.go
-            CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc \
-              CGO_CFLAGS="-I$SDLW/include" CGO_LDFLAGS="-L$SDLW/lib" \
-              GOWORK=off go build -o pitviper.exe ./cmd/pitviper )
-          cp os_apps/PITVIPER/pitviper.exe bundled/
+          if go_os_app os_apps/PITVIPER cmd/pitviper pitviper.exe; then
+            cp os_apps/PITVIPER/pitviper.exe bundled/
+          fi
 
           echo "== IDUNA.GAME idunagame.exe =="
-          ( cd os_apps/IDUNA.GAME
-            test -f cmd/idunagame/main.go
-            CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc \
-              CGO_CFLAGS="-I$SDLW/include" CGO_LDFLAGS="-L$SDLW/lib" \
-              GOWORK=off go build -o idunagame.exe ./cmd/idunagame )
-          cp os_apps/IDUNA.GAME/idunagame.exe bundled/
+          if go_os_app os_apps/IDUNA.GAME cmd/idunagame idunagame.exe; then
+            cp os_apps/IDUNA.GAME/idunagame.exe bundled/
+          fi
 
           echo "== REDGARDEN red_garden_arena.exe =="
           ( cd os_apps/REDGARDEN
