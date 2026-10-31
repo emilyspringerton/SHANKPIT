@@ -13,8 +13,8 @@ LIBS_M   := -lm
 
 # ---- Sources ----
 EDU_LOBBY_SRC := packages/education/edu_lexer.c packages/education/edu_parser.c packages/education/edu_bytecode.c packages/education/edu_vm.c packages/education/edu_bindings.c packages/education/edu_script.c packages/education/eduvm_host.c packages/education/eduvm_snippets.c packages/education/eduvm_mod_unit.c
-LOBBY_SRC    := apps/lobby/src/main.c apps/lobby/src/editor_widget_bridge.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/cutscene.c packages/simulation/typing_lesson.c packages/simulation/tyler_coldopen.c packages/simulation/tyler_e03_coldopen.c packages/simulation/tyler_fb01_coldopen.c packages/simulation/tyler_vh02_coldopen.c packages/simulation/tyler_vh03_coldopen.c packages/simulation/tyler_vh04_coldopen.c packages/simulation/tyler_voice_mod.c packages/simulation/day_night_clock.c packages/simulation/world_rules.c packages/simulation/witness_ai.c packages/simulation/witness_sim.c packages/simulation/witness_rules.c packages/simulation/npc_archetype.c packages/simulation/zombie_values.c packages/simulation/avian_values.c packages/simulation/ai_brain_rules.c packages/simulation/world_alerts_mod.c packages/simulation/world_alert_bridge.c packages/simulation/zombies_awareness_rules.c packages/simulation/zombies_hud_bridge.c packages/simulation/zombies_pheromone_rules.c packages/simulation/food_pickup.c packages/simulation/lab_station_host.c packages/simulation/lab_station_rules.c packages/simulation/shadow_war_host.c packages/simulation/shadow_war_rules.c packages/simulation/gun_items.c packages/simulation/chests.c packages/simulation/chest_rules.c packages/simulation/shield_packs.c packages/simulation/giant_bug_values.c packages/simulation/giant_bug_brain.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/sky_weather.c packages/render/retro_lighting.c packages/render/env_matrix.c packages/render/gl_shader.c packages/render/bloom.c packages/world/terrain.c packages/world/parena_runtime.c packages/world/png_decode_gen.c packages/ui/menu_gen.c packages/pellegrino_embed/os_menu_embed.c packages/audio/audio.c packages/audio/audio_wav.c packages/audio/audio_chain.c packages/audio/audio_dsp_gen.c packages/goldenband/gband.c packages/goldenband/gskel.c packages/goldenband/gmesh.c packages/goldenband/gband_mesh_rig.c packages/goldenband/gseq.c packages/goldenband/gpose.c packages/goldenband/gsync.c packages/goldenband/gband_skel_npc.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c packages/simulation/brick_mod.c packages/simulation/brick_bodies.c packages/simulation/ambient_rules.c packages/simulation/lighting_rules.c packages/simulation/structure_rules.c packages/simulation/buggy_rules.c packages/simulation/heli_rules.c packages/render/camera_rules.c packages/simulation/ragdoll_pool.c packages/simulation/rigid_ragdoll.c packages/simulation/ragdoll_rules.c packages/goldenband/grb.c packages/simulation/mission.c packages/simulation/party_rules.c packages/simulation/chat_rules.c packages/simulation/hoverboard_rules.c $(EDU_LOBBY_SRC)
-SERVER_SRC   := apps/server/src/main.c packages/simulation/shield_packs.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/tyler_coldopen.c packages/simulation/tyler_e03_coldopen.c packages/simulation/tyler_fb01_coldopen.c packages/simulation/tyler_vh02_coldopen.c packages/simulation/tyler_vh03_coldopen.c packages/simulation/tyler_vh04_coldopen.c packages/simulation/tyler_voice_mod.c packages/simulation/day_night_clock.c packages/simulation/world_rules.c packages/simulation/witness_ai.c packages/simulation/witness_sim.c packages/simulation/witness_rules.c packages/simulation/npc_archetype.c packages/simulation/zombie_values.c packages/simulation/avian_values.c packages/simulation/ai_brain_rules.c packages/simulation/giant_bug_values.c packages/simulation/giant_bug_brain.c packages/simulation/zombies_awareness_rules.c packages/simulation/zombies_hud_bridge.c packages/simulation/zombies_pheromone_rules.c packages/world/terrain.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c packages/simulation/brick_mod.c packages/simulation/brick_bodies.c packages/simulation/structure_rules.c packages/world/parena_runtime.c packages/goldenband/grb.c packages/simulation/buggy_rules.c packages/simulation/heli_rules.c
+LOBBY_SRC    := apps/lobby/src/main.c apps/lobby/src/editor_widget_bridge.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/cutscene.c packages/simulation/typing_lesson.c packages/simulation/tyler_coldopen.c packages/simulation/tyler_e03_coldopen.c packages/simulation/tyler_fb01_coldopen.c packages/simulation/tyler_vh02_coldopen.c packages/simulation/tyler_vh03_coldopen.c packages/simulation/tyler_vh04_coldopen.c packages/simulation/tyler_voice_mod.c packages/simulation/day_night_clock.c packages/simulation/world_rules.c packages/simulation/witness_ai.c packages/simulation/witness_sim.c packages/simulation/witness_rules.c packages/simulation/npc_archetype.c packages/simulation/zombie_values.c packages/simulation/avian_values.c packages/simulation/ai_brain_rules.c packages/simulation/world_alerts_mod.c packages/simulation/world_alert_bridge.c packages/simulation/zombies_awareness_rules.c packages/simulation/zombies_hud_bridge.c packages/simulation/zombies_pheromone_rules.c packages/simulation/food_pickup.c packages/simulation/lab_station_host.c packages/simulation/lab_station_rules.c packages/simulation/shadow_war_host.c packages/simulation/shadow_war_rules.c packages/simulation/gun_items.c packages/simulation/chests.c packages/simulation/chest_rules.c packages/simulation/shield_packs.c packages/simulation/giant_bug_values.c packages/simulation/giant_bug_brain.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/sky_weather.c packages/render/retro_lighting.c packages/render/env_matrix.c packages/render/gl_shader.c packages/render/bloom.c packages/world/terrain.c packages/world/parena_runtime.c packages/world/png_decode_gen.c packages/ui/menu_gen.c packages/pellegrino_embed/os_menu_embed.c packages/audio/audio.c packages/audio/audio_wav.c packages/audio/audio_chain.c packages/audio/audio_dsp_gen.c packages/goldenband/gband.c packages/goldenband/gskel.c packages/goldenband/gmesh.c packages/goldenband/gband_mesh_rig.c packages/goldenband/gseq.c packages/goldenband/gpose.c packages/goldenband/gsync.c packages/goldenband/gband_skel_npc.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c packages/simulation/brick_mod.c packages/simulation/brick_bodies.c packages/simulation/ambient_rules.c packages/simulation/lighting_rules.c packages/simulation/structure_rules.c packages/simulation/buggy_rules.c packages/simulation/heli_rules.c packages/simulation/rocket_car_rules.c packages/simulation/drone_rules.c packages/simulation/airplane_rules.c packages/simulation/vehicle_burn_rules.c packages/simulation/br_stadium.c packages/simulation/anim_rules.c packages/simulation/slide_rules.c packages/simulation/empire_rules.c packages/render/camera_rules.c packages/simulation/ragdoll_pool.c packages/simulation/rigid_ragdoll.c packages/simulation/ragdoll_rules.c packages/goldenband/grb.c packages/simulation/mission.c packages/simulation/party_rules.c packages/simulation/chat_rules.c packages/simulation/hoverboard_rules.c $(EDU_LOBBY_SRC)
+SERVER_SRC   := apps/server/src/main.c packages/simulation/shield_packs.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/tyler_coldopen.c packages/simulation/tyler_e03_coldopen.c packages/simulation/tyler_fb01_coldopen.c packages/simulation/tyler_vh02_coldopen.c packages/simulation/tyler_vh03_coldopen.c packages/simulation/tyler_vh04_coldopen.c packages/simulation/tyler_voice_mod.c packages/simulation/day_night_clock.c packages/simulation/world_rules.c packages/simulation/witness_ai.c packages/simulation/witness_sim.c packages/simulation/witness_rules.c packages/simulation/npc_archetype.c packages/simulation/zombie_values.c packages/simulation/avian_values.c packages/simulation/ai_brain_rules.c packages/simulation/giant_bug_values.c packages/simulation/giant_bug_brain.c packages/simulation/zombies_awareness_rules.c packages/simulation/zombies_hud_bridge.c packages/simulation/zombies_pheromone_rules.c packages/world/terrain.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c packages/simulation/brick_mod.c packages/simulation/brick_bodies.c packages/simulation/structure_rules.c packages/world/parena_runtime.c packages/goldenband/grb.c packages/simulation/buggy_rules.c packages/simulation/heli_rules.c packages/simulation/rocket_car_rules.c packages/simulation/drone_rules.c packages/simulation/airplane_rules.c packages/simulation/br_stadium.c
 SERVERCTL_SRC:= apps/server/serverctl.c
 
 # ---- Source-list export for CI ----
@@ -342,6 +342,74 @@ test-kit: | $(BIN_DIR)
 	$(CC) -std=c99 -Wall -Wextra -Werror -Ipackages/common packages/common/kit_test.c -o $(BIN_DIR)/kit_test
 	./$(BIN_DIR)/kit_test
 
+# The kit's three VEHICLE gadgets (packages/simulation/vehicle_call.h) and the rocket car's profile
+# (physics.h simulate_rocket_car_state, numbers from PARENA/stdlib/shankpit/rocket_car_rules.prn).
+.PHONY: test-vehicle-call
+test-vehicle-call: | $(BIN_DIR)
+	$(CC) -g -O1 -fsanitize=address,undefined -Wall $(INCLUDES) packages/simulation/vehicle_call_test.c $(filter-out apps/server/src/main.c,$(SERVER_SRC)) -o $(BIN_DIR)/vehicle_call_test $(LIBS_M)
+	./$(BIN_DIR)/vehicle_call_test
+
+# ROCKET CAR rules: PARENA/stdlib/shankpit/rocket_car_rules.prn -> packages/simulation/rocket_car_rules.c packages/simulation/drone_rules.c packages/simulation/airplane_rules.c
+.PHONY: regen-rocket-car-rules
+regen-rocket-car-rules:
+	scripts/gen_rocket_car_rules.sh
+
+# DRONE rules: PARENA/stdlib/shankpit/drone_rules.prn -> packages/simulation/drone_rules.c packages/simulation/airplane_rules.c
+.PHONY: regen-drone-rules
+regen-drone-rules:
+	scripts/gen_drone_rules.sh
+
+# AIRPLANE rules: PARENA/stdlib/shankpit/airplane_rules.prn -> packages/simulation/airplane_rules.c
+.PHONY: regen-airplane-rules
+regen-airplane-rules:
+	scripts/gen_airplane_rules.sh
+
+# VEHICLE BURN rules: PARENA/stdlib/shankpit/vehicle_burn_rules.prn -> packages/simulation/vehicle_burn_rules.c
+# (the smoke -> fire -> detonation ladder, and Bedrock Racers' br_fx fire-fx curve it is drawn with)
+.PHONY: regen-vehicle-burn-rules
+regen-vehicle-burn-rules:
+	scripts/gen_vehicle_burn_rules.sh
+
+# The car fire ladder, headless: smoke before flame, a fast swell and a slow fade, one blast at 5 s,
+# and crash damage that warns rather than kills.
+.PHONY: test-vehicle-burn
+test-vehicle-burn: | $(BIN_DIR)
+	$(CC) -O1 -Wall -Wextra -Werror -Ipackages/simulation -DSHANKPIT_VEHICLE_BURN_PARENA packages/simulation/vehicle_burn_test.c packages/simulation/vehicle_burn_rules.c -o $(BIN_DIR)/vehicle_burn_test $(LIBS_M)
+	./$(BIN_DIR)/vehicle_burn_test
+
+# EMPIRE rules: PARENA/stdlib/shankpit/empire_rules.prn -> packages/simulation/empire_rules.c
+# (the influence economy and the 72-district sphere geometry behind the phone's EMPIRE app)
+.PHONY: regen-empire-rules
+regen-empire-rules:
+	scripts/gen_empire_rules.sh
+
+# The influence economy and the sphere, headless: costs, the clone premium, the placement gate, the
+# squad cap, district alignment/income, and rings that close into a world instead of a funnel.
+.PHONY: test-empire-rules
+test-empire-rules: | $(BIN_DIR)
+	$(CC) -O1 -Wall -Wextra -Werror -Ipackages/simulation packages/simulation/empire_rules_test.c packages/simulation/empire_rules.c -o $(BIN_DIR)/empire_rules_test
+	./$(BIN_DIR)/empire_rules_test
+
+# MATERIAL rules: PARENA/stdlib/shankpit/material_rules.prn -> packages/simulation/material_rules.c
+# (UV scroll, frame-loop sheets, palette wrapping, Quake light styles, screen tints, probe-grid axes)
+.PHONY: regen-material-rules
+regen-material-rules:
+	scripts/gen_material_rules.sh
+
+# The storytelling vocabulary, headless: a strobe that actually goes dark, a fluorescent that drops
+# out rarely, a broken tube mostly off, scroll/frames that wrap on the second, tints monotonic in the
+# danger they represent, palette indices that never go negative, probe axes that clamp.
+.PHONY: test-material-rules
+test-material-rules: | $(BIN_DIR)
+	$(CC) -O1 -Wall -Wextra -Werror -Ipackages/simulation packages/simulation/material_rules_test.c packages/simulation/material_rules.c -o $(BIN_DIR)/material_rules_test
+	./$(BIN_DIR)/material_rules_test
+
+# The fixed-wing transport, headless: takeoff roll, stall, flaps, the v^2 lift law and its inertia.
+.PHONY: test-airplane-flight
+test-airplane-flight: | $(BIN_DIR)
+	$(CC) -O1 -Wall $(INCLUDES) packages/simulation/airplane_flight_test.c packages/world/terrain.c packages/simulation/airplane_rules.c -o $(BIN_DIR)/airplane_flight_test $(LIBS_M)
+	./$(BIN_DIR)/airplane_flight_test
+
 test-heli-flight: | $(BIN_DIR)
-	$(CC) -O1 -Wall -Ipackages/common -Ipackages/simulation packages/simulation/heli_flight_test.c packages/simulation/heli_rules.c packages/world/terrain.c -o $(BIN_DIR)/heli_flight_test -lm
+	$(CC) -O1 -Wall -Ipackages/common -Ipackages/simulation packages/simulation/heli_flight_test.c packages/simulation/heli_rules.c packages/simulation/rocket_car_rules.c packages/simulation/drone_rules.c packages/simulation/airplane_rules.c packages/world/terrain.c -o $(BIN_DIR)/heli_flight_test -lm
 	$(BIN_DIR)/heli_flight_test

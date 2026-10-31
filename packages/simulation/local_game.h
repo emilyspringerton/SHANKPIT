@@ -4,6 +4,8 @@
 #include "../common/protocol.h"
 #include "../common/physics.h"
 #include "../common/shared_movement.h"
+#include "drone_flight.h"   /* the two quadcopters (RECON / micro FLY) */
+#include "airplane_flight.h" /* the fixed-wing C-110 transport */
 #include "story_ai.h"
 #include "story_buttons.h"
 #include "witness_ai.h" /* BIG_O engine merge phase 7d -- MODE_STORY content cutover */
@@ -245,6 +247,12 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
 void update_entity(PlayerState *p, float dt, void *server_context, unsigned int cmd_time);
 static inline void heli_spawn_defaults(HelicopterState *h, int id, int scene_id, float x, float y, float z);
 static inline void buggy_spawn_defaults(BuggyState *b, int id, int scene_id, float x, float z, float yaw);
+/* authored vehicle spawns (level_boxes.h vehicle_spawns) can place drones and the C-110 too, and
+   scene_load runs before those definitions appear further down the include chain */
+static inline void drone_spawn_defaults(DroneState *d, int id, int scene_id, int kind,
+                                        float x, float y, float z, float yaw);
+static inline void airplane_spawn_defaults(AirplaneState *a, int id, int scene_id,
+                                          float x, float z, float yaw);
 static inline BuggyState *buggy_find_nearby(int scene_id, float x, float y, float z, float radius);
 static inline int buggy_try_enter(PlayerState *p, BuggyState *b);
 static inline int buggy_try_exit(PlayerState *p, BuggyState *b);
@@ -329,6 +337,16 @@ static inline void scene_load(int scene_id) {
         local_state.buggies[bi].id = bi;
         local_state.buggies[bi].occupant_player_id = -1;
     }
+    for (int di = 0; di < MAX_DRONES; di++) {
+        memset(&local_state.drones[di], 0, sizeof(local_state.drones[di]));
+        local_state.drones[di].id = di;
+        local_state.drones[di].occupant_player_id = -1;
+    }
+    for (int ai = 0; ai < MAX_AIRPLANES; ai++) {
+        memset(&local_state.airplanes[ai], 0, sizeof(local_state.airplanes[ai]));
+        local_state.airplanes[ai].id = ai;
+        local_state.airplanes[ai].occupant_player_id = -1;
+    }
     int pad_count = 0;
     const VehiclePad *pads = scene_vehicle_pads(scene_id, &pad_count);
     for (int i = 0; i < pad_count && i < MAX_BUGGIES; i++) {
@@ -341,6 +359,49 @@ static inline void scene_load(int scene_id) {
             buggy_spawn_defaults(&local_state.buggies[i], i, scene_id, g_custom_level_buggy_x[i], g_custom_level_buggy_z[i], g_custom_level_buggy_yaw[i]);
             local_state.buggies[i].y = g_custom_level_buggy_y[i] + BUGGY_WHEEL_RADIUS + BUGGY_CHASSIS_CLEARANCE;
             printf("[BUGGY] spawned id=%d scene=%d (level) x=%.1f z=%.1f yaw=%.0f\n", i, scene_id, g_custom_level_buggy_x[i], g_custom_level_buggy_z[i], g_custom_level_buggy_yaw[i]);
+        }
+        /* Author-placed vehicles (level_boxes.h vehicle_spawns): one list, kind by name. Buggies in
+           the legacy buggy_spawns list above keep their own slots, so a level that never used the
+           new list loads exactly as before. Kind numbers are level_boxes.h's LEVEL_VEHICLE_*
+           (0 buggy, 1 rocket, 2 heli, 3 recon, 4 fly, 5 plane). */
+        {
+            int hi = 0, di = 0, ai = 0, bi = g_custom_level_buggy_count;
+            if (bi > MAX_BUGGIES) bi = MAX_BUGGIES;
+            for (int vi = 0; vi < g_custom_level_vehicle_count; vi++) {
+                int vk = g_custom_level_vehicle_kind[vi];
+                float vx = g_custom_level_vehicle_x[vi];
+                float vy = g_custom_level_vehicle_y[vi];
+                float vz = g_custom_level_vehicle_z[vi];
+                float vyaw = g_custom_level_vehicle_yaw[vi];
+                if (vk == 0 || vk == 1) {
+                    if (bi >= MAX_BUGGIES) continue;
+                    buggy_spawn_defaults(&local_state.buggies[bi], bi, scene_id, vx, vz, vyaw);
+                    local_state.buggies[bi].y = vy + BUGGY_WHEEL_RADIUS + BUGGY_CHASSIS_CLEARANCE;
+                    local_state.buggies[bi].rocket = (vk == 1) ? 1 : 0;
+                    printf("[VEHICLE] %s id=%d scene=%d (level) x=%.1f z=%.1f yaw=%.0f\n",
+                           vk == 1 ? "rocket car" : "buggy", bi, scene_id, vx, vz, vyaw);
+                    bi++;
+                } else if (vk == 2) {
+                    if (hi >= MAX_HELICOPTERS) continue;
+                    heli_spawn_defaults(&local_state.helicopters[hi], hi, scene_id, vx, vy + 3.0f, vz);
+                    local_state.helicopters[hi].yaw = vyaw;
+                    local_state.helicopters[hi].grounded = 1;
+                    printf("[VEHICLE] heli id=%d scene=%d (level) x=%.1f z=%.1f\n", hi, scene_id, vx, vz);
+                    hi++;
+                } else if (vk == 3 || vk == 4) {
+                    if (di >= MAX_DRONES) continue;
+                    drone_spawn_defaults(&local_state.drones[di], di, scene_id, vk == 4 ? 1 : 0,
+                                         vx, vy + 2.5f, vz, vyaw);
+                    printf("[VEHICLE] %s drone id=%d scene=%d (level) x=%.1f z=%.1f\n",
+                           vk == 4 ? "mini fly" : "recon", di, scene_id, vx, vz);
+                    di++;
+                } else if (vk == 5) {
+                    if (ai >= MAX_AIRPLANES) continue;
+                    airplane_spawn_defaults(&local_state.airplanes[ai], ai, scene_id, vx, vz, vyaw);
+                    printf("[VEHICLE] C-110 id=%d scene=%d (level) x=%.1f z=%.1f yaw=%.0f\n", ai, scene_id, vx, vz, vyaw);
+                    ai++;
+                }
+            }
         }
     }
 
@@ -1533,6 +1594,10 @@ void update_entity(PlayerState *p, float dt, void *server_context, unsigned int 
     }
 
     apply_friction(p);
+    /* A crouch-slide on a hillside gains speed down its gradient (PARENA slide_rules.prn): the surface
+       normal was read for friction above, and this is the same slope pulling the slide along. No-op on
+       flat ground, standing up, in a vehicle, or in the air, so nothing else moves. */
+    phys_slide_slope_tick(p);
     float g = (p->in_jump) ? GRAVITY_FLOAT : GRAVITY_DROP;
     /* Wall ride (phys_wall_ride_tick): airborne + crouch held against a wall magnets you to it and
        replaces this tick's gravity; every other state falls through to the original line. */
@@ -1865,6 +1930,63 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
             h->input.forward = 0.0f; h->input.yaw = 0.0f; h->input.strafe = 0.0f;
             h->input.ascend = 0; h->input.descend = 0;
             heli_simulate_step(h, SHANKPIT_NET_FIXED_DT);
+        }
+    }
+
+    /* Drones (drone_flight.h). Same occupant-driven shape the helicopter loop above uses, but the
+       model underneath is the opposite one: a quadcopter applies translational thrust to velocity
+       immediately, so the pilot's stick IS the motion, and the storm buffets each airframe by its own
+       PARENA rule (drone_set_storm, fed by the host's sky). A parked drone with no pilot just settles
+       -- it hovers where it was left, which is what makes it usable as a camera. */
+    for (int di = 0; di < MAX_DRONES; di++) {
+        DroneState *d = &local_state.drones[di];
+        if (!d->active) continue;
+        float fwd = 0.0f, strafe = 0.0f, ascend = 0.0f, turn = 0.0f;
+        if (d->occupant_player_id >= 0 && d->occupant_player_id < MAX_CLIENTS) {
+            PlayerState *occ = &local_state.players[d->occupant_player_id];
+            d->scene_id = occ->scene_id;
+            fwd = occ->in_fwd;
+            strafe = occ->in_strafe;
+            ascend = (occ->in_jump ? 1.0f : 0.0f) - (occ->crouching ? 1.0f : 0.0f);
+            float yaw_err = norm_yaw_deg(occ->yaw - d->yaw);
+            if (yaw_err > 180.0f) yaw_err -= 360.0f;
+            if (yaw_err < -180.0f) yaw_err += 360.0f;
+            turn = yaw_err / 45.0f;
+            if (turn > 1.0f) turn = 1.0f;
+            if (turn < -1.0f) turn = -1.0f;
+        }
+        drone_simulate_step(d, fwd, strafe, ascend, turn, drone_storm_permille(), SHANKPIT_NET_FIXED_DT);
+        if (d->occupant_player_id >= 0 && d->occupant_player_id < MAX_CLIENTS) {
+            PlayerState *occ = &local_state.players[d->occupant_player_id];
+            occ->x = d->x; occ->y = d->y; occ->z = d->z;
+            occ->vx = occ->vy = occ->vz = 0.0f;
+            occ->on_ground = 0;
+        }
+    }
+
+    /* The fixed-wing transport (airplane_flight.h): throttle is a LEVER (SPACE up, CTRL down), W/S is the
+       elevator, A/D the aileron, and the pilot's heading is the tiller -- but only with the wheels down and
+       slow, because a bank is what turns an aeroplane. It is the one vehicle here that cannot hover. */
+    for (int ai = 0; ai < MAX_AIRPLANES; ai++) {
+        AirplaneState *a = &local_state.airplanes[ai];
+        if (!a->active) continue;
+        float elevator = 0.0f, aileron = 0.0f, tiller_yaw = a->yaw;
+        int throttle_up = 0, throttle_down = 0;
+        if (a->occupant_player_id >= 0 && a->occupant_player_id < MAX_CLIENTS) {
+            PlayerState *occ = &local_state.players[a->occupant_player_id];
+            a->scene_id = occ->scene_id;
+            elevator = occ->in_fwd;
+            aileron = occ->in_strafe;
+            tiller_yaw = occ->yaw;
+            throttle_up = occ->in_jump;
+            throttle_down = occ->crouching;
+        }
+        airplane_simulate_step(a, elevator, aileron, tiller_yaw, throttle_up, throttle_down, SHANKPIT_NET_FIXED_DT);
+        if (a->occupant_player_id >= 0 && a->occupant_player_id < MAX_CLIENTS) {
+            PlayerState *occ = &local_state.players[a->occupant_player_id];
+            occ->x = a->x; occ->y = a->y; occ->z = a->z;
+            occ->vx = occ->vy = occ->vz = 0.0f;
+            occ->on_ground = a->grounded;
         }
     }
 

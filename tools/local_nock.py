@@ -54,7 +54,7 @@ MAX_EVENTS = 2000
 MAX_WAIT = 25
 EVENT_KINDS = {
     "spawner", "avatar", "spawn_mode", "teleport",
-    "box_add", "box_move", "box_size", "box_del", "hello", "level", "save",
+    "box_add", "box_move", "box_size", "box_del", "vehicle_spawn", "hello", "level", "save",
 }
 HERE = os.path.dirname(os.path.abspath(__file__))
 

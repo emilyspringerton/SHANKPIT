@@ -19,6 +19,13 @@
  * "compose what exists" discipline the BIG_O merge work used instead of standing up another
  * standalone system.
  *
+ * Founder 2026-10-31: "add buggy, rocket car, and hellicopter to the gadgets we already have the
+ * buggy and the hellicopter the rocket car implementation is in bedrock racers". So the three
+ * VEHICLE gadgets are call items, not new inventory either: the buggy and the helicopter are the
+ * engine's own BuggyState/HelicopterState, the rocket car is a buggy with the rocket profile from
+ * Bedrock Racers (PARENA/stdlib/shankpit/rocket_car_rules.prn), and pressing the bound key spawns
+ * that vehicle in front of the player and puts them in it. See packages/simulation/vehicle_call.h.
+ *
  * Pure C99, no GL/SDL/network: the pages are strings (rendered by PELLEGRINO's own layout/paint
  * engine through packages/pellegrino_embed), the model is plain data, and every decision here is
  * unit-tested (packages/common/kit_test.c). */
@@ -38,12 +45,26 @@ typedef enum {
     KIT_ITEM_ABILITY,     /* input_ability   -- the weapon's own ability */
     KIT_ITEM_SECONDARY,   /* input_secondary -- the weapon's secondary */
     KIT_ITEM_RELOAD,      /* input_reload */
+    KIT_ITEM_BUGGY,       /* vehicle_call: the engine's own BuggyState, spawned and entered */
+    KIT_ITEM_ROCKET_CAR,  /* vehicle_call: a buggy with the Bedrock Racers rocket profile */
+    KIT_ITEM_HELI,        /* vehicle_call: the engine's own HelicopterState, spawned and entered */
+    KIT_ITEM_DRONE,       /* vehicle_call: the RECON quadcopter (stable, carries a camera) */
+    KIT_ITEM_MINI_DRONE,  /* vehicle_call: the 45 g FLY micro -- twitchy, fast, bounces off walls */
+    KIT_ITEM_PLANE,       /* vehicle_call: the C-110 fixed-wing transport (needs a runway) */
     KIT_ITEM_COUNT
 } KitItem;
 
 static const char *const KIT_ITEM_NAMES[KIT_ITEM_COUNT] = {
-    "-- EMPTY --", "PHEROMONE", "ABILITY", "SECONDARY", "RELOAD"
+    "-- EMPTY --", "PHEROMONE", "ABILITY", "SECONDARY", "RELOAD",
+    "BUGGY", "ROCKET CAR", "HELICOPTER", "DRONE", "MINI DRONE", "C-110"
 };
+
+/* The call items: pressing the key puts that vehicle in front of the player rather than changing a
+ * weapon input. Kept as a predicate so the host does not grow its own copy of the list. */
+static inline int kit_item_is_vehicle(int item) {
+    return item == KIT_ITEM_BUGGY || item == KIT_ITEM_ROCKET_CAR || item == KIT_ITEM_HELI ||
+           item == KIT_ITEM_DRONE || item == KIT_ITEM_MINI_DRONE || item == KIT_ITEM_PLANE;
+}
 
 /* The four gadget keys come AFTER the ten digits, in the founder's own order. */
 static const char *const KIT_SLOT_KEY_NAMES[KIT_SLOTS] = {
@@ -140,7 +161,32 @@ static inline void kit_defaults(KitState *s) {
     kit_set_slot(&s->kits[2], KIT_SLOT_MINUS, KIT_ITEM_PHEROMONE);
     kit_set_slot(&s->kits[2], KIT_SLOT_EQUALS, KIT_ITEM_PHEROMONE);
     kit_set_slot(&s->kits[2], KIT_SLOT_C, KIT_ITEM_SECONDARY);
-    s->kit_count = 3;
+
+    /* RUNNER -- the vehicle kit: all three calls on the gadget keys, canister on C. It is the prefab
+     * that makes the buggy / rocket car / helicopter reachable without building a kit first. */
+    kit_named(&s->kits[3], "RUNNER");
+    kit_set_slot(&s->kits[3], KIT_SLOT_BACKTICK, KIT_ITEM_BUGGY);
+    kit_set_slot(&s->kits[3], KIT_SLOT_MINUS, KIT_ITEM_ROCKET_CAR);
+    kit_set_slot(&s->kits[3], KIT_SLOT_EQUALS, KIT_ITEM_HELI);
+    kit_set_slot(&s->kits[3], KIT_SLOT_C, KIT_ITEM_PHEROMONE);
+
+    /* AERIAL -- the eyes kit: the two quadcopters on the first two gadget keys, then the helicopter
+     * and the buggy. Runs on the same keys as RUNNER on purpose: a kit IS a key map, and choosing
+     * which airframe answers `` ` `` is the point of having several prefabs. */
+    kit_named(&s->kits[4], "AERIAL");
+    kit_set_slot(&s->kits[4], KIT_SLOT_BACKTICK, KIT_ITEM_DRONE);
+    kit_set_slot(&s->kits[4], KIT_SLOT_MINUS, KIT_ITEM_MINI_DRONE);
+    kit_set_slot(&s->kits[4], KIT_SLOT_EQUALS, KIT_ITEM_HELI);
+    kit_set_slot(&s->kits[4], KIT_SLOT_C, KIT_ITEM_BUGGY);
+
+    /* TRANSPORT -- the heavy kit: the fixed-wing on the first key, then the helicopter to get you back to
+     * the runway, the buggy for the last mile and the recon to look at where you are going. */
+    kit_named(&s->kits[5], "TRANSPORT");
+    kit_set_slot(&s->kits[5], KIT_SLOT_BACKTICK, KIT_ITEM_PLANE);
+    kit_set_slot(&s->kits[5], KIT_SLOT_MINUS, KIT_ITEM_HELI);
+    kit_set_slot(&s->kits[5], KIT_SLOT_EQUALS, KIT_ITEM_BUGGY);
+    kit_set_slot(&s->kits[5], KIT_SLOT_C, KIT_ITEM_DRONE);
+    s->kit_count = 6;
     s->selected = 0;
     s->draft = s->kits[0];
 }

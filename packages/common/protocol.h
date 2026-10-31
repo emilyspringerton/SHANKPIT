@@ -16,6 +16,8 @@
 #define MAX_PROJECTILES 1024
 #define MAX_HELICOPTERS 8
 #define MAX_BUGGIES 16
+#define MAX_DRONES 12
+#define MAX_AIRPLANES 4
 #define MAX_HORSES  8
 #define LAG_HISTORY 64
 
@@ -294,6 +296,8 @@ typedef struct {
 #define VEH_BIKE  2
 #define VEH_HELICOPTER 3
 #define VEH_HORSE 4   /* Icelandic tölt mount — Toledo 1040 CE */
+#define VEH_DRONE 5   /* quadcopter -- packages/simulation/drone_flight.h (RECON and the micro FLY) */
+#define VEH_AIRPLANE 6 /* fixed-wing transport -- packages/simulation/airplane_flight.h */
 
 /* Bedrock Racers item slots — held one at a time, consumed via BTN_ABILITY_1 */
 #define RACE_ITEM_NONE  0
@@ -651,7 +655,58 @@ typedef struct {
     float snap_yaw;
     float snap_yaw_rate_dps; /* deg/s measured from consecutive snapshots */
     unsigned int snap_recv_ms;
+    /* ROCKET CAR (Bedrock Racers port; physics.h simulate_rocket_car_state). rocket != 0 runs the
+       rocket profile instead of the ordinary buggy one, and tank is its air supply in centi-units
+       (0..rocket_tank_max(), 10000 by default). Appended after the snap_* extrapolation scratch
+       fields, which are already client-local only, so the replicated fields above are untouched. */
+    int rocket;
+    int tank;
 } BuggyState;
+
+/* A QUADCOPTER (packages/simulation/drone_flight.h). Two airframes share this state: DRONE_KIND_RECON
+ * (a stable 2.5 kg camera) and DRONE_KIND_FLY (a 45 g micro). The flight model lives in the header's
+ * simulate step and takes its numbers from PARENA (stdlib/shankpit/drone_rules.prn); this struct is
+ * only what a driver, a draw call and a snapshot need. pitch/roll/rotor_angle are presentation, the
+ * same split HelicopterState's own pitch_visual/roll_visual uses. */
+typedef struct {
+    int active;
+    int id;
+    int scene_id;
+    int kind;              /* DRONE_KIND_RECON / DRONE_KIND_FLY */
+    float x, y, z;
+    float vx, vy, vz;
+    float yaw;
+    float pitch, roll;
+    float rotor_angle;
+    float health;
+    int occupant_player_id;
+    unsigned int flight_ticks;
+    /* destroyed = killed by a shard hit (drone_shard_contact) and no longer simulated; the host spawns
+       the pop. gimbal_* is the head's offset from the airframe, clamped to this airframe's own mechanical
+       limits -- a gimbal is a mechanism, not free look (PARENA drone-gimbal-*-milli). */
+    int destroyed;
+    float gimbal_yaw, gimbal_pitch;
+} DroneState;
+
+/* A FIXED-WING transport (packages/simulation/airplane_flight.h, airdata from
+ * PARENA/stdlib/shankpit/airplane_rules.prn). Unlike every other vehicle here it cannot hover: lift comes
+ * from airspeed, so the state carries the LEVER (throttle holds where you leave it), the airframe attitude,
+ * and a cached airspeed the HUD and tests read. */
+typedef struct {
+    int active;
+    int id;
+    int scene_id;
+    float x, y, z;
+    float vx, vy, vz;
+    float yaw, pitch, roll;
+    float throttle;      /* lever position, 0..1000 */
+    float prop_angle;
+    float airspeed;      /* cached, units/tick */
+    float health;
+    int occupant_player_id;
+    int flaps;
+    int grounded;
+} AirplaneState;
 
 /* Icelandic horse — Toledo mount. Tölt gait: 4-beat amble, smooth at speed.
  * No gallop bounce; good on rough terrain. Cannot fire weapons while mounted.
@@ -840,6 +895,8 @@ typedef struct {
     Projectile projectiles[MAX_PROJECTILES];
     HelicopterState helicopters[MAX_HELICOPTERS];
     BuggyState buggies[MAX_BUGGIES];
+    DroneState drones[MAX_DRONES];
+    AirplaneState airplanes[MAX_AIRPLANES];
     HorseState horses[MAX_HORSES];
     LagRecord history[MAX_CLIENTS][LAG_HISTORY];
     int server_tick;

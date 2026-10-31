@@ -31,6 +31,7 @@
 #include "../../../packages/simulation/shield_packs.h"
 #include "../../../packages/simulation/buggy_rules_host.h"
 #include "../../../packages/simulation/heli_rules_host.h"
+#include "../../../packages/simulation/rocket_car_rules_host.h"   /* the rocket car's PARENA model */
 
 /* cutscene handshake globals — defined in lobby/main.c for the client;
    server sim uses local_game.h but never renders cutscenes, so stub to 0. */
@@ -469,6 +470,18 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
             bz[bi] = lvl->buggy_spawns[bi].z; byaw[bi] = lvl->buggy_spawns[bi].yaw;
         }
         phys_set_custom_level_buggy_spawns(bx, by, bz, byaw, lvl->buggy_spawn_count);
+    }
+    {   /* author-placed VEHICLES (level_boxes.h vehicle_spawns): the buggy tile generalised to the
+           whole roster. scene_load (below) places them; the server owns their hull and fire. */
+        int vk[CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS];
+        float vx[CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS], vy[CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS];
+        float vz[CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS], vya[CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS];
+        for (int vi = 0; vi < lvl->vehicle_spawn_count; vi++) {
+            vk[vi] = lvl->vehicle_spawns[vi].kind;
+            vx[vi] = lvl->vehicle_spawns[vi].x; vy[vi] = lvl->vehicle_spawns[vi].y;
+            vz[vi] = lvl->vehicle_spawns[vi].z; vya[vi] = lvl->vehicle_spawns[vi].yaw;
+        }
+        phys_set_custom_level_vehicle_spawns(vk, vx, vy, vz, vya, lvl->vehicle_spawn_count);
     }
     brick_world_init_from_level(lvl); // destructible brick: pick the carvable boxes, install the weapon/blast hooks
 
@@ -1613,6 +1626,7 @@ void server_broadcast_brick_state(void) {
 int main(int argc, char *argv[]) {
     buggy_rules_install(); /* PARENA buggy handling (#468) */
     heli_rules_install(); /* PARENA helicopter flight model (#542) */
+    rocket_car_rules_install(); /* PARENA rocket car (Bedrock Racers port) */
     /* Card #479: clients default to the baked-in levels; the shared game server keeps resolving the admin-
        flagged QUEUE default live (a NOCK flag change must still take effect at the next round), falling back
        to the baked copy when IDUNA is unreachable. SHANKPIT_BAKED_LEVELS=1 makes it use baked levels only. */

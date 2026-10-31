@@ -50,7 +50,17 @@
     <button data-tool="add" class="on">Box</button>
     <button data-tool="delete">Erase</button>
     <button data-tool="spawner">Spawner</button>
+    <button data-tool="vehicle">Vehicle</button>
   </div>
+  <select id="vehKind" title="Which vehicle a placed spawn tile spawns">
+    <option value="buggy">buggy</option>
+    <option value="rocket">rocket car</option>
+    <option value="heli">helicopter</option>
+    <option value="recon">recon drone</option>
+    <option value="fly">mini fly drone</option>
+    <option value="plane">C-110 plane</option>
+  </select>
+  <div class="dim" style="font-size:11px">Vehicle places a vehicle_spawn_&lt;kind&gt; tile where you click — the same name convention the buggy spawner uses, so IDUNA NOCK and this editor export the same thing.</div>
 
   <h2>Live session</h2>
   <div class="row">
@@ -152,6 +162,8 @@ function ensureShape(doc) {
     doc.materials = [{ name: "brick", shader_name: "standard", specular: 0.04, shininess: 6, friction: 0.3 }];
   }
   if (!Array.isArray(doc.spawners)) doc.spawners = [];
+  if (!Array.isArray(doc.vehicle_spawns)) doc.vehicle_spawns = [];
+  if (!Array.isArray(doc.buggy_spawns)) doc.buggy_spawns = [];
   if (!doc.spawners.length) {
     doc.spawners.push({ id: 1, x: 0, y: 1, z: 0, yaw: 0, team: -1 });
   }
@@ -217,6 +229,15 @@ function draw() {
   for (const sp of W.spawners || []) {
     const [x, z] = v.toPx(sp.x, sp.z);
     ctx.beginPath(); ctx.arc(x, z, 5 * dpr, 0, Math.PI * 2); ctx.strokeStyle = "#e05c5c"; ctx.stroke();
+  }
+  const VEH_TINT = { buggy: "#f2b31a", rocket: "#f25033", heli: "#33bff2", recon: "#59d98c", fly: "#bf99f2", plane: "#e6e6f2" };
+  for (const vs of W.vehicle_spawns || []) {
+    const [x, z] = v.toPx(vs.x, vs.z);
+    ctx.fillStyle = VEH_TINT[vs.kind] || "#f2b31a";
+    ctx.fillRect(x - 4 * dpr, z - 4 * dpr, 8 * dpr, 8 * dpr);
+    ctx.fillStyle = "#d7dae0";
+    ctx.font = `${9 * dpr}px monospace`;
+    ctx.fillText(vs.kind || "buggy", x + 6 * dpr, z + 3 * dpr);
   }
   for (const e of W.level_exits || []) {
     const [x, z] = v.toPx(e.x, e.z);
@@ -293,6 +314,13 @@ canvas.addEventListener("mousedown", ev => {
     W.walls.splice(i, 1);
     log(`deleted wall ${i}`);
     post("box_del", { id: -1, index: i });
+  } else if (state.tool === "vehicle") {
+    snapshot();
+    const kind = el("vehKind").value;
+    const vs = { kind, x: +x.toFixed(2), y: 0, z: +z.toFixed(2), yaw: 0 };
+    W.vehicle_spawns.push(vs);
+    log(`vehicle spawn ${kind} at ${vs.x}, ${vs.z}`);
+    post("vehicle_spawn", vs);
   } else {
     snapshot();
     if (!W.spawners.length) W.spawners.push({ id: 1, x: 0, y: 1, z: 0, yaw: 0, team: -1 });
@@ -309,7 +337,7 @@ document.addEventListener("keydown", ev => {
   if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "z") { ev.preventDefault(); undo(); }
   if (ev.target.tagName === "INPUT") return;
   const k = ev.key.toLowerCase();
-  const tool = k === "b" ? "add" : k === "x" ? "delete" : k === "m" ? "spawner" : null;
+  const tool = k === "b" ? "add" : k === "x" ? "delete" : k === "m" ? "spawner" : k === "v" ? "vehicle" : null;
   if (tool) selectTool(tool);
 });
 
@@ -427,6 +455,13 @@ function applyEvents(events) {
         if (!W.spawners.length) W.spawners.push({ id: 1, x: 0, y: 1, z: 0, yaw: 0, team: -1 });
         W.spawners[0].x = d.x; W.spawners[0].y = d.y; W.spawners[0].z = d.z;
         if (d.yaw !== undefined) W.spawners[0].yaw = d.yaw;
+      }
+    } else if (ev.kind === "vehicle_spawn" && d.x !== undefined) {
+      const W = state.level;
+      if (W) {
+        if (!Array.isArray(W.vehicle_spawns)) W.vehicle_spawns = [];
+        W.vehicle_spawns.push({ kind: d.kind || "buggy", x: d.x, y: d.y || 0, z: d.z, yaw: d.yaw || 0 });
+        log(`game placed a ${d.kind || "buggy"} spawn`);
       }
     } else if (ev.kind === "avatar" && d.x !== undefined) {
       state.remote = { x: d.x, z: d.z, yaw: d.yaw || 0 };

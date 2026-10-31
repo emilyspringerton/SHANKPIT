@@ -29,6 +29,16 @@
 // draw_flashlight_beam (S459-14) already proved -- genuinely reused, not reinvented a third time.
 
 #include "gl_shader.h"
+#include "reflection.h"   /* lightweight sphere-map reflection for metal / glass / mirror */
+
+/* Reflection material constants, declared here because the specular pass below uses them and their
+ * own definitions live with the rest of the reflection material further down this file (one
+ * self-contained block per named shader, this file's established pattern). */
+#define MATERIAL_REFLECT_MIRROR 0
+#define MATERIAL_REFLECT_METAL  1
+#define MATERIAL_REFLECT_GLASS  2
+int mat_reflection_strength_permille(int kind);
+static inline int draw_material_reflection_box(float x, float y, float z, float w, float h, float d, int kind);
 #include "sky_weather.h" /* SKYW_GLSL_FOG: highlights fade into weather fog with the surface under them */
 #include <math.h>
 #include <string.h>
@@ -151,6 +161,11 @@ static inline void draw_material_specular_box(float x, float y, float z, float w
     gl_uniform1f(gl_get_uniform_location(g_material_shader_program, "u_shininess"), shininess);
     gl_dynamic_vbo_draw(&g_material_shader_vbo, verts, 36, GL_TRIANGLES);
     gl_use_program(0);
+    /* Metal is the material this pass's own threshold already identifies (specular 0.85 against
+     * brick's 0.04), so a strongly specular surface gets the environment reflection too. Everything
+     * below the threshold returned above and never reaches this line. */
+    if (specular >= 0.6f)
+        draw_material_reflection_box(x, y, z, w, h, d, MATERIAL_REFLECT_METAL);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDepthMask(GL_TRUE);
 }
@@ -356,6 +371,62 @@ static inline void draw_material_hps_box(float x, float y, float z, float w, flo
     glDepthMask(GL_TRUE);
 }
 
+// ---- lightweight environment reflection (metal / glass / mirror) --------------------------------
+// Founder: "we want to implement basic reflection in metal and glass materials i guess make a mirror
+// material? it needs to be lightweight". One procedural 64x64 sphere map, and ONE extra additive draw
+// per reflective surface: no render target, no cube map, no shader, no per-frame CPU work. The
+// STRENGTHS are PARENA's (material_rules.prn's mat-reflection-strength-permille), so how mirror-like a
+// material is can be retuned without touching the renderer.
+#define MATERIAL_REFLECT_MIRROR 0
+#define MATERIAL_REFLECT_METAL  1
+#define MATERIAL_REFLECT_GLASS  2
+
+int mat_reflection_strength_permille(int kind);   /* PARENA: mirror / metal / glass, permille 0-1000 */
+
+// The sheen for one box. Call AFTER the base pass AND after gl_use_program(0): this is
+// fixed-function sphere mapping (it reads vertex normals), not a shader, and it does nothing if the
+// material's own strength is 0 -- which is why brick, concrete and wood cost exactly nothing.
+static inline int draw_material_reflection_box(float x, float y, float z, float w, float h, float d, int kind) {
+    static const float mirror_tint[3] = { 1.00f, 1.00f, 1.02f };
+    static const float metal_tint[3]  = { 0.88f, 0.93f, 1.00f };
+    static const float glass_tint[3]  = { 0.70f, 0.98f, 1.00f };
+    const float *tint = mirror_tint;
+    int strength = mat_reflection_strength_permille(kind);
+    if (strength <= 0) return 0;
+    if (kind == MATERIAL_REFLECT_METAL) tint = metal_tint;
+    else if (kind == MATERIAL_REFLECT_GLASS) tint = glass_tint;
+    return reflection_draw_box(x, y, z, w, h, d, strength, tint);
+}
+
+// draw_material_mirror_box -- a mirrored surface. A near-black base so the environment IS the
+// surface, then the reflection over it. Whoever adds a mirror to a real material list calls this
+// instead of the ordinary opaque box pass; nothing in this build selects it yet.
+static inline void draw_material_mirror_box(float x, float y, float z, float w, float h, float d) {
+    float hw = w * 0.5f, hh = h * 0.5f, hd = d * 0.5f;
+    glColor3f(0.06f, 0.07f, 0.08f);
+    glBegin(GL_QUADS);
+    glNormal3f(0.0f, 1.0f, 0.0f);
+    glVertex3f(x - hw, y + hh, z + hd); glVertex3f(x + hw, y + hh, z + hd);
+    glVertex3f(x + hw, y + hh, z - hd); glVertex3f(x - hw, y + hh, z - hd);
+    glNormal3f(0.0f, -1.0f, 0.0f);
+    glVertex3f(x - hw, y - hh, z - hd); glVertex3f(x + hw, y - hh, z - hd);
+    glVertex3f(x + hw, y - hh, z + hd); glVertex3f(x - hw, y - hh, z + hd);
+    glNormal3f(0.0f, 0.0f, 1.0f);
+    glVertex3f(x - hw, y - hh, z + hd); glVertex3f(x + hw, y - hh, z + hd);
+    glVertex3f(x + hw, y + hh, z + hd); glVertex3f(x - hw, y + hh, z + hd);
+    glNormal3f(0.0f, 0.0f, -1.0f);
+    glVertex3f(x + hw, y - hh, z - hd); glVertex3f(x - hw, y - hh, z - hd);
+    glVertex3f(x - hw, y + hh, z - hd); glVertex3f(x + hw, y + hh, z - hd);
+    glNormal3f(-1.0f, 0.0f, 0.0f);
+    glVertex3f(x - hw, y - hh, z - hd); glVertex3f(x - hw, y - hh, z + hd);
+    glVertex3f(x - hw, y + hh, z + hd); glVertex3f(x - hw, y + hh, z - hd);
+    glNormal3f(1.0f, 0.0f, 0.0f);
+    glVertex3f(x + hw, y - hh, z + hd); glVertex3f(x + hw, y - hh, z - hd);
+    glVertex3f(x + hw, y + hh, z - hd); glVertex3f(x + hw, y + hh, z + hd);
+    glEnd();
+    draw_material_reflection_box(x, y, z, w, h, d, MATERIAL_REFLECT_MIRROR);
+}
+
 // SHADER_GLASS (founder real-time, 2026-10-02: "add a new one for glass (add a shader with glass
 // transparency slight cyan tint - but make the tint parena programmable)"). A box whose material
 // uses this shader is NOT drawn by draw_map's opaque textured pass at all; draw_map collects those
@@ -451,6 +522,8 @@ static inline int draw_material_glass_box(float x, float y, float z, float w, fl
     gl_uniform4fv(gl_get_uniform_location(g_glass_shader_program, "u_tint"), tint);
     gl_dynamic_vbo_draw(&g_glass_shader_vbo, verts, 36, GL_TRIANGLES);
     gl_use_program(0);
+    /* A pane reflects the room a little too -- fixed-function, additive, one extra draw. */
+    draw_material_reflection_box(x, y, z, w, h, d, MATERIAL_REFLECT_GLASS);
     glDepthMask(GL_TRUE);
     return 1;
 }

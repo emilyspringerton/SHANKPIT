@@ -27,6 +27,8 @@
 #include <GL/glu.h>
 
 #include "player_model.h"
+
+
 #include "editor_widget_bridge.h"
 #include "../../../packages/ui/turtle_text.h"
 #define UI_BRIDGE_DECL static
@@ -42,6 +44,7 @@
 #include "../../../packages/simulation/cutscene.h"
 #include "../../../packages/simulation/typing_lesson.h"
 #include "../../../packages/simulation/local_game.h"
+#include "../../../packages/simulation/vehicle_call.h"   /* kit's BUGGY / ROCKET CAR / HELICOPTER calls */
 #include "../../../packages/common/awareness_compass.h" /* AWARENESS_COMPASS_NAMES -- zombies_hud_bridge.c's own real HUD alert, see draw_zombies_awareness_hud */
 #include "../../../packages/reflux/reflux_runtime.h" /* REFLUX_ACTION_* constants -- same, for a type-specific HUD label */
 #include "../../../packages/simulation/tyler_coldopen.h"
@@ -69,6 +72,12 @@
 #include "../../../packages/simulation/brick_world.h"
 #include "../../../packages/simulation/buggy_rules_host.h"
 #include "../../../packages/simulation/heli_rules_host.h"
+#include "../../../packages/simulation/rocket_car_rules_host.h"   /* the rocket car's PARENA model */
+#include "../../../packages/simulation/drone_flight.h"   /* the two quadcopters (RECON / micro FLY) */
+#include "../../../packages/simulation/drone_rules_host.h"
+#include "../../../packages/simulation/airplane_flight.h"   /* the C-110 fixed-wing transport */
+#include "../../../packages/simulation/airplane_rules_host.h"
+#include "../../../packages/simulation/slide_rules_host.h"
 #include "../../../packages/render/held_model.h"
 #include "../../../packages/render/camera_rig.h"
 #include "../../../packages/render/stream_out.h"
@@ -1217,6 +1226,63 @@ static SkyWeather g_sky_weather = {0};
 // its first real, player-VISIBLE day/night turn boundary (a DAYBREAK/NIGHTFALL/STORM WARNING
 // banner) without building the full phone UI to get there.
 static Phone g_story_phone = {0};
+
+/* ---- EMPIRE (BP_APP_EMPIRE) host side ----------------------------------------------------------
+ * The phone shows the map and the prices; the WORLD is here. Influence trickles in (PARENA's rate),
+ * every placement is re-checked against the same PARENA gate the app drew its rows from, and the
+ * body is spawned on the ground beside the player. The body is a story-AI slot today -- SHANKPIT has
+ * bodies, REDGARDEN has the friendly/enemy team model, and nobody has joined them yet: this spawns a
+ * real person-shaped unit, not yet a LOYAL one. Named in docs/EMPIRE_NORTHSTAR.md §5. */
+static int g_empire_influence = -1;
+static int g_empire_live = 0, g_empire_veterans = 0;
+static unsigned int g_empire_last_ms = 0, g_empire_accum_ms = 0;
+
+static void lobby_empire_sync(Phone *p) {
+    unsigned int now = SDL_GetTicks();
+    if (!p) return;
+    if (p->emp_self_cell < 0 || p->emp_self_cell > 8) p->emp_self_cell = 4;
+    if (g_empire_influence < 0) { g_empire_influence = empire_influence_start(); g_empire_last_ms = now; }
+    if (now > g_empire_last_ms) {
+        g_empire_accum_ms += now - g_empire_last_ms;
+        g_empire_last_ms = now;
+        while (g_empire_accum_ms >= 1000u) {
+            g_empire_accum_ms -= 1000u;
+            g_empire_influence += empire_influence_per_second();
+            if (g_empire_influence > empire_influence_max()) g_empire_influence = empire_influence_max();
+        }
+    }
+    p->emp_influence = g_empire_influence;
+    p->emp_max = empire_influence_max();
+    p->emp_live = g_empire_live;
+    p->emp_cap = empire_squad_cap();
+    p->emp_veterans = g_empire_veterans;
+    p->emp_clone_cost = empire_clone_cost(0);
+    for (int k = 0; k < 4; k++) p->emp_cost[k] = empire_troop_cost(k);
+    /* Honest empty state: districts do not exist in the world yet, so the minimap shows the only
+       thing the sim actually knows -- you hold the block you are standing on; its eight neighbours
+       are neutral until district ownership is simulated (docs/EMPIRE_NORTHSTAR.md §3.2). */
+    for (int i = 0; i < 9; i++) p->emp_district[i] = (i == p->emp_self_cell) ? 1 : 0;
+}
+
+static void lobby_empire_place(Phone *p, int clone, int kind) {
+    if (!p) return;
+    if (clone) {
+        if (!empire_clone_can(g_empire_influence, kind, g_empire_live, g_empire_veterans)) return;
+        g_empire_influence -= empire_clone_cost(kind);
+    } else {
+        if (!empire_can_spawn(g_empire_influence, kind, g_empire_live)) return;
+        g_empire_influence -= empire_troop_cost(kind);
+        g_empire_veterans++;
+    }
+    g_empire_live++;
+    PlayerState *hero = &local_state.players[0];
+    int id = story_ai_spawn_enemy(&local_state, AI_ROLE_WANDERING_BOT, AI_KIT_AUTO,
+                                  hero->x + 2.0f, hero->y, hero->z + 2.0f);
+    printf("[EMPIRE] %s kind=%d -> body %d (influence %d, squad %d)\n",
+           clone ? "clone" : "spawn", kind, id, g_empire_influence, g_empire_live);
+    lobby_empire_sync(p);
+}
+
 /* Kit gadget-key pulses (packages/common/kit.h). A press arms ONE item for ~150 ms and the input
  * assembly consumes it, so tapping a kit key is exactly one action -- and a bound key can never get
  * stuck down if the window loses focus in the middle of a press. */
@@ -1532,6 +1598,28 @@ static void draw_phone_app(const Phone *p) {
                                                                   : (int)p->kit.draft.slot[i]));
                 glColor3f(i == p->cursor ? 1.0f : 0.6f, i == p->cursor ? 1.0f : 0.72f, i == p->cursor ? 1.0f : 0.82f);
                 draw_string(buf, col_x, row_y - i * 26.0f, 2.2f);
+            }
+        }
+    } else if (p->app == BP_APP_EMPIRE) {
+        /* EMPIRE: the influence economy and the nine-district minimap, painted as HTML+CSS by
+           PELLEGRINO (same surface the kit pages use). The text pass below is the real fallback for
+           builds where that surface is unavailable -- a phone app must never be a blank rectangle. */
+        static char emp_html[OS_MENU_PAGE_MAX];
+        lobby_empire_sync(p);
+        if (!(empire_page(p, emp_html, (int)sizeof emp_html) > 0 &&
+              kpg_draw(emp_html, PHONE_PANEL_X0 + 16.0f, PHONE_PANEL_Y0 + 34.0f,
+                       PHONE_PANEL_X1 - PHONE_PANEL_X0 - 32.0f,
+                       PHONE_PANEL_Y1 - PHONE_PANEL_Y0 - 84.0f))) {
+            char buf[72];
+            snprintf(buf, sizeof(buf), "INFLUENCE %d/%d  SQUAD %d/%d  VETS %d", p->emp_influence,
+                     p->emp_max, p->emp_live, p->emp_cap, p->emp_veterans);
+            draw_string(buf, col_x, row_y, 2.2f);
+            for (int i = 0; i < BP_EMPIRE_ROWS; i++) {
+                int cost = i < BP_EMPIRE_TROOP_ROWS ? p->emp_cost[i] : p->emp_clone_cost;
+                snprintf(buf, sizeof(buf), "%s  %d", BP_EMPIRE_ROW_NAMES[i], cost);
+                glColor3f(i == p->cursor ? 1.0f : 0.6f, i == p->cursor ? 1.0f : 0.72f,
+                          i == p->cursor ? 1.0f : 0.82f);
+                draw_string(buf, col_x, row_y - (i + 1) * 22.0f, 2.0f);
             }
         }
     } else if (p->app == BP_APP_MISSION) {
@@ -3114,6 +3202,18 @@ static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
             bz[bi] = lvl->buggy_spawns[bi].z; byaw[bi] = lvl->buggy_spawns[bi].yaw;
         }
         phys_set_custom_level_buggy_spawns(bx, by, bz, byaw, lvl->buggy_spawn_count);
+    }
+    {   /* author-placed VEHICLES (level_boxes.h vehicle_spawns): the buggy tile generalised to the
+           whole roster -- rocket car, heli, recon/fly drones, the C-110 */
+        int vk[CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS];
+        float vx[CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS], vy[CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS];
+        float vz[CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS], vya[CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS];
+        for (int vi = 0; vi < lvl->vehicle_spawn_count; vi++) {
+            vk[vi] = lvl->vehicle_spawns[vi].kind;
+            vx[vi] = lvl->vehicle_spawns[vi].x; vy[vi] = lvl->vehicle_spawns[vi].y;
+            vz[vi] = lvl->vehicle_spawns[vi].z; vya[vi] = lvl->vehicle_spawns[vi].yaw;
+        }
+        phys_set_custom_level_vehicle_spawns(vk, vx, vy, vz, vya, lvl->vehicle_spawn_count);
     }
     brick_world_init_from_level(lvl); // destructible brick: pick the carvable boxes, install the weapon/blast hooks
     brick_debris_clear(&g_brick_debris);
@@ -6623,7 +6723,120 @@ static void draw_buggy_entity(const BuggyState *b) {
     glRotatef(b->roll, 0, 0, 1);
     glRotatef(b->pitch, 1, 0, 0);
     draw_buggy_model(&style_driver);
+    if (b->rocket) {
+        /* The Bedrock Racers car's read is its NOZZLES: four cold-gas lift jets underneath it and a
+           rear booster, both brighter the more air is left (br_phys.prn: "four lift nozzles under it
+           and cold-gas jets on its flanks"). Drawn additively here so a rocket car is identifiable
+           from across the map without a second model. */
+        const float air = (float)b->tank / (float)(phys_rocket_tank_max() > 0 ? phys_rocket_tank_max() : 1);
+        const float hot = 0.25f + 0.75f * (air < 0.0f ? 0.0f : (air > 1.0f ? 1.0f : air));
+        glDisable(GL_LIGHTING);
+        glDisable(GL_TEXTURE_2D);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+        for (int i = 0; i < 4; i++) {
+            float nx = (i & 1) ? 1.25f : -1.25f;
+            float nz = (i & 2) ? 1.9f : -1.9f;
+            glPushMatrix();
+            glTranslatef(nx, -0.78f, nz);
+            glBegin(GL_QUADS);
+            glColor4f(0.45f, 0.85f, 1.0f, 0.55f * hot);
+            glVertex3f(-0.34f, -1.10f, 0.0f);
+            glVertex3f(0.34f, -1.10f, 0.0f);
+            glColor4f(0.10f, 0.28f, 0.90f, 0.0f);
+            glVertex3f(0.12f, 0.0f, 0.0f);
+            glVertex3f(-0.12f, 0.0f, 0.0f);
+            glEnd();
+            glPopMatrix();
+        }
+        glPushMatrix();
+        glTranslatef(0.0f, 0.30f, -3.55f);
+        glBegin(GL_QUADS);
+        glColor4f(0.95f, 0.72f, 0.35f, 0.60f * hot);
+        glVertex3f(-0.55f, -0.30f, 0.0f);
+        glVertex3f(0.55f, -0.30f, 0.0f);
+        glColor4f(0.85f, 0.20f, 0.05f, 0.0f);
+        glVertex3f(0.22f, 0.22f, -1.5f);
+        glVertex3f(-0.22f, 0.22f, -1.5f);
+        glEnd();
+        glPopMatrix();
+        glDisable(GL_BLEND);
+        glEnable(GL_LIGHTING);
+    }
     glPopMatrix();
+}
+
+/* A drone is a body plus four rotors, drawn at its own scale so the 45 g micro reads as small from
+ * across the map rather than just looking like a distant recon. Rotor angle comes straight from the
+ * flight model's own per-tick spin, so what it is doing and what it looks like cannot disagree. */
+static void draw_drone_entity(const DroneState *d) {
+    if (!d || !d->active) return;
+    const int micro = (d->kind == DRONE_KIND_FLY);
+    const float s = micro ? 0.32f : 1.0f;
+    glPushMatrix();
+    glTranslatef(d->x, d->y, d->z);
+    glRotatef(180.0f - norm_yaw_deg(d->yaw), 0, 1, 0);
+    glRotatef(d->roll, 0, 0, 1);
+    glRotatef(d->pitch, 1, 0, 0);
+    glScalef(s, s, s);
+    glDisable(GL_LIGHTING);
+    glDisable(GL_TEXTURE_2D);
+    glColor3f(0.12f, 0.13f, 0.15f);
+    glPushMatrix(); glScalef(0.55f, 0.16f, 0.55f); draw_box_solid(1.0f, 1.0f, 1.0f); glPopMatrix();
+    for (int i = 0; i < 4; i++) {
+        float ax = (i & 1) ? 0.62f : -0.62f;
+        float az = (i & 2) ? 0.62f : -0.62f;
+        glColor3f(0.09f, 0.10f, 0.11f);
+        glPushMatrix(); glTranslatef(ax * 0.5f, 0.02f, az * 0.5f); glScalef(0.7f, 0.05f, 0.12f); draw_box_solid(1, 1, 1); glPopMatrix();
+        glPushMatrix();
+        glTranslatef(ax, 0.14f, az);
+        glRotatef(d->rotor_angle * ((i & 1) ? 1.0f : -1.0f), 0, 1, 0);
+        glColor4f(0.55f, 0.75f, 0.90f, 0.30f);
+        draw_box_solid(0.46f, 0.02f, 0.09f);
+        draw_box_solid(0.09f, 0.02f, 0.46f);
+        glPopMatrix();
+    }
+    /* the nav light: red for the recon, green for the micro, so the two are told apart at range */
+    if (micro) glColor3f(0.15f, 0.95f, 0.35f); else glColor3f(0.95f, 0.20f, 0.20f);
+    glPushMatrix(); glTranslatef(0.0f, -0.14f, 0.0f); glScalef(0.12f, 0.06f, 0.12f); draw_box_solid(1, 1, 1); glPopMatrix();
+    glPopMatrix();
+    glEnable(GL_LIGHTING);
+}
+
+/* The C-110: a slab-sided transport -- fuselage, high wing, twin nacelles with spinning props, tail.
+ * Boxes again, because that is how every vehicle in this engine is built, but the wing is thin and wide
+ * so it reads as a wing from underneath, which is where players will see it most. */
+static void draw_airplane_model(const AirplaneState *a) {
+    if (!a || !a->active) return;
+    glPushMatrix();
+    glTranslatef(a->x, a->y, a->z);
+    glRotatef(180.0f - norm_yaw_deg(a->yaw), 0, 1, 0);
+    glRotatef(a->roll, 0, 0, 1);
+    glRotatef(-a->pitch, 1, 0, 0);
+    glDisable(GL_LIGHTING);
+    glDisable(GL_TEXTURE_2D);
+    glColor3f(0.34f, 0.36f, 0.33f);                              /* fuselage */
+    glPushMatrix(); glScalef(2.2f, 2.2f, 9.0f); draw_box_solid(1, 1, 1); glPopMatrix();
+    glColor3f(0.20f, 0.24f, 0.26f);                              /* cockpit glass */
+    glPushMatrix(); glTranslatef(0.0f, 0.45f, 9.1f); glScalef(1.7f, 1.1f, 0.9f); draw_box_solid(1, 1, 1); glPopMatrix();
+    glColor3f(0.43f, 0.45f, 0.41f);                              /* high wing */
+    glPushMatrix(); glTranslatef(0.0f, 1.5f, 0.6f); glScalef(18.0f, 0.32f, 3.0f); draw_box_solid(1, 1, 1); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.0f, 1.9f, -8.1f); glScalef(0.32f, 2.6f, 2.2f); draw_box_solid(1, 1, 1); glPopMatrix();
+    glPushMatrix(); glTranslatef(0.0f, 1.25f, -8.6f); glScalef(6.2f, 0.26f, 1.6f); draw_box_solid(1, 1, 1); glPopMatrix();
+    for (int i = 0; i < 2; i++) {                                /* twin nacelles + props */
+        float ex = (i == 0) ? -4.6f : 4.6f;
+        glColor3f(0.26f, 0.27f, 0.25f);
+        glPushMatrix(); glTranslatef(ex, 0.95f, 1.6f); glScalef(1.1f, 1.1f, 4.6f); draw_box_solid(1, 1, 1); glPopMatrix();
+        glPushMatrix();
+        glTranslatef(ex, 0.95f, 3.9f);
+        glRotatef(a->prop_angle * ((i == 0) ? 1.0f : -1.0f), 0, 0, 1);
+        glColor4f(0.62f, 0.66f, 0.70f, 0.45f);
+        draw_box_solid(0.28f, 3.4f, 0.06f);
+        draw_box_solid(3.4f, 0.28f, 0.06f);
+        glPopMatrix();
+    }
+    glPopMatrix();
+    glEnable(GL_LIGHTING);
 }
 
 static void draw_thirdperson_knife_model(void) {
@@ -11410,6 +11623,9 @@ static void draw_garage_overlay(PlayerState *p) {
     glMatrixMode(GL_MODELVIEW); glPopMatrix();
 }
 
+#include "vehicle_burn_rules_host.h"   /* PARENA car fire ladder, installed at startup below */
+#include "empire_rules_host.h"         /* PARENA influence economy + the EMPIRE sphere geometry */
+
 /* ---- AR underbarrel grenade FX (fireball + blast) ----------------------------------------------
  * Presentation only: the detonation is engine-side (local_game.h's explode_splash -> the
  * g_fx_explosion_hook installed below), so nothing here can change what a weapon does.
@@ -11520,6 +11736,56 @@ static void fx_spawn_explosion(float x, float y, float z, float radius, int weap
     b->weapon = weapon;
 }
 
+/* drone_local_pilot -- the drone the local player is currently flying, or NULL. */
+static DroneState *drone_local_pilot(void) {
+    if (!local_state.players[0].in_vehicle || local_state.players[0].vehicle_type != VEH_DRONE) return NULL;
+    for (int i = 0; i < MAX_DRONES; i++) {
+        DroneState *d = &local_state.drones[i];
+        if (d->active && d->occupant_player_id == local_state.players[0].id) return d;
+    }
+    return NULL;
+}
+
+/* drone_gimbal_clamp -- while piloting a drone the mouse drives its HEAD, not a free camera: the offset
+ * from the airframe is clamped to that airframe's own mechanical limits (drone_flight.h /
+ * PARENA drone-gimbal-*-milli). Recon swings 90 degrees, the micro barely moves. */
+static void drone_gimbal_clamp(void) {
+    DroneState *d = drone_local_pilot();
+    if (!d) return;
+    drone_gimbal_track(d, cam_yaw, cam_pitch);
+    cam_yaw = drone_gimbal_view_yaw(d);
+    cam_pitch = d->gimbal_pitch;
+}
+
+/* drone_shard_sweep -- the founder's "wire the Mini Fly Drone to explode instantly upon any impact with
+ * a rigid shard". The live debris in this build is g_brick_debris (the flakes a cracking wall throws,
+ * packages/world/brick_debris.h); its mass is estimated from the flake's own volume and its velocity is
+ * per second while the flight model is per tick, so it is converted here. Whether a contact is lethal is
+ * PARENA's call (drone-shard-kills): ANY shard kills the 45 g micro, while the recon's frame needs a
+ * real mass x speed hit -- cosmetic brick flakes cannot break it, which is the honest answer rather
+ * than pretending they are structural shards. */
+#define DRONE_DEBRIS_DENSITY_G 2000.0f   /* g per cubic world unit, a brick-ish flake */
+static void drone_shard_sweep(void) {
+    for (int di = 0; di < MAX_DRONES; di++) {
+        DroneState *d = &local_state.drones[di];
+        if (!d->active) continue;
+        for (int i = 0; i < BRICK_DEBRIS_MAX; i++) {
+            const BrickDebris *b = &g_brick_debris.d[i];
+            if (!b->active) continue;
+            int grams = (int)(b->sx * b->sy * b->sz * DRONE_DEBRIS_DENSITY_G);
+            if (grams < 1) grams = 1;
+            if (!drone_shard_contact(d, b->x, b->y, b->z,
+                                     b->vx * 0.016f, b->vy * 0.016f, b->vz * 0.016f, grams)) continue;
+            int pid = d->occupant_player_id;
+            if (pid >= 0 && pid < MAX_CLIENTS) drone_eject_pilot(&local_state.players[pid], d);
+            d->occupant_player_id = -1;
+            /* the pop: a real fireball, tiny for the micro (a 45 g airframe cannot make a crater) */
+            fx_spawn_explosion(d->x, d->y, d->z, d->kind == DRONE_KIND_FLY ? 0.6f : 1.6f, WPN_MISSILE);
+            break;
+        }
+    }
+}
+
 /* fireball_draw -- one camera-facing billboard, world-space verts with the camera's own VP, same
  * contract draw_flashlight_beam already uses. age 0..1, heat scales the whole thing. */
 static void fireball_draw(float x, float y, float z, float size, float age, float heat) {
@@ -11567,6 +11833,39 @@ static void fireball_draw(float x, float y, float z, float size, float age, floa
     glDepthMask(GL_TRUE);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDisable(GL_BLEND);
+}
+
+/* ---- burning vehicles (Bedrock Racers' fire look, on a car) -------------------------------------
+ * Founders's ask: "use the shaders from bedrock racers on fire for when a car is about to blow up".
+ * The curve is vehicle_burn.h's (PARENA numbers, BR's fx-fire-rise/fall), the shader is the same
+ * additive fireball the grenade/missile blast already uses, so a burning buggy reads as fire in
+ * this engine rather than a new effect bolted on. Ticked per drawn buggy: smoke (hull <= 150) then
+ * flame (hull <= 75), the flame swelling fast and dying slow, and one blast when the 5 s clock runs
+ * out. The hull itself stays the server's (and the local sim's) to own: this is the warning and the
+ * consequence the player sees. */
+static VehicleBurn g_vehicle_burn[MAX_BUGGIES];
+static float g_vehicle_burn_hp[MAX_BUGGIES];
+
+static void vehicle_burn_client(const BuggyState *b) {
+    if (!b || !b->active) return;
+    int slot = b->id % MAX_BUGGIES;
+    if (slot < 0) slot = 0;
+    VehicleBurn *v = &g_vehicle_burn[slot];
+    if (!v->active || v->seed != (unsigned int)b->id + 1u) {
+        vehicle_burn_reset(v, 0, (unsigned int)b->id + 1u);
+        g_vehicle_burn_hp[slot] = b->health;
+    }
+    /* the sim's hull is the truth: follow it when it changes (a crash, a repair), and let the fire
+       itself burn the copy down while the car is alight */
+    if (b->health > g_vehicle_burn_hp[slot]) g_vehicle_burn_hp[slot] = b->health;
+    int blast = vehicle_burn_tick(v, &g_vehicle_burn_hp[slot]);
+    if (blast) fx_spawn_explosion(b->x, b->y + 0.6f, b->z, 3.2f, WPN_MISSILE);
+    if (v->fire_fx > 0.02f) {
+        float size = 0.55f + 1.35f * v->fire_fx;
+        float age = 0.42f + 0.25f * v->fire_fx;
+        fireball_draw(b->x, b->y + 0.9f, b->z, size, age, 1.0f);
+        if (v->fire_fx > 0.55f) fireball_draw(b->x + 0.6f, b->y + 1.7f, b->z - 0.5f, size * 0.62f, 0.3f, 0.82f);
+    }
 }
 
 /* draw_explosions -- ages every live blast: the fireball grows and cools over FX_BLAST_MS, a second
@@ -12624,6 +12923,10 @@ void draw_scene(PlayerState *render_p) {
         env_in.fog_wash = g_sky_weather.fog_wash;
         env_in.visibility = g_sky_weather.visibility;
         env_in.flash = g_sky_weather.flash;   /* a lightning strike lights the world, not just the overlay */
+        /* what the quadcopters feel (drone_flight.h): the same storm the sky is drawing, 0..1 -> the
+           0..1000 permille PARENA's drift rule reads. Measured once per frame here rather than carried
+           on the wire, exactly like the environment matrix itself. */
+        drone_set_storm((int)(g_sky_weather.storm * 1000.0f));
         env_in.ambient_level = g_opt_ambient_level;
         env_in.interior = (g_world_lighting_preset == RETRO_LIGHTING_INTERIOR_FLAT);
         env_in.fog_r = g_sky_weather.fog[0];
@@ -12684,11 +12987,22 @@ void draw_scene(PlayerState *render_p) {
         BuggyState *b = &local_state.buggies[bi];
         if (!b->active || b->scene_id != render_p->scene_id) continue;
         draw_buggy_entity(b);
+        vehicle_burn_client(b);
     }
     for (int hi = 0; hi < MAX_HELICOPTERS; hi++) {
         HelicopterState *h = &local_state.helicopters[hi];
         if (!h->active || h->scene_id != render_p->scene_id) continue;
         draw_helicopter_model(h);
+    }
+    for (int di = 0; di < MAX_DRONES; di++) {
+        const DroneState *d = &local_state.drones[di];
+        if (!d->active || d->scene_id != render_p->scene_id) continue;
+        draw_drone_entity(d);
+    }
+    for (int ai = 0; ai < MAX_AIRPLANES; ai++) {
+        const AirplaneState *a = &local_state.airplanes[ai];
+        if (!a->active || a->scene_id != render_p->scene_id) continue;
+        draw_airplane_model(a);
     }
     if (local_state.game_mode == MODE_STORY && render_p->scene_id == SCENE_VOXWORLD) {
         draw_story_boss_world(&local_state.story_boss, now_ms);
@@ -14427,6 +14741,11 @@ static void buggy_advance_remote_positions(unsigned int now_ms) {
 int main(int argc, char* argv[]) {
     buggy_rules_install(); /* PARENA buggy handling (#468) */
     heli_rules_install(); /* PARENA helicopter flight model (#542) */
+    rocket_car_rules_install(); /* PARENA rocket car (Bedrock Racers port) */
+    drone_rules_install(); /* PARENA quadcopters (RECON / micro FLY) */
+    airplane_rules_install(); /* PARENA fixed-wing transport (C-110) */
+    vehicle_burn_rules_install(); /* PARENA car fire ladder (smoke -> fire -> blast), drawn with BR's fire curve */
+    slide_rules_install(); /* PARENA slope curve for the crouch-slide (a hill speeds you up) */
     int cli_start_zombies = 0;
     int cli_start_lab = 0;
     int cli_start_editmap = 0;
@@ -15033,6 +15352,8 @@ int main(int argc, char* argv[]) {
                                 snprintf(echo, sizeof(echo), "%.30s: %s", gname, say);
                                 phone_term_line(&g_story_phone, echo);
                                 chat_pane_push(echo);
+                            } else if (fx.kind == BP_FX_EMPIRE_SPAWN || fx.kind == BP_FX_EMPIRE_CLONE) {
+                                lobby_empire_place(&g_story_phone, fx.kind == BP_FX_EMPIRE_CLONE, fx.arg);
                             } else if (fx.kind == BP_FX_KIT_SELECT || fx.kind == BP_FX_KIT_BIND ||
                                        fx.kind == BP_FX_KIT_CLEAR || fx.kind == BP_FX_KIT_SAVE) {
                                 /* The kit itself lives in the phone (g_story_phone.kit) and the gameplay
@@ -15262,6 +15583,7 @@ int main(int argc, char* argv[]) {
                     if(cam_yaw > 360) cam_yaw -= 360; if(cam_yaw < 0) cam_yaw += 360;
                     cam_pitch -= e.motion.yrel * sens;
                     if(cam_pitch > 89) cam_pitch = 89; if(cam_pitch < -89) cam_pitch = -89;
+                    drone_gimbal_clamp();
                 }
             }
         }
@@ -15452,6 +15774,26 @@ int main(int argc, char* argv[]) {
                 local_state.players[0].in_use = input_use;
                 local_state.players[0].in_pheromone = input_pheromone ||
                                                       kit_pulse_take(KIT_ITEM_PHEROMONE, SDL_GetTicks());
+                /* The three VEHICLE gadgets (packages/common/kit.h -> vehicle_call.h). One pulse =
+                   one call: the vehicle spawns in front of the player and they are seated in it. Local
+                   modes only -- a networked client cannot spawn vehicles, the server owns that, and
+                   there is no kit-call packet yet (named gap, not a silent no-op pretending to work). */
+                {
+                    unsigned int vnow = SDL_GetTicks();
+                    if (kit_pulse_take(KIT_ITEM_BUGGY, vnow))
+                        vehicle_call_spawn(&local_state.players[0], KIT_ITEM_BUGGY);
+                    if (kit_pulse_take(KIT_ITEM_ROCKET_CAR, vnow))
+                        vehicle_call_spawn(&local_state.players[0], KIT_ITEM_ROCKET_CAR);
+                    if (kit_pulse_take(KIT_ITEM_HELI, vnow))
+                        vehicle_call_spawn(&local_state.players[0], KIT_ITEM_HELI);
+                    if (kit_pulse_take(KIT_ITEM_DRONE, vnow))
+                        vehicle_call_spawn(&local_state.players[0], KIT_ITEM_DRONE);
+                    if (kit_pulse_take(KIT_ITEM_MINI_DRONE, vnow))
+                        vehicle_call_spawn(&local_state.players[0], KIT_ITEM_MINI_DRONE);
+                    if (kit_pulse_take(KIT_ITEM_PLANE, vnow))
+                        vehicle_call_spawn(&local_state.players[0], KIT_ITEM_PLANE);
+                }
+                drone_shard_sweep();   /* debris that is in the air right now vs every live drone */
                 local_state.players[0].in_paint_next = g_input_paint_next;
                 local_state.players[0].in_paint_prev = g_input_paint_prev;
                 if (input_use && local_state.players[0].vehicle_cooldown == 0 && local_state.transition_timer == 0) {
@@ -15490,6 +15832,22 @@ int main(int argc, char* argv[]) {
                             }
                             break;
                         }
+                    } else if (p0->in_vehicle && p0->vehicle_type == VEH_AIRPLANE) {
+                        for (int ai = 0; ai < MAX_AIRPLANES; ai++) {
+                            AirplaneState *a = &local_state.airplanes[ai];
+                            if (!a->active || a->occupant_player_id != 0) continue;
+                            airplane_try_exit(p0, a);
+                            p0->vehicle_cooldown = 30;
+                            break;
+                        }
+                    } else if (p0->in_vehicle && p0->vehicle_type == VEH_DRONE) {
+                        for (int di = 0; di < MAX_DRONES; di++) {
+                            DroneState *d = &local_state.drones[di];
+                            if (!d->active || d->occupant_player_id != 0) continue;
+                            drone_try_exit(p0, d);
+                            p0->vehicle_cooldown = 30;
+                            break;
+                        }
                     } else if (near_h && near_h->occupant_player_id < 0) {
                         near_h->occupant_player_id = 0;
                         p0->in_vehicle = 1;
@@ -15505,8 +15863,18 @@ int main(int argc, char* argv[]) {
                         }
                         p0->vehicle_cooldown = 30;
                     } else {
+                        /* a drone you parked is a drone you can pick back up -- that is what makes it
+                           usable as a camera you leave somewhere and come back to */
+                        DroneState *near_d = drone_find_nearby(&local_state, p0->scene_id, p0->x, p0->y, p0->z, 6.0f);
                         BuggyState *near_b = buggy_find_nearby(p0->scene_id, p0->x, p0->y, p0->z, in_garage ? 8.0f : 14.0f);
-                        if (near_b && near_b->occupant_player_id < 0) {
+                        AirplaneState *near_a = airplane_find_nearby(&local_state, p0->scene_id, p0->x, p0->y, p0->z, 12.0f);
+                        if (near_a && near_a->occupant_player_id < 0) {
+                            airplane_try_enter(p0, near_a);
+                            p0->vehicle_cooldown = 30;
+                        } else if (near_d && near_d->occupant_player_id < 0) {
+                            drone_try_enter(p0, near_d);
+                            p0->vehicle_cooldown = 30;
+                        } else if (near_b && near_b->occupant_player_id < 0) {
                             buggy_try_enter(p0, near_b);
                             p0->vehicle_cooldown = 30;
                         }

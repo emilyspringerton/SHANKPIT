@@ -8,6 +8,7 @@
 #include "protocol.h"
 #include "../world/terrain.h"
 #include "obb.h"
+#include "../simulation/slide_rules.h"
 
 #ifndef PHYS_COMBAT_LOG
 #define PHYS_COMBAT_LOG 0
@@ -39,6 +40,11 @@
 #define STOP_SPEED 0.15f
 #define SLIDE_FRICTION 0.01f 
 #define CROUCH_SPEED 0.35f  
+/* SLIDE_SLOPE_ACCEL -- how hard a hillside pushes a crouch-slide along, per tick at permille 1000 of
+ * the PARENA curve (PARENA/stdlib/shankpit/slide_rules.prn). Deliberately small: it compounds over
+ * the whole hill instead of firing once, and the rules' own speed cap (1.20 units/tick, above
+ * MAX_SPEED's 0.95) is how fast a long steep slope is allowed to carry you. */
+#define SLIDE_SLOPE_ACCEL 0.008f
 
 // --- BUGGY TUNING ---
 // Tuning target (60 Hz fixed step): ~3.7-4.2s 0->BUGGY_TOP_SPEED on flat ground at full throttle.
@@ -492,6 +498,33 @@ static inline int phys_custom_level_box_pos(int box_index, float *x, float *y, f
     *y = g_custom_level_box_authored_y[slot];
     *z = g_custom_level_geo[slot].z;
     return 1;
+}
+
+// ---- Author-placed vehicle spawns (level_boxes.h vehicle_spawns) ---------------------------------
+// One list for every vehicle a map authors by hand, added when the roster grew past the buggy: the
+// buggy tiles above still work, but a level can now place a rocket car, a helicopter, both drones and
+// the C-110 too. kind uses level_boxes.h's LEVEL_VEHICLE_* numbering (0 buggy, 1 rocket, 2 heli,
+// 3 recon, 4 fly, 5 plane) and is kept as a plain int here so this header stays independent of the
+// level JSON loader, exactly as the buggy arrays above do.
+#define CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS 24
+static int g_custom_level_vehicle_kind[CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS];
+static float g_custom_level_vehicle_x[CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS];
+static float g_custom_level_vehicle_y[CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS];
+static float g_custom_level_vehicle_z[CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS];
+static float g_custom_level_vehicle_yaw[CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS];
+static int g_custom_level_vehicle_count = 0;
+static inline void phys_set_custom_level_vehicle_spawns(const int *kind, const float *x, const float *y,
+                                                       const float *z, const float *yaw, int count) {
+    if (count < 0) count = 0;
+    if (count > CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS) count = CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS;
+    for (int i = 0; i < count; i++) {
+        g_custom_level_vehicle_kind[i] = kind[i];
+        g_custom_level_vehicle_x[i] = x[i];
+        g_custom_level_vehicle_y[i] = y[i];
+        g_custom_level_vehicle_z[i] = z[i];
+        g_custom_level_vehicle_yaw[i] = yaw[i];
+    }
+    g_custom_level_vehicle_count = count;
 }
 
 // ---- Author-placed buggy spawns (#464: level_boxes.h buggy_spawns) ------------------------------
@@ -3432,6 +3465,66 @@ static inline int phys_try_melee_strike(PlayerState *attacker, PlayerState *targ
     return hit_any;
 }
 
+/* ---- crouch-slide on terrain (founder 2026-10-31: "sliding down a hill accelerates you") ------- */
+/* The surface under the player as permille of normal.y (1000 = flat, 0 = no heightfield), plus the
+ * horizontal DOWNHILL direction (unit length, zero when the surface is flat or absent). The downhill
+ * direction of a heightfield is the negative horizontal part of its normal -- gravity runs along the
+ * gradient, which is exactly what a skateboard feels and what a slide previously could not. */
+static inline int phys_slide_surface_permille(const PlayerState *p,
+                                              float *out_downhill_x, float *out_downhill_z) {
+    float nx = 0.0f, ny = 1.0f, nz = 0.0f, dl;
+    if (out_downhill_x) *out_downhill_x = 0.0f;
+    if (out_downhill_z) *out_downhill_z = 0.0f;
+    if (!p || !g_scene_terrain.active || !g_scene_terrain.heights) return 0;
+    if (!terrain_contains_world(&g_scene_terrain, p->x, p->z)) return 0;
+    terrain_sample_normal(&g_scene_terrain, p->x, p->z, &nx, &ny, &nz);
+    dl = sqrtf(nx * nx + nz * nz);
+    if (dl > 0.0001f) {
+        /* terrain_sample_normal builds its normal from (h_left - h_right, 2*step, ...), i.e. it points
+         * AGAINST the height gradient -- so on a ramp rising toward +x the normal leans toward -x, and
+         * downhill is the normal's own horizontal part, NOT its negative. (The first draft negated it
+         * and a slide accelerated uphill; the test caught it.) */
+        if (out_downhill_x) *out_downhill_x = nx / dl;
+        if (out_downhill_z) *out_downhill_z = nz / dl;
+    }
+    return (int)(ny * 1000.0f);
+}
+
+/* phys_slide_slope_tick -- one tick of a slide on a hill: gravity down the gradient, capped.
+ *
+ * A no-op on flat ground (normal.y at or above the rules' own 990 threshold), off any heightfield,
+ * standing up, in a vehicle, or in the air -- so every existing slide, walk and fall stays
+ * bit-identical, and only a crouch-slide on a real slope gains anything. Returns 1 when it moved the
+ * player's velocity, which is what the test and a debug readout look at.
+ *
+ * Deliberately terrain-only: a rotated box ramp has a face normal per box, not a field under the
+ * player, and sampling one box would make the slide depend on which box the loop reached first. */
+static inline int phys_slide_slope_tick(PlayerState *p) {
+    float dx = 0.0f, dz = 0.0f, speed, cap;
+    int ny_pm, speed_pm, align_pm, accel_pm;
+    float accel;
+    if (!p || p->in_vehicle || !p->crouching || !p->on_ground) return 0;
+    ny_pm = phys_slide_surface_permille(p, &dx, &dz);
+    if (ny_pm <= 0 || ny_pm >= 990) return 0;
+    cap = (float)g_slide_rules.speed_cap_milli() / 1000.0f;
+    speed = sqrtf(p->vx * p->vx + p->vz * p->vz);
+    speed_pm = (int)(speed * 1000.0f);
+    if (speed_pm >= g_slide_rules.speed_cap_milli()) return 0;
+    align_pm = 1000;
+    if (speed > 0.0001f) align_pm = (int)(((p->vx * dx + p->vz * dz) / speed) * 1000.0f);
+    accel_pm = g_slide_rules.accel_permille(ny_pm, align_pm, speed_pm);
+    if (accel_pm <= 0) return 0;
+    accel = SLIDE_SLOPE_ACCEL * (float)accel_pm / 1000.0f;
+    p->vx += dx * accel;
+    p->vz += dz * accel;
+    speed = sqrtf(p->vx * p->vx + p->vz * p->vz);
+    if (speed > cap && speed > 0.0001f) {          /* clamp the vector, not one component */
+        p->vx *= cap / speed;
+        p->vz *= cap / speed;
+    }
+    return 1;
+}
+
 void apply_friction(PlayerState *p) {
     if (p->dash_timer > 0) return;
     float speed = sqrtf(p->vx*p->vx + p->vz*p->vz);
@@ -3445,8 +3538,25 @@ void apply_friction(PlayerState *p) {
         // this used to always read directly.
         float ground_fric = p->ground_friction;
         if (p->crouching) {
-            if (speed > 0.75f) drop = speed * SLIDE_FRICTION;
-            else drop = speed * (ground_fric * 3.0f);
+            float sdx = 0.0f, sdz = 0.0f;
+            int slope_pm = phys_slide_surface_permille(p, &sdx, &sdz);
+            int on_slope = (slope_pm > 0 && slope_pm < 990);
+            int heading_downhill = on_slope && (p->vx * sdx + p->vz * sdz) > 0.0f;
+            /* A slope keeps less of the slide's drag, which is the other half of letting a hill win:
+             * the same 1% scrub that makes a flat slide glide would otherwise cancel the slope's own
+             * acceleration, and a downhill slide would still grind to a stop. Flat ground keeps 1000
+             * permille -- exactly the old behaviour. */
+            if (speed > 0.75f || heading_downhill) {
+                float slide_drag = SLIDE_FRICTION;
+                if (heading_downhill)
+                    slide_drag *= (float)g_slide_rules.scrub_permille(slope_pm) / 1000.0f;
+                drop = speed * slide_drag;
+            } else {
+                /* The crouch-walk stop: heavy drag, so letting go of a slide actually stops you.
+                 * A slide that starts from rest on a hill has to use the slide branch above instead,
+                 * or this 90%/tick scrub pins it at a crawl (the second bug the test caught). */
+                drop = speed * (ground_fric * 3.0f);
+            }
         } else {
             float control = (speed < STOP_SPEED) ? STOP_SPEED : speed;
             drop = control * ground_fric;
@@ -3610,8 +3720,229 @@ static inline void buggy_move_xz_blocked(BuggyState *b, float dx, float dz) {
     }
 }
 
+/* ---- The ROCKET CAR (Bedrock Racers port) --------------------------------------------------------
+   Founder 2026-10-31: "the rocket car implementation is in bedrock racers". It is: that car is
+   PARENA/stdlib/bedrockracers/web/br_phys.prn, a 6-DOF thruster platform whose fans let it drive
+   walls and ceilings. This chassis has no separate strafe/attitude axes (the driver's camera is the
+   steering, same as the buggy) and no wall driving, so what is ported is the part that makes that car
+   feel like that car: ONE AIR TANK that pays for everything (lift 26/s, boost 22/s, refills 34/s, and
+   48/s on a surface), the rear-nozzle boost that scales with what is left in it, and the fan
+   suspension that holds the belly off the surface instead of riding wheels.
+   Every number is a PARENA mod again (PARENA/stdlib/shankpit/rocket_car_rules.prn, generated into
+   packages/simulation/rocket_car_rules.c, installed by rocket_car_rules_host.h) -- same convention as
+   the buggy handling above: with nothing installed the built-in defaults here are used, so every test
+   that just includes this header is unchanged. */
+typedef struct {
+    int (*top_speed_milli)(void);
+    int (*reverse_top_speed_milli)(void);
+    int (*drive_permille)(void);
+    int (*tank_max)(void);
+    int (*lift_spend)(void);
+    int (*boost_spend)(void);
+    int (*refill_spend)(void);
+    int (*surface_refill_spend)(void);
+    int (*hover_height_milli)(void);
+    int (*boost_permille)(int tank);
+    int (*hover_accel_milli)(int err_milli);
+    int (*tank_step)(int tank, int spend);
+    int (*tank_fill)(int tank, int gain);
+} PhysRocketRules;
+static const PhysRocketRules *g_phys_rocket_rules = NULL;
+static inline void phys_set_rocket_rules(const PhysRocketRules *r) { g_phys_rocket_rules = r; }
+
+#define ROCKET_TOP_SPEED 9.2f           /* units/tick -- vs the buggy's 6.24 */
+#define ROCKET_REVERSE_TOP_SPEED 2.2f
+#define ROCKET_DRIVE 1.7f               /* drive-force multiplier over the buggy's base */
+#define ROCKET_TANK_MAX 10000           /* centi-units of air */
+#define ROCKET_HOVER_HEIGHT 2.6f        /* belly height above the surface the fans hold */
+
+static inline int phys_rocket_tank_max(void) {
+    if (g_phys_rocket_rules && g_phys_rocket_rules->tank_max) {
+        int v = g_phys_rocket_rules->tank_max();
+        if (v > 0) return v;
+    }
+    return ROCKET_TANK_MAX;
+}
+static inline float phys_rocket_top_speed(void) {
+    if (g_phys_rocket_rules && g_phys_rocket_rules->top_speed_milli) {
+        float v = (float)g_phys_rocket_rules->top_speed_milli() * 0.001f;
+        if (v > 0.1f) return v;
+    }
+    return ROCKET_TOP_SPEED;
+}
+static inline float phys_rocket_reverse_top_speed(void) {
+    if (g_phys_rocket_rules && g_phys_rocket_rules->reverse_top_speed_milli) {
+        float v = (float)g_phys_rocket_rules->reverse_top_speed_milli() * 0.001f;
+        if (v > 0.05f) return v;
+    }
+    return ROCKET_REVERSE_TOP_SPEED;
+}
+static inline float phys_rocket_drive_scale(void) {
+    if (g_phys_rocket_rules && g_phys_rocket_rules->drive_permille) {
+        float v = (float)g_phys_rocket_rules->drive_permille() * 0.001f;
+        if (v > 0.1f) return v;
+    }
+    return ROCKET_DRIVE;
+}
+static inline float phys_rocket_hover_height(void) {
+    if (g_phys_rocket_rules && g_phys_rocket_rules->hover_height_milli) {
+        float v = (float)g_phys_rocket_rules->hover_height_milli() * 0.001f;
+        if (v > 0.1f) return v;
+    }
+    return ROCKET_HOVER_HEIGHT;
+}
+static inline int phys_rocket_boost_permille(int tank) {
+    if (g_phys_rocket_rules && g_phys_rocket_rules->boost_permille) return g_phys_rocket_rules->boost_permille(tank);
+    if (tank < 0) tank = 0;
+    if (tank > ROCKET_TANK_MAX) tank = ROCKET_TANK_MAX;
+    return (tank * 1300) / ROCKET_TANK_MAX;
+}
+static inline int phys_rocket_hover_accel_milli(int err_milli) {
+    if (g_phys_rocket_rules && g_phys_rocket_rules->hover_accel_milli) return g_phys_rocket_rules->hover_accel_milli(err_milli);
+    int a = (err_milli * 3) / 1;   /* 3000 permille stiffness of the height error */
+    if (a > 1200) a = 1200;
+    if (a < -900) a = -900;
+    return a;
+}
+static inline int phys_rocket_tank_step(int tank, int spend) {
+    if (g_phys_rocket_rules && g_phys_rocket_rules->tank_step) return g_phys_rocket_rules->tank_step(tank, spend);
+    if (spend < 0) spend = 0;
+    tank -= spend;
+    return tank < 0 ? 0 : tank;
+}
+static inline int phys_rocket_tank_fill(int tank, int gain) {
+    if (g_phys_rocket_rules && g_phys_rocket_rules->tank_fill) return g_phys_rocket_rules->tank_fill(tank, gain);
+    if (gain < 0) gain = 0;
+    tank += gain;
+    return tank > ROCKET_TANK_MAX ? ROCKET_TANK_MAX : tank;
+}
+static inline int phys_rocket_lift_drain(int dt_scale_milli) {
+    int base = 433;
+    if (g_phys_rocket_rules && g_phys_rocket_rules->lift_spend) base = g_phys_rocket_rules->lift_spend();
+    return base * dt_scale_milli / 1000;
+}
+static inline int phys_rocket_boost_drain(int dt_scale_milli) {
+    int base = 367;
+    if (g_phys_rocket_rules && g_phys_rocket_rules->boost_spend) base = g_phys_rocket_rules->boost_spend();
+    return base * dt_scale_milli / 1000;
+}
+static inline int phys_rocket_refill_gain(int surface, int dt_scale_milli) {
+    int base = surface ? 800 : 567;
+    if (g_phys_rocket_rules) {
+        if (surface && g_phys_rocket_rules->surface_refill_spend) base = g_phys_rocket_rules->surface_refill_spend();
+        else if (!surface && g_phys_rocket_rules->refill_spend) base = g_phys_rocket_rules->refill_spend();
+    }
+    return base * dt_scale_milli / 1000;
+}
+
+/* simulate_rocket_car_state -- one tick of a buggy with b->rocket set. Same integration shell as
+   simulate_buggy_state (steering through the camera-derived steer intent, the same wall resolution),
+   plus the tank and the fan suspension. An empty tank leaves the car sitting on its belly at the
+   ordinary buggy clearance instead of hovering -- the br_phys "never helpless, but not a rocket"
+   rule; it refills and floats again a couple of seconds later. */
+static inline void simulate_rocket_car_state(BuggyState *b, float throttle, float steer, float dt, int apply_input) {
+    if (throttle > 1.0f) throttle = 1.0f;
+    if (throttle < -1.0f) throttle = -1.0f;
+    if (steer > 1.0f) steer = 1.0f;
+    if (steer < -1.0f) steer = -1.0f;
+    float dt_scale = dt / 0.016f;
+    if (dt_scale < 0.0f) dt_scale = 0.0f;
+    int dts_milli = (int)(dt_scale * 1000.0f + 0.5f);
+    if (!apply_input) { throttle = 0.0f; steer = 0.0f; }
+
+    float r = -b->yaw * (3.14159265358979323846f / 180.0f);
+    float fwd_x = sinf(r), fwd_z = -cosf(r);
+    float right_x = cosf(r), right_z = sinf(r);
+    float forward_speed = b->vx * fwd_x + b->vz * fwd_z;
+    float lateral_speed = b->vx * right_x + b->vz * right_z;
+    float top = phys_rocket_top_speed();
+    float speed_norm = fabsf(forward_speed) / top;
+    if (speed_norm > 1.0f) speed_norm = 1.0f;
+
+    /* the tank pays for the drive: nozzles burn while the throttle is open, air refills when it is not */
+    float thrust_scale = 1.0f;
+    if (throttle > 0.01f && b->tank > 0) {
+        b->tank = phys_rocket_tank_step(b->tank, phys_rocket_boost_drain(dts_milli));
+        thrust_scale += (float)phys_rocket_boost_permille(b->tank) * 0.001f;
+    } else {
+        b->tank = phys_rocket_tank_fill(b->tank, phys_rocket_refill_gain(b->grounded, dts_milli));
+    }
+
+    if (throttle > 0.01f) {
+        float drive = BUGGY_BASE_DRIVE_FORCE * phys_rocket_drive_scale() * buggy_drive_force(speed_norm)
+                      * throttle * dt_scale * thrust_scale;
+        forward_speed += drive;
+    } else if (throttle < -0.01f) {
+        if (forward_speed > 0.03f) {
+            float brake_strength = 1.0f + (forward_speed / top) * 0.55f;
+            forward_speed -= BUGGY_BRAKE_FRICTION * (-throttle) * brake_strength * dt_scale;
+            if (forward_speed < 0.0f) forward_speed = 0.0f;
+        } else {
+            float rev_norm = fabsf(forward_speed) / phys_rocket_reverse_top_speed();
+            if (rev_norm > 1.0f) rev_norm = 1.0f;
+            forward_speed += throttle * BUGGY_BASE_DRIVE_FORCE * 0.72f * buggy_drive_force(rev_norm) * dt_scale;
+        }
+    } else if (forward_speed > 0.0f) {
+        forward_speed -= BUGGY_COAST_FRICTION * dt_scale * 0.55f;   /* it coasts: the fans don't drag */
+        if (forward_speed < 0.0f) forward_speed = 0.0f;
+    }
+
+    if (forward_speed > top) forward_speed = top;
+    if (forward_speed < -phys_rocket_reverse_top_speed()) forward_speed = -phys_rocket_reverse_top_speed();
+
+    float abs_norm = fabsf(forward_speed) / top;
+    if (abs_norm > 1.0f) abs_norm = 1.0f;
+    float steer_sign = (forward_speed < -0.03f) ? -1.0f : 1.0f;
+    float steer_response = apply_input ? 0.22f : 0.10f;
+    b->steer += (steer - b->steer) * steer_response * dt_scale;
+    if (b->steer > 1.0f) b->steer = 1.0f;
+    if (b->steer < -1.0f) b->steer = -1.0f;
+    b->yaw = norm_yaw_deg(b->yaw + b->steer * buggy_turn_rate(abs_norm) * buggy_steer_authority(abs_norm)
+                                          * steer_sign * dt_scale);
+    float grip = buggy_lateral_grip(abs_norm) * dt_scale;
+    if (grip > 1.0f) grip = 1.0f;
+    lateral_speed *= (1.0f - grip);
+
+    float r2 = -b->yaw * (3.14159265358979323846f / 180.0f);
+    b->vx = sinf(r2) * forward_speed + cosf(r2) * lateral_speed;
+    b->vz = -cosf(r2) * forward_speed + sinf(r2) * lateral_speed;
+    buggy_move_xz_blocked(b, b->vx, b->vz);
+
+    float heights[4];
+    buggy_sample_wheel_heights(b, heights);
+    float support_avg = (heights[0] + heights[1] + heights[2] + heights[3]) * 0.25f;
+    float rest = support_avg + phys_rocket_hover_height();
+
+    /* the fans: lift out of the tank, a spring on the height error, damped so it settles */
+    if (b->tank > 0) b->tank = phys_rocket_tank_step(b->tank, phys_rocket_lift_drain(dts_milli));
+    float err_milli = (rest - b->y) * 1000.0f;
+    float fan = (b->tank > 0) ? 1.0f : 0.0f;
+    float accel = (float)phys_rocket_hover_accel_milli((int)err_milli) * 0.001f * fan;
+    b->vy += accel - BUGGY_GRAVITY * 0.55f * dt_scale;
+    b->vy *= 0.86f;
+    b->y += b->vy;
+
+    float floor_y = support_avg + BUGGY_CHASSIS_CLEARANCE;
+    if (b->y < floor_y) { b->y = floor_y; b->vy = 0.0f; }
+    b->grounded = (b->y <= rest + 0.15f) ? 1 : 0;
+
+    float front_avg = 0.5f * (heights[0] + heights[1]);
+    float rear_avg = 0.5f * (heights[2] + heights[3]);
+    float left_avg = 0.5f * (heights[0] + heights[2]);
+    float right_avg = 0.5f * (heights[1] + heights[3]);
+    float target_pitch = atanf((front_avg - rear_avg) / BUGGY_WHEELBASE) * (180.0f / 3.14159265358979323846f);
+    float target_roll = atanf((left_avg - right_avg) / BUGGY_TRACK_WIDTH) * (180.0f / 3.14159265358979323846f);
+    if (target_pitch > 28.0f) target_pitch = 28.0f;
+    if (target_pitch < -28.0f) target_pitch = -28.0f;
+    if (target_roll > 22.0f) target_roll = 22.0f;
+    if (target_roll < -22.0f) target_roll = -22.0f;
+    b->pitch += (target_pitch - b->pitch) * 0.35f;
+    b->roll += (target_roll - b->roll) * 0.35f;
+}
+
 static inline void simulate_buggy_state(BuggyState *b, float throttle, float steer, float dt, int apply_input) {
     if (!b || !b->active) return;
+    if (b->rocket) { simulate_rocket_car_state(b, throttle, steer, dt, apply_input); return; }
 
     if (throttle > 1.0f) throttle = 1.0f;
     if (throttle < -1.0f) throttle = -1.0f;

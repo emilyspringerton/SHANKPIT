@@ -142,6 +142,44 @@ typedef struct {
 #define LEVEL_BOXES_MAX_BUGGY_SPAWNS 16
 typedef struct { float x, y, z, yaw; } LevelBuggySpawn;
 
+/* Author-placed VEHICLE spawns -- the buggy tile above, generalised to the whole roster (rocket car,
+   helicopter, both drones, the C-110). Same name convention, one prefix: vehicle_spawn_<kind>
+   (facing yaw 0) or vehicle_spawn_<kind>_<deg> (vehicle_spawn_heli_90), kind from the list below.
+   A level can still use the old buggy_spawn tiles; IDUNA exports those as kind "buggy" in THIS
+   list as well, so one native path places everything and the legacy path keeps working. */
+#define LEVEL_BOXES_MAX_VEHICLE_SPAWNS 24
+enum {
+    LEVEL_VEHICLE_BUGGY = 0,
+    LEVEL_VEHICLE_ROCKET,
+    LEVEL_VEHICLE_HELI,
+    LEVEL_VEHICLE_RECON,
+    LEVEL_VEHICLE_FLY,
+    LEVEL_VEHICLE_PLANE,
+    LEVEL_VEHICLE_KIND_COUNT
+};
+typedef struct { int kind; float x, y, z, yaw; } LevelVehicleSpawn;
+static const char *const LEVEL_VEHICLE_KIND_NAMES[LEVEL_VEHICLE_KIND_COUNT] = {
+    "buggy", "rocket", "heli", "recon", "fly", "plane"
+};
+/* Human-friendly aliases: the words a person actually types into a wall's name. Anything else is a
+   buggy, which is the old default and the harmless one (never invent a helicopter). */
+static inline int level_boxes_vehicle_kind_from_name(const char *s) {
+    if (!s || !s[0]) return LEVEL_VEHICLE_BUGGY;
+    for (int i = 0; i < LEVEL_VEHICLE_KIND_COUNT; i++)
+        if (strcmp(s, LEVEL_VEHICLE_KIND_NAMES[i]) == 0) return i;
+    if (strcmp(s, "helicopter") == 0) return LEVEL_VEHICLE_HELI;
+    if (strcmp(s, "airplane") == 0 || strcmp(s, "plane_110") == 0 || strcmp(s, "c110") == 0 || strcmp(s, "c-110") == 0)
+        return LEVEL_VEHICLE_PLANE;
+    if (strcmp(s, "drone") == 0 || strcmp(s, "recon_drone") == 0) return LEVEL_VEHICLE_RECON;
+    if (strcmp(s, "mini") == 0 || strcmp(s, "mini_fly") == 0 || strcmp(s, "micro") == 0) return LEVEL_VEHICLE_FLY;
+    if (strcmp(s, "rocket_car") == 0) return LEVEL_VEHICLE_ROCKET;
+    return LEVEL_VEHICLE_BUGGY;
+}
+static inline const char *level_boxes_vehicle_kind_name(int kind) {
+    if (kind < 0 || kind >= LEVEL_VEHICLE_KIND_COUNT) return LEVEL_VEHICLE_KIND_NAMES[LEVEL_VEHICLE_BUGGY];
+    return LEVEL_VEHICLE_KIND_NAMES[kind];
+}
+
 /* SECTION 592: interactive BIG_O lab stations (IDUNA export "lab_stations": walls named lab_<kind>). kind uses the
    PARENA lab_station_rules.prn numbering: 0 splice 1 centrifuge 2 pcr 3 vat 4 fridge 5 console.
    6 "war" (LABST_WAR, shadow_war_host.h) is SHANKPIT-native, added after SECTION 592 shipped --
@@ -334,6 +372,15 @@ typedef struct {
     float radius;        /* sensor reach for PLATE; 0 -> host default */
     int box_index;       /* GATE/BRIDGE: index into boxes[] this widget raises/lowers like a story door
                             (physics + render); -1 = purely a register, no geometry attached */
+    /* Composable circuit wiring (2026-10-31, founder: "the widgets need to be composible ... think light
+     * switches, basic circuits, an elevator is a widget of widgets"). A widget can be a SOURCE (lever 6,
+     * plate 5), a RELAY (delay 7), a GATE (transistor 8) or an ACTUATOR (1..4 machines), wired by the
+     * index of the widget that feeds it. -1 = nothing wired. Pins must point at LOWER indices: the
+     * circuit is evaluated in authoring order, once per tick (see packages/simulation/widget_circuit.h).
+     * delay_ticks is a DELAY's own timer length in 60 Hz ticks; 0 = the default half-second relay. */
+    int input_pin;
+    int gate_pin;
+    int delay_ticks;
 } LevelEduWidget;
 
 #define LEVEL_BOXES_MAX_EDU_WIDGETS 16 /* == EDU_MAX_WIDGETS in packages/education/edu_bindings.h */
@@ -358,6 +405,8 @@ typedef struct {
     int spawner_count;
     LevelBuggySpawn buggy_spawns[LEVEL_BOXES_MAX_BUGGY_SPAWNS]; /* #464 */
     int buggy_spawn_count;
+    LevelVehicleSpawn vehicle_spawns[LEVEL_BOXES_MAX_VEHICLE_SPAWNS]; /* whole roster, by kind */
+    int vehicle_spawn_count;
     LevelLabStation lab_stations[LEVEL_BOXES_MAX_LAB_STATIONS]; /* SECTION 592 */
     int lab_station_count;
     LevelDoor doors[LEVEL_BOXES_MAX_DOORS]; /* Story System Phase 1 */
@@ -832,6 +881,53 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
         }
     }
 
+    // Vehicle spawns -- every author-placed vehicle, one list, kind by name ("buggy", "rocket",
+    // "heli", "recon", "fly", "plane") or by number. Same small-scanner shape as above; absent
+    // key = none, so every pre-existing level loads exactly as it did.
+    out->vehicle_spawn_count = 0;
+    const char *vh_arr_key = level_boxes_find_key(buf, end, "vehicle_spawns");
+    if (vh_arr_key) {
+        const char *vh_arr = level_boxes_skip_ws(vh_arr_key);
+        if (*vh_arr == '[') {
+            const char *vh_arr_end = level_boxes_find_array_end(vh_arr, end);
+            if (vh_arr_end) {
+                const char *vc = vh_arr + 1;
+                while (vc < vh_arr_end && out->vehicle_spawn_count < LEVEL_BOXES_MAX_VEHICLE_SPAWNS) {
+                    vc = level_boxes_skip_ws(vc);
+                    if (vc >= vh_arr_end) break;
+                    if (*vc != '{') { vc++; continue; }
+                    const char *vo = vc;
+                    const char *ve = strchr(vo, '}');
+                    if (!ve || ve > vh_arr_end) break;
+                    LevelVehicleSpawn *vs = &out->vehicle_spawns[out->vehicle_spawn_count];
+                    memset(vs, 0, sizeof(*vs));
+                    const char *kv;
+                    if ((kv = level_boxes_find_key(vo, ve, "kind"))) {
+                        const char *kp = level_boxes_skip_ws(kv);
+                        if (*kp == '"') {
+                            char kbuf[24];
+                            int kn = 0;
+                            kp++;
+                            while (*kp && *kp != '"' && kn < 23) kbuf[kn++] = *kp++;
+                            kbuf[kn] = '\0';
+                            vs->kind = level_boxes_vehicle_kind_from_name(kbuf);
+                        } else {
+                            float kf = 0.0f;
+                            if (level_boxes_parse_number(kv, &kf)) vs->kind = (int)kf;
+                        }
+                    }
+                    if (vs->kind < 0 || vs->kind >= LEVEL_VEHICLE_KIND_COUNT) vs->kind = LEVEL_VEHICLE_BUGGY;
+                    if ((kv = level_boxes_find_key(vo, ve, "x"))) level_boxes_parse_number(kv, &vs->x);
+                    if ((kv = level_boxes_find_key(vo, ve, "y"))) level_boxes_parse_number(kv, &vs->y);
+                    if ((kv = level_boxes_find_key(vo, ve, "z"))) level_boxes_parse_number(kv, &vs->z);
+                    if ((kv = level_boxes_find_key(vo, ve, "yaw"))) level_boxes_parse_number(kv, &vs->yaw);
+                    out->vehicle_spawn_count++;
+                    vc = ve + 1;
+                }
+            }
+        }
+    }
+
     // Lab stations (SECTION 592) -- same small-scanner shape; absent key = none. kind is a string in the JSON.
     out->lab_station_count = 0;
     const char *lb_arr_key = level_boxes_find_key(buf, end, "lab_stations");
@@ -1140,6 +1236,8 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
                     LevelEduWidget tmp;
                     memset(&tmp, 0, sizeof tmp);
                     tmp.box_index = -1;
+                    tmp.input_pin = -1;
+                    tmp.gate_pin = -1;
                     const char *ev;
                     float f = 0.0f;
                     int ok = 0;
@@ -1153,8 +1251,13 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
                     if ((ev = level_boxes_find_key(eo_start, eo_end, "z"))) level_boxes_parse_number(ev, &tmp.z);
                     if ((ev = level_boxes_find_key(eo_start, eo_end, "radius"))) level_boxes_parse_number(ev, &tmp.radius);
                     if ((ev = level_boxes_find_key(eo_start, eo_end, "box_index")) && level_boxes_parse_number(ev, &f)) tmp.box_index = (int)f;
+                    if ((ev = level_boxes_find_key(eo_start, eo_end, "input_pin")) && level_boxes_parse_number(ev, &f)) tmp.input_pin = (int)f;
+                    if ((ev = level_boxes_find_key(eo_start, eo_end, "gate_pin")) && level_boxes_parse_number(ev, &f)) tmp.gate_pin = (int)f;
+                    if ((ev = level_boxes_find_key(eo_start, eo_end, "delay_ticks")) && level_boxes_parse_number(ev, &f)) tmp.delay_ticks = (int)f;
                     if (tmp.box_index >= out->count) tmp.box_index = -1;
-                    if (ok && tmp.machine_type >= 1 && tmp.machine_type <= 5)
+                    /* 6 LEVER, 7 DELAY, 8 TRANSISTOR are circuit-only kinds (packages/simulation/
+                       widget_circuit.h); 1..5 keep their original education-machine meaning. */
+                    if (ok && tmp.machine_type >= 1 && tmp.machine_type <= 8)
                         out->edu_widgets[out->edu_widget_count++] = tmp;
                     ewc = eo_end + 1;
                 }
@@ -1249,6 +1352,16 @@ static inline void level_boxes_write_json(FILE *f, const CustomLevelData *lvl) {
     }
     fprintf(f, "\n ]");
 
+    fprintf(f, ",\n \"vehicle_spawns\": [");
+    for (int i = 0; i < lvl->vehicle_spawn_count; i++) {
+        const LevelVehicleSpawn *vs = &lvl->vehicle_spawns[i];
+        fprintf(f, "%s\n  { \"kind\": ", i ? "," : "");
+        level_boxes_put_json_string(f, level_boxes_vehicle_kind_name(vs->kind));
+        fprintf(f, ", \"x\": %.4g, \"y\": %.4g, \"z\": %.4g, \"yaw\": %.4g }",
+                (double)vs->x, (double)vs->y, (double)vs->z, (double)vs->yaw);
+    }
+    fprintf(f, "\n ]");
+
     fprintf(f, ",\n \"buggy_spawns\": [");
     for (int i = 0; i < lvl->buggy_spawn_count; i++) {
         const LevelBuggySpawn *bs = &lvl->buggy_spawns[i];
@@ -1335,6 +1448,9 @@ static inline void level_boxes_write_json(FILE *f, const CustomLevelData *lvl) {
                 ew->machine_type, ew->initial_state ? 1 : 0, ew->memory_address,
                 (double)ew->x, (double)ew->y, (double)ew->z, (double)ew->radius);
         if (ew->box_index >= 0) fprintf(f, ", \"box_index\": %d", ew->box_index);
+        if (ew->input_pin >= 0) fprintf(f, ", \"input_pin\": %d", ew->input_pin);
+        if (ew->gate_pin >= 0) fprintf(f, ", \"gate_pin\": %d", ew->gate_pin);
+        if (ew->delay_ticks > 0) fprintf(f, ", \"delay_ticks\": %d", ew->delay_ticks);
         fprintf(f, " }");
     }
     fprintf(f, "\n ]");

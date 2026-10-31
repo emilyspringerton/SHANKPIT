@@ -124,7 +124,7 @@ int main(void) {
     /* ---- kit apps (2026-10-31): pick a prefab, remap the live kit, build into a draft ---- */
     {
         phone_init(&p);
-        CHECK(p.kit.kit_count == 3);
+        CHECK(p.kit.kit_count == 6);
         CHECK(kit_live_item(&p.kit, KIT_SLOT_C) == KIT_ITEM_PHEROMONE);   /* SCOUT is live */
         phone_open_app(&p, BP_APP_KITS);
         CHECK(bp_rows(&p) == p.kit.kit_count);

@@ -28,17 +28,56 @@ int main(void) {
     assert(kit_slot_from_key('x') == -1);
     printf("PASS: 14 slots -- 1-9, 0, ` - = C, and no F\n");
 
-    /* ---- prefabs: three of them, genuinely different, digits untouched ---- */
-    assert(s.kit_count == 3);
+    /* ---- prefabs: six of them, genuinely different, digits untouched ---- */
+    assert(s.kit_count == 6);
     assert(s.selected == 0);
     assert(strcmp(s.kits[0].name, "SCOUT") == 0);
     assert(strcmp(s.kits[1].name, "BREACHER") == 0);
     assert(strcmp(s.kits[2].name, "HUNTER") == 0);
+    assert(strcmp(s.kits[3].name, "RUNNER") == 0);
+    assert(strcmp(s.kits[4].name, "AERIAL") == 0);
+    assert(strcmp(s.kits[5].name, "TRANSPORT") == 0);
     for (int i = 0; i < KIT_SLOT_FIRST_GADGET; i++) assert(s.kits[0].slot[i] == KIT_ITEM_NONE);
     assert(kit_live_item(&s, KIT_SLOT_C) == KIT_ITEM_PHEROMONE);
     assert(kit_live_item(&s, KIT_SLOT_BACKTICK) == KIT_ITEM_RELOAD);
     assert(kit_live_item(&s, 99) == KIT_ITEM_NONE);        /* out of range is empty, not a crash */
-    printf("PASS: three prefabs, and none of them steals a number key\n");
+    printf("PASS: six prefabs, and none of them steals a number key\n");
+
+    /* ---- RUNNER: all three vehicle calls, and they are classified as vehicles ---- */
+    assert(kit_live_item(&s, KIT_SLOT_BACKTICK) != KIT_ITEM_BUGGY);       /* still on SCOUT */
+    s.selected = 3;
+    assert(kit_live_item(&s, KIT_SLOT_BACKTICK) == KIT_ITEM_BUGGY);
+    assert(kit_live_item(&s, KIT_SLOT_MINUS) == KIT_ITEM_ROCKET_CAR);
+    assert(kit_live_item(&s, KIT_SLOT_EQUALS) == KIT_ITEM_HELI);
+    assert(kit_live_item(&s, KIT_SLOT_C) == KIT_ITEM_PHEROMONE);
+    assert(kit_item_is_vehicle(KIT_ITEM_BUGGY) && kit_item_is_vehicle(KIT_ITEM_ROCKET_CAR));
+    assert(kit_item_is_vehicle(KIT_ITEM_HELI));
+    assert(!kit_item_is_vehicle(KIT_ITEM_PHEROMONE) && !kit_item_is_vehicle(KIT_ITEM_NONE));
+    assert(strcmp(kit_item_name(KIT_ITEM_ROCKET_CAR), "ROCKET CAR") == 0);
+    s.selected = 0;
+    printf("PASS: RUNNER carries BUGGY / ROCKET CAR / HELICOPTER on ` - =\n");
+
+    /* ---- AERIAL: the eyes kit, sharing RUNNER's keys deliberately ---- */
+    s.selected = 4;
+    assert(kit_live_item(&s, KIT_SLOT_BACKTICK) == KIT_ITEM_DRONE);
+    assert(kit_live_item(&s, KIT_SLOT_MINUS) == KIT_ITEM_MINI_DRONE);
+    assert(kit_live_item(&s, KIT_SLOT_EQUALS) == KIT_ITEM_HELI);
+    assert(kit_live_item(&s, KIT_SLOT_C) == KIT_ITEM_BUGGY);
+    assert(kit_item_is_vehicle(KIT_ITEM_DRONE) && kit_item_is_vehicle(KIT_ITEM_MINI_DRONE));
+    assert(strcmp(kit_item_name(KIT_ITEM_MINI_DRONE), "MINI DRONE") == 0);
+    s.selected = 0;
+    printf("PASS: AERIAL puts DRONE / MINI DRONE / HELICOPTER / BUGGY on the same four keys\n");
+
+    /* ---- TRANSPORT: the fixed wing, and the rest of a run home ---- */
+    s.selected = 5;
+    assert(kit_live_item(&s, KIT_SLOT_BACKTICK) == KIT_ITEM_PLANE);
+    assert(kit_live_item(&s, KIT_SLOT_MINUS) == KIT_ITEM_HELI);
+    assert(kit_live_item(&s, KIT_SLOT_EQUALS) == KIT_ITEM_BUGGY);
+    assert(kit_live_item(&s, KIT_SLOT_C) == KIT_ITEM_DRONE);
+    assert(kit_item_is_vehicle(KIT_ITEM_PLANE));
+    assert(strcmp(kit_item_name(KIT_ITEM_PLANE), "C-110") == 0);
+    s.selected = 0;
+    printf("PASS: TRANSPORT calls the C-110, then a helicopter, buggy and drone\n");
 
     /* ---- cycling wraps through every item and back to empty ---- */
     kit_clear_slot(&s.kits[0], KIT_SLOT_MINUS);
@@ -49,7 +88,7 @@ int main(void) {
     }
     assert(seen_empty == 1 && s.kits[0].slot[KIT_SLOT_MINUS] == KIT_ITEM_NONE);   /* full loop */
     kit_cycle(&s.kits[0], KIT_SLOT_MINUS, -1);
-    assert(s.kits[0].slot[KIT_SLOT_MINUS] == KIT_ITEM_RELOAD);                    /* backwards wraps */
+    assert(s.kits[0].slot[KIT_SLOT_MINUS] == KIT_ITEM_COUNT - 1);                  /* backwards wraps */
     printf("PASS: cycling wraps through all %d items and returns to empty\n", KIT_ITEM_COUNT);
 
     /* ---- selecting a kit moves what the gameplay keys read ---- */
@@ -77,6 +116,7 @@ int main(void) {
     static char page[8192];
     int n = kit_page_select(page, (int)sizeof page, &s);
     assert(n > 0 && strstr(page, "<html") && strstr(page, "<style") && strstr(page, "HUNTER"));
+    assert(strstr(page, "RUNNER"));
     n = kit_page_map(page, (int)sizeof page, &s, KIT_SLOT_C);
     assert(n > 0 && strstr(page, "PHEROMONE") && strstr(page, "class=\"on\""));
     n = kit_page_build(page, (int)sizeof page, &s, KIT_SLOT_MINUS);

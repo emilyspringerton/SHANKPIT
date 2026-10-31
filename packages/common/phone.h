@@ -52,8 +52,17 @@ typedef enum {
        new one. All three paint HTML+CSS through PELLEGRINO (packages/pellegrino_embed/kit_page_gl.h),
        and all three edit the same real KitState -- packages/common/kit.h. */
     BP_APP_KITS, BP_APP_KITMAP, BP_APP_KITBUILD,
+    /* EMPIRE (founder 2026-10-31): the influence economy's surface. A minimap of the nine nearby
+       districts, and the place-a-troop / clone rows. The phone owns the SELECT, the host owns the
+       spend and the body (packages/simulation/empire_rules.c is the numbers). */
+    BP_APP_EMPIRE,
     BP_APP_COUNT
 } BpApp;
+
+/* EMPIRE rows: four troop kinds, then the clone. Declared here because bp_rows() and phone_input()
+   both need the count above the app's own page builder at the bottom of this header. */
+#define BP_EMPIRE_TROOP_ROWS 4
+#define BP_EMPIRE_ROWS (BP_EMPIRE_TROOP_ROWS + 1)
 
 typedef enum { BP_UP, BP_DOWN, BP_LEFT, BP_RIGHT, BP_SELECT, BP_BACK } BpAction;
 
@@ -76,7 +85,9 @@ typedef enum {
     ,BP_FX_KIT_SELECT,      /* arg = kit index -> that prefab kit is now live */
     BP_FX_KIT_BIND,         /* arg = slot -> the live kit's binding at that slot changed */
     BP_FX_KIT_CLEAR,        /* arg = slot -> the live kit's binding at that slot was emptied */
-    BP_FX_KIT_SAVE          /* arg = kit index -> the builder's draft replaced the live kit */
+    BP_FX_KIT_SAVE,         /* arg = kit index -> the builder's draft replaced the live kit */
+    BP_FX_EMPIRE_SPAWN,     /* arg = troop kind 0..3 -> host validates against PARENA, spends, places */
+    BP_FX_EMPIRE_CLONE      /* arg = troop kind -> same, at the clone premium, needs a veteran */
 } BpEffectKind;
 
 typedef struct { BpEffectKind kind; int arg; } BpEffect;
@@ -122,7 +133,7 @@ static const char *const BP_WEATHER_NAMES[4] = { "CLEAR", "OVERCAST", "RAIN", "S
 #define BP_MSG_THORNE_BRIEF 6   /* client message table id: Dr. Thorne's A1M1 reprimand; unlocks him in Contacts */
 
 static const char *const BP_APP_NAMES[BP_APP_COUNT] = {
-    "MESSAGES", "CONTACTS", "MAP", "CAMERA", "NOTES", "LAB", "CARGO", "SKILLS", "LOADOUT", "WARDROBE", "STATUS", "ORB", "GFD", "IDUNA", "ARPANET", "TECHTREE", "MISSION", "PELLEGRINO", "KITS", "KIT MAP", "KIT BUILD"
+    "MESSAGES", "CONTACTS", "MAP", "CAMERA", "NOTES", "LAB", "CARGO", "SKILLS", "LOADOUT", "WARDROBE", "STATUS", "ORB", "GFD", "IDUNA", "ARPANET", "TECHTREE", "MISSION", "PELLEGRINO", "KITS", "KIT MAP", "KIT BUILD", "EMPIRE"
 };
 
 static const char *const BP_MISSION_ROW_NAMES[BP_MISSION_ROWS] = {
@@ -224,6 +235,20 @@ typedef struct {
     /* The player's kit: which gadget sits on which of the 14 keys, which prefab is live, and the
        builder's draft. Gameplay reads kit_live_item(&p->kit, slot); the KIT* apps edit it. */
     KitState kit;
+
+    /* EMPIRE (BP_APP_EMPIRE): host-fed. The phone never invents a cost -- the host writes the PARENA
+       numbers in with phone_empire_sync() each frame, so the rows and the host's refusal cannot
+       disagree. emp_district[] is the minimap: nine cells, 0 neutral / 1 yours / 2 rival, with
+       emp_self_cell marking where you stand. */
+    int emp_influence;
+    int emp_max;
+    int emp_live;                 /* bodies currently alive (squad cap is emp_cap) */
+    int emp_cap;
+    int emp_veterans;             /* how many of them a clone may copy */
+    int emp_cost[4];              /* per troop kind, from empire_troop_cost */
+    int emp_clone_cost;           /* from empire_clone_cost */
+    int emp_district[9];
+    int emp_self_cell;
 } Phone;
 
 static inline void phone_init(Phone *p) {
@@ -267,6 +292,7 @@ static inline int bp_rows(const Phone *p) {
     case BP_APP_KITS: return p->kit.kit_count > 0 ? p->kit.kit_count : 1;
     case BP_APP_KITMAP: return KIT_SLOTS;
     case BP_APP_KITBUILD: return KIT_SLOTS;
+    case BP_APP_EMPIRE: return BP_EMPIRE_ROWS;
     default: return 1;
     }
 }
@@ -558,12 +584,86 @@ static inline BpEffect phone_input(Phone *p, BpAction a, int unspent_points) {
             fx.kind = BP_FX_KIT_SAVE; fx.arg = p->kit.selected;
         }
         break;
+    case BP_APP_EMPIRE:
+        /* SELECT asks; the host decides. Spending here would let the app and the world drift apart
+         * the moment a cost is retuned in PARENA -- so the phone emits what was chosen and the host
+         * re-checks it against empire_can_spawn / empire_clone_can and takes the influence. */
+        if (a == BP_SELECT && p->cursor >= 0 && p->cursor < BP_EMPIRE_ROWS) {
+            if (p->cursor < BP_EMPIRE_TROOP_ROWS) { fx.kind = BP_FX_EMPIRE_SPAWN; fx.arg = p->cursor; }
+            else { fx.kind = BP_FX_EMPIRE_CLONE; fx.arg = 0; }
+        }
+        break;
     case BP_APP_ORB:
         if (a == BP_SELECT) fx.kind = BP_FX_OPEN_ORB;
         break;
     default: break;
     }
     return fx;
+}
+
+/* ---- EMPIRE app page (BP_APP_EMPIRE) -------------------------------------------------------------- */
+static const char *const BP_EMPIRE_ROW_NAMES[BP_EMPIRE_ROWS] = {
+    "SPAWN RIFLEMAN", "SPAWN BREACHER", "SPAWN RECON DRONE", "SPAWN MINI FLY", "CLONE A VETERAN"
+};
+
+/* empire_page -- the minimap and the shop, as HTML+CSS for PELLEGRINO (same surface and the same
+ * constrained vocabulary the kit pages use: a table, background colours, a highlighted row). The grid
+ * is nine table cells: your district, and its eight neighbours on the sphere. Ownership comes from
+ * the host (emp_district), not from anything this header guesses. */
+static inline int empire_page(const Phone *p, char *out, int cap) {
+    int n, i;
+    if (!out || !p) return -1;
+    n = snprintf(out, (size_t)cap,
+        "<html><head><style>"
+        "body{background:#0b0f14;color:#cfe3f0;font-family:sans-serif;margin:0;padding:10px}"
+        "h1{font-size:17px;color:#8fd0ff;margin:0 0 3px 0}"
+        "p.s{color:#6f8ba0;font-size:12px;margin:0 0 8px 0}"
+        "table{border-collapse:collapse;width:100%%}"
+        "td{padding:2px 6px;font-size:12px}"
+        "td.m{width:20px;height:20px;border:1px solid #1f2a36;text-align:center}"
+        "td.me{background:#2f6f4f}td.you{background:#1d4a6b}td.riv{background:#5c2430}td.neu{background:#161d26}"
+        "tr.on{background:#16394f}"
+        "td.k{color:#ffd479;width:74px}td.i{color:#bfe9c8}td.x{color:#6f8ba0;width:40px}"
+        "</style></head><body>"
+        "<h1>EMPIRE</h1>"
+        "<p class=\"s\">INFLUENCE %d / %d    SQUAD %d / %d    VETERANS %d</p><table>",
+        p->emp_influence, p->emp_max, p->emp_live, p->emp_cap, p->emp_veterans);
+    if (n < 0 || n >= cap) return -1;
+    for (int r = 0; r < 3; r++) {
+        n = kit_page_add(out, cap, n, "<tr>");
+        if (n < 0) return -1;
+        for (int c = 0; c < 3; c++) {
+            int cell = r * 3 + c;
+            const char *cls = p->emp_district[cell] == 1 ? "you" :
+                              (p->emp_district[cell] == 2 ? "riv" : "neu");
+            char buf[64];
+            if (cell == p->emp_self_cell) cls = "me";
+            snprintf(buf, sizeof(buf), "<td class=\"m %s\">%s</td>", cls,
+                     cell == p->emp_self_cell ? "@" : "");
+            n = kit_page_add(out, cap, n, buf);
+            if (n < 0) return -1;
+        }
+        n = kit_page_add(out, cap, n, "</tr>");
+        if (n < 0) return -1;
+    }
+    n = kit_page_add(out, cap, n, "</table><table>");
+    if (n < 0) return -1;
+    for (i = 0; i < BP_EMPIRE_ROWS; i++) {
+        int cost = (i < BP_EMPIRE_TROOP_ROWS) ? p->emp_cost[i] : p->emp_clone_cost;
+        int can = (p->emp_influence >= cost) && (p->emp_live < p->emp_cap) &&
+                  (i < BP_EMPIRE_TROOP_ROWS || p->emp_veterans > 0);
+        char row[160];
+        snprintf(row, sizeof(row),
+                 "<tr%s><td class=\"k\">%d</td><td class=\"i\">%s</td><td class=\"x\">%s</td></tr>",
+                 i == p->cursor ? " class=\"on\"" : "", cost, BP_EMPIRE_ROW_NAMES[i],
+                 can ? "ok" : "--");
+        n = kit_page_add(out, cap, n, row);
+        if (n < 0) return -1;
+    }
+    n = kit_page_add(out, cap, n,
+        "</table><p class=\"s\">MINIMAP: 9 NEARBY DISTRICTS -- @ YOU, BLUE YOURS, RED RIVAL</p>"
+        "</body></html>");
+    return n;
 }
 
 #endif
