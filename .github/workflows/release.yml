@@ -306,6 +306,15 @@ jobs:
         with:
           repository: emilyspringerton/EDITOR.GAME
           path: os_apps/EDITOR.GAME
+      # PARENA generates the local NOCK server's C (SHANKPIT/tools/local_nock.prn). It is needed HERE,
+      # in the packaging job, because the lobby's NOCK tile starts bundled/dw_nock.exe and that binary
+      # never existed in any release: the server runs on PARENA's net/tcp + process host glue, which
+      # was POSIX-only, so there was nothing to bundle and the tile could only report a missing
+      # server. See PARENA/runtime/parena_runtime.h's own `_WIN32` block for that port.
+      - uses: actions/checkout@v4
+        with:
+          repository: emilyspringerton/PARENA
+          path: PARENA
 
       # Go module + build cache for the two Go OS apps (PITVIPER, IDUNA.GAME). Their modules are not
       # vendored in this repo, so without this every release re-downloads go-sdl2 / x-image / x-sys /
@@ -434,6 +443,36 @@ jobs:
             rm -f /tmp/eg_pf_arena.o /tmp/eg_pf_fmt.o /tmp/eg_pf_bridge.o )
           cp os_apps/EDITOR.GAME/editor-game.exe bundled/
 
+          echo "== local NOCK map server dw_nock.exe =="
+          # The NOCK tile in the lobby's APPS page (APP_NOCK, apps/lobby/src/main.c) starts this
+          # server itself, then opens http://127.0.0.1:8787/ in the browser. Founder real-time:
+          # "i click it in shankpit apps and nothing happens ... ensure it is bundled into the client".
+          # Guarded, not fatal: a generator hiccup must not cost the client/server/world artifacts,
+          # and the tile already reports an unbundled app honestly.
+          if ( cd PARENA && make .parena-bootstrap >/dev/null 2>&1 ); then
+            mkdir -p var
+            if PARENA/.parena-bootstrap build \
+                 PARENA/stdlib/string.prn PARENA/stdlib/net/tcp.prn \
+                 PARENA/stdlib/net/http_server.prn PARENA/stdlib/process.prn \
+                 tools/local_nock.prn -o var/local_nock_gen.c && \
+               x86_64-w64-mingw32-gcc -std=c99 -DPARENA_NO_GRAPHICS \
+                 -I PARENA/runtime -I tools -include tools/local_nock_host.h \
+                 var/local_nock_gen.c tools/local_nock_host.c PARENA/runtime/parena_runtime.c \
+                 -o bundled/dw_nock.exe -lws2_32 -static-libgcc; then
+              ls -la bundled/dw_nock.exe
+            else
+              echo "!! dw_nock.exe not built -- NOCK tile will report a missing server in this release"
+            fi
+          else
+            echo "!! PARENA bootstrap not built -- skipping dw_nock.exe"
+          fi
+          # The editor page and the levels it lists. A packaged client resolves NOCK's root as
+          # <exe dir>/bundled when <exe dir>/../levels does not exist, so these two land exactly
+          # where lobby_launch_nock looks -- the editor opens on a real level list instead of a 404.
+          mkdir -p bundled/levels bundled/tools
+          cp -r levels/. bundled/levels/
+          cp tools/nock_editor.html bundled/tools/
+
           # DLL dependencies confirmed via objdump against a real local build of all five --
           # SDL2.dll for all five, SDL2_ttf.dll for PITVIPER/IDUNA.GAME/EDITOR.GAME specifically
           # (dw_gui/red_garden_arena don't link it). Copied into bundled/ itself (not just the
@@ -513,6 +552,25 @@ jobs:
           mkdir -p bundled_linux
           cp os_apps/DEADWEIGHT/dw_gui bundled_linux/dw_gui
           test -x bundled_linux/dw_gui
+
+          # local NOCK on Linux: same server, built natively (the Windows port is PARENA's own
+          # `_WIN32` block -- Linux needs none of it). Without this the Linux APPS page has the same
+          # "NOCK does nothing" hole the Windows one had.
+          if PARENA/.parena-bootstrap build \
+               PARENA/stdlib/string.prn PARENA/stdlib/net/tcp.prn \
+               PARENA/stdlib/net/http_server.prn PARENA/stdlib/process.prn \
+               tools/local_nock.prn -o var/local_nock_gen.c && \
+             gcc -std=c99 -DPARENA_NO_GRAPHICS \
+               -I PARENA/runtime -I tools -include tools/local_nock_host.h \
+               var/local_nock_gen.c tools/local_nock_host.c PARENA/runtime/parena_runtime.c \
+               -o bundled_linux/dw_nock; then
+            chmod +x bundled_linux/dw_nock
+            mkdir -p bundled_linux/levels bundled_linux/tools
+            cp -r levels/. bundled_linux/levels/
+            cp tools/nock_editor.html bundled_linux/tools/
+          else
+            echo "!! bundled_linux/dw_nock not built -- Linux NOCK tile will report a missing server"
+          fi
 
       # SHIP-LINUX-03 (card): the Linux client must actually RENDER before it is released, not just
       # link. Reuses the repo's own headless Xvfb check (scripts/ux_screenshot_test.sh): boots the real
@@ -610,6 +668,11 @@ jobs:
           # first release that actually populates it, so the lobby's APPS page buttons work.
           cp -r bundled ShankPit_Client/
           # Native streaming: ffmpeg is NOT bundled (card #618) -- players install it onto PATH, see docs/FFMPEG_INSTALL.md.
+          # The standalone NOCK start file (founder real-time: "add a separate local nock bat start
+          # file") -- same server the APPS tile starts, in its own console, with everything it says
+          # appended to var\logs\nock.log. Shipped next to PLAY.bat so a user who never opens the
+          # game can still edit maps.
+          cp local_nock.bat ShankPit_Client/
           printf '%s\n' "start ShankPit.exe" > ShankPit_Client/PLAY.bat
           zip -r "ShankPit_Client_${BUILD}.zip" ShankPit_Client
           # Lite client (card #622): same directory structure (ShankPit_Client/ with exe, DLLs, assets/, CONSTRUCT,

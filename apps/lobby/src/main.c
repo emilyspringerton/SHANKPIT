@@ -5,6 +5,7 @@
 #include <math.h>
 #include <assert.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <time.h>
 
 #ifdef _WIN32
@@ -14,6 +15,8 @@
     #include <winsock2.h>
     #include <windows.h>
     #include <ws2tcpip.h>
+    #include <direct.h>
+    #include <share.h>
     #pragma comment(lib, "ws2_32.lib")
 #else
     #include <sys/socket.h>
@@ -23,6 +26,7 @@
     #include <fcntl.h>
     #include <netdb.h>
     #include <errno.h>
+    #include <sys/stat.h>
 #endif
 
 #include <SDL2/SDL.h>
@@ -5222,6 +5226,68 @@ static int lobby_app_binary_path(const char *bundled_name, const char *dev_relat
  * working after quitting the game; and if the port already answers (a previous click, or the user's
  * own `make local-nock`), nothing is spawned -- this just re-opens the tab. */
 #define NOCK_LOCAL_PORT 8787
+#define NOCK_LOG_TAIL "var/logs/nock.log"
+
+/* nock_log -- every step of the NOCK app appended to <root>/var/logs/nock.log, and the spawned
+ * server's own stdout/stderr redirected into that same file.
+ *
+ * Founder real-time, 2026-10-31: "fix the local nock? i click it in shankpit apps and nothing happens
+ * ... ensure any logs are output into a text file not just swallowed when a screen opens and closes
+ * right away". The server is spawned detached, so its output had nowhere to go at all (on Windows
+ * the child was created with no inherited handles), which meant the only place the real reason could
+ * be written -- "levels/ missing", "port taken", "no such binary" -- was discarded. It now lands in
+ * one file next to the game, and every failure the app reports on screen names that file. */
+static FILE *g_nock_log = NULL;
+
+static int nock_mkdir(const char *path) {
+#ifdef _WIN32
+    if (_mkdir(path) == 0) return 1;
+#else
+    if (mkdir(path, 0755) == 0) return 1;
+#endif
+    return errno == EEXIST;
+}
+
+static void nock_log_close(void) {
+    if (g_nock_log) { fclose(g_nock_log); g_nock_log = NULL; }
+}
+
+static void nock_logf(const char *fmt, ...) {
+    va_list ap;
+    if (!g_nock_log) return;
+    va_start(ap, fmt);
+    fprintf(g_nock_log, "[%6us] ", (unsigned)(SDL_GetTicks() / 1000u));
+    vfprintf(g_nock_log, fmt, ap);
+    fputc('\n', g_nock_log);
+    va_end(ap);
+    fflush(g_nock_log);  /* a launch that never returns must still leave its own last line behind */
+}
+
+/* nock_log_open -- create <root>/var/logs and open nock.log for append. The share flags matter on
+ * Windows: the spawned server appends to this same file, so the parent's own handle has to permit a
+ * concurrent writer (plain fopen() denies it, and the child's redirect would then fail silently). */
+static void nock_log_open(const char *root) {
+    char dir1[1250], dir2[1300], file[1400];
+    nock_log_close();
+    snprintf(dir1, sizeof dir1, "%s/var", root);
+    snprintf(dir2, sizeof dir2, "%s/var/logs", root);
+    (void)nock_mkdir(dir1);
+    (void)nock_mkdir(dir2);
+    snprintf(file, sizeof file, "%s/" NOCK_LOG_TAIL, root);
+#ifdef _WIN32
+    g_nock_log = _fsopen(file, "ab", _SH_DENYNO);
+#else
+    g_nock_log = fopen(file, "ab");
+#endif
+    if (!g_nock_log) {           /* last resort: the process's own working directory */
+#ifdef _WIN32
+        g_nock_log = _fsopen("nock.log", "ab", _SH_DENYNO);
+#else
+        g_nock_log = fopen("nock.log", "ab");
+#endif
+    }
+    nock_logf("==== NOCK app ====");
+}
 
 static int nock_dir_exists(const char *path) {
     struct stat st;
@@ -5306,6 +5372,9 @@ static void lobby_launch_nock(void) {
         else snprintf(root, sizeof root, "%s..", base);
     }
 
+    nock_log_open(root);
+    nock_logf("launch: port=%d root=%s base=%s", NOCK_LOCAL_PORT, root, base[0] ? base : "(unknown)");
+
     char server[1200];
 #ifdef _WIN32
     const char *bundled_name = "dw_nock.exe";
@@ -5313,33 +5382,77 @@ static void lobby_launch_nock(void) {
     const char *bundled_name = "dw_nock";
 #endif
     if (!lobby_app_binary_path(bundled_name, "local_nock_parena", server, sizeof server)) {
+        nock_logf("server NOT FOUND -- looked for %sbundled/%s and %slocal_nock_parena", base, bundled_name, base);
+        nock_logf("dev trees: run `make local-nock-parena`; packaged clients ship bundled/%s", bundled_name);
         snprintf(app_launch_status, sizeof app_launch_status,
-                 "NOCK server not found -- run `make local-nock-parena`");
+                 "NOCK: server missing -- see " NOCK_LOG_TAIL);
         return;
     }
+    nock_logf("server=%s", server);
 
     int started = 0;
-    if (!nock_port_open(NOCK_LOCAL_PORT)) {
+    if (nock_port_open(NOCK_LOCAL_PORT)) {
+        nock_logf("port %d already answering -- reusing the server that is already up", NOCK_LOCAL_PORT);
+    } else {
 #ifdef _WIN32
         char cmdline[2800];
         snprintf(cmdline, sizeof cmdline, "\"%s\" --port %d --root \"%s\"", server, NOCK_LOCAL_PORT, root);
+        nock_logf("spawn: %s (cwd %s)", cmdline, root);
+        /* Inheritable, share-permitted log handle for the child: without STARTF_USESTDHANDLES the
+           server's own stdout/stderr go nowhere on Windows, which is exactly how "nothing happens"
+           stayed unexplained. CREATE_NO_WINDOW keeps it console-less; the file is its console. */
+        SECURITY_ATTRIBUTES sa;
+        ZeroMemory(&sa, sizeof sa);
+        sa.nLength = sizeof sa;
+        sa.bInheritHandle = TRUE;
+        char logfile[1400];
+        snprintf(logfile, sizeof logfile, "%s/" NOCK_LOG_TAIL, root);
+        HANDLE logh = CreateFileA(logfile, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                  &sa, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        HANDLE nulh = CreateFileA("NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                  &sa, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
         STARTUPINFOA si;
         PROCESS_INFORMATION pi;
         ZeroMemory(&si, sizeof si);
         si.cb = sizeof si;
+        if (logh != INVALID_HANDLE_VALUE) {
+            si.dwFlags = STARTF_USESTDHANDLES;
+            si.hStdOutput = logh;
+            si.hStdError = logh;
+            si.hStdInput = (nulh != INVALID_HANDLE_VALUE) ? nulh : GetStdHandle(STD_INPUT_HANDLE);
+        } else {
+            nock_logf("could not open %s for the server's output (error %lu)", logfile, GetLastError());
+        }
         ZeroMemory(&pi, sizeof pi);
-        if (CreateProcessA(NULL, cmdline, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+        if (CreateProcessA(NULL, cmdline, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, root, &si, &pi)) {
             CloseHandle(pi.hProcess);
             CloseHandle(pi.hThread);
             started = 1;
+        } else {
+            nock_logf("CreateProcessA failed (error %lu)", GetLastError());
         }
+        if (logh != INVALID_HANDLE_VALUE) CloseHandle(logh);
+        if (nulh != INVALID_HANDLE_VALUE) CloseHandle(nulh);
 #else
         pid_t pid = fork();
         if (pid == 0) {
+            /* the server's own output goes to the log, then the repo root becomes its cwd: its
+               levels/ path and the `git add` / `git commit` it runs on save are both relative */
+            char logfile[1400];
+            snprintf(logfile, sizeof logfile, "%s/" NOCK_LOG_TAIL, root);
+            int lf = open(logfile, O_WRONLY | O_CREAT | O_APPEND, 0644);
+            if (lf >= 0) {
+                (void)dup2(lf, STDOUT_FILENO);
+                (void)dup2(lf, STDERR_FILENO);
+                if (lf > 2) close(lf);
+            }
+            if (root[0]) (void)chdir(root);
             execl(server, server, "--port", "8787", "--root", root, (char *)NULL);
             _exit(127); /* execl only returns on failure */
         } else if (pid > 0) {
             started = 1;
+        } else {
+            nock_logf("fork failed: %s", strerror(errno));
         }
 #endif
     }
@@ -5348,16 +5461,21 @@ static void lobby_launch_nock(void) {
      * first start shows the editor instead of the browser's connection error page. */
     for (int i = 0; i < 40 && !nock_port_open(NOCK_LOCAL_PORT); i++) SDL_Delay(50);
     if (!nock_port_open(NOCK_LOCAL_PORT)) {
-        if (started) snprintf(app_launch_status, sizeof app_launch_status,
-                              "NOCK: server started but port %d never answered", NOCK_LOCAL_PORT);
-        else snprintf(app_launch_status, sizeof app_launch_status, "NOCK: cannot start the server");
+        /* the server's own output is already above this line in the same file, so the reason is
+           readable instead of guessed at */
+        nock_logf("no answer on 127.0.0.1:%d after 2s (spawned=%d) -- the server's own output, if any, is above",
+                  NOCK_LOCAL_PORT, started);
+        snprintf(app_launch_status, sizeof app_launch_status,
+                 "NOCK: no answer on %d -- see " NOCK_LOG_TAIL, NOCK_LOCAL_PORT);
         return;
     }
 
     char url[128];
     snprintf(url, sizeof url, "http://127.0.0.1:%d/", NOCK_LOCAL_PORT);
+    nock_logf("listening on %s -- opening the editor", url);
     iduna__open_browser(url);
-    snprintf(app_launch_status, sizeof app_launch_status, "NOCK: %s", url);
+    snprintf(app_launch_status, sizeof app_launch_status,
+             "NOCK: %s (log: " NOCK_LOG_TAIL ")", url);
 }
 /* ---- end local NOCK app -------------------------------------------------------------------- */
 
