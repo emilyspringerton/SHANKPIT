@@ -140,7 +140,11 @@ BAY_W, BAY_D, STOREY = 20.0, 20.0, 8.0
 # phi^2 = 2.618, i.e. a bit more than double, and it is the scale applied here: a pair goes from 60x20 to
 # 157x52 and one storey from 8 to 21 units, which is what the city's own slabs are built at.
 PHI = (1.0 + 5.0 ** 0.5) / 2.0
-LOFT_SCALE = PHI * PHI
+# phi^3, not phi^2: the first pass (2.618) was still small next to the city's own blocks -- a 157-wide
+# building in a 333-wide world. One more phi is 4.236: a pair becomes 254x85 and a storey 34, so a loft is
+# a landmark you can see from the bridge instead of a kiosk. Change this ONE number and re-run with
+# --replace-placements (the frozen spots are chosen against the old size).
+LOFT_SCALE = PHI * PHI * PHI
 R, G, B, FRICTION = 0.6, 0.6, 0.65, 0.8
 
 # The city's own material table already has brick/concrete/hps_light/ips_light/metal/wood. Glass is the
