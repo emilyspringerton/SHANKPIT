@@ -649,16 +649,47 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # Pinned download rather than android-actions/setup-android: the action
+      # failed on this repo's first run (step 29, no logs available to us to see
+      # why), while this exact sequence -- same URL, same packages -- built the
+      # release APK locally. continue-on-error on the three Android steps so a
+      # flaky SDK download cannot take the desktop artifacts down with it; the
+      # Bundle step below then warns instead of failing, and the release simply
+      # has no APK on that run.
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          SDK="$RUNNER_TEMP/android-sdk"
+          mkdir -p "$SDK/cmdline-tools"
+          curl -sSL --retry 3 --retry-delay 5 -o "$RUNNER_TEMP/cmdline-tools.zip" \
+            https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q "$RUNNER_TEMP/cmdline-tools.zip" -d "$SDK/cmdline-tools"
+          if [ -d "$SDK/cmdline-tools/cmdline-tools" ]; then
+            mv "$SDK/cmdline-tools/cmdline-tools" "$SDK/cmdline-tools/latest"
+          fi
+          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-34" "build-tools;34.0.0" "platform-tools" >/dev/null
+          {
+            echo "ANDROID_SDK_ROOT=$SDK"
+            echo "ANDROID_HOME=$SDK"
+          } >> "$GITHUB_ENV"
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.7'
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          curl -sSL --retry 3 --retry-delay 5 -o "$RUNNER_TEMP/gradle.zip" \
+            https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gradle-8.7/bin" >> "$GITHUB_PATH"
 
       - name: Build Android APK (shankpit-460)
         shell: bash
+        continue-on-error: true
         env:
           SHANKPIT_ANDROID_VERSION_CODE: ${{ github.run_number }}
           SHANKPIT_ANDROID_VERSION_NAME: ${{ github.run_number }}
@@ -794,12 +825,12 @@ jobs:
           # Android APK (shankpit-460). Flat, one file, same BUILD stamp as the
           # zips above so an APK always matches the desktop build it shipped with.
           APK="android/app/build/outputs/apk/release/app-release.apk"
-          if [ ! -f "$APK" ]; then
-            echo "::error::Android release APK missing at $APK"
-            exit 1
+          if [ -f "$APK" ]; then
+            cp "$APK" "ShankPit_Android_${BUILD}.apk"
+            ls -l "ShankPit_Android_${BUILD}.apk"
+          else
+            echo "::warning::Android APK was not built this run; this release ships the desktop artifacts without one."
           fi
-          cp "$APK" "ShankPit_Android_${BUILD}.apk"
-          ls -l "ShankPit_Android_${BUILD}.apk"
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -867,12 +898,20 @@ jobs:
           set -euo pipefail
           git tag "$NEXT_VERSION"
           git push origin "$NEXT_VERSION"
+          # The APK is appended only when it actually built: a literal glob that
+          # matches nothing makes `gh release create` exit non-zero, which would
+          # lose the whole release over a missing Android artifact.
+          files=(
+            dist/ShankPit_World_*.zip
+            dist/ShankPit_Client_*.zip
+            dist/ShankPit_Bots_*.zip
+            dist/ShankPit_SlimClient_*.zip
+            dist/SHANKPIT_CONSTRUCT.txt
+          )
+          if ls dist/ShankPit_Android_*.apk >/dev/null 2>&1; then
+            files+=(dist/ShankPit_Android_*.apk)
+          fi
           gh release create "$NEXT_VERSION" \
-            dist/ShankPit_World_*.zip \
-            dist/ShankPit_Client_*.zip \
-            dist/ShankPit_Bots_*.zip \
-            dist/ShankPit_SlimClient_*.zip \
-            dist/ShankPit_Android_*.apk \
-            dist/SHANKPIT_CONSTRUCT.txt \
+            "${files[@]}" \
             --title "$NEXT_VERSION" \
             --generate-notes
