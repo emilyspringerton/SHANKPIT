@@ -174,8 +174,14 @@ def auto_map(stems, rig=None):
     return found, missing, ambiguous
 
 
-def write_bundle(mapping, assets, out, allow_partial=False):
-    """Validate the whole mapping, then write <out>/<contract>.gband(+.json). Returns warnings."""
+def write_bundle(mapping, assets, out, allow_partial=False, mesh=None):
+    """Validate the whole mapping, then write <out>/<contract>.gband(+.json). Returns warnings.
+
+    `mesh` names the .gskel/.gmesh in `assets` these clips were made against, and is recorded as
+    <out>/skin.json. Without it the bundle is still a valid clip set, but nothing can DRAW it: a
+    clip is channel data and channels are only meaningful against one skeleton, so the engine needs
+    to be told which skin to put them on.
+    """
     errors, warnings, headers, manifests = [], [], {}, {}
     used = {}
     for state, stem in mapping.items():
@@ -236,6 +242,18 @@ def write_bundle(mapping, assets, out, allow_partial=False):
         with open(os.path.join(out, state + ".gband.json"), "w") as f:
             json.dump(man, f, indent=2, sort_keys=True)
             f.write("\n")
+
+    if mesh:
+        skin = {
+            "mesh": mesh,
+            "source": "mixamo_clipset.py",
+            "assets": os.path.basename(os.path.abspath(assets)),
+            "contract_version": 1,
+            "states": [s for s in CONTRACT if s in mapping],
+        }
+        with open(os.path.join(out, "skin.json"), "w") as f:
+            json.dump(skin, f, indent=2, sort_keys=True)
+            f.write("\n")
     return [], warnings
 
 
@@ -247,6 +265,7 @@ def main(argv):
     ap.add_argument("--rig", help="with --auto: only consider clips whose name contains this")
     ap.add_argument("--out", required=True, help="output directory for the bundle")
     ap.add_argument("--allow-partial", action="store_true", help="write the states that are mapped (still validates each)")
+    ap.add_argument("--mesh", help="the .gskel/.gmesh in --assets these clips belong to (written to skin.json)")
     ap.add_argument("--dry-run", action="store_true", help="validate and report, write nothing")
     args = ap.parse_args(argv)
 
@@ -288,7 +307,7 @@ def main(argv):
             if state not in mapping:
                 errors.append("missing contract clip: " + state)
     else:
-        errors, warnings = write_bundle(mapping, args.assets, args.out, args.allow_partial)
+        errors, warnings = write_bundle(mapping, args.assets, args.out, args.allow_partial, args.mesh)
 
     for w in warnings:
         print("warn: " + w, file=sys.stderr)

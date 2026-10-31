@@ -48,6 +48,11 @@ typedef struct {
 } AIPerception;
 
 static AIController g_story_ai[STORY_AI_MAX];
+
+/* EMPIRE world -- resource nodes, claimable cells and the per-faction stockpiles, owned here because this
+   is the module that ticks the units. See story_ai.h's own doc comments. */
+static EUWorld g_empire_world;
+static int ai_index_by_player_id(int player_id);
 static AIWorldBlackboard g_story_bb;
 static AIPerception g_story_perception[STORY_AI_MAX];
 static unsigned int g_story_debug_next_log_ms = 0;
@@ -98,6 +103,9 @@ static const char *ai_mode_name(AIMode mode) {
         case AI_MODE_FLEE: return "FLEE";
         case AI_MODE_LEASH_RETURN: return "LEASH_RETURN";
         case AI_MODE_GREET: return "GREET";
+        case AI_MODE_EXPLORE: return "EXPLORE";
+        case AI_MODE_GATHER: return "GATHER";
+        case AI_MODE_CLAIM: return "CLAIM";
         default: return "DISABLED";
     }
 }
@@ -363,6 +371,10 @@ void story_ai_reset(ServerState *s) {
         s->players[i].carried_flag_team_id = -1;
         s->players[i].state = STATE_ALIVE;
     }
+    /* A level's authored EMPIRE units need ground to take and something to gather, so a reset seeds the
+       default contested ring. Deliberately at reset and not at spawn: two units spawned a second apart must
+       see the same world, and re-seeding per spawn would reset faction stockpiles under them. */
+    story_ai_empire_seed_default();
 }
 
 // story_ai_despawn_all_characters -- see story_ai.h's own doc comment for the full rationale.
@@ -443,6 +455,57 @@ int story_ai_spawn_enemy(ServerState *s, AIRole role, int kit, float x, float y,
     ai_assign_role_defaults(ai, p);
 
     return slot;
+}
+
+/* ---- EMPIRE units ----------------------------------------------------------------------------- */
+
+EUWorld *story_ai_empire_world(void) { return &g_empire_world; }
+
+void story_ai_empire_seed_default(void) {
+    eu_world_clear(&g_empire_world);
+    int cap = g_eu_rules.node_capacity();
+    /* Six nodes on a 40-unit ring, twelve claim cells on a 70-unit ring: close enough that a unit walks to
+       one in a few seconds, far enough apart that two factions do not silently share a node. */
+    for (int i = 0; i < 6; i++) {
+        float a = (float)i * 1.0471976f; /* 60 degrees */
+        eu_world_add_node(&g_empire_world, cosf(a) * 40.0f, sinf(a) * 40.0f, cap);
+    }
+    for (int i = 0; i < 12; i++) {
+        float a = (float)i * 0.5235988f; /* 30 degrees */
+        eu_world_add_claim_cell(&g_empire_world, cosf(a) * 70.0f, sinf(a) * 70.0f);
+    }
+}
+
+int story_ai_spawn_unit(ServerState *s, int archetype, int kit, int faction, int orders,
+                        float x, float y, float z) {
+    if (!s) return -1;
+    EUUnit probe;
+    eu_unit_init(&probe, archetype, kit, faction, orders);
+    if (probe.archetype == EU_ARCH_NONE) return -1;
+    int pid = story_ai_spawn_enemy(s, (AIRole)probe.role, probe.kit, x, y, z);
+    if (pid < 0) return -1;
+    int idx = ai_index_by_player_id(pid);
+    if (idx < 0) return -1;
+    AIController *ai = &g_story_ai[idx];
+    ai->archetype = probe.archetype;
+    ai->faction = probe.faction;
+    ai->eu = probe;
+    ai->last_order_ms = 0;
+    /* The archetype's health pool is the point of an archetype (an ally outlasts a zombie). The brain
+       defaults above already set the weapon/senses for the role it picked. */
+    s->players[pid].health = probe.health;
+    return pid;
+}
+
+int story_ai_unit_order(int player_id) {
+    int idx = ai_index_by_player_id(player_id);
+    if (idx < 0 || g_story_ai[idx].archetype == EU_ARCH_NONE) return -1;
+    return g_story_ai[idx].eu.order;
+}
+
+int story_ai_unit_archetype(int player_id) {
+    int idx = ai_index_by_player_id(player_id);
+    return idx < 0 ? -1 : g_story_ai[idx].archetype;
 }
 
 static void ai_set_patrol(AIController *ai, int idx, float x, float y, float z, unsigned int wait_ms, int hint) {
@@ -800,6 +863,74 @@ static void ai_run_greet(ServerState *s, AIController *ai, unsigned int now_ms) 
     p->anim_override = (ai->greet_phase == 0) ? 1 /* GBAND_SKEL_NPC_ANIM_GREET */ : 2 /* GBAND_SKEL_NPC_ANIM_DANCE */;
 }
 
+/* EMPIRE order runs -- deliberately thin. They use the same ai_move_towards primitive every other mode
+ * uses; the world mutation itself lives in empire_units.h so a test drives it without a server. */
+static void ai_run_explore(ServerState *s, AIController *ai, unsigned int now_ms) {
+    PlayerState *p = &s->players[ai->player_id];
+    if (!ai->eu.exploring) {
+        /* Deterministic per unit and per leg: no RNG, so two hosts running this build explore the same
+           way, and the point stays put for the few seconds it takes to walk to it. */
+        int spin = (ai->player_id * 7 + (int)(now_ms / 2500U)) & 7;
+        float ang = (float)spin * 0.7853982f;
+        float radius = (float)g_eu_rules.explore_radius() * 0.5f + (float)(spin & 3) * 6.0f;
+        ai->eu.explore_x = ai->home_x + cosf(ang) * radius;
+        ai->eu.explore_z = ai->home_z + sinf(ang) * radius;
+        ai->eu.exploring = 1;
+    }
+    float dist = ai_len2(ai->eu.explore_x - p->x, ai->eu.explore_z - p->z);
+    if (dist < 4.0f) { ai->eu.exploring = 0; p->in_fwd = 0.0f; return; }
+    ai_move_towards(ai, p, ai->eu.explore_x, ai->eu.explore_z, 0.55f * ai->move_speed_scale, 6.0f, 6.0f);
+}
+
+static void ai_run_gather(ServerState *s, AIController *ai, unsigned int now_ms) {
+    PlayerState *p = &s->players[ai->player_id];
+    EUWorld *w = &g_empire_world;
+    int node = ai->eu.target_node;
+    if (node < 0 || node >= w->node_count || w->nodes[node].amount <= 0) {
+        node = eu_nearest_node(w, p->x, p->z);
+        ai->eu.target_node = node;
+    }
+    if (node < 0) { ai->eu.order = EU_ORDER_NONE; p->in_fwd = 0.0f; return; }
+    float dist = ai_len2(w->nodes[node].x - p->x, w->nodes[node].z - p->z);
+    if (dist > (float)g_eu_rules.gather_radius()) {
+        ai_move_towards(ai, p, w->nodes[node].x, w->nodes[node].z,
+                        0.6f * ai->move_speed_scale, 6.0f, 4.0f);
+        return;
+    }
+    p->in_fwd = 0.0f;
+    /* One unit every 250 ms, not one per tick: a node is 25 units, so emptying one is a real ~6 second
+       job a player can interrupt rather than an instant pickup. */
+    if (now_ms - ai->last_order_ms >= 250U) {
+        ai->last_order_ms = now_ms;
+        eu_world_gather(w, &ai->eu, node);
+    }
+}
+
+static void ai_run_claim(ServerState *s, AIController *ai, unsigned int now_ms) {
+    PlayerState *p = &s->players[ai->player_id];
+    EUWorld *w = &g_empire_world;
+    int cell = ai->eu.target_cell;
+    if (cell < 0 || cell >= w->cell_count || w->cells[cell].owner == ai->faction) {
+        cell = eu_nearest_free_cell(w, ai->faction, p->x, p->z);
+        ai->eu.target_cell = cell;
+    }
+    if (cell < 0) { ai->eu.order = EU_ORDER_NONE; p->in_fwd = 0.0f; return; }
+    float dist = ai_len2(w->cells[cell].x - p->x, w->cells[cell].z - p->z);
+    if (dist > (float)w->cells[cell].radius) {
+        ai_move_towards(ai, p, w->cells[cell].x, w->cells[cell].z,
+                        0.6f * ai->move_speed_scale, 6.0f, 4.0f);
+        return;
+    }
+    p->in_fwd = 0.0f;
+    int dt = (int)(now_ms - ai->last_order_ms);
+    /* One second at most per tick: a real hitch must not hand out a free claim, but the cap cannot be
+       smaller than the rules' own millisecond unit or a low-tick-rate host could never finish a claim. */
+    if (dt > 1000) dt = 1000;
+    if (dt < 0) dt = 0;
+    ai->last_order_ms = now_ms;
+    eu_world_claim_tick(w, &ai->eu, cell, dt);
+}
+
 static void ai_run_ally_follow(ServerState *s, AIController *ai, unsigned int now_ms) {
     PlayerState *p = &s->players[ai->player_id];
     PlayerState *hero = &s->players[0];
@@ -1132,7 +1263,19 @@ void story_ai_tick(ServerState *s, unsigned int now_ms) {
        Tyler and Hana never got any movement input on the server OR locally (verified by
        tests/tyler/test_tyler_vo.c, T6). Deliberately an explicit allow-list entry, not a blanket
        "any mode" -- QUEUE/deathmatch levels that author characters keep their existing behavior. */
-    if ((s->game_mode != MODE_STORY && s->game_mode != MODE_TYLER) || s->story_phase != STORY_PHASE_PLAYING) return;
+    int tick_allowed = (s->game_mode == MODE_STORY || s->game_mode == MODE_TYLER) &&
+                       s->story_phase == STORY_PHASE_PLAYING;
+    if (!tick_allowed) {
+        /* EMPIRE units are level-authored, which means any mode: a NOCK character with an archetype can be
+           spawned in ZOMBIES, a custom map or anything else, and the founder's own ask was to be able to
+           put citizens/zombies/soldiers/allies into the world. Gating their tick on MODE_STORY would spawn
+           them and leave them standing still forever, so a live EMPIRE unit makes the tick legal on its
+           own. Characters without an archetype keep the old gate exactly. */
+        for (i = 0; i < STORY_AI_MAX; i++) {
+            if (g_story_ai[i].active && g_story_ai[i].archetype != EU_ARCH_NONE) { tick_allowed = 1; break; }
+        }
+    }
+    if (!tick_allowed) return;
 
     memset(&g_story_bb, 0, sizeof(g_story_bb));
 
@@ -1217,6 +1360,42 @@ void story_ai_tick(ServerState *s, unsigned int now_ms) {
         wants_combat = per->visible;
         search_timeout = STORY_AI_SEARCH_MIN_MS + (((unsigned int)ai->player_id * 317U) % STORY_AI_SEARCH_VAR_MS);
 
+        /* EMPIRE orders (empire_units.h) -- the one place an authored mask turns into behaviour. A unit
+           with archetype 0 never reaches this, so every pre-existing AI's path below is untouched. NONE
+           deliberately falls through to the role's own brain instead of freezing the unit: "no order
+           applies right now" is not "stand still forever", which is what keeps a soldier on guard and a
+           citizen wandering without either of those being special-cased here. */
+        if (ai->archetype != EU_ARCH_NONE) {
+            EUView view;
+            /* ai_gather_perception has exactly one target: players[0], the hero. An ally's leader and its
+               enemy cannot be the same body, so an ally never treats what it sees as a threat -- otherwise
+               an ally would pick ENGAGE the first time it looked at the player it is following. Hostile and
+               neutral units read the perception normally. (A real multi-target perception is the honest
+               fix; this is the correct behaviour for the one target the engine has.) */
+            view.enemy_visible = (ai->faction == EU_FACTION_ALLY) ? 0 : per->visible;
+            view.enemy_dist = per->dist;
+            view.leader_alive = s->players[0].active && s->players[0].state != STATE_DEAD;
+            view.leader_dist = ai_len2(s->players[0].x - s->players[ai->player_id].x,
+                                       s->players[0].z - s->players[ai->player_id].z);
+            view.idle_ms = (int)(now_ms - ai->mode_entered_ms);
+            view.at_home = ai_len2(s->players[ai->player_id].x - ai->home_x,
+                                   s->players[ai->player_id].z - ai->home_z) < 4.0f;
+            int order = eu_choose_order(&ai->eu, &g_empire_world, &view);
+            if (order != ai->eu.order) {
+                ai->eu.order = order;
+                ai->eu.target_node = -1;
+                ai->eu.target_cell = -1;
+                ai->eu.exploring = 0;
+                ai->last_order_ms = now_ms;
+            }
+            if (order == EU_ORDER_ENGAGE) { ai_set_mode(ai, AI_MODE_COMBAT, now_ms); continue; }
+            if (order == EU_ORDER_FOLLOW) { ai_set_mode(ai, AI_MODE_ALLY_FOLLOW, now_ms); continue; }
+            if (order == EU_ORDER_GATHER) { ai_set_mode(ai, AI_MODE_GATHER, now_ms); continue; }
+            if (order == EU_ORDER_CLAIM) { ai_set_mode(ai, AI_MODE_CLAIM, now_ms); continue; }
+            if (order == EU_ORDER_EXPLORE) { ai_set_mode(ai, AI_MODE_EXPLORE, now_ms); continue; }
+            if (order == EU_ORDER_GUARD) { ai_set_mode(ai, AI_MODE_PATROL, now_ms); continue; }
+        }
+
         if (ai->role == AI_ROLE_STORY_ALLY) {
             if (wants_combat) ai_set_mode(ai, AI_MODE_COMBAT, now_ms);
             else ai_set_mode(ai, AI_MODE_ALLY_FOLLOW, now_ms);
@@ -1278,6 +1457,9 @@ void story_ai_tick(ServerState *s, unsigned int now_ms) {
         else if (ai->mode == AI_MODE_SCRIPTED) ai_run_scripted(s, ai, now_ms);
         else if (ai->mode == AI_MODE_LEASH_RETURN) ai_run_leash_return(s, ai, now_ms);
         else if (ai->mode == AI_MODE_GREET) ai_run_greet(s, ai, now_ms);
+        else if (ai->mode == AI_MODE_EXPLORE) ai_run_explore(s, ai, now_ms);
+        else if (ai->mode == AI_MODE_GATHER) ai_run_gather(s, ai, now_ms);
+        else if (ai->mode == AI_MODE_CLAIM) ai_run_claim(s, ai, now_ms);
     }
 
 #if STORY_AI_DEBUG

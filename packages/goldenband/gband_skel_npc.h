@@ -25,7 +25,11 @@
 #include "../common/mat4.h"
 #include "gskel.h"
 
-#define GBAND_SKEL_NPC_MAX_KITS 8
+// 16, not 8: the six fixed kits (mannequin, zombie, Stan, Mike, Leela, George) already occupy most
+// of the old table, which left imported skins only two slots -- useless for "import additional skins
+// to use for npcs". A kit is one skeleton + one mesh + at most four clips held for the process
+// lifetime, so the extra eight slots are bounded and loaded once, same as the originals.
+#define GBAND_SKEL_NPC_MAX_KITS 16
 
 // S470 follow-up, founder real-time: "get all the robots in there and have them walking around
 // different waypoints... if you can get them to wave to the player when the player gets close
@@ -51,6 +55,16 @@
 int gband_skel_npc_load_kit(const char *asset_dir, const char *mesh_name,
                              const char *idle_clip_name, const char *walk_clip_name,
                              const char *greet_clip_name, const char *dance_clip_name);
+
+/* gband_skel_npc_load_clipset -- load an IMPORTED bundle (assets/goldenband/clipsets/<name>/) as a
+ * kit, so a skin imported through NOCK is the same kind of thing every built-in character is.
+ *
+ * The directory must hold the contract-named clips (anim_idle, anim_walk, ...) and a skin.json
+ * naming its "mesh" -- the .gskel/.gmesh in the parent directory. Returns the new kit index, or -1
+ * (no skin.json, no mesh named, missing/unreadable clips, kit slots full). Idle and walk are
+ * required; the two gestures come from anim_melee_swing/anim_ability, so a partial bundle still
+ * loads as long as those two exist. */
+int gband_skel_npc_load_clipset(const char *set_dir);
 
 void gband_skel_npc_shutdown(void);
 

@@ -1,7 +1,8 @@
 # Mixamo → GOLDENBAND → SHANKPIT: the asset pipeline, and its licensing boundary
 
-Status: the binding and loading halves are built and tested; the IDUNA NOCK endpoint is not (see the
-end, where the gap is named rather than implied).
+Status: import → binding → a selectable skin (yours, and an NPC's) is built and tested. The IDUNA NOCK
+endpoint is not (see the end, where the gap is named rather than implied), and the draw path plays four
+of the thirteen clips.
 
 ## The boundary first, because it decides the design
 
@@ -57,6 +58,37 @@ Mixamo .fbx/.glb  →  (GOLDENBAND / IDUNA importer)  →  <clip>.gband + <clip>
   human step, exactly like a level save.
 - Refusals come back as the binder's own sentences ("no clip for: anim_run, anim_ability",
   "content_hash mismatch…"), not a generic failure, because the artist is the one who has to act.
+
+## From an imported set to a skin you can actually wear
+
+The binder producing a valid bundle is half the chain; the other half is the engine offering it. Three
+places close it, and none of them keeps a second list of skins:
+
+- **Discovery** (`packages/simulation/skin_registry.h`): the lobby scans `assets/goldenband/clipsets/`
+  at startup. Every directory with a `skin.json` naming its mesh, an `anim_idle` and an `anim_walk` is
+  offered. A directory without a `skin.json` is refused — a clip is channel data and channels only
+  mean something against one skeleton, so a set that does not name its rig cannot be drawn.
+- **A row in the SKINS menu**: the built-in cosmetics come first, then one row per imported set.
+  Choosing one sets the draw path to `SKIN_MANNEQUIN` (the skin that knows how to draw a general
+  GOLDENBAND rig) and records which set, so the player's body is that rig. The choice is saved in
+  `shankpit_skin.cfg` as two numbers — built-in id and imported index — which is why old one-number
+  configs still load.
+- **An NPC body** (`AI_KIT_IMPORTED_BASE` in `packages/simulation/story_ai.h`): an authored
+  `LevelCharacter.kit` of `AI_KIT_IMPORTED_BASE + index` gives that NPC the imported skin. The host
+  prints the number for every set it loads (`... = kit N -- authored LevelCharacter.kit M`), so a
+  designer reads the index off the startup line instead of guessing. Up to ten imported sets are
+  addressable; a value past what this build loaded falls through to the ordinary role/round-robin
+  cascade, never to an invisible NPC.
+
+The mount point is worth stating because it is where the first attempt broke: a set lives at
+`<assets root>/clipsets/<name>/` while the `.gskel`/`.gmesh` it was made against sit **one level up**,
+so the loader resolves the mesh directory by walking up out of the set and checks `skin.json`'s own
+`"assets"` field against that path rather than appending it.
+
+What an imported skin draws today: idle, walk, and two gestures (melee swing cosplaying as greet,
+ability as dance) through the NPC kit path — four of the thirteen clips. The full set is loaded and
+loadable (`anim_clipset.h` is the selector); driving all thirteen from `PlayerState` is still the
+renderer slice named above.
 
 ## The IDUNA side — named, not built
 

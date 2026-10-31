@@ -38,9 +38,14 @@ static void init_single_clip_seq(GSeq *seq) {
     seq->loop = 1;
 }
 
-int gband_skel_npc_load_kit(const char *asset_dir, const char *mesh_name,
-                             const char *idle_clip_name, const char *walk_clip_name,
-                             const char *greet_clip_name, const char *dance_clip_name) {
+/* load_kit_paths -- the real loader, with skeleton/mesh and clips allowed to live in different
+ * directories. They are the same directory for every fixed kit (asset_dir == clip_dir); an imported
+ * clip set keeps its clips under clipsets/<name>/ while the skin's .gskel/.gmesh stay in
+ * assets/goldenband, which is exactly what the second public entry point below needs. */
+static int load_kit_paths(const char *asset_dir, const char *mesh_name, const char *clip_dir,
+                          const char *idle_clip_name, const char *walk_clip_name,
+                          const char *greet_clip_name, const char *dance_clip_name) {
+    if (!asset_dir || !clip_dir || !mesh_name) return -1;
     if (g_kit_count >= GBAND_SKEL_NPC_MAX_KITS) return -1;
     GbandSkelNpcKit *kit = &g_kits[g_kit_count];
     memset(kit, 0, sizeof(*kit));
@@ -52,12 +57,12 @@ int gband_skel_npc_load_kit(const char *asset_dir, const char *mesh_name,
     snprintf(path, sizeof(path), "%s/%s.gmesh", asset_dir, mesh_name);
     if (!gmesh_init(path, &kit->mesh)) return -1;
 
-    snprintf(gband_path, sizeof(gband_path), "%s/%s.gband", asset_dir, idle_clip_name);
-    snprintf(manifest_path, sizeof(manifest_path), "%s/%s.gband.json", asset_dir, idle_clip_name);
+    snprintf(gband_path, sizeof(gband_path), "%s/%s.gband", clip_dir, idle_clip_name);
+    snprintf(manifest_path, sizeof(manifest_path), "%s/%s.gband.json", clip_dir, idle_clip_name);
     if (!gseq_clip_load(gband_path, manifest_path, &kit->idle_clip)) { gmesh_free(&kit->mesh); return -1; }
 
-    snprintf(gband_path, sizeof(gband_path), "%s/%s.gband", asset_dir, walk_clip_name);
-    snprintf(manifest_path, sizeof(manifest_path), "%s/%s.gband.json", asset_dir, walk_clip_name);
+    snprintf(gband_path, sizeof(gband_path), "%s/%s.gband", clip_dir, walk_clip_name);
+    snprintf(manifest_path, sizeof(manifest_path), "%s/%s.gband.json", clip_dir, walk_clip_name);
     if (!gseq_clip_load(gband_path, manifest_path, &kit->walk_clip)) { gseq_clip_free(&kit->idle_clip); gmesh_free(&kit->mesh); return -1; }
 
     /* S470 -- both real, optional gestures. A NULL name means this character has no real clip
@@ -65,16 +70,16 @@ int gband_skel_npc_load_kit(const char *asset_dir, const char *mesh_name,
        a non-NULL name that fails to load is a real error, same as idle/walk above -- if the
        caller named a clip, it must actually be there. */
     if (greet_clip_name) {
-        snprintf(gband_path, sizeof(gband_path), "%s/%s.gband", asset_dir, greet_clip_name);
-        snprintf(manifest_path, sizeof(manifest_path), "%s/%s.gband.json", asset_dir, greet_clip_name);
+        snprintf(gband_path, sizeof(gband_path), "%s/%s.gband", clip_dir, greet_clip_name);
+        snprintf(manifest_path, sizeof(manifest_path), "%s/%s.gband.json", clip_dir, greet_clip_name);
         if (!gseq_clip_load(gband_path, manifest_path, &kit->greet_clip)) {
             gseq_clip_free(&kit->idle_clip); gseq_clip_free(&kit->walk_clip); gmesh_free(&kit->mesh); return -1;
         }
         kit->has_greet = 1;
     }
     if (dance_clip_name) {
-        snprintf(gband_path, sizeof(gband_path), "%s/%s.gband", asset_dir, dance_clip_name);
-        snprintf(manifest_path, sizeof(manifest_path), "%s/%s.gband.json", asset_dir, dance_clip_name);
+        snprintf(gband_path, sizeof(gband_path), "%s/%s.gband", clip_dir, dance_clip_name);
+        snprintf(manifest_path, sizeof(manifest_path), "%s/%s.gband.json", clip_dir, dance_clip_name);
         if (!gseq_clip_load(gband_path, manifest_path, &kit->dance_clip)) {
             if (kit->has_greet) gseq_clip_free(&kit->greet_clip);
             gseq_clip_free(&kit->idle_clip); gseq_clip_free(&kit->walk_clip); gmesh_free(&kit->mesh); return -1;
@@ -97,6 +102,102 @@ int gband_skel_npc_load_kit(const char *asset_dir, const char *mesh_name,
 
     kit->ready = 1;
     return g_kit_count++;
+}
+
+int gband_skel_npc_load_kit(const char *asset_dir, const char *mesh_name,
+                             const char *idle_clip_name, const char *walk_clip_name,
+                             const char *greet_clip_name, const char *dance_clip_name) {
+    return load_kit_paths(asset_dir, mesh_name, asset_dir,
+                          idle_clip_name, walk_clip_name, greet_clip_name, dance_clip_name);
+}
+
+/* gband_skel_npc_load_clipset -- an imported, contract-named bundle as a real kit.
+ *
+ * The set directory holds anim_idle..anim_climb_loop plus skin.json, which names the .gskel/.gmesh
+ * in the parent directory the clips were made against. That indirection is the whole point: a clip
+ * is channel data and channels only mean something against one skeleton, so a bundle that does not
+ * declare its mesh cannot be drawn and is refused rather than silently attached to a stranger's rig.
+ *
+ * Which four of the thirteen the current draw path samples: idle, walk, melee swing (greet) and
+ * ability (dance). The other nine are loaded and loadable -- packages/simulation/anim_clipset.h is
+ * the full-13 selector -- but gband_skel_npc_draw still drives GSeq, so this is "your skin, playing
+ * its own idle/walk and two gestures", not yet "your skin playing all thirteen states".
+ */
+/* json_string_value -- pull one "key": "value" string out of a small JSON file. Same one-key,
+ * one-shape scan the level readers use; not a general parser. */
+static int json_string_value(const char *buf, const char *key, char *out, size_t out_sz) {
+    if (!buf || !key || !out || out_sz < 2) return 0;
+    char needle[64];
+    snprintf(needle, sizeof needle, "\"%s\"", key);
+    const char *p = strstr(buf, needle);
+    if (!p) return 0;
+    p = strchr(p, ':');
+    if (!p) return 0;
+    p++;
+    while (*p == ' ' || *p == '\t' || *p == '"') p++;
+    size_t k = 0;
+    while (*p && *p != '"' && k < out_sz - 1) out[k++] = *p++;
+    out[k] = '\0';
+    return k > 0;
+}
+
+int gband_skel_npc_load_clipset(const char *set_dir) {
+    if (!set_dir) return -1;
+    char skin_path[512];
+    snprintf(skin_path, sizeof(skin_path), "%.*s/skin.json", (int)sizeof(skin_path) - 11, set_dir);
+    FILE *f = fopen(skin_path, "rb");
+    if (!f) {
+        fprintf(stderr, "clipset %s: no skin.json -- refusing (a bundle must name its mesh)\n", set_dir);
+        return -1;
+    }
+    char buf[2048];
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+
+    char mesh[64];
+    if (!json_string_value(buf, "mesh", mesh, sizeof mesh)) {
+        fprintf(stderr, "clipset %s: skin.json names no mesh -- refusing\n", set_dir);
+        return -1;
+    }
+
+    /* The set sits at <assets_root>/clipsets/<name>/ -- ONE level deeper than the .gskel/.gmesh it was
+       made against -- so the mesh directory is the set's grandparent (plus skin.json's own "assets"
+       field, which says which directory there). Stripping only the set name (the old behaviour) left
+       asset_dir pointing at ".../clipsets", where no .gskel exists, so every import failed at
+       gskel_init with a bundle that looked perfectly complete on disk. */
+    char assets[64] = "";
+    json_string_value(buf, "assets", assets, sizeof assets);
+
+    char root[512];
+    snprintf(root, sizeof root, "%.*s", (int)sizeof root - 1, set_dir);
+    char *slash = strrchr(root, '/');   /* .../clipsets/mike -> .../clipsets */
+    if (!slash) return -1;
+    *slash = '\0';
+    char *slash2 = strrchr(root, '/');  /* .../clipsets      -> ... */
+    if (slash2) *slash2 = '\0';
+
+    /* Two levels up from the set IS the mesh directory (<assets_root>/<assets>): "assets/goldenband/
+       clipsets/mike" -> "assets/goldenband". skin.json's "assets" names that same directory, so it is
+       checked rather than appended (appending it produced "assets/goldenband/goldenband", which is how
+       a complete-looking bundle failed to load). */
+    char asset_dir[512];
+    snprintf(asset_dir, sizeof asset_dir, "%.*s", (int)sizeof asset_dir - 1, root);
+    if (assets[0]) {
+        char expect[96];
+        snprintf(expect, sizeof expect, "/%s", assets);
+        size_t el = strlen(expect), al = strlen(asset_dir);
+        if (al < el || strcmp(asset_dir + al - el, expect) != 0)
+            fprintf(stderr, "clipset %s: skin.json says assets='%s' but the set sits in '%s' -- "
+                            "using the set's own location\n", set_dir, assets, asset_dir);
+    }
+
+    int kit = load_kit_paths(asset_dir, mesh, set_dir,
+                             "anim_idle", "anim_walk", "anim_melee_swing", "anim_ability");
+    if (kit < 0)
+        fprintf(stderr, "clipset %s: %s/%s.gskel+.gmesh with idle/walk/melee/ability did not load\n",
+                set_dir, asset_dir, mesh);
+    return kit;
 }
 
 void gband_skel_npc_shutdown(void) {

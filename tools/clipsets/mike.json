@@ -1,0 +1,15 @@
+{
+  "anim_idle": "Mike_Idle",
+  "anim_walk": "Mike_Walk",
+  "anim_run": "Mike_Walk",
+  "anim_crouch_idle": "Mike_Idle",
+  "anim_crouch_walk": "Mike_Walk",
+  "anim_jump_start": "Mike_Hello",
+  "anim_in_air": "Mike_Hello",
+  "anim_slide": "Mike_Hello",
+  "anim_weapon_fire": "Mike_Hello",
+  "anim_reload": "Mike_Hello",
+  "anim_melee_swing": "Mike_Hello",
+  "anim_ability": "Mike_Hello",
+  "anim_climb_loop": "Mike_Hello"
+}

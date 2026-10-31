@@ -27,6 +27,30 @@
 #include <GL/glu.h>
 
 #include "player_model.h"
+/* Imported character sets (assets/goldenband/clipsets/<name>/) as selectable skins. Included up top
+   rather than beside its first big user further down, because the skin-selection state (below) and
+   the SKINS menu both live above that point. */
+#include "../../../packages/simulation/skin_registry.h"
+/* EMPIRE, both halves, from PARENA: the influence economy + district sphere (empire_rules.c, declared by
+   its own host header -- the phone app calls empire_* and the Windows build was compiling those calls as
+   implicit declarations because nothing included it) and the unit layer (empire_units_rules.c: archetypes,
+   the human baseline, order priorities). */
+#include "../../../packages/simulation/empire_rules_host.h"
+#include "../../../packages/simulation/empire_units_rules_host.h"
+/* Lab stations: labst_reach_tenths was also an implicit declaration in the Windows build. */
+#include "../../../packages/simulation/lab_station_host.h"
+
+/* The imported skins this build found, in registry (alphabetical) order. Each one is a real GOLDENBAND
+   kit -- the same kind of thing mannequin/Stan/Mike/Leela/George are -- so "import a skin" and "use it
+   for an NPC" are the same mechanism, not two. g_selected_imported_skin is the player's own pick from
+   the SKINS menu (-1 = they picked a built-in cosmetic), and it is the index into these arrays. */
+static int g_imported_skin_kit[SKIN_REGISTRY_MAX];
+static char g_imported_skin_name[SKIN_REGISTRY_MAX][SKIN_REGISTRY_NAME_MAX];
+static int g_imported_skin_count = 0;
+static int g_selected_imported_skin = -1;
+/* Set around the one draw_player_3rd call made for the local player, so the mannequin skin can tell
+   "this is my own body" (use my chosen imported set) from "this is somebody else" (use the heuristics). */
+static int g_drawing_local_third_person = 0;
 
 
 #include "editor_widget_bridge.h"
@@ -268,6 +292,39 @@ static void gband_shader_and_mesh_init(void) {
     g_skel_npc_kit_leela = gband_skel_npc_load_kit("assets/goldenband", "Leela", "Leela_Idle", "Leela_Walk", "Leela_Hello", "Leela_Hello");
     if (g_skel_npc_kit_leela < 0) SDL_Log("S468: Leela kit load failed");
     g_skel_npc_kit_george = gband_skel_npc_load_kit("assets/goldenband", "George", "George_Idle", "George_Walk", "George_Hello", "George_Hello");
+    /* Imported skins -- the same kit path every built-in robot uses, so a set imported through NOCK
+       (tools/local_nock.py, or the binder directly) is immediately an NPC skin rather than a second
+       kind of asset. Slots are finite (GBAND_SKEL_NPC_MAX_KITS) and the five built-ins are already
+       held, so this loads what fits and says plainly what it found. A set that fails here is not
+       fatal: the built-ins still animate and the reason is on stdout. */
+    {
+        SkinRegistry found_sets;
+        int found = skin_registry_scan(&found_sets, "assets/goldenband/clipsets");
+        g_imported_skin_count = 0;
+        for (int i = 0; i < found; i++) {
+            int kit = gband_skel_npc_load_clipset(found_sets.entries[i].dir);
+            if (kit < 0) {
+                printf("[skin] imported '%s' did not load (mesh %s) -- skipped\n",
+                       found_sets.entries[i].name, found_sets.entries[i].mesh);
+                continue;
+            }
+            int slot = g_imported_skin_count;
+            if (slot >= SKIN_REGISTRY_MAX || slot >= STORY_AI_IMPORTED_MAX) {
+                printf("[skin] imported '%s' loaded but there is no authored-kit slot left -- skipped\n",
+                       found_sets.entries[i].name);
+                continue;
+            }
+            g_imported_skin_kit[slot] = kit;
+            snprintf(g_imported_skin_name[slot], sizeof g_imported_skin_name[slot], "%s",
+                     found_sets.entries[i].name);
+            g_imported_skin_count++;
+            printf("[skin] imported '%s' (mesh %s, %d/%d clips) = kit %d -- authored LevelCharacter.kit %d\n",
+                   found_sets.entries[i].name, found_sets.entries[i].mesh,
+                   found_sets.entries[i].bound, ANIM_STATE_COUNT, kit,
+                   AI_KIT_IMPORTED_BASE + slot);
+        }
+        if (found) printf("[skin] %d imported set(s), %d loaded\n", found, g_imported_skin_count);
+    }
     if (g_skel_npc_kit_george < 0) SDL_Log("S468: George kit load failed");
 
     g_skel_npc_ready = (g_skel_npc_kit_mannequin >= 0 || g_skel_npc_kit_stan >= 0 || g_skel_npc_kit_mike >= 0 ||
@@ -1018,6 +1075,10 @@ static void apply_ambient_level(void) {
 static BrickDebrisPool g_brick_debris;
 
 enum { SKIN_MENU_BACK = -1 };
+/* SKINS menu rows, declared here because the CUSTOMIZE handler above the definitions uses them. */
+static int skin_menu_row_count(void);
+static int skin_row_for_selection(void);
+static void skin_row_apply(int row);
 
 UiState ui_state;
 int ui_use_server = 0;
@@ -3280,8 +3341,14 @@ static void lobby_apply_story_level(const CustomLevelData *lvl) {
     for (int ci = 0; ci < lvl->character_count; ci++) {
         const LevelCharacter *lc = &lvl->characters[ci];
         if (lc->role < AI_ROLE_RIFT_HOUND || lc->role > AI_ROLE_WANDERING_BOT) continue; // S492, mirrors apps/server's own identical fix
-        int kit = (lc->kit >= AI_KIT_AUTO && lc->kit <= AI_KIT_GEORGE) ? lc->kit : AI_KIT_AUTO; // S492, mirrors apps/server's own identical fallback
-        story_ai_spawn_enemy(&local_state, (AIRole)lc->role, kit, lc->x, lc->y, lc->z);
+        int kit = story_ai_kit_is_valid(lc->kit) ? lc->kit : AI_KIT_AUTO; // S492 + imported skins, mirrors apps/server's own fallback
+        /* An authored EMPIRE unit (archetype > 0) spawns through the order layer, which picks its role,
+           skin, faction and accepted orders; every other character spawns exactly as before. */
+        if (lc->archetype > 0)
+            story_ai_spawn_unit(&local_state, lc->archetype, kit, lc->faction, lc->orders,
+                                lc->x, lc->y, lc->z);
+        else
+            story_ai_spawn_enemy(&local_state, (AIRole)lc->role, kit, lc->x, lc->y, lc->z);
     }
 
     float nn_x[LEVEL_BOXES_MAX_NAV_NODES], nn_y[LEVEL_BOXES_MAX_NAV_NODES], nn_z[LEVEL_BOXES_MAX_NAV_NODES];
@@ -4761,7 +4828,12 @@ static const CharacterDefinition* character_definition_for_skin(int skin_id) {
 static void save_skin_selection() {
     FILE *f = fopen(SKIN_CONFIG_PATH, "w");
     if (!f) return;
-    fprintf(f, "%d\n", clamp_skin_id(g_selected_skin));
+    /* Two numbers, not one: which built-in cosmetic, and which imported set (-1 = none). The two are
+       separate axes -- an imported skin keeps SKIN_MANNEQUIN as the draw path and the index says
+       which GOLDENBAND rig that mannequin wears, so the built-in list is never rewritten. */
+    int imported = (g_selected_imported_skin >= 0 && g_selected_imported_skin < g_imported_skin_count)
+                       ? g_selected_imported_skin : -1;
+    fprintf(f, "%d %d\n", clamp_skin_id(g_selected_skin), imported);
     fclose(f);
 }
 
@@ -4772,10 +4844,18 @@ static void load_skin_selection() {
         return;
     }
     int parsed = SKIN_BAT;
-    if (fscanf(f, "%d", &parsed) == 1) {
+    int imported = -1;
+    int got = fscanf(f, "%d %d", &parsed, &imported);
+    if (got >= 1) {
         g_selected_skin = clamp_skin_id(parsed);
+        /* Keep the number even when the set isn't loaded YET: this can run before the kits do, and a
+           stale/missing index is resolved against the real count at draw and menu time instead of
+           silently discarding the player's choice here. */
+        g_selected_imported_skin = (imported >= 0 && imported < SKIN_REGISTRY_MAX) ? imported : -1;
+        if (g_selected_imported_skin < 0 && g_selected_skin == SKIN_MANNEQUIN) g_selected_skin = SKIN_BAT;
     } else {
         g_selected_skin = SKIN_BAT;
+        g_selected_imported_skin = -1;
     }
     fclose(f);
 }
@@ -5450,7 +5530,7 @@ static void lobby_start_action(int action) {
             lobby_selection = 0;
         } else if (action == CUSTOMIZE_SKINS) {
             skin_menu_open = 1;
-            skin_menu_selection = clamp_skin_id(g_selected_skin);
+            skin_menu_selection = skin_row_for_selection();
             skin_menu_scroll = 0;
             ensure_skin_selection_visible();
         } else if (action == CUSTOMIZE_SPRAYS) {
@@ -8927,7 +9007,23 @@ static void draw_player_skin_mannequin(PlayerState *p, float draw_pitch, float d
      * connection-order round-robin -- a designer's real choice outranks either heuristic.
      * forced_kit is 1-indexed (0 = AI_KIT_AUTO, meaning "no author choice, fall through to the
      * existing behavior below unchanged"); kits[] is 0-indexed. */
-    if (p->forced_kit >= 1 && p->forced_kit <= 5 && kits[p->forced_kit - 1] >= 0) {
+    /* The local player's own pick from the SKINS menu, imported half. Beats every heuristic below for
+     * the same reason an authored forced_kit does: the player (or the level author) chose explicitly.
+     * Only the local player's own draw call sets g_drawing_local_third_person, so a coop peer's body
+     * is never painted with this machine's choice. */
+    int chosen_imported = (g_drawing_local_third_person && g_selected_imported_skin >= 0 &&
+                           g_selected_imported_skin < g_imported_skin_count)
+                              ? g_imported_skin_kit[g_selected_imported_skin] : -1;
+    if (chosen_imported >= 0 && gband_skel_npc_kit_ready(chosen_imported)) {
+        kit_index = chosen_imported;
+    /* An NPC authored with an imported skin (AI_KIT_IMPORTED_BASE + index, level_boxes.h's kit field).
+     * A kit that failed to load leaves kit_index at -1 so the normal role/round-robin cascade below
+     * decides, exactly as an AI_KIT_AUTO character would -- never an invisible NPC. */
+    } else if (p->forced_kit >= AI_KIT_IMPORTED_BASE) {
+        int imported = p->forced_kit - AI_KIT_IMPORTED_BASE;
+        if (imported < g_imported_skin_count && gband_skel_npc_kit_ready(g_imported_skin_kit[imported]))
+            kit_index = g_imported_skin_kit[imported];
+    } else if (p->forced_kit >= 1 && p->forced_kit <= 5 && kits[p->forced_kit - 1] >= 0) {
         kit_index = kits[p->forced_kit - 1];
     } else if (role == WITNESS_AI_ROLE_GIANT_BUG && kits[3] >= 0) {
         kit_index = kits[3]; /* leela, same kit as regular zombies -- "evil versions of the ones
@@ -13231,7 +13327,11 @@ void draw_scene(PlayerState *render_p) {
     draw_orb_world(SDL_GetTicks());
     draw_edu_widgets(SDL_GetTicks());
     draw_lab_world(SDL_GetTicks());
+    /* The one draw_player_3rd call for "me" -- the imported-skin choice is per-client, so the skin
+       code must not apply it to the other bodies this same loop draws. */
+    g_drawing_local_third_person = 1;
     if ((render_p->in_vehicle && render_p->vehicle_type != VEH_BUGGY) || render_p->third_person || g_cam_override.active) draw_player_3rd(render_p);
+    g_drawing_local_third_person = 0;
     for(int i=0; i<MAX_CLIENTS; i++) {
         PlayerState *p = &local_state.players[i];
         if (!p->active || p->scene_id != render_p->scene_id) continue;
@@ -13501,11 +13601,58 @@ static int skin_menu_visible_count(void) {
     return 4;
 }
 
-static int skin_menu_row_count(void) {
-    /* SKIN_MANNEQUIN is deliberately excluded from the player-facing cosmetic menu (see its own
-       enum doc comment) -- it's forced onto story_ai NPCs in MODE_STORY, never player-chosen. As
-       the real last enum value before SKIN_COUNT, one fewer row hides exactly it. */
+/* SKIN_MANNEQUIN is deliberately excluded from the BUILT-IN rows (see its own enum doc comment) -- it
+   is the mode-forced NPC body, not a cosmetic. Imported sets appear after those rows instead, and
+   selecting one pins the draw path to SKIN_MANNEQUIN internally while the set index picks the rig. */
+static int skin_menu_builtin_rows(void) {
     return SKIN_COUNT - 1;
+}
+
+static int skin_menu_row_count(void) {
+    return skin_menu_builtin_rows() + g_imported_skin_count;
+}
+
+/* Which imported set a row is, or -1 for a built-in row. */
+static int skin_row_imported(int row) {
+    int i = row - skin_menu_builtin_rows();
+    return (i >= 0 && i < g_imported_skin_count) ? i : -1;
+}
+
+static const char *skin_row_label(int row) {
+    int imported = skin_row_imported(row);
+    if (imported >= 0) return g_imported_skin_name[imported];
+    if (row >= 0 && row < skin_menu_builtin_rows()) return SKIN_LABELS[row];
+    return "";
+}
+
+static int skin_row_is_active(int row) {
+    int imported = skin_row_imported(row);
+    if (imported >= 0) return g_selected_imported_skin == imported;
+    return g_selected_imported_skin < 0 && clamp_skin_id(g_selected_skin) == row;
+}
+
+/* The row the cursor should open on: the imported set the player chose, else their built-in skin. */
+static int skin_row_for_selection(void) {
+    if (g_selected_imported_skin >= 0 && g_selected_imported_skin < g_imported_skin_count)
+        return skin_menu_builtin_rows() + g_selected_imported_skin;
+    int row = clamp_skin_id(g_selected_skin);
+    return (row < skin_menu_builtin_rows()) ? row : 0;
+}
+
+/* Confirm a row. An imported row also sets SKIN_MANNEQUIN, which is the skin that knows how to draw a
+   general GOLDENBAND rig at all -- the imported kit only decides which one.
+   An imported index the build could not load falls back to the built-in list rather than leaving the
+   player with no body, and the menu simply never offered such a row. */
+static void skin_row_apply(int row) {
+    int imported = skin_row_imported(row);
+    if (imported >= 0) {
+        g_selected_imported_skin = imported;
+        g_selected_skin = SKIN_MANNEQUIN;
+    } else {
+        g_selected_imported_skin = -1;
+        g_selected_skin = clamp_skin_id(row);
+    }
+    save_skin_selection();
 }
 
 static int skin_menu_visible_skin_count(void) {
@@ -13593,7 +13740,7 @@ static void draw_skin_chooser_overlay() {
         int i = skin_menu_scroll + row;
         if (i >= entry_count) break;
         float y = item_top - item_gap * row;
-        int is_active = (clamp_skin_id(g_selected_skin) == i);
+        int is_active = skin_row_is_active(i);
         int is_cursor = (skin_menu_selection == i);
         glColor3f(is_active ? 0.35f : 0.16f, is_active ? 0.65f : 0.22f, is_active ? 0.88f : 0.28f);
         glRectf(item_x, y, item_x + item_w, y + item_h);
@@ -13607,7 +13754,7 @@ static void draw_skin_chooser_overlay() {
             glEnd();
         }
         glColor3f(0.05f, 0.05f, 0.06f);
-        draw_string(SKIN_LABELS[i], item_x + 12.0f, y + 29.0f, 3.5f);
+        draw_string(skin_row_label(i), item_x + 12.0f, y + 29.0f, 3.5f);
         if (is_active) {
             draw_string("< ACTIVE >", item_x + item_w - 120.0f, y + 29.0f, 3);
         }
@@ -14956,7 +15103,6 @@ static void buggy_advance_remote_positions(unsigned int now_ms) {
 #include "coop_host.h"
 /* --coop-find: join a world another machine is advertising (packages/simulation/zone_beacon.h). */
 #include "zone_beacon.h"
-
 /* lobby_coop_host_start -- `--coop-host [zone]`: spawn the real game server for this zone and point
  * the client at it. Returns 1 when a world is reachable (started now, or already running from an
  * earlier session, which is why the same command is also a rejoin), 0 with app_launch_status set to
@@ -15027,6 +15173,7 @@ int main(int argc, char* argv[]) {
     slide_rules_install(); /* PARENA slope curve for the crouch-slide (a hill speeds you up) */
     widget_rules_install(); /* PARENA widget circuit (lever / plate / relay / transistor / machine) */
     zone_rules_install();   /* PARENA shared-zone lifecycle + procedural dungeon parameters */
+    eu_rules_install();     /* PARENA EMPIRE unit archetypes, the human baseline, order priorities */
     int cli_start_zombies = 0;
     int cli_start_dungeon = 0;
     char cli_dungeon_zone[32] = "dungeon_1";
@@ -15368,7 +15515,7 @@ int main(int argc, char* argv[]) {
                     if (skin_menu_open) {
                         if (e.key.keysym.sym == SDLK_UP) {
                             if (skin_menu_selection == SKIN_MENU_BACK) {
-                                skin_menu_selection = SKIN_COUNT - 1;
+                                skin_menu_selection = skin_menu_row_count() - 1;
                                 ensure_skin_selection_visible();
                             } else if (skin_menu_selection == 0) {
                                 skin_menu_selection = SKIN_MENU_BACK;
@@ -15380,7 +15527,7 @@ int main(int argc, char* argv[]) {
                             if (skin_menu_selection == SKIN_MENU_BACK) {
                                 skin_menu_selection = 0;
                                 ensure_skin_selection_visible();
-                            } else if (skin_menu_selection >= SKIN_COUNT - 1) {
+                            } else if (skin_menu_selection >= skin_menu_row_count() - 1) {
                                 skin_menu_selection = SKIN_MENU_BACK;
                             } else {
                                 skin_menu_selection++;
@@ -15389,9 +15536,8 @@ int main(int argc, char* argv[]) {
                         } else if (e.key.keysym.sym == SDLK_ESCAPE || e.key.keysym.sym == SDLK_BACKSPACE) {
                             skin_menu_open = 0;
                         } else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) {
-                            if (skin_menu_selection >= 0 && skin_menu_selection < SKIN_COUNT) {
-                                g_selected_skin = clamp_skin_id(skin_menu_selection);
-                                save_skin_selection();
+                            if (skin_menu_selection >= 0 && skin_menu_selection < skin_menu_row_count()) {
+                                skin_row_apply(skin_menu_selection);
                             } else if (skin_menu_selection == SKIN_MENU_BACK) {
                                 skin_menu_open = 0;
                             }
@@ -15493,11 +15639,10 @@ int main(int argc, char* argv[]) {
                             continue;
                         }
                         int hit = skin_hit_test_scroll_rows(mx, my, 790.0f, 455.0f, 290.0f, 50.0f, 60.0f);
-                        if (hit >= 0 && hit < SKIN_COUNT) {
+                        if (hit >= 0 && hit < skin_menu_row_count()) {
                             skin_menu_selection = hit;
                             ensure_skin_selection_visible();
-                            g_selected_skin = clamp_skin_id(hit);
-                            save_skin_selection();
+                            skin_row_apply(hit);
                         }
                         continue;
                     }

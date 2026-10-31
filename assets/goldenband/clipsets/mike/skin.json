@@ -1,0 +1,21 @@
+{
+  "assets": "goldenband",
+  "contract_version": 1,
+  "mesh": "Mike",
+  "source": "mixamo_clipset.py",
+  "states": [
+    "anim_idle",
+    "anim_walk",
+    "anim_run",
+    "anim_crouch_idle",
+    "anim_crouch_walk",
+    "anim_jump_start",
+    "anim_in_air",
+    "anim_slide",
+    "anim_weapon_fire",
+    "anim_reload",
+    "anim_melee_swing",
+    "anim_ability",
+    "anim_climb_loop"
+  ]
+}

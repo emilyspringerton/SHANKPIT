@@ -586,8 +586,14 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
         // whole character -- same "a stale/bad reference mustn't break the level" convention
         // Door/NavNode cross-references already follow, just for a cosmetic field instead of a
         // structural one, so it earns a fallback instead of a skip.
-        int kit = (lc->kit >= AI_KIT_AUTO && lc->kit <= AI_KIT_GEORGE) ? lc->kit : AI_KIT_AUTO;
-        int spawned_id = story_ai_spawn_enemy(&local_state, (AIRole)lc->role, kit, lc->x, lc->y, lc->z);
+        int kit = story_ai_kit_is_valid(lc->kit) ? lc->kit : AI_KIT_AUTO;
+        /* An authored EMPIRE unit (archetype > 0) goes through the order layer; everything else keeps
+           spawning exactly as it did. */
+        int spawned_id = lc->archetype > 0
+                             ? story_ai_spawn_unit(&local_state, lc->archetype, kit, lc->faction,
+                                                   lc->orders, lc->x, lc->y, lc->z)
+                             : story_ai_spawn_enemy(&local_state, (AIRole)lc->role, kit,
+                                                    lc->x, lc->y, lc->z);
         /* S536: TYLER_VALHANNA_ICELAND_1986 authors exactly two characters, Tyler first then Hana
          * (cmd/nock_gen_tyler_levels/main.go) -- capture whichever real player slots they actually
          * landed in, in authored order, same "author order is actor identity" convention this
@@ -1738,8 +1744,13 @@ void server_broadcast_brick_state(void) {
     }
 }
 
+/* EMPIRE unit rules from PARENA -- included here because this file has no block of rules includes yet;
+   the server spawns authored units, so it must read the same archetype/order table the lobby does. */
+#include "../../../packages/simulation/empire_units_rules_host.h"
+
 int main(int argc, char *argv[]) {
     buggy_rules_install(); /* PARENA buggy handling (#468) */
+    eu_rules_install(); /* PARENA EMPIRE unit archetypes, the human baseline, order priorities */
     heli_rules_install(); /* PARENA helicopter flight model (#542) */
     rocket_car_rules_install(); /* PARENA rocket car (Bedrock Racers port) */
     /* Card #479: clients default to the baked-in levels; the shared game server keeps resolving the admin-

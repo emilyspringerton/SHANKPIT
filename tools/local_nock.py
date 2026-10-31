@@ -260,7 +260,7 @@ class ClipsetStore:
             })
         return out
 
-    def bind(self, name, mapping, auto, partial):
+    def bind(self, name, mapping, auto, partial, mesh=None):
         """Returns (result, error). The binder's own messages are what the editor shows."""
         if not SLUG_RE.match(name or ""):
             return None, "bad clip set name (letters, digits, _ and -, max 64)"
@@ -274,8 +274,13 @@ class ClipsetStore:
             mapping = found
         if not isinstance(mapping, dict) or not mapping:
             return None, "nothing mapped: pick a clip for at least one state, or tick auto"
+        if mesh is not None:
+            mesh = str(mesh).strip()
+            if mesh and (not SLUG_RE.match(mesh) or not os.path.isfile(os.path.join(self.assets_dir, mesh + ".gskel"))):
+                return None, "no %s.gskel in assets/goldenband -- pick a mesh that exists" % (mesh or "?")
         out = os.path.join(self.clipsets_dir(), name)
-        errors, warnings = mixamo_clipset.write_bundle(mapping, self.assets_dir, out, allow_partial=partial)
+        errors, warnings = mixamo_clipset.write_bundle(mapping, self.assets_dir, out,
+                                                       allow_partial=partial, mesh=mesh or None)
         if errors:
             return None, "; ".join(errors)
         return {
@@ -473,6 +478,7 @@ class Handler(BaseHTTPRequestHandler):
                     body.get("map"),
                     bool(body.get("auto")),
                     bool(body.get("partial")),
+                    body.get("mesh"),
                 )
             except OSError as e:
                 return self._error(500, f"cannot write clip set: {e}")

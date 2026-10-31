@@ -3,13 +3,11 @@
 #
 # Both halves are tested against the repo's REAL assets: the binder on Mike/Leela/Stan/George .gband
 # files, the selector through GOLDENBAND's own loader. Nothing here needs a GPU or a display.
-.PHONY: test-anim-clipset test-mixamo-clipset test-clipset-import bind-mike-clips
+.PHONY: test-anim-clipset test-mixamo-clipset test-clipset-import
 
-# bind-mike-clips -- a real, inspectable binding of the robot rigs to the contract, into var/ (not
-# committed): the honest place for a bundle an artist is still populating.
-bind-mike-clips:
-	python3 tools/mixamo_clipset.py --assets assets/goldenband --auto --rig Mike --allow-partial \
-		--out var/clipsets/mike
+# bind-mike-clips lives in mk/skin_registry.mk: it now binds the committed set the engine loads as a
+# skin (assets/goldenband/clipsets/mike) rather than a var/ scratch copy, and two recipes for one
+# target would only make make print an override warning on every other target's run.
 
 test-mixamo-clipset:
 	python3 tools/test_mixamo_clipset.py

@@ -4,6 +4,7 @@
 #include "../common/protocol.h"
 #include "humanness.h"
 #include "ai_nav.h"
+#include "empire_units.h"
 
 #define STORY_AI_MAX 16
 #define STORY_AI_PATROL_MAX_POINTS 8
@@ -33,7 +34,14 @@ typedef enum {
        (story_ai_tick) never routes it through combat/investigate/flee at all, same class of
        "real behavior, deliberately excluded from the rest of the state machine" precedent
        AI_MODE_SCRIPTED's own locked-state comment already sets. See ai_run_greet. */
-    AI_MODE_GREET
+    AI_MODE_GREET,
+    /* EMPIRE unit orders (packages/simulation/empire_units.h). These are not new brains: each one is a
+       small, specific way of using the movement/attack primitives the modes above already have, chosen
+       by eu_choose_order from the unit's own authored mask. A unit whose archetype is 0 never enters
+       them -- every pre-existing AI's behaviour is untouched. */
+    AI_MODE_EXPLORE, /* walk to points inside the explore radius, look around, pick another */
+    AI_MODE_GATHER,  /* walk to the nearest resource node and take from it while standing on it */
+    AI_MODE_CLAIM   /* walk to the nearest unowned cell and stand on it until it is ours */
 } AIMode;
 
 typedef enum {
@@ -82,8 +90,29 @@ typedef enum {
     AI_KIT_STAN,
     AI_KIT_MIKE,
     AI_KIT_LEELA,
-    AI_KIT_GEORGE
+    AI_KIT_GEORGE,
+    /* Imported skins. A set NOCK imported into assets/goldenband/clipsets/<name>/ becomes a kit at
+       startup (skin_registry_scan + gband_skel_npc_load_clipset), and an authored character picks
+       one with AI_KIT_IMPORTED_BASE + index -- the same number the lobby prints for each set when it
+       loads, so a level author reads the index off the host's own startup line instead of guessing.
+       forced_kit is an unsigned char on the wire (NetPlayer.forced_kit), so this range costs nothing
+       and AI_KIT_IMPORTED_BASE + STORY_AI_IMPORTED_MAX still fits in a byte. */
+    AI_KIT_IMPORTED_BASE = 6
 } AIKit;
+
+/* How many imported skins an authored character may address. The host loads at most this many (it is
+   bounded by the GOLDENBAND kit table and the registry scan), and a value past what actually loaded
+   is not an error: the drawing cascade simply falls through to its usual round-robin. Kept as a
+   plain number so this header stays free of the filesystem-facing skin_registry.h. */
+#define STORY_AI_IMPORTED_MAX 10
+
+/* story_ai_kit_is_valid -- the one range check every kit consumer should use. Before imported skins
+   existed this test was written out by hand as `kit >= AI_KIT_AUTO && kit <= AI_KIT_GEORGE` in both
+   apps/server and apps/lobby; two copies of a range that has now grown is exactly how an imported
+   skin silently stops being authorable. */
+static inline int story_ai_kit_is_valid(int kit) {
+    return kit >= AI_KIT_AUTO && kit < AI_KIT_IMPORTED_BASE + STORY_AI_IMPORTED_MAX;
+}
 
 typedef struct {
     float x, y, z;
@@ -182,6 +211,16 @@ typedef struct {
        never run concurrently on the same AI so there's no real conflict over the field. */
     int greet_phase;
     unsigned int last_greet_ms;
+
+    /* EMPIRE unit layer -- see packages/simulation/empire_units.h. `archetype` is EU_ARCH_NONE (0) on
+       every AI that was not authored as a citizen/soldier/ally, which is what keeps this additive:
+       the order block in story_ai_tick is skipped entirely for archetype 0. `eu` carries the inherited
+       traits, the accepted order mask and the live order; `last_order_ms` is the delta the gather/claim
+       runs use (a claim is 30 real seconds of standing still, so it needs a clock). */
+    EUUnit eu;
+    int archetype;
+    int faction;
+    unsigned int last_order_ms;
 } AIController;
 
 /* S461-03 -- a real, persistent group of specific AIController slots (by index into the
@@ -224,6 +263,38 @@ void story_ai_despawn_all_characters(ServerState *s);
 // kit: AI_KIT_AUTO or an explicit AIKit (S492) -- sets the spawned PlayerState's own forced_kit
 // once, unchanged for the rest of that NPC's life (see forced_kit's own doc comment).
 int story_ai_spawn_enemy(ServerState *s, AIRole role, int kit, float x, float y, float z);
+
+/* story_ai_spawn_unit -- spawn an EMPIRE archetype (packages/simulation/empire_units.h): citizen,
+   zombie, soldier, ally, guard, worker. The archetype picks the brain role, the default skin, the
+   faction, the accepted orders and the health pool; every one of them is overridable here, which is
+ * the level editor's own affordance ("spawn a soldier", "spawn Mike as an ally on my side").
+ *
+ *   kit:     > 0 = that AIKit, 0 = the archetype's default. An authored skin always wins.
+ *   faction: >= 0 = that faction, < 0 = the archetype's default.
+ *   orders:  >= 0 = that EU_ORDER_* mask, < 0 = the archetype's default mask.
+ *
+ * Returns the player slot id (>= 1), or -1 when there is no free slot/controller. Spawning through
+ * this path is what puts the unit's orders into the real tick -- story_ai_spawn_enemy alone still
+ * works and still means exactly what it meant before. */
+int story_ai_spawn_unit(ServerState *s, int archetype, int kit, int faction, int orders,
+                         float x, float y, float z);
+
+/* The shared EMPIRE world (resource nodes + claimable cells + per-faction stockpiles). One per process,
+ * owned here because this is the module that ticks units. The lobby's local sim and the server each have
+ * their own, the same way each already owns its own ServerState. */
+EUWorld *story_ai_empire_world(void);
+
+/* Seeds the default contested ground: a ring of resource nodes and a handful of claim cells around the
+ * origin. Called from story_ai_reset so a level with authored units always has something to gather and
+ * something to take; idempotent, and a caller that wants a different layout can clear/refill the world
+ * before spawning. Named honestly: this is a default, not level-authored terrain (the level schema does
+ * not carry nodes/cells yet). */
+void story_ai_empire_seed_default(void);
+
+/* Test/debug readouts, -1 when player_id is not an EMPIRE unit: the order it is executing (EU_ORDER_*)
+ * and its archetype (EU_ARCH_*). */
+int story_ai_unit_order(int player_id);
+int story_ai_unit_archetype(int player_id);
 void story_ai_tick(ServerState *s, unsigned int now_ms);
 /* story_ai_seed_voxworld_encounter (the old MODE_STORY VOXWORLD combat-squad encounter) was
    removed in the BIG_O engine merge phase 7d content cutover -- see

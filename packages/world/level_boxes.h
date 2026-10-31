@@ -301,6 +301,15 @@ typedef struct {
     int kit; /* S492 -- AIKit value (packages/simulation/story_ai.h); 0 = AI_KIT_AUTO, absent
                 from an older level's JSON parses as 0 too (level_boxes_parse_number's own
                 default), so every pre-S492 level keeps its exact current round-robin look. */
+    /* EMPIRE unit layer (packages/simulation/empire_units.h). `archetype` 0 = "not an EMPIRE unit":
+       the character spawns exactly as it did before this field existed (its authored role/kit, no
+       orders). 1..6 are citizen/zombie/soldier/ally/guard/worker, which pick a brain role, a default
+       skin and a faction by themselves -- that is the editor's "spawn a soldier" affordance.
+       `faction` and `orders` are -1 when authored absent, which means "use the archetype's own", and
+       orders 0 is a real value ("takes no orders, does whatever its brain does"). */
+    int archetype;
+    int faction;  /* -1 = archetype default; 0 neutral, 1 ally, 2 hostile */
+    int orders;   /* -1 = archetype default; else a EU_ORDER_* bitmask */
     float x, y, z;
 } LevelCharacter;
 
@@ -1129,6 +1138,16 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
                     float kit_f = 0.0f;
                     if ((v5 = level_boxes_find_key(cobj_start, cobj_end, "kit"))) level_boxes_parse_number(v5, &kit_f);
                     ch->kit = (int)kit_f;
+                    /* EMPIRE unit fields. Absent faction/orders mean "the archetype's own", so they
+                       are -1 rather than 0 -- 0 is a real faction (neutral) and a real mask ("takes no
+                       orders"), and collapsing the two would make an unauthored character neutral. */
+                    float arch_f = 0.0f, faction_f = -1.0f, orders_f = -1.0f;
+                    if ((v5 = level_boxes_find_key(cobj_start, cobj_end, "archetype"))) level_boxes_parse_number(v5, &arch_f);
+                    if ((v5 = level_boxes_find_key(cobj_start, cobj_end, "faction"))) level_boxes_parse_number(v5, &faction_f);
+                    if ((v5 = level_boxes_find_key(cobj_start, cobj_end, "orders"))) level_boxes_parse_number(v5, &orders_f);
+                    ch->archetype = (int)arch_f;
+                    ch->faction = (int)faction_f;
+                    ch->orders = (int)orders_f;
                     if ((v5 = level_boxes_find_key(cobj_start, cobj_end, "x"))) level_boxes_parse_number(v5, &ch->x);
                     if ((v5 = level_boxes_find_key(cobj_start, cobj_end, "y"))) level_boxes_parse_number(v5, &ch->y);
                     if ((v5 = level_boxes_find_key(cobj_start, cobj_end, "z"))) level_boxes_parse_number(v5, &ch->z);
@@ -1418,8 +1437,13 @@ static inline void level_boxes_write_json(FILE *f, const CustomLevelData *lvl) {
     fprintf(f, ",\n \"characters\": [");
     for (int i = 0; i < lvl->character_count; i++) {
         const LevelCharacter *ch = &lvl->characters[i];
-        fprintf(f, "%s\n  { \"role\": %d, \"kit\": %d, \"x\": %.4g, \"y\": %.4g, \"z\": %.4g }",
-                i ? "," : "", ch->role, ch->kit, (double)ch->x, (double)ch->y, (double)ch->z);
+        fprintf(f, "%s\n  { \"role\": %d, \"kit\": %d", i ? "," : "", ch->role, ch->kit);
+        /* Only written for a real EMPIRE unit, so a pre-EMPIRE character's JSON stays byte-identical. */
+        if (ch->archetype != 0)
+            fprintf(f, ", \"archetype\": %d, \"faction\": %d, \"orders\": %d",
+                    ch->archetype, ch->faction, ch->orders);
+        fprintf(f, ", \"x\": %.4g, \"y\": %.4g, \"z\": %.4g }",
+                (double)ch->x, (double)ch->y, (double)ch->z);
     }
     fprintf(f, "\n ]");
 
