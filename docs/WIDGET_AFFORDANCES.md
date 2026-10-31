@@ -97,14 +97,36 @@ Widget values are written by the host with `edu_widget_host_set`, so a script ca
 cannot forge one. That asymmetry is deliberate: a security door that a script can claim is open is not
 a door.
 
-## 6. What is NOT built (do not pretend otherwise)
+## 6. Is it running? What is still missing?
 
-- **No drawing.** There is no prompt quad, no panel rendering, no lever/centrifuge mesh. The circuit is
-  headless; a renderer pass reads `mode`, `pressed`, `focused` and `reg_value` and draws what it likes.
-- **Not in the game loop yet.** `widget_circuit_tick` is driven by `make test-widget-circuit`. Wiring it
-  to a scene (load on level load, tick once per frame, feed plates from player positions, install the
-  PARENA rules at startup) is the next step.
-- **No editor UI for wiring.** The NOCK/level-editor affordance is a table of pins in the JSON; adding
-  a visual wire tool in IDUNA's editor or `tools/nock_editor.html` is a separate slice.
+**Running.** `packages/simulation/widget_runtime.h` is the host: it loads a level's nodes, feeds every
+plate from the bodies actually standing on it, ticks the circuit once per tick, pushes each machine's
+authored box through `phys_set_custom_level_box_y`, and mirrors every register into EduVM
+(`eduvm_host_widget_set`, so `read_sensor(reg)` sees the machine). `apps/lobby` loads it from the same
+`lobby_edu_widgets_init` every custom level uses, which is why **zombies mode, LAB and deathmatch all get
+it** — zombies loads its level through that loader, not a special path.
+
+**The coverage is delayed, and that is the point.** A machine's box follows its live power, so a lever ->
+relay -> lift opens when the relay closes, not when the button is pressed. The legacy per-widget box path
+(`eduvm_host_widget_set` -> `phys_set_custom_level_box_y`) is skipped for any box the circuit drives, so
+two systems never fight over one lift.
+
+**On screen.** `draw_widget_affordances` draws `[F] USE <id>` with its kind and live power, or the panel
+(a cyan-on-black card with the node's power, register, setpoint and the key legend) when one is open. A
+panel freezes movement and owns the keys (UP/DOWN dial by 500, ESC returns to the world without dropping
+into the pause menu). A lever is used and stays in the world; a node with no lever is drawn as a box
+coloured by its power.
+
+**Still not built, named rather than implied:**
+
+- **No lever/centrifuge/terminal mesh.** A node is a box, not a model.
+- **No editor UI for wiring.** The NOCK/level-editor affordance is still a table of pins in the JSON; a
+  visual wire tool in IDUNA's editor or `tools/nock_editor.html` is a separate slice.
+- **A panel setpoint is display-only to a script.** EduVM's widget register is a boolean line by
+  contract, so a script reads the machine's on/off state; the 0..8000 setpoint lives in the circuit and
+  on the panel.
+- **Single-player authority.** The circuit runs in the lobby's local simulation. A networked match is
+  server-authoritative and has no widget packet yet, so a remote client would see the boxes but not the
+  interactions.
 - **No back-EMF / overload.** DEADWEIGHT's circuit-burn mechanics are not modelled: power is a plain
   0..15 integer with no heat, no fuses, no cascading failure.

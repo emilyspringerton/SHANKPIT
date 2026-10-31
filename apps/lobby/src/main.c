@@ -107,6 +107,8 @@
 #include "../../../packages/simulation/ragdoll_pool.h"
 #include "../../../packages/education/eduvm_host.h"
 #include "../../../packages/education/eduvm_snippets.h"
+#include "../../../packages/simulation/widget_runtime.h"
+#include "../../../packages/simulation/widget_rules_host.h"
 
 /* ── S144-02 Stage B: GOLDENBAND skinned mesh for Tyler ──────────────────────
  * Ports REDGARDEN/GFD's S144-07 gband_mesh_rig onto the shader/VBO
@@ -10072,6 +10074,106 @@ static void orb_load_slots(void) {
 static int g_edu_widget_box[EDU_MAX_WIDGETS];      /* box_index per widget slot, -1 none */
 static int g_edu_widget_applied[EDU_MAX_WIDGETS];  /* last state pushed to physics (-1 = never) */
 
+/* ---- the composable circuit, actually running in a level ------------------------------------------
+ * packages/simulation/widget_circuit.h decides and packages/simulation/widget_runtime.h is the host
+ * glue; this block owns only the two sinks and the once-per-tick call, so the circuit itself stays
+ * headless and covered by `make test-widget-circuit` / `make test-widget-runtime`. It is loaded from
+ * lobby_edu_widgets_init, the SAME loader every custom level uses -- which is what makes a lab terminal
+ * or a security door reachable in deathmatch, LAB and zombies mode alike (zombies loads its level
+ * through that loader too, not a special path). */
+static WidgetRuntime g_widget_rt;
+static int g_widget_use_was_down = 0;      /* F edge, so one press is one use */
+static int g_widget_busy_external = 0;     /* pause menu / phone / Orb / vehicle seat */
+static unsigned int g_widget_tick_ms = 0;
+
+static void lobby_widget_reg_sink(void *user, const char *id, int reg, int value) {
+    (void)user; (void)reg;
+    /* EduVM's per-widget register is a machine's on/off line: a script reads it with read_sensor(reg), so
+       the script and the physical circuit look at one number instead of two copies of the world. */
+    eduvm_host_widget_set(id, value ? 1 : 0);
+}
+
+static void lobby_widget_box_sink(void *user, int box_index, int open) {
+    (void)user;
+    phys_set_custom_level_box_y(box_index, open);   /* the same moving box a story door uses */
+}
+
+static void lobby_widgets_load(const CustomLevelData *lvl) {
+    widget_runtime_load(&g_widget_rt, lvl);
+    g_widget_use_was_down = 0;
+    g_widget_busy_external = 0;
+    g_widget_tick_ms = 0;
+    if (g_widget_rt.c.count > 0)
+        SDL_Log("widgets: %d circuit node(s) live in '%s'", g_widget_rt.c.count, lvl->name);
+}
+
+/* One tick for the whole circuit. `busy` suppresses the F PROMPT without stopping the circuit: a lift
+   that is already moving keeps moving while you are on the phone. */
+static void lobby_widgets_tick(unsigned int now_ms, int busy) {
+    WidgetActor actors[MAX_CLIENTS];
+    int count = 0, dt = 16;
+    if (g_widget_rt.c.count <= 0) { g_widget_tick_ms = 0; return; }
+    if (g_widget_tick_ms && now_ms > g_widget_tick_ms) {
+        dt = (int)(now_ms - g_widget_tick_ms);
+        if (dt > 250) dt = 250;
+    }
+    g_widget_tick_ms = now_ms;
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        const PlayerState *p = &local_state.players[i];
+        if (!p->active || p->state == STATE_DEAD || p->in_vehicle) continue;
+        if (p->scene_id != local_state.players[0].scene_id) continue;
+        actors[count].x = p->x; actors[count].y = p->y; actors[count].z = p->z;
+        count++;
+    }
+    widget_runtime_tick(&g_widget_rt, actors, count, lobby_widget_reg_sink, lobby_widget_box_sink, NULL);
+    widget_runtime_focus(&g_widget_rt, local_state.players[0].x, local_state.players[0].y,
+                         local_state.players[0].z, busy, dt);
+}
+
+/* The affordance itself: the prompt over the world, or the panel once a terminal has the keys. */
+static void draw_widget_affordances(const PlayerState *p) {
+    const WidgetNode *pn;
+    char line[128];
+    if (g_widget_rt.c.count <= 0 || p->in_vehicle) return;
+    pn = widget_runtime_panel_node(&g_widget_rt);
+    if (!pn && g_widget_rt.c.focused < 0) return;
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    glDisable(GL_TEXTURE_2D); glDisable(GL_LIGHTING); glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    if (pn) {
+        float x0 = 340.0f, y0 = 190.0f, x1 = 940.0f, y1 = 470.0f;
+        glColor4f(0.02f, 0.05f, 0.06f, 0.93f);
+        glBegin(GL_QUADS);
+        glVertex2f(x0, y0); glVertex2f(x1, y0); glVertex2f(x1, y1); glVertex2f(x0, y1);
+        glEnd();
+        glColor3f(0.2f, 0.95f, 0.95f);
+        draw_string(pn->id, x0 + 24.0f, y1 - 40.0f, 5.0f);
+        glColor3f(0.62f, 0.85f, 0.85f);
+        snprintf(line, sizeof line, "%s   POWER %d/15", widget_runtime_kind_name(pn->kind), pn->power);
+        draw_string(line, x0 + 24.0f, y1 - 88.0f, 2.8f);
+        snprintf(line, sizeof line, "REG %d = %d", pn->reg, pn->reg_value);
+        draw_string(line, x0 + 24.0f, y1 - 126.0f, 2.8f);
+        glColor3f(0.95f, 0.95f, 0.95f);
+        snprintf(line, sizeof line, "SETPOINT %d", pn->panel_value);
+        draw_string(line, x0 + 24.0f, y1 - 178.0f, 3.4f);
+        glColor3f(0.45f, 0.7f, 0.7f);
+        draw_string("[UP]/[DOWN] ADJUST   [ESC] BACK", x0 + 24.0f, y0 + 26.0f, 2.2f);
+    } else {
+        const WidgetNode *n = &g_widget_rt.c.n[g_widget_rt.c.focused];
+        glColor3f(0.25f, 0.98f, 0.98f);
+        snprintf(line, sizeof line, "[F] %s %s", n->kind == WIDGET_KIND_LEVER ? "TOGGLE" : "USE", n->id);
+        draw_string(line, 500.0f, 150.0f, 3.2f);
+        glColor3f(0.6f, 0.8f, 0.8f);
+        snprintf(line, sizeof line, "%s   POWER %d/15", widget_runtime_kind_name(n->kind), n->power);
+        draw_string(line, 500.0f, 122.0f, 2.2f);
+    }
+    glDisable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST); glEnable(GL_LIGHTING); glEnable(GL_TEXTURE_2D);
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glMatrixMode(GL_MODELVIEW); glPopMatrix();
+}
+
 static const char *const EDU_TUTORIAL_SCRIPT =
     "let r = 2;\n"
     "while r < 5 {\n"
@@ -10103,6 +10205,7 @@ static void lobby_edu_widgets_init(const CustomLevelData *lvl) {
         if (slot < 0) { SDL_Log("edu widget '%s' rejected (full, bad type, or register clash)", w->entity_id); continue; }
         g_edu_widget_box[slot] = w->box_index;
     }
+    lobby_widgets_load(lvl);   /* the composable circuit over the same authored widgets */
     if (g_orb_seeded && eduvm_host_widget_count() > 0) lobby_edu_install_template();
 }
 
@@ -10122,11 +10225,15 @@ static void lobby_edu_widgets_tick(void) {
             eduvm_host_widget_set(w->id, on);
             w = eduvm_host_widget_at(i);
         }
-        if (g_edu_widget_box[i] >= 0 && g_edu_widget_applied[i] != w->state) {
+        /* A box the circuit drives is moved by the circuit (widget_runtime's sink), because a relay's
+           delay is real: this legacy path would open the lift on the same tick as the press. */
+        if (g_edu_widget_box[i] >= 0 && g_edu_widget_applied[i] != w->state &&
+            !widget_runtime_owns_box(&g_widget_rt, g_edu_widget_box[i])) {
             phys_set_custom_level_box_y(g_edu_widget_box[i], w->state); /* state 1 = geometry moved away (open) */
             g_edu_widget_applied[i] = w->state;
         }
     }
+    lobby_widgets_tick(SDL_GetTicks(), g_widget_busy_external);
 }
 
 static const EduWidget *lobby_edu_nearest_widget(void) {
@@ -13040,7 +13147,7 @@ void draw_scene(PlayerState *render_p) {
     overlay_begin_frame(&g_overlay);
     overlay_collect_items(render_p, now_ms);
     overlay_render(&g_overlay, render_p);
-    if (!render_p->third_person && render_p->state != STATE_SPECTATOR) draw_weapon_p(render_p); draw_hud(render_p); draw_garage_overlay(render_p); draw_tab_scoreboard(render_p);
+    if (!render_p->third_person && render_p->state != STATE_SPECTATOR) draw_weapon_p(render_p); draw_hud(render_p); draw_widget_affordances(render_p); draw_garage_overlay(render_p); draw_tab_scoreboard(render_p);
     draw_travel_overlay();
     draw_tdmb_match_over_overlay();
     draw_survival_hud();
@@ -14746,6 +14853,7 @@ int main(int argc, char* argv[]) {
     airplane_rules_install(); /* PARENA fixed-wing transport (C-110) */
     vehicle_burn_rules_install(); /* PARENA car fire ladder (smoke -> fire -> blast), drawn with BR's fire curve */
     slide_rules_install(); /* PARENA slope curve for the crouch-slide (a hill speeds you up) */
+    widget_rules_install(); /* PARENA widget circuit (lever / plate / relay / transistor / machine) */
     int cli_start_zombies = 0;
     int cli_start_lab = 0;
     int cli_start_editmap = 0;
@@ -15415,6 +15523,18 @@ int main(int argc, char* argv[]) {
                     if (g_lab_active && app_state == STATE_GAME_LOCAL && !g_story_phone.open && !g_orb_open && e.key.keysym.sym == SDLK_e) {
                         lab_interact(SDL_GetTicks());   /* SECTION 592: LAB stations; E is also the normal use key, harmless */
                     }
+                    /* A terminal's panel owns the keys while it is open -- including ESC, so leaving a
+                       panel never drops you into the pause menu. */
+                    if (app_state == STATE_GAME_LOCAL && !g_paused && widget_runtime_panel_open(&g_widget_rt)) {
+                        int wk = -1;
+                        if (e.key.keysym.sym == SDLK_UP || e.key.keysym.sym == SDLK_w) wk = WIDGET_KEY_UP;
+                        else if (e.key.keysym.sym == SDLK_DOWN || e.key.keysym.sym == SDLK_s) wk = WIDGET_KEY_DOWN;
+                        else if (e.key.keysym.sym == SDLK_LEFT) wk = WIDGET_KEY_LEFT;
+                        else if (e.key.keysym.sym == SDLK_RIGHT) wk = WIDGET_KEY_RIGHT;
+                        else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) wk = WIDGET_KEY_USE;
+                        else if (e.key.keysym.sym == SDLK_ESCAPE) wk = WIDGET_KEY_BACK;
+                        if (wk >= 0 && widget_runtime_panel_key(&g_widget_rt, wk)) continue;
+                    }
                     if (app_state == STATE_GAME_LOCAL && !g_paused && !g_story_phone.open && !g_orb_open &&
                         e.key.keysym.sym == SDLK_e && orb_available() && lobby_edu_nearest_widget()) {
                         orb_toggle();   /* E at a programmable widget opens the Orb on its script slot */
@@ -15767,9 +15887,25 @@ int main(int argc, char* argv[]) {
                      local_state.story_phase == STORY_PHASE_COMPLETE ||
                      local_state.story_phase == STORY_PHASE_FAILED ||
                      g_story_phone.open) || g_orb_open ||
-                    (PHONE_SANDBOX() && g_story_phone.open)) {
+                    (PHONE_SANDBOX() && g_story_phone.open) ||
+                    widget_runtime_panel_open(&g_widget_rt)) {
                     input_fwd = 0.0f; input_str = 0.0f;
                     input_jump = 0; input_crouch = 0; input_shoot = 0; input_reload = 0; input_use = 0; input_ability = 0; input_secondary = 0; input_pheromone = 0;
+                }
+                /* F at a widget is the general interface (the founder's ask: "general interface like F to
+                   interact and then after that it needs to be able to go into custom programmed
+                   affordances"). A lever toggles in place and CONSUMES the press, so it cannot also board
+                   a vehicle on the same key; anything with a register opens its panel instead. Focus is
+                   refreshed once per tick in lobby_widgets_tick. */
+                {
+                    int widget_use_now = input_use;
+                    int widget_busy = g_paused || g_orb_open || g_story_phone.open ||
+                                      local_state.players[0].in_vehicle;
+                    g_widget_busy_external = widget_busy;
+                    if (widget_use_now && !g_widget_use_was_down && !widget_busy) {
+                        if (widget_runtime_use(&g_widget_rt)) input_use = 0;
+                    }
+                    g_widget_use_was_down = widget_use_now;
                 }
                 local_state.players[0].in_use = input_use;
                 local_state.players[0].in_pheromone = input_pheromone ||

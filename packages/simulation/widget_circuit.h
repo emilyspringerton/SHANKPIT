@@ -26,10 +26,12 @@
  * and stays in the world; USE on anything with a register opens its PANEL, where a script-driven
  * affordance takes over the keys (that is the "custom programmed affordance" the founder asked for).
  *
- * NOT DONE, and named: nothing here draws. There is no prompt quad, no panel rendering and no lever
- * mesh -- those are renderer work, and this file deliberately contains no GL. Nothing calls
- * widget_circuit_tick from the game loop yet either: it is loaded and driven by the test, and wiring it
- * to a scene is the next step (see docs/WIDGET_AFFORDANCES.md).
+ * RUNNING IN A LEVEL: packages/simulation/widget_runtime.h is the host -- it feeds plates from the
+ * bodies standing on them, ticks this circuit once per tick, moves each machine's authored box and
+ * mirrors the registers into EduVM. apps/lobby loads it with every level (so zombies mode gets it too)
+ * and draws the prompt and the panel. What this file still does NOT do, deliberately: it draws nothing
+ * and knows nothing about GL, physics or the VM (the host passes callbacks), and there is no lever or
+ * terminal mesh yet -- a node is drawn by the host as a box coloured by its live power.
  */
 #ifndef SHANKPIT_WIDGET_CIRCUIT_H
 #define SHANKPIT_WIDGET_CIRCUIT_H
@@ -72,6 +74,8 @@ typedef struct {
     int delay_ticks;           /* this delay's own length; 0 = the rules' default */
     int reg;                   /* EduVM register to mirror into; -1 = none */
     int reg_value;             /* what the host copies into that register */
+    int panel_value;           /* a setpoint dialled in the panel (a centrifuge's rpm, a lift's floor) */
+    int panel_used;            /* 0 = the register reads circuit power; 1 = it reads the panel setpoint */
     float x, y, z, radius;
     int box_index;
 } WidgetNode;
@@ -161,8 +165,10 @@ static inline void widget_circuit_tick(WidgetCircuit *c) {
             }
         }
         n->power = g_widget_rules.output_power(n->kind, n->armed, src, gate);
-        /* A mirror, not a second copy: the register reads what the circuit actually did this tick. */
-        n->reg_value = n->power;
+        /* A mirror, not a second copy: the register reads what the circuit actually did this tick --
+         * unless a panel dialled a setpoint, which must SURVIVE the tick. The first draft mirrored power
+         * unconditionally, so a terminal's 3500 rpm was clobbered to 0..15 the instant it was typed. */
+        n->reg_value = n->panel_used ? n->panel_value : n->power;
     }
 }
 
@@ -223,6 +229,7 @@ static inline int widget_circuit_use(WidgetCircuit *c) {
     if (c->n[idx].reg >= 0) {
         c->mode = WIDGET_MODE_PANEL;
         c->pressed = idx;
+        c->n[idx].panel_value = c->n[idx].reg_value;   /* dial from where the machine already is */
         return WIDGET_MODE_PANEL;
     }
     return WIDGET_MODE_WORLD;
@@ -240,12 +247,14 @@ static inline int widget_circuit_panel_key(WidgetCircuit *c, int key, int panel_
         return 1;
     }
     if (panel_max <= WIDGET_PANEL_MIN) panel_max = WIDGET_PANEL_MAX;
-    if (key == WIDGET_KEY_UP) {
-        n->reg_value = g_widget_rules.panel_key_adjust(n->reg_value, WIDGET_PANEL_STEP, WIDGET_PANEL_MIN, panel_max);
-        return 1;
-    }
-    if (key == WIDGET_KEY_DOWN) {
-        n->reg_value = g_widget_rules.panel_key_adjust(n->reg_value, -WIDGET_PANEL_STEP, WIDGET_PANEL_MIN, panel_max);
+    if (key == WIDGET_KEY_UP || key == WIDGET_KEY_DOWN) {
+        int step = (key == WIDGET_KEY_UP) ? WIDGET_PANEL_STEP : -WIDGET_PANEL_STEP;
+        /* The first key dials from the machine's LIVE value, not from the value it had when the panel
+         * opened -- a lift that moved while you were reading must not send you back to where it was. */
+        if (!n->panel_used) n->panel_value = n->reg_value;
+        n->panel_value = g_widget_rules.panel_key_adjust(n->panel_value, step, WIDGET_PANEL_MIN, panel_max);
+        n->panel_used = 1;
+        n->reg_value = n->panel_value;
         return 1;
     }
     if (key == WIDGET_KEY_USE || key == WIDGET_KEY_LEFT || key == WIDGET_KEY_RIGHT) return 1; /* consumed */
