@@ -20,6 +20,8 @@ int empire_spawn_radius_milli(void);
 int empire_can_spawn(int influence, int kind, int live);
 int empire_clone_can(int influence, int kind, int live, int veterans);
 int empire_influence_from_district(int state, int base);
+int empire_influence_per_banked_unit(void);
+int empire_bank_credit(int carrying, int influence, int cap);
 int empire_district_state(int your_pressure_milli, int their_pressure_milli);
 int empire_district_threshold_milli(void);
 int empire_sphere_rings(void);

@@ -16,6 +16,8 @@ int empire_squad_cap();
 int empire_spawn_radius_milli();
 int empire_can_spawn(int, int, int);
 int empire_clone_can(int, int, int, int);
+int empire_influence_per_banked_unit();
+int empire_bank_credit(int, int, int);
 int empire_influence_from_district(int, int);
 int empire_district_threshold_milli();
 int empire_district_state(int, int);
@@ -100,6 +102,26 @@ int empire_clone_can(int influence __attribute__((unused)), int kind __attribute
     return 1;
     } else {
     return 0;
+    }
+    }
+    }
+}
+
+int empire_influence_per_banked_unit(void) {
+    return 1;
+}
+
+int empire_bank_credit(int carrying __attribute__((unused)), int influence __attribute__((unused)), int cap __attribute__((unused))) {
+    if ((carrying < 1)) {
+    return 0;
+    } else {
+    if ((influence >= cap)) {
+    return 0;
+    } else {
+    if (((influence + (carrying * empire_influence_per_banked_unit())) > cap)) {
+    return (cap - influence);
+    } else {
+    return (carrying * empire_influence_per_banked_unit());
     }
     }
     }

@@ -41,6 +41,26 @@ int main(void) {
     CHECK(empire_clone_can(empire_clone_cost(0) - 1, 0, 0, 1) == 0, "clone discounted");
     CHECK(empire_clone_can(10000, 0, empire_squad_cap(), 1) == 0, "clone ignored the cap");
 
+    /* ---- banking: carried goods become influence only once banked, and the cap is real ---- */
+    {
+        int rate = empire_influence_per_banked_unit();
+        int cap = empire_influence_max();
+        int per_rifleman = empire_troop_cost(0) / (rate > 0 ? rate : 1) + 1;
+        CHECK(rate > 0, "banking pays nothing");
+        CHECK(empire_bank_credit(0, 100, cap) == 0, "banked nothing and was paid");
+        CHECK(empire_bank_credit(-5, 100, cap) == 0, "a negative carry was paid out");
+        CHECK(empire_bank_credit(10, 100, cap) == 10 * rate, "ten banked paid %d, want %d",
+              empire_bank_credit(10, 100, cap), 10 * rate);
+        CHECK(empire_bank_credit(10, cap, cap) == 0, "a full pool still paid out");
+        CHECK(empire_bank_credit(10, cap - 3, cap) == 3, "the cap was not clamped to the gap: %d",
+              empire_bank_credit(10, cap - 3, cap));
+        CHECK(cap - 3 + empire_bank_credit(10, cap - 3, cap) <= cap, "credit pushed the pool over its cap");
+        /* the round trip that matters: bank a rifleman's worth and you can actually place one */
+        CHECK(empire_bank_credit(per_rifleman, 0, cap) >= empire_troop_cost(0),
+              "banking %d units (%d) did not buy a %d-cost rifleman", per_rifleman,
+              empire_bank_credit(per_rifleman, 0, cap), empire_troop_cost(0));
+    }
+
     /* ---- districts: TRAPX's three-way alignment, with income attached ---- */
     int t = empire_district_threshold_milli();
     CHECK(empire_district_state(t, 0) == 1, "held district not yours");
