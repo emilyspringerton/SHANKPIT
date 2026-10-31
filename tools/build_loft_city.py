@@ -637,7 +637,7 @@ def build(city_path=CITY, placements_path=PLACEMENTS, write=True):
     chests = []
     nodes = []
     cells = []
-    plan = population_plan(placements)
+    plan = population_plan(placements, levels)
     for p in placements:
         name = p["level"]
         lid = VARIANT_IDS[name]
@@ -745,21 +745,81 @@ def build(city_path=CITY, placements_path=PLACEMENTS, write=True):
 # exist in the world. LEVEL_BOXES_MAX_CHARACTERS (128) is the FILE's cap, not the live one.
 NPC_BUDGET = 69
 
+# A deck is NOT the same size on every floor: loft_c/f/g/h step back as they rise, so a storey's deck sits
+# over a narrower stack than the one below it. Population used to be asked per FLOOR with no area at all,
+# which gave a full 254x68 pair deck and a stepped-back 254x34 deck the same single body. This constant is
+# what one body is "worth" in deck; a smaller deck is still staffed once (climbing a building has to be a
+# fight, not a corridor), but only decks at or above it compete for a SECOND body.
+DECK_AREA_PER_ZOMBIE = 9000.0
 
-def population_plan(placements):
+
+def storey_deck_areas(levels, name):
+    """[(floor, area)] for one variant, measured from each storey's OWN deck box -- the same predicate
+    build_city's storey_box uses, so the plan and the placement cannot disagree about what a floor is."""
+    lid = VARIANT_IDS[name]
+    walls = flatten(levels, levels[lid]["objects"], 0, 0, 0, 0, {lid}, 1, [])
+    spec = VARIANTS[name]
+    storeys = spec["pairs"] * 2 + (1 if spec["lobby"] else 0)
+    whole = footprint(walls)
+    out = []
+    for floor in range(storeys):
+        deck_y = floor * STOREY * LOFT_SCALE
+        deck = [w for w in walls
+                if abs(w["y"] - (deck_y + 0.5 * LOFT_SCALE)) < 0.7 * LOFT_SCALE
+                and w["sy"] <= 2.0 * LOFT_SCALE and w["sx"] >= 4.0 * LOFT_SCALE]
+        box = footprint(deck) if deck else whole
+        out.append((floor, max(1.0, (box[2] - box[0]) * (box[3] - box[1]))))
+    return out
+
+
+def population_plan(placements, levels=None):
     """Which floors of which buildings get a zombie, as a flat [(level_name, floor)] list; a floor of 0
     is the ground floor and appears TWICE per building (a player walking in meets two).
 
-    Ground floors are staffed first, then the upper floors are spread EVENLY across the whole city --
-    the i-th of `keep` floors taken from the i*len/keep-th candidate -- rather than the first N of the
-    list. Spread is the point: building one must not be packed while building eight is empty, and a
-    building with fewer storeys must not be starved by the ones before it."""
+    Ground floors are staffed first, then every upper floor is staffed ONCE, spread EVENLY across the
+    whole city -- the i-th of `keep` floors taken from the i*len/keep-th candidate -- rather than the
+    first N of the list. Spread is the point: building one must not be packed while building eight is
+    empty, and a building with fewer storeys must not be starved by the ones before it.
+
+    THEN THE DECK DECIDES WHO GETS A SECOND BODY. The staffed floors are ordered by their own area,
+    largest first, and topped up until NPC_BUDGET is spent -- so a full pair deck earns its extra before a
+    stepped-back floor above it does, and the last slots of the squad budget land where there is room to
+    fight. Without this, floor size never entered the decision at all."""
+    if levels is None:
+        levels = load_tree()
     storeys = {n: s["pairs"] * 2 + (1 if s["lobby"] else 0) for n, s in VARIANTS.items()}
+    areas = {n: dict(storey_deck_areas(levels, n)) for n in VARIANTS}
     plan = [(p["level"], 0) for p in placements for _ in (0, 1)]
     upper = [(p["level"], f) for p in placements for f in range(1, storeys[p["level"]])]
     keep = min(max(0, NPC_BUDGET - len(plan)), len(upper))
     if keep:
         plan += [upper[(i * len(upper)) // keep] for i in range(keep)]
+    # DECK SIZE decides WHICH FLOOR of a building earns the extra (its own biggest first). It does not
+    # decide which BUILDING gets served, and that distinction is load-bearing: every full pair deck in
+    # this city measures the same 21964, so a plain area sort handed all eight spare slots to loft_a and
+    # loft_b on the name tiebreak -- re-creating precisely the "building one packed while building eight
+    # is empty" failure the even-spread pass above exists to prevent. The spare slots are therefore dealt
+    # one per building per round; a building whose biggest remaining deck is under DECK_AREA_PER_ZOMBIE
+    # gets nothing, which is what keeps a stepped-back storey from outranking the full deck below it.
+    staffed = {}
+    for (n, f) in plan:
+        if f > 0:
+            staffed.setdefault(n, []).append(f)
+    queues = {n: sorted(fs, key=lambda f: (-areas[n][f], f)) for n, fs in staffed.items()}
+    while len(plan) < NPC_BUDGET:
+        served = False
+        for n in sorted(queues):
+            if len(plan) >= NPC_BUDGET:
+                break
+            while queues[n]:
+                f = queues[n].pop(0)
+                if areas[n][f] < DECK_AREA_PER_ZOMBIE:
+                    break
+                plan.append((n, f))
+                served = True
+                break
+        if not served:
+            break
     if len(plan) > NPC_BUDGET:
         raise SystemExit("population plan authors %d characters, over the %d simultaneous slots"
                          % (len(plan), NPC_BUDGET))
@@ -831,11 +891,43 @@ def check():
     if len(city.get("chests", [])) > 32:
         raise SystemExit("city authors %d chests, over LEVEL_BOXES_MAX_CHESTS 32" % len(city["chests"]))
     authored = city.get("loft_city", {})
-    want_npcs = len(population_plan([{"level": n} for n in VARIANTS]))
+    plan = population_plan([{"level": n} for n in VARIANTS], levels)
+    want_npcs = len(plan)
     if len(authored.get("characters", [])) != want_npcs:
-        raise SystemExit("expected %d zombies (two per ground floor, one per staffed floor above), found %d"
+        raise SystemExit("expected %d zombies (two per ground floor, then one per staffed floor above, "
+                         "plus a second on the biggest decks), found %d"
                          % (want_npcs, len(authored.get("characters", []))))
-    if want_npcs > NPC_BUDGET:
+    # DECK SIZE has to actually reach the plan. Before this, every staffed floor got exactly one body and
+    # a 254x68 pair deck was treated the same as the 254x34 stepped-back storey above it. The rule is now
+    # "at most two per floor, and the second one goes to the largest decks first", so both halves of that
+    # are asserted here rather than trusted.
+    areas = {n: dict(storey_deck_areas(levels, n)) for n in VARIANTS}
+    per_floor = {}
+    for n, f in plan:
+        per_floor[(n, f)] = per_floor.get((n, f), 0) + 1
+    if max(per_floor.values()) > 2 or min(per_floor.values()) < 1:
+        raise SystemExit("a floor is staffed %d times -- the rule is one body, at most two"
+                         % max(per_floor.values()))
+    # The ground floor is two because that is what a player walking in meets, NOT because of its area, so
+    # it is excluded from the area comparison -- counting it here made the first version of this check
+    # fail against its own rule (a ground deck is smaller than a full upper pair deck).
+    doubled = [k for k, c in per_floor.items() if c == 2 and k[1] > 0]
+    if not doubled:
+        raise SystemExit("no upper floor earned a second body -- deck area is not reaching the plan")
+    # ...and the extra goes to the biggest deck IN ITS OWN BUILDING, not the biggest deck in the city: the
+    # spare slots are dealt one per building so a single loft cannot take them all (see population_plan).
+    by_building = {}
+    for (n, f), c in per_floor.items():
+        if f > 0:
+            by_building.setdefault(n, []).append((f, c))
+    for n, f in doubled:
+        biggest = max(areas[n][g] for (g, _) in by_building.get(n, [(f, 1)]))
+        if areas[n][f] < biggest:
+            raise SystemExit("%s floor %d got a second body while its bigger deck (%.0f) was left with one"
+                             % (n, f, biggest))
+    if len(doubled) < min(len(by_building), 2):
+        raise SystemExit("the spare slots are not being spread across buildings")
+    if len(plan) > NPC_BUDGET:
         raise SystemExit("%d zombies do not fit the %d simultaneous slots" % (want_npcs, NPC_BUDGET))
     # ...and the array the ENGINE actually loads, not just the tool's own record of it. Those two came
     # apart once already: the record said 61 while the file still carried 73, which would have loaded 12
