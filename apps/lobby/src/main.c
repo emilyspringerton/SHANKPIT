@@ -78,6 +78,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/simulation/local_game.h"
 #include "../../../packages/simulation/vehicle_call.h"   /* kit's BUGGY / ROCKET CAR / HELICOPTER calls */
 #include "../../../packages/simulation/kit_call.h"      /* ...and their PACKET_KIT_CALL on the net path */
+#include "../../../packages/render/material_draw.h"      /* which pass a level material's shader selects (mirror) */
 #include "../../../packages/common/awareness_compass.h" /* AWARENESS_COMPASS_NAMES -- zombies_hud_bridge.c's own real HUD alert, see draw_zombies_awareness_hud */
 #include "../../../packages/reflux/reflux_runtime.h" /* REFLUX_ACTION_* constants -- same, for a type-specific HUD label */
 #include "../../../packages/simulation/tyler_coldopen.h"
@@ -5987,6 +5988,8 @@ void draw_map(const RetroLightingState *lighting) {
     enum { GLASS_DRAW_MAX = 512 };
     int glass_list[GLASS_DRAW_MAX];
     int glass_count = 0;
+    int mirror_list[GLASS_DRAW_MAX];   /* E3: a mirror material now has a pass to land in */
+    int mirror_count = 0;
     for(int i=1; i<map_count; i++) {
         Box b = map_geo[i];
         const BoxOrient *bo = phys_box_orient(i); /* rotated / ramp cube (obb.h), else NULL */
@@ -5999,14 +6002,22 @@ void draw_map(const RetroLightingState *lighting) {
         const int is_custom_scene = (phys_scene_id == SCENE_CUSTOM_LEVEL && i < CUSTOM_LEVEL_SLOT_CAP);
         if (is_custom_scene && g_custom_level_hidden[i]) continue;
         const int is_fracture_piece = (is_custom_scene && i > g_custom_level_authored);
-        /* SHADER_GLASS: not drawn here at all -- collected and drawn after every opaque box
-           (farthest first) so a pane never hides what's behind it. Falls through to the ordinary
-           opaque path if the glass pass isn't available. */
-        if (is_custom_scene && material_pass_active && g_glass_shader_ready && glass_count < GLASS_DRAW_MAX) {
+        /* Deferred material passes (packages/render/material_draw.h): glass is not drawn here at
+           all -- it is collected and drawn after every opaque box (farthest first) so a pane never
+           hides what is behind it -- and neither is a MIRROR, whose base is near-black and whose
+           surface IS the reflection. E3: a level could already name a mirror material, but nothing
+           selected the pass, so it drew as an ordinary brick-textured box. Anything unrecognised
+           falls through to the ordinary opaque path exactly as before. */
+        if (is_custom_scene && material_pass_active && g_glass_shader_ready) {
             int gmi = g_custom_level_material_idx[i];
-            if (gmi >= 0 && gmi < g_custom_level_material_count &&
-                strcmp(g_custom_level_material_shader[gmi], SHADER_GLASS) == 0) {
+            int draw_path = (gmi >= 0 && gmi < g_custom_level_material_count)
+                            ? material_draw_path(g_custom_level_material_shader[gmi]) : MAT_DRAW_OPAQUE;
+            if (draw_path == MAT_DRAW_GLASS && glass_count < GLASS_DRAW_MAX) {
                 glass_list[glass_count++] = i;
+                continue;
+            }
+            if (draw_path == MAT_DRAW_MIRROR && mirror_count < GLASS_DRAW_MAX) {
+                mirror_list[mirror_count++] = i;
                 continue;
             }
         }
@@ -6333,6 +6344,27 @@ void draw_map(const RetroLightingState *lighting) {
             const Box *gb = &map_geo[glass_list[k]];
             draw_material_glass_box(gb->x, gb->y, gb->z, gb->w, gb->h, gb->d,
                                     material_mvp.m, material_light_dir, material_cam_pos);
+        }
+    }
+
+    /* MIRROR boxes collected above (material_draw.h): same painter's order as the glass pass, drawn
+       after it. They are opaque, so depth-write stays on and they simply overwrite whatever the
+       transparent panes left -- the reflection is additive on top of a near-black base. */
+    if (mirror_count > 0) {
+        float md[GLASS_DRAW_MAX];
+        for (int k = 0; k < mirror_count; k++) {
+            const Box *mb = &map_geo[mirror_list[k]];
+            float dx = mb->x - material_cam_pos[0], dy = mb->y - material_cam_pos[1], dz = mb->z - material_cam_pos[2];
+            md[k] = dx * dx + dy * dy + dz * dz;
+        }
+        for (int a = 1; a < mirror_count; a++) {   /* insertion sort, descending distance */
+            int li = mirror_list[a]; float ld = md[a]; int b2 = a - 1;
+            while (b2 >= 0 && md[b2] < ld) { mirror_list[b2 + 1] = mirror_list[b2]; md[b2 + 1] = md[b2]; b2--; }
+            mirror_list[b2 + 1] = li; md[b2 + 1] = ld;
+        }
+        for (int k = 0; k < mirror_count; k++) {
+            const Box *mb = &map_geo[mirror_list[k]];
+            draw_material_mirror_box(mb->x, mb->y, mb->z, mb->w, mb->h, mb->d);
         }
     }
 

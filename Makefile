@@ -360,6 +360,13 @@ test-vehicle-call: | $(BIN_DIR)
 	$(CC) -g -O1 -fsanitize=address,undefined -Wall $(INCLUDES) packages/simulation/vehicle_call_test.c $(filter-out apps/server/src/main.c,$(SERVER_SRC)) -o $(BIN_DIR)/vehicle_call_test $(LIBS_M)
 	./$(BIN_DIR)/vehicle_call_test
 
+# MATERIAL DRAW PATH (packages/render/material_draw.h): which pass a level material's shader selects,
+# and the PARENA reflection strengths the mirror path depends on
+.PHONY: test-material-draw
+test-material-draw: | $(BIN_DIR)
+	$(CC) -g -O1 -fsanitize=address,undefined -Wall -Wextra -Werror $(INCLUDES) packages/render/material_draw_test.c packages/simulation/material_rules.c packages/world/parena_runtime.c -o $(BIN_DIR)/material_draw_test $(LIBS_M)
+	./$(BIN_DIR)/material_draw_test
+
 # KIT CALL packet (packages/simulation/kit_call.h + PACKET_KIT_CALL): parsing an untrusted datagram
 # and the server's verdict on a real player
 .PHONY: test-kit-call
