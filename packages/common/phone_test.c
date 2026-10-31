@@ -120,6 +120,40 @@ int main(void) {
         phone_set_tech_points(&p, -5);             /* a negative balance clamps to none */
         CHECK(p.tech_points == 0);
     }
+
+    /* ---- kit apps (2026-10-31): pick a prefab, remap the live kit, build into a draft ---- */
+    {
+        phone_init(&p);
+        CHECK(p.kit.kit_count == 3);
+        CHECK(kit_live_item(&p.kit, KIT_SLOT_C) == KIT_ITEM_PHEROMONE);   /* SCOUT is live */
+        phone_open_app(&p, BP_APP_KITS);
+        CHECK(bp_rows(&p) == p.kit.kit_count);
+        phone_input(&p, BP_DOWN, 0);
+        fx = phone_input(&p, BP_SELECT, 0);
+        CHECK(fx.kind == BP_FX_KIT_SELECT && p.kit.selected == 1);
+        CHECK(strcmp(p.kit.kits[1].name, "BREACHER") == 0);
+
+        /* KIT MAP edits the live kit: BREACHER has PHEROMONE on `, so RIGHT gives ABILITY */
+        phone_open_app(&p, BP_APP_KITMAP);
+        CHECK(bp_rows(&p) == KIT_SLOTS);
+        p.cursor = KIT_SLOT_BACKTICK;
+        fx = phone_input(&p, BP_RIGHT, 0);
+        CHECK(fx.kind == BP_FX_KIT_BIND && fx.arg == KIT_SLOT_BACKTICK);
+        CHECK(kit_live_item(&p.kit, KIT_SLOT_BACKTICK) == KIT_ITEM_ABILITY);
+        fx = phone_input(&p, BP_SELECT, 0);
+        CHECK(fx.kind == BP_FX_KIT_CLEAR && kit_live_item(&p.kit, KIT_SLOT_BACKTICK) == KIT_ITEM_NONE);
+
+        /* KIT BUILD edits a draft: the live kit only changes on SAVE */
+        phone_open_app(&p, BP_APP_KITBUILD);
+        p.cursor = KIT_SLOT_EQUALS;
+        int live_eq = kit_live_item(&p.kit, KIT_SLOT_EQUALS);
+        phone_input(&p, BP_LEFT, 0);
+        CHECK(kit_live_item(&p.kit, KIT_SLOT_EQUALS) == live_eq);
+        CHECK((int)p.kit.draft.slot[KIT_SLOT_EQUALS] != live_eq);
+        fx = phone_input(&p, BP_SELECT, 0);
+        CHECK(fx.kind == BP_FX_KIT_SAVE);
+        CHECK(kit_live_item(&p.kit, KIT_SLOT_EQUALS) == (int)p.kit.draft.slot[KIT_SLOT_EQUALS]);
+    }
     go(&p, BP_APP_MISSION); phone_input(&p, BP_DOWN, 0); phone_input(&p, BP_DOWN, 0);
     fx = phone_input(&p, BP_SELECT, 0); CHECK(fx.kind == BP_FX_MISSION_ACT && fx.arg == 2);
     go(&p, BP_APP_WARDROBE); phone_input(&p, BP_DOWN, 0); fx = phone_input(&p, BP_SELECT, 0);

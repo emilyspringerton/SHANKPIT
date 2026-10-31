@@ -335,6 +335,13 @@ test-witness-ai-zombies: | $(BIN_DIR)
 	$(CC) -g -O1 -fsanitize=address,undefined -Wall $(INCLUDES) packages/simulation/witness_ai_zombies_test.c $(WAI_TEST_SRC) -o $(BIN_DIR)/witness_ai_zombies_test $(LIBS_M)
 	./$(BIN_DIR)/witness_ai_zombies_test
 
+# The player's KIT (packages/common/kit.h): 14 bind slots (1-9, 0, `, -, =, C), three prefab kits,
+# cycling, the builder's draft, and the three HTML+CSS pages the phone renders through PELLEGRINO.
+.PHONY: test-kit
+test-kit: | $(BIN_DIR)
+	$(CC) -std=c99 -Wall -Wextra -Werror -Ipackages/common packages/common/kit_test.c -o $(BIN_DIR)/kit_test
+	./$(BIN_DIR)/kit_test
+
 test-heli-flight: | $(BIN_DIR)
 	$(CC) -O1 -Wall -Ipackages/common -Ipackages/simulation packages/simulation/heli_flight_test.c packages/simulation/heli_rules.c packages/world/terrain.c -o $(BIN_DIR)/heli_flight_test -lm
 	$(BIN_DIR)/heli_flight_test

@@ -1217,6 +1217,18 @@ static SkyWeather g_sky_weather = {0};
 // its first real, player-VISIBLE day/night turn boundary (a DAYBREAK/NIGHTFALL/STORM WARNING
 // banner) without building the full phone UI to get there.
 static Phone g_story_phone = {0};
+/* Kit gadget-key pulses (packages/common/kit.h). A press arms ONE item for ~150 ms and the input
+ * assembly consumes it, so tapping a kit key is exactly one action -- and a bound key can never get
+ * stuck down if the window loses focus in the middle of a press. */
+static int g_kit_pulse_item = 0;
+static unsigned int g_kit_pulse_until_ms = 0;
+
+static int kit_pulse_take(int item, unsigned int now) {
+    if (item == KIT_ITEM_NONE || g_kit_pulse_item != item) return 0;
+    if ((int)(g_kit_pulse_until_ms - now) <= 0) { g_kit_pulse_item = 0; return 0; }
+    g_kit_pulse_item = 0;
+    return 1;
+}
 /* BIG_O unification state (see bigo_wiring_tick below) */
 static int   g_board = BOARD_NONE;
 static float g_board_vx = 0.0f, g_board_vz = 0.0f;
@@ -1306,6 +1318,8 @@ static void draw_phone_home_grid(const Phone *p) {
     glColor3f(0.4f, 0.5f, 0.6f);
     draw_string("[ARROWS] MOVE  [ENTER] OPEN  [P] CLOSE", PHONE_PANEL_X0 + 20.0f, PHONE_PANEL_Y0 + 16.0f, 2.0f);
 }
+
+#include "../../../packages/pellegrino_embed/kit_page_gl.h"   /* kit pages, painted by PELLEGRINO */
 
 /* --- tech tree (founder 2026-10-31: "stat adding tech tree we can have improved pherimone balls
  * it should increase your seconds of immunity by 2 seconds per level upt to 5 points build the ui
@@ -1492,6 +1506,32 @@ static void draw_phone_app(const Phone *p) {
             if (p->tech_points == 0) {
                 glColor3f(0.55f, 0.5f, 0.45f);
                 draw_string("NO POINTS -- EARN XP, 1 POINT PER 500", col_x, row_y - (p->tech_count + 3) * row_h - 6.0f, 2.0f);
+            }
+        }
+    } else if (p->app == BP_APP_KITS || p->app == BP_APP_KITMAP || p->app == BP_APP_KITBUILD) {
+        /* The three kit apps, rendered as HTML+CSS by PELLEGRINO (kit_page_gl.h). The text pass below
+           is a real fallback for builds where that surface is unavailable -- a phone app must never
+           be a blank rectangle. */
+        static char kit_html[OS_MENU_PAGE_MAX];
+        int klen = -1;
+        if (p->app == BP_APP_KITS) klen = kit_page_select(kit_html, (int)sizeof kit_html, &p->kit);
+        else if (p->app == BP_APP_KITMAP) klen = kit_page_map(kit_html, (int)sizeof kit_html, &p->kit, p->cursor);
+        else klen = kit_page_build(kit_html, (int)sizeof kit_html, &p->kit, p->cursor);
+        if (!(klen > 0 && kpg_draw(kit_html, PHONE_PANEL_X0 + 16.0f, PHONE_PANEL_Y0 + 34.0f,
+                                   PHONE_PANEL_X1 - PHONE_PANEL_X0 - 32.0f,
+                                   PHONE_PANEL_Y1 - PHONE_PANEL_Y0 - 84.0f))) {
+            int rows = (p->app == BP_APP_KITS) ? p->kit.kit_count : KIT_SLOTS;
+            for (int i = 0; i < rows && i < 14; i++) {
+                char buf[56];
+                if (p->app == BP_APP_KITS)
+                    snprintf(buf, sizeof(buf), "%s%s", p->kit.kits[i].name,
+                             i == p->kit.selected ? "  [LIVE]" : "");
+                else
+                    snprintf(buf, sizeof(buf), "%s  %s", kit_slot_key_name(i),
+                             kit_item_name(p->app == BP_APP_KITMAP ? kit_live_item(&p->kit, i)
+                                                                  : (int)p->kit.draft.slot[i]));
+                glColor3f(i == p->cursor ? 1.0f : 0.6f, i == p->cursor ? 1.0f : 0.72f, i == p->cursor ? 1.0f : 0.82f);
+                draw_string(buf, col_x, row_y - i * 26.0f, 2.2f);
             }
         }
     } else if (p->app == BP_APP_MISSION) {
@@ -14888,7 +14928,28 @@ int main(int argc, char* argv[]) {
                     continue;
                 }
                 if (g_orb_open && e.type == SDL_KEYDOWN) { orb_key(e.key.keysym.sym); continue; }
-                if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_BACKQUOTE && orb_available() && !g_chat_open && !g_paused) {
+                /* Kit gadget keys: ` - = and C (packages/common/kit.h). Checked BEFORE the orb so a
+                   gadget bound to ` wins; the orb still opens whenever that slot is empty. F is not
+                   one of these on purpose -- F enters vehicles. */
+                if (e.type == SDL_KEYDOWN && !g_chat_open && !g_paused && !g_story_phone.open) {
+                    int kslot = -1;
+                    switch (e.key.keysym.sym) {
+                    case SDLK_BACKQUOTE: kslot = KIT_SLOT_BACKTICK; break;
+                    case SDLK_MINUS: kslot = KIT_SLOT_MINUS; break;
+                    case SDLK_EQUALS: kslot = KIT_SLOT_EQUALS; break;
+                    case SDLK_c: kslot = KIT_SLOT_C; break;
+                    default: break;
+                    }
+                    if (kslot >= 0) {
+                        int item = kit_live_item(&g_story_phone.kit, kslot);
+                        if (item != KIT_ITEM_NONE) {
+                            g_kit_pulse_item = item;
+                            g_kit_pulse_until_ms = SDL_GetTicks() + 150u;
+                        }
+                    }
+                }
+                if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_BACKQUOTE && orb_available() && !g_chat_open && !g_paused &&
+                    kit_live_item(&g_story_phone.kit, KIT_SLOT_BACKTICK) == KIT_ITEM_NONE) {
                     orb_toggle(); continue;
                 }
                 /* chat pane: capture text input when open */
@@ -14972,6 +15033,18 @@ int main(int argc, char* argv[]) {
                                 snprintf(echo, sizeof(echo), "%.30s: %s", gname, say);
                                 phone_term_line(&g_story_phone, echo);
                                 chat_pane_push(echo);
+                            } else if (fx.kind == BP_FX_KIT_SELECT || fx.kind == BP_FX_KIT_BIND ||
+                                       fx.kind == BP_FX_KIT_CLEAR || fx.kind == BP_FX_KIT_SAVE) {
+                                /* The kit itself lives in the phone (g_story_phone.kit) and the gameplay
+                                   keys read it directly, so these effects are the visible half: one line
+                                   per change, and the single place a server-authoritative kit would hook
+                                   in later. */
+                                const Kit *k = &g_story_phone.kit.kits[g_story_phone.kit.selected];
+                                if (fx.kind == BP_FX_KIT_BIND || fx.kind == BP_FX_KIT_CLEAR)
+                                    printf("[KIT] %s key %s -> %s\n", k->name, kit_slot_key_name(fx.arg),
+                                           kit_item_name((int)k->slot[fx.arg]));
+                                else
+                                    printf("[KIT] live kit = %s\n", k->name);
                             } else if (fx.kind == BP_FX_TECH_UPGRADE) {
                                 /* The phone already spent the point; this is what a level is
                                    actually WORTH. techtree_sync re-derives the balance and hands
@@ -15343,6 +15416,12 @@ int main(int argc, char* argv[]) {
                         float net_aim_yaw = cam_yaw, net_aim_pitch = cam_pitch;
                         if (local_state.players[net_local_pid].third_person)
                             lobby_third_person_aim(&local_state.players[net_local_pid], cam_yaw, cam_pitch, &net_aim_yaw, &net_aim_pitch);
+                        /* Kit gadget keys feed the very same inputs the keyboard already drives, so a
+                           kit is a key->real-action map and not a parallel universe of fake gadgets. */
+                        input_pheromone |= kit_pulse_take(KIT_ITEM_PHEROMONE, now_ms);
+                        input_ability   |= kit_pulse_take(KIT_ITEM_ABILITY, now_ms);
+                        input_secondary |= kit_pulse_take(KIT_ITEM_SECONDARY, now_ms);
+                        input_reload    |= kit_pulse_take(KIT_ITEM_RELOAD, now_ms);
                         UserCmd cmd = client_create_cmd(input_fwd, input_str, net_aim_yaw, net_aim_pitch, input_shoot, input_jump, input_crouch, input_reload, input_use, input_ability, input_secondary, input_bike, input_pheromone, wpn_req);
                         client_apply_cmd_movement(&local_state.players[net_local_pid], &cmd, now_ms);
                         net_send_cmd(cmd);
@@ -15371,7 +15450,8 @@ int main(int argc, char* argv[]) {
                     input_jump = 0; input_crouch = 0; input_shoot = 0; input_reload = 0; input_use = 0; input_ability = 0; input_secondary = 0; input_pheromone = 0;
                 }
                 local_state.players[0].in_use = input_use;
-                local_state.players[0].in_pheromone = input_pheromone;
+                local_state.players[0].in_pheromone = input_pheromone ||
+                                                      kit_pulse_take(KIT_ITEM_PHEROMONE, SDL_GetTicks());
                 local_state.players[0].in_paint_next = g_input_paint_next;
                 local_state.players[0].in_paint_prev = g_input_paint_prev;
                 if (input_use && local_state.players[0].vehicle_cooldown == 0 && local_state.transition_timer == 0) {

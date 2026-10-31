@@ -33,6 +33,7 @@
  * data table (names/points/heal), same layering every other BIG_O-apps field below already
  * uses (e.g. BP_COSTUME_NAMES for WARDROBE). */
 #include "food_items.h"
+#include "kit.h"   /* KitState -- the 14 key bindings the three kit apps edit */
 
 typedef enum {
     BP_APP_MESSAGES = 0, BP_APP_CONTACTS, BP_APP_MAP, BP_APP_CAMERA, BP_APP_NOTES,   /* TYLER spec apps */
@@ -47,6 +48,10 @@ typedef enum {
                           packages/pellegrino_browser_embed/) -- host-only, same "no network in this
                           header" rule as every other app; the host special-cases app==BP_APP_PELLEGRINO
                           the same way it already special-cases BP_APP_GFD's text terminal. */
+    /* The kit apps (founder 2026-10-31): pick a prefab kit, remap the live kit's keys, or build a
+       new one. All three paint HTML+CSS through PELLEGRINO (packages/pellegrino_embed/kit_page_gl.h),
+       and all three edit the same real KitState -- packages/common/kit.h. */
+    BP_APP_KITS, BP_APP_KITMAP, BP_APP_KITBUILD,
     BP_APP_COUNT
 } BpApp;
 
@@ -68,6 +73,10 @@ typedef enum {
     BP_FX_IDUNA_POLL,       /* SELECT on pending IDUNA screen -> host runs one /auth/device/poll */
     BP_FX_TECH_UPGRADE      /* arg = tech node index -> host pushes the new level's real effect
                                (for BP_TECH_PHEROMONE: witness_ai_set_pheromone_grace_bonus_ms) */
+    ,BP_FX_KIT_SELECT,      /* arg = kit index -> that prefab kit is now live */
+    BP_FX_KIT_BIND,         /* arg = slot -> the live kit's binding at that slot changed */
+    BP_FX_KIT_CLEAR,        /* arg = slot -> the live kit's binding at that slot was emptied */
+    BP_FX_KIT_SAVE          /* arg = kit index -> the builder's draft replaced the live kit */
 } BpEffectKind;
 
 typedef struct { BpEffectKind kind; int arg; } BpEffect;
@@ -113,7 +122,7 @@ static const char *const BP_WEATHER_NAMES[4] = { "CLEAR", "OVERCAST", "RAIN", "S
 #define BP_MSG_THORNE_BRIEF 6   /* client message table id: Dr. Thorne's A1M1 reprimand; unlocks him in Contacts */
 
 static const char *const BP_APP_NAMES[BP_APP_COUNT] = {
-    "MESSAGES", "CONTACTS", "MAP", "CAMERA", "NOTES", "LAB", "CARGO", "SKILLS", "LOADOUT", "WARDROBE", "STATUS", "ORB", "GFD", "IDUNA", "ARPANET", "TECHTREE", "MISSION", "PELLEGRINO"
+    "MESSAGES", "CONTACTS", "MAP", "CAMERA", "NOTES", "LAB", "CARGO", "SKILLS", "LOADOUT", "WARDROBE", "STATUS", "ORB", "GFD", "IDUNA", "ARPANET", "TECHTREE", "MISSION", "PELLEGRINO", "KITS", "KIT MAP", "KIT BUILD"
 };
 
 static const char *const BP_MISSION_ROW_NAMES[BP_MISSION_ROWS] = {
@@ -211,12 +220,17 @@ typedef struct {
     int tech_level[BP_TECH_NODES];      /* levels BOUGHT (0 = never upgraded) */
     int tech_max_level[BP_TECH_NODES];  /* BP_TECH_MAX_LEVEL for every node the host feeds */
     int tech_points;                    /* unspent; the host awards these (lobby: 1 per 500 XP) */
+
+    /* The player's kit: which gadget sits on which of the 14 keys, which prefab is live, and the
+       builder's draft. Gameplay reads kit_live_item(&p->kit, slot); the KIT* apps edit it. */
+    KitState kit;
 } Phone;
 
 static inline void phone_init(Phone *p) {
     memset(p, 0, sizeof(*p));
     p->app = -1; p->zone_alert = -1; p->zone_pinned = -1; p->zone_current = 0;
     p->contacts_met = 1;
+    kit_defaults(&p->kit);   /* SCOUT / BREACHER / HUNTER, SCOUT live */
     p->weapons_owned = 1;
     strcpy(p->notes[0], "The archive is not where you");   /* spec: pre-populated Eastwind Owls briefing */
     strcpy(p->notes[1], "think it is. Start with what the");
@@ -250,6 +264,9 @@ static inline int bp_rows(const Phone *p) {
     case BP_APP_SKILLS: return 5;
     case BP_APP_LOADOUT: return 6;
     case BP_APP_WARDROBE: return BP_COSTUMES;
+    case BP_APP_KITS: return p->kit.kit_count > 0 ? p->kit.kit_count : 1;
+    case BP_APP_KITMAP: return KIT_SLOTS;
+    case BP_APP_KITBUILD: return KIT_SLOTS;
     default: return 1;
     }
 }
@@ -511,6 +528,34 @@ static inline BpEffect phone_input(Phone *p, BpAction a, int unspent_points) {
             p->tech_level[p->cursor]++;
             p->tech_points--;
             fx.kind = BP_FX_TECH_UPGRADE; fx.arg = p->cursor;
+        }
+        break;
+    case BP_APP_KITS:
+        /* Which prefab kit is live. The gameplay keys read kit_live_item(), so this is the one
+         * SELECT in the suite that changes what happens in the world. */
+        if (a == BP_SELECT && p->kit.kit_count > 0) {
+            kit_select(&p->kit, p->cursor);
+            fx.kind = BP_FX_KIT_SELECT; fx.arg = p->kit.selected;
+        }
+        break;
+    case BP_APP_KITMAP:
+        /* Map the LIVE kit to keys: LEFT/RIGHT cycles the highlighted key's item, SELECT empties it.
+         * Edits are immediate because this app is about the kit you are actually carrying. */
+        if (a == BP_LEFT || a == BP_RIGHT) {
+            kit_cycle(&p->kit.kits[p->kit.selected], p->cursor, a == BP_RIGHT ? 1 : -1);
+            fx.kind = BP_FX_KIT_BIND; fx.arg = p->cursor;
+        } else if (a == BP_SELECT) {
+            kit_clear_slot(&p->kit.kits[p->kit.selected], p->cursor);
+            fx.kind = BP_FX_KIT_CLEAR; fx.arg = p->cursor;
+        }
+        break;
+    case BP_APP_KITBUILD:
+        /* Build into the DRAFT so a half-finished kit never becomes the thing you are carrying.
+         * SELECT commits the draft over the live kit. */
+        if (a == BP_LEFT || a == BP_RIGHT) kit_cycle_draft(&p->kit, p->cursor, a == BP_RIGHT ? 1 : -1);
+        else if (a == BP_SELECT) {
+            kit_save_draft(&p->kit);
+            fx.kind = BP_FX_KIT_SAVE; fx.arg = p->kit.selected;
         }
         break;
     case BP_APP_ORB:
