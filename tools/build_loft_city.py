@@ -131,6 +131,16 @@ PROPS_WALLS = {
 # One bay is 20 x 16 footprint, 8 units storey height. A "floor" is three bays (60 x 16), a "pair" is
 # two floors (the founder's "floors that are actually 2 floors"), a building is 2..5 pairs plus lobby/roof.
 BAY_W, BAY_D, STOREY = 20.0, 20.0, 8.0
+
+# How big a loft is IN THE CITY, relative to how it is authored. The authored tree stays at human
+# authoring scale (a 20-unit bay is easy to reason about and to edit); the flatten scales it on the way
+# out, so one constant resizes every building without touching a single sub-level.
+#
+# Founder, on the first export: "the new lofts are tiny ... scale up by double using phi". Phi twice is
+# phi^2 = 2.618, i.e. a bit more than double, and it is the scale applied here: a pair goes from 60x20 to
+# 157x52 and one storey from 8 to 21 units, which is what the city's own slabs are built at.
+PHI = (1.0 + 5.0 ** 0.5) / 2.0
+LOFT_SCALE = PHI * PHI
 R, G, B, FRICTION = 0.6, 0.6, 0.65, 0.8
 
 # The city's own material table already has brick/concrete/hps_light/ips_light/metal/wood. Glass is the
@@ -396,8 +406,17 @@ def load_tree():
     return levels
 
 
-def flatten(levels, objects, origin_x, origin_y, origin_z, origin_rot, visited, depth, out):
-    """IDUNA flattenObjects, in Python: recursive, cycle-guarded, finite depth, Y-only rotation."""
+def flatten(levels, objects, origin_x, origin_y, origin_z, origin_rot, visited, depth, out,
+            scale=None):
+    """IDUNA flattenObjects, in Python: recursive, cycle-guarded, finite depth, Y-only rotation.
+
+    `scale` is LOFT_SCALE by default and applies to AUTHORED distances only -- each clip's extents and each
+    object's offset from its parent. The root origin (a building's place in the city) is passed in world
+    units and is deliberately NOT scaled: scaling it too is what put the first scaled export 2.6x further
+    from the spawn than the spot it was tested against.
+    """
+    if scale is None:
+        scale = LOFT_SCALE
     if depth > 12:
         raise SystemExit("loft object nesting too deep (max 12)")
     for o in objects:
@@ -407,14 +426,17 @@ def flatten(levels, objects, origin_x, origin_y, origin_z, origin_rot, visited, 
         child = levels.get(ref)
         if child is None:
             raise SystemExit("object references unknown level %d (not in the manifest)" % ref)
-        ox, oz, _, _ = rotate_y90(o["x"], o["z"], 0, 0, origin_rot)
+        ox, oz, _, _ = rotate_y90(o["x"] * scale, o["z"] * scale, 0, 0, origin_rot)
         wx, wz = origin_x + ox, origin_z + oz
-        wy = origin_y + o["y"]
+        wy = origin_y + o["y"] * scale
         wrot = (origin_rot + int(o.get("rot_y", 0))) % 360
         for w in child.get("walls", []):
-            out.append(transform_wall(w, wx, wy, wz, wrot))
+            aw = dict(w)
+            for k in ("x", "y", "z", "sx", "sy", "sz"):
+                aw[k] = round(w[k] * scale, 3)
+            out.append(transform_wall(aw, wx, wy, wz, wrot))
         flatten(levels, child.get("objects", []), wx, wy, wz, wrot,
-                visited | {ref}, depth + 1, out)
+                visited | {ref}, depth + 1, out, scale)
     return out
 
 
@@ -436,28 +458,31 @@ def choose_placements(city, levels):
     blocked = []
     for w in city["walls"]:
         top, bottom = w["y"] + w["sy"] / 2, w["y"] - w["sy"] / 2
-        if top < 2.0 or bottom > 70.0:
+        # The SAME band placement_conflicts verifies against (>1.0 .. <70). The old 2.0 floor made the
+        # chooser free to stand a building on a low kerb/slab that the verifier then (rightly) refused --
+        # harmless while buildings were 60 wide and there were plenty of spots, fatal at 157.
+        if top <= 1.0 or bottom >= 70.0:
             continue  # ground plane, or a tower's upper floors: not in the way of a street building
         blocked.append((w["x"] - w["sx"] / 2 - 6, w["z"] - w["sz"] / 2 - 6,
                         w["x"] + w["sx"] / 2 + 6, w["z"] + w["sz"] / 2 + 6))
     spawn = city["spawners"][0]
     blocked.append((spawn["x"] - 30, spawn["z"] - 30, spawn["x"] + 30, spawn["z"] + 30))
 
-    sizes = {}
-    for name in VARIANTS:
-        walls = flatten(levels, levels[VARIANT_IDS[name]]["objects"], 0, 0, 0, 0,
-                        {VARIANT_IDS[name]}, 1, [])
-        sizes[name] = footprint(walls)
+    def placed_footprint(name, cx, cz, rot):
+        """The plan the export will ACTUALLY occupy if this building is dropped at (cx,cz) at `rot`.
 
-    # rotated plan extents: the anchor is the building's minimum corner, so a candidate is tested
-    # against the SAME box the export will produce, not against an unrotated approximation
-    sizes = {name: {0: (fp[2] - fp[0], fp[3] - fp[1]),
-                    90: (fp[3] - fp[1], fp[2] - fp[0]),
-                    180: (fp[2] - fp[0], fp[3] - fp[1]),
-                    270: (fp[3] - fp[1], fp[2] - fp[0])}
-             for name, fp in sizes.items()}
+        Not extents-at-the-origin: a loft's authored geometry is centred on zero, so its footprint starts
+        at a negative corner and the anchor is nothing like its minimum. Sizing candidates by extents
+        therefore tested a box up to a building's own width away from where the walls landed -- invisible
+        at 60 wide with a 220-unit gap, immediate at 157 with the gap removed, and the reason the export
+        failed its own overlap check after the chooser had accepted the spot.
+        """
+        lid = VARIANT_IDS[name]
+        return footprint(flatten(levels, levels[lid]["objects"], cx, 0.0, cz, rot, {lid}, 1, []))
 
-    candidates = [(gx, gz) for gx in range(-1600, 2400, 100) for gz in range(-1400, 2000, 100)]
+    # 40-unit candidates, not 100: a phi^2 building is 157x52, and on the old coarse grid whole blocks of
+    # genuinely empty street fell between the candidate points ("no room near the street grid for loft_b").
+    candidates = [(gx, gz) for gx in range(-1600, 2400, 40) for gz in range(-1400, 2000, 40)]
     candidates.sort(key=lambda p: math.hypot(p[0] + 30 - spawn["x"], p[1] + 10 - spawn["z"]))
 
     placements = []
@@ -466,14 +491,17 @@ def choose_placements(city, levels):
         chosen = None
         # nearest-first, and a different rotation per building so the street is not a row of clones
         for rot in [rots[i % 4], rots[(i + 1) % 4], rots[(i + 2) % 4], rots[(i + 3) % 4]]:
-            rw, rd = sizes[name][rot]
             for c in candidates:
-                box = (c[0], c[1], c[0] + rw, c[1] + rd)
+                fp = placed_footprint(name, c[0], c[1], rot)
+                box = (fp[0] - 6.0, fp[1] - 6.0, fp[2] + 6.0, fp[3] + 6.0)
                 if any(overlaps(box, b) for b in blocked):
                     continue
                 bad = False
                 for other in placements:
-                    if overlaps(box, other["_box"]) or math.hypot(c[0] - other["x"], c[1] - other["z"]) < 220:
+                    # Not overlapping is the requirement; the old 220-unit ANCHOR gap stopped meaning
+                    # "the street breathes" once a building was 157 wide, and became a reason to refuse
+                    # a spot that had room. Keep a 40-unit margin so they are neighbours, not one block.
+                    if overlaps(box, other["_box"]) or math.hypot(c[0] - other["x"], c[1] - other["z"]) < 40:
                         bad = True
                         break
                 if bad:
@@ -627,9 +655,13 @@ def build(city_path=CITY, placements_path=PLACEMENTS, write=True):
         # has one. Same count check()'s own want_npcs formula uses, so the two cannot drift.
         storeys = spec["pairs"] * 2 + (1 if spec["lobby"] else 0)
 
+        # The placed walls are WORLD-scaled (flatten applies LOFT_SCALE), so every authored constant used
+        # to find a deck, a storey height or a floor offset has to be scaled with them -- otherwise a
+        # storey's own deck is never found and its people and loot land on the ground floor.
         def storey_box(deck_y):
             deck = [w for w in placed
-                    if abs(w["y"] - (deck_y + 0.5)) < 0.7 and w["sy"] <= 2.0 and w["sx"] >= 4.0]
+                    if abs(w["y"] - (deck_y + 0.5 * LOFT_SCALE)) < 0.7 * LOFT_SCALE
+                    and w["sy"] <= 2.0 * LOFT_SCALE and w["sx"] >= 4.0 * LOFT_SCALE]
             return footprint(deck) if deck else fp
 
         def spot(box, fx, fz, y):
@@ -639,8 +671,8 @@ def build(city_path=CITY, placements_path=PLACEMENTS, write=True):
         # loot: the theme's own tiers, spread up the building rather than all on the ground floor
         for i, tier in enumerate(THEME_LOOT[spec["theme"]]):
             floor = i % storeys
-            x, y, z = spot(storey_box(floor * STOREY), (0.18, 0.82, 0.15)[i % 3],
-                           (0.55, 0.50, 0.85)[i % 3], 1.05 + floor * STOREY)
+            x, y, z = spot(storey_box(floor * STOREY * LOFT_SCALE), (0.18, 0.82, 0.15)[i % 3],
+                           (0.55, 0.50, 0.85)[i % 3], (1.05 + floor * STOREY) * LOFT_SCALE)
             chests.append({"tier": tier, "x": x, "y": y, "z": z})
 
         # EMPIRE ground: one resource node outside the front door to gather from, one claim cell on the
@@ -649,9 +681,10 @@ def build(city_path=CITY, placements_path=PLACEMENTS, write=True):
         # have their orders and nothing within reach to act on.
         deck = storey_box(0.0)
         nx = round((deck[0] + deck[2]) * 0.5, 2)
-        nodes.append({"x": nx, "z": round(deck[3] + 6.0, 2),
+        nodes.append({"x": nx, "z": round(deck[3] + 6.0 * LOFT_SCALE, 2),
                       "amount": 60 + 15 * len(THEME_LOOT[spec["theme"]])})
-        cells.append({"x": nx, "z": round((deck[1] + deck[3]) * 0.5, 2), "radius": 10})
+        cells.append({"x": nx, "z": round((deck[1] + deck[3]) * 0.5, 2),
+                      "radius": round(10 * LOFT_SCALE, 2)})
 
         # ground floor: two, at opposite ends. Every staffed floor above: one, so climbing a loft is a
         # fight. Which floors those are is population_plan's decision, not this loop's.
@@ -665,7 +698,8 @@ def build(city_path=CITY, placements_path=PLACEMENTS, write=True):
                 fx, fz = ground[idx % 2]
             else:
                 fx, fz = upper[(floor + idx) % 4]
-            x, y, z = spot(storey_box(floor * STOREY), fx, fz, 1.05 + floor * STOREY)
+            x, y, z = spot(storey_box(floor * STOREY * LOFT_SCALE), fx, fz,
+                           (1.05 + floor * STOREY) * LOFT_SCALE)
             # archetype 2 = EU_ARCH_ZOMBIE, role 7 = the "Zombie" pursuer brain, faction/orders -1
             # so the archetype's own values win (that is what an unauthored EMPIRE character means)
             npcs.append({"role": 7, "kit": 0, "archetype": 2, "faction": -1, "orders": -1,
@@ -833,7 +867,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--author", action="store_true", help="rewrite the authored tree from the blueprint")
+    ap.add_argument("--out", help="write the flattened city here instead of var/zombie/nextown_zombies.json "
+                                  "(a FORK: same loft tree, its own map)")
+    ap.add_argument("--replace-placements", action="store_true",
+                    help="ignore the frozen placements and choose them again (needed when LOFT_SCALE changes)")
     args = ap.parse_args()
+    global CITY, PLACEMENTS
+    if args.out:
+        CITY = os.path.abspath(args.out)
+    if args.replace_placements and os.path.exists(PLACEMENTS):
+        os.remove(PLACEMENTS)
+        print("placements: cleared, choosing again against the current building size")
     if args.author:
         n = write_authored(force=True)
         print("authored %d level file(s) under levels/lofts" % n)
