@@ -1333,6 +1333,17 @@ static void lobby_empire_sync(Phone *p) {
             if (g_empire_influence > empire_influence_max()) g_empire_influence = empire_influence_max();
         }
     }
+    /* Gathered goods pay out on HAND-IN, never at pickup: story_ai_bank_handins empties every ally that
+       walked its node back home and returns the units, and PARENA's empire_bank_credit says what that is
+       worth under the pool's own cap (it returns the credit that FITS, so a full pool clamps rather than
+       swallowing the haul). The gather path itself is story_ai.c's, so a server-side match banks the same
+       way once it has a pool -- which today it does not: influence is the phone's, and the phone is the
+       lobby's. */
+    int banked = story_ai_bank_handins(&local_state, EU_FACTION_ALLY);
+    if (banked > 0) {
+        g_empire_influence += empire_bank_credit(banked, g_empire_influence, empire_influence_max());
+        printf("[EMPIRE] banked %d units -> influence %d\n", banked, g_empire_influence);
+    }
     p->emp_influence = g_empire_influence;
     p->emp_max = empire_influence_max();
     p->emp_live = g_empire_live;

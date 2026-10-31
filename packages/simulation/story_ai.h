@@ -311,6 +311,13 @@ int story_ai_empire_unit_count(void);
 /* Test/debug readouts, -1 when player_id is not an EMPIRE unit: the order it is executing (EU_ORDER_*)
  * and its archetype (EU_ARCH_*). */
 int story_ai_unit_order(int player_id);
+
+/* story_ai_bank_handins -- empty every unit of `faction` that has walked its cargo back to its own spawn
+ * point, and return how many units were handed in (0 when nobody is home with anything). Deliberately
+ * returns UNITS, not influence: `empire_bank_credit` (PARENA, via empire_rules_host.h) says what a banked
+ * unit is worth and how much fits under the pool's cap, and converting here would drag empire_rules.c into
+ * the server's source list for no gain. Called by the lobby's own empire sync, once per frame. */
+int story_ai_bank_handins(ServerState *s, int faction);
 int story_ai_unit_archetype(int player_id);
 void story_ai_tick(ServerState *s, unsigned int now_ms);
 /* story_ai_seed_voxworld_encounter (the old MODE_STORY VOXWORLD combat-squad encounter) was

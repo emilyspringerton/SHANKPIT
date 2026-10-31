@@ -496,6 +496,35 @@ int story_ai_empire_unit_count(void) {
     return n;
 }
 
+/* story_ai_bank_handins -- a unit that walked a full node home hands it in, and the caller gets the units.
+ *
+ * The influence economy's own numbers live in PARENA (`empire-bank-credit`), but this file is linked into
+ * the SERVER, whose source list does not carry empire_rules.c -- so what this returns is UNITS BANKED, not
+ * influence, and the host that owns the pool converts it (apps/lobby's lobby_empire_sync calls
+ * empire_bank_credit with its own balance and cap). Splitting it there is also what keeps the hand-in
+ * testable without a display: who is carrying, and when they stop, is this function.
+ *
+ * Hand-in happens at the unit's OWN spawn point, because the return trip is the whole point of gathering --
+ * crediting at pickup would make the walk home cosmetic. A unit still walking is left alone, and the
+ * faction is a parameter because two sides can be hauling at once. */
+int story_ai_bank_handins(ServerState *s, int faction) {
+    if (!s) return 0;
+    int banked = 0;
+    float hand_in = (float)g_eu_rules.follow_distance();
+    int slots = (int)(sizeof(s->players) / sizeof(s->players[0]));
+    for (int i = 0; i < STORY_AI_MAX; i++) {
+        AIController *ai = &g_story_ai[i];
+        if (!ai->active || ai->archetype == EU_ARCH_NONE) continue;
+        if (ai->eu.faction != faction || ai->eu.carrying <= 0) continue;
+        if (ai->player_id < 0 || ai->player_id >= slots) continue;
+        PlayerState *p = &s->players[ai->player_id];
+        if (eu_dist2(p->x, p->z, ai->home_x, ai->home_z) > hand_in * hand_in) continue;
+        banked += ai->eu.carrying;
+        ai->eu.carrying = 0;
+    }
+    return banked;
+}
+
 int story_ai_spawn_unit(ServerState *s, int archetype, int kit, int faction, int orders,
                         float x, float y, float z) {
     if (!s) return -1;
