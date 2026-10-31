@@ -517,6 +517,14 @@ unsigned int witness_ai_pheromone_cooldown_ms(int player_id, unsigned int now_ms
 /* Milliseconds of thrower-immunity this zombie still has (0 = none left, it has forgotten you).
  * Test/debug + a future HUD readout, same convention as witness_ai_pheromone_cooldown_ms. */
 unsigned int witness_ai_zombie_grace_ms(int player_id, unsigned int now_ms);
+
+/* Host-set bonus added to every freshly-recruited marker's window. The phone's own tech tree
+ * (BP_APP_TECHTREE's PHEROMONE IMMUNITY line, packages/common/phone.h) buys this at +2000 ms per
+ * level, five levels deep, and the host pushes the total here the moment a level is bought -- so
+ * a player's upgrade is felt on the very next canister, not after a reload. Deliberately not reset
+ * by witness_ai_reset: it is a player's upgrade, not population state. */
+void witness_ai_set_pheromone_grace_bonus_ms(unsigned int ms);
+unsigned int witness_ai_pheromone_grace_bonus_ms(void);
 /* This zombie's current aggression meter (0..1), -1 if player_id isn't a zombie. The sibling of
  * witness_ai_zombie_hunger, needed because both now independently make a zombie hunt. */
 float witness_ai_zombie_aggression(int player_id);

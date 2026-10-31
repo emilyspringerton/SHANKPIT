@@ -65,7 +65,9 @@ typedef enum {
     BP_FX_CHAT_SEND,        /* arg = pending say length; text in p->term_input -- host calls phone_term_take() */
     BP_FX_IDUNA_START,      /* SELECT on idle/error IDUNA screen -> host starts /auth/device/start */
     BP_FX_MISSION_ACT,      /* arg = mission row 0..BP_MISSION_ROWS-1 (see BP_MISSION_ROW_NAMES) */
-    BP_FX_IDUNA_POLL        /* SELECT on pending IDUNA screen -> host runs one /auth/device/poll */
+    BP_FX_IDUNA_POLL,       /* SELECT on pending IDUNA screen -> host runs one /auth/device/poll */
+    BP_FX_TECH_UPGRADE      /* arg = tech node index -> host pushes the new level's real effect
+                               (for BP_TECH_PHEROMONE: witness_ai_set_pheromone_grace_bonus_ms) */
 } BpEffectKind;
 
 typedef struct { BpEffectKind kind; int arg; } BpEffect;
@@ -90,6 +92,15 @@ typedef struct { BpEffectKind kind; int arg; } BpEffect;
 #define BP_IDUNA_ERR_LEN 80
 #define BP_TECH_NODES 12
 #define BP_TECH_NAME_LEN 32
+/* Tech tree, spendable (founder 2026-10-31: "stat adding tech tree we can have improved pherimone
+ * balls it should increase your seconds of immunity by 2 seconds per level upt to 5 points build
+ * the ui into the phone app ui that you pull up with P"). Until now BP_APP_TECHTREE was a
+ * read-only host-fed list of names + [OK] flags; it now has real levels and a real point cost, the
+ * same shape BP_APP_SKILLS already established for talents. */
+#define BP_TECH_MAX_LEVEL 5                  /* "up to 5 points" */
+#define BP_TECH_PHEROMONE 0                  /* node 0: the canister line, read by witness_ai.c's
+                                                own grace window -- see BP_TECH_PHEROMONE_MS_PER_LEVEL */
+#define BP_TECH_PHEROMONE_MS_PER_LEVEL 2000  /* +2 s of thrower immunity per level */
 #define BP_INV_SLOTS 8
 #define BP_ZONES 5
 #define BP_COSTUMES 4
@@ -193,10 +204,13 @@ typedef struct {
     char iduna_verification_url[BP_IDUNA_URL_LEN];
     char iduna_handle[BP_IDUNA_HANDLE_LEN];
     char iduna_error[BP_IDUNA_ERR_LEN];
-    /* Tech tree (BP_APP_TECHTREE): host-fed read-only node list. */
+    /* Tech tree (BP_APP_TECHTREE): host-fed node list, now with real, spendable levels. */
     int tech_count;
     char tech_names[BP_TECH_NODES][BP_TECH_NAME_LEN];
     int tech_unlocked[BP_TECH_NODES];
+    int tech_level[BP_TECH_NODES];      /* levels BOUGHT (0 = never upgraded) */
+    int tech_max_level[BP_TECH_NODES];  /* BP_TECH_MAX_LEVEL for every node the host feeds */
+    int tech_points;                    /* unspent; the host awards these (lobby: 1 per 500 XP) */
 } Phone;
 
 static inline void phone_init(Phone *p) {
@@ -362,7 +376,20 @@ static inline void phone_set_tech(Phone *p, const char *const *names, const int 
     for (int i = 0; i < n; i++) {
         snprintf(p->tech_names[i], sizeof(p->tech_names[i]), "%s", names[i]);
         p->tech_unlocked[i] = unlocked ? unlocked[i] : 0;
+        p->tech_max_level[i] = BP_TECH_MAX_LEVEL;
     }
+}
+
+/* phone_set_tech_points -- the host's tech-point balance (never negative; buying clamps at 0). */
+static inline void phone_set_tech_points(Phone *p, int points) {
+    p->tech_points = points > 0 ? points : 0;
+}
+
+/* phone_tech_bonus_ms -- the immunity bonus this tree currently provides, in milliseconds. One
+ * function so the UI and the AI can never disagree about what a level is worth: the lobby prints
+ * it and hands the same number to witness_ai_set_pheromone_grace_bonus_ms. */
+static inline int phone_tech_bonus_ms(const Phone *p) {
+    return p->tech_level[BP_TECH_PHEROMONE] * BP_TECH_PHEROMONE_MS_PER_LEVEL;
 }
 
 /* Real, live pickup-side entry point: adds one collected food item to CARGO. Capped at
@@ -471,6 +498,20 @@ static inline BpEffect phone_input(Phone *p, BpAction a, int unspent_points) {
         break;
     case BP_APP_MISSION:
         if (a == BP_SELECT) { fx.kind = BP_FX_MISSION_ACT; fx.arg = p->cursor; }
+        break;
+    case BP_APP_TECHTREE:
+        /* Buy one level of the highlighted node. This header only SPENDS the point and says which
+         * node moved; the host owns what a level is actually worth (for the pheromone line, that is
+         * witness_ai's grace window -- see BP_FX_TECH_UPGRADE). Refuses when the node is locked,
+         * already at its ceiling, or there is nothing to spend: a SELECT that cannot buy anything is
+         * a real no-op, not a silent free level. */
+        if (a == BP_SELECT && p->tech_count > 0 && p->cursor >= 0 && p->cursor < p->tech_count &&
+            p->tech_unlocked[p->cursor] && p->tech_points > 0 &&
+            p->tech_level[p->cursor] < p->tech_max_level[p->cursor]) {
+            p->tech_level[p->cursor]++;
+            p->tech_points--;
+            fx.kind = BP_FX_TECH_UPGRADE; fx.arg = p->cursor;
+        }
         break;
     case BP_APP_ORB:
         if (a == BP_SELECT) fx.kind = BP_FX_OPEN_ORB;

@@ -1307,6 +1307,30 @@ static void draw_phone_home_grid(const Phone *p) {
     draw_string("[ARROWS] MOVE  [ENTER] OPEN  [P] CLOSE", PHONE_PANEL_X0 + 20.0f, PHONE_PANEL_Y0 + 16.0f, 2.0f);
 }
 
+/* --- tech tree (founder 2026-10-31: "stat adding tech tree we can have improved pherimone balls
+ * it should increase your seconds of immunity by 2 seconds per level upt to 5 points build the ui
+ * into the phone app ui that you pull up with P") -------------------------------------------------
+ * One real, spendable line to start: PHEROMONE IMMUNITY, five levels of +2 s onto witness_ai.c's
+ * own grace window. Points are earned from the XP this build already awards (1 per 500), so the
+ * tree is paid for out of play rather than handed out -- and the bonus is pushed into the AI the
+ * instant a level is bought, so the very next canister carries the bigger window. The whole thing
+ * is re-derived from XP every call, which makes sync idempotent: no save-file of its own to drift,
+ * and a level bought twice can never double-charge. */
+static const char *const TECHTREE_NODE_NAMES[1] = { "PHEROMONE IMMUNITY +2s" };
+#define TECHTREE_NODES 1
+#define TECHTREE_XP_PER_POINT 500
+
+static void techtree_sync(void) {
+    int unlocked[TECHTREE_NODES];
+    int spent = 0;
+    for (int i = 0; i < TECHTREE_NODES; i++) unlocked[i] = 1;
+    for (int i = 0; i < BP_TECH_NODES; i++) spent += g_story_phone.tech_level[i];
+    phone_set_tech(&g_story_phone, TECHTREE_NODE_NAMES, unlocked, TECHTREE_NODES);
+    phone_set_tech_points(&g_story_phone, g_xp / TECHTREE_XP_PER_POINT - spent);
+    /* The one real effect a level has. Push it now, not on the next reload. */
+    witness_ai_set_pheromone_grace_bonus_ms((unsigned int)phone_tech_bonus_ms(&g_story_phone));
+}
+
 static void phone_iduna_pump(void);
 static void phone_iduna_start(void);
 static void draw_phone_app(const Phone *p) {
@@ -1444,10 +1468,30 @@ static void draw_phone_app(const Phone *p) {
             draw_string("NO TECH NODES YET", col_x, row_y, 2.6f);
         } else {
             for (int i = 0; i < p->tech_count; i++) {
-                char buf[BP_TECH_NAME_LEN + 12];
-                snprintf(buf, sizeof(buf), "%s%s", p->tech_names[i], p->tech_unlocked[i] ? "  [OK]" : "");
+                char buf[BP_TECH_NAME_LEN + 24];
+                /* LEVEL x/5 -- the bought level, not the name, is the thing you come here for. */
+                snprintf(buf, sizeof(buf), "%s   LV %d/%d", p->tech_names[i],
+                         p->tech_level[i], p->tech_max_level[i]);
                 glColor3f(i == p->cursor ? 1.0f : 0.6f, i == p->cursor ? 1.0f : 0.72f, i == p->cursor ? 1.0f : 0.82f);
                 draw_string(buf, col_x, row_y - i * row_h, 2.4f);
+                for (int lv = 0; lv < p->tech_max_level[i]; lv++) {
+                    glColor3f(lv < p->tech_level[i] ? 0.55f : 0.22f,
+                              lv < p->tech_level[i] ? 0.95f : 0.26f,
+                              lv < p->tech_level[i] ? 0.55f : 0.32f);
+                    glRectf(col_x + 330.0f + lv * 18.0f, row_y - i * row_h - 2.0f,
+                            col_x + 342.0f + lv * 18.0f, row_y - i * row_h + 10.0f);
+                }
+            }
+            char pts[80];
+            snprintf(pts, sizeof(pts), "POINTS: %d    CANISTER GRACE: %d.%ds  (base 9s)",
+                     p->tech_points, phone_tech_bonus_ms(p) / 1000, (phone_tech_bonus_ms(p) / 100) % 10);
+            glColor3f(0.55f, 0.75f, 0.85f);
+            draw_string(pts, col_x, row_y - (p->tech_count + 1) * row_h - 6.0f, 2.2f);
+            glColor3f(0.5f, 0.6f, 0.7f);
+            draw_string("[ENTER] BUY A LEVEL (1 POINT)", col_x, row_y - (p->tech_count + 2) * row_h - 6.0f, 2.0f);
+            if (p->tech_points == 0) {
+                glColor3f(0.55f, 0.5f, 0.45f);
+                draw_string("NO POINTS -- EARN XP, 1 POINT PER 500", col_x, row_y - (p->tech_count + 3) * row_h - 6.0f, 2.0f);
             }
         }
     } else if (p->app == BP_APP_MISSION) {
@@ -14891,6 +14935,7 @@ int main(int argc, char* argv[]) {
                             if (phone_browser_key(e.key.keysym.sym)) g_story_phone.app = -1;
                             continue;
                         }
+                        techtree_sync();   /* re-seed points from XP before any phone input */
                         if (e.key.keysym.sym == SDLK_UP) phone_input(&g_story_phone, BP_UP, 0);
                         else if (e.key.keysym.sym == SDLK_DOWN) phone_input(&g_story_phone, BP_DOWN, 0);
                         else if (e.key.keysym.sym == SDLK_LEFT) phone_input(&g_story_phone, BP_LEFT, 0);
@@ -14927,6 +14972,15 @@ int main(int argc, char* argv[]) {
                                 snprintf(echo, sizeof(echo), "%.30s: %s", gname, say);
                                 phone_term_line(&g_story_phone, echo);
                                 chat_pane_push(echo);
+                            } else if (fx.kind == BP_FX_TECH_UPGRADE) {
+                                /* The phone already spent the point; this is what a level is
+                                   actually WORTH. techtree_sync re-derives the balance and hands
+                                   the new total to witness_ai, so the next canister is longer. */
+                                techtree_sync();
+                                if (fx.arg == BP_TECH_PHEROMONE)
+                                    printf("[TECHTREE] pheromone immunity -> level %d (+%d ms per canister)\n",
+                                           g_story_phone.tech_level[BP_TECH_PHEROMONE],
+                                           phone_tech_bonus_ms(&g_story_phone));
                             } else if (fx.kind == BP_FX_MISSION_ACT) {
                                 bigo_mission_act(fx.arg);
                             } else if (fx.kind == BP_FX_IDUNA_START || fx.kind == BP_FX_IDUNA_POLL) {

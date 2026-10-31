@@ -232,6 +232,31 @@ int main(void) {
     assert(hurt);                                         /* it forgot, and it is still hungry */
     printf("PASS: grace expires and the same zombie turns on the thrower (hp %d)\n", S.players[0].health);
 
+    /* ---- the phone's tech tree really lands on the window: +2 s per level, five levels ---- */
+    witness_ai_set_pheromone_grace_bonus_ms(10000u);   /* 5 levels x 2 s (phone.h's tech tree) */
+    assert(witness_ai_pheromone_grace_bonus_ms() == 10000u);
+    memset(&S, 0, sizeof S);
+    S.game_mode = MODE_ZOMBIES;
+    S.players[0].active = 1; S.players[0].state = STATE_ALIVE; S.players[0].yaw = 0.0f;
+    nboxes = 1;
+    witness_ai_reset(82u, 0);
+    t = 5000;
+    assert(witness_ai_try_throw_pheromone(&S, 0, t) == 1);
+    int uz = witness_ai_spawn_zombie(&S, 0.0f, 0.0f, 30.0f, 0);
+    assert(uz > 0);
+    witness_ai_force_zombie_mood(uz, 2 /* HUNTING */);
+    S.players[0].x = 5000; S.players[0].z = 5000;
+    unsigned int best_grace = 0;
+    for (int i = 0; i < 200; i++) {
+        t += 33; witness_ai_tick(&S, t); walk(0.033f);
+        unsigned int g = witness_ai_zombie_grace_ms(uz, t);
+        if (g > best_grace) best_grace = g;
+    }
+    /* base 9000 + 10000 bought = ~19000; anything near 9000 means the upgrade never reached the AI */
+    assert(best_grace > WITNESS_AI_PHEROMONE_GRACE_MS + 8000u);
+    printf("PASS: a maxed pheromone line buys a %u ms window (base %u ms)\n", best_grace, WITNESS_AI_PHEROMONE_GRACE_MS);
+    witness_ai_set_pheromone_grace_bonus_ms(0);   /* leave the rest of the run unupgraded */
+
     printf("ALL PASS\n");
     return 0;
 }

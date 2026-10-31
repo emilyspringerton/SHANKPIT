@@ -90,6 +90,36 @@ int main(void) {
     phone_input(&p, BP_BACK, 0); CHECK(!p.detail && p.app == BP_APP_ARPANET);
     go(&p, BP_APP_TECHTREE);
     { const char *n[2] = { "WALLS", "TURRETS" }; int u[2] = { 1, 0 }; phone_set_tech(&p, n, u, 2); CHECK(p.tech_count == 2); phone_set_tech(&p, NULL, NULL, 5); CHECK(p.tech_count == 0); }
+
+    /* ---- tech tree, spendable (founder 2026-10-31) ----
+       Buying a level costs a point, stops at 5, and the pheromone line is worth +2 s per level --
+       the exact number witness_ai's grace window reads, so the UI and the AI cannot disagree. ---- */
+    {
+        const char *n[1] = { "PHEROMONE IMMUNITY +2s" }; int u[1] = { 1 };
+        phone_init(&p);
+        phone_set_tech(&p, n, u, 1);
+        phone_set_tech_points(&p, 3);
+        phone_open_app(&p, BP_APP_TECHTREE);
+        CHECK(phone_tech_bonus_ms(&p) == 0);
+        CHECK(p.tech_max_level[BP_TECH_PHEROMONE] == BP_TECH_MAX_LEVEL);
+        fx = phone_input(&p, BP_SELECT, 0);
+        CHECK(fx.kind == BP_FX_TECH_UPGRADE && fx.arg == BP_TECH_PHEROMONE);
+        CHECK(p.tech_level[BP_TECH_PHEROMONE] == 1 && p.tech_points == 2);
+        CHECK(phone_tech_bonus_ms(&p) == BP_TECH_PHEROMONE_MS_PER_LEVEL);
+        phone_set_tech_points(&p, 6);              /* the one above is already spent; 6 more in hand */
+        for (int i = 0; i < 9; i++) phone_input(&p, BP_SELECT, 0);   /* more presses than levels left */
+        CHECK(p.tech_level[BP_TECH_PHEROMONE] == BP_TECH_MAX_LEVEL);
+        CHECK(p.tech_points == 2);                 /* stopped at the cap; the rest was NOT spent */
+        CHECK(phone_tech_bonus_ms(&p) == BP_TECH_MAX_LEVEL * BP_TECH_PHEROMONE_MS_PER_LEVEL);
+        fx = phone_input(&p, BP_SELECT, 0);        /* capped: a real no-op, and no point is taken */
+        CHECK(fx.kind == BP_FX_NONE && p.tech_points == 2 &&
+              p.tech_level[BP_TECH_PHEROMONE] == BP_TECH_MAX_LEVEL);
+        phone_set_tech_points(&p, 0);
+        fx = phone_input(&p, BP_SELECT, 0);        /* broke: also a no-op, not a free level */
+        CHECK(fx.kind == BP_FX_NONE && p.tech_level[BP_TECH_PHEROMONE] == BP_TECH_MAX_LEVEL);
+        phone_set_tech_points(&p, -5);             /* a negative balance clamps to none */
+        CHECK(p.tech_points == 0);
+    }
     go(&p, BP_APP_MISSION); phone_input(&p, BP_DOWN, 0); phone_input(&p, BP_DOWN, 0);
     fx = phone_input(&p, BP_SELECT, 0); CHECK(fx.kind == BP_FX_MISSION_ACT && fx.arg == 2);
     go(&p, BP_APP_WARDROBE); phone_input(&p, BP_DOWN, 0); fx = phone_input(&p, BP_SELECT, 0);

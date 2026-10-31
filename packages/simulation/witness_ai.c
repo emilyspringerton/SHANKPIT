@@ -140,6 +140,14 @@ static PgGrenade g_pheromone_grenades[PHEROMONE_MAX]; /* slot i is the canister 
  * game (the grace window), not part of the pure targeting primitive. An expired marker's slot stops
  * being readable the moment .active clears, so nothing here needs clearing on expiry. */
 static int g_pheromone_owner1[PHEROMONE_MAX];
+/* Player upgrade: extra milliseconds stacked onto every freshly-recruited marker's window. The
+ * phone's tech tree (BP_APP_TECHTREE) buys it at +2000 ms per level; the host pushes the total in
+ * the moment a level is bought. NOT cleared by witness_ai_reset -- it belongs to the player, not
+ * to the population, and a level load must not silently refund their points. */
+static unsigned int g_pheromone_grace_bonus_ms;
+
+void witness_ai_set_pheromone_grace_bonus_ms(unsigned int ms) { g_pheromone_grace_bonus_ms = ms; }
+unsigned int witness_ai_pheromone_grace_bonus_ms(void) { return g_pheromone_grace_bonus_ms; }
 static unsigned int g_pheromone_last_step_ms;
 static unsigned int g_pheromone_next_throw_ms[MAX_CLIENTS];
 
@@ -1325,7 +1333,7 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
                 /* ...and it remembers whose it was, which is what buys the thrower its window. */
                 if (g_pheromone_owner1[mslot] > 0) {
                     z->pher_owner_pid1 = g_pheromone_owner1[mslot];
-                    z->pher_grace_until_ms = now_ms + WITNESS_AI_PHEROMONE_GRACE_MS;
+                    z->pher_grace_until_ms = now_ms + WITNESS_AI_PHEROMONE_GRACE_MS + g_pheromone_grace_bonus_ms;
                 }
             }
         }
