@@ -11568,6 +11568,49 @@ static void draw_shield_hud_flash(unsigned int now_ms) {
     glDisable(GL_BLEND);
 }
 
+/* The car the player is actually sitting in, or NULL. By occupant id rather than by index, because
+ * the garage slot a called car lands in is whichever one was free. */
+static const BuggyState *hud_driven_buggy(const PlayerState *p) {
+    if (!p) return NULL;
+    for (int i = 0; i < MAX_BUGGIES; i++) {
+        const BuggyState *b = &local_state.buggies[i];
+        if (b->active && b->occupant_player_id == p->id) return b;
+    }
+    return NULL;
+}
+
+/* THE ROCKET CAR'S HUD. Its air tank is the one number that decides what the car can do -- no air,
+ * no climb and no boost (physics.h simulate_rocket_car_state) -- so it is a bar beside the vehicle
+ * line rather than a debug string, coloured the way the car itself reads: cold-gas blue when it is
+ * full, amber as it empties, which is the same shift the plumes under the pods make. Below it, the
+ * two nozzle keys light while they are held and there is air to answer with. */
+static void draw_rocket_air_hud(const BuggyState *b, const PlayerState *p, int art_direction) {
+    if (!b || !b->rocket) return;
+    const int tank_max = phys_rocket_tank_max() > 0 ? phys_rocket_tank_max() : 1;
+    float frac = (float)b->tank / (float)tank_max;
+    if (frac < 0.0f) frac = 0.0f;
+    if (frac > 1.0f) frac = 1.0f;
+    const float small = art_direction ? 4.0f : 5.0f;
+    const float x0 = 300.0f, x1 = 530.0f, y0 = 112.0f, y1 = 128.0f;
+    const float r = 0.95f + (0.35f - 0.95f) * frac;
+    const float g = 0.58f + (0.82f - 0.58f) * frac;
+    const float bl = 0.14f + (1.00f - 0.14f) * frac;
+    glColor3f(0.10f, 0.12f, 0.16f);
+    glRectf(x0, y0, x1, y1);
+    glColor3f(r, g, bl);
+    glRectf(x0, y0, x0 + (x1 - x0) * frac, y1);
+    char air_buf[32];
+    snprintf(air_buf, sizeof(air_buf), "AIR %d%%", (int)(frac * 100.0f + 0.5f));
+    glColor3f(r, g, bl);
+    draw_string(air_buf, x1 + 12.0f, y0 + 1.0f, small);
+    const int lit_lift = (p && p->in_lift && b->tank > 0);
+    const int lit_boost = (p && p->in_boost && b->tank > 0);
+    glColor3f(lit_lift ? 0.42f : 0.20f, lit_lift ? 0.86f : 0.26f, lit_lift ? 1.00f : 0.32f);
+    draw_string("LIFT", x0, 148.0f, small);
+    glColor3f(lit_boost ? 1.00f : 0.34f, lit_boost ? 0.72f : 0.22f, lit_boost ? 0.30f : 0.16f);
+    draw_string("BOOST", x0 + 120.0f, 148.0f, small);
+}
+
 void draw_hud(PlayerState *p) {
     /* Pre-existing broken build, found live (S170-110): the MODE_STORY branch below calls
        draw_tyler_cutscene()/cutscene_tick() with a `now_ms` that was never declared anywhere in
@@ -11907,11 +11950,19 @@ void draw_hud(PlayerState *p) {
            now derived from the real glyph height (7 * scale) instead of a magic-number offset
            that happened to fit a different scale once and silently stopped fitting. */
         float heli_online_scale = vs0_art_direction_enabled ? 8.0f : 12.0f;
+        const BuggyState *car = hud_driven_buggy(p);
+        const int in_rocket = (car && car->rocket);
         glColor3f(0.0f, 1.0f, 0.0f);
-        draw_string(p->vehicle_type == VEH_HELICOPTER ? "HELI ONLINE" : "BUGGY ONLINE", 50, 112, heli_online_scale);
+        draw_string(p->vehicle_type == VEH_HELICOPTER ? "HELI ONLINE"
+                                                      : (in_rocket ? "ROCKET CAR ONLINE" : "BUGGY ONLINE"),
+                    50, 112, heli_online_scale);
         char style_buf[96];
         if (p->vehicle_type == VEH_HELICOPTER) {
             snprintf(style_buf, sizeof(style_buf), "HP:%d ALT:%.1f", p->health, p->y);
+        } else if (in_rocket) {
+            /* the style keys below only touch the buggy's own model, which a rocket car no longer
+               draws -- so its line says what its own keys do instead of lying about F6/F7/F8 */
+            snprintf(style_buf, sizeof(style_buf), "SPACE LIFT  SHIFT BOOST  ALT:%.1f", p->y);
         } else {
             snprintf(style_buf, sizeof(style_buf), "F6 STYLE:%s F7 GLOW:%s F8 LIGHT:%s",
                      vehicle_style_enabled ? "ON" : "OFF",
@@ -11920,6 +11971,7 @@ void draw_hud(PlayerState *p) {
         }
         glColor3f(0.95f, 0.55f, 0.1f);
         draw_string(style_buf, 50, 112 - (7.0f * heli_online_scale) - 6.0f, vs0_art_direction_enabled ? 4 : 6);
+        draw_rocket_air_hud(car, p, vs0_art_direction_enabled);
     }
     /* Removed bottom-of-screen debug toggle readouts from player HUD.
        Debug toggles and key handling remain active for internal use. */
@@ -16660,6 +16712,14 @@ int main(int argc, char* argv[]) {
                 str /= move_len;
             }
             int jump = k[SDL_SCANCODE_SPACE]; int crouch = k[SDL_SCANCODE_LCTRL];
+            /* The rocket car's two nozzle keys, sampled here on the same frame-keyboard this block
+               already reads. PlayerState.in_lift / in_boost are LOCAL, exactly like in_roll: what
+               replicates is the attitude and the air the car ends up with, not the keypress. Written
+               to the player being controlled so the HUD (which draws the render player) matches the
+               car that is actually being flown in a networked match too. */
+            local_state.players[control_pid].in_lift = k[SDL_SCANCODE_SPACE] ? 1 : 0;
+            local_state.players[control_pid].in_boost =
+                (k[SDL_SCANCODE_LSHIFT] || k[SDL_SCANCODE_RSHIFT]) ? 1 : 0;
             int shoot = (SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_LEFT));
             int reload = in_heli ? 0 : k[SDL_SCANCODE_R];
             int bike = in_heli ? (k[SDL_SCANCODE_Q] || k[SDL_SCANCODE_J]) : 0;   /* heli bank left: Q or J */
@@ -16948,13 +17008,6 @@ int main(int argc, char* argv[]) {
                     const Uint8 *roll_keys = SDL_GetKeyboardState(NULL);
                     local_state.players[0].in_roll = (roll_keys[SDL_SCANCODE_J] || roll_keys[SDL_SCANCODE_LEFT]) ? -1
                                                    : ((roll_keys[SDL_SCANCODE_L] || roll_keys[SDL_SCANCODE_RIGHT]) ? 1 : 0);
-                    /* ROCKET CAR: Space is LIFT (the four nozzles) and Shift is BOOST (the rear one),
-                       the bindings br_input.prn gives them. Local only, exactly like in_roll above:
-                       local_game.h's buggy tick reads them, and what replicates is the attitude and
-                       the air the car ends up with, not the keypress. Harmless while on foot -- only a
-                       car with b->rocket reads them. */
-                    local_state.players[0].in_lift = roll_keys[SDL_SCANCODE_SPACE] ? 1 : 0;
-                    local_state.players[0].in_boost = (roll_keys[SDL_SCANCODE_LSHIFT] || roll_keys[SDL_SCANCODE_RSHIFT]) ? 1 : 0;
                 }
                 local_update(input_fwd, input_str, local_aim_yaw, local_aim_pitch, input_shoot, wpn_req, input_jump, input_crouch, input_reload, input_ability, input_secondary, input_bike, NULL, now_ms);
                 if (bigo_wiring_active() && !g_story_phone.open) bigo_board_tick(&local_state.players[0], (float)input_fwd, (float)input_str, TICK_DT);
