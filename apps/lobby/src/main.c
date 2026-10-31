@@ -77,6 +77,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/simulation/stats_apply.h" /* a GFD job -> live health + weapon cooldown */
 #include "../../../packages/simulation/local_game.h"
 #include "../../../packages/simulation/vehicle_call.h"   /* kit's BUGGY / ROCKET CAR / HELICOPTER calls */
+#include "../../../packages/simulation/kit_call.h"      /* ...and their PACKET_KIT_CALL on the net path */
 #include "../../../packages/common/awareness_compass.h" /* AWARENESS_COMPASS_NAMES -- zombies_hud_bridge.c's own real HUD alert, see draw_zombies_awareness_hud */
 #include "../../../packages/reflux/reflux_runtime.h" /* REFLUX_ACTION_* constants -- same, for a type-specific HUD label */
 #include "../../../packages/simulation/tyler_coldopen.h"
@@ -2135,6 +2136,17 @@ static void net_emit_client_summaries(unsigned int now_ms) {
                         net_diag.snapshots_rx, net_diag.latest_snapshot_len, net_diag.latest_entity_count,
                         net_diag.got_local_snapshot, local_state.scene_id, net_last_reconciled_ack);
     }
+}
+
+/* net_send_kit_call -- one PACKET_KIT_CALL datagram (protocol.h / kit_call.h). Fire and forget: the
+ * server's answer is the vehicle appearing in a snapshot, and a lost datagram is a key press that did
+ * not happen, which the player can simply repeat. */
+static void net_send_kit_call(int item) {
+    if (sock < 0) return;
+    NetKitCall pkt;
+    kit_call_build(&pkt, item, my_client_id);
+    sendto(sock, (const char *)&pkt, sizeof(pkt), 0, (struct sockaddr*)&server_addr, sizeof(server_addr));
+    NET_CLIENT_LOG("KIT_CALL_TX item=%s client_id=%d", kit_item_name(item), my_client_id);
 }
 
 static void net_check_diag_timeouts(unsigned int now_ms) {
@@ -16540,24 +16552,20 @@ int main(int argc, char* argv[]) {
                 local_state.players[0].in_use = input_use;
                 local_state.players[0].in_pheromone = input_pheromone ||
                                                       kit_pulse_take(KIT_ITEM_PHEROMONE, SDL_GetTicks());
-                /* The three VEHICLE gadgets (packages/common/kit.h -> vehicle_call.h). One pulse =
-                   one call: the vehicle spawns in front of the player and they are seated in it. Local
-                   modes only -- a networked client cannot spawn vehicles, the server owns that, and
-                   there is no kit-call packet yet (named gap, not a silent no-op pretending to work). */
+                /* The six VEHICLE gadgets (packages/common/kit.h -> vehicle_call.h). One pulse = one
+                   call: the vehicle appears in front of the player and they are seated in it. In a
+                   networked match the SERVER owns spawning, so the same pulses become PACKET_KIT_CALL
+                   datagrams (kit_call.h) instead of local calls -- a client-side buggy would exist on
+                   one screen and the server would never know about it. */
                 {
                     unsigned int vnow = SDL_GetTicks();
-                    if (kit_pulse_take(KIT_ITEM_BUGGY, vnow))
-                        vehicle_call_spawn(&local_state.players[0], KIT_ITEM_BUGGY);
-                    if (kit_pulse_take(KIT_ITEM_ROCKET_CAR, vnow))
-                        vehicle_call_spawn(&local_state.players[0], KIT_ITEM_ROCKET_CAR);
-                    if (kit_pulse_take(KIT_ITEM_HELI, vnow))
-                        vehicle_call_spawn(&local_state.players[0], KIT_ITEM_HELI);
-                    if (kit_pulse_take(KIT_ITEM_DRONE, vnow))
-                        vehicle_call_spawn(&local_state.players[0], KIT_ITEM_DRONE);
-                    if (kit_pulse_take(KIT_ITEM_MINI_DRONE, vnow))
-                        vehicle_call_spawn(&local_state.players[0], KIT_ITEM_MINI_DRONE);
-                    if (kit_pulse_take(KIT_ITEM_PLANE, vnow))
-                        vehicle_call_spawn(&local_state.players[0], KIT_ITEM_PLANE);
+                    static const int call_items[6] = { KIT_ITEM_BUGGY, KIT_ITEM_ROCKET_CAR, KIT_ITEM_HELI,
+                                                       KIT_ITEM_DRONE, KIT_ITEM_MINI_DRONE, KIT_ITEM_PLANE };
+                    for (int ci = 0; ci < 6; ci++) {
+                        if (!kit_pulse_take(call_items[ci], vnow)) continue;
+                        if (app_state == STATE_GAME_NET) net_send_kit_call(call_items[ci]);
+                        else vehicle_call_spawn(&local_state.players[0], call_items[ci]);
+                    }
                 }
                 drone_shard_sweep();   /* debris that is in the air right now vs every live drone */
                 local_state.players[0].in_paint_next = g_input_paint_next;

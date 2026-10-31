@@ -606,8 +606,14 @@ static void story_ai_downed_tick(ServerState *s, unsigned int now_ms) {
         ai->eu.revive_ms += dt;
         if (ai->eu.revive_ms >= g_eu_rules.revive_hold_ms()) {
             int hp = eu_unit_revive_health(&ai->eu, g_eu_rules.revive_health_milli());
-            phys_respawn(p, now_ms);
+            /* Stand up WHERE THEY FELL. This deliberately does not go through phys_respawn: that is the
+               respawn path, and it moves the body to a spawn point -- a revive that teleports the ally
+               across the level is not a rescue. (This call was also compiled with no declaration in this
+               TU, which -Wimplicit-function-declaration reports and which is why it was reachable at all
+               without anyone noticing the teleport.) */
+            p->state = STATE_ALIVE;
             p->health = hp;
+            p->vx = p->vy = p->vz = 0.0f;
             p->respawn_time = 0;
             ai->eu.order = EU_ORDER_NONE;
             eu_unit_revive(&ai->eu);

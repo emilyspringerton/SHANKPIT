@@ -117,6 +117,23 @@
  * is why the counts travel too. Absolute and idempotent, like PACKET_BRICK_STATE: a dropped datagram or
  * a late joiner heals on the next one. */
 #define PACKET_EMPIRE_STATE 18
+
+/* PACKET_KIT_CALL -- the KIT's vehicle gadgets on the wire (packages/common/kit.h ->
+ * packages/simulation/vehicle_call.h). Client -> server, one datagram per call: "the player pressed
+ * the key bound to this call item". Before this the gadget keys were local/sandbox only -- in
+ * STATE_GAME_NET they did nothing at all, because the server owns spawning (N1 in
+ * docs/NAMED_NOT_DONE.md).
+ *
+ * The packet carries the ITEM, never a position or a vehicle id: the server decides whether the call
+ * is allowed (alive, not already driving, off its cooldown, a free garage slot) and where the vehicle
+ * appears, exactly the way it already owns every other vehicle. The spawned buggy / helicopter then
+ * reaches every client through PACKET_SNAPSHOT's own NetBuggy / NetHelicopter rows -- no new
+ * replication. A drone or the C-110 is accepted and spawned too, but those two are not in snapshots
+ * yet (N2 in the same doc), so a remote client does not draw them.
+ *
+ * Fixed size and self-contained: a datagram is one call, or it is garbage. */
+#define PACKET_KIT_CALL 19
+
 #define NET_EMPIRE_MAX_NODES 16 /* must match EU_MAX_NODES (empire_units.h) */
 #define NET_EMPIRE_MAX_CELLS 32 /* must match EU_MAX_CLAIM_CELLS (empire_units.h) */
 #define NET_ZONE_ID_MAX 32
@@ -288,6 +305,15 @@ typedef struct {
     unsigned short node_amount[NET_EMPIRE_MAX_NODES];
     unsigned char cell_owner[NET_EMPIRE_MAX_CELLS]; /* EU_FACTION_* */
 } NetEmpireState;
+
+/* NetKitCall -- see PACKET_KIT_CALL's own doc comment above. `item` is a KIT_ITEM_* call item
+ * (packages/common/kit.h); the server re-checks it with kit_item_is_vehicle, so a hand-rolled value is
+ * a refusal and never a spawn. The three pad bytes keep the payload word-aligned and the size fixed. */
+typedef struct {
+    NetHeader hdr;
+    unsigned char item;
+    unsigned char pad[3];
+} NetKitCall;
 
 /* NetBrickState -- see PACKET_BRICK_STATE's own doc comment above. key_lo/key_hi are the two halves
  * of the 30-bit cell key (ix | iy<<10 | iz<<20) so the entry has no padding or endianness trap. */

@@ -360,6 +360,13 @@ test-vehicle-call: | $(BIN_DIR)
 	$(CC) -g -O1 -fsanitize=address,undefined -Wall $(INCLUDES) packages/simulation/vehicle_call_test.c $(filter-out apps/server/src/main.c,$(SERVER_SRC)) -o $(BIN_DIR)/vehicle_call_test $(LIBS_M)
 	./$(BIN_DIR)/vehicle_call_test
 
+# KIT CALL packet (packages/simulation/kit_call.h + PACKET_KIT_CALL): parsing an untrusted datagram
+# and the server's verdict on a real player
+.PHONY: test-kit-call
+test-kit-call: | $(BIN_DIR)
+	$(CC) -g -O1 -fsanitize=address,undefined -Wall $(INCLUDES) packages/simulation/kit_call_test.c $(filter-out apps/server/src/main.c,$(SERVER_SRC)) -o $(BIN_DIR)/kit_call_test $(LIBS_M)
+	./$(BIN_DIR)/kit_call_test
+
 # ROCKET CAR rules: PARENA/stdlib/shankpit/rocket_car_rules.prn -> packages/simulation/rocket_car_rules.c packages/simulation/drone_rules.c packages/simulation/airplane_rules.c
 .PHONY: regen-rocket-car-rules
 regen-rocket-car-rules:

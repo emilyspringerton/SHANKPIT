@@ -39,6 +39,7 @@
 #include "../../../packages/simulation/buggy_rules_host.h"
 #include "../../../packages/simulation/heli_rules_host.h"
 #include "../../../packages/simulation/rocket_car_rules_host.h"   /* the rocket car's PARENA model */
+#include "../../../packages/simulation/kit_call.h"   /* PACKET_KIT_CALL: the kit's vehicle gadgets */
 
 /* cutscene handshake globals — defined in lobby/main.c for the client;
    server sim uses local_game.h but never renders cutscenes, so stub to 0. */
@@ -1261,7 +1262,7 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
     NetHeader *head = (NetHeader*)buffer;
     int client_id = -1;
 
-    if (head->type == PACKET_CONNECT || head->type == PACKET_USERCMD || head->type == PACKET_DISCONNECT || head->type == PACKET_SPRAY_DECAL) {
+    if (head->type == PACKET_CONNECT || head->type == PACKET_USERCMD || head->type == PACKET_DISCONNECT || head->type == PACKET_SPRAY_DECAL || head->type == PACKET_KIT_CALL) {
         client_id = ensure_slot_for_sender(sender, head->type == PACKET_CONNECT);
     }
     if (client_id == -1) return;
@@ -1359,6 +1360,33 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
 
     if (client_id != -1 && head->type == PACKET_SPRAY_DECAL) {
         server_relay_spray_decal(client_id, buffer, size);
+        return;
+    }
+
+    /* --- KIT CALLS ---
+     * Card N1 (docs/NAMED_NOT_DONE.md): the kit's vehicle gadget keys were local/sandbox only, so in a
+     * networked match pressing `` ` `` did nothing at all. The client sends which call item it pressed and
+     * the server decides -- it is the one that owns every other vehicle, and the spawn it makes reaches
+     * every client through the ordinary snapshot. kit_call_parse refuses anything that is not a
+     * well-formed call for a vehicle item, and kit_call_server_apply refuses a dead or spectating caller
+     * (plus every refusal vehicle_call_spawn already makes: already driving, on cooldown, garage full). */
+    if (client_id != -1 && head->type == PACKET_KIT_CALL) {
+        slots[client_id].last_heard = now_seconds();
+        local_state.client_meta[client_id].last_heard_ms = get_server_time();
+        if (!slots[client_id].welcomed) {
+            g_net_diag.malformed++;
+            NET_WARN_LOG("KIT_CALL_REJECTED client_id=%d reason=not_welcomed", client_id);
+            return;
+        }
+        int item = kit_call_parse(buffer, size);
+        if (item == KIT_ITEM_NONE) {
+            g_net_diag.malformed++;
+            NET_WARN_LOG("KIT_CALL_MALFORMED client_id=%d size=%d", client_id, size);
+            return;
+        }
+        int spawned = kit_call_server_apply(&local_state.players[client_id], item);
+        NET_SERVER_LOG("KIT_CALL client_id=%d item=%s -> veh=%d scene=%d", client_id, kit_item_name(item),
+                       spawned, local_state.players[client_id].scene_id);
         return;
     }
 
