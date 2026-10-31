@@ -126,6 +126,36 @@ test-structure: $(STRUCTURE_RULES_C)
 		packages/world/parena_runtime.c -o /tmp/shankpit_structure_test -lm
 	/tmp/shankpit_structure_test
 
+# ---- the NOOBTOPIA three-way merge (MONOREPO/docs/THREE_WAY_MERGE.md) --------------------------------
+# Decisions are PARENA's, once (stdlib/noobtopia/*.prn), emitted to C here and to Luau in NOOBTOPIA. The WORDS are
+# NOOBTOPIA's data file, generated into ambient_lines.inc. Neither side keeps a copy.
+NOOBTOPIA_RULES_PRN ?= ../PARENA/stdlib/noobtopia/ambient_life.prn ../PARENA/stdlib/noobtopia/arena_rules.prn
+NOOBTOPIA_RULES_C   ?= packages/simulation/ambient_life.c packages/simulation/arena_rules.c
+AMBIENT_LINES_INC   ?= packages/simulation/ambient_lines.inc
+
+$(NOOBTOPIA_RULES_C): $(NOOBTOPIA_RULES_PRN)
+	./scripts/gen_noobtopia_rules.sh
+
+$(AMBIENT_LINES_INC): ../NOOBTOPIA/data/noob_lines.lua
+	./scripts/gen_ambient_lines.sh
+
+.PHONY: test-ambient-life test-noobtopia-arena test-noobtopia
+test-ambient-life: $(NOOBTOPIA_RULES_C) $(AMBIENT_LINES_INC)
+	gcc -std=gnu99 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
+		-Ipackages/simulation -Ipackages/world -Ipackages/common \
+		packages/simulation/ambient_life_test.c packages/simulation/ambient_life.c \
+		-o /tmp/shankpit_ambient_life_test -lm
+	/tmp/shankpit_ambient_life_test
+
+test-noobtopia-arena: $(NOOBTOPIA_RULES_C)
+	gcc -std=gnu99 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
+		-Ipackages/simulation -Ipackages/world -Ipackages/common \
+		packages/simulation/arena_rules_test.c packages/simulation/arena_rules.c \
+		-o /tmp/shankpit_arena_rules_test -lm
+	/tmp/shankpit_arena_rules_test
+
+test-noobtopia: test-ambient-life test-noobtopia-arena
+
 STRUCTURE_RULES_PRN ?= ../PARENA/stdlib/shankpit/structure_rules.prn
 STRUCTURE_RULES_C   ?= packages/simulation/structure_rules.c
 $(STRUCTURE_RULES_C): $(STRUCTURE_RULES_PRN)
