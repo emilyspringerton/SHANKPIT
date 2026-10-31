@@ -14954,6 +14954,8 @@ static void buggy_advance_remote_positions(unsigned int now_ms) {
 
 /* --coop-host: start this zone's local server and join it (packages/simulation/coop_host.h). */
 #include "coop_host.h"
+/* --coop-find: join a world another machine is advertising (packages/simulation/zone_beacon.h). */
+#include "zone_beacon.h"
 
 /* lobby_coop_host_start -- `--coop-host [zone]`: spawn the real game server for this zone and point
  * the client at it. Returns 1 when a world is reachable (started now, or already running from an
@@ -14992,6 +14994,29 @@ static int lobby_coop_host_start(const char *zone, int port) {
     return 1;
 }
 
+/* lobby_coop_find_and_join -- `--coop-find [port]`: listen for a beacon and point the client at the
+ * world it names. The address comes from the DATAGRAM'S SOURCE, never from a field inside it, so a
+ * forged beacon can only send a player to a host that will not answer. Returns 1 when a world was
+ * found (SERVER_HOST/SERVER_PORT set), 0 with the reason in app_launch_status otherwise. */
+static int lobby_coop_find_and_join(int beacon_port) {
+    ZoneBeacon b;
+    char ip[64] = "";
+    memset(&b, 0, sizeof b);
+    printf("[coop] listening for a world on :%d...\n", beacon_port);
+    int found = zone_beacon_find(beacon_port, ZONE_BEACON_DEFAULT_TIMEOUT_MS, &b, ip, sizeof ip);
+    if (found != 1) {
+        snprintf(app_launch_status, sizeof app_launch_status,
+                 found < 0 ? "COOP: cannot listen for worlds" : "COOP: no world found on this LAN");
+        return 0;
+    }
+    snprintf(SERVER_HOST, sizeof SERVER_HOST, "%s", ip);
+    SERVER_PORT = b.port;
+    snprintf(app_launch_status, sizeof app_launch_status, "COOP: found %s at %s:%d (%d in, seed %08x)",
+             b.zone, ip, b.port, b.players, b.seed);
+    printf("[coop] %s\n", app_launch_status);
+    return 1;
+}
+
 int main(int argc, char* argv[]) {
     buggy_rules_install(); /* PARENA buggy handling (#468) */
     heli_rules_install(); /* PARENA helicopter flight model (#542) */
@@ -15012,6 +15037,8 @@ int main(int argc, char* argv[]) {
     int cli_start_city = 0;
     int cli_coop_host = 0;
     char cli_coop_host_zone[COOP_HOST_ZONE_MAX] = "";
+    int cli_coop_find = 0;
+    int cli_coop_find_port = ZONE_BEACON_PORT;
     int cli_third_person = 0;
     int cli_legacy_menu = 0;
     for(int i=1; i<argc; i++) {
@@ -15051,6 +15078,11 @@ int main(int argc, char* argv[]) {
                process for solo play and has no server anyone else can reach. */
             cli_coop_host = 1;
             if (i + 1 < argc && argv[i + 1][0] != '-') snprintf(cli_coop_host_zone, sizeof cli_coop_host_zone, "%s", argv[++i]);
+        } else if(strcmp(argv[i], "--coop-find") == 0) {
+            /* --coop-find [beacon-port] -- join the world another machine is advertising, instead of
+               being told its IP. Optional numeric arg for a non-default beacon port. */
+            cli_coop_find = 1;
+            if (i + 1 < argc && argv[i + 1][0] != '-') cli_coop_find_port = atoi(argv[++i]);
         } else if(strcmp(argv[i], "--level") == 0 && i+1<argc) {
             // A level authored in NOCK's SHANKPIT level editor (EMILY/BACKLOG.md SECTION 459).
             // Real, existing convention this matches exactly: every other scene's own map_geo is
@@ -15208,7 +15240,8 @@ int main(int argc, char* argv[]) {
     /* No title screen / main menu: with no explicit mode flag, drop straight into ZOMBIES.
        Esc leaves the match for the legacy menu (see the SDLK_ESCAPE branch in the game keydown). */
     if (!cli_legacy_menu && !cli_start_zombies && !cli_start_lab && !cli_start_editmap &&
-        !cli_start_survival && !cli_start_city && !cli_start_dungeon && !cli_coop_host) cli_start_zombies = 1;
+        !cli_start_survival && !cli_start_city && !cli_start_dungeon && !cli_coop_host &&
+        !cli_coop_find) cli_start_zombies = 1;
     if (cli_start_dungeon) {
         app_state = STATE_GAME_LOCAL;
         if (!lobby_start_proc_dungeon(cli_dungeon_zone)) app_state = STATE_LOBBY;
@@ -15218,6 +15251,18 @@ int main(int argc, char* argv[]) {
            uses, just aimed at loopback. If the world could not come up, stay in the lobby -- the
            reason is already on screen via app_launch_status. */
         if (lobby_coop_host_start(cli_coop_host_zone, 0)) {
+            app_state = STATE_GAME_NET;
+            reset_client_render_state_for_net();
+            net_requested_mode = MODE_QUEUE;
+            net_connect();
+        } else {
+            app_state = STATE_LOBBY;
+        }
+    }
+    if (cli_coop_find) {
+        /* Same join as the host side, sourced from a beacon instead of a flag: the world is already
+           running elsewhere, so there is nothing to spawn, only to connect to. */
+        if (lobby_coop_find_and_join(cli_coop_find_port)) {
             app_state = STATE_GAME_NET;
             reset_client_render_state_for_net();
             net_requested_mode = MODE_QUEUE;

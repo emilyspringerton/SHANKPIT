@@ -1568,6 +1568,13 @@ void server_broadcast_queue_level(void) {
  * clock (packages/simulation/zone_registry.h); clients get its IDENTITY over PACKET_ZONE_STATE and
  * rebuild the identical layout from the seed (zone_sync.h), so no geometry crosses the wire. Occupancy is
  * the count of connected players: the first one in generates, the last one out starts the countdown. */
+/* LAN discovery (packages/simulation/zone_beacon.h): where friends find this world. Not part of
+   the game protocol -- its own port, identity only, no trust -- and absent when --beacon-port 0. */
+#include "zone_beacon.h"
+static int g_server_beacon_sock = -1;
+static int g_server_beacon_port = ZONE_BEACON_PORT;
+static int g_server_game_port = 6969;
+
 static ZoneRegistry g_server_zones;
 static int g_server_zones_ready = 0;
 static char g_server_zone_id[NET_ZONE_ID_MAX] = "";
@@ -1650,6 +1657,19 @@ void server_broadcast_zone_state(void) {
     for (int i = 1; i < MAX_CLIENTS; i++) {
         if (!slots[i].active || !slots[i].welcomed) continue;
         sendto(sock, &pkt, sizeof(pkt), 0, (struct sockaddr*)&slots[i].addr, sizeof(struct sockaddr_in));
+    }
+
+    /* Same 1 Hz beat as the packet above, so a finder hears about a world at most a second after it
+       exists. Announced only while the zone is live: an expired zone has nothing to advertise, and a
+       beacon for a dead world would send allies to a host that cannot generate it. */
+    if (g_server_beacon_sock >= 0 && state != ZONE_STATE_UNINIT && g_server_zone_id[0]) {
+        ZoneBeacon beacon;
+        memset(&beacon, 0, sizeof beacon);
+        snprintf(beacon.zone, sizeof beacon.zone, "%s", g_server_zone_id);
+        beacon.seed = g_server_zone_seed;
+        beacon.players = connected;
+        beacon.port = g_server_game_port; /* the port this process really bound, not a constant */
+        zone_beacon_announce(g_server_beacon_sock, g_server_beacon_port, &beacon);
     }
 }
 
@@ -1740,6 +1760,10 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
             server_port = atoi(argv[i + 1]);
             i++;
+        } else if (strcmp(argv[i], "--beacon-port") == 0 && i + 1 < argc) {
+            /* 0 disables advertising entirely (a private world, or a test that must not be seen). */
+            g_server_beacon_port = atoi(argv[i + 1]);
+            i++;
         } else if (strcmp(argv[i], "--fast-forward") == 0) {
             // S459-48, real training-pipeline prerequisite. Mirrors ECOWAR's own real
             // apps/arena_server/src/main.c --fast-forward exactly (itself mirrored into
@@ -1757,6 +1781,12 @@ int main(int argc, char *argv[]) {
     }
 
     server_net_init(server_port);
+    g_server_game_port = server_port;
+    if (g_server_beacon_port > 0) {
+        g_server_beacon_sock = zone_beacon_socket();
+        if (g_server_beacon_sock < 0) NET_SERVER_LOG("BEACON_DISABLED socket failed -- this world will not be discoverable");
+        else NET_SERVER_LOG("BEACON_ON port=%d game_port=%d", g_server_beacon_port, g_server_game_port);
+    }
     int mode = parse_server_mode(argc, argv);
     NET_SERVER_LOG("MODE_SELECTED mode=%d", mode);
     local_init_match(1, mode);

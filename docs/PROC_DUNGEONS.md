@@ -67,6 +67,12 @@ the lever is the familiar `[F] USE` prompt.
   the host's world and both run the same netcode (`--host <host-lan-ip>`). Running the same command again
   attaches to the world that is still up rather than starting a second server that cannot bind the port.
   `make test-coop-host` spawns the real server and checks exactly that.
+- `./bin/shank_lobby --coop-find [beacon-port]` joins the world a host is advertising on the LAN, without
+  being told its address: the server announces zone id, seed, players and its real game port at 1 Hz on
+  UDP 6968 (broadcast and loopback), and the client dials the datagram's source and connects `MODE_QUEUE`.
+  Identity only — the dungeon is still rebuilt locally from the seed. `--beacon-port 0` hosts privately.
+  `make test-zone-beacon` starts a server on its own ports and asserts the finder hears it and reads the
+  port that actually answers.
 - `./bin/shank_server --dungeon [zone]` **hosts** one: the server owns the zone and the clock, broadcasts
   `PACKET_ZONE_STATE` (id, seed, players, state, idle_ms) at 1 Hz, and a client that receives it rebuilds
   the identical layout locally and reloads only when the id or the seed changes. No geometry crosses the

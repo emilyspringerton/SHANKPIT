@@ -52,10 +52,19 @@ attach** to a world that is still up instead of spawning a second server that ca
 Second, zone ids are validated at the flag (`[A-Za-z0-9_-]`, not starting with `-`) because the id is a
 real filename component (`var/maps/proc_<zone>.json`) *and* an argv element.
 
-Still missing from phase 3, and named here rather than implied: **no LAN broadcast/discovery** (an ally
-types the IP; nothing announces the world), and **no in-process server** — it is a child process, so
-quitting the lobby leaves the world up until it is killed. That is deliberate for now (a hosted world
-outliving one person's session is the point), but it is a policy that needs a decision, not an oversight.
+**Discovery, also shipped.** A hosted world announces itself: `zone_beacon_announce` sends a 48-byte
+beacon at the same 1 Hz beat as the zone packet, to the LAN broadcast address and to loopback, and the ally
+runs `--coop-find` instead of being told an IP. The beacon is identity only — zone id, seed, players, and
+the **real** game port this process bound — so a joiner still generates the dungeon locally from the seed;
+nothing about the level geometry is transferred. Two deliberate choices: the address to dial is the
+datagram's **source**, never a field inside the packet, so a forged beacon can only point at a host that
+will not answer; and the beacon port is not the game protocol's, so discovery can be disabled
+(`--beacon-port 0`) or fail entirely without touching a session that already works.
+
+Still missing from phase 3, and named here rather than implied: **no in-process server** — it is a child
+process, so quitting the lobby leaves the world up until it is killed. That is deliberate for now (a hosted
+world outliving one person's session is the point), but it is a policy that needs a decision, not an
+oversight. Discovery also only sees worlds on the same broadcast domain: no relay, no internet lobby.
 
 `make test-coop-host` covers the flag parsing/refusals, the exact child argv, the port probe against a
 really-bound socket, and — the part that matters — spawns the actual server, waits for the zone file it
@@ -76,8 +85,8 @@ a fake import.
 
 A LAN client of a `--dungeon` server learns the zone and rebuilds the same dungeon, and reloads when the
 zone expires and regenerates. `--coop-host` now makes the host side one command too, on the same
-`MODE_QUEUE` netcode the ally uses. What is **not** there yet: LAN broadcast/discovery (the ally needs the
-host's IP, typed), a world that stops when the host quits (the server is a child process and outlives the
-lobby), and an explicit "enter zone" action — on the server, occupancy is whoever is connected, so the zone
-generates when the first client joins rather than when someone walks through a door. Those are the next
-slices, not claims.
+`MODE_QUEUE` netcode the ally uses, and a beacon means the ally runs `--coop-find` rather than typing an IP.
+What is **not** there yet: a world that stops when the host quits (the server is a child process and
+outlives the lobby), an internet lobby (discovery is same-broadcast-domain only), and an explicit "enter
+zone" action — on the server, occupancy is whoever is connected, so the zone generates when the first
+client joins rather than when someone walks through a door. Those are the next slices, not claims.
