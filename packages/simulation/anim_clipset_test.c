@@ -201,6 +201,9 @@ int main(void) {
     }
 
     anim_clipset_free(&set);
+    /* The bundles are this test's own artifacts (copies of real assets), not content: leaving them
+       behind means an untracked var/anim_clipset_test/ in every working tree after a test run. */
+    if (system("rm -rf var/anim_clipset_test") != 0) printf("warn: could not remove var/anim_clipset_test\n");
     printf("\n%d checks, %d failed\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }
