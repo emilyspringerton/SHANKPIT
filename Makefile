@@ -367,6 +367,15 @@ test-material-draw: | $(BIN_DIR)
 	$(CC) -g -O1 -fsanitize=address,undefined -Wall -Wextra -Werror $(INCLUDES) packages/render/material_draw_test.c packages/simulation/material_rules.c packages/world/parena_runtime.c -o $(BIN_DIR)/material_draw_test $(LIBS_M)
 	./$(BIN_DIR)/material_draw_test
 
+# GROUND FOG (packages/render/ground_fog.h): weather fog that pools ON THE GROUND -- a height term
+# layered over the existing distance fog -- lit by the same unified environment matrix the rest of the
+# lighting reads (occlusion, scattered bleed, exposure, and a lightning strike that whitens as well as
+# brightens). Header-only and GL-free, so the exact model the lobby draws with is exercised with no GPU.
+.PHONY: test-ground-fog
+test-ground-fog: | $(BIN_DIR)
+	$(CC) -g -O1 -fsanitize=address,undefined -Wall -Wextra -Werror $(INCLUDES) packages/render/ground_fog_test.c -o $(BIN_DIR)/ground_fog_test $(LIBS_M)
+	./$(BIN_DIR)/ground_fog_test
+
 # KIT CALL packet (packages/simulation/kit_call.h + PACKET_KIT_CALL): parsing an untrusted datagram
 # and the server's verdict on a real player
 .PHONY: test-kit-call

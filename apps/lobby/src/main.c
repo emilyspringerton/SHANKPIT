@@ -111,6 +111,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/simulation/drone_rules_host.h"
 #include "../../../packages/simulation/airplane_flight.h"   /* the C-110 fixed-wing transport */
 #include "../../../packages/simulation/airplane_rules_host.h"
+#include "../../../packages/render/ground_fog.h"   /* weather fog that pools on the ground */
 #include "../../../packages/simulation/slide_rules_host.h"
 #include "../../../packages/render/held_model.h"
 #include "../../../packages/render/camera_rig.h"
@@ -1970,6 +1971,68 @@ static void retro_eval_terrain_vertex_rgb(const RetroLightingState *lighting,
  * Keep per-world readability decisions data-driven while preserving the
  * centralized RetroLightingState -> retro_apply_fog_rgb pipeline.
  */
+/* GROUND FOG (packages/render/ground_fog.h). The distance fog above fades the world evenly from your
+ * boots to the sky; real fog pools in the bottom few metres, which is the whole difference. The model
+ * itself is GL-free and tested headlessly (make test-ground-fog) -- this is only the part that needs
+ * a GPU: three translucent sheets laid on the ground, thinning upward, tinted by the same g_env the
+ * walls were lit with this frame, so a storm dims them, the scattered bleed colours them and a
+ * lightning strike whitens them. Drawn inside the world pass (before sky_weather_fog_off) so the
+ * sheets fade with distance exactly like every other surface. */
+static void draw_ground_fog(const PlayerState *view, const EnvMatrix *env, unsigned int now_ms) {
+    GroundFogInputs in;
+    GroundFog gf;
+    if (!view || !g_sky_weather.ready) return;
+    memset(&in, 0, sizeof in);
+    in.fog_wash = g_sky_weather.fog_wash;
+    in.visibility = g_sky_weather.visibility;
+    in.cover = g_sky_weather.cover;
+    in.storm = g_sky_weather.storm;
+    in.fog_r = g_sky_weather.fog[0];
+    in.fog_g = g_sky_weather.fog[1];
+    in.fog_b = g_sky_weather.fog[2];
+    in.ground_y = terrain_sample_height(&g_scene_terrain, view->x, view->z);
+    if (in.ground_y < 0.0f) in.ground_y = 0.0f;
+    if (env) {
+        in.occlusion = env->occlusion;
+        in.light_bleed = env->light_bleed;
+        in.bleed_r = env->bleed_r;
+        in.bleed_g = env->bleed_g;
+        in.bleed_b = env->bleed_b;
+        in.exposure = env->exposure;
+        in.flash_boost = env->flash_boost;
+    }
+    in.interior = (g_world_lighting_preset == RETRO_LIGHTING_INTERIOR_FLAT);
+    ground_fog_eval(&in, &gf);
+    if (gf.layers <= 0) return;
+
+    glPushAttrib(GL_ENABLE_BIT | GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_LIGHTING);
+    glDisable(GL_CULL_FACE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);      /* the sheets must not occlude each other... */
+    glEnable(GL_DEPTH_TEST);    /* ...but the world must still occlude them */
+    /* A slow drift, so a motionless frame is not a visibly frozen texture of fog. Purely visual: it
+     * moves no gameplay state and is not in the model, so the headless test stays exact. */
+    float drift = (float)(now_ms % 120000u) * 0.00035f;
+    for (int i = 0; i < gf.layers; i++) {
+        float y = ground_fog_layer_y(&gf, i) + 0.6f;   /* clear of the ground plane, no z-fighting */
+        float a = ground_fog_layer_alpha(&gf, i);
+        float ext = 260.0f;                            /* the sheet's edges are beyond the fog itself */
+        glColor4f(gf.r, gf.g, gf.b, a);
+        glBegin(GL_QUADS);
+        glVertex3f(view->x - ext + drift, y, view->z - ext);
+        glVertex3f(view->x + ext + drift, y, view->z - ext);
+        glVertex3f(view->x + ext + drift, y, view->z + ext);
+        glVertex3f(view->x - ext + drift, y, view->z + ext);
+        glEnd();
+    }
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+    glPopAttrib();
+}
+
 static void retro_tune_world_fog(RetroLightingState *lighting, int scene_id) {
     if (!lighting) return;
 
@@ -13623,6 +13686,9 @@ void draw_scene(PlayerState *render_p) {
     draw_shield_packs(now_ms);
     draw_shield_bubbles(render_p, now_ms);
     shard_step_and_draw(now_ms);
+    /* Ground fog LAST in the world pass: it is the nearest thing to the camera and it must be faded
+     * by the distance fog still being on, not after it has been switched off. */
+    if (weather_fog) draw_ground_fog(render_p, &g_env, now_ms);
     if (weather_fog) sky_weather_fog_off(); /* world pass ends here -- overlays, first-person weapon and HUD stay crisp */
     if (g_world_only_pass) return;           /* broadcast tiles / program feed: just the world */
     overlay_begin_frame(&g_overlay);
