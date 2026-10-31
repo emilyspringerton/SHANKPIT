@@ -70,6 +70,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/common/net_sim.h"
 #include "../../../packages/simulation/cutscene.h"
 #include "../../../packages/simulation/typing_lesson.h"
+#include "../../../packages/simulation/stats_apply.h" /* a GFD job -> live health + weapon cooldown */
 #include "../../../packages/simulation/local_game.h"
 #include "../../../packages/simulation/vehicle_call.h"   /* kit's BUGGY / ROCKET CAR / HELICOPTER calls */
 #include "../../../packages/common/awareness_compass.h" /* AWARENESS_COMPASS_NAMES -- zombies_hud_bridge.c's own real HUD alert, see draw_zombies_awareness_hud */
@@ -9125,9 +9126,19 @@ static void draw_player_skin_mannequin(PlayerState *p, float draw_pitch, float d
        around it do nothing -- gband_skel_npc_set_scale is the real scale hook. */
     gband_skel_npc_set_scale(MANNEQUIN_DRAW_SCALE * (is_giant_bug ? 2.5f : is_bird ? 0.3f : 1.0f));
     g_outline_mode = outline_mode_for(p, role); /* #538: yellow enemy outline, red while it is fighting */
-    gband_skel_npc_draw(kit_index, p->id, p->x, p->y, p->z, facing_rad, g_gband_frame_dt_ms,
-                         p->anim_override,
-                         &g_gband_frame_vp, skel_npc_draw_skinned);
+    /* An imported skin bundles all thirteen contract states, so drive the one the player is actually in
+       -- run, crouch-walk, jump, in-air, fire, reload, swing, ability, climb -- instead of idle/walk plus
+       two gestures standing in for four. A kit with no state clips (every built-in character, and any
+       bundle that only bound the four a body needs) keeps the old path exactly. */
+    {
+        int anim_st = anim_state_for_player(p, 0, 0);
+        if (anim_st >= 0 && anim_st < ANIM_STATE_COUNT && gband_skel_npc_state_loaded(kit_index, anim_st))
+            gband_skel_npc_draw_state(kit_index, p->id, p->x, p->y, p->z, facing_rad, g_gband_frame_dt_ms,
+                                      anim_st, &g_gband_frame_vp, skel_npc_draw_skinned);
+        else
+            gband_skel_npc_draw(kit_index, p->id, p->x, p->y, p->z, facing_rad, g_gband_frame_dt_ms,
+                                p->anim_override, &g_gband_frame_vp, skel_npc_draw_skinned);
+    }
     g_outline_mode = 0;
     gband_skel_npc_set_scale(1.0f);
     g_skel_npc_evil_tint = 0;
@@ -15296,6 +15307,19 @@ int main(int argc, char* argv[]) {
                being told its IP. Optional numeric arg for a non-default beacon port. */
             cli_coop_find = 1;
             if (i + 1 < argc && argv[i + 1][0] != '-') cli_coop_find_port = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--job") == 0 && i + 1 < argc) {
+            /* --job NIN:75 -- the GFD job this session plays as. Installed here rather than at spawn so the
+               hero's own respawns (and the EMPIRE units' bodies) already see it. */
+            int job = -1, level = 1;
+            if (stats_apply_parse(argv[++i], &job, &level)) {
+                stats_apply_clear();
+                stats_apply_install();
+                stats_apply_set(0, job, level);
+                SDL_Log("STATS: playing %s level %d (health %d, ROF x%.3f)", stats_bridge_job_name(job), level,
+                        stats_apply_health_for(0), stats_apply_move_permille(0) / 1000.0f);
+            } else {
+                SDL_Log("STATS: --job '%s' is not a job (try NIN:75); ignoring", argv[i]);
+            }
         } else if(strcmp(argv[i], "--level") == 0 && i+1<argc) {
             // A level authored in NOCK's SHANKPIT level editor (EMILY/BACKLOG.md SECTION 459).
             // Real, existing convention this matches exactly: every other scene's own map_geo is

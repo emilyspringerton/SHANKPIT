@@ -1,8 +1,7 @@
 # Mixamo → GOLDENBAND → SHANKPIT: the asset pipeline, and its licensing boundary
 
-Status: import → binding → a selectable skin (yours, and an NPC's) is built and tested. The IDUNA NOCK
-endpoint is not (see the end, where the gap is named rather than implied), and the draw path plays four
-of the thirteen clips.
+Status: import → binding → a selectable skin (yours, and an NPC's) playing **all thirteen** clips is
+built and tested. The IDUNA NOCK endpoint is not (see the end, where the gap is named rather than implied).
 
 ## The boundary first, because it decides the design
 
@@ -85,10 +84,17 @@ The mount point is worth stating because it is where the first attempt broke: a 
 so the loader resolves the mesh directory by walking up out of the set and checks `skin.json`'s own
 `"assets"` field against that path rather than appending it.
 
-What an imported skin draws today: idle, walk, and two gestures (melee swing cosplaying as greet,
-ability as dance) through the NPC kit path — four of the thirteen clips. The full set is loaded and
-loadable (`anim_clipset.h` is the selector); driving all thirteen from `PlayerState` is still the
-renderer slice named above.
+What an imported skin draws today: **all thirteen**. The kit loads every contract clip
+(`gband_skel_npc_load_clipset` → `load_state_clips`), and `gband_skel_npc_draw_state` samples the one the
+body is actually in — `anim_state_for_player` decides (run, crouch-walk, jump, in-air, fire, reload,
+swing, ability, climb), so the four-clip idle/walk/greet/dance path is now only what the built-in
+characters use. A one-shot holds its last tick because the loop flag comes from each clip's own manifest
+(the binder fills it from `anim_rules.prn`), not from a copy of the table in the renderer.
+
+`make test-anim-states` proves it on the committed Mike set, without a GPU: the two contract name tables
+agree, 13/13 states load, run samples different vertices than idle, fire holds instead of restarting, an
+unloaded state falls back to idle instead of drawing nothing, and a kit with no states resolves to -1 so
+the caller keeps the old path.
 
 ## The IDUNA side — named, not built
 

@@ -795,7 +795,7 @@ int sb_haste_permille(int job __attribute__((unused)), int level __attribute__((
 }
 
 int sb_cooldown(int rof __attribute__((unused)), int haste __attribute__((unused))) {
-    return sb_rule_clamp(1, 999, ((sb_rule_clamp(1, 999, rof) * sb_rule_clamp(700, 1300, haste)) / 1000));
+    return sb_rule_clamp(1, 999, ((sb_rule_clamp(1, 999, rof) * 1000) / sb_rule_clamp(700, 1300, haste)));
 }
 
 int sb_move_permille(int job __attribute__((unused))) {

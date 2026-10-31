@@ -164,8 +164,13 @@ int main(void) {
         check(sb_haste_permille(WAR, 1) == 1020, "AGI 6 is a 2% haste at level 1");
         check(sb_haste_permille(NIN, 1) > sb_haste_permille(WAR, 1), "NIN (AGI 9) is faster than WAR (AGI 6)");
         check(sb_haste_permille(ASN, 40) <= 1300, "haste is capped");
-        check(sb_cooldown(20, 1300) == 26, "a knife's 20-tick ROF gets longer under a 1300 haste");
-        check(sb_cooldown(20, 700) < 20 && sb_cooldown(20, 700) >= 1, "a fast job shortens it but never to zero");
+        /* These two assertions used to read the other way round -- "a knife gets LONGER under a 1300
+           haste" -- because sb_cooldown multiplied the ROF by haste. That inversion made a higher-AGI job
+           shoot slower, and nothing caught it while no call site read the bridge; applying it to a live
+           player did (make test-stats-apply). Haste is a speed factor: the ROF is divided by it. */
+        check(sb_cooldown(20, 1300) == 15, "a knife's 20-tick ROF drops to 15 ticks under a 1300 haste");
+        check(sb_cooldown(20, 700) == 28, "...and stretches to 28 under a 700 haste, so the band is real");
+        check(sb_cooldown(1, 1300) >= 1 && sb_cooldown(1, 700) >= 1, "the floor holds at one tick");
         check(sb_cooldown(0, 1000) == 1, "a zero ROF still cannot produce a zero-tick weapon");
         check(sb_cooldown(99999, 1000) <= 999, "an absurd ROF is clamped");
 

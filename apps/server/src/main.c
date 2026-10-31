@@ -24,6 +24,8 @@
 #include "../../../packages/simulation/zone_sync.h"
 #include "../../../packages/simulation/empire_sync.h"
 #include "../../../packages/common/physics.h"
+/* AFTER physics.h: this installs into physics' own player-stats hooks (stats_apply.h's own note). */
+#include "../../../packages/simulation/stats_apply.h" /* --job: a GFD job -> authoritative health/ROF */
 #include "../../../packages/common/shared_movement.h"
 #include "../../../packages/common/net_sim.h"
 #include "../../../packages/simulation/local_game.h"
@@ -1902,6 +1904,19 @@ int main(int argc, char *argv[]) {
                (id, seed) is broadcast; clients rebuild the identical layout themselves. */
             const char *zone = (i + 1 < argc && argv[i + 1][0] != '-') ? argv[++i] : "dungeon_1";
             server_zone_begin(zone);
+        } else if (strcmp(argv[i], "--job") == 0 && i + 1 < argc) {
+            /* --job NIN:75 -- apply that GFD job to every slot this host spawns, so an ally's health pool and
+               cooldown are the server's numbers and not their own idea of them. */
+            int job = -1, level = 1;
+            if (stats_apply_parse(argv[++i], &job, &level)) {
+                stats_apply_clear();
+                stats_apply_install();
+                stats_apply_set_all(job, level);
+                printf("[STATS] --job %s level %d for every slot (health %d)\n",
+                       stats_bridge_job_name(job), level, stats_apply_health_for(1));
+            } else {
+                printf("[STATS] --job '%s' is not a job (try NIN:75); ignoring\n", argv[i]);
+            }
         } else if (strcmp(argv[i], "--level") == 0 && i + 1 < argc) {
             CustomLevelData lvl;
             if (level_boxes_load_from_file(argv[i + 1], &lvl)) {

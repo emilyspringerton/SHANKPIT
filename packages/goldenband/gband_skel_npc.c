@@ -22,6 +22,13 @@ typedef struct {
     GSeqClip greet_clip, dance_clip;
     GSeq greet_seq, dance_seq;
     int has_greet, has_dance;
+    /* The thirteen contract states, loaded only for an imported clipset. A built-in kit leaves these
+       zeroed and keeps playing through the four-clip path above, so nothing about the fixed characters
+       changes; an imported one gets the full state machine. */
+    GSeqClip state_clips[GBAND_SKEL_NPC_STATE_COUNT];
+    GSeq state_seqs[GBAND_SKEL_NPC_STATE_COUNT];
+    int has_state[GBAND_SKEL_NPC_STATE_COUNT];
+    int state_loaded_count;
     float *out_buf; /* owned, 6 floats per output vertex (pos+normal), sized to THIS kit's own mesh */
     uint32_t out_capacity_verts;
 } GbandSkelNpcKit;
@@ -102,6 +109,61 @@ static int load_kit_paths(const char *asset_dir, const char *mesh_name, const ch
 
     kit->ready = 1;
     return g_kit_count++;
+}
+
+/* The thirteen contract names, in anim_state.h's own ANIM_* order. Kept here rather than included from
+ * packages/simulation because this package must not depend on the simulation layer; `make test-anim-states`
+ * asserts these strings equal anim_state_clip_name()'s, so a rename on either side fails a test instead of
+ * silently making a clip unreachable. */
+static const char *const g_state_names[GBAND_SKEL_NPC_STATE_COUNT] = {
+    "anim_idle", "anim_walk", "anim_run", "anim_crouch_idle", "anim_crouch_walk",
+    "anim_jump_start", "anim_in_air", "anim_slide", "anim_weapon_fire", "anim_reload",
+    "anim_melee_swing", "anim_ability", "anim_climb_loop"
+};
+
+const char *gband_skel_npc_state_name(int state) {
+    if (state < 0 || state >= GBAND_SKEL_NPC_STATE_COUNT) return NULL;
+    return g_state_names[state];
+}
+
+/* manifest_loops -- does this clip loop? Read from the bundle's own manifest, which the binder fills from
+ * anim_rules.prn (postures loop, actions are one-shot). Data-driven on purpose: packages/goldenband must
+ * not depend on packages/simulation, so the alternative would be copying the loop table into this file.
+ * Absent key keeps the old behaviour (loop), which is what a pre-metadata bundle assumed. */
+static int manifest_loops(const char *manifest_path) {
+    FILE *f = fopen(manifest_path, "rb");
+    if (!f) return 1;
+    char buf[4096];
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+    const char *k = strstr(buf, "\"loop\"");
+    if (!k) return 1;
+    k = strchr(k, ':');
+    if (!k) return 1;
+    k++;
+    while (*k == ' ' || *k == '\t') k++;
+    return (*k == 't' || *k == '1') ? 1 : 0;
+}
+
+/* Loads as many of the thirteen as the bundle actually holds. A partial bundle is legal (the binder can
+ * bind a subset): whatever loads is usable, whatever does not simply is not offered, and the draw path
+ * falls back to idle. Returns how many loaded. */
+static int load_state_clips(GbandSkelNpcKit *kit, const char *clip_dir) {
+    char gb[512], mj[512];
+    if (!kit || !clip_dir) return 0;
+    for (int s = 0; s < GBAND_SKEL_NPC_STATE_COUNT; s++) {
+        snprintf(gb, sizeof gb, "%s/%s.gband", clip_dir, g_state_names[s]);
+        snprintf(mj, sizeof mj, "%s/%s.gband.json", clip_dir, g_state_names[s]);
+        if (!gseq_clip_load(gb, mj, &kit->state_clips[s])) continue;
+        init_single_clip_seq(&kit->state_seqs[s]);
+        /* ...and the clip's own loop flag, because a fire/reload/swing that wraps back to frame 0 reads as
+           a glitch instead of a finished action. gseq holds the final pose when loop is 0. */
+        kit->state_seqs[s].loop = manifest_loops(mj);
+        kit->has_state[s] = 1;
+        kit->state_loaded_count++;
+    }
+    return kit->state_loaded_count;
 }
 
 int gband_skel_npc_load_kit(const char *asset_dir, const char *mesh_name,
@@ -194,9 +256,20 @@ int gband_skel_npc_load_clipset(const char *set_dir) {
 
     int kit = load_kit_paths(asset_dir, mesh, set_dir,
                              "anim_idle", "anim_walk", "anim_melee_swing", "anim_ability");
-    if (kit < 0)
+    if (kit < 0) {
         fprintf(stderr, "clipset %s: %s/%s.gskel+.gmesh with idle/walk/melee/ability did not load\n",
                 set_dir, asset_dir, mesh);
+        return kit;
+    }
+    /* ...and then the rest of the thirteen, which is the whole point of an imported set: the four clips
+       above are the minimum a body needs to be drawable, not the whole state machine. A bundle that
+       binds fewer keeps working through the four-clip path. */
+    {
+        int n = load_state_clips(&g_kits[kit], set_dir);
+        if (n > 0)
+            fprintf(stderr, "clipset %s: kit %d, %d/%d states loaded\n",
+                    set_dir, kit, n, GBAND_SKEL_NPC_STATE_COUNT);
+    }
     return kit;
 }
 
@@ -208,6 +281,8 @@ void gband_skel_npc_shutdown(void) {
         gseq_clip_free(&kit->walk_clip);
         if (kit->has_greet) gseq_clip_free(&kit->greet_clip);
         if (kit->has_dance) gseq_clip_free(&kit->dance_clip);
+        for (int s = 0; s < GBAND_SKEL_NPC_STATE_COUNT; s++)
+            if (kit->has_state[s]) gseq_clip_free(&kit->state_clips[s]);
         gmesh_free(&kit->mesh);
         free(kit->out_buf);
         kit->out_buf = NULL;
@@ -320,6 +395,81 @@ void gband_skel_npc_draw(int kit_index, int npc_slot, float npc_x, float npc_y, 
     uint32_t vert_count = gpose_skin_mesh(&kit->mesh, skin, kit->out_buf);
     if (vert_count > kit->out_capacity_verts) vert_count = kit->out_capacity_verts; /* defensive */
 
+    Mat4 identity = mat4_identity();
+    Mat4 mvp = mat4_multiply(vp, &identity);
+    draw_skinned(kit->out_buf, (int)vert_count, &mvp, &identity);
+}
+
+/* ---- the thirteen-state draw path ------------------------------------------------------------- */
+/* One player per NPC slot, re-initialized when the STATE changes (a loop rewinds to its own start, which
+ * is what the selector in anim_clipset.h does too) or when this slot is drawn with another kit. */
+static GSeqPlayer g_state_players[MAX_NPC_SLOTS];
+static int g_state_player_state[MAX_NPC_SLOTS];
+static int g_state_player_kit[MAX_NPC_SLOTS];
+static int g_state_player_init[MAX_NPC_SLOTS];
+
+int gband_skel_npc_state_loaded(int kit_index, int state) {
+    if (kit_index < 0 || kit_index >= g_kit_count) return 0;
+    if (!g_kits[kit_index].ready) return 0;
+    if (state < 0 || state >= GBAND_SKEL_NPC_STATE_COUNT) return 0;
+    return g_kits[kit_index].has_state[state];
+}
+
+int gband_skel_npc_resolve_state(int kit_index, int want) {
+    if (kit_index < 0 || kit_index >= g_kit_count || !g_kits[kit_index].ready) return -1;
+    GbandSkelNpcKit *kit = &g_kits[kit_index];
+    if (kit->state_loaded_count <= 0) return -1;
+    if (want >= 0 && want < GBAND_SKEL_NPC_STATE_COUNT && kit->has_state[want]) return want;
+    if (kit->has_state[0]) return 0;
+    for (int s = 0; s < GBAND_SKEL_NPC_STATE_COUNT; s++)
+        if (kit->has_state[s]) return s;
+    return -1;
+}
+
+void gband_skel_npc_draw_state(int kit_index, int npc_slot, float npc_x, float npc_y, float npc_z,
+                               float facing_rad, float dt_ms, int state,
+                               const Mat4 *vp,
+                               void (*draw_skinned)(const float *verts6, int vert_count,
+                                                    const Mat4 *mvp, const Mat4 *model)) {
+    if (kit_index < 0 || kit_index >= g_kit_count) return;
+    if (npc_slot < 0 || npc_slot >= MAX_NPC_SLOTS) return;
+    GbandSkelNpcKit *kit = &g_kits[kit_index];
+    if (!kit->ready) return;
+    int resolved = gband_skel_npc_resolve_state(kit_index, state);
+    if (resolved < 0) return;   /* no state clips at all: the caller should have used gband_skel_npc_draw */
+
+    if (!g_state_player_init[npc_slot] || g_state_player_kit[npc_slot] != kit_index ||
+        g_state_player_state[npc_slot] != resolved) {
+        gseq_player_init(&g_state_players[npc_slot], &kit->state_seqs[resolved], &kit->state_clips[resolved]);
+        g_state_player_init[npc_slot] = 1;
+        g_state_player_kit[npc_slot] = kit_index;
+        g_state_player_state[npc_slot] = resolved;
+    }
+    gseq_player_advance(&g_state_players[npc_slot], dt_ms / 1000.0f);
+
+    float pose_rot[GSKEL_MAX_JOINTS * 4];
+    float pose_trans[GSKEL_MAX_JOINTS * 3];
+    gseq_player_sample_pose(&g_state_players[npc_slot], &kit->skel, pose_rot, pose_trans);
+
+    float skin[GSKEL_MAX_JOINTS][16];
+    gpose_compute_skin_matrices(&kit->skel, pose_rot, pose_trans, skin);
+
+    Mat4 npc_world_t = mat4_translate(npc_x, npc_y, npc_z);
+    Mat4 npc_rot = mat4_rotate_y(facing_rad);
+    Mat4 npc_world = mat4_multiply(&npc_world_t, &npc_rot);
+    if (g_npc_scale != 1.0f) {
+        Mat4 sc = mat4_scale(g_npc_scale, g_npc_scale, g_npc_scale);
+        npc_world = mat4_multiply(&npc_world, &sc);
+    }
+    for (uint32_t j = 0; j < kit->skel.joint_count; j++) {
+        Mat4 sj;
+        memcpy(sj.m, skin[j], sizeof(sj.m));
+        Mat4 baked = mat4_multiply(&npc_world, &sj);
+        memcpy(skin[j], baked.m, sizeof(baked.m));
+    }
+
+    uint32_t vert_count = gpose_skin_mesh(&kit->mesh, skin, kit->out_buf);
+    if (vert_count > kit->out_capacity_verts) vert_count = kit->out_capacity_verts;
     Mat4 identity = mat4_identity();
     Mat4 mvp = mat4_multiply(vp, &identity);
     draw_skinned(kit->out_buf, (int)vert_count, &mvp, &identity);

@@ -17,10 +17,17 @@
  * that exists when a bundle has holes. tools/mixamo_clipset.py produces that bundle from real
  * Mixamo-derived .gband clips and refuses one that would fail at load.
  *
- * STILL NOT DONE, and named: nothing DRAWS from the clip set yet. The player's own body still goes
- * through main.c's procedural compute_player_anim_pose, the NPC kit loader still takes
- * idle/walk/greet/dance rather than the thirteen, and anim_clipset_sample()'s channels have not been
- * pushed through forward kinematics into a skinned draw. That is a renderer slice, not a rules one.
+ * DRAWN NOW: a kit loaded from an imported clipset carries all thirteen states
+ * (gband_skel_npc_draw_state, packages/goldenband/gband_skel_npc.c), and main.c drives it with this
+ * header's own anim_state_for_player, so an imported skin plays run, crouch-walk, jump, in-air, fire,
+ * reload, swing, ability and climb rather than idle/walk and two gestures standing in for four. The
+ * built-in characters are still 4-clip kits and keep that path; and a SKIN still has to be an imported
+ * clipset to have the thirteen (a built-in cosmetic has no bundle to load).
+ *
+ * The two clip-name lists (this header's and the kit loader's) are separate on purpose -- the goldenband
+ * package does not depend on this one -- and `make test-anim-states` asserts they agree string for string.
+ * Still not done, named: the thirteen are selected per PLAYER, not per NPC brain state, so a greeted NPC
+ * still uses the anim_override path for its wave rather than the state machine.
  */
 #ifndef SHANKPIT_ANIM_STATE_H
 #define SHANKPIT_ANIM_STATE_H

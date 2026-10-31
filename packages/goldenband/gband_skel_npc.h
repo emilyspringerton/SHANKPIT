@@ -66,6 +66,35 @@ int gband_skel_npc_load_kit(const char *asset_dir, const char *mesh_name,
  * loads as long as those two exist. */
 int gband_skel_npc_load_clipset(const char *set_dir);
 
+// The thirteen gameplay states an imported set is expected to bundle. This NUMBER must match
+// anim_state.h's ANIM_STATE_COUNT and the names below must match anim_state_clip_name(): the two live in
+// different packages on purpose (packages/goldenband does not depend on packages/simulation), so the
+// agreement is pinned by a test (make test-anim-states) rather than by a shared header.
+#define GBAND_SKEL_NPC_STATE_COUNT 13
+
+// The contract name of a state ("anim_idle", ...), or NULL past the table.
+const char *gband_skel_npc_state_name(int state);
+
+// Did THIS kit load a real clip for that state? False for every built-in kit (they are 4-clip kits by
+// construction) and for an imported bundle that only bound some states.
+int gband_skel_npc_state_loaded(int kit_index, int state);
+
+// Which state this kit will actually sample for `want` (the fallback applied), or -1 when the kit has no
+// state clips at all -- a caller that gets -1 should use gband_skel_npc_draw instead.
+int gband_skel_npc_resolve_state(int kit_index, int want);
+
+// gband_skel_npc_draw_state -- draw one NPC instance from the state it is actually in: walk, run,
+// crouch-walk, jump, in-air, slide, fire, reload, melee swing, ability, climb. `state` is an
+// anim_state.h ANIM_* id. A state this kit did not load falls back to idle, then to the first state it
+// did load, and draws nothing only when the kit loaded none -- never an invisible body because a bundle
+// was partial. Same world-space contract as gband_skel_npc_draw (the world transform is baked into the
+// vertices, so vp is the whole matrix).
+void gband_skel_npc_draw_state(int kit_index, int npc_slot, float npc_x, float npc_y, float npc_z,
+                               float facing_rad, float dt_ms, int state,
+                               const Mat4 *vp,
+                               void (*draw_skinned)(const float *verts6, int vert_count,
+                                                    const Mat4 *mvp, const Mat4 *model));
+
 void gband_skel_npc_shutdown(void);
 
 // The kit's skeleton (NULL for a bad/unready kit) -- the ragdoll pool is built on it.

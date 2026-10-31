@@ -102,8 +102,11 @@ static inline int sb_c_mp(int job, int level) {
 static inline int sb_c_haste_permille(int job, int level) {
     return sb_clamp(700, 1300, 1000 + (sb_c_agi(job) - 5) * 20 + (sb_c_level(level) - 1) * 2);
 }
+/* ROF DIVIDED by haste, not multiplied: the first version multiplied, so a faster job (higher AGI -> higher
+ * haste permille) got a LONGER cooldown. Nothing caught it while no call site read this; applying the
+ * bridge to a live player did (make test-stats-apply). A 1080-haste job turns a 20-tick knife into 18. */
 static inline int sb_c_cooldown(int rof, int haste_permille) {
-    return sb_clamp(1, 999, (sb_clamp(1, 999, rof) * sb_clamp(700, 1300, haste_permille)) / 1000);
+    return sb_clamp(1, 999, (sb_clamp(1, 999, rof) * 1000) / sb_clamp(700, 1300, haste_permille));
 }
 static inline int sb_c_move_permille(int job) { return sb_clamp(850, 1150, 1000 + (sb_c_agi(job) - 5) * 10); }
 static inline int sb_c_crit_permille(int job) { return sb_clamp(0, 400, 50 + (sb_c_dex(job) - 5) * 15); }

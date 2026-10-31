@@ -87,10 +87,25 @@ against the header across every job and level −2..80, and the mapping's behavi
 jobs having no MP, a fast job shortening a cooldown but never to a zero-tick weapon, health capping rather
 than wrapping).
 
-Deliberately **not** in this pass, named rather than implied: **nothing applies a job to a live match yet**
-— no call site reads the bridge, so a player is still the same 100 HP and the same ROF whatever job a save
-says; equipment and elemental affinities are untouched (they need the item model, which is GFD's); and
-nothing persists. The dungeon's `difficulty` tier is still generated but not yet fed into a stat curve.
+**Phase 4b — the bridge is applied (`packages/simulation/stats_apply.h`).** A job now reaches a live
+player: a per-slot roster (no new `PlayerState` field, because 0 is WAR and every zeroed struct would have
+silently become a Warrior) plus two hooks in `packages/common/physics.h` — `phys_respawn` grants the job's
+health and a shot leaves the job's cooldown, with haste as a **divisor** on the weapon's own ROF so a knife
+stays a knife. A slot with no job is byte-for-byte the old engine, so nothing already tuned moves. Reachable
+with `--job NIN:75` on the lobby or the server; `make test-stats-apply` drives the *real* `phys_respawn` and
+the *real* cooldown expression, not a copy of them.
+
+Applying it found a real bug in the mapping that no table test could see: `sb_cooldown` **multiplied** the
+ROF by haste, so a higher-AGI job (higher haste permille) shot *slower* — the exact opposite of what its
+own comment promised. Fixed in `stats_bridge.prn` (source of truth), regenerated into `stats_bridge.c`, and
+mirrored in the header; the two bridge assertions that had encoded the inversion were corrected with it.
+A 1300-haste job now turns a 20-tick knife into 15 ticks, and 700 into 28.
+
+Still **not** applied, named rather than implied: movement speed and a damage scalar are exposed as
+accessors but no call site multiplies by them, crit/evade never touch the hit path (that needs the
+multi-target perception and dice model GFD has and this engine does not), equipment and elemental
+affinities are untouched (they need GFD's item model), nothing persists a job across launches, and the
+dungeon's `difficulty` tier is still generated but not fed into a stat curve.
 
 **Phase 5 — Meadow, properly.** Meadow has a *simulation* seed, not geometry. Turning it into a 3D zone
 means either authoring it as a NOCK level or teaching `proc_dungeon.h` a second layout kind (outdoor

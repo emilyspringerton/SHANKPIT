@@ -614,6 +614,16 @@ static float g_phys_blast_normal[3] = { 0.0f, 0.0f, 0.0f };
 static inline void phys_set_map_damage_hooks(PhysMapHitscanHook hs, PhysMapBlastHook bl, PhysMapSurfaceHook sf) {
     g_phys_map_hitscan_hook = hs; g_phys_map_blast_hook = bl; g_phys_map_surface_hook = sf;
 }
+/* GFD job hooks (packages/simulation/stats_apply.h). A job changes the health a respawn grants and the
+   cooldown a shot leaves behind; both decisions belong to the simulation layer, and this header must not
+   depend on it. NULL by default, so a build that never installs them is exactly the engine that existed
+   before they did -- same contract as the map-damage hooks above. Keyed off the player's own id. */
+typedef int (*PhysPlayerStatsHook)(const PlayerState *p, int base_value);
+static PhysPlayerStatsHook g_phys_stats_health_hook = NULL;
+static PhysPlayerStatsHook g_phys_stats_rof_hook = NULL;
+static inline void phys_set_player_stats_hooks(PhysPlayerStatsHook health, PhysPlayerStatsHook rof) {
+    g_phys_stats_health_hook = health; g_phys_stats_rof_hook = rof;
+}
 /* g_local_match_reset_hook -- called at the top of every local_init_match (packages/simulation/
    local_game.h) so world state that lives outside ServerState (destructible brick,
    packages/simulation/brick_world.h) is reset with the match instead of leaking a previous round's
@@ -4324,7 +4334,9 @@ static inline int phys_wall_ride_tick(PlayerState *p) {
 
 void phys_respawn(PlayerState *p, unsigned int now) {
     p->active = 1; p->state = STATE_ALIVE;
-    p->health = 100; p->shield = 100; p->respawn_time = 0; p->in_vehicle = 0;
+    /* A job's health pool when one is installed (stats_apply.h); the engine's own 100 otherwise. */
+    p->health = g_phys_stats_health_hook ? g_phys_stats_health_hook(p, 100) : 100;
+    p->shield = 100; p->respawn_time = 0; p->in_vehicle = 0;
     p->katana_slash_timer = 0;
     p->dash_timer = 0;
     p->dash_vx = p->dash_vy = p->dash_vz = 0.0f;
@@ -4509,7 +4521,10 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
         if (w != WPN_KNIFE && w != WPN_KATANA && w != WPN_HAMMER && p->ammo[w] <= 0) p->reload_timer = RELOAD_TIME_FULL;
         else {
             p->is_shooting = 5; p->recoil_anim = 1.0f;
-            p->attack_cooldown = WPN_STATS[w].rof;
+            /* Haste is a multiplier on the weapon's own ROF, never a rewrite of it -- a knife stays a
+               knife. No job installed: the ROF exactly as authored. */
+            p->attack_cooldown = g_phys_stats_rof_hook ? g_phys_stats_rof_hook(p, WPN_STATS[w].rof)
+                                                       : WPN_STATS[w].rof;
             if (w != WPN_KNIFE && w != WPN_KATANA && w != WPN_HAMMER) p->ammo[w]--;
             if (w == WPN_KATANA) {
                 p->katana_slash_timer = KATANA_SLASH_ACTIVE_TICKS;
