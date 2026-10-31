@@ -48,7 +48,12 @@ static const EUUnitRules g_eu_rules_parena = {
     eu_order_follow, eu_order_explore, eu_order_engage, eu_order_gather, eu_order_claim,
     eu_order_guard, eu_order_priority,
     eu_claim_ticks, eu_claim_radius, eu_gather_radius, eu_node_capacity,
-    eu_explore_radius, eu_follow_distance
+    eu_explore_radius, eu_follow_distance,
+    /* Downed-ally numbers: PARENA's authority is empire_rules.prn (empire-bleedout-ms and friends), not the
+       units module this header installs, so these slots carry the mirrored defaults from
+       empire_units_rules.h. `make test-empire-rules` asserts the generated empire_* values equal exactly
+       these, which is what keeps the one authority and its mirror from drifting apart. */
+    eu_c_bleedout_ms, eu_c_revive_radius_milli, eu_c_revive_hold_ms, eu_c_revive_health_milli, eu_c_downable
 };
 
 static inline void eu_rules_install(void) { eu_rules_set(&g_eu_rules_parena); }

@@ -558,6 +558,64 @@ int story_ai_waves_tick(ServerState *s, unsigned int now_ms) {
 
 int story_ai_waves_remaining(void) { return wave_runner_remaining(&g_wave_runner); }
 
+/* ---- downed allies -----------------------------------------------------------------------------------
+ * A dead ALLY is not gone. physics puts it in STATE_DEAD with a respawn timer; this holds that timer off
+ * while the body is on the ground, so a companion can reach it, and lets go when the bleed-out window
+ * expires. Reviving is a HOLD, not a touch (g_eu_rules.revive_hold_ms), and it restores a fraction of the
+ * archetype's pool rather than healing it -- the numbers are PARENA's empire_rules.prn, reached through
+ * empire_units_rules.h so the server keeps linking.
+ *
+ * ALLIES ONLY, on purpose: an enemy that lingered would be a corpse with a countdown, and every existing
+ * level's zombies must keep dying and respawning exactly as they did. */
+static unsigned int g_downed_last_ms = 0;
+
+static void story_ai_downed_tick(ServerState *s, unsigned int now_ms) {
+    if (!s) return;
+    int slots = (int)(sizeof(s->players) / sizeof(s->players[0]));
+    PlayerState *hero = &s->players[0];
+    unsigned int elapsed = now_ms - g_downed_last_ms;
+    int dt = elapsed > 1000u ? 1000 : (int)elapsed;   /* unsigned subtraction: wrap-safe, hitch-capped */
+    g_downed_last_ms = now_ms;
+    for (int i = 0; i < STORY_AI_MAX; i++) {
+        AIController *ai = &g_story_ai[i];
+        if (!ai->active || ai->archetype == EU_ARCH_NONE) continue;
+        if (ai->faction != EU_FACTION_ALLY) continue;
+        if (ai->player_id < 0 || ai->player_id >= slots) continue;
+        PlayerState *p = &s->players[ai->player_id];
+        if (p->state != STATE_DEAD) {
+            /* Up again -- by a revive below, or by physics' own respawn after a bleed-out. */
+            ai->eu.downed_ms = 0;
+            ai->eu.revive_ms = 0;
+            continue;
+        }
+        if (!g_eu_rules.downable(ai->archetype)) continue;
+        if (!eu_unit_is_downed(&ai->eu)) eu_unit_start_bleed(&ai->eu);
+        else eu_unit_bleed_advance(&ai->eu, dt);
+        if (ai->eu.downed_ms >= g_eu_rules.bleedout_ms()) {
+            /* Written off: stop holding the respawn and let the body go. */
+            eu_unit_revive(&ai->eu);
+            continue;
+        }
+        /* Hold the body's own respawn so it is still there for a companion to reach. */
+        p->respawn_time = now_ms + 1000;
+        float reach = (float)g_eu_rules.revive_radius_milli() / 1000.0f;
+        if (ai_len2(hero->x - p->x, hero->z - p->z) > reach) {
+            ai->eu.revive_ms = 0;   /* left the body: the hold starts over */
+            continue;
+        }
+        ai->eu.revive_ms += dt;
+        if (ai->eu.revive_ms >= g_eu_rules.revive_hold_ms()) {
+            int hp = eu_unit_revive_health(&ai->eu, g_eu_rules.revive_health_milli());
+            phys_respawn(p, now_ms);
+            p->health = hp;
+            p->respawn_time = 0;
+            ai->eu.order = EU_ORDER_NONE;
+            eu_unit_revive(&ai->eu);
+            printf("[EMPIRE] ally %d revived at %d hp\n", ai->player_id, hp);
+        }
+    }
+}
+
 int story_ai_spawn_unit(ServerState *s, int archetype, int kit, int faction, int orders,
                         float x, float y, float z) {
     if (!s) return -1;
@@ -1339,6 +1397,8 @@ static void ai_run_combat(ServerState *s, AIController *ai, const AIPerception *
 void story_ai_tick(ServerState *s, unsigned int now_ms) {
     /* Survival waves, if a host armed them (story_ai_waves_enable): a disarmed runner is a no-op. */
     if (g_wave_runner.enabled) (void)story_ai_waves_tick(s, now_ms);
+    /* Downed allies: holds an ally's respawn so a companion can reach it (allies only). */
+    story_ai_downed_tick(s, now_ms);
     int i;
     int attackers = 0;
     if (!s) return;

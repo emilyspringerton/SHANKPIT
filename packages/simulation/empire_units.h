@@ -114,6 +114,11 @@ typedef struct {
     int carrying;    /* units gathered, not yet banked separately from the faction stockpile */
     float explore_x, explore_z;
     int exploring;   /* 0 = needs a new explore point */
+    /* Downed, not dead. downed_ms counts the bleed (0 = up); revive_ms is the in-range hold accumulated by
+       the host, reset the moment the reviver leaves. The numbers are empire_rules.prn's, reached through
+       g_eu_rules so this header stays free of empire_rules_host.h. */
+    int downed_ms;
+    int revive_ms;
 } EUUnit;
 
 /* What the unit can currently perceive. Kept as a plain struct so the host decides how it is filled and
@@ -226,6 +231,39 @@ static inline void eu_unit_init(EUUnit *u, int archetype, int kit, int faction, 
     u->carrying = 0;
     u->explore_x = u->explore_z = 0.0f;
     u->exploring = 0;
+    u->downed_ms = 0;
+    u->revive_ms = 0;
+}
+
+/* ---- downed / revived -------------------------------------------------------------------------------
+ * A downed ally is on the ground, not gone: the host holds the body's respawn, advances the bleed, and asks
+ * these when the body stops being rescuable or gets back up. State only -- no clock, no display, so a test
+ * can drive a whole bleed-out in a loop. */
+static inline int eu_unit_is_downed(const EUUnit *u) { return u && u->downed_ms > 0; }
+
+static inline void eu_unit_start_bleed(EUUnit *u) {
+    if (!u) return;
+    u->downed_ms = 1;
+    u->revive_ms = 0;
+}
+
+static inline void eu_unit_bleed_advance(EUUnit *u, int dt_ms) {
+    if (!u || u->downed_ms <= 0 || dt_ms <= 0) return;
+    u->downed_ms += dt_ms;
+}
+
+/* What a revive actually restores: a fraction of the archetype's own pool, never zero (a revive that leaves
+ * somebody on 0 HP would put them straight back down). */
+static inline int eu_unit_revive_health(const EUUnit *u, int health_milli) {
+    if (!u) return 1;
+    int h = (g_eu_rules.archetype_health(u->archetype) * health_milli) / 1000;
+    return h > 0 ? h : 1;
+}
+
+static inline void eu_unit_revive(EUUnit *u) {
+    if (!u) return;
+    u->downed_ms = 0;
+    u->revive_ms = 0;
 }
 
 static inline int eu_orders_has(const EUUnit *u, int order) {

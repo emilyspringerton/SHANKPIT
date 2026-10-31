@@ -47,6 +47,15 @@ typedef struct {
     int (*node_capacity)(void);
     int (*explore_radius)(void);
     int (*follow_distance)(void);
+    /* Downed allies (PARENA empire_rules.prn: empire-bleedout-ms and friends). Carried in THIS table rather
+       than called from empire_rules_host.h because story_ai.c is linked into the SERVER too, and the
+       server's source list has no empire_rules.c -- the same reason every other number in this file is
+       here. `make test-empire-rules` asserts these defaults equal the generated copy sample for sample. */
+    int (*bleedout_ms)(void);
+    int (*revive_radius_milli)(void);
+    int (*revive_hold_ms)(void);
+    int (*revive_health_milli)(void);
+    int (*downable)(int arch);
 } EUUnitRules;
 
 static inline int eu_clamp(int lo, int hi, int x) { return x < lo ? lo : (x > hi ? hi : x); }
@@ -148,6 +157,16 @@ static inline int eu_c_node_capacity(void) { return 25; }
 static inline int eu_c_explore_radius(void) { return 60; }
 static inline int eu_c_follow_distance(void) { return 20; }
 
+static inline int eu_c_bleedout_ms(void) { return 20000; }
+static inline int eu_c_revive_radius_milli(void) { return 4000; }
+static inline int eu_c_revive_hold_ms(void) { return 2500; }
+static inline int eu_c_revive_health_milli(void) { return 400; }
+static inline int eu_c_downable(int arch) {
+    /* 0 = none, 2 = zombie: neither is rescuable. Every human archetype is. */
+    if (arch < 1) return 0;
+    return arch == 2 ? 0 : 1;
+}
+
 static EUUnitRules g_eu_rules = {
     eu_c_archetype_count, eu_c_archetype_species, eu_c_archetype_role, eu_c_archetype_kit,
     eu_c_archetype_faction, eu_c_archetype_orders, eu_c_archetype_health,
@@ -158,7 +177,8 @@ static EUUnitRules g_eu_rules = {
     eu_c_order_follow, eu_c_order_explore, eu_c_order_engage, eu_c_order_gather, eu_c_order_claim,
     eu_c_order_guard, eu_c_order_priority,
     eu_c_claim_ticks, eu_c_claim_radius, eu_c_gather_radius, eu_c_node_capacity,
-    eu_c_explore_radius, eu_c_follow_distance
+    eu_c_explore_radius, eu_c_follow_distance,
+    eu_c_bleedout_ms, eu_c_revive_radius_milli, eu_c_revive_hold_ms, eu_c_revive_health_milli, eu_c_downable
 };
 
 static inline void eu_rules_set(const EUUnitRules *r) { if (r) g_eu_rules = *r; }

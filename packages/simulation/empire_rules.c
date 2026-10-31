@@ -18,6 +18,13 @@ int empire_can_spawn(int, int, int);
 int empire_clone_can(int, int, int, int);
 int empire_influence_per_banked_unit();
 int empire_bank_credit(int, int, int);
+int empire_bleedout_ms();
+int empire_revive_radius_milli();
+int empire_revive_hold_ms();
+int empire_revive_health_milli();
+int empire_downable(int);
+int empire_bled_out(int);
+int empire_revive_holds(int);
 int empire_influence_from_district(int, int);
 int empire_district_threshold_milli();
 int empire_district_state(int, int);
@@ -124,6 +131,50 @@ int empire_bank_credit(int carrying __attribute__((unused)), int influence __att
     return (carrying * empire_influence_per_banked_unit());
     }
     }
+    }
+}
+
+int empire_bleedout_ms(void) {
+    return 20000;
+}
+
+int empire_revive_radius_milli(void) {
+    return 4000;
+}
+
+int empire_revive_hold_ms(void) {
+    return 2500;
+}
+
+int empire_revive_health_milli(void) {
+    return 400;
+}
+
+int empire_downable(int archetype __attribute__((unused))) {
+    if ((archetype < 1)) {
+    return 0;
+    } else {
+    if ((archetype == 2)) {
+    return 0;
+    } else {
+    return 1;
+    }
+    }
+}
+
+int empire_bled_out(int downed_ms __attribute__((unused))) {
+    if ((downed_ms >= empire_bleedout_ms())) {
+    return 1;
+    } else {
+    return 0;
+    }
+}
+
+int empire_revive_holds(int held_ms __attribute__((unused))) {
+    if ((held_ms >= empire_revive_hold_ms())) {
+    return 1;
+    } else {
+    return 0;
     }
 }
 

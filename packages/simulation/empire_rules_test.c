@@ -4,6 +4,7 @@
  * into a sphere-sized world. */
 #include <stdio.h>
 #include "empire_rules_host.h"
+#include "empire_units_rules.h"   /* the defaults story_ai.c actually uses -- see the parity block below */
 
 static int fails = 0;
 #define CHECK(cond, ...) do { \
@@ -59,6 +60,37 @@ int main(void) {
         CHECK(empire_bank_credit(per_rifleman, 0, cap) >= empire_troop_cost(0),
               "banking %d units (%d) did not buy a %d-cost rifleman", per_rifleman,
               empire_bank_credit(per_rifleman, 0, cap), empire_troop_cost(0));
+    }
+
+    /* ---- downed allies: who can be downed, when they bleed out, when a hold counts ---- */
+    {
+        CHECK(empire_downable(0) == 0, "the 'none' archetype can be downed");
+        CHECK(empire_downable(2) == 0, "a zombie can be downed -- a beast that lingers is a bug, not a rescue");
+        CHECK(empire_downable(1) == 1 && empire_downable(4) == 1 && empire_downable(5) == 1,
+              "a human archetype cannot be downed");
+        CHECK(empire_bleedout_ms() > 0, "no bleed-out window");
+        CHECK(empire_bled_out(empire_bleedout_ms() - 1) == 0, "bled out one tick early");
+        CHECK(empire_bled_out(empire_bleedout_ms()) == 1, "did not bleed out at the window");
+        CHECK(empire_revive_holds(empire_revive_hold_ms() - 1) == 0, "a short hold counted as a revive");
+        CHECK(empire_revive_holds(empire_revive_hold_ms()) == 1, "a full hold did not count");
+        CHECK(empire_revive_radius_milli() > 0 && empire_revive_radius_milli() < empire_spawn_radius_milli(),
+              "revive reach %d is not inside a squad's own spread (%d)", empire_revive_radius_milli(),
+              empire_spawn_radius_milli());
+        CHECK(empire_revive_health_milli() > 0 && empire_revive_health_milli() < 1000,
+              "a revive restores %d permille -- that is a heal, not a recovery", empire_revive_health_milli());
+    }
+
+    /* ---- and the copy story_ai.c actually reads must agree with the generated one ---- */
+    CHECK(g_eu_rules.bleedout_ms() == empire_bleedout_ms(), "bleed-out: units defaults vs PARENA");
+    CHECK(g_eu_rules.revive_radius_milli() == empire_revive_radius_milli(), "revive radius: units defaults vs PARENA");
+    CHECK(g_eu_rules.revive_hold_ms() == empire_revive_hold_ms(), "revive hold: units defaults vs PARENA");
+    CHECK(g_eu_rules.revive_health_milli() == empire_revive_health_milli(),
+          "revive health: units defaults vs PARENA");
+    for (int a = -1; a <= 7; a++) {
+        if (g_eu_rules.downable(a) != empire_downable(a)) {
+            CHECK(0, "downable(%d): units defaults %d vs PARENA %d", a, g_eu_rules.downable(a),
+                  empire_downable(a));
+        }
     }
 
     /* ---- districts: TRAPX's three-way alignment, with income attached ---- */
