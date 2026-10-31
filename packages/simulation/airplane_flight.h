@@ -5,7 +5,8 @@
  * AIRSPEED, not of a lever, so it has to be flown. It is deliberately not "the helicopter with wings":
  *
  *   - no lift at or below the stall speed, whatever the nose is doing, so a bad climb falls out of the sky
- *   - a real takeoff roll (throttle is a LEVER, it stays where you leave it) on a runway-length run
+ *   - a real takeoff roll, driven with W on the wheels the same way the rocket car is (the SPACE/CTRL
+ *     lever still works, and in the air it is the only throttle: it stays where you leave it)
  *   - a bank turns it (rudder only matters while taxiing), and every rate is heavy compared to a quad
  *   - flaps lower the stall speed and add drag -- the short-field option
  *
@@ -42,6 +43,41 @@ static inline void airplane_set_rules(const AirplaneRules *r) { g_airplane_rules
 #define AF_GRAVITY 0.02f          /* units/tick^2, the same order as every other vehicle's */
 #define AF_THROTTLE_RATE 350.0f   /* lever units per SECOND */
 #define AF_TAXI_CLEARANCE 0.55f   /* how high the gear holds the fuselage off the ground */
+
+/* Handling, tuned to the rocket car's arcade model rather than to a real aeroplane (founder 2026-10-31:
+ * "it should handle similar to the rocket car"). Three things that car has and this one did not:
+ *
+ *   - a throttle you DRIVE with W, not a lever you have to wind up with SPACE. On the wheels W/S now
+ *     spools the engine (S brakes back to idle, then reverses), so a taxi is just holding W.
+ *   - a bounded climb. The old model integrated lift-minus-weight forever, so full throttle ballooned
+ *     from y=6 to y=2200 in ten seconds and the airframe felt like it was on a string. Vertical speed
+ *     now chases a target set by the lift SURPLUS, and the surplus itself is capped, so it climbs at a
+ *     sane rate and settles instead of accelerating.
+ *   - trim. Release the stick and the aeroplane settles back to level, like the car's suspension does,
+ *     instead of holding the last input forever.
+ */
+#define AF_MAX_LIFT_RATIO 1.25f   /* hard cap on lift/weight -- the anti-balloon clamp */
+#define AF_CLIMB_RATE 0.8f        /* units/tick of climb per 1.0 of lift surplus */
+#define AF_VSPEED_RESPONSE 0.15f  /* how fast vy chases that target (per tick) */
+/* Attitude control, straight from Bedrock Racers (PARENA/stdlib/bedrockracers/web/br_phys.prn
+ * fly-sub!): a stick commands a RATE, the rate chases it through a first-order lag, and the moment the
+ * stick is let go the rate decays to zero. That is the difference between this and the old model, which
+ * added degrees to an angle every tick, so a tap banked the aeroplane and it kept turning -- the "floppy"
+ * report. Bank is no longer integrated at all: it follows the yaw rate (a coordinated turn), so there is
+ * no bank -> yaw -> bank feedback loop left to oscillate. */
+#define AF_PITCH_RATE 2.2f        /* deg/tick at full stick (~132 deg/s) */
+#define AF_YAW_RATE 1.4f          /* deg/tick at full rudder (~84 deg/s) */
+#define AF_ATTITUDE_RESPONSE 0.45f  /* per tick; Bedrock Racers' own 0.27 per 8 ms substep, ~0.54/tick */
+#define AF_BANK_PER_YAW 45.0f     /* degrees of bank at full yaw rate */
+#define AF_PITCH_TRIM 0.02f       /* per-tick weathervane back to level with the stick centred */
+/* Lateral grip: the airframe flies where the nose points instead of keeping the sideways velocity of
+ * its previous heading. This is the aeroplane's version of the rocket car's tyre grip, and its absence
+ * is why a turn used to end with the aeroplane sliding sideways. */
+#define AF_AIR_GRIP 0.06f         /* per tick, in the air */
+#define AF_GROUND_GRIP 0.30f      /* per tick, on the wheels */
+#define AF_GROUND_SPOOL_UP 900.0f     /* throttle units per SECOND while W is held on the wheels */
+#define AF_GROUND_SPOOL_DOWN 1400.0f  /* S: brake back to idle */
+#define AF_GROUND_IDLE_DECAY 500.0f   /* no key held: the engine falls back to idle, like lifting off */
 
 static inline float af_top_speed(void) {
     if (g_airplane_rules && g_airplane_rules->top_speed_milli) {
@@ -192,7 +228,8 @@ static inline int airplane_try_exit(PlayerState *p, AirplaneState *a) {
  *   rudder    -1..1  A/D  (yaws the nose directly -- pedals in the air, nosewheel steering on the roll)
  *   roll_dir  -1/0/1 J/L and the arrow keys (a COMMANDED barrel roll: a full 360 turn, not a bank)
  *   cam_yaw          the pilot's heading -- still a tiller ASSIST at walking pace on the wheels
- *   throttle_up/down      throttle is a LEVER (space raises, ctrl lowers), it holds where you leave it
+ *   throttle_up/down      LEVER trim (space raises, ctrl lowers), held between ticks; on the wheels W/S
+ *                         spools the engine directly and S brakes back to idle
  */
 static inline void airplane_simulate_step(AirplaneState *a, float elevator, float rudder, int roll_dir,
                                           float cam_yaw, int throttle_up, int throttle_down, float dt) {
@@ -210,6 +247,17 @@ static inline void airplane_simulate_step(AirplaneState *a, float elevator, floa
     /* the lever */
     if (throttle_up) a->throttle += AF_THROTTLE_RATE * dts / 60.0f;
     if (throttle_down) a->throttle -= AF_THROTTLE_RATE * dts / 60.0f;
+    /* On the wheels, W/S is the throttle, the way it is in the rocket car. This is what makes a taxi a
+     * taxi: hold W and it rolls off, release and the engine falls back to idle. In the air W/S is the
+     * elevator again, so the stick keeps its meaning and nothing has to be re-learned on the runway. */
+    if (a->grounded) {
+        if (elevator > 0.05f)
+            a->throttle += AF_GROUND_SPOOL_UP * fabsf(elevator) * dts / 60.0f;
+        else if (elevator < -0.05f)
+            a->throttle += AF_GROUND_SPOOL_DOWN * elevator * dts / 60.0f;   /* elevator is negative */
+        else if (!throttle_up && !throttle_down)
+            a->throttle -= AF_GROUND_IDLE_DECAY * dts / 60.0f;
+    }
     if (a->throttle < 0.0f) a->throttle = 0.0f;
     if (a->throttle > 1000.0f) a->throttle = 1000.0f;
 
@@ -229,10 +277,16 @@ static inline void airplane_simulate_step(AirplaneState *a, float elevator, floa
     if (a->grounded) {
         a->pitch *= 0.80f;
         a->roll *= 0.80f;
+        a->pitch_rate = 0.0f;
+        a->yaw_rate = 0.0f;
     } else if (flying) {
-        a->pitch += elevator * 3.2f * dts;
-        a->roll += rudder * 5.0f * dts;      /* pedalling into a turn banks it, as it should */
+        /* W/S pitches the nose: a rate command, damped, that stops when the stick does. */
+        a->pitch_rate += (elevator * AF_PITCH_RATE - a->pitch_rate) * AF_ATTITUDE_RESPONSE * dts;
+        a->pitch += a->pitch_rate * dts;
+        if (elevator > -0.05f && elevator < 0.05f)
+            a->pitch += (0.0f - a->pitch) * AF_PITCH_TRIM * dts;   /* weathervane, no drift */
     } else {
+        a->pitch_rate = 0.0f;
         a->pitch -= 1.8f * dts;
         a->roll *= 0.985f;
     }
@@ -253,16 +307,26 @@ static inline void airplane_simulate_step(AirplaneState *a, float elevator, floa
         if (a->roll < -180.0f) a->roll += 360.0f;
     }
 
-    /* turning: a bank turns it; a barrel roll is a corkscrew and does not change heading. */
-    float bank = a->roll;
-    if (bank > 60.0f) bank = 60.0f;
-    if (bank < -60.0f) bank = -60.0f;
-    if (!rolling_barrel) a->yaw = norm_yaw_deg(a->yaw + bank * 0.05f * dts);
-
     /* rudder -- the pedals. On the wheels this IS the nosewheel steering, which is what makes a taxi
-     * a taxi; in the air it yaws the nose. Either way it no longer depends on where the camera looks. */
-    if (!rolling_barrel)
-        a->yaw = norm_yaw_deg(a->yaw + rudder * (a->grounded ? 1.5f : 0.9f) * dts);
+     * a taxi; in the air it yaws the nose. Rate-commanded like pitch, so letting go stops the turn
+     * instead of leaving it banked and circling. A barrel roll is a corkscrew and does not change
+     * heading. */
+    if (!rolling_barrel) {
+        float want = rudder * (a->grounded ? 1.6f : AF_YAW_RATE);
+        a->yaw_rate += (want - a->yaw_rate) * AF_ATTITUDE_RESPONSE * dts;
+        a->yaw = norm_yaw_deg(a->yaw + a->yaw_rate * dts);
+    } else {
+        a->yaw_rate = 0.0f;
+    }
+
+    /* Bank follows the turn instead of being integrated separately (coordinated turn). The old code
+     * added roll from the rudder AND turned from the bank, a loop that kept the airframe rocking. */
+    if (!rolling_barrel && !a->grounded) {
+        float bank_deg = a->yaw_rate / AF_YAW_RATE * AF_BANK_PER_YAW;
+        a->roll += (bank_deg - a->roll) * 0.25f * dts;
+        if (a->roll > 60.0f) a->roll = 60.0f;
+        if (a->roll < -60.0f) a->roll = -60.0f;
+    }
     /* The camera-heading tiller survives only as a self-align assist for a pilot who is NOT on the
      * pedals: with the rudder held it used to pull the nose back toward where the camera looked, which
      * cancelled the rudder almost exactly (1.5 in, 1.4 back) and is why the plane felt like it steered
@@ -284,6 +348,20 @@ static inline void airplane_simulate_step(AirplaneState *a, float elevator, floa
     a->vx += fx * along * dts;
     a->vz += fz * along * dts;
 
+    /* Lateral grip: throw away the part of the velocity that is not along the nose, the way the rocket
+     * car's tyres throw away its slide. Without it a turn left the aeroplane travelling sideways for
+     * seconds -- the other half of "floppy". */
+    {
+        float rxv = cosf(r), rzv = sinf(r);
+        float fwd_v = a->vx * fx + a->vz * fz;
+        float lat_v = a->vx * rxv + a->vz * rzv;
+        float grip = (a->grounded ? AF_GROUND_GRIP : AF_AIR_GRIP) * dts;
+        if (grip > 1.0f) grip = 1.0f;
+        lat_v *= (1.0f - grip);
+        a->vx = fx * fwd_v + rxv * lat_v;
+        a->vz = fz * fwd_v + rzv * lat_v;
+    }
+
     /* lift versus weight: 1000 permille holds altitude, so anything above it climbs and a stall falls.
      * LEVEL flight sits at 880 permille, not 1000: at zero angle of attack a wing does not carry its own
      * weight at the liftoff speed, so the aeroplane has to be ROTATED (or run faster) to unstick. That is
@@ -298,7 +376,20 @@ static inline void airplane_simulate_step(AirplaneState *a, float elevator, floa
         lift = (int)((float)lift * proj);
     }
     float lift_accel = (float)lift * 0.001f * AF_GRAVITY;
-    a->vy += (lift_accel - AF_GRAVITY) * dts;
+    /* Cap the surplus. The rule's own v^2 curve reaches 1.8x weight at cruise, and integrating that
+     * forever is what made the aeroplane balloon; 1.25x still climbs, it just does not accelerate away. */
+    if (lift_accel > AF_GRAVITY * AF_MAX_LIFT_RATIO) lift_accel = AF_GRAVITY * AF_MAX_LIFT_RATIO;
+    /* Vertical speed chases a target instead of integrating lift-minus-weight without limit. This is
+     * the same thing the rocket car's hover controller does with its height error, and it is what makes
+     * a climb settle at a rate rather than keep gaining speed. */
+    float lift_ratio = lift_accel / AF_GRAVITY;
+    float target_vy = (lift_ratio - 1.0f) * AF_CLIMB_RATE;
+    /* While the gear is carrying the weight, weight does not get to pull the hull down: the tyres hold
+     * it. Building vy here and zeroing it at the clamp below put a phantom -0.12 into the cached
+     * airspeed every tick, which is exactly the kind of artefact that reads as the plane twitching. */
+    int wheels_down = a->grounded && lift_accel <= AF_GRAVITY * 1.15f;
+    if (!wheels_down)
+        a->vy += (target_vy - a->vy) * AF_VSPEED_RESPONSE * dts;
 
     /* propellers and the cached airspeed the HUD/tests read */
     a->prop_angle += (35.0f + a->throttle * 0.045f) * dts;
@@ -324,7 +415,7 @@ static inline void airplane_simulate_step(AirplaneState *a, float elevator, floa
      * a time. It unsticks only on a real surplus (15%) -- that is a takeoff, not a hop. Rolling
      * resistance then keeps the tyres planted instead of letting the airframe skitter. */
     float ground = af_world_y(a->x, a->z, a->y + 1.0f);   /* only surfaces at or below the hull */
-    if (a->grounded && lift_accel <= AF_GRAVITY * 1.15f) {
+    if (wheels_down) {
         a->y = ground;
         a->vy = 0.0f;
         a->grounded = 1;

@@ -781,6 +781,10 @@ typedef struct {
     float x, y, z;
     float vx, vy, vz;
     float yaw, pitch, roll;
+    /* Attitude RATES, in degrees/tick. Bedrock Racers' cold-gas model (br_phys.prn fly-sub!): the rate
+       chases the stick and STOPS when the stick is released, which is what stops a gentle tap turning
+       into a permanent bank-and-turn. Pure simulation state -- never serialized. */
+    float pitch_rate, yaw_rate;
     float throttle;      /* lever position, 0..1000 */
     float prop_angle;
     float airspeed;      /* cached, units/tick */

@@ -2016,10 +2016,11 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
         }
     }
 
-    /* The fixed-wing transport (airplane_flight.h): throttle is a LEVER (SPACE up, CTRL down), W/S is the
-       elevator, A/D is the RUDDER (pedals in the air, nosewheel steering on the roll), J/L and the arrow
-       keys are a commanded barrel roll, and the pilot's heading is a tiller assist at walking pace. It is
-       the one vehicle here that cannot hover. */
+    /* The fixed-wing transport (airplane_flight.h): on the wheels W/S is the THROTTLE, rocket-car style
+       (S brakes back to idle), so a taxi is just holding W; in the air W/S is the elevator. SPACE/CTRL
+       trims the throttle lever and holds it. A/D is the RUDDER (pedals in the air, nosewheel steering on
+       the roll), J/L and the arrow keys are a commanded barrel roll, and the pilot's heading is a tiller
+       assist at walking pace. It is the one vehicle here that cannot hover. */
     for (int ai = 0; ai < MAX_AIRPLANES; ai++) {
         AirplaneState *a = &local_state.airplanes[ai];
         if (!a->active) continue;

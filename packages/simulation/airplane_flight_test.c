@@ -221,6 +221,96 @@ int main(void) {
                travelled, a.roll, heading, y_max - y_min);
     }
 
+    /* ---- W IS THE THROTTLE ON THE WHEELS: taxi the rocket-car way, no lever ritual ---- */
+    {
+        AirplaneState a = on_runway();
+        float x0 = a.x;
+        for (int i = 0; i < 120; i++) airplane_simulate_step(&a, 1.0f, 0.0f, 0, a.yaw, 0, 0, SHANKPIT_NET_FIXED_DT);
+        CHECK(a.throttle > 500.0f, "holding W wound the throttle up to only %.0f", a.throttle);
+        CHECK(fabsf(a.x - x0) > 30.0f, "holding W moved it %.1f units -- it will not taxi", fabsf(a.x - x0));
+        CHECK(a.airspeed > 1.0f, "holding W built only %.2f units/tick", a.airspeed);
+        CHECK(a.grounded, "W on the wheels lifted it off the ground");
+        float coast_speed = a.airspeed;
+        /* release: the engine falls back to idle and it coasts to a stop, like the car does */
+        for (int i = 0; i < 240; i++) airplane_simulate_step(&a, 0.0f, 0.0f, 0, a.yaw, 0, 0, SHANKPIT_NET_FIXED_DT);
+        CHECK(a.grounded, "it took off from a released throttle while taxiing");
+        CHECK(a.airspeed < coast_speed, "it did not coast down after the throttle was released");
+        printf("PASS: W taxis it (%.0f throttle, %.1f units rolled, coasts %.2f -> %.2f)\n",
+               a.throttle, fabsf(a.x - x0), coast_speed, a.airspeed);
+    }
+
+    /* ---- BOUNDED CLIMB: full throttle must not balloon the way it used to ---- */
+    {
+        AirplaneState a = on_runway();
+        a.y = 80.0f;
+        a.grounded = 0;
+        a.vx = 8.0f;
+        a.throttle = 1000.0f;
+        float y0 = a.y;
+        for (int i = 0; i < 600; i++) airplane_simulate_step(&a, 0.0f, 0.0f, 0, a.yaw, 0, 0, SHANKPIT_NET_FIXED_DT);
+        CHECK(a.vy < 0.5f, "ten seconds of full throttle left it climbing at %.2f units/tick", a.vy);
+        CHECK(a.y - y0 < 200.0f, "ten seconds of full throttle gained %.0f units -- it is ballooning", a.y - y0);
+        printf("PASS: full throttle settles into a %.2f units/tick climb (%.0f units in 10 s)\n",
+               a.vy, a.y - y0);
+    }
+
+    /* ---- TRIM: release the stick and it settles back to level ---- */
+    {
+        AirplaneState a = on_runway();
+        a.y = 80.0f;
+        a.grounded = 0;
+        a.vx = 8.0f;
+        a.throttle = 1000.0f;
+        for (int i = 0; i < 30; i++) airplane_simulate_step(&a, 1.0f, 1.0f, 0, a.yaw, 0, 0, SHANKPIT_NET_FIXED_DT);
+        CHECK(a.pitch > 20.0f && a.roll > 20.0f, "the stick did not bite (pitch %.1f roll %.1f)", a.pitch, a.roll);
+        for (int i = 0; i < 120; i++) airplane_simulate_step(&a, 0.0f, 0.0f, 0, a.yaw, 0, 0, SHANKPIT_NET_FIXED_DT);
+        CHECK(fabsf(a.pitch) < 8.0f, "pitch stayed at %.1f deg with the stick centred -- it is floppy", a.pitch);
+        CHECK(fabsf(a.roll) < 12.0f, "roll stayed at %.1f deg with the stick centred -- it is floppy", a.roll);
+        printf("PASS: centred stick trims back to level (pitch %.1f, roll %.1f)\n", a.pitch, a.roll);
+    }
+
+    /* ---- RATE, NOT ANGLE: the turn stops when the pedals are released (Bedrock Racers' jets) ---- */
+    {
+        AirplaneState a = on_runway();
+        a.y = 80.0f; a.grounded = 0; a.vx = 8.0f; a.throttle = 1000.0f;
+        for (int i = 0; i < 30; i++) airplane_simulate_step(&a, 0.0f, 1.0f, 0, a.yaw, 0, 0, SHANKPIT_NET_FIXED_DT);
+        float turned = fabsf(norm_yaw_deg(a.yaw - (-90.0f)));
+        float held = a.yaw;
+        for (int i = 0; i < 60; i++) airplane_simulate_step(&a, 0.0f, 0.0f, 0, a.yaw, 0, 0, SHANKPIT_NET_FIXED_DT);
+        float drift = fabsf(norm_yaw_deg(a.yaw - held));
+        CHECK(turned > 3.0f, "full rudder turned it only %.1f deg", turned);
+        CHECK(drift < 4.0f, "it kept turning %.1f deg after the rudder was released", drift);
+        CHECK(fabsf(a.roll) < 20.0f, "the bank did not follow the turn back to level (roll %.1f)", a.roll);
+        printf("PASS: the turn stops on release (%.1f deg held, %.1f deg drift, roll %.1f)\n",
+               turned, drift, a.roll);
+    }
+
+    /* ---- GRIP: it flies where the nose points, not sideways along its old heading ---- */
+    {
+        AirplaneState a = on_runway();
+        a.y = 80.0f; a.grounded = 0; a.vx = 9.0f; a.throttle = 1000.0f;
+        for (int i = 0; i < 40; i++) airplane_simulate_step(&a, 0.0f, 1.0f, 0, a.yaw, 0, 0, SHANKPIT_NET_FIXED_DT);
+        for (int i = 0; i < 60; i++) airplane_simulate_step(&a, 0.0f, 0.0f, 0, a.yaw, 0, 0, SHANKPIT_NET_FIXED_DT);
+        float r = -a.yaw * 0.0174532925f;
+        float fwd = a.vx * sinf(r) + a.vz * -cosf(r);
+        float lat = a.vx * cosf(r) + a.vz * sinf(r);
+        float slip = fabsf(atan2f(lat, fwd)) * 57.29578f;
+        CHECK(slip < 5.0f, "it is still sliding %.1f deg off its nose after a turn", slip);
+        printf("PASS: it tracks its nose out of a turn (%.1f deg of slip)\n", slip);
+    }
+
+    /* ---- W/S IS THE ELEVATOR: nose up, then nose down, both rate-commanded ---- */
+    {
+        AirplaneState a = on_runway();
+        a.y = 80.0f; a.grounded = 0; a.vx = 9.0f; a.throttle = 1000.0f;
+        for (int i = 0; i < 20; i++) airplane_simulate_step(&a, 1.0f, 0.0f, 0, a.yaw, 0, 0, SHANKPIT_NET_FIXED_DT);
+        float up = a.pitch;
+        CHECK(up > 10.0f, "W only pitched the nose up to %.1f deg", up);
+        for (int i = 0; i < 40; i++) airplane_simulate_step(&a, -1.0f, 0.0f, 0, a.yaw, 0, 0, SHANKPIT_NET_FIXED_DT);
+        CHECK(a.pitch < 0.0f, "S did not point the nose down (%.1f deg)", a.pitch);
+        printf("PASS: W/S pitches the nose (up to %.1f, then down to %.1f)\n", up, a.pitch);
+    }
+
     printf(fails ? "FAILURES: %d\n" : "ALL PASS\n", fails);
     return fails ? 1 : 0;
 }
