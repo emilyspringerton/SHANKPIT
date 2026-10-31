@@ -1,3 +1,4 @@
+#include "wave_spawner.h"   /* the wave timer: numbers are PARENA wave_rules.prn */
 #include "story_ai.h"
 #include <math.h>
 #include <stdio.h>
@@ -524,6 +525,38 @@ int story_ai_bank_handins(ServerState *s, int faction) {
     }
     return banked;
 }
+
+/* ---- survival waves ---------------------------------------------------------------------------------
+ * The timer is wave_spawner.h (headless, `make test-wave-spawner`); the numbers are PARENA's
+ * (wave_rules.prn); the bodies are this file's. Disarmed until a host arms it, because a level that never
+ * had waves must not grow them.
+ *
+ * A wave appears on a ring around the world origin, not around the player: a wave that arrives on top of
+ * you is a trap rather than a fight, and the ring is where a survival mode's approach is legible. */
+static WaveRunner g_wave_runner;
+
+void story_ai_waves_enable(int on, unsigned int now_ms) {
+    g_wave_runner.enabled = on ? 1 : 0;
+    wave_runner_reset(&g_wave_runner, (int)now_ms);
+}
+
+int story_ai_waves_tick(ServerState *s, unsigned int now_ms) {
+    if (!s) return 0;
+    int size = wave_runner_tick(&g_wave_runner, (int)now_ms, story_ai_empire_unit_count());
+    if (size <= 0) return 0;
+    int arch = g_wr_rules.archetype();
+    float radius = (float)g_wr_rules.spawn_radius_milli() / 1000.0f;
+    int spawned = 0;
+    for (int i = 0; i < size; i++) {
+        /* Offset by half a step so an even-sized wave does not put two bodies on the same bearing. */
+        float ang = 6.28318531f * ((float)i + 0.5f) / (float)size;
+        if (story_ai_spawn_unit(s, arch, 0, -1, -1, cosf(ang) * radius, 8.0f, sinf(ang) * radius) >= 0)
+            spawned++;
+    }
+    return spawned;
+}
+
+int story_ai_waves_remaining(void) { return wave_runner_remaining(&g_wave_runner); }
 
 int story_ai_spawn_unit(ServerState *s, int archetype, int kit, int faction, int orders,
                         float x, float y, float z) {
@@ -1304,6 +1337,8 @@ static void ai_run_combat(ServerState *s, AIController *ai, const AIPerception *
 }
 
 void story_ai_tick(ServerState *s, unsigned int now_ms) {
+    /* Survival waves, if a host armed them (story_ai_waves_enable): a disarmed runner is a no-op. */
+    if (g_wave_runner.enabled) (void)story_ai_waves_tick(s, now_ms);
     int i;
     int attackers = 0;
     if (!s) return;

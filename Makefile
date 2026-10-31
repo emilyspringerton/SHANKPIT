@@ -401,6 +401,19 @@ test-empire-rules: | $(BIN_DIR)
 	$(CC) -O1 -Wall -Wextra -Werror -Ipackages/simulation packages/simulation/empire_rules_test.c packages/simulation/empire_rules.c -o $(BIN_DIR)/empire_rules_test
 	./$(BIN_DIR)/empire_rules_test
 
+# WAVE rules: PARENA/stdlib/shankpit/wave_rules.prn -> packages/simulation/wave_rules.c
+.PHONY: regen-wave-rules
+regen-wave-rules:
+	scripts/gen_wave_rules.sh
+
+# WAVE SPAWNER: the runner that turns those numbers into bodies, plus the parity between the generated
+# copy and wave_rules.h's defaults. Deliberately NOT added to LOBBY_SRC/SERVER_SRC: story_ai.c uses the
+# header's defaults, so a hand-copied source list cannot forget it (that list has drifted nine times).
+.PHONY: test-wave-spawner
+test-wave-spawner: | $(BIN_DIR)
+	$(CC) -O1 -Wall -Wextra -Werror -Ipackages/simulation packages/simulation/wave_spawner_test.c packages/simulation/wave_rules.c -o $(BIN_DIR)/wave_spawner_test
+	./$(BIN_DIR)/wave_spawner_test
+
 # MATERIAL rules: PARENA/stdlib/shankpit/material_rules.prn -> packages/simulation/material_rules.c
 # (UV scroll, frame-loop sheets, palette wrapping, Quake light styles, screen tints, probe-grid axes)
 .PHONY: regen-material-rules

@@ -318,6 +318,18 @@ int story_ai_unit_order(int player_id);
  * unit is worth and how much fits under the pool's cap, and converting here would drag empire_rules.c into
  * the server's source list for no gain. Called by the lobby's own empire sync, once per frame. */
 int story_ai_bank_handins(ServerState *s, int faction);
+
+/* ---- survival waves (packages/simulation/wave_spawner.h + PARENA wave_rules.prn) --------------------
+ * story_ai_waves_enable arms or disarms the schedule and resets it to the first delay from `now_ms`;
+ * calling it with 1 is how a survival mode turns waves on. It is OFF by default and nothing in this file
+ * arms it, so an ordinary level still has exactly the population it authored.
+ *
+ * story_ai_waves_tick emits one wave when the timer says so and the live cap allows, spawning the PARENA
+ * archetype on a ring around the world origin, and returns how many bodies actually took a slot. Call it
+ * once per host tick; time is passed in, never read here, so a hitch cannot mint waves. */
+void story_ai_waves_enable(int on, unsigned int now_ms);
+int story_ai_waves_tick(ServerState *s, unsigned int now_ms);
+int story_ai_waves_remaining(void);
 int story_ai_unit_archetype(int player_id);
 void story_ai_tick(ServerState *s, unsigned int now_ms);
 /* story_ai_seed_voxworld_encounter (the old MODE_STORY VOXWORLD combat-squad encounter) was
