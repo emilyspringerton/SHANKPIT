@@ -55,8 +55,24 @@ static int g_cli_port = 0;
 static const char *g_cli_repo = NULL;
 static const char *g_cli_levels = NULL;
 static const char *g_cli_editor = NULL;
-static char g_root_levels[1024];
-static char g_root_editor[1024];
+/* The two composed paths are larger than g_root_repo on purpose: "%s/tools/nock_editor.html" has to
+ * fit whole for -Wformat-truncation to stay quiet, and truncating the editor path is exactly the
+ * class of bug this file is fixing. */
+static char g_root_repo[1024];
+static char g_root_levels[2048];
+static char g_root_editor[2048];
+
+/* strip_trailing_sep -- one trailing '/' or '\\' is removed before a path is composed from it.
+ * local_nock.bat passed --root "%~dp0", and %~dp0 ENDS in a backslash: the composed path was
+ * `dir//tools/nock_editor.html` (a doubled separator), and on Windows the closing `\"` is an
+ * ESCAPED quote to the C runtime, so the argument arrived mangled outright. Either way the editor
+ * path missed, ln_read_file returned "", and the browser got an empty 200 -- a blank white page
+ * with nothing in var/logs/nock.log, which is exactly the report this fixes. A drive root ("C:\\")
+ * is left whole. */
+static void strip_trailing_sep(char *path) {
+    size_t n = path ? strlen(path) : 0;
+    while (n > 1 && (path[n - 1] == '/' || path[n - 1] == '\\')) path[--n] = 0;
+}
 
 static const char *cli_value(int argc, char **argv, const char *flag) {
     for (int i = 1; i + 1 < argc; i++)
@@ -84,7 +100,15 @@ char *ln_env(const char *key, const char *fallback, Arena *dest) {
     else if (key && strcmp(key, "LOCAL_NOCK_EDITOR") == 0) v = g_cli_editor;
     if ((!v || !*v) && key) v = getenv(key);
     if (!v || !*v) v = fallback ? fallback : "";
-    return arena_strdup_local(v, dest);
+    {
+        /* These three are paths that get composed into further paths below, so a trailing
+         * separator has to be gone before that happens (see strip_trailing_sep). */
+        char *out = arena_strdup_local(v, dest);
+        if (key && (strcmp(key, "LOCAL_NOCK_REPO") == 0 || strcmp(key, "LOCAL_NOCK_LEVELS") == 0 ||
+                    strcmp(key, "LOCAL_NOCK_EDITOR") == 0))
+            strip_trailing_sep(out);
+        return out;
+    }
 }
 
 /* ln_new_id -- 32 lowercase hex chars, the shape edit_sync_create() checks for. The RNG is seeded
@@ -264,6 +288,11 @@ char *ln_levels_json(const char *dir, Arena *dest) {
 }
 
 int main(int argc, char **argv) {
+    /* Line-buffer stdout: a server never exits, so a block-buffered line sits in the C runtime's
+     * buffer forever and var/logs/nock.log stays empty even though the server DID say why. That was
+     * half of "no errors written to a text file" -- the other half was the silent empty 200 above. */
+    setvbuf(stdout, NULL, _IOLBF, 0);
+
     arena_init(&g_arena);
     arena_init(&g_state);
     arena_init(&g_request);
@@ -275,18 +304,35 @@ int main(int argc, char **argv) {
      * git commits run in DIR, so saved levels land in the SHANKPIT repo the lobby came from. */
     const char *root = cli_value(argc, argv, "--root");
     if (root && *root) {
-        g_cli_repo = root;
-        snprintf(g_root_levels, sizeof g_root_levels, "%s/levels", root);
-        snprintf(g_root_editor, sizeof g_root_editor, "%s/tools/nock_editor.html", root);
+        snprintf(g_root_repo, sizeof g_root_repo, "%s", root);
+        strip_trailing_sep(g_root_repo);
+        g_cli_repo = g_root_repo;
+        snprintf(g_root_levels, sizeof g_root_levels, "%s/levels", g_root_repo);
+        snprintf(g_root_editor, sizeof g_root_editor, "%s/tools/nock_editor.html", g_root_repo);
         g_cli_levels = g_root_levels;
         g_cli_editor = g_root_editor;
     }
     const char *repo = cli_value(argc, argv, "--repo");
-    if (repo && *repo) g_cli_repo = repo;
+    if (repo && *repo) {
+        char norm[1024];
+        snprintf(norm, sizeof norm, "%s", repo);
+        strip_trailing_sep(norm);
+        g_cli_repo = arena_strdup_local(norm, &g_state);
+    }
     const char *levels = cli_value(argc, argv, "--levels");
-    if (levels && *levels) g_cli_levels = levels;
+    if (levels && *levels) {
+        char norm[1024];
+        snprintf(norm, sizeof norm, "%s", levels);
+        strip_trailing_sep(norm);
+        g_cli_levels = arena_strdup_local(norm, &g_state);
+    }
     const char *editor = cli_value(argc, argv, "--editor");
-    if (editor && *editor) g_cli_editor = editor;
+    if (editor && *editor) {
+        char norm[1024];
+        snprintf(norm, sizeof norm, "%s", editor);
+        strip_trailing_sep(norm);
+        g_cli_editor = arena_strdup_local(norm, &g_state);
+    }
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {

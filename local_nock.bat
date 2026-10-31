@@ -16,7 +16,10 @@ REM from the log and waits.
 REM
 REM Usage: double-click, or `local_nock.bat [port]`.
 
-set "ROOT=%~dp0"
+REM ROOT must NOT end in a backslash. %~dp0 does, and `--root "C:\dir\"` hands the C runtime a
+REM closing \" -- an ESCAPED quote -- so the path arrived mangled and the editor came up blank.
+REM `for` with the trailing `.` resolves to a full path with no trailing separator.
+for %%I in ("%~dp0.") do set "ROOT=%%~fI"
 set "PORT=%~1"
 if "%PORT%"=="" set "PORT=8787"
 set "LOGDIR=%ROOT%var\logs"

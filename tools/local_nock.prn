@@ -425,10 +425,26 @@
 (defn too-big? [(raw : String @ Region) (dest : Arena @ Region)] : Bool
   (> (parse-int-or (http_server/header-value raw "Content-Length" dest) 0) max-body))
 
+;; editor-response -- the browser editor, or a REAL error when it cannot be read.
+;; A missing editor used to answer 200 with an empty body and print nothing, which is a blank white
+;; page with no console error and no line in var/logs/nock.log -- not diagnosable from either end.
+;; A path mistake is a server-side fault, so it is a 500 that names the path it tried, and one line
+;; on stdout, which every launcher (the APPS tile, local_nock.bat) already redirects into the log.
+(defn editor-response [(dest : Arena @ Region)] : String @ Region
+  (let [html (host-read editor-path dest)]
+    (if (string/str-eq? html "")
+      (do
+        (println (string/concat "local_nock: editor NOT FOUND or unreadable: " editor-path dest))
+        (http_server/text-response 500
+          (cat3 "local NOCK: cannot read the browser editor at " editor-path
+                " -- check --root / LOCAL_NOCK_EDITOR; this line is also in var/logs/nock.log" dest)
+          dest))
+      (http_server/html-response 200 html dest))))
+
 (defn route [(method : String @ Region) (target : String @ Region) (path : String @ Region) (body : String @ Region) (dest : Arena @ Region)] : String @ Region
   (if (and (string/str-eq? method "GET")
            (or (string/str-eq? path "/") (string/str-eq? path "/editor.html")))
-    (http_server/html-response 200 (host-read editor-path dest) dest)
+    (editor-response dest)
     (if (and (string/str-eq? method "GET") (string/str-eq? path "/api/local-nock"))
       (http_server/json-response 200 (status-json dest) dest)
       (if (and (string/str-eq? method "GET") (string/str-eq? path "/api/levels"))
@@ -476,6 +492,12 @@
       (set! repo-dir (host-env "LOCAL_NOCK_REPO" "." state))
       (set! levels-dir (host-env "LOCAL_NOCK_LEVELS" (string/concat repo-dir "/levels" state) state))
       (set! editor-path (host-env "LOCAL_NOCK_EDITOR" (string/concat repo-dir "/tools/nock_editor.html" state) state))
+      ;; Say where the editor was looked for, always. A blank page is answered by the two lines below
+      ;; instead of by guessing which of --root / cwd / LOCAL_NOCK_EDITOR was wrong.
+      (println (string/concat "local NOCK editor: " editor-path state))
+      (if (string/str-eq? (host-read editor-path state) "")
+        (do (println "local NOCK: WARNING editor unreadable -- GET / will answer 500 with this path") 0)
+        0)
       0)))
 
 (defn nock-run [(dest : Arena @ Region)] : I32
