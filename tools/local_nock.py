@@ -45,9 +45,17 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, parse_qs, urlparse
 
+HERE_FIRST = os.path.dirname(os.path.abspath(__file__))
+if HERE_FIRST not in sys.path:
+    sys.path.insert(0, HERE_FIRST)
+# The same binder the CLI runs. The point of importing it rather than reimplementing it here is that
+# the editor and `tools/mixamo_clipset.py` cannot disagree about what a valid bundle is.
+import mixamo_clipset  # noqa: E402
+
 SLUG_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 SESSION_PREFIX = "/api/v1/shankpit-edit-sessions"
 LEVELS_PREFIX = "/api/levels"
+CLIPSETS_PREFIX = "/api/clipsets"
 MAX_BODY = 4 << 20          # a whole level draft; IDUNA's cap for the same reason
 MAX_EVENT_BODY = 64 << 10   # one event is small; keep the log's per-entry cost bounded too
 MAX_EVENTS = 2000
@@ -203,9 +211,106 @@ class LevelStore:
             return {"committed": False, "detail": "git not found"}
 
 
+class ClipsetStore:
+    """Mixamo/GOLDENBAND clips as a committed bundle: assets/goldenband/clipsets/<name>/.
+
+    Same shape as LevelStore -- a file is the record, saving is committing -- because that is the
+    founder's own "import the assets and then commit them back up to git" for this repo. The bundle
+    is the thirteen-name contract directory the engine loads (packages/simulation/anim_clipset.h),
+    not a copy of anyone's raw FBX: the binder validates and renames, and only its output is tracked.
+
+    A raw .fbx/.glb staging directory is deliberately NOT here. Adobe's terms allow baking Mixamo
+    into a game but not redistributing the editable source assets, so the import path starts from
+    .gband clips that this repo already owns; a local NOCK that wrote raw exports into a public
+    tree would be the exact thing those terms forbid.
+    """
+
+    def __init__(self, repo, assets_dir, commit=True):
+        self.repo = repo
+        self.assets_dir = assets_dir
+        self.commit = commit
+
+    def clipsets_dir(self):
+        return os.path.join(self.assets_dir, "clipsets")
+
+    def available(self):
+        """Clip stems that have BOTH halves. The binary is channel-blind; without the manifest a
+        clip cannot be sampled by joint at all, so offering it would only produce a failed import."""
+        if not os.path.isdir(self.assets_dir):
+            return []
+        stems = sorted(fn[:-len(".gband")] for fn in os.listdir(self.assets_dir)
+                       if fn.endswith(".gband"))
+        return [s for s in stems if os.path.isfile(os.path.join(self.assets_dir, s + ".gband.json"))]
+
+    def sets(self):
+        base = self.clipsets_dir()
+        if not os.path.isdir(base):
+            return []
+        out = []
+        for name in sorted(os.listdir(base)):
+            d = os.path.join(base, name)
+            if not os.path.isdir(d):
+                continue
+            bound = [fn[:-len(".gband")] for fn in os.listdir(d) if fn.endswith(".gband")]
+            out.append({
+                "name": name,
+                "bound": len(bound),
+                "total": len(mixamo_clipset.CONTRACT),
+                "missing": [s for s in mixamo_clipset.CONTRACT if s not in bound],
+            })
+        return out
+
+    def bind(self, name, mapping, auto, partial):
+        """Returns (result, error). The binder's own messages are what the editor shows."""
+        if not SLUG_RE.match(name or ""):
+            return None, "bad clip set name (letters, digits, _ and -, max 64)"
+        if auto:
+            found, missing, ambiguous = mixamo_clipset.auto_map(self.available())
+            if ambiguous:
+                return None, "ambiguous: " + "; ".join(
+                    "%s could be %s" % (s, " or ".join(h)) for s, h in ambiguous)
+            if missing and not partial:
+                return None, "no clip for: " + ", ".join(missing)
+            mapping = found
+        if not isinstance(mapping, dict) or not mapping:
+            return None, "nothing mapped: pick a clip for at least one state, or tick auto"
+        out = os.path.join(self.clipsets_dir(), name)
+        errors, warnings = mixamo_clipset.write_bundle(mapping, self.assets_dir, out, allow_partial=partial)
+        if errors:
+            return None, "; ".join(errors)
+        return {
+            "ok": True, "name": name, "dir": os.path.relpath(out, self.repo),
+            "bound": len(mapping), "warnings": warnings, "git": self._commit(out, name, len(mapping)),
+        }, None
+
+    def _commit(self, path, name, bound):
+        if not self.commit:
+            return {"committed": False, "detail": "commits disabled (--no-commit)"}
+        rel = os.path.relpath(path, self.repo)
+        msg = f"asset(clipset): {name} bound to the 13-clip contract from local NOCK ({bound} clips)"
+        try:
+            add = subprocess.run(["git", "-C", self.repo, "add", "--", rel], capture_output=True, text=True)
+            if add.returncode != 0:
+                return {"committed": False, "detail": (add.stderr or add.stdout).strip()[:400]}
+            status = subprocess.run(["git", "-C", self.repo, "status", "--porcelain", "--", rel],
+                                    capture_output=True, text=True)
+            if not status.stdout.strip():
+                return {"committed": False, "detail": "no changes to commit"}
+            c = subprocess.run(["git", "-C", self.repo, "commit", "-m", msg, "--", rel],
+                               capture_output=True, text=True)
+            if c.returncode != 0:
+                return {"committed": False, "detail": (c.stderr or c.stdout).strip()[:400] or "commit failed"}
+            head = subprocess.run(["git", "-C", self.repo, "rev-parse", "--short", "HEAD"],
+                                  capture_output=True, text=True).stdout.strip()
+            return {"committed": True, "commit": head, "message": msg}
+        except FileNotFoundError:
+            return {"committed": False, "detail": "git not found"}
+
+
 class State:
-    def __init__(self, store, editor_html, verbose=False):
+    def __init__(self, store, editor_html, verbose=False, clips=None):
         self.store = store
+        self.editclipsets = clips
         self.editor_html = editor_html
         self.sessions = {}
         self.lock = threading.Lock()
@@ -301,6 +406,15 @@ class Handler(BaseHTTPRequestHandler):
         if path == LEVELS_PREFIX:
             return self._json(200, {"levels": st.store.listing()})
 
+        if path == CLIPSETS_PREFIX:
+            return self._json(200, {
+                "contract": mixamo_clipset.CONTRACT,
+                "clips": st.editclipsets.available() if st.editclipsets else [],
+                "sets": st.editclipsets.sets() if st.editclipsets else [],
+                "package": os.path.relpath(st.editclipsets.assets_dir, st.editclipsets.repo)
+                           if st.editclipsets else "",
+            })
+
         if path.startswith(LEVELS_PREFIX + "/"):
             name = unquote(path[len(LEVELS_PREFIX) + 1:])
             if not SLUG_RE.match(name):
@@ -343,6 +457,28 @@ class Handler(BaseHTTPRequestHandler):
 
         if path.startswith(LEVELS_PREFIX):
             return self._error(405, "method not allowed")
+
+        if path == CLIPSETS_PREFIX:
+            if not st.editclipsets:
+                return self._error(503, "clip sets are not configured")
+            try:
+                body = self._body()
+            except BodyTooLarge as e:
+                return self._error(413, str(e))
+            except ValueError as e:
+                return self._error(400, str(e))
+            try:
+                result, error = st.editclipsets.bind(
+                    str(body.get("name") or "")[:64],
+                    body.get("map"),
+                    bool(body.get("auto")),
+                    bool(body.get("partial")),
+                )
+            except OSError as e:
+                return self._error(500, f"cannot write clip set: {e}")
+            if error:
+                return self._error(400, error)
+            return self._json(200, result)
 
         if path == SESSION_PREFIX:
             try:
@@ -429,16 +565,18 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def build_server(port=8787, host="127.0.0.1", levels_dir=None, repo=None, commit=True,
-                 verbose=False):
+                 verbose=False, assets_dir=None):
     """Create (but do not start) the server -- used by main() and by the integration test."""
     repo = os.path.abspath(repo or os.getcwd())
     levels_dir = os.path.abspath(levels_dir or os.path.join(repo, "levels"))
+    assets_dir = os.path.abspath(assets_dir or os.path.join(repo, "assets", "goldenband"))
     with open(os.path.join(HERE, "nock_editor.html"), "r", encoding="utf-8") as f:
         editor_html = f.read()
     store = LevelStore(levels_dir, repo, commit=commit)
+    clips = ClipsetStore(repo, assets_dir, commit=commit)
     server = ThreadingHTTPServer((host, port), Handler)
     server.daemon_threads = True
-    server.state = State(store, editor_html, verbose=verbose)
+    server.state = State(store, editor_html, verbose=verbose, clips=clips)
     return server
 
 

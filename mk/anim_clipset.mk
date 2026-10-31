@@ -3,7 +3,7 @@
 #
 # Both halves are tested against the repo's REAL assets: the binder on Mike/Leela/Stan/George .gband
 # files, the selector through GOLDENBAND's own loader. Nothing here needs a GPU or a display.
-.PHONY: test-anim-clipset test-mixamo-clipset bind-mike-clips
+.PHONY: test-anim-clipset test-mixamo-clipset test-clipset-import bind-mike-clips
 
 # bind-mike-clips -- a real, inspectable binding of the robot rigs to the contract, into var/ (not
 # committed): the honest place for a bundle an artist is still populating.
@@ -13,6 +13,11 @@ bind-mike-clips:
 
 test-mixamo-clipset:
 	python3 tools/test_mixamo_clipset.py
+
+# The editor's side of the same binder: local NOCK's /api/clipsets, over real HTTP against a
+# throwaway git repo, so "import and commit" is verified as a workflow and not just a function.
+test-clipset-import:
+	python3 tools/test_clipset_import.py
 
 # The selector needs gband.c/gseq.c/gskel.c at runtime; sha256.c is only needed when the build's
 # gband.c pulls it in, so it is included when present rather than assumed.

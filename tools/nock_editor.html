@@ -62,6 +62,20 @@
   </select>
   <div class="dim" style="font-size:11px">Vehicle places a vehicle_spawn_&lt;kind&gt; tile where you click — the same name convention the buggy spawner uses, so IDUNA NOCK and this editor export the same thing.</div>
 
+  <h2>Character clips</h2>
+  <input id="clipsetName" placeholder="clip set name (mike, leo…)">
+  <div class="row" style="align-items:center">
+    <label class="dim" style="flex:1"><input id="clipAuto" type="checkbox" checked style="width:auto"> auto-map by name</label>
+    <label class="dim" style="flex:1"><input id="clipPartial" type="checkbox" style="width:auto"> allow partial</label>
+  </div>
+  <div id="clipSelects"></div>
+  <div class="row"><button id="clipImportBtn">Import + commit</button></div>
+  <div id="clipResult" class="dim"></div>
+  <div id="clipSets" class="dim" style="white-space:pre-wrap;font-size:11px"></div>
+  <div class="dim" style="font-size:11px">Binds .gband clips to the 13 gameplay states the engine asks for
+    (anim_idle…anim_climb_loop), validates hashes and rigs, and commits the bundle to git. Raw .fbx
+    exports never go in here: only the baked clips this repo already owns.</div>
+
   <h2>Live session</h2>
   <div class="row">
     <button id="startBtn">Start</button>
@@ -372,6 +386,82 @@ async function save() {
 }
 el("saveBtn").onclick = save;
 el("newBtn").onclick = newLevel;
+
+/* ---------- character clips: bind + commit ---------- */
+
+const CLIP_CONTRACT = ["anim_idle", "anim_walk", "anim_run", "anim_crouch_idle", "anim_crouch_walk",
+  "anim_jump_start", "anim_in_air", "anim_slide", "anim_weapon_fire", "anim_reload",
+  "anim_melee_swing", "anim_ability", "anim_climb_loop"];
+
+async function loadClipsets() {
+  try {
+    const r = await api("GET", "/api/clipsets");
+    const stems = r.clips || [];
+    const box = el("clipSelects");
+    const keep = {};
+    for (const s of box.querySelectorAll("select")) keep[s.dataset.state] = s.value;
+    box.innerHTML = "";
+    for (const state of (r.contract || CLIP_CONTRACT)) {
+      const row = document.createElement("label");
+      row.className = "row";
+      row.style.margin = "2px 0";
+      const tag = document.createElement("span");
+      tag.className = "dim";
+      tag.style.width = "9.5em";
+      tag.style.fontSize = "11px";
+      tag.textContent = state.replace("anim_", "");
+      const sel = document.createElement("select");
+      sel.dataset.state = state;
+      sel.style.flex = "1";
+      const none = document.createElement("option");
+      none.value = "";
+      none.textContent = "—";
+      sel.appendChild(none);
+      for (const stem of stems) {
+        const o = document.createElement("option");
+        o.value = stem;
+        o.textContent = stem;
+        sel.appendChild(o);
+      }
+      if (keep[state]) sel.value = keep[state];
+      row.appendChild(tag);
+      row.appendChild(sel);
+      box.appendChild(row);
+    }
+    const sets = r.sets || [];
+    el("clipSets").textContent = sets.length
+      ? sets.map(s => `${s.name}: ${s.bound}/${s.total}${s.missing.length ? " — missing " + s.missing.join(", ") : " (complete)"}`).join("\n")
+      : `${stems.length} clips available, no sets yet`;
+  } catch (e) {
+    el("clipSets").textContent = "clipsets: " + e.message;
+  }
+}
+
+async function importClips() {
+  const name = el("clipsetName").value.trim();
+  const auto = el("clipAuto").checked;
+  const partial = el("clipPartial").checked;
+  const map = {};
+  for (const sel of document.querySelectorAll("#clipSelects select"))
+    if (sel.value) map[sel.dataset.state] = sel.value;
+  el("clipResult").textContent = "importing…";
+  try {
+    const r = await api("POST", "/api/clipsets", { name, auto, partial, map });
+    const g = r.git || {};
+    el("clipResult").textContent = g.committed
+      ? `bound ${r.bound}/13 -> ${r.dir} (committed ${g.commit})`
+      : `bound ${r.bound}/13 -> ${r.dir} (${g.detail || "not committed"})`;
+    log(el("clipResult").textContent);
+    if (r.warnings && r.warnings.length) log("warn: " + r.warnings.join("; "));
+    loadClipsets();
+  } catch (e) {
+    el("clipResult").textContent = "import failed: " + e.message;
+    log(el("clipResult").textContent);
+  }
+}
+
+el("clipImportBtn").onclick = importClips;
+loadClipsets();
 
 /* ---------- live session ---------- */
 
