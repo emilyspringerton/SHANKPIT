@@ -71,10 +71,26 @@ really-bound socket, and — the part that matters — spawns the actual server,
 writes, checks the port is held, checks a second start attaches instead of spawning, then stops it and
 checks the port is released.
 
-**Phase 4 — GFD state server.** Take the MUD's job/stat/inventory model, and **port its rules to PARENA**
-(`stats_bridge.prn`: job → cooldown/haste/evasion/max HP, equipment → affinities). The C side consumes a
-flat struct; it must not learn about 23 jobs. The dungeon's `difficulty` tier is the first input.
-Persistence is the state server's job (name-keyed JSON saves), not the client's.
+**Phase 4 — shipped (the bridge).** `PARENA/stdlib/shankpit/stats_bridge.prn` now owns GFD's job model
+as numbers this engine can use: the table is copied verbatim from
+`GoblinFoxDragon/server/job/job.go` — 23 jobs in `AllJobs` order, including GFD's own non-canonical 23rd
+(ASN), with base HP/MP, the per-level curves, and STR/DEX/VIT/AGI — and the mapping into this engine is
+ours, in I32 permille: haste (a multiplier on a weapon's own ROF ticks, never a rewrite of it), move,
+crit, evade, a damage *scalar* on `WPN_STATS` (a knife stays a knife), and health clamped to the 255 the
+wire's `unsigned char` can actually carry.
+
+The boundary the doc called for is kept: the C side consumes a flat `StatsBridge` of function pointers and
+plain ints, so it never learns about 23 jobs, and `packages/simulation/stats_bridge.h` carries identical C
+defaults for binaries and tests that cannot link generated code. `make test-stats-bridge` pins all three
+things that would otherwise rot: the table against `job.go` field by field (all 23), the generated rules
+against the header across every job and level −2..80, and the mapping's behaviour (level curves, melee
+jobs having no MP, a fast job shortening a cooldown but never to a zero-tick weapon, health capping rather
+than wrapping).
+
+Deliberately **not** in this pass, named rather than implied: **nothing applies a job to a live match yet**
+— no call site reads the bridge, so a player is still the same 100 HP and the same ROF whatever job a save
+says; equipment and elemental affinities are untouched (they need the item model, which is GFD's); and
+nothing persists. The dungeon's `difficulty` tier is still generated but not yet fed into a stat curve.
 
 **Phase 5 — Meadow, properly.** Meadow has a *simulation* seed, not geometry. Turning it into a 3D zone
 means either authoring it as a NOCK level or teaching `proc_dungeon.h` a second layout kind (outdoor
