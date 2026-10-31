@@ -6800,13 +6800,31 @@ void draw_buggy_model(PlayerState *p) {
     glEnable(GL_LIGHTING);
     glEnable(GL_LIGHT0);
     glLightfv(GL_LIGHT0, GL_POSITION, light_pos);
+    /* REAL FIX (founder real-time, 2026-10-31: "the vehicles totally black"): every part of this
+       model is authored with glColor -- body, wheels, accents -- but under GL_LIGHTING glColor is
+       IGNORED unless GL_COLOR_MATERIAL is on, so the whole car was rendering from the flat
+       0.06/0.14 material above instead of from its own colours: a black blob. The light model's
+       own ambient is the car's sky fill for exactly the reason retro_lighting.c's SUN_SKY_FILL
+       spells out -- without it every face turned away from LIGHT0 falls to material-ambient times
+       light-model-ambient, i.e. back to black on half the car. Both toggles are inside this
+       function's existing glPushAttrib(GL_LIGHTING_BIT | GL_ENABLE_BIT), so they are restored with
+       everything else and cannot leak into the map, the HUD or the next entity. */
+    glEnable(GL_COLOR_MATERIAL);
+    glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
+    {
+        GLfloat sky_fill[] = {0.42f, 0.45f, 0.50f, 1.0f};
+        glLightModelfv(GL_LIGHT_MODEL_AMBIENT, sky_fill);
+    }
     glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT, ambient);
     glMaterialfv(GL_FRONT_AND_BACK, GL_DIFFUSE, diffuse);
     glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, specular);
     glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, 6.0f + (1.0f - g_vehicle_style.matte) * 28.0f);
 
     glDisable(GL_TEXTURE_2D);
-    glColor4f(0.06f, 0.06f, 0.065f, 1.0f);
+    /* 0.06 here never reached the glass: it was written while glColor was dead under GL_LIGHTING.
+       Now that the colour material actually reads it, the body has to be the graphite it was meant
+       to be, or the car is a hole in the road with wheels. */
+    glColor4f(0.24f, 0.25f, 0.27f, 1.0f);
     glPushMatrix();
     glScalef(2.0f, 1.0f, 3.5f);
     draw_box_solid(1.0f, 1.0f, 1.0f);
@@ -6915,7 +6933,7 @@ void draw_buggy_model(PlayerState *p) {
         glPushMatrix();
         glTranslatef(wx[i], -0.5f, wz[i]);
         glScalef(0.8f, 1.5f, 1.5f);
-        glColor3f(0.10f, 0.10f, 0.10f);
+        glColor3f(0.16f, 0.16f, 0.17f);
         draw_box_solid(0.5f, 0.5f, 0.5f);
         glPopMatrix();
     }
@@ -6941,6 +6959,14 @@ static void draw_buggy_entity(const BuggyState *b) {
            from across the map without a second model. */
         const float air = (float)b->tank / (float)(phys_rocket_tank_max() > 0 ? phys_rocket_tank_max() : 1);
         const float hot = 0.25f + 0.75f * (air < 0.0f ? 0.0f : (air > 1.0f ? 1.0f : air));
+        /* SAVED, not assumed off (founder real-time, 2026-10-31: "everything is black now ... the
+           vehicles totally black the screen text totally black even the background for the log
+           text"). This branch used to end with a flat glEnable(GL_LIGHTING), which turned lighting
+           ON for the rest of the frame with no light source enabled -- 0.2 material ambient times
+           0.2 light-model ambient, about 4% brightness. Everything drawn after the first vehicle
+           (HUD glyphs, the log panel, every prop that colours itself with glColor) rendered black.
+           Same save/restore discipline retro_sky.c already uses. */
+        const GLboolean rocket_lit_was_on = glIsEnabled(GL_LIGHTING);
         glDisable(GL_LIGHTING);
         glDisable(GL_TEXTURE_2D);
         glEnable(GL_BLEND);
@@ -6972,7 +6998,7 @@ static void draw_buggy_entity(const BuggyState *b) {
         glEnd();
         glPopMatrix();
         glDisable(GL_BLEND);
-        glEnable(GL_LIGHTING);
+        if (rocket_lit_was_on) glEnable(GL_LIGHTING); else glDisable(GL_LIGHTING);
     }
     glPopMatrix();
 }
@@ -6990,6 +7016,7 @@ static void draw_drone_entity(const DroneState *d) {
     glRotatef(d->roll, 0, 0, 1);
     glRotatef(d->pitch, 1, 0, 0);
     glScalef(s, s, s);
+    const GLboolean drone_lit_was_on = glIsEnabled(GL_LIGHTING); /* see draw_buggy_entity's own note */
     glDisable(GL_LIGHTING);
     glDisable(GL_TEXTURE_2D);
     glColor3f(0.12f, 0.13f, 0.15f);
@@ -7011,7 +7038,8 @@ static void draw_drone_entity(const DroneState *d) {
     if (micro) glColor3f(0.15f, 0.95f, 0.35f); else glColor3f(0.95f, 0.20f, 0.20f);
     glPushMatrix(); glTranslatef(0.0f, -0.14f, 0.0f); glScalef(0.12f, 0.06f, 0.12f); draw_box_solid(1, 1, 1); glPopMatrix();
     glPopMatrix();
-    glEnable(GL_LIGHTING);
+    /* Restore rather than re-enable: this used to leave GL_LIGHTING on for the rest of the frame. */
+    if (drone_lit_was_on) glEnable(GL_LIGHTING); else glDisable(GL_LIGHTING);
 }
 
 /* The C-110: a slab-sided transport -- fuselage, high wing, twin nacelles with spinning props, tail.
@@ -7024,6 +7052,7 @@ static void draw_airplane_model(const AirplaneState *a) {
     glRotatef(180.0f - norm_yaw_deg(a->yaw), 0, 1, 0);
     glRotatef(a->roll, 0, 0, 1);
     glRotatef(-a->pitch, 1, 0, 0);
+    const GLboolean plane_lit_was_on = glIsEnabled(GL_LIGHTING); /* see draw_buggy_entity's own note */
     glDisable(GL_LIGHTING);
     glDisable(GL_TEXTURE_2D);
     glColor3f(0.34f, 0.36f, 0.33f);                              /* fuselage */
@@ -7047,7 +7076,9 @@ static void draw_airplane_model(const AirplaneState *a) {
         glPopMatrix();
     }
     glPopMatrix();
-    glEnable(GL_LIGHTING);
+    /* Restore rather than re-enable: with the C-110 on the bridge this ran every frame, and the
+       flat glEnable here is what threw the rest of the frame (HUD included) into black. */
+    if (plane_lit_was_on) glEnable(GL_LIGHTING); else glDisable(GL_LIGHTING);
 }
 
 static void draw_thirdperson_knife_model(void) {
@@ -10374,6 +10405,8 @@ static void draw_widget_affordances(const PlayerState *p) {
     if (!pn && g_widget_rt.c.focused < 0) return;
     glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
     glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    const GLboolean afford_lit_was_on = glIsEnabled(GL_LIGHTING);
+    const GLboolean afford_tex_was_on = glIsEnabled(GL_TEXTURE_2D);
     glDisable(GL_TEXTURE_2D); glDisable(GL_LIGHTING); glDisable(GL_DEPTH_TEST);
     glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     if (pn) {
@@ -10404,7 +10437,9 @@ static void draw_widget_affordances(const PlayerState *p) {
         draw_string(line, 500.0f, 122.0f, 2.2f);
     }
     glDisable(GL_BLEND);
-    glEnable(GL_DEPTH_TEST); glEnable(GL_LIGHTING); glEnable(GL_TEXTURE_2D);
+    glEnable(GL_DEPTH_TEST);
+    if (afford_lit_was_on) glEnable(GL_LIGHTING); else glDisable(GL_LIGHTING);
+    if (afford_tex_was_on) glEnable(GL_TEXTURE_2D); else glDisable(GL_TEXTURE_2D);
     glMatrixMode(GL_PROJECTION); glPopMatrix();
     glMatrixMode(GL_MODELVIEW); glPopMatrix();
 }
