@@ -22,7 +22,11 @@ REM `for` with the trailing `.` resolves to a full path with no trailing separat
 for %%I in ("%~dp0.") do set "ROOT=%%~fI"
 set "PORT=%~1"
 if "%PORT%"=="" set "PORT=8787"
-set "LOGDIR=%ROOT%var\logs"
+REM ROOT has no trailing separator by design (see above), so EVERY join needs an
+REM explicit \ -- `%ROOT%var\logs` was the "ShankPitClientvar\logs" bug, and the
+REM same join made the dw_nock existence checks below fail, which is why NOCK
+REM always fell through to the Python one.
+set "LOGDIR=%ROOT%\var\logs"
 set "LOG=%LOGDIR%\nock.log"
 if not exist "%LOGDIR%" mkdir "%LOGDIR%" >nul 2>&1
 
@@ -30,9 +34,9 @@ echo. >> "%LOG%"
 echo ==== local_nock.bat %DATE% %TIME% port=%PORT% ==== >> "%LOG%"
 
 set "SERVER="
-if exist "%ROOT%bundled\dw_nock.exe"     set "SERVER=%ROOT%bundled\dw_nock.exe"
-if not defined SERVER if exist "%ROOT%bin\dw_nock.exe"          set "SERVER=%ROOT%bin\dw_nock.exe"
-if not defined SERVER if exist "%ROOT%bin\local_nock_parena.exe" set "SERVER=%ROOT%bin\local_nock_parena.exe"
+if exist "%ROOT%\bundled\dw_nock.exe"     set "SERVER=%ROOT%\bundled\dw_nock.exe"
+if not defined SERVER if exist "%ROOT%\bin\dw_nock.exe"          set "SERVER=%ROOT%\bin\dw_nock.exe"
+if not defined SERVER if exist "%ROOT%\bin\local_nock_parena.exe" set "SERVER=%ROOT%\bin\local_nock_parena.exe"
 
 echo ==========================================
 echo   SHANKPIT LOCAL NOCK  ^(map editor^)
@@ -49,13 +53,17 @@ where python >nul 2>&1
 if errorlevel 1 goto :no_server
 echo   server: python tools\local_nock.py (no native binary found)
 echo [local-nock] python fallback >> "%LOG%"
-start "SHANKPIT NOCK (python)" /min cmd /c "cd /d "%ROOT%" ^&^& python tools\local_nock.py --port %PORT% >> "%LOG%" 2>&1"
+REM `start /d` sets the working directory, so this needs no nested `cd /d` and
+REM no quotes-inside-quotes (that nesting was what printed "The system cannot
+REM find the path specified"). The log is relative because /d already put us at
+REM ROOT, and a relative path has no spaces to quote.
+start "SHANKPIT NOCK (python)" /min /d "%ROOT%" cmd /c "python tools\local_nock.py --port %PORT% >> var\logs\nock.log 2>&1"
 goto :opened
 
 :run_native
 echo   server: %SERVER%
 echo [local-nock] server=%SERVER% >> "%LOG%"
-start "SHANKPIT NOCK" /min cmd /c ""%SERVER%" --port %PORT% --root "%ROOT%" >> "%LOG%" 2>&1"
+start "SHANKPIT NOCK" /min /d "%ROOT%" cmd /c ""%SERVER%" --port %PORT% --root "%ROOT%" >> var\logs\nock.log 2>&1"
 
 :opened
 REM give the server a moment to bind before the browser asks for the page
@@ -77,9 +85,9 @@ exit /b 0
 echo   [FAIL] no NOCK server found and Python is not installed.
 echo.
 echo   Looked for:
-echo     %ROOT%bundled\dw_nock.exe
-echo     %ROOT%bin\dw_nock.exe
-echo     %ROOT%bin\local_nock_parena.exe
+echo     %ROOT%\bundled\dw_nock.exe
+echo     %ROOT%\bin\dw_nock.exe
+echo     %ROOT%\bin\local_nock_parena.exe
 echo.
 echo   Build one of them:
 echo     make local-nock-win          (Windows binary, cross-compiled)
