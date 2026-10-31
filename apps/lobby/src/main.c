@@ -14952,6 +14952,46 @@ static void buggy_advance_remote_positions(unsigned int now_ms) {
     }
 }
 
+/* --coop-host: start this zone's local server and join it (packages/simulation/coop_host.h). */
+#include "coop_host.h"
+
+/* lobby_coop_host_start -- `--coop-host [zone]`: spawn the real game server for this zone and point
+ * the client at it. Returns 1 when a world is reachable (started now, or already running from an
+ * earlier session, which is why the same command is also a rejoin), 0 with app_launch_status set to
+ * the reason otherwise. Nothing is written to SERVER_HOST/SERVER_PORT on failure, so a bad binary or
+ * a refused bind leaves the player in the lobby instead of silently connecting to the internet
+ * default (shankpit.okemily.com). */
+static int lobby_coop_host_start(const char *zone, int port) {
+    CoopHostConfig cfg;
+    if (!coop_host_config(&cfg, zone, port)) {
+        snprintf(app_launch_status, sizeof app_launch_status, "COOP: invalid zone or port");
+        return 0;
+    }
+    char server[1200];
+#ifdef _WIN32
+    const char *bundled_name = "shank_server.exe";
+#else
+    const char *bundled_name = "shank_server";
+#endif
+    /* Same search as every other launcher: bundled/ next to the client, else the dev tree's bin/. */
+    if (!lobby_app_binary_path(bundled_name, "shank_server", server, sizeof server)) {
+        snprintf(app_launch_status, sizeof app_launch_status,
+                 "COOP: server binary not found -- run `make server`");
+        return 0;
+    }
+    CoopHostResult r;
+    if (!coop_host_start(server, &cfg, &r)) {
+        snprintf(app_launch_status, sizeof app_launch_status, "COOP: %s", r.error);
+        return 0;
+    }
+    snprintf(SERVER_HOST, sizeof SERVER_HOST, "127.0.0.1");
+    SERVER_PORT = cfg.port;
+    snprintf(app_launch_status, sizeof app_launch_status, "COOP: zone %s %s on :%d",
+             cfg.zone, r.attached ? "already running" : "hosted", cfg.port);
+    printf("[coop] %s\n", app_launch_status);
+    return 1;
+}
+
 int main(int argc, char* argv[]) {
     buggy_rules_install(); /* PARENA buggy handling (#468) */
     heli_rules_install(); /* PARENA helicopter flight model (#542) */
@@ -14970,6 +15010,8 @@ int main(int argc, char* argv[]) {
     char cli_edit_session[40] = "";
     int cli_start_survival = 0;
     int cli_start_city = 0;
+    int cli_coop_host = 0;
+    char cli_coop_host_zone[COOP_HOST_ZONE_MAX] = "";
     int cli_third_person = 0;
     int cli_legacy_menu = 0;
     for(int i=1; i<argc; i++) {
@@ -15002,6 +15044,13 @@ int main(int argc, char* argv[]) {
             strncpy(SERVER_HOST, argv[++i], 63);
         } else if(strcmp(argv[i], "--port") == 0 && i+1<argc) {
             SERVER_PORT = atoi(argv[++i]);
+        } else if(strcmp(argv[i], "--coop-host") == 0) {
+            /* --coop-host [zone] -- one command to host: start the local server for this zone and
+               join it over loopback, so a LAN ally's join and the host's own session are the same
+               MODE_QUEUE netcode. Deliberately NOT --dungeon above, which builds the zone in this
+               process for solo play and has no server anyone else can reach. */
+            cli_coop_host = 1;
+            if (i + 1 < argc && argv[i + 1][0] != '-') snprintf(cli_coop_host_zone, sizeof cli_coop_host_zone, "%s", argv[++i]);
         } else if(strcmp(argv[i], "--level") == 0 && i+1<argc) {
             // A level authored in NOCK's SHANKPIT level editor (EMILY/BACKLOG.md SECTION 459).
             // Real, existing convention this matches exactly: every other scene's own map_geo is
@@ -15159,10 +15208,23 @@ int main(int argc, char* argv[]) {
     /* No title screen / main menu: with no explicit mode flag, drop straight into ZOMBIES.
        Esc leaves the match for the legacy menu (see the SDLK_ESCAPE branch in the game keydown). */
     if (!cli_legacy_menu && !cli_start_zombies && !cli_start_lab && !cli_start_editmap &&
-        !cli_start_survival && !cli_start_city && !cli_start_dungeon) cli_start_zombies = 1;
+        !cli_start_survival && !cli_start_city && !cli_start_dungeon && !cli_coop_host) cli_start_zombies = 1;
     if (cli_start_dungeon) {
         app_state = STATE_GAME_LOCAL;
         if (!lobby_start_proc_dungeon(cli_dungeon_zone)) app_state = STATE_LOBBY;
+    }
+    if (cli_coop_host) {
+        /* Host is a player too, and a networked one: the exact MODE_QUEUE connect path the menu tile
+           uses, just aimed at loopback. If the world could not come up, stay in the lobby -- the
+           reason is already on screen via app_launch_status. */
+        if (lobby_coop_host_start(cli_coop_host_zone, 0)) {
+            app_state = STATE_GAME_NET;
+            reset_client_render_state_for_net();
+            net_requested_mode = MODE_QUEUE;
+            net_connect();
+        } else {
+            app_state = STATE_LOBBY;
+        }
     }
     if (cli_start_zombies) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_ZOMBIES); lobby_modes_bypass = 0; }
     if (cli_start_editmap) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_EDITMAP); lobby_modes_bypass = 0; if (cli_edit_session[0]) es_start(strcmp(cli_edit_session, "new") ? cli_edit_session : NULL); }

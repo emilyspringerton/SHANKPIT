@@ -61,7 +61,12 @@ the lever is the familiar `[F] USE` prompt.
 - In game (local), **F7** descends: it creates/joins `dungeon_N` and loads it through the normal
   custom-level loader (so lighting, destructible brick, the widget circuit and zombies population all
   apply).
-- `./bin/shank_lobby --dungeon [zone]` starts straight into a generated zone.
+- `./bin/shank_lobby --dungeon [zone]` starts straight into a generated zone, single-process (no server).
+- `./bin/shank_lobby --coop-host [zone]` **hosts** it instead: one command that starts `bin/shank_server`
+  for that zone as a child, joins it over loopback, and plays `MODE_QUEUE` — so an ally on the LAN joins
+  the host's world and both run the same netcode (`--host <host-lan-ip>`). Running the same command again
+  attaches to the world that is still up rather than starting a second server that cannot bind the port.
+  `make test-coop-host` spawns the real server and checks exactly that.
 - `./bin/shank_server --dungeon [zone]` **hosts** one: the server owns the zone and the clock, broadcasts
   `PACKET_ZONE_STATE` (id, seed, players, state, idle_ms) at 1 Hz, and a client that receives it rebuilds
   the identical layout locally and reloads only when the id or the seed changes. No geometry crosses the

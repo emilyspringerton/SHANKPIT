@@ -39,11 +39,28 @@ changed, so a 1 Hz repeat never drops decals or restarts the world. The wire car
 geometry — both sides run the same deterministic generator. `make test-zone-sync` covers the refusals
 (short datagram, wrong type, unterminated id) and the no-op-on-repeat rule.
 
-**Phase 3 — batteries-included host.** `--coop-host` that starts the authoritative server in-process (or
-as a child process) on the LAN interface, advertises over broadcast, and writes progress under `var/`.
-Single-player = the same path with nobody else joining, which is the Minecraft model the founder named.
-The current `--host/--port` client path already exists; what is missing is the host side owning both the
-UDP game loop and the zone registry.
+**Phase 3 — shipped (host side).** `./bin/shank_lobby --coop-host [zone]` hosts and joins in one command:
+`packages/simulation/coop_host.c` starts the real `bin/shank_server` for that zone as a child process
+(same fork/exec and `CreateProcessA` pattern as `lobby_launch_nock`), points the client at loopback, and
+enters `MODE_QUEUE` — the host plays the *same* netcode an ally uses, not a local special case. An ally
+joins by the host's LAN IP the ordinary way (`--host <ip>`). Single-player is that path with nobody else
+in it, which is the Minecraft model the founder named.
+
+Two decisions in there are load-bearing rather than convenience. First, the UDP port probe: a UDP port
+has no `accept`, so `coop_host_port_busy` binds it briefly and lets go. That is what makes **relaunching
+attach** to a world that is still up instead of spawning a second server that cannot bind and dies.
+Second, zone ids are validated at the flag (`[A-Za-z0-9_-]`, not starting with `-`) because the id is a
+real filename component (`var/maps/proc_<zone>.json`) *and* an argv element.
+
+Still missing from phase 3, and named here rather than implied: **no LAN broadcast/discovery** (an ally
+types the IP; nothing announces the world), and **no in-process server** — it is a child process, so
+quitting the lobby leaves the world up until it is killed. That is deliberate for now (a hosted world
+outliving one person's session is the point), but it is a policy that needs a decision, not an oversight.
+
+`make test-coop-host` covers the flag parsing/refusals, the exact child argv, the port probe against a
+really-bound socket, and — the part that matters — spawns the actual server, waits for the zone file it
+writes, checks the port is held, checks a second start attaches instead of spawning, then stops it and
+checks the port is released.
 
 **Phase 4 — GFD state server.** Take the MUD's job/stat/inventory model, and **port its rules to PARENA**
 (`stats_bridge.prn`: job → cooldown/haste/evasion/max HP, equipment → affinities). The C side consumes a
@@ -57,8 +74,10 @@ a fake import.
 
 ## Honest state of "multiplayer"
 
-A LAN client of a `--dungeon` server now learns the zone and rebuilds the same dungeon, and reloads when
-the zone expires and regenerates. What is **not** there yet: one command that starts the host
-(`--coop-host`, phase 3), LAN discovery, and an explicit "enter zone" action — on the server, occupancy is
-whoever is connected, so the zone generates when the first client joins rather than when someone walks
-through a door. Those are the next slices, not claims.
+A LAN client of a `--dungeon` server learns the zone and rebuilds the same dungeon, and reloads when the
+zone expires and regenerates. `--coop-host` now makes the host side one command too, on the same
+`MODE_QUEUE` netcode the ally uses. What is **not** there yet: LAN broadcast/discovery (the ally needs the
+host's IP, typed), a world that stops when the host quits (the server is a child process and outlives the
+lobby), and an explicit "enter zone" action — on the server, occupancy is whoever is connected, so the zone
+generates when the first client joins rather than when someone walks through a door. Those are the next
+slices, not claims.
