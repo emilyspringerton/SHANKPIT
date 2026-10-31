@@ -167,4 +167,14 @@ static inline unsigned zone_registry_seed(const ZoneRegistry *reg, const char *i
     return idx < 0 ? 0u : reg->slot[idx].seed;
 }
 
+/* How long the zone has been empty, for the packet's countdown. 0 while occupied or not counting. */
+static inline int zone_registry_idle_ms(const ZoneRegistry *reg, const char *id, int now_ms) {
+    int idx = zone_registry_find(reg, id);
+    const ZoneSlot *s;
+    if (idx < 0) return 0;
+    s = &reg->slot[idx];
+    if (s->players > 0 || s->idle_since_ms == 0) return 0;
+    return g_zone_rules.elapsed_ms(now_ms, s->idle_since_ms);
+}
+
 #endif /* SHANKPIT_ZONE_REGISTRY_H */

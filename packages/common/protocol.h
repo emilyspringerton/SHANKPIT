@@ -98,6 +98,16 @@
  * can (WPN_SPRAYCAN) needs no packet: weapon, colour (ammo) and trigger (is_shooting) already ride
  * NetPlayer. */
 #define PACKET_SPRAY_DECAL 16
+
+/* PACKET_ZONE_STATE -- shared procedural zones (SHANKPIT ARCHIPELAGO phase 2). Server -> client, 1 Hz,
+ * every welcomed client, any mode that has a zone loaded. It carries the zone's IDENTITY, not its
+ * geometry: a client rebuilds the identical dungeon from the seed with
+ * packages/simulation/proc_dungeon.h, the same "both sides independently build the same level" contract
+ * `--level` already relies on. `state` is the zone registry's own 0 uninitialized / 1 active / 2 idle;
+ * `idle_ms` is how long it has been empty, so a client can show the countdown. Absolute and idempotent,
+ * like PACKET_BRICK_STATE: a dropped datagram or a late joiner heals on the next one. */
+#define PACKET_ZONE_STATE 17
+#define NET_ZONE_ID_MAX 32
 #define NET_SHIELD_PACK_MAX 16
 
 #define VOXEL_CHUNK_SIZE            16
@@ -240,6 +250,19 @@ typedef struct {
     float x, y, z;
     float nx, ny, nz;
 } NetSprayDecal;
+
+/* NetZoneState -- see PACKET_ZONE_STATE's own doc comment above. A fixed-size, self-contained packet:
+ * the seed and the id are the whole payload, because sending hundreds of boxes over UDP would be the
+ * wrong answer when every client already has the generator. */
+typedef struct {
+    NetHeader hdr;
+    char zone_id[NET_ZONE_ID_MAX];
+    unsigned int seed;
+    unsigned int idle_ms;   /* how long the zone has been empty (0 while occupied) */
+    unsigned char players;
+    unsigned char state;    /* zone_registry.h: 0 uninitialized, 1 active, 2 idle */
+    unsigned short pad;
+} NetZoneState;
 
 /* NetBrickState -- see PACKET_BRICK_STATE's own doc comment above. key_lo/key_hi are the two halves
  * of the 30-bit cell key (ix | iy<<10 | iz<<20) so the entry has no padding or endianness trap. */

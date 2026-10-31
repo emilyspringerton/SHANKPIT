@@ -58,11 +58,18 @@ the lever is the familiar `[F] USE` prompt.
 
 ## Reaching it
 
-- In game, **F7** descends: it creates/joins `dungeon_N` and loads it through the normal custom-level
-  loader (so lighting, destructible brick, the widget circuit and zombies population all apply).
+- In game (local), **F7** descends: it creates/joins `dungeon_N` and loads it through the normal
+  custom-level loader (so lighting, destructible brick, the widget circuit and zombies population all
+  apply).
 - `./bin/shank_lobby --dungeon [zone]` starts straight into a generated zone.
+- `./bin/shank_server --dungeon [zone]` **hosts** one: the server owns the zone and the clock, broadcasts
+  `PACKET_ZONE_STATE` (id, seed, players, state, idle_ms) at 1 Hz, and a client that receives it rebuilds
+  the identical layout locally and reloads only when the id or the seed changes. No geometry crosses the
+  wire — the packet carries the identity and both sides run the same deterministic generator.
 
-Both call the same `lobby_start_proc_dungeon`.
+On the server, occupancy is the number of connected players: the first one in generates the zone, the
+last one out starts the fifteen-minute countdown, and a later arrival after expiry regenerates from a new
+seed (which is what makes the client reload).
 
 ## GFD maps
 
@@ -77,9 +84,12 @@ Both call the same `lobby_start_proc_dungeon`.
 
 ## Not built yet (named, not implied)
 
-- **No zone packet.** The registry and seeds are host-side; a LAN friend is not yet sent the seed or the
-  map. That is the next slice (a `PACKET_ZONE_STATE` carrying zone id + seed + occupancy, and the client
-  generating from the seed instead of trusting a file).
+- **No single-command co-op host.** `--dungeon` works with the server started separately: there is no
+  `--coop-host` that starts the server in-process and advertises it on the LAN yet. That is phase 3 in
+  `docs/GFD_UNIFICATION.md`.
+- **No explicit "enter zone" request.** On the server, occupancy is presence, so the zone is generated when
+  the first client connects rather than when they walk through a door. A portal/`/enter` trigger is a
+  follow-up; the registry already supports the lifecycle it would call.
 - **No menu tile.** F7 and `--dungeon` are the reachable paths; the archipelago browser is UI work.
 - **No GFD state server.** Job/stat/inventory progression is a separate phase (see the unification doc);
   the dungeon carries a `difficulty` tier for it to consume later.

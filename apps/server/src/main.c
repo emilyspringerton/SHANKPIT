@@ -18,6 +18,10 @@
 #endif
 
 #include "../../../packages/common/protocol.h"
+#include "../../../packages/simulation/proc_dungeon.h"
+#include "../../../packages/simulation/zone_registry.h"
+#include "../../../packages/simulation/zone_rules_host.h"
+#include "../../../packages/simulation/zone_sync.h"
 #include "../../../packages/common/physics.h"
 #include "../../../packages/common/shared_movement.h"
 #include "../../../packages/common/net_sim.h"
@@ -1558,6 +1562,97 @@ void server_broadcast_queue_level(void) {
     }
 }
 
+/* ---- shared procedural zones, server side -------------------------------------------------------
+ * Founder: "the first person to enter it it generates and then everyone else enters the same one ...
+ * generated and then they exist until everyone leaves + 15 minutes". The server owns the zone and the
+ * clock (packages/simulation/zone_registry.h); clients get its IDENTITY over PACKET_ZONE_STATE and
+ * rebuild the identical layout from the seed (zone_sync.h), so no geometry crosses the wire. Occupancy is
+ * the count of connected players: the first one in generates, the last one out starts the countdown. */
+static ZoneRegistry g_server_zones;
+static int g_server_zones_ready = 0;
+static char g_server_zone_id[NET_ZONE_ID_MAX] = "";
+static unsigned int g_server_zone_seed = 0;
+static int g_server_zone_seen_players = 0;
+
+static void server_zone_expired(void *user, const char *zone_id) {
+    char path[256];
+    (void)user;
+    snprintf(path, sizeof path, "var/maps/proc_%s.json", zone_id ? zone_id : "zone");
+    remove(path);
+    printf("[ZONE] '%s' was empty past its grace period -- layout deleted, next entrant regenerates\n",
+           zone_id ? zone_id : "?");
+}
+
+static void server_zone_generate_and_apply(const char *zone_id, unsigned int seed) {
+    static CustomLevelData lvl;
+    char path[256];
+    FILE *probe;
+    proc_dungeon_generate(&lvl, zone_id, seed);
+    probe = fopen("var/maps", "rb");
+    if (probe) fclose(probe);
+    else (void)system("mkdir -p var/maps");
+    snprintf(path, sizeof path, "var/maps/proc_%s.json", zone_id);
+    if (!proc_dungeon_save(path, &lvl)) printf("[ZONE] could not write %s\n", path);
+    server_apply_custom_level(&lvl);
+    /* Copy only when the source is NOT the destination: snprintf with overlapping buffers is undefined,
+       and the first version did exactly that (g_server_zone_id into itself), which glibc turned into an
+       empty id -- a server that generated a zone and then advertised ''. */
+    if (zone_id != g_server_zone_id) snprintf(g_server_zone_id, sizeof g_server_zone_id, "%s", zone_id);
+    g_server_zone_seed = seed;
+    printf("[ZONE] generated '%s' seed %08x (%d boxes, difficulty %d)\n",
+           zone_id, seed, lvl.count, g_zone_rules.difficulty((int)seed));
+}
+
+static void server_zone_begin(const char *zone) {
+    const char *id = (zone && zone[0]) ? zone : "dungeon_1";
+    unsigned int seed = 0;
+    int created;
+    if (!g_server_zones_ready) {
+        zone_registry_init(&g_server_zones, (unsigned int)get_server_time() | 1u);
+        g_server_zones_ready = 1;
+    }
+    created = zone_registry_enter(&g_server_zones, id, (int)get_server_time(), &seed);
+    if (created < 0) { printf("[ZONE] no free slot for '%s'\n", id); g_server_zone_id[0] = 0; return; }
+    g_server_zone_seen_players = 1;   /* the first tick with nobody connected releases it to idle */
+    server_zone_generate_and_apply(id, seed);
+}
+
+void server_broadcast_zone_state(void) {
+    static unsigned int last_ms = 0;
+    unsigned int now_ms = get_server_time();
+    int connected = 0, state;
+    NetZoneState pkt;
+
+    if (!g_server_zones_ready || !g_server_zone_id[0]) return;
+    for (int i = 1; i < MAX_CLIENTS; i++)
+        if (slots[i].active && slots[i].welcomed && slots[i].cmd_seen && local_state.players[i].active) connected++;
+
+    state = zone_registry_state(&g_server_zones, g_server_zone_id);
+    if (connected > 0 && state == ZONE_STATE_UNINIT) {
+        unsigned int seed = 0;
+        if (zone_registry_enter(&g_server_zones, g_server_zone_id, (int)now_ms, &seed) == 1)
+            server_zone_generate_and_apply(g_server_zone_id, seed);
+    } else if (connected > g_server_zone_seen_players) {
+        for (int n = g_server_zone_seen_players; n < connected; n++)
+            zone_registry_enter(&g_server_zones, g_server_zone_id, (int)now_ms, NULL);
+    } else if (connected < g_server_zone_seen_players) {
+        for (int n = connected; n < g_server_zone_seen_players; n++)
+            zone_registry_leave(&g_server_zones, g_server_zone_id, (int)now_ms);
+    }
+    g_server_zone_seen_players = connected;
+    zone_registry_tick(&g_server_zones, (int)now_ms, server_zone_expired, NULL);
+    state = zone_registry_state(&g_server_zones, g_server_zone_id);
+
+    if (last_ms != 0 && (now_ms - last_ms) < 1000) return;
+    last_ms = now_ms;
+    zone_sync_fill(&pkt, g_server_zone_id, g_server_zone_seed, connected, state,
+                   (unsigned int)zone_registry_idle_ms(&g_server_zones, g_server_zone_id, (int)now_ms), now_ms);
+    for (int i = 1; i < MAX_CLIENTS; i++) {
+        if (!slots[i].active || !slots[i].welcomed) continue;
+        sendto(sock, &pkt, sizeof(pkt), 0, (struct sockaddr*)&slots[i].addr, sizeof(struct sockaddr_in));
+    }
+}
+
 /* server_shield_packs_tick -- card #541. MODE_QUEUE only. A player dying has a SHIELD_PACK_DROP_PERCENT chance
  * to leave a pack where they fell; any living player standing on a pack whose shield is below full takes it and
  * is refilled to full. Shields still do not regenerate (founder: "leave it like that") -- a pack is the only way
@@ -1719,7 +1814,12 @@ int main(int argc, char *argv[]) {
     // override pattern in this file -- loading real, honest fallback on any failure (missing/
     // malformed file), never silently falls back to a garbled half-loaded level.
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--level") == 0 && i + 1 < argc) {
+        if (strcmp(argv[i], "--dungeon") == 0) {
+            /* --dungeon [zone] -- host a shared procedural zone. It is generated once here and its
+               (id, seed) is broadcast; clients rebuild the identical layout themselves. */
+            const char *zone = (i + 1 < argc && argv[i + 1][0] != '-') ? argv[++i] : "dungeon_1";
+            server_zone_begin(zone);
+        } else if (strcmp(argv[i], "--level") == 0 && i + 1 < argc) {
             CustomLevelData lvl;
             if (level_boxes_load_from_file(argv[i + 1], &lvl)) {
                 server_apply_custom_level(&lvl);
@@ -2055,6 +2155,7 @@ int main(int argc, char *argv[]) {
             server_broadcast_world_clock();
             server_broadcast_brick_state();
             server_broadcast_queue_level();
+            server_broadcast_zone_state();   /* PACKET_ZONE_STATE: the zone's id + seed, 1 Hz */
             server_broadcast_shield_packs();
         }
         net_server_emit_summary(now);

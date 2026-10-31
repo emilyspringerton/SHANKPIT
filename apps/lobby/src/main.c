@@ -112,6 +112,7 @@
 #include "../../../packages/simulation/proc_dungeon.h"
 #include "../../../packages/simulation/zone_registry.h"
 #include "../../../packages/simulation/zone_rules_host.h"
+#include "../../../packages/simulation/zone_sync.h"
 
 /* ── S144-02 Stage B: GOLDENBAND skinned mesh for Tyler ──────────────────────
  * Ports REDGARDEN/GFD's S144-07 gband_mesh_rig onto the shader/VBO
@@ -12185,6 +12186,26 @@ static void draw_gun_items(unsigned int now_ms) {
 // sent by the other.
 static int g_queue_level_loaded = 0; // only latches once the real fetch+apply SUCCEEDS -- a transient failure retries on the next scene-entry instead of leaving the client permanently geometry-less for the rest of the session
 static int g_queue_level_id = -2; // card #481: registry id of the level this client's physics currently holds (-2 = none yet)
+/* ---- shared procedural zones, client side -------------------------------------------------------
+ * The server sends the zone's identity, never its geometry: PACKET_ZONE_STATE carries (id, seed) and this
+ * rebuilds the identical layout with the same generator the host used (zone_sync.h explains why a
+ * repeated 1 Hz packet must be a no-op). */
+static ZoneSync g_client_zone;
+
+static void client_apply_zone_state(const char *zone_id, unsigned int seed) {
+    static CustomLevelData lvl;
+    proc_dungeon_generate(&lvl, zone_id, seed);
+    level_boxes_apply_to_physics(&lvl);
+    scene_load(SCENE_CUSTOM_LEVEL);
+    if (net_local_pid > 0 && net_local_pid < MAX_CLIENTS)
+        local_state.players[net_local_pid].scene_id = SCENE_CUSTOM_LEVEL;
+    memset(&g_client_zone, 0, sizeof g_client_zone);
+    g_client_zone.active = 1;
+    snprintf(g_client_zone.zone_id, sizeof g_client_zone.zone_id, "%s", zone_id);
+    g_client_zone.seed = seed;
+    NET_CLIENT_LOG("ZONE_RX id=%s seed=%08x (%d boxes)", zone_id, seed, lvl.count);
+}
+
 static void client_load_queue_level_id(int found_id) {
     if (found_id < 0) return;
     CustomLevelData lvl;
@@ -13918,7 +13939,8 @@ void net_connect() {
     if (sock < 0) return;
     local_state.game_mode = net_requested_mode;
     g_queue_level_id = -2;
-    g_queue_level_loaded = 0; // real reset per S459-39: a fresh connect attempt deserves a fresh level-fetch attempt, not a stale failure/success latched from a previous session
+    g_queue_level_loaded = 0;
+    memset(&g_client_zone, 0, sizeof g_client_zone);   /* a new connection re-learns its zone */ // real reset per S459-39: a fresh connect attempt deserves a fresh level-fetch attempt, not a stale failure/success latched from a previous session
     g_default_spray_prefetched = 0; // S459-74, same real reasoning -- a transient registry failure on a prior connect shouldn't be latched forever
     NET_CLIENT_LOG("CONNECT_BEGIN host=%s port=%d mode=%d", SERVER_HOST, SERVER_PORT, net_requested_mode);
     /* Try numeric IP first (no DNS stall); fall back to gethostbyname only for hostnames.
@@ -14822,6 +14844,10 @@ void net_tick() {
             for (int k = 0; ok && k < 6; k++)
                 if (!(sv[k] == sv[k]) || sv[k] > 100000.0f || sv[k] < -100000.0f) ok = 0;
             if (ok) spray_decal_push(sd.x, sd.y, sd.z, sd.nx, sd.ny, sd.nz, sd.hdr.scene_id, sd.spray_id);
+        } else if (head->type == PACKET_ZONE_STATE && len >= (int)sizeof(NetZoneState)) {
+            ZoneSync in;
+            if (zone_sync_decode(&in, head, len) && zone_sync_should_reload(&g_client_zone, &in))
+                client_apply_zone_state(in.zone_id, in.seed);
         } else if (head->type == PACKET_QUEUE_LEVEL && len >= (int)sizeof(NetQueueLevel)) {
             /* card #481: the server's authoritative QUEUE level id. A change (a round boundary
                re-resolved the admin-flagged default) re-fetches geometry instead of keeping the

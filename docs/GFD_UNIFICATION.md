@@ -32,13 +32,12 @@ parallel implementation, SHANKPIT's is the one that runs and GFD's content is im
   JSON, with a gate that is a real lever → relay → machine circuit.
 - `scripts/import_gfd_levels.py`: Town → `var/maps/gfd_town.json` (boxes, perimeter, spawners). Meadow is
   reported as a sim seed, not a level, rather than fabricated.
-- Reachable: **F7** in game and `--dungeon [zone]` on the command line.
-
-**Phase 2 — the zone packet (next).** `PACKET_ZONE_STATE` carrying zone id, seed, occupancy and the
-grace countdown. A LAN client then generates the dungeon from the seed instead of being sent geometry,
-which is the same "identical geometry compiled in" contract `--level` already relies on. Client entry
-must not stall the render thread while generating (generation is a few hundred boxes — measure before
-optimising).
+- Reachable: **F7** in game and `--dungeon [zone]` on the command line.**Phase 2 — shipped.** `PACKET_ZONE_STATE` (id, seed, players, state, idle_ms) plus
+`packages/simulation/zone_sync.h`: the server hosts a zone (`--dungeon [zone]`) and broadcasts once a
+second; a client decodes the packet, and reloads geometry **only** when the zone id or the seed actually
+changed, so a 1 Hz repeat never drops decals or restarts the world. The wire carries identity, not
+geometry — both sides run the same deterministic generator. `make test-zone-sync` covers the refusals
+(short datagram, wrong type, unterminated id) and the no-op-on-repeat rule.
 
 **Phase 3 — batteries-included host.** `--coop-host` that starts the authoritative server in-process (or
 as a child process) on the LAN interface, advertises over broadcast, and writes progress under `var/`.
@@ -58,6 +57,8 @@ a fake import.
 
 ## Honest state of "multiplayer"
 
-Today the zone registry and the dungeon are **host-local**. Two players on one machine's session share
-the layout; a LAN friend cannot join a zone yet because there is no packet carrying the zone's identity or
-seed, and the learn-from-seed path is phase 2. Saying "co-op works" before that would be false.
+A LAN client of a `--dungeon` server now learns the zone and rebuilds the same dungeon, and reloads when
+the zone expires and regenerates. What is **not** there yet: one command that starts the host
+(`--coop-host`, phase 3), LAN discovery, and an explicit "enter zone" action — on the server, occupancy is
+whoever is connected, so the zone generates when the first client joins rather than when someone walks
+through a door. Those are the next slices, not claims.
