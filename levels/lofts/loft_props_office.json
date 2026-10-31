@@ -1,0 +1,78 @@
+{
+ "version": 1,
+ "id": 220,
+ "name": "loft_props_office",
+ "width": 20.0,
+ "height": 8.0,
+ "depth": 20.0,
+ "ground_plane_enabled": false,
+ "ground_plane_squares": 0,
+ "walls": [
+  {
+   "x": -4.0,
+   "y": 2.2,
+   "z": -5.0,
+   "sx": 5.0,
+   "sy": 2.4,
+   "sz": 2.4,
+   "r": 0.6,
+   "g": 0.6,
+   "b": 0.65,
+   "friction": 0.8,
+   "material": "wood"
+  },
+  {
+   "x": 2.0,
+   "y": 2.2,
+   "z": -5.0,
+   "sx": 5.0,
+   "sy": 2.4,
+   "sz": 2.4,
+   "r": 0.6,
+   "g": 0.6,
+   "b": 0.65,
+   "friction": 0.8,
+   "material": "wood"
+  },
+  {
+   "x": 8.3,
+   "y": 3.5,
+   "z": 3.0,
+   "sx": 1.4,
+   "sy": 5.0,
+   "sz": 8.0,
+   "r": 0.6,
+   "g": 0.6,
+   "b": 0.65,
+   "friction": 0.8,
+   "material": "metal"
+  },
+  {
+   "x": 0.0,
+   "y": 3.0,
+   "z": 6.5,
+   "sx": 10.0,
+   "sy": 4.0,
+   "sz": 0.4,
+   "r": 0.6,
+   "g": 0.6,
+   "b": 0.65,
+   "friction": 0.8,
+   "material": "brick"
+  },
+  {
+   "x": -6.0,
+   "y": 7.4,
+   "z": 0.0,
+   "sx": 2.0,
+   "sy": 0.4,
+   "sz": 2.0,
+   "r": 0.6,
+   "g": 0.6,
+   "b": 0.65,
+   "friction": 0.8,
+   "material": "hps_light"
+  }
+ ],
+ "objects": []
+}

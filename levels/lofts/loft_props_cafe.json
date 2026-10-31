@@ -1,0 +1,78 @@
+{
+ "version": 1,
+ "id": 221,
+ "name": "loft_props_cafe",
+ "width": 20.0,
+ "height": 8.0,
+ "depth": 20.0,
+ "ground_plane_enabled": false,
+ "ground_plane_squares": 0,
+ "walls": [
+  {
+   "x": 0.0,
+   "y": 2.2,
+   "z": -7.0,
+   "sx": 14.0,
+   "sy": 2.4,
+   "sz": 2.0,
+   "r": 0.6,
+   "g": 0.6,
+   "b": 0.65,
+   "friction": 0.8,
+   "material": "wood"
+  },
+  {
+   "x": -6.0,
+   "y": 3.8,
+   "z": -7.0,
+   "sx": 2.6,
+   "sy": 2.0,
+   "sz": 2.0,
+   "r": 0.6,
+   "g": 0.6,
+   "b": 0.65,
+   "friction": 0.8,
+   "material": "metal"
+  },
+  {
+   "x": 3.0,
+   "y": 1.6,
+   "z": 2.0,
+   "sx": 2.4,
+   "sy": 1.4,
+   "sz": 2.4,
+   "r": 0.6,
+   "g": 0.6,
+   "b": 0.65,
+   "friction": 0.8,
+   "material": "wood"
+  },
+  {
+   "x": -3.0,
+   "y": 1.6,
+   "z": 2.0,
+   "sx": 2.4,
+   "sy": 1.4,
+   "sz": 2.4,
+   "r": 0.6,
+   "g": 0.6,
+   "b": 0.65,
+   "friction": 0.8,
+   "material": "wood"
+  },
+  {
+   "x": 0.0,
+   "y": 4.6,
+   "z": 9.4,
+   "sx": 6.0,
+   "sy": 2.0,
+   "sz": 0.3,
+   "r": 0.6,
+   "g": 0.6,
+   "b": 0.65,
+   "friction": 0.8,
+   "material": "ips_light"
+  }
+ ],
+ "objects": []
+}

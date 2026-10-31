@@ -29,6 +29,38 @@
    "file": "loft_roof.json"
   },
   {
+   "id": 220,
+   "file": "loft_props_office.json"
+  },
+  {
+   "id": 221,
+   "file": "loft_props_cafe.json"
+  },
+  {
+   "id": 222,
+   "file": "loft_props_lounge.json"
+  },
+  {
+   "id": 223,
+   "file": "loft_props_workshop.json"
+  },
+  {
+   "id": 224,
+   "file": "loft_props_lab.json"
+  },
+  {
+   "id": 225,
+   "file": "loft_props_shop.json"
+  },
+  {
+   "id": 226,
+   "file": "loft_props_clinic.json"
+  },
+  {
+   "id": 227,
+   "file": "loft_props_warehouse.json"
+  },
+  {
    "id": 211,
    "file": "loft_a.json"
   },

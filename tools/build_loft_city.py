@@ -57,6 +57,77 @@ ID_ROOF = 207
 VARIANT_IDS = {name: 211 + i for i, name in enumerate(
     ["loft_a", "loft_b", "loft_c", "loft_d", "loft_e", "loft_f", "loft_g", "loft_h"])}
 
+# Interior detail pass: the shells are shared, the rooms are not. One props module per theme, placed
+# on every storey of the building that owns it -- so editing loft_props_cafe restyles only the cafe,
+# and the eight lofts read as eight different buildings from the inside. Ids 220.. keep clear of the
+# bay/floor/pair modules (201..207) and the variants (211..218) above.
+THEMES = ["office", "cafe", "lounge", "workshop", "lab", "shop", "clinic", "warehouse"]
+ID_PROPS = {name: 220 + i for i, name in enumerate(THEMES)}
+
+# Every theme is authored inside ONE 20x20 bay (x,z -10..10, deck top at y=1) so the same module can
+# be dropped into the glass bay of any storey without ever touching the stair well, which lives in the
+# core bay (x -4..4, z -10..2) and is not where any of these coordinates reach. Materials stay inside
+# the carvable set (wood/brick/glass) or the fixtures (metal/hps/ips) so props carve the same way the
+# shell does.
+PROPS_WALLS = {
+    "office": [
+        (-4.0, 2.2, -5.0, 5.0, 2.4, 2.4, "wood"),          # desk
+        (2.0, 2.2, -5.0, 5.0, 2.4, 2.4, "wood"),            # desk
+        (8.3, 3.5, 3.0, 1.4, 5.0, 8.0, "metal"),             # filing run
+        (0.0, 3.0, 6.5, 10.0, 4.0, 0.4, "brick"),            # partition
+        (-6.0, 7.4, 0.0, 2.0, 0.4, 2.0, "hps_light"),
+    ],
+    "cafe": [
+        (0.0, 2.2, -7.0, 14.0, 2.4, 2.0, "wood"),           # counter
+        (-6.0, 3.8, -7.0, 2.6, 2.0, 2.0, "metal"),           # espresso machine
+        (3.0, 1.6, 2.0, 2.4, 1.4, 2.4, "wood"),              # table
+        (-3.0, 1.6, 2.0, 2.4, 1.4, 2.4, "wood"),             # table
+        (0.0, 4.6, 9.4, 6.0, 2.0, 0.3, "ips_light"),         # menu board
+    ],
+    "lounge": [
+        (-3.5, 2.0, 4.0, 6.0, 2.0, 2.6, "wood"),             # couch
+        (4.0, 2.0, 4.0, 6.0, 2.0, 2.6, "wood"),              # couch
+        (0.0, 1.4, 0.5, 5.0, 1.4, 3.0, "wood"),              # coffee table
+        (9.0, 3.5, -6.0, 0.6, 6.0, 0.6, "metal"),            # floor lamp
+        (-9.0, 3.5, -6.0, 0.6, 6.0, 0.6, "metal"),
+    ],
+    "workshop": [
+        (0.0, 2.6, -5.0, 12.0, 3.0, 2.6, "wood"),            # workbench
+        (8.3, 3.5, 1.0, 1.4, 5.0, 9.0, "metal"),             # tool rack
+        (-6.0, 2.7, 5.5, 2.6, 2.6, 2.6, "wood"),             # crates
+        (-6.0, 2.7, 8.5, 2.6, 2.6, 2.6, "wood"),
+        (0.0, 7.4, 3.0, 2.0, 0.4, 2.0, "hps_light"),
+    ],
+    "lab": [
+        (-2.0, 2.6, -4.5, 6.0, 3.0, 2.4, "wood"),            # bench
+        (5.0, 2.6, -4.5, 6.0, 3.0, 2.4, "wood"),             # bench
+        (8.0, 4.0, 5.0, 3.0, 6.0, 3.0, "metal"),             # fume hood
+        (-6.0, 3.0, 6.0, 3.0, 4.0, 3.0, "glass"),            # sample tank
+        (0.0, 7.4, 0.0, 2.0, 0.4, 2.0, "ips_light"),
+    ],
+    "shop": [
+        (8.3, 3.5, -2.0, 1.4, 5.0, 12.0, "wood"),            # shelving run
+        (-8.3, 3.5, -2.0, 1.4, 5.0, 12.0, "wood"),           # shelving run
+        (0.0, 2.2, 7.0, 8.0, 2.4, 2.0, "wood"),              # till counter
+        (0.0, 5.0, -9.5, 10.0, 2.0, 0.3, "ips_light"),       # window sign
+        (4.0, 1.6, 2.0, 2.4, 1.4, 2.4, "wood"),
+    ],
+    "clinic": [
+        (-3.0, 1.7, -3.0, 6.0, 1.4, 2.6, "wood"),            # bed
+        (4.0, 1.7, -3.0, 6.0, 1.4, 2.6, "wood"),             # bed
+        (8.3, 3.0, 4.0, 1.4, 6.0, 6.0, "metal"),             # cabinet
+        (0.0, 4.0, 6.5, 8.0, 8.0, 0.3, "glass"),             # screen
+        (0.0, 7.4, 0.0, 2.0, 0.4, 2.0, "ips_light"),
+    ],
+    "warehouse": [
+        (-6.0, 2.2, -6.0, 5.0, 2.4, 5.0, "wood"),            # pallet
+        (1.0, 2.2, -6.0, 5.0, 2.4, 5.0, "wood"),             # pallet
+        (-2.5, 5.0, -6.0, 5.0, 2.4, 5.0, "wood"),            # stacked
+        (8.3, 4.5, 4.0, 1.4, 7.0, 10.0, "metal"),            # racking
+        (-7.0, 1.6, 6.5, 5.0, 1.4, 5.0, "wood"),
+    ],
+}
+
 # One bay is 20 x 16 footprint, 8 units storey height. A "floor" is three bays (60 x 16), a "pair" is
 # two floors (the founder's "floors that are actually 2 floors"), a building is 2..5 pairs plus lobby/roof.
 BAY_W, BAY_D, STOREY = 20.0, 20.0, 8.0
@@ -108,10 +179,7 @@ def bay_glass():
         wall(-BAY_W / 2.0 + 0.3, STOREY / 2.0, 0, 0.6, STOREY - 1.0, BAY_D - 1.0, "brick"),
         wall(BAY_W / 2.0 - 1.0, STOREY / 2.0, BAY_D / 2.0 - 1.0, 1.0, STOREY, 1.0, "metal"),
         wall(-BAY_W / 2.0 + 1.0, STOREY / 2.0, BAY_D / 2.0 - 1.0, 1.0, STOREY, 1.0, "metal"),
-        # ---- interior: a floor with furniture on it, not an empty glass box ----
-        wall(-1.0, 2.1, 2.0, 7.0, 2.2, 2.0, "wood"),          # reception desk
-        wall(2.8, 3.5, 6.0, 5.0, 5.0, 1.2, "metal"),            # shelf unit against the back
-        wall(-6.0, 7.4, 0.0, 2.0, 0.4, 2.0, "hps_light"),       # ceiling fixture
+        wall(-6.0, 7.4, 0.0, 2.0, 0.4, 2.0, "hps_light"),       # ceiling fixture (the furniture is themed)
     ]
     return level("loft_bay_glass", ID_BAY_GLASS, BAY_W, STOREY, BAY_D, walls)
 
@@ -156,15 +224,18 @@ def bay_open():
         wall(BAY_W / 2.0 - 0.2, STOREY / 2.0, 0, 0.4, STOREY - 1.0, BAY_D, "glass"),
         wall(0, STOREY - 0.4, 0, BAY_W - 2.0, 0.4, BAY_D - 2.0, "ips_light"),
         wall(-BAY_W / 2.0 + 1.0, STOREY / 2.0, BAY_D / 2.0 - 1.0, 0.8, STOREY, 0.8, "metal"),
-        # ---- interior: the lived-in half of the floor ----
-        wall(-2.0, 1.6, -2.0, 4.0, 1.4, 4.0, "wood"),        # table
-        wall(5.0, 1.9, 4.0, 6.0, 2.0, 2.6, "wood"),           # couch
-        wall(6.0, 3.2, -6.0, 0.5, 6.0, 0.5, "metal"),         # floor lamp
+        # (furniture lives in this building's own loft_props_<theme> module, not in the shared bay)
     ]
     return level("loft_bay_open", ID_BAY_OPEN, BAY_W, STOREY, BAY_D, walls)
 
 
 # ---- the composition (depth 2..4) ------------------------------------------------------------
+def props_module(theme):
+    """One building's interior: a 20x20 bay's worth of furniture, dropped on every storey of it."""
+    return level("loft_props_" + theme, ID_PROPS[theme], BAY_W, STOREY, BAY_D,
+                 [wall(*t) for t in PROPS_WALLS[theme]])
+
+
 def floor_unit():
     """One floor plate: glass bay + core + open bay, three objects side by side."""
     objects = [
@@ -214,28 +285,36 @@ def roof():
 # with a stepped-back tower. Editing any module changes every building that references it, because
 # nothing here duplicates module geometry -- only references it.
 VARIANTS = {
-    "loft_a": {"lobby": True, "pairs": 2, "roof": True, "step": 0},
-    "loft_b": {"lobby": True, "pairs": 3, "roof": True, "step": 0},
-    "loft_c": {"lobby": False, "pairs": 2, "roof": True, "step": 1},   # stepped tower
-    "loft_d": {"lobby": True, "pairs": 4, "roof": False, "step": 0},
-    "loft_e": {"lobby": False, "pairs": 3, "roof": False, "step": 0},
-    "loft_f": {"lobby": True, "pairs": 5, "roof": True, "step": 1},
-    "loft_g": {"lobby": False, "pairs": 2, "roof": False, "step": 2},
-    "loft_h": {"lobby": True, "pairs": 3, "roof": True, "step": 2},
+    "loft_a": {"lobby": True, "pairs": 2, "roof": True, "step": 0, "theme": "office"},
+    "loft_b": {"lobby": True, "pairs": 3, "roof": True, "step": 0, "theme": "cafe"},
+    "loft_c": {"lobby": False, "pairs": 2, "roof": True, "step": 1, "theme": "lounge"},
+    "loft_d": {"lobby": True, "pairs": 4, "roof": False, "step": 0, "theme": "workshop"},
+    "loft_e": {"lobby": False, "pairs": 3, "roof": False, "step": 0, "theme": "lab"},
+    "loft_f": {"lobby": True, "pairs": 5, "roof": True, "step": 1, "theme": "shop"},
+    "loft_g": {"lobby": False, "pairs": 2, "roof": False, "step": 2, "theme": "clinic"},
+    "loft_h": {"lobby": True, "pairs": 3, "roof": True, "step": 2, "theme": "warehouse"},
 }
 
 
 def variant(name, spec):
     objects = []
     y = 0.0
+    props = ID_PROPS[spec["theme"]]
     if spec["lobby"]:
         objects.append(obj(ID_LOBBY, 0, y, 0))
+        # the ground floor gets the theme too: a cafe opens onto the street, a workshop onto its yard
+        objects.append(obj(props, -BAY_W, y, 0))
         y += STOREY
     for i in range(spec["pairs"]):
         # a step-back every `step` pairs: the upper stack shifts and loses a bay, which is what makes
         # these read as eight different buildings rather than eight heights of one.
         setback = spec["step"] > 0 and i >= spec["step"]
-        objects.append(obj(ID_PAIR, BAY_W if setback else 0, y, 0))
+        stack_x = BAY_W if setback else 0
+        objects.append(obj(ID_PAIR, stack_x, y, 0))
+        # this building's interior on BOTH floors of the pair, in the glass bay (the core bay holds
+        # the stair well, so nothing is placed there)
+        objects.append(obj(props, stack_x - BAY_W, y, 0))
+        objects.append(obj(props, stack_x - BAY_W, y + STOREY, 0))
         y += STOREY * 2
     if spec["roof"]:
         objects.append(obj(ID_ROOF, BAY_W if spec["step"] > 0 else 0, y, 0))
@@ -243,6 +322,7 @@ def variant(name, spec):
 
 
 MODULES = [bay_glass(), bay_core(), bay_open(), floor_unit(), pair_unit(), lobby(), roof()]
+MODULES += [props_module(t) for t in THEMES]
 AUTHORED = {m["name"]: m for m in MODULES}
 AUTHORED.update({n: variant(n, s) for n, s in VARIANTS.items()})
 
@@ -531,6 +611,14 @@ def build(city_path=CITY, placements_path=PLACEMENTS, write=True):
 
 def check():
     levels = load_tree()
+    owners = {}
+    for name, spec in VARIANTS.items():
+        t = spec["theme"]
+        if t in owners:
+            raise SystemExit("%s and %s share the %r interior" % (owners[t], name, t))
+        owners[t] = name
+    if sorted(owners) != sorted(THEMES):
+        raise SystemExit("expected the %d themes to be owned one each, got %d" % (len(THEMES), len(owners)))
     seen = {}
     for name, lid in VARIANT_IDS.items():
         walls = flatten(levels, levels[lid]["objects"], 0, 0, 0, 0, {lid}, 1, [])
@@ -556,6 +644,14 @@ def check():
         for r in ramps:
             if r["sy"] <= 0.0 or r["sz"] <= 0.0:
                 raise SystemExit("%s has a ramp with no rise or no run" % name)
+        # its OWN interior, and nobody else's: this is what makes the eight read differently inside
+        theme = VARIANTS[name]["theme"]
+        refs = {o["ref_level_id"] for o in levels[lid].get("objects", [])}
+        if ID_PROPS[theme] not in refs:
+            raise SystemExit("%s does not place its own interior (%s)" % (name, theme))
+        foreign = refs & (set(ID_PROPS.values()) - {ID_PROPS[theme]})
+        if foreign:
+            raise SystemExit("%s places another building's interior" % name)
         key = tuple(sorted((w["x"], w["y"], w["z"], w["sx"], w["sy"], w["sz"]) for w in walls))
         if key in seen:
             raise SystemExit("%s and %s flatten to the same building" % (seen[key], name))
