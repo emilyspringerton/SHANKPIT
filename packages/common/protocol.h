@@ -569,6 +569,10 @@ typedef struct {
     int use_was_down; int bike_was_down;
     int in_ability;
     int in_ability2; /* BTN_ABILITY_2 -- secondary fire (AR underbarrel grenade) */
+    int in_roll;     /* -1/0/+1 -- a commanded barrel roll in the C-110 (J / left-arrow, L / right-arrow).
+                        LOCAL input only: it is read by local_game.h's airplane tick, not carried in
+                        UserCmd/snapshots. A networked match rolls on the pilot's screen and the
+                        attitude is what replicates, not the keypress. */
     int in_paint_next; int in_paint_prev; int paint_btn_prev; /* spray can colour cycle, see WPN_SPRAYCAN */
     int current_weapon; int ammo[MAX_WEAPONS];
     int reload_timer; int attack_cooldown;

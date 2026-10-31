@@ -1951,6 +1951,10 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
     p0->in_jump = jump; 
     p0->in_ability = ability;
     p0->in_ability2 = ability2;   /* BTN_ABILITY_2 (right mouse / controller LT) -- AR grenade only */
+    /* p0->in_roll is NOT set here: a barrel roll is a C-110 attitude the pilot commands, so the lobby
+       writes local_state.players[0].in_roll directly (main.c) and the airplane tick below reads it.
+       Deliberately not a new local_update parameter -- that signature has six callers across apps/
+       and tests/, and none of them has any business knowing about a plane's roll axis. */
     was_holding_jump = jump;
     
     for (int hi = 0; hi < MAX_HELICOPTERS; hi++) {
@@ -2006,23 +2010,25 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
     }
 
     /* The fixed-wing transport (airplane_flight.h): throttle is a LEVER (SPACE up, CTRL down), W/S is the
-       elevator, A/D the aileron, and the pilot's heading is the tiller -- but only with the wheels down and
-       slow, because a bank is what turns an aeroplane. It is the one vehicle here that cannot hover. */
+       elevator, A/D is the RUDDER (pedals in the air, nosewheel steering on the roll), J/L and the arrow
+       keys are a commanded barrel roll, and the pilot's heading is a tiller assist at walking pace. It is
+       the one vehicle here that cannot hover. */
     for (int ai = 0; ai < MAX_AIRPLANES; ai++) {
         AirplaneState *a = &local_state.airplanes[ai];
         if (!a->active) continue;
-        float elevator = 0.0f, aileron = 0.0f, tiller_yaw = a->yaw;
-        int throttle_up = 0, throttle_down = 0;
+        float elevator = 0.0f, rudder = 0.0f, tiller_yaw = a->yaw;
+        int roll_dir = 0, throttle_up = 0, throttle_down = 0;
         if (a->occupant_player_id >= 0 && a->occupant_player_id < MAX_CLIENTS) {
             PlayerState *occ = &local_state.players[a->occupant_player_id];
             a->scene_id = occ->scene_id;
             elevator = occ->in_fwd;
-            aileron = occ->in_strafe;
+            rudder = occ->in_strafe;
+            roll_dir = occ->in_roll;
             tiller_yaw = occ->yaw;
             throttle_up = occ->in_jump;
             throttle_down = occ->crouching;
         }
-        airplane_simulate_step(a, elevator, aileron, tiller_yaw, throttle_up, throttle_down, SHANKPIT_NET_FIXED_DT);
+        airplane_simulate_step(a, elevator, rudder, roll_dir, tiller_yaw, throttle_up, throttle_down, SHANKPIT_NET_FIXED_DT);
         if (a->occupant_player_id >= 0 && a->occupant_player_id < MAX_CLIENTS) {
             PlayerState *occ = &local_state.players[a->occupant_player_id];
             occ->x = a->x; occ->y = a->y; occ->z = a->z;

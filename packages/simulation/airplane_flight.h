@@ -188,18 +188,21 @@ static inline int airplane_try_exit(PlayerState *p, AirplaneState *a) {
 }
 
 /* airplane_simulate_step -- one tick.
- *   elevator  -1..1  W/S   (nose down / nose up; no authority below the stall speed)
- *   aileron   -1..1  A/D   (roll; a bank is what actually turns a fixed wing)
- *   cam_yaw          the pilot's heading -- used as a tiller, ONLY while taxiing
+ *   elevator  -1..1  W/S  (nose up / nose down; no authority below the stall speed)
+ *   rudder    -1..1  A/D  (yaws the nose directly -- pedals in the air, nosewheel steering on the roll)
+ *   roll_dir  -1/0/1 J/L and the arrow keys (a COMMANDED barrel roll: a full 360 turn, not a bank)
+ *   cam_yaw          the pilot's heading -- still a tiller ASSIST at walking pace on the wheels
  *   throttle_up/down      throttle is a LEVER (space raises, ctrl lowers), it holds where you leave it
  */
-static inline void airplane_simulate_step(AirplaneState *a, float elevator, float aileron,
+static inline void airplane_simulate_step(AirplaneState *a, float elevator, float rudder, int roll_dir,
                                           float cam_yaw, int throttle_up, int throttle_down, float dt) {
     if (!a || !a->active) return;
     if (elevator > 1.0f) elevator = 1.0f;
     if (elevator < -1.0f) elevator = -1.0f;
-    if (aileron > 1.0f) aileron = 1.0f;
-    if (aileron < -1.0f) aileron = -1.0f;
+    if (rudder > 1.0f) rudder = 1.0f;
+    if (rudder < -1.0f) rudder = -1.0f;
+    if (roll_dir > 1) roll_dir = 1;
+    if (roll_dir < -1) roll_dir = -1;
     float dts = dt / 0.016f;
     if (dts < 0.0f) dts = 0.0f;
     if (dts > 4.0f) dts = 4.0f;
@@ -214,23 +217,57 @@ static inline void airplane_simulate_step(AirplaneState *a, float elevator, floa
     int speed_milli = (int)(airspeed * 1000.0f);
     int stall_milli = (int)(af_stall(a->flaps) * 1000.0f);
 
-    /* attitude. Above the stall the stick works; below it the wing is not flying and the nose falls --
+    /* attitude.
+     * ON THE WHEELS the gear carries the airframe, so the stick does not pitch or bank it: the nose
+     * settles to level instead of being driven down every tick by the airborne stall rule. That drag
+     * down was the taxi bug -- it rocked the plane onto its nose, the ground clamp shoved y back up,
+     * and the airframe skipped instead of rolling, which reads as "jumping" and losing traction.
+     * IN THE AIR, above the stall, the stick works; below it the wing is not flying and the nose falls --
      * that is the whole failure mode, and it is not recoverable by pulling harder. */
-    if (speed_milli > stall_milli) {
+    int flying = speed_milli > stall_milli;
+    int rolling_barrel = 0;
+    if (a->grounded) {
+        a->pitch *= 0.80f;
+        a->roll *= 0.80f;
+    } else if (flying) {
         a->pitch += elevator * 3.2f * dts;
-        a->roll += aileron * 5.0f * dts;
+        a->roll += rudder * 5.0f * dts;      /* pedalling into a turn banks it, as it should */
     } else {
         a->pitch -= 1.8f * dts;
         a->roll *= 0.985f;
     }
     if (a->pitch > 32.0f) a->pitch = 32.0f;
     if (a->pitch < -32.0f) a->pitch = -32.0f;
-    if (a->roll > 60.0f) a->roll = 60.0f;
-    if (a->roll < -60.0f) a->roll = -60.0f;
 
-    /* turning: a bank turns it; the tiller only works with the wheels down and slow */
-    a->yaw = norm_yaw_deg(a->yaw + a->roll * 0.05f * dts);
-    if (a->grounded && speed_milli < stall_milli * 2) {
+    /* a barrel roll is a COMMANDED full turn, so it is not clamped the way a bank is: it rolls through
+     * 360 and comes out level on the other side, which a +/-60 bank clamp could never express. */
+    if (roll_dir != 0 && !a->grounded && flying) {
+        a->roll += (float)roll_dir * 3.6f * dts;     /* degrees/tick: 360 in about 1.7 s */
+        rolling_barrel = 1;
+    }
+    if (!rolling_barrel) {
+        if (a->roll > 60.0f) a->roll = 60.0f;
+        if (a->roll < -60.0f) a->roll = -60.0f;
+    } else {
+        if (a->roll > 180.0f) a->roll -= 360.0f;      /* normalised: a full turn ends at level again */
+        if (a->roll < -180.0f) a->roll += 360.0f;
+    }
+
+    /* turning: a bank turns it; a barrel roll is a corkscrew and does not change heading. */
+    float bank = a->roll;
+    if (bank > 60.0f) bank = 60.0f;
+    if (bank < -60.0f) bank = -60.0f;
+    if (!rolling_barrel) a->yaw = norm_yaw_deg(a->yaw + bank * 0.05f * dts);
+
+    /* rudder -- the pedals. On the wheels this IS the nosewheel steering, which is what makes a taxi
+     * a taxi; in the air it yaws the nose. Either way it no longer depends on where the camera looks. */
+    if (!rolling_barrel)
+        a->yaw = norm_yaw_deg(a->yaw + rudder * (a->grounded ? 1.5f : 0.9f) * dts);
+    /* The camera-heading tiller survives only as a self-align assist for a pilot who is NOT on the
+     * pedals: with the rudder held it used to pull the nose back toward where the camera looked, which
+     * cancelled the rudder almost exactly (1.5 in, 1.4 back) and is why the plane felt like it steered
+     * itself. One steering authority at a time. */
+    if (a->grounded && speed_milli < stall_milli * 2 && rudder > -0.001f && rudder < 0.001f) {
         float err = norm_yaw_deg(cam_yaw - a->yaw);
         if (err > 180.0f) err -= 360.0f;
         if (err < -180.0f) err += 360.0f;
@@ -247,9 +284,19 @@ static inline void airplane_simulate_step(AirplaneState *a, float elevator, floa
     a->vx += fx * along * dts;
     a->vz += fz * along * dts;
 
-    /* lift versus weight: 1000 permille holds altitude, so anything above it climbs and a stall falls */
-    int aoa = (int)(1000.0f + a->pitch * 10.0f);
+    /* lift versus weight: 1000 permille holds altitude, so anything above it climbs and a stall falls.
+     * LEVEL flight sits at 880 permille, not 1000: at zero angle of attack a wing does not carry its own
+     * weight at the liftoff speed, so the aeroplane has to be ROTATED (or run faster) to unstick. That is
+     * what removes the old hop, where merely reaching 6.0 units/tick flicked it off the ground. */
+    int aoa = (int)(880.0f + a->pitch * 18.0f);
     int lift = af_lift_permille(speed_milli, a->flaps, aoa);
+    if (rolling_barrel) {
+        /* Only the part of the lift along the world's up axis holds the aircraft up: wings vertical lift
+         * sideways, inverted they lift downwards. 0.6 + 0.4*cos keeps a barrel roll roughly level on
+         * average, so rolling does not secretly turn into a climb or a 100-unit drop. */
+        float proj = 0.6f + 0.4f * cosf(a->roll * 0.0174532925f);
+        lift = (int)((float)lift * proj);
+    }
     float lift_accel = (float)lift * 0.001f * AF_GRAVITY;
     a->vy += (lift_accel - AF_GRAVITY) * dts;
 
@@ -272,16 +319,34 @@ static inline void airplane_simulate_step(AirplaneState *a, float elevator, floa
         a->x = nx;
         a->z = nz;
     }
-    a->y += a->vy * dts;
+    /* Ground contact, with hysteresis: while the wheels carry the weight the gear pins y and vy to the
+     * surface, so lift that is merely CLOSE to weight cannot bounce the plane into the air one tick at
+     * a time. It unsticks only on a real surplus (15%) -- that is a takeoff, not a hop. Rolling
+     * resistance then keeps the tyres planted instead of letting the airframe skitter. */
     float ground = af_world_y(a->x, a->z, a->y + 1.0f);   /* only surfaces at or below the hull */
-    if (a->y <= ground) {
+    if (a->grounded && lift_accel <= AF_GRAVITY * 1.15f) {
         a->y = ground;
-        if (a->vy < 0.0f) a->vy = 0.0f;
+        a->vy = 0.0f;
         a->grounded = 1;
-        a->pitch *= 0.85f;      /* sitting on the gear */
-        a->roll *= 0.85f;
     } else {
-        a->grounded = 0;
+        a->y += a->vy * dts;
+        if (a->y <= ground) {
+            a->y = ground;
+            if (a->vy < 0.0f) a->vy = 0.0f;
+            a->grounded = 1;
+            a->pitch *= 0.85f;      /* sitting on the gear */
+            a->roll *= 0.85f;
+        } else {
+            a->grounded = 0;
+        }
+    }
+    if (a->grounded) {
+        /* Brakes when the lever is closed, a LIGHT rolling resistance under power. 0.995 was the first
+         * value tried and it is ~26% of speed per second at 60 Hz, which is a parachute: the takeoff
+         * run plateaued at 6.0 and never reached liftoff. 0.9995 is ~3%/s, a tyre, not a brake. */
+        float resist = (a->throttle < 1.0f) ? 0.97f : 0.9995f;
+        a->vx *= resist;
+        a->vz *= resist;
     }
 }
 

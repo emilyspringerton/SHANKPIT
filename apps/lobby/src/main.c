@@ -16727,6 +16727,16 @@ int main(int argc, char* argv[]) {
                 float local_aim_yaw = cam_yaw, local_aim_pitch = cam_pitch;
                 if (local_state.players[0].third_person)
                     lobby_third_person_aim(&local_state.players[0], cam_yaw, cam_pitch, &local_aim_yaw, &local_aim_pitch);
+                /* C-110 barrel roll: J / left-arrow rolls left, L / right-arrow rolls right. Read from the
+                   keyboard state here rather than through the networked UserCmd, because a barrel roll is
+                   an attitude the pilot commands, not a button the server has to arbitrate -- see
+                   PlayerState.in_roll. Written straight onto the local player, so local_update's own
+                   signature (shared by six callers) does not grow a plane-only argument. */
+                {
+                    const Uint8 *roll_keys = SDL_GetKeyboardState(NULL);
+                    local_state.players[0].in_roll = (roll_keys[SDL_SCANCODE_J] || roll_keys[SDL_SCANCODE_LEFT]) ? -1
+                                                   : ((roll_keys[SDL_SCANCODE_L] || roll_keys[SDL_SCANCODE_RIGHT]) ? 1 : 0);
+                }
                 local_update(input_fwd, input_str, local_aim_yaw, local_aim_pitch, input_shoot, wpn_req, input_jump, input_crouch, input_reload, input_ability, input_secondary, input_bike, NULL, now_ms);
                 if (bigo_wiring_active() && !g_story_phone.open) bigo_board_tick(&local_state.players[0], (float)input_fwd, (float)input_str, TICK_DT);
                 bigo_wiring_tick(now_ms);
