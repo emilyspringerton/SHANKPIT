@@ -126,6 +126,22 @@ test-structure: $(STRUCTURE_RULES_C)
 		packages/world/parena_runtime.c -o /tmp/shankpit_structure_test -lm
 	/tmp/shankpit_structure_test
 
+# ---- ARCHIPELAGO water (docs/ARCHIPELAGO_NORTHSTAR.md) ------------------------------------------------
+# Sea state, wave field, planing lift and drag are PARENA's (stdlib/shankpit/ocean_rules.prn); ocean.h samples and
+# integrates them. First water code in the engine, so the test is also the spec.
+OCEAN_RULES_PRN ?= ../PARENA/stdlib/shankpit/ocean_rules.prn
+OCEAN_RULES_C   ?= packages/simulation/ocean.c
+$(OCEAN_RULES_C): $(OCEAN_RULES_PRN)
+	./scripts/gen_ocean_rules.sh
+
+.PHONY: test-ocean
+test-ocean: $(OCEAN_RULES_C)
+	gcc -std=gnu99 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
+		-Ipackages/simulation -Ipackages/world -Ipackages/common \
+		packages/simulation/ocean_test.c packages/simulation/ocean.c \
+		-o /tmp/shankpit_ocean_test -lm
+	/tmp/shankpit_ocean_test
+
 # ---- the NOOBTOPIA three-way merge (MONOREPO/docs/THREE_WAY_MERGE.md) --------------------------------
 # Decisions are PARENA's, once (stdlib/noobtopia/*.prn), emitted to C here and to Luau in NOOBTOPIA. The WORDS are
 # NOOBTOPIA's data file, generated into ambient_lines.inc. Neither side keeps a copy.
