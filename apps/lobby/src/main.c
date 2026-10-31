@@ -109,6 +109,9 @@
 #include "../../../packages/education/eduvm_snippets.h"
 #include "../../../packages/simulation/widget_runtime.h"
 #include "../../../packages/simulation/widget_rules_host.h"
+#include "../../../packages/simulation/proc_dungeon.h"
+#include "../../../packages/simulation/zone_registry.h"
+#include "../../../packages/simulation/zone_rules_host.h"
 
 /* ── S144-02 Stage B: GOLDENBAND skinned mesh for Tyler ──────────────────────
  * Ports REDGARDEN/GFD's S144-07 gband_mesh_rig onto the shader/VBO
@@ -4109,6 +4112,84 @@ static int lobby_start_zombies_mode(void) {
     food_pickup_seed_ring(SCENE_CUSTOM_LEVEL, hero->x, hero->y, hero->z);
     SDL_Log("ZOMBIES: loaded '%s' (source id %d, %d boxes, %d damaged cells)", lvl->name, lvl->source_id, lvl->count, lvl->brick_damage_count);
     free(lvl);
+    return 1;
+}
+
+/* ---- shared procedural zones (SHANKPIT ARCHIPELAGO) ------------------------------------------------
+ * Founder: "GFD server ... like diablo where we can travel to a map and do it as a dungeon it can be
+ * procedurally generated ... the first person to enter it it generates and then everyone else enters the
+ * same one ... there should be a grace period of 15 minutes ... dungeons are not instanced". The
+ * lifecycle is packages/simulation/zone_registry.h and the layout is packages/simulation/proc_dungeon.h;
+ * this block is only the host: generate once per zone, keep that layout until the grace window lapses,
+ * and load it through the same loader every custom level uses. Co-op note, named rather than implied: a
+ * LAN friend joining this host would receive the same SEED and rebuild the identical dungeon -- there is
+ * no zone packet yet, so today this is the local half of that story. */
+static ZoneRegistry g_zone_registry;
+static int g_zone_registry_ready = 0;
+static int g_dungeon_descent = 0;
+
+static void lobby_zone_expire(void *user, const char *zone_id) {
+    char path[256];
+    (void)user;
+    snprintf(path, sizeof path, "var/maps/proc_%s.json", zone_id ? zone_id : "zone");
+    remove(path);
+    SDL_Log("DUNGEON: '%s' emptied and its grace period ran out -- layout deleted", zone_id ? zone_id : "?");
+}
+
+static int lobby_start_proc_dungeon(const char *zone) {
+    static CustomLevelData lvl;
+    unsigned seed = 0;
+    int created, now;
+    char path[256];
+    PlayerState *hero;
+
+    if (!zone || !zone[0]) return 0;
+    if (!g_zone_registry_ready) {
+        zone_registry_init(&g_zone_registry, (unsigned)SDL_GetTicks() | 1u);
+        g_zone_registry_ready = 1;
+    }
+    now = (int)SDL_GetTicks();
+    zone_registry_tick(&g_zone_registry, now, lobby_zone_expire, NULL);
+    created = zone_registry_enter(&g_zone_registry, zone, now, &seed);
+    if (created < 0) { SDL_Log("DUNGEON: no free zone slot for '%s'", zone); return 0; }
+
+    proc_dungeon_generate(&lvl, zone, seed);
+    snprintf(path, sizeof path, "var/maps/proc_%s.json", zone);
+    if (created) {
+        FILE *probe = fopen("var/maps", "rb");
+        if (probe) fclose(probe);
+        else (void)system("mkdir -p var/maps");
+        if (proc_dungeon_save(path, &lvl))
+            SDL_Log("DUNGEON: generated '%s' seed %08x -> %s (%d boxes)", zone, seed, path, lvl.count);
+        else
+            SDL_Log("DUNGEON: generated '%s' seed %08x (%d boxes), could not write %s", zone, seed, lvl.count, path);
+    } else {
+        SDL_Log("DUNGEON: joining the existing '%s' seed %08x (%d boxes)", zone, seed, lvl.count);
+    }
+
+    local_init_match(1, MODE_ZOMBIES);   /* the sandbox that already populates a custom level */
+    level_boxes_apply_to_physics(&lvl);
+    scene_load(SCENE_CUSTOM_LEVEL);
+    hero = &local_state.players[0];
+    hero->scene_id = SCENE_CUSTOM_LEVEL;
+    local_state.story_phase = STORY_PHASE_PLAYING;
+    phys_respawn(hero, SDL_GetTicks());
+    g_snap_zombies = 1;
+    food_pickup_reset();
+    food_pickup_seed_ring(SCENE_CUSTOM_LEVEL, hero->x, hero->y, hero->z);
+    SDL_Log("DUNGEON: '%s' loaded, difficulty %d, %d spawners",
+            zone, g_zone_rules.difficulty((int)seed), lvl.spawner_count);
+    return 1;
+}
+
+/* F7 -- descend. The reachable version of the Diablo door; a menu tile for the archipelago can call the
+ * same function once the level browser grows a dungeon entry. */
+static int lobby_descend_dungeon(void) {
+    char zone[32];
+    g_dungeon_descent++;
+    snprintf(zone, sizeof zone, "dungeon_%d", g_dungeon_descent);
+    app_state = STATE_GAME_LOCAL;
+    if (!lobby_start_proc_dungeon(zone)) { app_state = STATE_LOBBY; return 0; }
     return 1;
 }
 
@@ -14854,7 +14935,10 @@ int main(int argc, char* argv[]) {
     vehicle_burn_rules_install(); /* PARENA car fire ladder (smoke -> fire -> blast), drawn with BR's fire curve */
     slide_rules_install(); /* PARENA slope curve for the crouch-slide (a hill speeds you up) */
     widget_rules_install(); /* PARENA widget circuit (lever / plate / relay / transistor / machine) */
+    zone_rules_install();   /* PARENA shared-zone lifecycle + procedural dungeon parameters */
     int cli_start_zombies = 0;
+    int cli_start_dungeon = 0;
+    char cli_dungeon_zone[32] = "dungeon_1";
     int cli_start_lab = 0;
     int cli_start_editmap = 0;
     char cli_edit_session[40] = "";
@@ -14882,6 +14966,12 @@ int main(int argc, char* argv[]) {
             cli_legacy_menu = 1; /* opt out of the straight-into-zombies default: boot to the legacy menu */
         } else if(strcmp(argv[i], "--zombies") == 0) {
             cli_start_zombies = 1; /* straight into the ZOMBIES sandbox (menu tile equivalent) */
+        } else if(strcmp(argv[i], "--dungeon") == 0) {
+            /* --dungeon [zone] -- generate (or join, if it is still alive) a shared procedural zone and
+               load it as a custom level. The zone id is also the seed's identity: the same id in the
+               grace window is the same dungeon. */
+            cli_start_dungeon = 1;
+            if (i + 1 < argc && argv[i + 1][0] != '-') snprintf(cli_dungeon_zone, sizeof cli_dungeon_zone, "%s", argv[++i]);
         } else if(strcmp(argv[i], "--host") == 0 && i+1<argc) {
             strncpy(SERVER_HOST, argv[++i], 63);
         } else if(strcmp(argv[i], "--port") == 0 && i+1<argc) {
@@ -15043,7 +15133,11 @@ int main(int argc, char* argv[]) {
     /* No title screen / main menu: with no explicit mode flag, drop straight into ZOMBIES.
        Esc leaves the match for the legacy menu (see the SDLK_ESCAPE branch in the game keydown). */
     if (!cli_legacy_menu && !cli_start_zombies && !cli_start_lab && !cli_start_editmap &&
-        !cli_start_survival && !cli_start_city) cli_start_zombies = 1;
+        !cli_start_survival && !cli_start_city && !cli_start_dungeon) cli_start_zombies = 1;
+    if (cli_start_dungeon) {
+        app_state = STATE_GAME_LOCAL;
+        if (!lobby_start_proc_dungeon(cli_dungeon_zone)) app_state = STATE_LOBBY;
+    }
     if (cli_start_zombies) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_ZOMBIES); lobby_modes_bypass = 0; }
     if (cli_start_editmap) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_EDITMAP); lobby_modes_bypass = 0; if (cli_edit_session[0]) es_start(strcmp(cli_edit_session, "new") ? cli_edit_session : NULL); }
     if (cli_start_lab) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_LAB); lobby_modes_bypass = 0; }
@@ -15522,6 +15616,10 @@ int main(int argc, char* argv[]) {
                     if (g_edit_active && app_state == STATE_GAME_LOCAL && !g_paused) { edit_key(e.key.keysym.sym); edit_key_sync(e.key.keysym.sym); }
                     if (g_lab_active && app_state == STATE_GAME_LOCAL && !g_story_phone.open && !g_orb_open && e.key.keysym.sym == SDLK_e) {
                         lab_interact(SDL_GetTicks());   /* SECTION 592: LAB stations; E is also the normal use key, harmless */
+                    }
+                    if (app_state == STATE_GAME_LOCAL && !g_paused && !g_story_phone.open && !g_orb_open &&
+                        e.key.keysym.sym == SDLK_F7) {
+                        if (lobby_descend_dungeon()) continue;   /* descend: generate or join a zone */
                     }
                     /* A terminal's panel owns the keys while it is open -- including ESC, so leaving a
                        panel never drops you into the pause menu. */
