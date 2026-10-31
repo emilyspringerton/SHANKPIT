@@ -249,6 +249,27 @@ keeps working after you quit the game. Window is bounded rather than guessed (th
 after the port answers, up to 2 s). Windows has no bundled binary yet, so the tile says
 `NOCK server not found` there instead of pretending it started.
 
+## Android client: shankpit-460 in a WebView (2026-10-31)
+
+The arena shooter ships on Android as **shankpit-460**, the PARENA-compiled
+WebAssembly build, inside a WebView. No C engine port: the module has zero imports,
+draws its own 640×360 framebuffer, and the Android layer is a WebView plus touch
+controls (`android/`, `apps/shankpit-460/`).
+
+- **Matchmaking** keeps the web contract (`/api/v1/shankpit460/play` + `/status`).
+  With no backend configured — the only state today — the game drops into the
+  **local bot match** and says so, instead of retrying a dead endpoint.
+- **Touch controls** are a virtual gamepad: left stick moves, drag aims, and six
+  buttons cover fire / jump / crouch / reload / ability / weapon. Raw taps start the
+  match, which is also what unlocks audio.
+- **Ships in every release**: `release.yml` builds the APK and uploads
+  `ShankPit_Android_<build>.apk` next to the desktop zips.
+
+Honest limits: the arena is deathmatch-only (no zombies), there is no map editing
+(NOCK is desktop-only), and there are no accounts. `node
+android/tools/verify-web-bundle.mjs` is the check — it boots the real wasm through
+the real touch layer and proves the offline path.
+
 ## Lighting: one environment matrix, resolved in PARENA (2026-10-30)
 
 Founder real-time: "we have cool weather effects but it doesnt work with the ambient lighting like it

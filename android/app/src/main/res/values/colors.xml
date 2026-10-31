@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="sp_bg">#11161C</color>
+    <color name="sp_ink">#ECE6D8</color>
+    <color name="sp_accent">#D8A657</color>
+</resources>

@@ -1,0 +1,77 @@
+plugins {
+    id 'com.android.application'
+}
+
+// --- release identity -------------------------------------------------------
+// versionCode must monotonically increase for sideload updates; CI passes the
+// run number. Locally it falls back to a date-derived value.
+def buildNumber = System.getenv('SHANKPIT_ANDROID_VERSION_CODE')
+def defaultCode = new Date().format('yyMMdd').toInteger()
+def versionCodeValue = (buildNumber ? buildNumber.toInteger() : defaultCode)
+def versionNameValue = System.getenv('SHANKPIT_ANDROID_VERSION_NAME') ?: '0.1.0'
+
+// Matchmaking backend. Empty (the default) means "no backend": the app boots
+// straight into the offline bot demo instead of retrying a dead endpoint.
+def backend = System.getenv('SHANKPIT_ANDROID_BACKEND') ?: ''
+
+// Optional release signing; without it the APK is signed with the local debug
+// key so it still installs (sideload only, not a Play upload).
+def keystorePath = System.getenv('SHANKPIT_ANDROID_KEYSTORE')
+
+android {
+    namespace 'industrial.einhorn.shankpit'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'industrial.einhorn.shankpit'
+        minSdk 24
+        targetSdk 34
+        versionCode versionCodeValue
+        versionName versionNameValue
+        buildConfigField 'String', 'SHANKPIT_BACKEND', '"' + backend + '"'
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    // Single source of truth: the game itself lives in apps/shankpit-460 and is
+    // packaged verbatim into the APK's assets. No copies to drift apart.
+    sourceSets {
+        main {
+            assets.srcDirs += [file('../../apps/shankpit-460')]
+        }
+    }
+
+    signingConfigs {
+        if (keystorePath) {
+            release {
+                storeFile file(keystorePath)
+                storePassword System.getenv('SHANKPIT_ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('SHANKPIT_ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('SHANKPIT_ANDROID_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix '.debug'
+            versionNameSuffix '-debug'
+        }
+        release {
+            minifyEnabled false
+            shrinkResources false
+            signingConfig keystorePath ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+    }
+}

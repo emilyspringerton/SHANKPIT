@@ -626,6 +626,64 @@ jobs:
             echo "" >> "$OUT"
           done
 
+      # ---- Android v1: shankpit-460 in a WebView ------------------------------
+      # The game is the PARENA-compiled WebAssembly build WOTAN already serves
+      # (apps/shankpit-460, vendored from WOTAN/shankpit-460). The Android layer
+      # is a WebView plus the touch pad; there is no C engine port involved, so
+      # this build is one Gradle module over static assets -- but it still ships
+      # in the same release as the desktop clients, per the standing rule that a
+      # passing build becomes a real (non pre-release) version bump.
+      #
+      # No backend is configured by default: the app drops into the offline bot
+      # demo. Set the SHANKPIT_MATCHMAKING_URL repo variable to point it at a
+      # real matchmaker (https only; cleartext is disabled in the manifest).
+      - name: Verify shankpit-460 web bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          node android/tools/verify-web-bundle.mjs
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.7'
+
+      - name: Build Android APK (shankpit-460)
+        shell: bash
+        env:
+          SHANKPIT_ANDROID_VERSION_CODE: ${{ github.run_number }}
+          SHANKPIT_ANDROID_VERSION_NAME: ${{ github.run_number }}
+          SHANKPIT_ANDROID_BACKEND: ${{ vars.SHANKPIT_MATCHMAKING_URL }}
+          KEYSTORE_B64: ${{ secrets.SHANKPIT_ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PW: ${{ secrets.SHANKPIT_ANDROID_KEYSTORE_PASSWORD }}
+          KEYSTORE_ALIAS: ${{ secrets.SHANKPIT_ANDROID_KEY_ALIAS }}
+          KEY_PW: ${{ secrets.SHANKPIT_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -n "${KEYSTORE_B64:-}" ]; then
+            printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/shankpit-release.keystore"
+            export SHANKPIT_ANDROID_KEYSTORE="$RUNNER_TEMP/shankpit-release.keystore"
+            export SHANKPIT_ANDROID_KEYSTORE_PASSWORD="$KEYSTORE_PW"
+            export SHANKPIT_ANDROID_KEY_ALIAS="$KEYSTORE_ALIAS"
+            export SHANKPIT_ANDROID_KEY_PASSWORD="$KEY_PW"
+          else
+            echo "::notice::SHANKPIT_ANDROID_KEYSTORE_BASE64 is unset; signing with the debug key (installs by sideload, not a Play upload)."
+          fi
+          if [ -z "${SHANKPIT_ANDROID_BACKEND:-}" ]; then
+            echo "::notice::No SHANKPIT_MATCHMAKING_URL set; the APK ships in offline bot-demo mode."
+          fi
+          gradle -p android assembleRelease --no-daemon --stacktrace
+          ls -l android/app/build/outputs/apk/release/
+
       - name: Bundle Artifacts
         shell: bash
         run: |
@@ -733,6 +791,16 @@ jobs:
           cp SHANKPIT_CONSTRUCT.txt ShankPit_Bots/
           zip -r "ShankPit_Bots_${BUILD}.zip" ShankPit_Bots
 
+          # Android APK (shankpit-460). Flat, one file, same BUILD stamp as the
+          # zips above so an APK always matches the desktop build it shipped with.
+          APK="android/app/build/outputs/apk/release/app-release.apk"
+          if [ ! -f "$APK" ]; then
+            echo "::error::Android release APK missing at $APK"
+            exit 1
+          fi
+          cp "$APK" "ShankPit_Android_${BUILD}.apk"
+          ls -l "ShankPit_Android_${BUILD}.apk"
+
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -742,6 +810,7 @@ jobs:
             ShankPit_Client_*.zip
             ShankPit_Bots_*.zip
             ShankPit_SlimClient_*.zip
+            ShankPit_Android_*.apk
             SHANKPIT_CONSTRUCT.txt
 
   # Founder real-time: "ensure all our core repos have auto release non pre release" -- same
@@ -803,6 +872,7 @@ jobs:
             dist/ShankPit_Client_*.zip \
             dist/ShankPit_Bots_*.zip \
             dist/ShankPit_SlimClient_*.zip \
+            dist/ShankPit_Android_*.apk \
             dist/SHANKPIT_CONSTRUCT.txt \
             --title "$NEXT_VERSION" \
             --generate-notes
