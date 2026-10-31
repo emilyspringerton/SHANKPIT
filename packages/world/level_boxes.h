@@ -313,7 +313,18 @@ typedef struct {
     float x, y, z;
 } LevelCharacter;
 
-#define LEVEL_BOXES_MAX_CHARACTERS 16 /* matches STORY_AI_MAX, packages/simulation/story_ai.h */
+#define LEVEL_BOXES_MAX_CHARACTERS 64 /* matches STORY_AI_MAX, packages/simulation/story_ai.h.
+                                          Was 16: a dressed city puts a population in every building,
+                                          and 16 was the story campaign's own cast size, not a map's. */
+#define LEVEL_BOXES_MAX_CHESTS 32      /* matches CHEST_MAX, packages/simulation/chests.h */
+
+/* Authored loot -- a level can place chests directly instead of relying on the road-ring seed.
+   tier is chests.h's own 0 wooden / 1 reinforced / 2 rare, and (x,y,z) is the chest's BASE centre,
+   exactly what chests_place takes. Absent "chests" is a real "this level authors no loot". */
+typedef struct {
+    float x, y, z;
+    int tier;
+} LevelChest;
 
 /* S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1 (founder real-time: "we need the loading
    points or whatever the opposite of the spawners is") -- a real, author-placed exit trigger
@@ -446,6 +457,8 @@ typedef struct {
     int nav_node_count;
     LevelCharacter characters[LEVEL_BOXES_MAX_CHARACTERS]; /* S467 */
     int character_count;
+    LevelChest chests[LEVEL_BOXES_MAX_CHESTS]; /* authored loot */
+    int chest_count;
     LevelExit level_exits[LEVEL_BOXES_MAX_LEVEL_EXITS]; /* S473 */
     int level_exit_count;
     LevelZone zones[LEVEL_BOXES_MAX_ZONES]; /* BIG_O engine merge phase 7c */
@@ -1182,6 +1195,43 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
         }
     }
 
+    // Authored loot -- same real, small-scanner convention as characters above. Absent "chests"
+    // means "this level places no loot of its own" and stays 0, so every pre-existing level loads
+    // exactly as it did; the tier is clamped to chests.h's own 0..2 rather than trusted.
+    out->chest_count = 0;
+    const char *chest_arr_key = level_boxes_find_key(buf, end, "chests");
+    if (chest_arr_key) {
+        const char *chest_arr = level_boxes_skip_ws(chest_arr_key);
+        if (*chest_arr == '[') {
+            const char *chest_arr_end = level_boxes_find_array_end(chest_arr, end);
+            if (chest_arr_end) {
+                const char *cucursor = chest_arr + 1;
+                while (cucursor < chest_arr_end && out->chest_count < LEVEL_BOXES_MAX_CHESTS) {
+                    cucursor = level_boxes_skip_ws(cucursor);
+                    if (cucursor >= chest_arr_end) break;
+                    if (*cucursor == ',') { cucursor++; continue; }
+                    if (*cucursor != '{') { cucursor++; continue; }
+                    const char *cuobj_start = cucursor;
+                    const char *cuobj_end = strchr(cuobj_start, '}');
+                    if (!cuobj_end || cuobj_end > chest_arr_end) break;
+                    LevelChest *cu = &out->chests[out->chest_count];
+                    memset(cu, 0, sizeof(*cu));
+                    const char *cv;
+                    float tier_f = 0.0f;
+                    if ((cv = level_boxes_find_key(cuobj_start, cuobj_end, "tier"))) level_boxes_parse_number(cv, &tier_f);
+                    cu->tier = (int)tier_f;
+                    if (cu->tier < 0) cu->tier = 0;
+                    if (cu->tier > 2) cu->tier = 2;
+                    if ((cv = level_boxes_find_key(cuobj_start, cuobj_end, "x"))) level_boxes_parse_number(cv, &cu->x);
+                    if ((cv = level_boxes_find_key(cuobj_start, cuobj_end, "y"))) level_boxes_parse_number(cv, &cu->y);
+                    if ((cv = level_boxes_find_key(cuobj_start, cuobj_end, "z"))) level_boxes_parse_number(cv, &cu->z);
+                    out->chest_count++;
+                    cucursor = cuobj_end + 1;
+                }
+            }
+        }
+    }
+
     // Level exits (S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1) -- same real, small-scanner
     // convention as characters above. Absent "level_exits" key is a real, honest "no authored
     // exit points for this level" state, not an error -- level_exit_count stays 0.
@@ -1537,6 +1587,14 @@ static inline void level_boxes_write_json(FILE *f, const CustomLevelData *lvl) {
                     ch->archetype, ch->faction, ch->orders);
         fprintf(f, ", \"x\": %.4g, \"y\": %.4g, \"z\": %.4g }",
                 (double)ch->x, (double)ch->y, (double)ch->z);
+    }
+    fprintf(f, "\n ]");
+
+    fprintf(f, ",\n \"chests\": [");
+    for (int i = 0; i < lvl->chest_count; i++) {
+        const LevelChest *cu = &lvl->chests[i];
+        fprintf(f, "%s\n  { \"tier\": %d, \"x\": %.4g, \"y\": %.4g, \"z\": %.4g }",
+                i ? "," : "", cu->tier, (double)cu->x, (double)cu->y, (double)cu->z);
     }
     fprintf(f, "\n ]");
 

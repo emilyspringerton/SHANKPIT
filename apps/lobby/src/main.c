@@ -3345,7 +3345,19 @@ static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
 // second, near-identical one. Deliberately does NOT call story_doors_init -- door scripting
 // (dlopen'd compiled .so via story_doors.h) is server-only, never wired into the lobby build
 // (checked directly, not assumed), a real, honest, named scope limit rather than a silent gap.
+static void chest_install_hooks(void); /* defined with the survival setup further down */
+
 static void lobby_apply_story_level(const CustomLevelData *lvl) {
+    /* Authored loot: a level's own chests, so a dressed building is worth walking into. The pool is
+       only reset when this level actually authored any, so a mode that seeds its own ring (survival)
+       keeps it, and a level with no "chests" key behaves exactly as it did before. */
+    if (lvl->chest_count > 0) {
+        chests_reset();
+        chest_install_hooks();
+        for (int ci = 0; ci < lvl->chest_count; ci++)
+            chests_place(lvl->chests[ci].tier, lvl->chests[ci].x, lvl->chests[ci].y, lvl->chests[ci].z);
+        SDL_Log("[LEVEL] %d authored chest(s) placed", lvl->chest_count);
+    }
     level_boxes_apply_to_physics(lvl);
     scene_load(SCENE_CUSTOM_LEVEL);
     local_state.players[0].scene_id = SCENE_CUSTOM_LEVEL;

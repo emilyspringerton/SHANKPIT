@@ -108,6 +108,10 @@ def bay_glass():
         wall(-BAY_W / 2.0 + 0.3, STOREY / 2.0, 0, 0.6, STOREY - 1.0, BAY_D - 1.0, "brick"),
         wall(BAY_W / 2.0 - 1.0, STOREY / 2.0, BAY_D / 2.0 - 1.0, 1.0, STOREY, 1.0, "metal"),
         wall(-BAY_W / 2.0 + 1.0, STOREY / 2.0, BAY_D / 2.0 - 1.0, 1.0, STOREY, 1.0, "metal"),
+        # ---- interior: a floor with furniture on it, not an empty glass box ----
+        wall(-1.0, 2.1, 2.0, 7.0, 2.2, 2.0, "wood"),          # reception desk
+        wall(2.8, 3.5, 6.0, 5.0, 5.0, 1.2, "metal"),            # shelf unit against the back
+        wall(-6.0, 7.4, 0.0, 2.0, 0.4, 2.0, "hps_light"),       # ceiling fixture
     ]
     return level("loft_bay_glass", ID_BAY_GLASS, BAY_W, STOREY, BAY_D, walls)
 
@@ -137,6 +141,9 @@ def bay_core():
         wall(-BAY_W / 2.0 + 0.3, STOREY / 2.0, 0.0, 0.6, STOREY - 1.0, BAY_D, "concrete"),
         wall(BAY_W / 2.0 - 0.3, STOREY / 2.0, 0.0, 0.6, STOREY - 1.0, BAY_D, "brick"),
         wall(-7.0, 6.0, 0.0, 3.0, 2.0, 3.0, "hps_light"),
+        # ---- interior: the clutter of a stair core, kept clear of the well (x -4..4, z -10..2) ----
+        wall(-7.5, 2.7, -5.0, 2.6, 2.6, 2.6, "wood"),       # crate stack
+        wall(-7.5, 2.7, -1.8, 2.6, 2.6, 2.6, "wood"),
     ]
     return level("loft_bay_core", ID_BAY_CORE, BAY_W, STOREY, BAY_D, walls)
 
@@ -149,6 +156,10 @@ def bay_open():
         wall(BAY_W / 2.0 - 0.2, STOREY / 2.0, 0, 0.4, STOREY - 1.0, BAY_D, "glass"),
         wall(0, STOREY - 0.4, 0, BAY_W - 2.0, 0.4, BAY_D - 2.0, "ips_light"),
         wall(-BAY_W / 2.0 + 1.0, STOREY / 2.0, BAY_D / 2.0 - 1.0, 0.8, STOREY, 0.8, "metal"),
+        # ---- interior: the lived-in half of the floor ----
+        wall(-2.0, 1.6, -2.0, 4.0, 1.4, 4.0, "wood"),        # table
+        wall(5.0, 1.9, 4.0, 6.0, 2.0, 2.6, "wood"),           # couch
+        wall(6.0, 3.2, -6.0, 0.5, 6.0, 0.5, "metal"),         # floor lamp
     ]
     return level("loft_bay_open", ID_BAY_OPEN, BAY_W, STOREY, BAY_D, walls)
 
@@ -421,6 +432,8 @@ def build(city_path=CITY, placements_path=PLACEMENTS, write=True):
     # as the fallback. Without that, a rebuild would stack a second copy of all eight buildings on top.
     prev = city.pop("loft_city", {}) or {}
     recorded = {tuple(round(float(v), 3) for v in e) for e in prev.get("walls", [])}
+    prev_characters = prev.get("characters", [])
+    prev_chests = prev.get("chests", [])
 
     if os.path.exists(placements_path):
         placements = json.load(open(placements_path)).get("buildings", [])
@@ -442,6 +455,17 @@ def build(city_path=CITY, placements_path=PLACEMENTS, write=True):
                 round(w["sx"], 3), round(w["sy"], 3), round(w["sz"], 3)) in recorded
 
     city["walls"] = [w for w in city["walls"] if not is_ours(w)]
+
+    def strip_authored(key, recorded_entries):
+        """Same idempotence for the population and the loot: the entries this tool wrote last time are
+        removed by exact value before it adds their replacements."""
+        if not recorded_entries:
+            return
+        rec = {json.dumps(e, sort_keys=True) for e in recorded_entries}
+        city[key] = [e for e in city.get(key, []) if json.dumps(e, sort_keys=True) not in rec]
+
+    strip_authored("characters", prev_characters)
+    strip_authored("chests", prev_chests)
     if not any(m.get("name") == "glass" for m in city.get("materials", [])):
         city.setdefault("materials", []).append(dict(GLASS_MATERIAL))
 
@@ -454,6 +478,8 @@ def build(city_path=CITY, placements_path=PLACEMENTS, write=True):
 
     stats = []
     groups = []
+    npcs = []
+    chests = []
     for p in placements:
         name = p["level"]
         lid = VARIANT_IDS[name]
@@ -465,16 +491,32 @@ def build(city_path=CITY, placements_path=PLACEMENTS, write=True):
             nw = transform_wall(w, p["x"], p["y"], p["z"], int(p["rot_y"]))
             nw["name"] = "%s_%d" % (name, len(placed) + 1)
             placed.append(nw)
+        # ---- dressing: loot and a population, on the ground floor, clear of the stair core ----
+        fp = footprint(placed)
+        bw, bd = fp[2] - fp[0], fp[3] - fp[1]
+        for i, (fx, fz) in enumerate(((0.18, 0.55), (0.82, 0.50), (0.15, 0.85))):
+            chests.append({"tier": (len(chests) + i) % 3,
+                           "x": round(fp[0] + fx * bw, 2), "y": 1.05, "z": round(fp[1] + fz * bd, 2)})
+        for fx, fz in ((0.22, 0.28), (0.78, 0.72)):
+            # archetype 2 = EU_ARCH_ZOMBIE, role 7 = the "Zombie" pursuer brain, faction/orders -1
+            # so the archetype's own values win (that is what an unauthored EMPIRE character means)
+            npcs.append({"role": 7, "kit": 0, "archetype": 2, "faction": -1, "orders": -1,
+                         "x": round(fp[0] + fx * bw, 2), "y": 1.05, "z": round(fp[1] + fz * bd, 2)})
+
         groups.append(placed)
-        stats.append((name, len(placed), footprint(placed)))
+        stats.append((name, len(placed), fp))
 
     placement_conflicts(city["walls"], placements, levels)
 
     for g in groups:
         city["walls"].extend(g)
+    city.setdefault("characters", []).extend(npcs)
+    city.setdefault("chests", []).extend(chests)
     city["loft_city"] = {
         "buildings": placements,
         "walls": [[w["x"], w["y"], w["z"], w["sx"], w["sy"], w["sz"]] for g in groups for w in g],
+        "characters": npcs,
+        "chests": chests,
     }
 
     for i, w in enumerate(city["walls"]):
@@ -528,6 +570,20 @@ def check():
         raise SystemExit("city has %d walls, over LEVEL_BOXES_MAX 2048" % len(city["walls"]))
     if len(city["walls"]) > 1600:
         print("warn city has %d walls -- close to LEVEL_BOXES_MAX 2048" % len(city["walls"]))
+    # the engine's own caps: LEVEL_BOXES_MAX_CHARACTERS is 64 in level_boxes.h (== STORY_AI_MAX) and
+    # LEVEL_BOXES_MAX_CHESTS is 32 (== CHEST_MAX). Exceeding either is a silent truncation at load.
+    if len(city.get("characters", [])) > 64:
+        raise SystemExit("city authors %d characters, over LEVEL_BOXES_MAX_CHARACTERS 64"
+                         % len(city["characters"]))
+    if len(city.get("chests", [])) > 32:
+        raise SystemExit("city authors %d chests, over LEVEL_BOXES_MAX_CHESTS 32" % len(city["chests"]))
+    authored = city.get("loft_city", {})
+    if len(authored.get("characters", [])) != 2 * len(VARIANTS):
+        raise SystemExit("expected two zombies per building, found %d"
+                         % len(authored.get("characters", [])))
+    if len(authored.get("chests", [])) != 3 * len(VARIANTS):
+        raise SystemExit("expected three chests per building, found %d"
+                         % len(authored.get("chests", [])))
     for name, n, fp in stats:
         print("ok  %-8s placed %3d walls at x=%.0f..%.0f z=%.0f..%.0f" % (name, n, fp[0], fp[2], fp[1], fp[3]))
     print("ok  city: %d walls, %d materials" % (len(city["walls"]), len(city.get("materials", []))))

@@ -6,7 +6,10 @@
 #include "ai_nav.h"
 #include "empire_units.h"
 
-#define STORY_AI_MAX 16
+/* 64, not 16: a dressed city authors a population per building (levels/lofts), and 16 was the story
+   campaign's own cast size. The arrays are static and the level loader's own cap matches this number
+   (LEVEL_BOXES_MAX_CHARACTERS), so the two must move together. */
+#define STORY_AI_MAX 64
 #define STORY_AI_PATROL_MAX_POINTS 8
 
 #ifndef STORY_AI_DEBUG
