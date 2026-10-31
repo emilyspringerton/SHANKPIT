@@ -45,12 +45,13 @@ int walk_within_leash(int dx, int dy, int leash);
 
 /* The seed mixer, shared with NOOBTOPIA's Wander.nextSeed().
  *
- * MINSTD (48271 mod 2^31-1) rather than the 1103515245 mixer ambient_life.h uses, and the reason is measured, not
- * stylistic: this seed drives a path that must match across C and Luau, and Luau numbers are IEEE doubles, exact
+ * MINSTD (48271 mod 2^31-1), and the reason is measured, not stylistic: this seed drives a path that must match
+ * across C and Luau, and Luau numbers are IEEE doubles, exact
  * only to 2^53. `seed * 1103515245` reaches ~2.4e18 (61 bits) for a seed near 2^31, so the low bits are rounded
  * away -- seed 2147483646 gives 2087949151 exactly but 2087949312 once forced through double arithmetic. Plain
  * `lua` 5.4 keeps 64-bit integers and hides this; Roblox would not. `seed * 48271` peaks near 1.0e14, exact in
- * both. Done in int64 here so the C multiply cannot wrap first. */
+ * both. Done in int64 here so the C multiply cannot wrap first. ambient_life.h carries this same mixer for the same
+ * reason, having used the 1103515245 generator until the divergence above was found and pinned by both test suites. */
 static inline int walk_agent_next_seed(int seed) {
     int64_t s = (int64_t)(seed < 0 ? 0 : seed);
     return (int)((s * 48271) % 2147483647);

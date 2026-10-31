@@ -97,6 +97,13 @@ int main(void) {
     (void)ambient_life_speak(0, 0, &q);
     CHECK(q == before);
 
+    /* 9. the seed mixer, pinned to the exact numbers NOOBTOPIA's tests/ambient_test.lua pins. MINSTD: the near-2^31
+     * row is the seed that silently diverged in a double, which is why this table is here rather than trusted. */
+    CHECK(ambient_life_next_seed(0u) == 0u);
+    CHECK(ambient_life_next_seed(42u) == 2027382u);
+    CHECK(ambient_life_next_seed(999999u) == 1026311495u);
+    CHECK(ambient_life_next_seed(2147483646u) == 2147435376u);
+
     if (g_fail) { printf("ambient_life_test: %d FAILED\n", g_fail); return 1; }
     printf("ambient_life_test OK\n");
     return 0;

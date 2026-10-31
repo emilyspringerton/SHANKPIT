@@ -26,12 +26,22 @@ int ambient_pick(int count, int seed);
 
 typedef struct { int category; const char *text; } AmbientLine;
 
+#include <stdint.h>
+
 /* Generated from NOOBTOPIA's data file: defines g_ambient_lines[] and g_ambient_line_count. */
 #include "ambient_lines.inc"
 
-/* The same deterministic generator NOOBTOPIA's Luau side uses, so a seed means the same thing in both worlds. */
+/* The seed mixer, shared digit for digit with NOOBTOPIA's Ambient.nextSeed().
+ *
+ * MINSTD (48271 mod 2^31-1), NOT the 1103515245 generator this used to carry. That one needs ~61 bits above a seed
+ * near 2^31, and Luau numbers are IEEE doubles (exact to 2^53), so the low bits were rounded away and the same seed
+ * produced two different worlds: seed 2147483646 gave 2087949151 exactly but 2087949312 through double arithmetic.
+ * Plain `lua` 5.4 has 64-bit integers and hides the whole defect; Roblox does not. This mixer peaks near 1.0e14,
+ * exact in both, and is verified in the tests on both sides rather than argued about. Done in int64 so the C
+ * multiply cannot wrap first. */
 static inline unsigned int ambient_life_next_seed(unsigned int seed) {
-    return (seed * 1103515245u + 12345u) & 0x7FFFFFFFu;
+    int64_t s = (int64_t)(seed & 0x7FFFFFFFu);
+    return (unsigned int)((s * 48271) % 2147483647);
 }
 
 static inline int ambient_life_count_in(int category) {
