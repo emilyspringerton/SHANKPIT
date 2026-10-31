@@ -12,11 +12,15 @@
  * everything. The names are lowercase and hyphen-free because they become file stems
  * (<asset_dir>/<name>.gband + .gband.json).
  *
- * NOT DONE, and named: nothing here draws anything yet. The player's own body still goes through
- * main.c's procedural compute_player_anim_pose, and no imported skin has these clips on disk -- so
- * anim_state_clip_name() returns the contract, not a loaded clip. Wiring it means the kit loader
- * gaining a clip-set concept (13 names per kit instead of idle/walk/greet/dance) and the player draw
- * path switching from procedural poses to gseq. That is the next slice, not a claim this one makes.
+ * The loaded half now exists: packages/simulation/anim_clipset.h loads these thirteen names through
+ * GOLDENBAND's own loader, ticks them (looping postures, holding one-shots) and falls back to a clip
+ * that exists when a bundle has holes. tools/mixamo_clipset.py produces that bundle from real
+ * Mixamo-derived .gband clips and refuses one that would fail at load.
+ *
+ * STILL NOT DONE, and named: nothing DRAWS from the clip set yet. The player's own body still goes
+ * through main.c's procedural compute_player_anim_pose, the NPC kit loader still takes
+ * idle/walk/greet/dance rather than the thirteen, and anim_clipset_sample()'s channels have not been
+ * pushed through forward kinematics into a skinned draw. That is a renderer slice, not a rules one.
  */
 #ifndef SHANKPIT_ANIM_STATE_H
 #define SHANKPIT_ANIM_STATE_H
