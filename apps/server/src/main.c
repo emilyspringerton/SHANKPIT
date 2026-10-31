@@ -2094,7 +2094,7 @@ int main(int argc, char *argv[]) {
                 occ->vx = occ->vy = occ->vz = 0.0f;
             }
         }
-        buggy_tick_all();
+        buggy_tick_all(get_server_time()); /* the car fire ladder needs a clock for its blast */
 
         if ((local_state.game_mode == MODE_DEATHMATCH || local_state.game_mode == MODE_TDM) && server_scene_is_dm_map(g_server_match_scene)) {
             int top_frags = 0;

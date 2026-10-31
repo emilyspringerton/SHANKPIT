@@ -256,7 +256,7 @@ static inline void airplane_spawn_defaults(AirplaneState *a, int id, int scene_i
 static inline BuggyState *buggy_find_nearby(int scene_id, float x, float y, float z, float radius);
 static inline int buggy_try_enter(PlayerState *p, BuggyState *b);
 static inline int buggy_try_exit(PlayerState *p, BuggyState *b);
-static inline void buggy_tick_all(void);
+static inline void buggy_tick_all(unsigned int now_ms);
 static inline void horse_spawn_defaults(HorseState *h, int id, int scene_id, float x, float z, float yaw);
 static inline HorseState *horse_find_nearby(int scene_id, float x, float y, float z, float radius);
 static inline int horse_try_enter(PlayerState *p, HorseState *h);
@@ -502,7 +502,27 @@ static inline int buggy_try_exit(PlayerState *p, BuggyState *b) {
     return 1;
 }
 
-static inline void buggy_tick_all(void) {
+/* ---- vehicle fire, authoritative -------------------------------------------------------------
+ * vehicle_burn.h's ladder used to run only in the lobby, over a client-side shadow of each car's
+ * hull (apps/lobby's vehicle_burn_client). That is enough to DRAW a burning car, but it means the
+ * car never actually burns: the server's hull only ever changed from hits, and the detonation
+ * damaged nobody, because the only blast was the local one. Running the same ladder on the
+ * authoritative hull closes both: fire consumes the car here, the hull reaches 0 here, and the
+ * blast is explode_splash on this side, so allies burn and the people standing next to the car
+ * take the damage.
+ *
+ * Still exactly one ladder per car: the lobby keeps drawing from the replicated health, which now
+ * falls on its own because the server is the one taking it down. */
+#include "vehicle_burn.h"
+
+static VehicleBurn g_local_buggy_burn[MAX_BUGGIES];
+
+/* Forward declaration: explode_splash is defined further down (it needs the projectile and brick
+   machinery). Same reason the header's own prototype block exists -- buggy_tick_all runs first. */
+static void explode_splash(float ex, float ey, float ez, unsigned char scene_id, int owner_id, int damage,
+                           float splash_radius, int weapon, unsigned int now_ms);
+
+static inline void buggy_tick_all(unsigned int now_ms) {
     for (int i = 0; i < MAX_BUGGIES; i++) {
         BuggyState *b = &local_state.buggies[i];
         if (!b->active) continue;
@@ -521,6 +541,19 @@ static inline void buggy_tick_all(void) {
         }
         phys_set_scene(b->scene_id);
         simulate_buggy_state(b, throttle, steer_intent, SHANKPIT_NET_FIXED_DT, b->occupant_player_id >= 0);
+        {
+            /* Seeded from the car's own id, so its flicker and fuse are that car's on every host.
+               Reset on a respawned/replacement car rather than inheriting a dead one's burn. */
+            VehicleBurn *vb = &g_local_buggy_burn[i];
+            if (!vb->active || vb->seed != (unsigned int)b->id + 1u)
+                vehicle_burn_reset(vb, 0, (unsigned int)b->id + 1u);
+            if (vehicle_burn_tick(vb, &b->health)) {
+                const VehicleBurnRules *br = vehicle_burn_rules();
+                explode_splash(b->x, b->y + 1.0f, b->z, (unsigned char)b->scene_id, -1,
+                               br->blast_damage, (float)br->blast_radius_milli / 1000.0f,
+                               WPN_MISSILE, now_ms);
+            }
+        }
         if (b->occupant_player_id >= 0 && b->occupant_player_id < MAX_CLIENTS) {
             PlayerState *occ = &local_state.players[b->occupant_player_id];
             occ->x = b->x; occ->y = b->y; occ->z = b->z;
@@ -2128,7 +2161,7 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
         if (local_state.game_mode == MODE_CTFB) ctf_try_capture(p, cmd_time);
         p->use_was_down = p->in_use;
     }
-    buggy_tick_all();
+    buggy_tick_all(cmd_time);
     horse_tick_all();
     update_projectiles(cmd_time);
     if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&

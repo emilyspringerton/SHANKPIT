@@ -20,8 +20,12 @@
  *                Those are the curves BR lights its arena with, applied to a car instead of a ball
  *                -- so a burning buggy reads the way a burning car already reads in Bedrock Racers.
  *
- * Nothing here decides WHO died: the caller owns the hull and runs the blast (physics.h
- * explode_splash via g_fx_explosion_hook), so this stays a pure function of (hull, ticks burned).
+ * Nothing here decides WHO died: the caller owns the hull and runs the blast, so this stays a pure
+ * function of (hull, ticks burned). Two real callers now, deliberately different halves: the server's
+ * buggy_tick_all (local_game.h) runs the ladder on the AUTHORITATIVE hull, so fire destroys the car
+ * and explode_splash damages everyone nearby; the lobby's vehicle_burn_client draws from the
+ * replicated health that the authority is taking down. Before the server ticked it, a car could only
+ * ever burn on the screen of the person watching it.
  */
 
 #include <math.h>
