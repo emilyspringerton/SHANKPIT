@@ -4,6 +4,8 @@
 # The decisions live in PARENA, once, and are emitted twice:
 #   PARENA/stdlib/noobtopia/ambient_life.prn  -> packages/simulation/ambient_life.c  (this script)
 #                                             -> NOOBTOPIA/src/generated/ambient_life.lua (NOOBTOPIA/scripts/gen_rules.sh)
+#   PARENA/stdlib/noobtopia/walk_rules.prn    -> packages/simulation/walk_rules.c    (this script)
+#                                             -> NOOBTOPIA/src/generated/walk_rules.lua
 #   PARENA/stdlib/noobtopia/arena_rules.prn   -> packages/simulation/arena_rules.c   (this script)
 #                                             -> NOOBTOPIA/src/generated/arena_rules.lua
 # Editing a threshold means editing the .prn and re-running both generators; there is no second copy to forget.
@@ -23,6 +25,8 @@ fi
 
 "$parena_bin" build "$parena_dir/stdlib/noobtopia/ambient_life.prn" \
     -o "$root/packages/simulation/ambient_life.c"
+"$parena_bin" build "$parena_dir/stdlib/noobtopia/walk_rules.prn" \
+    -o "$root/packages/simulation/walk_rules.c"
 "$parena_bin" build "$parena_dir/stdlib/noobtopia/arena_rules.prn" \
     -o "$root/packages/simulation/arena_rules.c"
-echo "regenerated packages/simulation/{ambient_life,arena_rules}.c"
+echo "regenerated packages/simulation/{ambient_life,walk_rules,arena_rules}.c"

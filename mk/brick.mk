@@ -152,8 +152,8 @@ test-ocean: $(OCEAN_RULES_C)
 # ---- the NOOBTOPIA three-way merge (MONOREPO/docs/THREE_WAY_MERGE.md) --------------------------------
 # Decisions are PARENA's, once (stdlib/noobtopia/*.prn), emitted to C here and to Luau in NOOBTOPIA. The WORDS are
 # NOOBTOPIA's data file, generated into ambient_lines.inc. Neither side keeps a copy.
-NOOBTOPIA_RULES_PRN ?= ../PARENA/stdlib/noobtopia/ambient_life.prn ../PARENA/stdlib/noobtopia/arena_rules.prn
-NOOBTOPIA_RULES_C   ?= packages/simulation/ambient_life.c packages/simulation/arena_rules.c
+NOOBTOPIA_RULES_PRN ?= ../PARENA/stdlib/noobtopia/ambient_life.prn ../PARENA/stdlib/noobtopia/walk_rules.prn ../PARENA/stdlib/noobtopia/arena_rules.prn
+NOOBTOPIA_RULES_C   ?= packages/simulation/ambient_life.c packages/simulation/walk_rules.c packages/simulation/arena_rules.c
 AMBIENT_LINES_INC   ?= packages/simulation/ambient_lines.inc
 
 ifneq ($(wildcard $(firstword $(NOOBTOPIA_RULES_PRN))),)
@@ -166,7 +166,7 @@ $(AMBIENT_LINES_INC): ../NOOBTOPIA/data/noob_lines.lua
 	./scripts/gen_ambient_lines.sh
 endif
 
-.PHONY: test-ambient-life test-noobtopia-arena test-noobtopia
+.PHONY: test-ambient-life test-walk-rules test-noobtopia-arena test-noobtopia
 test-ambient-life: $(NOOBTOPIA_RULES_C) $(AMBIENT_LINES_INC)
 	gcc -std=gnu99 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
 		-Ipackages/simulation -Ipackages/world -Ipackages/common \
@@ -181,7 +181,16 @@ test-noobtopia-arena: $(NOOBTOPIA_RULES_C)
 		-o /tmp/shankpit_arena_rules_test -lm
 	/tmp/shankpit_arena_rules_test
 
-test-noobtopia: test-ambient-life test-noobtopia-arena
+# Where it drifts, and when: the shared walk rule (PARENA walk_rules.prn), with the same parity vectors
+# NOOBTOPIA/tests/walk_test.lua asserts -- a startled noob frozen, a curious one roaming, the leash holding.
+test-walk-rules: $(NOOBTOPIA_RULES_C)
+	gcc -std=gnu99 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
+		-Ipackages/simulation -Ipackages/world -Ipackages/common \
+		packages/simulation/walk_rules_test.c packages/simulation/walk_rules.c \
+		-o /tmp/shankpit_walk_rules_test -lm
+	/tmp/shankpit_walk_rules_test
+
+test-noobtopia: test-ambient-life test-walk-rules test-noobtopia-arena
 
 STRUCTURE_RULES_PRN ?= ../PARENA/stdlib/shankpit/structure_rules.prn
 STRUCTURE_RULES_C   ?= packages/simulation/structure_rules.c
