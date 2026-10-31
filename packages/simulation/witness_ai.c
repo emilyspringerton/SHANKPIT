@@ -22,6 +22,8 @@ void reflux_dispatch(int action_type, int a, int b, int c);
 /* Prototype for zombies_pheromone_rules.c (PARENA-generated, do-not-edit-by-hand) -- same
  * no-shared-header-between-generated-units convention as reflux_dispatch above. */
 int zombies_pheromone_should_steer_to_marker(int hero_has_target);
+int zombies_pheromone_should_hunt(int hunger_milli, int aggression_milli);
+int zombies_pheromone_spares_thrower(int grace_ms, int thrower_alive);
 
 typedef struct {
     int active;
@@ -53,6 +55,12 @@ typedef struct {
     int grudge_pid1;             /* player_id+1 of whoever bit this zombie last (fights back), 0 = none */
     unsigned int grudge_until_ms;
     unsigned int last_prey_bite_ms;
+    float target_dist;           /* distance to whatever this tick's target is (hero, marker or
+                                    prey), or a large sentinel when it has none. Read by the
+                                    movement pass to choose breach-vs-route -- see
+                                    WITNESS_AI_ZOMBIE_BREACH_TARGET_RANGE. */
+    int pher_owner_pid1;         /* player_id+1 whose canister recruited this zombie, 0 = none */
+    unsigned int pher_grace_until_ms; /* ...and the fading memory that spares that player until here */
 } WitnessAiZombie;
 
 /* Giant Zombie Bug -- founder real-time, 2026-09-22: "add giant zombie bugs (feral AI units)."
@@ -92,6 +100,7 @@ static int wai_map(const WaiBox **b) {
 #define WAI_BODY_R 1.6f
 static void wai_learn_reset(void);
 static void wai_learn_clear_near(float x, float z);
+static void wai_route_reset(void);
 static signed char g_wai_side[MAX_CLIENTS];
 static unsigned int g_zlast_spawn_ms;
 void witness_ai_set_wall_hit_hook(WitnessWallHitFn fn) { g_wall_hit_hook = fn; }
@@ -125,6 +134,12 @@ static int g_have_last_sim_tick;
 #define WITNESS_AI_PHEROMONE_DETECTION_RADIUS 60.0f
 static PheromoneMarker g_pheromone_markers[PHEROMONE_MAX];
 static PgGrenade g_pheromone_grenades[PHEROMONE_MAX]; /* slot i is the canister carrying marker i */
+/* Who threw marker slot i (player_id+1, 0 = nobody). Kept in this parallel array rather than adding
+ * an owner field to PheromoneMarker: that struct is ported BIG_O code (packages/common/pheromone.h)
+ * with its own standalone test, and "whose canister is this" is a SHANKPIT-side fact about the live
+ * game (the grace window), not part of the pure targeting primitive. An expired marker's slot stops
+ * being readable the moment .active clears, so nothing here needs clearing on expiry. */
+static int g_pheromone_owner1[PHEROMONE_MAX];
 static unsigned int g_pheromone_last_step_ms;
 static unsigned int g_pheromone_next_throw_ms[MAX_CLIENTS];
 
@@ -272,6 +287,10 @@ void witness_ai_reset(unsigned int seed, unsigned int now_ms) {
     memset(g_wai_breach, 0, sizeof(g_wai_breach));
     memset(g_wai_side, 0, sizeof(g_wai_side));
     wai_learn_reset();
+    wai_route_reset(); /* a fresh population must not inherit the last one's planned paths --
+                          found by the 2026-10-31 navigation test, which left a route half-walked
+                          for a slot the next spawn then reused: the new zombie steered at the old
+                          zombie's waypoints and never changed heading again. */
     g_have_last_sim_tick = 0;
     g_zlast_spawn_ms = 0;
     g_player_zone = ZONE_PUBLIC; /* matches witness_sim_init's own player-0 default */
@@ -280,6 +299,7 @@ void witness_ai_reset(unsigned int seed, unsigned int now_ms) {
     g_lab_deliveries = 0;
     g_distraction_until_ms = 0;
     memset(g_pheromone_markers, 0, sizeof(g_pheromone_markers));
+    memset(g_pheromone_owner1, 0, sizeof(g_pheromone_owner1));
     memset(g_pheromone_grenades, 0, sizeof(g_pheromone_grenades));
     g_pheromone_last_step_ms = 0;
     memset(g_pheromone_next_throw_ms, 0, sizeof(g_pheromone_next_throw_ms));
@@ -505,6 +525,7 @@ int witness_ai_try_throw_pheromone(ServerState *s, int player_id, unsigned int n
     g_pheromone_markers[slot].x = org[0];
     g_pheromone_markers[slot].z = org[2];
     g_pheromone_markers[slot].expires_at_ms = now_ms + (unsigned int)(PG_MAX_FLIGHT * 1000.0f) + WITNESS_AI_PHEROMONE_MARKER_LIFETIME_MS;
+    g_pheromone_owner1[slot] = player_id + 1; /* whose canister it is -- see g_pheromone_owner1 */
     g_pheromone_last_step_ms = g_pheromone_last_step_ms ? g_pheromone_last_step_ms : now_ms;
 
     printf("[PHEROMONE] player=%d threw canister slot=%d mass=%.2fkg speed=%.1f\n",
@@ -583,11 +604,28 @@ int witness_ai_spawn_zombie(ServerState *s, float x, float y, float z, unsigned 
     zc->last_attack_ms = 0;
     zc->last_tick_ms = 0; zc->lock_until_ms = 0; zc->wander_until_ms = 0; zc->wander_yaw = 0.0f; zc->wander_pause = 0;
     zc->harvested_reported = 0;
+    zc->target_dist = 1.0e9f;   /* no target yet -- must not read as "the target is right here" to
+                                   the movement pass's own breach-vs-route test */
+    zc->pher_owner_pid1 = 0;
+    zc->pher_grace_until_ms = 0;
     zombie_state_init(&zc->zstate, now_ms);
     /* not every zombie starts equally hungry -- desynchronises the wander->scent turn */
     zc->zstate.hunger = (float)((((unsigned int)slot * 2654435761u) ^ now_ms) % 40u) / 100.0f;
     reflux_dispatch(REFLUX_ACTION_ZOMBIE_SPAWNED, slot, 0, 0);
     return slot;
+}
+
+unsigned int witness_ai_zombie_grace_ms(int player_id, unsigned int now_ms) {
+    for (int i = 0; i < WITNESS_AI_MAX_ZOMBIES; i++)
+        if (g_zombies[i].active && g_zombies[i].player_id == player_id)
+            return g_zombies[i].pher_grace_until_ms > now_ms ? g_zombies[i].pher_grace_until_ms - now_ms : 0u;
+    return 0u;
+}
+
+float witness_ai_zombie_aggression(int player_id) {
+    for (int i = 0; i < WITNESS_AI_MAX_ZOMBIES; i++)
+        if (g_zombies[i].active && g_zombies[i].player_id == player_id) return g_zombies[i].zstate.aggression;
+    return -1.0f;
 }
 
 float witness_ai_zombie_hunger(int player_id) {
@@ -918,6 +956,20 @@ static unsigned int g_wai_route_until[MAX_CLIENTS];
 static float g_wai_gx[MAX_CLIENTS], g_wai_gz[MAX_CLIENTS];
 static unsigned char g_wai_blocked_drop[MAX_CLIENTS];
 
+/* Clears every mover's route bookkeeping. Split out (rather than inlined into witness_ai_reset,
+ * which sits 600 lines above these arrays) so a reset really is a reset: route state is per player
+ * slot and OUTLIVES deactivate_managed_player, so a slot handed to a new zombie otherwise walks the
+ * previous occupant's waypoints with a fixed heading. */
+static void wai_route_reset(void) {
+    memset(g_wai_rn, 0, sizeof(g_wai_rn));
+    memset(g_wai_ri, 0, sizeof(g_wai_ri));
+    memset(g_wai_route_until, 0, sizeof(g_wai_route_until));
+    memset(g_wai_blocked_drop, 0, sizeof(g_wai_blocked_drop));
+    memset(g_wai_commit_until, 0, sizeof(g_wai_commit_until));
+    memset(g_wai_commit_yaw, 0, sizeof(g_wai_commit_yaw));
+    memset(g_wai_lchk, 0, sizeof(g_wai_lchk));
+}
+
 static void wai_learn_reset(void) {
     memset(g_wai_cell, 0, sizeof g_wai_cell); memset(g_wai_lchk, 0, sizeof g_wai_lchk); memset(g_wai_commit_until, 0, sizeof g_wai_commit_until);
     memset(g_wai_blocked_drop, 0, sizeof g_wai_blocked_drop); memset(g_wai_rn, 0, sizeof g_wai_rn); memset(g_wai_ri, 0, sizeof g_wai_ri); memset(g_wai_route_until, 0, sizeof g_wai_route_until);
@@ -1111,23 +1163,24 @@ static void wai_avoid_walls(PlayerState *p, int id, int relentless) {
 /* wai_find_prey -- the nearest living thing a starving zombie will bite: any other zombie, citizen
  * or Man in its scene within `radius`. A grudge target (whoever bit it last) wins if it is in reach.
  * Returns the victim's player_id or -1. */
-static int wai_find_prey(ServerState *s, int self_pid, int grudge_pid, float radius) {
+static int wai_find_prey(ServerState *s, int self_pid, int grudge_pid, float radius, int exempt_pid) {
     PlayerState *me = &s->players[self_pid];
     float best = radius * radius; int pick = -1;
+    if (grudge_pid == exempt_pid) grudge_pid = -1; /* an old grudge is not a way round the grace window */
     if (grudge_pid > 0 && grudge_pid < MAX_CLIENTS) {
         PlayerState *g = &s->players[grudge_pid];
         float dx = g->x - me->x, dz = g->z - me->z;
         if (g->active && g->state != STATE_DEAD && g->scene_id == me->scene_id && dx * dx + dz * dz <= radius * radius) return grudge_pid;
     }
     for (int i = 0; i < WITNESS_AI_MAX_ZOMBIES; i++) {
-        if (!g_zombies[i].active || g_zombies[i].player_id == self_pid) continue;
+        if (!g_zombies[i].active || g_zombies[i].player_id == self_pid || g_zombies[i].player_id == exempt_pid) continue;
         PlayerState *o = &s->players[g_zombies[i].player_id];
         if (o->state == STATE_DEAD || o->scene_id != me->scene_id) continue;
         float dx = o->x - me->x, dz = o->z - me->z, d2 = dx * dx + dz * dz;
         if (d2 <= best) { best = d2; pick = g_zombies[i].player_id; }
     }
     for (int i = 0; i < WITNESS_AI_MAX_CITIZENS; i++) {
-        if (!g_citizens[i].active) continue;
+        if (!g_citizens[i].active || g_citizens[i].player_id == exempt_pid) continue;
         PlayerState *o = &s->players[g_citizens[i].player_id];
         if (o->state == STATE_DEAD || o->scene_id != me->scene_id) continue;
         float dx = o->x - me->x, dz = o->z - me->z, d2 = dx * dx + dz * dz;
@@ -1145,6 +1198,23 @@ static WitnessAiZombie *wai_zombie_by_pid(int pid) {
 int witness_ai_zombie_has_prey(int player_id) {
     WitnessAiZombie *z = wai_zombie_by_pid(player_id);
     return z && z->prey_pid1 != 0;
+}
+
+/* wai_nearest_marker_slot -- which marker slot pheromone_find_nearest would pick, or -1. Same
+ * search and radius rule as that pure primitive (packages/common/pheromone.h), returning the INDEX
+ * instead of just the position because the caller needs to know WHOSE canister it is: the thrower's
+ * own fading immunity hangs off that. Kept here rather than widening the ported primitive's
+ * signature, which its own standalone test already covers as-is. */
+static int wai_nearest_marker_slot(float x, float z, float radius) {
+    int best = -1;
+    float best_d2 = radius * radius;
+    for (int i = 0; i < PHEROMONE_MAX; i++) {
+        if (!g_pheromone_markers[i].active) continue;
+        float dx = g_pheromone_markers[i].x - x, dz = g_pheromone_markers[i].z - z;
+        float d2 = dx * dx + dz * dz;
+        if (d2 <= best_d2) { best_d2 = d2; best = i; }
+    }
+    return best;
 }
 
 void witness_ai_tick(ServerState *s, unsigned int now_ms) {
@@ -1194,8 +1264,16 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
             redirects hdx/hdz/hdist at a thrown marker instead -- witness_ai_hero_melee_hit must
             never fire off a distance that's actually measured to a marker, not the hero. */
         float hdx = 0.0f, hdz = 0.0f, hdist = 0.0f;
+        /* The fading memory (founder 2026-10-31). A zombie that took THIS hero's canister does not
+           perceive the hero at all while the window lasts -- not a mood, a countdown, and one that
+           runs out: the same hunger the canister fed it then walks it back to the thrower. Player 0
+           is always the hero (story_ai.c's own convention), so pher_owner_pid1==1 is "mine". The
+           moment it lapses the owner is cleared, so a later marker from anyone is judged fresh. */
+        int grace_ms = (z->pher_grace_until_ms > now_ms) ? (int)(z->pher_grace_until_ms - now_ms) : 0;
+        int grace_hero = zombies_pheromone_spares_thrower(grace_ms, z->pher_owner_pid1 == 1 && hero_live);
+        if (grace_ms == 0) z->pher_owner_pid1 = 0;
         int wander_mode = (s->game_mode == MODE_ZOMBIES || s->game_mode == MODE_SURVIVAL);
-        if (hero_live && zp->scene_id == hero_p->scene_id) {
+        if (hero_live && zp->scene_id == hero_p->scene_id && !grace_hero) {
             hdx = hero_p->x - zp->x;
             hdz = hero_p->z - zp->z;
             hdist = sqrtf(hdx * hdx + hdz * hdz);
@@ -1227,14 +1305,28 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
            no memory of its own the way a moving hero does. */
         if (wander_mode) {
             pheromone_marker_expire(g_pheromone_markers, PHEROMONE_MAX, now_ms);
-            float mtx = 0.0f, mtz = 0.0f;
-            if (pheromone_find_nearest(g_pheromone_markers, PHEROMONE_MAX, zp->x, zp->z,
-                                        WITNESS_AI_PHEROMONE_DETECTION_RADIUS, &mtx, &mtz) &&
-                zombies_pheromone_should_steer_to_marker(has_target)) {
-                hdx = mtx - zp->x;
-                hdz = mtz - zp->z;
+            int mslot = wai_nearest_marker_slot(zp->x, zp->z, WITNESS_AI_PHEROMONE_DETECTION_RADIUS);
+            if (mslot >= 0 && zombies_pheromone_should_steer_to_marker(has_target)) {
+                hdx = g_pheromone_markers[mslot].x - zp->x;
+                hdz = g_pheromone_markers[mslot].z - zp->z;
                 hdist = sqrtf(hdx * hdx + hdz * hdz);
                 has_target = 1;
+                /* A lure FEEDS. Without this a canister was a pure steering override: it walked a
+                   horde around the map and left it exactly as harmless as it found it. Rate is
+                   per second against the real tick delta, clamped so a hitch cannot teleport the
+                   meter to 1.0 in one frame. */
+                float mdt = z->last_tick_ms ? (float)(now_ms - z->last_tick_ms) / 1000.0f : 0.05f;
+                if (mdt < 0.0f) mdt = 0.0f;
+                if (mdt > 0.5f) mdt = 0.5f;
+                z->zstate.hunger += WITNESS_AI_PHEROMONE_HUNGER_PER_SEC * mdt;
+                if (z->zstate.hunger > 1.0f) z->zstate.hunger = 1.0f;
+                z->zstate.aggression += WITNESS_AI_PHEROMONE_AGGRESSION_PER_SEC * mdt;
+                if (z->zstate.aggression > 1.0f) z->zstate.aggression = 1.0f;
+                /* ...and it remembers whose it was, which is what buys the thrower its window. */
+                if (g_pheromone_owner1[mslot] > 0) {
+                    z->pher_owner_pid1 = g_pheromone_owner1[mslot];
+                    z->pher_grace_until_ms = now_ms + WITNESS_AI_PHEROMONE_GRACE_MS;
+                }
             }
         }
         /* Hunger infighting: with the hero out of sense, a STARVING zombie (or one that was just
@@ -1244,7 +1336,11 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
            itself. */
         int targeting_prey = 0;
         if (wander_mode && !targeting_hero) {
-            int starving = z->zstate.hunger >= WITNESS_AI_ZOMBIE_STARVING_HUNGER;
+            /* "attack the player and the citizens when they are hungry or aggressive" -- one
+               PARENA decision over both meters, so the aggression a pheromone canister feeds is a
+               real targeting input and not just a number that sat there climbing. */
+            int hungry_or_angry = zombies_pheromone_should_hunt((int)(z->zstate.hunger * 1000.0f),
+                                                               (int)(z->zstate.aggression * 1000.0f));
             int grudge = z->grudge_pid1 && (int)(z->grudge_until_ms - now_ms) > 0;
             if (!grudge) z->grudge_pid1 = 0;
             if (z->prey_pid1) {
@@ -1252,11 +1348,13 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
                 float ddx = pp->x - zp->x, ddz = pp->z - zp->z;
                 int keep = pp->active && pp->state != STATE_DEAD && pp->scene_id == zp->scene_id &&
                            ddx * ddx + ddz * ddz <= (WITNESS_AI_ZOMBIE_PREY_RADIUS * 1.5f) * (WITNESS_AI_ZOMBIE_PREY_RADIUS * 1.5f) &&
-                           (int)(z->prey_until_ms - now_ms) > 0;
+                           (int)(z->prey_until_ms - now_ms) > 0 &&
+                           !(grace_hero && z->prey_pid1 == 1); /* never keep MY hero as prey in my window */
                 if (!keep) z->prey_pid1 = 0;
             }
-            if (!z->prey_pid1 && (starving || grudge)) {
-                int pid = wai_find_prey(s, z->player_id, grudge ? z->grudge_pid1 - 1 : -1, WITNESS_AI_ZOMBIE_PREY_RADIUS);
+            if (!z->prey_pid1 && (hungry_or_angry || grudge)) {
+                int pid = wai_find_prey(s, z->player_id, grudge ? z->grudge_pid1 - 1 : -1,
+                                        WITNESS_AI_ZOMBIE_PREY_RADIUS, grace_hero ? 0 : -1);
                 if (pid > 0) {
                     z->prey_pid1 = pid + 1;
                     z->prey_until_ms = now_ms + 10000u;
@@ -1273,6 +1371,7 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
                 }
             }
         }
+        z->target_dist = has_target ? hdist : 1.0e9f; /* see the movement pass's breach-vs-route test */
         {
             float dt = z->last_tick_ms ? (float)(now_ms - z->last_tick_ms) / 1000.0f : 0.05f;
             if (dt > 1.0f) dt = 1.0f;
@@ -1304,7 +1403,8 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
                 else if (hunger >= WITNESS_AI_ZOMBIE_STARVING_HUNGER) {
                     /* starving: smell the nearest zombie / citizen / Man much further out than it
                        can bite, and drift toward it (a wider "scent" than the 45-unit hunt radius) */
-                    int sp = wai_find_prey(s, z->player_id, -1, WITNESS_AI_ZOMBIE_PREY_RADIUS * 3.0f);
+                    int sp = wai_find_prey(s, z->player_id, -1, WITNESS_AI_ZOMBIE_PREY_RADIUS * 3.0f,
+                                           grace_hero ? 0 : -1);
                     if (sp > 0) {
                         z->wander_yaw = atan2f(s->players[sp].x - zp->x, s->players[sp].z - zp->z) * (180.0f / 3.14159f) +
                                         (float)((int)((h >> 5) % 41u) - 20);
@@ -1717,8 +1817,29 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
     for (int i = 0; i < WITNESS_AI_MAX_CITIZENS; i++)
         if (g_citizens[i].active) wai_avoid_walls(&s->players[g_citizens[i].player_id], g_citizens[i].player_id, 0);
     for (int i = 0; i < WITNESS_AI_MAX_ZOMBIES; i++)
-        if (g_zombies[i].active && !g_wai_breach[g_zombies[i].player_id])
-            wai_avoid_walls(&s->players[g_zombies[i].player_id], g_zombies[i].player_id, g_wall_hit_hook != NULL);
+        if (g_zombies[i].active && !g_wai_breach[g_zombies[i].player_id]) {
+            /* Breach, or route around? "Zombies shouldnt just walk into walls ... sometimes they
+               should but that is when they are trying to break walls down" (founder 2026-10-31).
+               This used to pass `g_wall_hit_hook != NULL`, i.e. relentless whenever the host had a
+               wall-hit hook installed -- which the real game always does -- so wai_avoid_walls
+               skipped route planning for EVERY zombie and the whole horde ground the straight line
+               into the nearest face and clawed it from a hundred metres away. Now a zombie only
+               means it when its target is close (WITNESS_AI_ZOMBIE_BREACH_TARGET_RANGE); otherwise
+               it plans a route exactly the way a citizen already does, and the breach path above
+               (g_wai_breach, which skips this pass entirely) stays what it always was: the zombie
+               stops, plants, and tears the wall down. */
+            /* A zombie with NO target is not breaching anything and has no goal worth planning a
+             * path TO: the stuck detector's own "walk 60 m the way I was already facing" detour then
+             * just pins its heading, which is what a wandering zombie must never have (found by the
+             * 2026-10-31 navigation test: the far-zombie wander test stopped changing heading
+             * entirely). It keeps the old straight-line behaviour -- still steering around walls
+             * through the fan sweep below, just not planning routes to nowhere. */
+            int target_far = g_zombies[i].target_dist > WITNESS_AI_ZOMBIE_BREACH_TARGET_RANGE;
+            int has_goal = g_zombies[i].target_dist < 1.0e8f;
+            int breach_intent = g_wall_hit_hook != NULL &&
+                                (!has_goal || (g_zombies[i].zstate.mood >= ZOMBIE_MOOD_HUNTING && !target_far));
+            wai_avoid_walls(&s->players[g_zombies[i].player_id], g_zombies[i].player_id, breach_intent);
+        }
     for (int i = 0; i < WITNESS_AI_MAX_GIANT_BUGS; i++)
         if (g_giant_bugs[i].active) wai_avoid_walls(&s->players[g_giant_bugs[i].player_id], g_giant_bugs[i].player_id, 0);
 }

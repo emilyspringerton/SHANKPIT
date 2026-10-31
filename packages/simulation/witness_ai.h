@@ -486,6 +486,41 @@ int witness_ai_pheromone_view(int i, WitnessAiPheromoneView *out);
 /* Milliseconds until this player can throw again (0 = ready), for the HUD. */
 unsigned int witness_ai_pheromone_cooldown_ms(int player_id, unsigned int now_ms);
 
+/* --- the lure that feeds, and the thrower's fading memory (founder 2026-10-31) ------------------
+ * "the zombies dont seem to respond to ferimone balls it should make them hungry and somewhat
+ * aggressive also it should guide them to the spot also they should attack the player and the
+ * citizens when they are hungry or aggressive there should be some threshold where they dont
+ * attack you if your pherimone caused their hunger and agression but that should be like a fading
+ * memory your zombies wont attack you at first but they forget pretty quick and they will target
+ * you for the next snack after your window runs out so you need to be intentional with your
+ * phermone balls"
+ *
+ * A marker used to do exactly one thing: redirect the steering of a zombie that had no hero lock.
+ * It now does three. It FEEDS whoever comes to it -- hunger and aggression climb while a zombie is
+ * steering to a canister, so a lure genuinely makes a horde dangerous instead of merely moving it,
+ * and the "hungry or aggressive -> go eat somebody" rule (zombies_pheromone_should_hunt, PARENA)
+ * then has something real to act on. It stays the target until the zombie arrives. And the zombie
+ * that took YOUR canister is barred from eating YOU for WITNESS_AI_PHEROMONE_GRACE_MS -- a real
+ * countdown, not a mood: when it expires the very hunger your canister created sends the zombie
+ * back for you. That window covers the thrower ONLY. Citizens and other zombies were never
+ * spared, so a lured horde eats the neighbourhood and remembers you late -- which is the whole
+ * reason the throw has to be deliberate. The bar itself is zombies_pheromone_spares_thrower
+ * (PARENA), see that rule's own comment for why both halves of it must hold. */
+#define WITNESS_AI_PHEROMONE_GRACE_MS 9000u          /* how long a recruited zombie remembers you */
+#define WITNESS_AI_PHEROMONE_HUNGER_PER_SEC 0.40f    /* what standing at your canister feeds it */
+#define WITNESS_AI_PHEROMONE_AGGRESSION_PER_SEC 0.30f
+/* Breach-vs-route: a zombie only ploughs into a wall it MEANS to break when its current target is
+ * this close; further out it routes around the building the way a citizen already does. Without
+ * this the whole horde walked the straight line into a face and clawed from 100 m out. */
+#define WITNESS_AI_ZOMBIE_BREACH_TARGET_RANGE 70.0f
+
+/* Milliseconds of thrower-immunity this zombie still has (0 = none left, it has forgotten you).
+ * Test/debug + a future HUD readout, same convention as witness_ai_pheromone_cooldown_ms. */
+unsigned int witness_ai_zombie_grace_ms(int player_id, unsigned int now_ms);
+/* This zombie's current aggression meter (0..1), -1 if player_id isn't a zombie. The sibling of
+ * witness_ai_zombie_hunger, needed because both now independently make a zombie hunt. */
+float witness_ai_zombie_aggression(int player_id);
+
 /* Hunger infighting (MODE_ZOMBIES/MODE_SURVIVAL): a zombie whose hunger reaches
  * WITNESS_AI_ZOMBIE_STARVING_HUNGER with the hero out of sense turns on the nearest zombie,
  * citizen or Man in range and bites; whoever it bites fights back. 1 = this zombie is hunting prey. */

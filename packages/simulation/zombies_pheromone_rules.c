@@ -6,8 +6,18 @@
 #include <math.h>
 
 int zombies_pheromone_should_steer_to_marker(int);
+int zombies_pheromone_should_hunt(int, int);
+int zombies_pheromone_spares_thrower(int, int);
 
 int zombies_pheromone_should_steer_to_marker(int hero_has_target __attribute__((unused))) {
     return (hero_has_target == 0);
+}
+
+int zombies_pheromone_should_hunt(int hunger_milli __attribute__((unused)), int aggression_milli __attribute__((unused))) {
+    return ((hunger_milli >= 400) || (aggression_milli >= 450));
+}
+
+int zombies_pheromone_spares_thrower(int grace_ms __attribute__((unused)), int thrower_alive __attribute__((unused))) {
+    return ((grace_ms > 0) && (thrower_alive == 1));
 }
 

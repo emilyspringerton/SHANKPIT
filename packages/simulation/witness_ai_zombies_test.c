@@ -163,6 +163,34 @@ int main(void) {
     assert(S.players[zid].x < 28.0f);                 /* and did not walk through it */
     printf("PASS: zombie clawed the wall %d times, face x=%.2f normal=(%.0f,%.0f)\n", hits, hit_x, hit_nx, hit_nz);
 
+    /* ---- breach only when it MEANS it (founder 2026-10-31: "zombies shouldnt just walk into walls
+       ... sometimes they should but that is when they are trying to break walls down they should
+       have some ability to navigate the terrain"). A zombie whose target is far away must route
+       AROUND the same building instead of grinding into its face -- the old movement pass passed
+       relentless whenever a wall-hit hook was installed, which the real game always does, so every
+       zombie walked the straight line and clawed from a hundred metres out. ---- */
+    memset(&S, 0, sizeof S);
+    S.game_mode = MODE_ZOMBIES;
+    S.players[0].active = 1; S.players[0].state = STATE_ALIVE;
+    S.players[0].x = 300.0f; S.players[0].y = 0.0f; S.players[0].z = 0.0f;   /* far behind the same wall */
+    witness_ai_reset(9u, 0);
+    hits = 0;
+    zid = witness_ai_spawn_zombie(&S, 10.0f, 0.0f, 0.0f, 0);
+    assert(zid > 0);
+    float zmax = -1e9f, zmin = 1e9f;
+    for (int i = 0; i < 6000; i++) {                 /* 300 s of game time at 50 ms */
+        t += 50;
+        witness_ai_force_zombie_mood(zid, 2 /* HUNTING */);
+        witness_ai_tick(&S, t);
+        walk_solid(0.05f);
+        if (S.players[zid].z > zmax) zmax = S.players[zid].z;
+        if (S.players[zid].z < zmin) zmin = S.players[zid].z;
+    }
+    assert(hits == 0);                               /* it did not stand at the face clawing */
+    assert(zmax > 42.0f || zmin < -42.0f || S.players[zid].x > 32.0f);  /* it went around it */
+    printf("PASS: a far target makes it navigate around the building, not claw it (claw hits=%d, z %.0f..%.0f, x=%.0f)\n",
+           hits, zmin, zmax, S.players[zid].x);
+
     /* ---- founder 2026-10-04: sandbox zombies wander and get hungry instead of always knowing
        where the hero is; a close hero is sensed and chased, a far one is found by hunger scent ---- */
     memset(&S, 0, sizeof S);
@@ -175,7 +203,11 @@ int main(void) {
     witness_ai_force_zombie_mood(zid, 2);
     float yaw0 = 0.0f; int yaw_changes = 0, stood = 0, moved = 0;
     float fx0 = 0, fz0 = 0;
-    for (int i = 0; i < 400; i++) {   /* 20 s */
+    /* 60 s, not 20: a wander leg lasts 3-7 s and roughly 30% of legs are stand-stills (fewer as
+     * hunger climbs), so a 20 s window can legitimately hold a single walking leg -- the assertion
+     * below then fails on a RNG roll, not on behaviour. Found when the 2026-10-31 navigation test
+     * shifted now_ms and this went red with the zombie perfectly healthy, mid-stand-still. */
+    for (int i = 0; i < 1200; i++) {
         t += 50; witness_ai_tick(&S, t); walk(0.05f);
         assert(S.players[zid].in_fwd <= 0.45f);        /* far zombie shambles, never sprints at a hero it can't sense */
         if (i == 0 || fabsf(S.players[zid].yaw - yaw0) > 1.0f) { if (i) yaw_changes++; yaw0 = S.players[zid].yaw; }
@@ -188,10 +220,20 @@ int main(void) {
     for (int i = 0; i < 1600; i++) { t += 50; witness_ai_tick(&S, t); walk(0.05f); }   /* +80 s */
     assert(witness_ai_zombie_hunger(zid) >= 0.4f || S.players[zid].x > 20.0f);  /* hunger climbs while it has no target */
     float far0 = S.players[0].x - S.players[zid].x;
-    for (int i = 0; i < 24000; i++) { t += 50; witness_ai_tick(&S, t); walk(0.05f); }  /* +20 min */
-    assert(S.players[0].x - S.players[zid].x < far0 - 100.0f || S.players[0].x - S.players[zid].x < 60.0f);
+    float dmin = far0;  /* closest it ever gets, not where it happens to be on the last tick */
+    for (int i = 0; i < 24000; i++) {  /* +20 min */
+        t += 50; witness_ai_tick(&S, t); walk(0.05f);
+        float d = S.players[0].x - S.players[zid].x;
+        if (fabsf(d) < fabsf(dmin)) dmin = d;
+    }
+    /* The scent brings it HOME -- asserted on the closest approach, because a zombie that has
+       ARRIVED keeps wandering around the hero (dist 3 -> 74 -> 23 -> 335 is one circling you, not
+       one that failed to find you), so an instantaneous end-of-run distance measures where the last
+       wander leg happened to point. This only became visible on 2026-10-31: the earlier window was
+       short enough that the zombie had not arrived yet when the baseline was taken. */
+    assert(fabsf(dmin) < 60.0f);
     printf("PASS: far zombie wanders (%d heading changes, hunger %.2f -> %.2f), scent closed 900 -> %.0f\n",
-           yaw_changes, h_before, witness_ai_zombie_hunger(zid), S.players[0].x - S.players[zid].x);
+           yaw_changes, h_before, witness_ai_zombie_hunger(zid), dmin);
     (void)stood;
 
     /* a hero inside sense range is locked and chased */
@@ -393,6 +435,12 @@ int main(void) {
     assert(zid > 0);
     witness_ai_force_zombie_mood(zid, 2 /* HUNTING */);
     witness_ai_tick(&S, 100); /* same real escalation as the WITNESS_ESCALATED block: all 5 -> SILENCING */
+    /* Park the zombie before the dispatch half. Since 2026-10-31 a hungry OR aggressive zombie
+       genuinely eats citizens (that rule is the point of the change), so leaving it in the pen made
+       this a race between The Men and a predator -- and the Man legitimately arrived at nothing,
+       because the citizen he was walking toward had been bitten to death. The escalation it just
+       caused is permanent (WS_SILENCING persists), so this test no longer needs it alive and close. */
+    S.players[zid].x = 5000.0f; S.players[zid].z = 5000.0f;
 
     man_id = witness_ai_spawn_the_men(&S, ZONE_PUBLIC, 80, 50, 100.0f, 0.0f, 0.0f, 0);
     assert(man_id > 0);

@@ -185,6 +185,53 @@ int main(void) {
     assert(S.players[zz].health < 100 || S.players[zz].state == STATE_DEAD);
     printf("PASS: the Man engaged the zombie (zombie hp %d, man hp %d)\n", S.players[zz].health, S.players[man].health);
 
+    /* ---- the lure FEEDS, and the thrower's immunity is a window that closes (founder 2026-10-31:
+       "it should make them hungry and somewhat aggressive... there should be some threshold where
+       they dont attack you if your pherimone caused their hunger... but that should be like a
+       fading memory") ---- */
+    memset(&S, 0, sizeof S);
+    S.game_mode = MODE_ZOMBIES;
+    S.players[0].active = 1; S.players[0].state = STATE_ALIVE; S.players[0].yaw = 0.0f;
+    S.players[0].health = 100;
+    nboxes = 1;
+    witness_ai_reset(81u, 0);
+    t = 2000;
+    assert(witness_ai_try_throw_pheromone(&S, 0, t) == 1);
+    int fz = witness_ai_spawn_zombie(&S, 0.0f, 0.0f, 20.0f, 0);
+    assert(fz > 0);
+    witness_ai_force_zombie_mood(fz, 2 /* HUNTING */);
+    float hung0 = witness_ai_zombie_hunger(fz);
+    S.players[0].x = 5000; S.players[0].z = 5000;         /* the thrower walks away to watch it work */
+    for (int i = 0; i < 400; i++) { t += 33; witness_ai_tick(&S, t); walk(0.033f); }
+    float hung1 = witness_ai_zombie_hunger(fz);
+    assert(hung1 > hung0 + 0.15f);                              /* standing at a canister really FED it */
+    assert(witness_ai_zombie_aggression(fz) >= 0.20f);    /* and made it mean, not just walked */
+    assert(witness_ai_zombie_grace_ms(fz, t) > 0);         /* and it remembers whose canister it was */
+    printf("PASS: the lure feeds the horde (hunger %.2f -> %.2f, aggression %.2f, grace %u ms)\n",
+           hung0, hung1, witness_ai_zombie_aggression(fz), witness_ai_zombie_grace_ms(fz, t));
+
+    /* ...and while that window lasts, the thrower standing in its face is not food */
+    S.players[0].x = S.players[fz].x + 1.0f; S.players[0].z = S.players[fz].z;
+    for (int i = 0; i < 90; i++) {
+        t += 33; witness_ai_tick(&S, t);
+        S.players[0].x = S.players[fz].x + 1.0f; S.players[0].z = S.players[fz].z;
+    }
+    assert(S.players[0].health == 100);                   /* untouched: the memory holds */
+    printf("PASS: the thrower can stand in a recruited zombie's face unhurt (grace %u ms left)\n",
+           witness_ai_zombie_grace_ms(fz, t));
+
+    /* the window runs out -- same zombie, still hungry, and now it comes for you */
+    t += 20000;
+    int hurt = 0;
+    for (int i = 0; i < 300 && !hurt; i++) {
+        t += 33; witness_ai_tick(&S, t);
+        S.players[0].x = S.players[fz].x + 1.0f; S.players[0].z = S.players[fz].z;
+        if (S.players[0].health < 100) hurt = 1;
+    }
+    assert(witness_ai_zombie_grace_ms(fz, t) == 0);
+    assert(hurt);                                         /* it forgot, and it is still hungry */
+    printf("PASS: grace expires and the same zombie turns on the thrower (hp %d)\n", S.players[0].health);
+
     printf("ALL PASS\n");
     return 0;
 }
