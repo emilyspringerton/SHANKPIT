@@ -120,6 +120,17 @@ remaining amount, each cell's owner -- and never positions or radii, because bot
 (or generated the same zone from one seed), and a packet must not be able to drag a resource node across the
 map. Entries are index-matched, so a client on an older world applies only the overlap.
 
+## The loft city's own ground
+
+`tools/build_loft_city.py` authors both arrays for every one of the eight lofts: a resource node just
+outside the front door (its amount scaled by that building's theme loot table — `60 + 15 * tiers`) and a
+claim cell on the ground floor, radius 10. Without them the city's units would fall back to
+`story_ai_empire_seed_default`'s ring at the world origin, which in this city is several hundred metres
+from the nearest building, so `gather` and `claim` would have had nothing to act on. `make test-loft-city`
+loads the city through `level_boxes_load_from_file`, pushes the arrays through
+`story_ai_empire_load_level`, and asserts there is one of each per loft and that the first node is out at
+a building rather than at the origin.
+
 ## Verification
 
 `make test-empire-units` — **59 checks**: PARENA's generated table equals the header's defaults across every
@@ -158,7 +169,8 @@ in, and the lobby `main.c` compiles clean (`gcc -fsyntax-only`) with the HUD and
 **Not verified**: no windowed match was played, so an ally has been driven by ticks in a test but not watched
 walking a level, and the HUD line has been asserted as text, not seen on screen; no two-client session was
 driven, so the replication is proven at the packet seam (encode/decode/apply and its refusals), not observed
-between machines; authoring the two new arrays still means writing the level JSON (NOCK has no placement UI
-for nodes or claim cells yet, unlike characters/boxes); `make lobby` cannot link on this box at all
+between machines; authoring ground is now a tool in the local NOCK editor (**Node**/**Claim**, with an amount and a
+radius, erasable like a box and drawn at the cell's real radius) but has **not** been watched being
+placed, because there is no browser here; `make lobby` cannot link on this box at all
 (`../EDITOR.GAME` is not checked out), so the client half is compiled, not run; and the Windows CI job's full
 command also needs `EDITOR.GAME` and the SDL2 mingw kit, neither of which is in this checkout.

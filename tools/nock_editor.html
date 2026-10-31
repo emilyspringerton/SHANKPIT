@@ -51,6 +51,18 @@
     <button data-tool="delete">Erase</button>
     <button data-tool="spawner">Spawner</button>
     <button data-tool="vehicle">Vehicle</button>
+    <button data-tool="object" title="place a reference to another level (O)">Object</button>
+    <button data-tool="node" title="place an EMPIRE resource node (N)">Node</button>
+    <button data-tool="cell" title="place an EMPIRE claim cell (C)">Claim</button>
+  </div>
+  <div class="row" title="EMPIRE ground (EMPIRE_UNITS.md): what a node starts with, how wide a cell is">
+    <label>node <input id="nodeAmount" type="number" value="100" min="1" style="width:5em"></label>
+    <label>claim r <input id="cellRadius" type="number" value="10" min="0" style="width:4em"></label>
+  </div>
+  <div class="row" title="Object tool: which level id to reference, at what height and quarter-turn">
+    <label>ref id <input id="objRef" type="number" value="0" min="0" style="width:5em"></label>
+    <label>y <input id="objY" type="number" value="0" step="0.5" style="width:4em"></label>
+    <label>rot <select id="objRot" title="quarter turns about Y"><option>0</option><option>1</option><option>2</option><option>3</option></select>&times;90&deg;</label>
   </div>
   <select id="vehKind" title="Which vehicle a placed spawn tile spawns">
     <option value="buggy">buggy</option>
@@ -193,6 +205,11 @@ function ensureShape(doc) {
   if (!Array.isArray(doc.spawners)) doc.spawners = [];
   if (!Array.isArray(doc.vehicle_spawns)) doc.vehicle_spawns = [];
   if (!Array.isArray(doc.buggy_spawns)) doc.buggy_spawns = [];
+  /* EMPIRE ground: resource_nodes / claim_cells are real level keys (level_boxes.h). They are not
+     defaulted INTO a level the way a spawner is -- a level with no contested ground has none, and
+     story_ai falls back to its own ring. */
+  if (!Array.isArray(doc.resource_nodes)) doc.resource_nodes = [];
+  if (!Array.isArray(doc.claim_cells)) doc.claim_cells = [];
   if (!composed && !doc.spawners.length) {
     doc.spawners.push({ id: 1, x: 0, y: 1, z: 0, yaw: 0, team: -1 });
   }
@@ -274,6 +291,34 @@ function draw() {
     const [x, z] = v.toPx(sp.x, sp.z);
     ctx.beginPath(); ctx.arc(x, z, 5 * dpr, 0, Math.PI * 2); ctx.strokeStyle = "#e05c5c"; ctx.stroke();
   }
+  /* EMPIRE ground: a node is a diamond, a claim cell a ring at its real radius (v.s is world units to
+     pixels), so a radius of 10 looks like 10 and two overlapping cells are visible as overlapping. */
+  for (const nd of W.resource_nodes || []) {
+    const [px, pz] = v.toPx(nd.x, nd.z);
+    ctx.fillStyle = "#f2b31a";
+    ctx.beginPath();
+    ctx.moveTo(px, pz - 5 * dpr); ctx.lineTo(px + 5 * dpr, pz);
+    ctx.lineTo(px, pz + 5 * dpr); ctx.lineTo(px - 5 * dpr, pz);
+    ctx.closePath();
+    ctx.fill();
+  }
+  for (const cc of W.claim_cells || []) {
+    const [px, pz] = v.toPx(cc.x, cc.z);
+    ctx.strokeStyle = "#59d98c";
+    ctx.beginPath();
+    ctx.arc(px, pz, Math.max(3, (cc.radius || 10) * v.s), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  /* Level references. A composition level (a floor, a pair, a building) is its object list and
+     nothing else -- the loft city is eight of those referencing the floors below them -- so if the
+     markers are not drawn there is no way to see or pick what a building is made of. */
+  for (const ob of W.objects || []) {
+    const [ox, oz] = v.toPx(ob.x, ob.z);
+    ctx.fillStyle = "#59d98c";
+    ctx.fillRect(ox - 3 * dpr, oz - 3 * dpr, 6 * dpr, 6 * dpr);
+    ctx.strokeStyle = "#59d98c";
+    ctx.strokeRect(ox - 7 * dpr, oz - 7 * dpr, 14 * dpr, 14 * dpr);
+  }
   const VEH_TINT = { buggy: "#f2b31a", rocket: "#f25033", heli: "#33bff2", recon: "#59d98c", fly: "#bf99f2", plane: "#e6e6f2" };
   for (const vs of W.vehicle_spawns || []) {
     const [x, z] = v.toPx(vs.x, vs.z);
@@ -325,6 +370,19 @@ function undo() {
   draw(); pushDraftSoon();
 }
 
+/* Nearest point-like entry (a level reference, a resource node, a claim cell) within three world
+   units. They are all markers, so they all pick the same way. */
+function pointIndexAt(list, x, z) {
+  let best = -1, bestd = 9.0;
+  (list || []).forEach((o, i) => {
+    const d = Math.hypot(o.x - x, o.z - z);
+    if (d < bestd) { bestd = d; best = i; }
+  });
+  return best;
+}
+
+function objectIndexAt(x, z) { return pointIndexAt(state.level.objects, x, z); }
+
 function wallIndexAt(x, z) {
   const walls = state.level.walls;
   for (let i = walls.length - 1; i >= 0; i--) {
@@ -353,11 +411,49 @@ canvas.addEventListener("mousedown", ev => {
                       sx: box.sx, sy: box.sy, sz: box.sz, r: box.r, g: box.g, b: box.b });
   } else if (state.tool === "delete") {
     const i = wallIndexAt(x, z);
-    if (i < 0) { log("nothing under the cursor"); return; }
+    if (i < 0) {
+      for (const [key, label] of [["resource_nodes", "resource node"], ["claim_cells", "claim cell"],
+                                   ["objects", "reference"]]) {
+        if (!Array.isArray(W[key]) || !W[key].length) continue;
+        const pi = pointIndexAt(W[key], x, z);
+        if (pi < 0) continue;
+        snapshot();
+        W[key].splice(pi, 1);
+        log(`removed ${label}`);
+        draw();
+        pushDraftSoon();
+        return;
+      }
+      log("nothing under the cursor");
+      return;
+    }
     snapshot();
     W.walls.splice(i, 1);
     log(`deleted wall ${i}`);
     post("box_del", { id: -1, index: i });
+  } else if (state.tool === "node") {
+    const amount = Math.max(1, parseInt((el("nodeAmount") || {}).value || "100", 10) || 100);
+    snapshot();
+    W.resource_nodes.push({ x: +x.toFixed(2), z: +z.toFixed(2), amount });
+    log(`resource node at ${x.toFixed(1)}, ${z.toFixed(1)} (${amount})`);
+  } else if (state.tool === "cell") {
+    /* 0 is a real value: it means "the host's own claim radius", story_ai's default. */
+    const radius = Math.max(0, parseInt((el("cellRadius") || {}).value || "0", 10) || 0);
+    snapshot();
+    W.claim_cells.push({ x: +x.toFixed(2), z: +z.toFixed(2), radius });
+    log(`claim cell at ${x.toFixed(1)}, ${z.toFixed(1)} (r ${radius || "host default"})`);
+  } else if (state.tool === "object") {
+    /* Place a reference to another level here -- what a floor, a pair and a building all are. rot_y is
+       authored in 90-degree steps because that is what the loader's flatten applies. */
+    const ref = parseInt((el("objRef") || {}).value || "0", 10);
+    if (!ref) { log("set the reference level id first"); return; }
+    snapshot();
+    const oy = parseFloat((el("objY") || {}).value || "0") || 0;
+    const orot = (parseInt((el("objRot") || {}).value || "0", 10) || 0) * 90;
+    const ob = { ref_level_id: ref, x: +x.toFixed(2), y: oy, z: +z.toFixed(2), rot_y: orot };
+    if (!Array.isArray(W.objects)) W.objects = [];
+    W.objects.push(ob);
+    log(`reference ${ref} at ${ob.x}, ${ob.z} (y ${ob.y}, rot ${ob.rot_y})`);
   } else if (state.tool === "vehicle") {
     snapshot();
     const kind = el("vehKind").value;
@@ -381,7 +477,8 @@ document.addEventListener("keydown", ev => {
   if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "z") { ev.preventDefault(); undo(); }
   if (ev.target.tagName === "INPUT") return;
   const k = ev.key.toLowerCase();
-  const tool = k === "b" ? "add" : k === "x" ? "delete" : k === "m" ? "spawner" : k === "v" ? "vehicle" : null;
+  const tool = k === "b" ? "add" : k === "x" ? "delete" : k === "m" ? "spawner" : k === "v" ? "vehicle"
+    : k === "o" ? "object" : k === "n" ? "node" : k === "c" ? "cell" : null;
   if (tool) selectTool(tool);
 });
 

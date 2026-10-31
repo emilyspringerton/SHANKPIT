@@ -233,6 +233,14 @@ def bay_open():
 # Loot per theme, in chests.h's own tiers (0 wooden / 1 reinforced / 2 rare). A lab is worth breaking
 # into, a cafe is not -- and because the tiers belong to the theme, two buildings carry different loot
 # instead of the same 0,1,2 rotation repeated eight times.
+# The authored crowd cannot exceed the SIMULTANEOUS slots, and those are not
+# LEVEL_BOXES_MAX_CHARACTERS: an NPC occupies a player slot, and protocol.h's MAX_CLIENTS is 70 with
+# slot 0 reserved for the player. So 69 is the real ceiling for every character in one level file,
+# including the ones a level already authored before the lofts -- which is why the population below is
+# allocated against a BUDGET rather than one-per-floor-and-hope. Kept in sync with protocol.h by hand;
+# packages/simulation/loft_city_test.c asserts the file stays inside it and that every one spawns.
+MAX_AUTHORED_CHARACTERS = 69
+
 THEME_LOOT = {
     "office": (0, 1, 1),
     "cafe": (0, 0, 1),
@@ -529,6 +537,8 @@ def build(city_path=CITY, placements_path=PLACEMENTS, write=True):
     recorded = {tuple(round(float(v), 3) for v in e) for e in prev.get("walls", [])}
     prev_characters = prev.get("characters", [])
     prev_chests = prev.get("chests", [])
+    prev_nodes = prev.get("resource_nodes", [])
+    prev_cells = prev.get("claim_cells", [])
 
     if os.path.exists(placements_path):
         placements = json.load(open(placements_path)).get("buildings", [])
@@ -559,8 +569,26 @@ def build(city_path=CITY, placements_path=PLACEMENTS, write=True):
         rec = {json.dumps(e, sort_keys=True) for e in recorded_entries}
         city[key] = [e for e in city.get(key, []) if json.dumps(e, sort_keys=True) not in rec]
 
+    # The population is stripped by SHAPE as well as by recorded value. Recorded-only stripping is
+    # enough for the loot (a chest is a tier and three floats) but not for people: a run that changed
+    # the population plan left the entries it no longer recorded behind forever, so the city slowly
+    # accumulated zombies nobody authored. A bare zombie -- the tool's own output, no name, the
+    # archetype's own kit/faction/orders -- is the tool's to remove; anything a human placed through
+    # EDIT MAP carries a name or explicit fields and is left alone.
+    def is_generated_npc(e):
+        # archetype None = an entry written before the EMPIRE fields existed: a nameless role-7 body with
+        # every other field at its default is still this tool's own output, and twelve of those were
+        # sitting in the city exactly like that.
+        return (e.get("name") in (None, "")
+                and e.get("role") == 7
+                and e.get("archetype") in (None, 2)
+                and e.get("kit", 0) == 0 and e.get("faction", -1) == -1 and e.get("orders", -1) == -1)
+
     strip_authored("characters", prev_characters)
+    city["characters"] = [e for e in city.get("characters", []) if not is_generated_npc(e)]
     strip_authored("chests", prev_chests)
+    strip_authored("resource_nodes", prev_nodes)
+    strip_authored("claim_cells", prev_cells)
     if not any(m.get("name") == "glass" for m in city.get("materials", [])):
         city.setdefault("materials", []).append(dict(GLASS_MATERIAL))
 
@@ -575,6 +603,9 @@ def build(city_path=CITY, placements_path=PLACEMENTS, write=True):
     groups = []
     npcs = []
     chests = []
+    nodes = []
+    cells = []
+    plan = population_plan(placements)
     for p in placements:
         name = p["level"]
         lid = VARIANT_IDS[name]
@@ -592,6 +623,8 @@ def build(city_path=CITY, placements_path=PLACEMENTS, write=True):
         # would put its people in the air where the lower stack used to be.
         fp = footprint(placed)
         spec = VARIANTS[name]
+        # The storeys this variant actually builds: a pair level is two floors, plus a lobby when it
+        # has one. Same count check()'s own want_npcs formula uses, so the two cannot drift.
         storeys = spec["pairs"] * 2 + (1 if spec["lobby"] else 0)
 
         def storey_box(deck_y):
@@ -610,17 +643,31 @@ def build(city_path=CITY, placements_path=PLACEMENTS, write=True):
                            (0.55, 0.50, 0.85)[i % 3], 1.05 + floor * STOREY)
             chests.append({"tier": tier, "x": x, "y": y, "z": z})
 
-        # ground floor: two, at opposite ends. Every floor above: one, so climbing a loft is a fight.
-        for fx, fz in ((0.22, 0.28), (0.78, 0.72)):
-            x, y, z = spot(storey_box(0.0), fx, fz, 1.05)
+        # EMPIRE ground: one resource node outside the front door to gather from, one claim cell on the
+        # ground floor to take. A level that authors neither key falls back to story_ai's default ring at
+        # the WORLD ORIGIN, which in this city is several hundred metres from any loft -- the units would
+        # have their orders and nothing within reach to act on.
+        deck = storey_box(0.0)
+        nx = round((deck[0] + deck[2]) * 0.5, 2)
+        nodes.append({"x": nx, "z": round(deck[3] + 6.0, 2),
+                      "amount": 60 + 15 * len(THEME_LOOT[spec["theme"]])})
+        cells.append({"x": nx, "z": round((deck[1] + deck[3]) * 0.5, 2), "radius": 10})
+
+        # ground floor: two, at opposite ends. Every staffed floor above: one, so climbing a loft is a
+        # fight. Which floors those are is population_plan's decision, not this loop's.
+        ground = ((0.22, 0.28), (0.78, 0.72))
+        upper = ((0.30, 0.30), (0.70, 0.70), (0.20, 0.70), (0.80, 0.30))
+        per_floor = {}
+        for _, floor in [(n, f) for (n, f) in plan if n == name]:
+            idx = per_floor.get(floor, 0)
+            per_floor[floor] = idx + 1
+            if floor == 0:
+                fx, fz = ground[idx % 2]
+            else:
+                fx, fz = upper[(floor + idx) % 4]
+            x, y, z = spot(storey_box(floor * STOREY), fx, fz, 1.05 + floor * STOREY)
             # archetype 2 = EU_ARCH_ZOMBIE, role 7 = the "Zombie" pursuer brain, faction/orders -1
             # so the archetype's own values win (that is what an unauthored EMPIRE character means)
-            npcs.append({"role": 7, "kit": 0, "archetype": 2, "faction": -1, "orders": -1,
-                         "x": x, "y": y, "z": z})
-        upper = ((0.30, 0.30), (0.70, 0.70), (0.20, 0.70), (0.80, 0.30))
-        for floor in range(1, storeys):
-            fx, fz = upper[floor % 4]
-            x, y, z = spot(storey_box(floor * STOREY), fx, fz, 1.05 + floor * STOREY)
             npcs.append({"role": 7, "kit": 0, "archetype": 2, "faction": -1, "orders": -1,
                          "x": x, "y": y, "z": z})
 
@@ -633,11 +680,15 @@ def build(city_path=CITY, placements_path=PLACEMENTS, write=True):
         city["walls"].extend(g)
     city.setdefault("characters", []).extend(npcs)
     city.setdefault("chests", []).extend(chests)
+    city["resource_nodes"] = city.get("resource_nodes", []) + nodes
+    city["claim_cells"] = city.get("claim_cells", []) + cells
     city["loft_city"] = {
         "buildings": placements,
         "walls": [[w["x"], w["y"], w["z"], w["sx"], w["sy"], w["sz"]] for g in groups for w in g],
         "characters": npcs,
         "chests": chests,
+        "resource_nodes": nodes,
+        "claim_cells": cells,
     }
 
     for i, w in enumerate(city["walls"]):
@@ -648,6 +699,33 @@ def build(city_path=CITY, placements_path=PLACEMENTS, write=True):
             json.dump(city, f)
             f.write("\n")
     return city, stats
+
+
+# The engine's own simultaneous-character ceiling: MAX_CLIENTS (70, packages/common/protocol.h) minus
+# the human's own slot 0. The authored population has to fit it, or the loader keeps every character in
+# the file and the brains can only ever place 69 of them -- the rest would be authored, saved, and never
+# exist in the world. LEVEL_BOXES_MAX_CHARACTERS (128) is the FILE's cap, not the live one.
+NPC_BUDGET = 69
+
+
+def population_plan(placements):
+    """Which floors of which buildings get a zombie, as a flat [(level_name, floor)] list; a floor of 0
+    is the ground floor and appears TWICE per building (a player walking in meets two).
+
+    Ground floors are staffed first, then the upper floors are spread EVENLY across the whole city --
+    the i-th of `keep` floors taken from the i*len/keep-th candidate -- rather than the first N of the
+    list. Spread is the point: building one must not be packed while building eight is empty, and a
+    building with fewer storeys must not be starved by the ones before it."""
+    storeys = {n: s["pairs"] * 2 + (1 if s["lobby"] else 0) for n, s in VARIANTS.items()}
+    plan = [(p["level"], 0) for p in placements for _ in (0, 1)]
+    upper = [(p["level"], f) for p in placements for f in range(1, storeys[p["level"]])]
+    keep = min(max(0, NPC_BUDGET - len(plan)), len(upper))
+    if keep:
+        plan += [upper[(i * len(upper)) // keep] for i in range(keep)]
+    if len(plan) > NPC_BUDGET:
+        raise SystemExit("population plan authors %d characters, over the %d simultaneous slots"
+                         % (len(plan), NPC_BUDGET))
+    return plan
 
 
 def check():
@@ -715,15 +793,32 @@ def check():
     if len(city.get("chests", [])) > 32:
         raise SystemExit("city authors %d chests, over LEVEL_BOXES_MAX_CHESTS 32" % len(city["chests"]))
     authored = city.get("loft_city", {})
-    want_npcs = sum(2 + (VARIANTS[n]["pairs"] * 2 + (1 if VARIANTS[n]["lobby"] else 0) - 1)
-                    for n in VARIANTS)
+    want_npcs = len(population_plan([{"level": n} for n in VARIANTS]))
     if len(authored.get("characters", [])) != want_npcs:
-        raise SystemExit("expected %d zombies (two per ground floor, one per floor above), found %d"
+        raise SystemExit("expected %d zombies (two per ground floor, one per staffed floor above), found %d"
                          % (want_npcs, len(authored.get("characters", []))))
+    if want_npcs > NPC_BUDGET:
+        raise SystemExit("%d zombies do not fit the %d simultaneous slots" % (want_npcs, NPC_BUDGET))
+    # ...and the array the ENGINE actually loads, not just the tool's own record of it. Those two came
+    # apart once already: the record said 61 while the file still carried 73, which would have loaded 12
+    # zombies nobody authored and spent 12 of the 69 slots on them.
+    if len(city.get("characters", [])) != want_npcs:
+        raise SystemExit("the level carries %d characters but the plan authors %d (stale entries)"
+                         % (len(city.get("characters", [])), want_npcs))
     want_chests = sum(len(v) for v in THEME_LOOT.values())
     if len(authored.get("chests", [])) != want_chests:
         raise SystemExit("expected %d chests (each theme's own), found %d"
                          % (want_chests, len(authored.get("chests", []))))
+    # EMPIRE ground: one of each per loft, inside the loader's own caps, and the array the engine reads
+    # (not just the record) must be exactly the plan -- the same drift check the population got.
+    # LEVEL_BOXES_MAX_RESOURCE_NODES (16) and LEVEL_BOXES_MAX_CLAIM_CELLS (32) in level_boxes.h.
+    for key, cap in (("resource_nodes", 16), ("claim_cells", 32)):
+        if len(city.get(key, [])) != len(VARIANTS):
+            raise SystemExit("%s: authored %d, one per loft is %d"
+                             % (key, len(city.get(key, [])), len(VARIANTS)))
+        if len(city.get(key, [])) > cap:
+            raise SystemExit("%s: %d entries, over the loader's cap of %d"
+                             % (key, len(city.get(key, [])), cap))
     if len({tuple(v) for v in THEME_LOOT.values()}) < 4:
         raise SystemExit("the per-theme loot tables are not distinct enough to feel different")
     if set(THEME_LOOT) != set(THEMES):
