@@ -545,14 +545,22 @@ static inline void buggy_tick_all(unsigned int now_ms) {
             /* Seeded from the car's own id, so its flicker and fuse are that car's on every host.
                Reset on a respawned/replacement car rather than inheriting a dead one's burn. */
             VehicleBurn *vb = &g_local_buggy_burn[i];
-            if (!vb->active || vb->seed != (unsigned int)b->id + 1u)
+            if (!vb->active || vb->seed != (unsigned int)b->id + 1u) {
                 vehicle_burn_reset(vb, 0, (unsigned int)b->id + 1u);
-            if (vehicle_burn_tick(vb, &b->health)) {
+                vb->hull = (float)b->health;
+            }
+            /* The buggy's hull is an int; the burn ladder works in float. This used to pass
+               `&b->health` to a `float *` -- a real type error (float bits written into an int), not a
+               warning to live with. The ladder now runs on the shadow, re-seeded whenever something
+               else changed the hull (a shot, a repair), and the hull is written back as whole points. */
+            if ((int)ceilf(vb->hull) != b->health) vb->hull = (float)b->health;
+            if (vehicle_burn_tick(vb, &vb->hull)) {
                 const VehicleBurnRules *br = vehicle_burn_rules();
                 explode_splash(b->x, b->y + 1.0f, b->z, (unsigned char)b->scene_id, -1,
                                br->blast_damage, (float)br->blast_radius_milli / 1000.0f,
                                WPN_MISSILE, now_ms);
             }
+            b->health = (int)ceilf(vb->hull);
         }
         if (b->occupant_player_id >= 0 && b->occupant_player_id < MAX_CLIENTS) {
             PlayerState *occ = &local_state.players[b->occupant_player_id];

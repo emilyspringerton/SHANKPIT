@@ -6,8 +6,8 @@
 #include <math.h>
 
 int slide_slope_flat_threshold_permille();
-int s_clamp(int, int, int);
-int s_abs(int);
+int slide_clamp(int, int, int);
+int slide_abs(int);
 int slide_slope_steep_permille(int);
 int slide_slope_align_permille(int);
 int slide_slope_accel_permille(int, int, int);
@@ -18,7 +18,7 @@ int slide_slope_flat_threshold_permille(void) {
     return 990;
 }
 
-int s_clamp(int lo __attribute__((unused)), int hi __attribute__((unused)), int x __attribute__((unused))) {
+int slide_clamp(int lo __attribute__((unused)), int hi __attribute__((unused)), int x __attribute__((unused))) {
     if ((x < lo)) {
     return lo;
     } else {
@@ -30,7 +30,7 @@ int s_clamp(int lo __attribute__((unused)), int hi __attribute__((unused)), int 
     }
 }
 
-int s_abs(int n __attribute__((unused))) {
+int slide_abs(int n __attribute__((unused))) {
     if ((n < 0)) {
     return (0 - n);
     } else {
@@ -39,27 +39,27 @@ int s_abs(int n __attribute__((unused))) {
 }
 
 int slide_slope_steep_permille(int normal_y_permille __attribute__((unused))) {
-    return s_clamp(0, 1000, ((1000 - s_clamp(0, 1000, normal_y_permille)) * 3));
+    return slide_clamp(0, 1000, ((1000 - slide_clamp(0, 1000, normal_y_permille)) * 3));
 }
 
 int slide_slope_align_permille(int downhill_dot_permille __attribute__((unused))) {
-    return s_clamp(0, 1000, downhill_dot_permille);
+    return slide_clamp(0, 1000, downhill_dot_permille);
 }
 
 int slide_slope_accel_permille(int normal_y_permille __attribute__((unused)), int downhill_dot_permille __attribute__((unused)), int speed_milli __attribute__((unused))) {
-    if ((s_clamp(0, 1000, normal_y_permille) >= slide_slope_flat_threshold_permille())) {
+    if ((slide_clamp(0, 1000, normal_y_permille) >= slide_slope_flat_threshold_permille())) {
     return 0;
     } else {
-    if ((s_clamp(0, slide_slope_speed_cap_milli(), speed_milli) >= slide_slope_speed_cap_milli())) {
+    if ((slide_clamp(0, slide_slope_speed_cap_milli(), speed_milli) >= slide_slope_speed_cap_milli())) {
     return 0;
     } else {
-    return s_clamp(0, 1000, ((slide_slope_steep_permille(normal_y_permille) * slide_slope_align_permille(downhill_dot_permille)) / 1000));
+    return slide_clamp(0, 1000, ((slide_slope_steep_permille(normal_y_permille) * slide_slope_align_permille(downhill_dot_permille)) / 1000));
     }
     }
 }
 
 int slide_slope_scrub_permille(int normal_y_permille __attribute__((unused))) {
-    return s_clamp(300, 1000, (1000 - ((slide_slope_steep_permille(normal_y_permille) * 700) / 1000)));
+    return slide_clamp(300, 1000, (1000 - ((slide_slope_steep_permille(normal_y_permille) * 700) / 1000)));
 }
 
 int slide_slope_speed_cap_milli(void) {

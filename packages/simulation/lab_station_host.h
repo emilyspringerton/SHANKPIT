@@ -20,6 +20,11 @@ typedef struct {
     char msg[48];     /* one-line HUD feedback */
 } LabStationResult;
 
+/* labst_reach_tenths -- PARENA's interaction reach, in tenths of a unit (lab_station_rules.c). Declared
+ * here because that file is a generated TU with no header of its own, so every caller was compiling the
+ * call as an implicit declaration (visible in the Windows release log). */
+int labst_reach_tenths(void);
+
 /* The working base is the sample type the player has most of (ties -> lowest). */
 int lab_station_pick_base(const Phone *p);
 /* Use the station `kind` against phone p (mutates samples / clones). Always fills *r. */

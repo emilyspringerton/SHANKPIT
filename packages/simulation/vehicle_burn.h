@@ -69,6 +69,11 @@ typedef struct {
     float fire_fx;        /* 0..1 -- the renderer's flame size (BR br_fx c-fire-fx) */
     float smoke;          /* 0..1 -- the renderer's smoke thickness */
     unsigned int seed;    /* the car's own identity, so its flicker is its own */
+    /* The hull THIS ladder has been draining, in float. A vehicle whose authoritative hull is an int
+       (BuggyState.health) cannot take a 0.25/tick drain directly -- truncating each tick would drain
+       four times too fast and passing &int to a float* is undefined behaviour. The host seeds this from
+       the hull and writes whole points back; a divergence means something else changed the hull. */
+    float hull;
 } VehicleBurn;
 
 static inline unsigned int vehicle_burn_hash(unsigned int x) {
@@ -85,6 +90,7 @@ static inline void vehicle_burn_reset(VehicleBurn *v, int kind, unsigned int see
     v->exploded = 0;
     v->fire_fx = 0.0f;
     v->smoke = 0.0f;
+    v->hull = 0.0f;   /* the host seeds it from the real hull on the same call that resets the burn */
     v->seed = seed ? seed : 1u;
 }
 
