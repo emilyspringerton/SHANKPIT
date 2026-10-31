@@ -476,6 +476,26 @@ void story_ai_empire_seed_default(void) {
     }
 }
 
+int story_ai_empire_load_level(int node_count, const float *node_x, const float *node_z,
+                               const int *node_amount, int cell_count, const float *cell_x,
+                               const float *cell_z, const int *cell_radius) {
+    /* Absent keys stay absent: a level with no authored ground keeps the default ring rather than
+       silently becoming an EMPIRE-free world (every order would then fall back to GUARD). */
+    if (node_count <= 0 && cell_count <= 0) {
+        story_ai_empire_seed_default();
+        return 0;
+    }
+    return eu_world_load(&g_empire_world, node_count, node_x, node_z, node_amount,
+                         cell_count, cell_x, cell_z, cell_radius);
+}
+
+int story_ai_empire_unit_count(void) {
+    int n = 0;
+    for (int i = 0; i < STORY_AI_MAX; i++)
+        if (g_story_ai[i].active && g_story_ai[i].archetype != EU_ARCH_NONE) n++;
+    return n;
+}
+
 int story_ai_spawn_unit(ServerState *s, int archetype, int kit, int faction, int orders,
                         float x, float y, float z) {
     if (!s) return -1;

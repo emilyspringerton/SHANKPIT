@@ -9,7 +9,7 @@
 # NOT empire_rules.prn/.c: those already exist and are a different EMPIRE module (the influence economy
 # and the 72-district sphere behind the phone app, see the Makefile's own regen-empire-rules). This is the
 # unit layer that spends that influence on bodies, so the two are siblings, not the same file.
-.PHONY: regen-empire-units test-empire-units test-empire-spawn
+.PHONY: regen-empire-units test-empire-units test-empire-spawn test-empire-world test-empire-sync
 
 regen-empire-units:
 	scripts/gen_empire_units.sh
@@ -36,3 +36,20 @@ test-empire-units: | $(BIN_DIR)
 		packages/simulation/empire_units_test.c packages/simulation/empire_units_rules.c \
 		-o $(BIN_DIR)/empire_units_test $(LIBS_M)
 	./$(BIN_DIR)/empire_units_test
+
+# test-empire-world -- the level-authored half of the shared world: `resource_nodes` / `claim_cells`
+# parse with the real level scanner, a zero-amount node is skipped, absent keys stay honestly empty, and
+# save -> load (the NOCK editor's own round trip) keeps every authored position, amount and radius.
+test-empire-world: | $(BIN_DIR)
+	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/world \
+		packages/world/level_boxes_empire_world_test.c -o $(BIN_DIR)/level_boxes_empire_world_test $(LIBS_M)
+	./$(BIN_DIR)/level_boxes_empire_world_test
+
+# test-empire-sync -- the wire half: the host's world survives fill -> bytes -> decode -> apply (stockpiles,
+# node amounts, ground ownership); the wrong type, a short datagram and a count past the struct's own
+# arrays are refused; and applying a packet never moves a node, a cell or a radius.
+test-empire-sync: | $(BIN_DIR)
+	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/simulation -Ipackages/common \
+		packages/simulation/empire_sync_test.c packages/simulation/empire_units_rules.c \
+		-o $(BIN_DIR)/empire_sync_test $(LIBS_M)
+	./$(BIN_DIR)/empire_sync_test

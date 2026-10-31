@@ -104,20 +104,44 @@ units owns it: `story_ai_empire_world()`). `story_ai_reset` seeds a default cont
 40-unit ring, twelve claim cells on a 70-unit ring — because a level with authored units needs something to
 gather and something to take.
 
-Named limits: nodes and cells are **not level-authored yet** (the default ring is all there is), and there is
-no HUD reading the stockpiles. Claims and stockpiles are per-host state; nothing replicates them over the
-wire, so in a networked match two clients would each run their own copy.
+Nodes and cells are **level-authored** now: `resource_nodes` (`x`, `z`, `amount`) and `claim_cells` (`x`, `z`,
+`radius`) are real keys in the level schema, parsed and re-serialized by `level_boxes.h`, and both hosts load
+them through `story_ai_empire_load_level` (`0` amount is not a node and is skipped; `radius 0` means the host's
+own default). A level that authors neither key keeps the default ring, which is why every older level behaves
+exactly as it did. The ground plane is deliberate: the EMPIRE world is 2D, so only `x`/`z` are read.
+
+The HUD draws one line (`eu_hud_text`, pure and unit-tested) whenever the process is ticking EMPIRE units:
+units under orders, each faction's stockpile, ground held, and nodes still worth walking to. An EMPIRE-free
+level draws nothing.
+
+In a networked match the host owns the shared world and clients mirror it: `PACKET_EMPIRE_STATE`
+(`packages/simulation/empire_sync.h`) carries the **mutable** half at 1 Hz -- stockpiles, each node's
+remaining amount, each cell's owner -- and never positions or radii, because both sides loaded the same level
+(or generated the same zone from one seed), and a packet must not be able to drag a resource node across the
+map. Entries are index-matched, so a client on an older world applies only the overlap.
 
 ## Verification
 
-`make test-empire-units` — **50 checks**: PARENA's generated table equals the header's defaults across every
+`make test-empire-units` — **59 checks**: PARENA's generated table equals the header's defaults across every
 archetype field and order priority (and both inheritance rows and the world numbers), the archetype table's
 faction/skin/role/health/orders are the documented ones, every human archetype inherits the human row while
 the zombie inherits the beast row, an authored mask *replaces* the archetype's and its bits are usable, orders
 0 is legal, an authored skin and faction win, the decision engages first / follows a distant leader / gathers
 when a node is near / explores when idle / claims as a soldier / guards as the fallback / says none when
-nothing applies, a node yields exactly its amount and no more, and a claim takes exactly 30 s with a second
-faction starting its own clock.
+nothing applies, a node yields exactly its amount and no more, a claim takes exactly 30 s with a second
+faction starting its own clock, an authored world loads its own positions/amounts/radii (a zero-amount node
+is not a node, an over-authored world is capped at `EU_MAX_NODES`, and loading nothing loads nothing), and
+the HUD line reports units, the ally stockpile and ground held while an EMPIRE-free world draws nothing.
+
+`make test-empire-world` — the level schema's own half: `resource_nodes` / `claim_cells` parse through the
+real scanner (positions, amounts, an authored radius, a zero-amount node skipped), a level with neither key
+stays honestly empty, and save -> load keeps every authored value.
+
+`make test-empire-sync` — **24 checks**: the host's world survives fill -> bytes -> decode -> apply
+(stockpiles, every node's remaining amount, exactly who holds what ground); the wrong packet type, a short
+datagram and a count past the struct's own arrays are refused; an unknown faction byte lands as neutral
+rather than trusted; applying a packet never moves a node, a cell or a radius; and a client with fewer
+authored entries applies only the overlap.
 
 `make test-empire-spawn` — **16 checks**, the wiring rather than the model: `story_ai_spawn_unit` turns an
 archetype into a real player slot with the archetype's role, Mike's skin and the archetype's health; an
@@ -127,9 +151,14 @@ seconds on a cell makes it the soldier's faction's ground; and a zombie with not
 and falls back to its own brain. It runs in `MODE_ZOMBIES` on purpose, so the tick-gate widening is pinned
 down by a test instead of a comment.
 
-`make test-empire-rules` (the influence economy module) still passes, `make server` links, the lobby compiles
-clean, and `make check-windows` (mingw) compiles the Windows build. **Not verified**: no windowed match was
-played, so an ally has been driven by ticks in a test but not watched walking a level; nodes/cells are not
-level-authored (the seeded ring is all there is); claims and stockpiles are per-host and do not replicate;
-the NOCK editor change is type-reviewed only (no `node_modules` here); and the Windows CI job's full command
-also needs `EDITOR.GAME` and the SDL2 mingw kit, neither of which is in this checkout.
+`make test-empire-spawn` — **16 checks** on the same wiring as above, still green, and `make test-empire-rules`
+(the influence economy module) still passes. `make server` links with the broadcast and the level load wired
+in, and the lobby `main.c` compiles clean (`gcc -fsyntax-only`) with the HUD and the packet handler.
+
+**Not verified**: no windowed match was played, so an ally has been driven by ticks in a test but not watched
+walking a level, and the HUD line has been asserted as text, not seen on screen; no two-client session was
+driven, so the replication is proven at the packet seam (encode/decode/apply and its refusals), not observed
+between machines; authoring the two new arrays still means writing the level JSON (NOCK has no placement UI
+for nodes or claim cells yet, unlike characters/boxes); `make lobby` cannot link on this box at all
+(`../EDITOR.GAME` is not checked out), so the client half is compiled, not run; and the Windows CI job's full
+command also needs `EDITOR.GAME` and the SDL2 mingw kit, neither of which is in this checkout.

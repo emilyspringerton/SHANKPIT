@@ -22,6 +22,7 @@
 #include "../../../packages/simulation/zone_registry.h"
 #include "../../../packages/simulation/zone_rules_host.h"
 #include "../../../packages/simulation/zone_sync.h"
+#include "../../../packages/simulation/empire_sync.h"
 #include "../../../packages/common/physics.h"
 #include "../../../packages/common/shared_movement.h"
 #include "../../../packages/common/net_sim.h"
@@ -602,6 +603,27 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
         if (local_state.game_mode == MODE_TYLER && spawned_id > 0 && tyler_coldopen_slot_count < 2) {
             tyler_coldopen_slots[tyler_coldopen_slot_count++] = spawned_id;
         }
+    }
+    /* EMPIRE: the level's own contested ground (resource_nodes / claim_cells), replacing the default
+       ring. Unpacked here rather than inside story_ai so story_ai.h keeps its no-packages/world boundary;
+       a level that authors nothing keeps the default ring (that fallback lives in
+       story_ai_empire_load_level, so both hosts behave the same way). Loaded after the characters so the
+       first tick already has something to gather and something to take. */
+    {
+        float eu_nx[LEVEL_BOXES_MAX_RESOURCE_NODES], eu_nz[LEVEL_BOXES_MAX_RESOURCE_NODES];
+        int eu_amt[LEVEL_BOXES_MAX_RESOURCE_NODES];
+        float eu_cx[LEVEL_BOXES_MAX_CLAIM_CELLS], eu_cz[LEVEL_BOXES_MAX_CLAIM_CELLS];
+        int eu_rad[LEVEL_BOXES_MAX_CLAIM_CELLS];
+        for (int ni = 0; ni < lvl->resource_node_count; ni++) {
+            eu_nx[ni] = lvl->resource_nodes[ni].x; eu_nz[ni] = lvl->resource_nodes[ni].z;
+            eu_amt[ni] = lvl->resource_nodes[ni].amount;
+        }
+        for (int ci = 0; ci < lvl->claim_cell_count; ci++) {
+            eu_cx[ci] = lvl->claim_cells[ci].x; eu_cz[ci] = lvl->claim_cells[ci].z;
+            eu_rad[ci] = lvl->claim_cells[ci].radius;
+        }
+        story_ai_empire_load_level(lvl->resource_node_count, eu_nx, eu_nz, eu_amt,
+                                   lvl->claim_cell_count, eu_cx, eu_cz, eu_rad);
     }
     if (lvl->character_count > 0) {
         NET_SERVER_LOG("CUSTOM_LEVEL_CHARACTERS_SPAWNED count=%d", lvl->character_count);
@@ -1679,6 +1701,26 @@ void server_broadcast_zone_state(void) {
     }
 }
 
+/* server_broadcast_empire_state -- the EMPIRE shared world's mutable state (per-faction stockpiles, each
+ * node's remaining amount, who holds which ground), server -> client, 1 Hz, on the same beat as the zone
+ * identity above. empire_sync.h owns the packet layout; this function owns only "who is still connected"
+ * and "is there any EMPIRE in this world at all". The host is authoritative -- a client mirrors what it
+ * hears and never gathers or claims the shared world itself. */
+void server_broadcast_empire_state(void) {
+    static unsigned int last_ms = 0;
+    unsigned int now_ms = get_server_time();
+    NetEmpireState pkt;
+
+    if (story_ai_empire_unit_count() <= 0) return; /* nothing to report: a pre-EMPIRE world stays silent */
+    if (last_ms != 0 && (now_ms - last_ms) < 1000) return;
+    last_ms = now_ms;
+    empire_sync_fill(&pkt, story_ai_empire_world(), now_ms);
+    for (int i = 1; i < MAX_CLIENTS; i++) {
+        if (!slots[i].active || !slots[i].welcomed) continue;
+        sendto(sock, &pkt, sizeof(pkt), 0, (struct sockaddr*)&slots[i].addr, sizeof(struct sockaddr_in));
+    }
+}
+
 /* server_shield_packs_tick -- card #541. MODE_QUEUE only. A player dying has a SHIELD_PACK_DROP_PERCENT chance
  * to leave a pack where they fell; any living player standing on a pack whose shield is below full takes it and
  * is refilled to full. Shields still do not regenerate (founder: "leave it like that") -- a pack is the only way
@@ -2197,6 +2239,7 @@ int main(int argc, char *argv[]) {
             server_broadcast_brick_state();
             server_broadcast_queue_level();
             server_broadcast_zone_state();   /* PACKET_ZONE_STATE: the zone's id + seed, 1 Hz */
+            server_broadcast_empire_state(); /* PACKET_EMPIRE_STATE: stockpiles, node amounts, ground, 1 Hz */
             server_broadcast_shield_packs();
         }
         net_server_emit_summary(now);

@@ -291,6 +291,20 @@ EUWorld *story_ai_empire_world(void);
  * not carry nodes/cells yet). */
 void story_ai_empire_seed_default(void);
 
+/* story_ai_empire_load_level -- the level-authored world (level_boxes.h's resource_nodes/claim_cells),
+ * unpacked into flat arrays by the caller so this header keeps its own "no packages/world dependency"
+ * boundary. Replaces the whole world; a level that authors nothing (both counts 0) falls back to
+ * story_ai_empire_seed_default's ring, which is exactly what every level authored before this did.
+ * Returns the number of nodes loaded. */
+int story_ai_empire_load_level(int node_count, const float *node_x, const float *node_z,
+                               const int *node_amount, int cell_count, const float *cell_x,
+                               const float *cell_z, const int *cell_radius);
+
+/* story_ai_empire_unit_count -- how many live EMPIRE units this process is ticking (archetype > 0).
+ * The HUD reads it to decide whether to draw anything at all, and the replication broadcaster uses it as
+ * its own gate; 0 means "this world has no EMPIRE in it". */
+int story_ai_empire_unit_count(void);
+
 /* Test/debug readouts, -1 when player_id is not an EMPIRE unit: the order it is executing (EU_ORDER_*)
  * and its archetype (EU_ARCH_*). */
 int story_ai_unit_order(int player_id);

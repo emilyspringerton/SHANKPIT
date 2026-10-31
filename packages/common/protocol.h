@@ -107,6 +107,18 @@
  * `idle_ms` is how long it has been empty, so a client can show the countdown. Absolute and idempotent,
  * like PACKET_BRICK_STATE: a dropped datagram or a late joiner heals on the next one. */
 #define PACKET_ZONE_STATE 17
+
+/* PACKET_EMPIRE_STATE -- the EMPIRE shared world on the wire (packages/simulation/empire_sync.h).
+ * Server -> client, 1 Hz, every welcomed client on a world that has EMPIRE in it. It carries only the
+ * MUTABLE half -- per-faction stockpiles, each resource node's remaining amount, each claim cell's owner
+ * -- and never positions: both sides load the same authored level (or generate the same zone from one
+ * seed), so every position is already known, and a hostile packet must not be able to move a resource
+ * node or drag ground across the map. Entries are indexed by their position in that shared list, which
+ * is why the counts travel too. Absolute and idempotent, like PACKET_BRICK_STATE: a dropped datagram or
+ * a late joiner heals on the next one. */
+#define PACKET_EMPIRE_STATE 18
+#define NET_EMPIRE_MAX_NODES 16 /* must match EU_MAX_NODES (empire_units.h) */
+#define NET_EMPIRE_MAX_CELLS 32 /* must match EU_MAX_CLAIM_CELLS (empire_units.h) */
 #define NET_ZONE_ID_MAX 32
 #define NET_SHIELD_PACK_MAX 16
 
@@ -263,6 +275,19 @@ typedef struct {
     unsigned char state;    /* zone_registry.h: 0 uninitialized, 1 active, 2 idle */
     unsigned short pad;
 } NetZoneState;
+
+/* NetEmpireState -- see PACKET_EMPIRE_STATE's own doc comment above. Both sides clamp the counts to
+ * NET_EMPIRE_MAX_*; a packet claiming more entries than the struct holds is refused outright rather than
+ * partially trusted. Amounts are counts, not floats: a node holds a small number of units.
+ * stockpile is indexed EU_FACTION_NEUTRAL / _ALLY / _HOSTILE (empire_units.h), same order on both sides. */
+typedef struct {
+    NetHeader hdr;
+    unsigned short stockpile[3];
+    unsigned char node_count;
+    unsigned char cell_count;
+    unsigned short node_amount[NET_EMPIRE_MAX_NODES];
+    unsigned char cell_owner[NET_EMPIRE_MAX_CELLS]; /* EU_FACTION_* */
+} NetEmpireState;
 
 /* NetBrickState -- see PACKET_BRICK_STATE's own doc comment above. key_lo/key_hi are the two halves
  * of the 30-bit cell key (ix | iy<<10 | iz<<20) so the entry has no padding or endianness trap. */

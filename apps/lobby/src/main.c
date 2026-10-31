@@ -8,8 +8,11 @@
 #include <time.h>
 
 #ifdef _WIN32
-    #include <windows.h>
+    /* winsock2.h BEFORE windows.h. windows.h pulls in the old winsock.h, and including it first is
+       exactly the `#warning Please include winsock2.h before windows.h` the Windows release log carried;
+       the two headers disagree about the socket types the rest of this file uses. */
     #include <winsock2.h>
+    #include <windows.h>
     #include <ws2tcpip.h>
     #pragma comment(lib, "ws2_32.lib")
 #else
@@ -137,6 +140,13 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/simulation/zone_registry.h"
 #include "../../../packages/simulation/zone_rules_host.h"
 #include "../../../packages/simulation/zone_sync.h"
+#include "../../../packages/simulation/empire_sync.h"
+
+/* Forward declarations for the two render helpers defined far below their first use (draw_phone_app
+   and broadcast_render_view call them). Both used to be implicit declarations in the Windows build --
+   an implicit `int()` prototype against a real void signature is undefined behaviour, not just noise. */
+void draw_string(const char *str, float x, float y, float size);
+void draw_scene(PlayerState *render_p);
 
 /* ── S144-02 Stage B: GOLDENBAND skinned mesh for Tyler ──────────────────────
  * Ports REDGARDEN/GFD's S144-07 gband_mesh_rig onto the shader/VBO
@@ -1480,7 +1490,10 @@ static void techtree_sync(void) {
 
 static void phone_iduna_pump(void);
 static void phone_iduna_start(void);
-static void draw_phone_app(const Phone *p) {
+/* Not const: opening the phone syncs the EMPIRE economy into it (lobby_empire_sync writes emp_*,
+   including nudging emp_self_cell), so a const parameter was a promise this function cannot keep --
+   the Windows build said so with a discarded-qualifier warning at the call site. */
+static void draw_phone_app(Phone *p) {
     draw_phone_panel_bg(BP_APP_NAMES[p->app]);
     float row_y = PHONE_PANEL_Y1 - 90.0f;
     float row_h = 30.0f;
@@ -3351,6 +3364,25 @@ static void lobby_apply_story_level(const CustomLevelData *lvl) {
             story_ai_spawn_enemy(&local_state, (AIRole)lc->role, kit, lc->x, lc->y, lc->z);
     }
 
+    /* EMPIRE: this level's own contested ground, replacing the default ring (the fallback for a level
+       that authors none lives in story_ai_empire_load_level, so the local host and apps/server agree). */
+    {
+        float eu_nx[LEVEL_BOXES_MAX_RESOURCE_NODES], eu_nz[LEVEL_BOXES_MAX_RESOURCE_NODES];
+        int eu_amt[LEVEL_BOXES_MAX_RESOURCE_NODES];
+        float eu_cx[LEVEL_BOXES_MAX_CLAIM_CELLS], eu_cz[LEVEL_BOXES_MAX_CLAIM_CELLS];
+        int eu_rad[LEVEL_BOXES_MAX_CLAIM_CELLS];
+        for (int ni = 0; ni < lvl->resource_node_count; ni++) {
+            eu_nx[ni] = lvl->resource_nodes[ni].x; eu_nz[ni] = lvl->resource_nodes[ni].z;
+            eu_amt[ni] = lvl->resource_nodes[ni].amount;
+        }
+        for (int ci = 0; ci < lvl->claim_cell_count; ci++) {
+            eu_cx[ci] = lvl->claim_cells[ci].x; eu_cz[ci] = lvl->claim_cells[ci].z;
+            eu_rad[ci] = lvl->claim_cells[ci].radius;
+        }
+        story_ai_empire_load_level(lvl->resource_node_count, eu_nx, eu_nz, eu_amt,
+                                   lvl->claim_cell_count, eu_cx, eu_cz, eu_rad);
+    }
+
     float nn_x[LEVEL_BOXES_MAX_NAV_NODES], nn_y[LEVEL_BOXES_MAX_NAV_NODES], nn_z[LEVEL_BOXES_MAX_NAV_NODES];
     int nn_is_cover[LEVEL_BOXES_MAX_NAV_NODES];
     float nn_cover_dir_x[LEVEL_BOXES_MAX_NAV_NODES], nn_cover_dir_z[LEVEL_BOXES_MAX_NAV_NODES];
@@ -4480,7 +4512,9 @@ static void spray_place_decal(void) {
         pkt.hdr.scene_id = (unsigned char)p->scene_id;
         pkt.spray_id = g_selected_spray_id;
         pkt.x = hx; pkt.y = hy; pkt.z = hz; pkt.nx = nx; pkt.ny = ny; pkt.nz = nz;
-        sendto(sock, &pkt, sizeof(pkt), 0, (struct sockaddr*)&server_addr, sizeof(server_addr));
+        /* winsock's sendto takes `const char *`, POSIX's takes `const void *`: the cast is the one call
+           shape both accept (the release log carried this as an incompatible-pointer warning). */
+        sendto(sock, (const char *)&pkt, sizeof(pkt), 0, (struct sockaddr*)&server_addr, sizeof(server_addr));
     }
 }
 
@@ -11137,6 +11171,20 @@ void draw_hud(PlayerState *p) {
         }
     }
 
+    /* EMPIRE: the shared world in one line -- units under orders, what each side has banked, how much
+     * ground is held, how many nodes still have something in them. Drawn only when this world actually
+     * has EMPIRE units, so every pre-EMPIRE level looks exactly as it did; the wording itself is a pure
+     * function (eu_hud_text, empire_units.h) so it is unit-tested rather than eyeballed. On a network
+     * client the numbers are the host's, mirrored over PACKET_EMPIRE_STATE. */
+    if (story_ai_empire_unit_count() > 0) {
+        char empire_line[128];
+        if (eu_hud_text(story_ai_empire_world(), story_ai_empire_unit_count(), empire_line,
+                        (int)sizeof empire_line)) {
+            glColor3f(0.86f, 0.9f, 0.66f);
+            draw_string(empire_line, 24.0f, 120.0f, 2.0f);
+        }
+    }
+
 
     /* S536, TYLER VALHANNA -- subtitle box anchored bottom-left, deliberately small (not full
      * screen, per the founder's own "have that show up on an actual computer screen that is a
@@ -14995,6 +15043,12 @@ void net_tick() {
             ZoneSync in;
             if (zone_sync_decode(&in, head, len) && zone_sync_should_reload(&g_client_zone, &in))
                 client_apply_zone_state(in.zone_id, in.seed);
+        } else if (head->type == PACKET_EMPIRE_STATE && len >= (int)sizeof(NetEmpireState)) {
+            /* EMPIRE shared world (empire_sync.h): the host's stockpiles, node amounts and which ground
+               it holds. Index-matched to the level both sides loaded, and apply() only ever mirrors
+               state -- it cannot move a node or a cell. */
+            NetEmpireState es;
+            if (empire_sync_decode(&es, head, len)) empire_sync_apply(story_ai_empire_world(), &es);
         } else if (head->type == PACKET_QUEUE_LEVEL && len >= (int)sizeof(NetQueueLevel)) {
             /* card #481: the server's authoritative QUEUE level id. A change (a round boundary
                re-resolved the admin-flagged default) re-fetches geometry instead of keeping the

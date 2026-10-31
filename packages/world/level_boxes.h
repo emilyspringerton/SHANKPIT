@@ -366,6 +366,26 @@ typedef struct {
 
 #define LEVEL_BOXES_MAX_ZONES 16 /* matches IDUNA/internal/shankpit.MaxLevelZones exactly */
 
+/* EMPIRE shared world, level-authored (2026-10-31, founder: "this is almost like a level building
+ * affordance ... taking over territory gathering resources"). A resource node is a place a unit walks to
+ * and gathers from; a claim cell is ground a faction can hold. Pure data carriers like LevelZone --
+ * packages/world stays empire_units-independent (amount/radius are bare ints), and the host unpacks them
+ * into story_ai's own EUWorld (story_ai_empire_load_level). Ground-plane on purpose: only x/z mean
+ * anything, because the EMPIRE world is a 2D map (empire_units.h's EUResourceNode). Not story-mode-only:
+ * a level's contested ground is as general as its boxes. */
+typedef struct {
+    float x, z;
+    int amount;   /* what the node starts with; the host caps it at its own node capacity */
+} LevelResourceNode;
+
+typedef struct {
+    float x, z;
+    int radius;   /* 0 -> the host's own claim radius (empire_rules.h) */
+} LevelClaimCell;
+
+#define LEVEL_BOXES_MAX_RESOURCE_NODES 16 /* must match EU_MAX_NODES (empire_units.h) */
+#define LEVEL_BOXES_MAX_CLAIM_CELLS 32    /* must match EU_MAX_CLAIM_CELLS (empire_units.h) */
+
 /* An author-placed programmable widget (NOCK `edu_widgets` array): a named machine bound to one EduVM
  * "hardware register", so a script typed into the Architect's Orb can drive the level
  * (set_state("door_gate_alpha", 1) / set_reg(1, 1) / read_sensor(2)). Pure data carrier like LevelZone --
@@ -430,6 +450,10 @@ typedef struct {
     int level_exit_count;
     LevelZone zones[LEVEL_BOXES_MAX_ZONES]; /* BIG_O engine merge phase 7c */
     int zone_count;
+    LevelResourceNode resource_nodes[LEVEL_BOXES_MAX_RESOURCE_NODES]; /* EMPIRE shared world */
+    int resource_node_count;
+    LevelClaimCell claim_cells[LEVEL_BOXES_MAX_CLAIM_CELLS]; /* EMPIRE claimable ground */
+    int claim_cell_count;
     LevelEduWidget edu_widgets[LEVEL_BOXES_MAX_EDU_WIDGETS]; /* programmable widgets -> EduVM */
     int edu_widget_count;
     /* next_level_id (S473) -- 0 is the real "no next level" sentinel (matches this loader's own
@@ -1235,6 +1259,75 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
         }
     }
 
+    // EMPIRE shared world -- authored resource nodes and claimable ground, the same real small-scanner
+    // convention as zones above. Absent keys are a real, honest "nothing authored for this level" state,
+    // not an error: the host then keeps its default contested ring
+    // (story_ai_empire_seed_default) rather than inventing terrain.
+    out->resource_node_count = 0;
+    const char *rn_arr_key = level_boxes_find_key(buf, end, "resource_nodes");
+    if (rn_arr_key) {
+        const char *rn_arr = level_boxes_skip_ws(rn_arr_key);
+        if (*rn_arr == '[') {
+            const char *rn_arr_end = level_boxes_find_array_end(rn_arr, end);
+            if (rn_arr_end) {
+                const char *rnc = rn_arr + 1;
+                while (rnc < rn_arr_end && out->resource_node_count < LEVEL_BOXES_MAX_RESOURCE_NODES) {
+                    rnc = level_boxes_skip_ws(rnc);
+                    if (rnc >= rn_arr_end) break;
+                    if (*rnc == ',') { rnc++; continue; }
+                    if (*rnc != '{') { rnc++; continue; }
+                    const char *rnobj_end = strchr(rnc, '}');
+                    if (!rnobj_end || rnobj_end > rn_arr_end) break;
+                    LevelResourceNode rn;
+                    memset(&rn, 0, sizeof(rn));
+                    const char *v8;
+                    if ((v8 = level_boxes_find_key(rnc, rnobj_end, "x"))) level_boxes_parse_number(v8, &rn.x);
+                    if ((v8 = level_boxes_find_key(rnc, rnobj_end, "z"))) level_boxes_parse_number(v8, &rn.z);
+                    if ((v8 = level_boxes_find_key(rnc, rnobj_end, "amount"))) {
+                        float amt_f = 0.0f;
+                        if (level_boxes_parse_number(v8, &amt_f)) rn.amount = (int)amt_f;
+                    }
+                    /* A node with nothing in it is not a node: skip rather than load a dead spot the AI
+                       would walk to and stand on forever. */
+                    if (rn.amount <= 0) { rnc = rnobj_end + 1; continue; }
+                    out->resource_nodes[out->resource_node_count++] = rn;
+                    rnc = rnobj_end + 1;
+                }
+            }
+        }
+    }
+
+    out->claim_cell_count = 0;
+    const char *cc_arr_key = level_boxes_find_key(buf, end, "claim_cells");
+    if (cc_arr_key) {
+        const char *cc_arr = level_boxes_skip_ws(cc_arr_key);
+        if (*cc_arr == '[') {
+            const char *cc_arr_end = level_boxes_find_array_end(cc_arr, end);
+            if (cc_arr_end) {
+                const char *ccc = cc_arr + 1;
+                while (ccc < cc_arr_end && out->claim_cell_count < LEVEL_BOXES_MAX_CLAIM_CELLS) {
+                    ccc = level_boxes_skip_ws(ccc);
+                    if (ccc >= cc_arr_end) break;
+                    if (*ccc == ',') { ccc++; continue; }
+                    if (*ccc != '{') { ccc++; continue; }
+                    const char *ccobj_end = strchr(ccc, '}');
+                    if (!ccobj_end || ccobj_end > cc_arr_end) break;
+                    LevelClaimCell cc;
+                    memset(&cc, 0, sizeof(cc));
+                    const char *v9;
+                    if ((v9 = level_boxes_find_key(ccc, ccobj_end, "x"))) level_boxes_parse_number(v9, &cc.x);
+                    if ((v9 = level_boxes_find_key(ccc, ccobj_end, "z"))) level_boxes_parse_number(v9, &cc.z);
+                    if ((v9 = level_boxes_find_key(ccc, ccobj_end, "radius"))) {
+                        float rad_f = 0.0f;
+                        if (level_boxes_parse_number(v9, &rad_f)) cc.radius = (int)rad_f;
+                    }
+                    out->claim_cells[out->claim_cell_count++] = cc;
+                    ccc = ccobj_end + 1;
+                }
+            }
+        }
+    }
+
     // Programmable widgets ("edu_widgets"). Absent key = none authored, not an error. A malformed entry
     // (no entity_id, or a machine_type outside 1..5) is skipped, never half-loaded.
     out->edu_widget_count = 0;
@@ -1460,6 +1553,22 @@ static inline void level_boxes_write_json(FILE *f, const CustomLevelData *lvl) {
         const LevelZone *zn = &lvl->zones[i];
         fprintf(f, "%s\n  { \"x\": %.4g, \"y\": %.4g, \"z\": %.4g, \"radius\": %.4g, \"zone_type\": %d }",
                 i ? "," : "", (double)zn->x, (double)zn->y, (double)zn->z, (double)zn->radius, zn->zone_type);
+    }
+    fprintf(f, "\n ]");
+
+    fprintf(f, ",\n \"resource_nodes\": [");
+    for (int i = 0; i < lvl->resource_node_count; i++) {
+        const LevelResourceNode *rn = &lvl->resource_nodes[i];
+        fprintf(f, "%s\n  { \"x\": %.4g, \"z\": %.4g, \"amount\": %d }",
+                i ? "," : "", (double)rn->x, (double)rn->z, rn->amount);
+    }
+    fprintf(f, "\n ]");
+
+    fprintf(f, ",\n \"claim_cells\": [");
+    for (int i = 0; i < lvl->claim_cell_count; i++) {
+        const LevelClaimCell *cc = &lvl->claim_cells[i];
+        fprintf(f, "%s\n  { \"x\": %.4g, \"z\": %.4g, \"radius\": %d }",
+                i ? "," : "", (double)cc->x, (double)cc->z, cc->radius);
     }
     fprintf(f, "\n ]");
 

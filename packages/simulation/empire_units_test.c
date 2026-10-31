@@ -244,6 +244,49 @@ int main(void) {
            "a second faction standing on a cell starts its own clock instead of inheriting progress");
     }
 
+    printf("== a level's own ground (eu_world_load) ==\n");
+    {
+        EUWorld w;
+        float nx[3] = { -6.0f, 6.0f, 0.0f }, nz[3] = { 8.0f, -8.0f, 0.0f };
+        int amt[3] = { 12, 3, 0 };
+        float cx[2] = { 14.0f, -14.0f }, cz[2] = { 0.0f, 0.0f };
+        int rad[2] = { 0, 9 };
+        ok(eu_world_load(&w, 3, nx, nz, amt, 2, cx, cz, rad) == 2,
+           "an authored level loads its nodes, and a zero-amount node is not a node");
+        ok(w.nodes[0].x == -6.0f && w.nodes[0].z == 8.0f && w.nodes[0].amount == 12,
+           "node positions and amounts are the author's own numbers");
+        ok(w.cells[1].radius == 9, "an authored claim radius wins");
+        ok(w.cells[0].radius != 9 && w.cells[0].radius > 0, "0 means the host's own default radius, not a 1-unit cell");
+
+        /* Over-authoring is capped, never an overrun: the world keeps the first EU_MAX_NODES nodes. */
+        float mx[EU_MAX_NODES + 4], mz[EU_MAX_NODES + 4];
+        int ma[EU_MAX_NODES + 4];
+        for (int i = 0; i < EU_MAX_NODES + 4; i++) { mx[i] = (float)i; mz[i] = 0.0f; ma[i] = 1; }
+        ok(eu_world_load(&w, EU_MAX_NODES + 4, mx, mz, ma, 0, NULL, NULL, NULL) == EU_MAX_NODES,
+           "more nodes than the world holds are capped at EU_MAX_NODES");
+        ok(eu_world_load(&w, 0, NULL, NULL, NULL, 0, NULL, NULL, NULL) == 0 &&
+           w.node_count == 0 && w.cell_count == 0,
+           "a level that authors nothing loads nothing (the caller decides on the default ring)");
+    }
+
+    printf("== the HUD line ==\n");
+    {
+        EUWorld w;
+        build_world(&w);
+        EUUnit ally;
+        eu_unit_init(&ally, EU_ARCH_ALLY, 0, -1, -1);
+        eu_world_gather(&w, &ally, 0);
+        eu_world_claim_tick(&w, &ally, 0, 30000);
+        char line[160];
+        ok(eu_hud_text(&w, 3, line, (int)sizeof line) == 1, "a live world writes a line");
+        ok(strstr(line, "UNITS 3") != NULL && strstr(line, "ALLY 1") != NULL &&
+           strstr(line, "GROUND 1/2") != NULL,
+           "the line carries units, the ally stockpile and ground held");
+        EUWorld none;
+        eu_world_clear(&none);
+        ok(eu_hud_text(&none, 0, line, (int)sizeof line) == 0, "an EMPIRE-free world draws nothing");
+    }
+
     printf("\n%d checks, %d failed\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

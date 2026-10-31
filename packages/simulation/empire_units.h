@@ -27,6 +27,7 @@
 #define SHANKPIT_EMPIRE_UNITS_H
 
 #include <math.h>
+#include <stdio.h>
 #include "empire_units_rules.h"
 
 /* Archetypes. 0 is deliberately "none": a character with no archetype keeps exactly the pre-EMPIRE
@@ -278,6 +279,54 @@ static inline int eu_world_add_claim_cell(EUWorld *w, float x, float z) {
     c->claimant = EU_FACTION_NEUTRAL;
     c->claim_ms = 0;
     return w->cell_count++;
+}
+
+/* eu_world_load -- an authored level's own contested ground, replacing whatever was there. Flat arrays,
+ * not a level struct: this header stays free of packages/world, the same boundary
+ * story_ai_load_nav_graph keeps. Both counts are capped by EU_MAX_* (a host that authors more than the
+ * world holds keeps the first ones, never overruns). Returns the number of nodes loaded. A level that
+ * authors nothing loads nothing -- this function never invents terrain; the caller decides whether to
+ * fall back to the default ring. */
+static inline int eu_world_load(EUWorld *w, int node_count, const float *node_x, const float *node_z,
+                                const int *node_amount, int cell_count, const float *cell_x,
+                                const float *cell_z, const int *cell_radius) {
+    if (!w) return 0;
+    eu_world_clear(w);
+    if (node_count > 0 && node_x && node_z && node_amount) {
+        for (int i = 0; i < node_count && w->node_count < EU_MAX_NODES; i++)
+            eu_world_add_node(w, node_x[i], node_z[i], node_amount[i]);
+    }
+    if (cell_count > 0 && cell_x && cell_z) {
+        for (int i = 0; i < cell_count && w->cell_count < EU_MAX_CLAIM_CELLS; i++) {
+            int idx = eu_world_add_claim_cell(w, cell_x[i], cell_z[i]);
+            /* 0 is the level schema's own "use the host default", not a one-unit cell. */
+            if (idx >= 0 && cell_radius && cell_radius[i] > 0) w->cells[idx].radius = cell_radius[i];
+        }
+    }
+    return w->node_count;
+}
+
+/* eu_hud_text -- one line for the HUD: how many units are under orders, what each side has banked, how
+ * much ground is held, how many nodes still have something in them. Returns 1 when it wrote a line and 0
+ * when the world has nothing to say (no nodes, no cells, no units), so a level with no EMPIRE in it draws
+ * nothing rather than a row of zeroes. Pure text, no GL -- which is also what makes it testable. */
+static inline int eu_hud_text(const EUWorld *w, int units, char *buf, int buflen) {
+    if (!buf || buflen <= 0) return 0;
+    buf[0] = '\0';
+    int nodes = w ? w->node_count : 0;
+    int cells = w ? w->cell_count : 0;
+    if (nodes == 0 && cells == 0 && units <= 0) return 0;
+    int held = 0, live = 0;
+    if (w) {
+        for (int i = 0; i < w->cell_count; i++)
+            if (w->cells[i].owner != EU_FACTION_NEUTRAL) held++;
+        for (int i = 0; i < w->node_count; i++)
+            if (w->nodes[i].amount > 0) live++;
+    }
+    snprintf(buf, (size_t)buflen, "UNITS %d  ALLY %d  HOSTILE %d  GROUND %d/%d  NODES %d/%d", units,
+             w ? w->stockpile[EU_FACTION_ALLY] : 0, w ? w->stockpile[EU_FACTION_HOSTILE] : 0,
+             held, cells, live, nodes);
+    return 1;
 }
 
 static inline float eu_dist2(float ax, float az, float bx, float bz) {
