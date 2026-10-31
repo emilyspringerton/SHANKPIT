@@ -694,8 +694,14 @@ jobs:
           test -n "$(ls ShankPit_Client_Linux/lib)"
           cp -r assets ShankPit_Client_Linux/
           # SHIP-LINUX-02a: the lobby APPS page on Linux looks for bundled/<name> (no .exe).
+          # RECURSIVE, and `/.` rather than `/*`: once the Linux NOCK server actually builds, the step
+          # above leaves `bundled_linux/levels/` and `bundled_linux/tools/` behind (the map data and the
+          # editor page dw_nock needs beside it), and a plain `cp bundled_linux/*` can copy neither -- it
+          # exits non-zero with "-r not specified; omitting directory", which kills the whole artifact
+          # job. `dir/.` also carries dotfiles and is a no-op on an empty directory, so this stays correct
+          # on the run where the NOCK build failed and bundled_linux holds only dw_gui.
           mkdir -p ShankPit_Client_Linux/bundled
-          cp bundled_linux/* ShankPit_Client_Linux/bundled/
+          cp -r bundled_linux/. ShankPit_Client_Linux/bundled/
           cp SHANKPIT_CONSTRUCT.txt ShankPit_Client_Linux/
           printf '%s\n' '#!/bin/sh' 'cd "$(dirname "$0")"' 'LD_LIBRARY_PATH="$PWD/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" exec ./ShankPit "$@"' > ShankPit_Client_Linux/PLAY.sh
           chmod +x ShankPit_Client_Linux/ShankPit ShankPit_Client_Linux/PLAY.sh
