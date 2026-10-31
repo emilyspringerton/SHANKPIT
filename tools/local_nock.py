@@ -112,6 +112,27 @@ def validate_level(doc):
             if o.get("rot_y", 0) not in (0, 90, 180, 270):
                 raise ValueError(f"object {i} rot_y must be 0/90/180/270 "
                                  "(the engine composes quarter turns only)")
+    # The subtract modifier: cubes that cut themselves out of whatever level geometry they intersect
+    # (elevator shafts through floors, stairwells through decks). The native loader resolves these at
+    # parse time, so the editor only has to carry them faithfully -- but carrying a malformed one
+    # through would be a hole that silently never appears, which is worse than a refused save. The
+    # schema is the same shorthand a wall uses: centre x/y/z plus FULL extents sx/sy/sz.
+    if "subtract" in doc:
+        subs = doc.get("subtract")
+        if not isinstance(subs, list):
+            raise ValueError('"subtract" must be an array of cubes')
+        for i, s in enumerate(subs):
+            if not isinstance(s, dict):
+                raise ValueError(f"subtract {i} is not an object")
+            missing = [k for k in ("x", "y", "z", "sx", "sy", "sz") if k not in s]
+            if missing:
+                raise ValueError(f"subtract {i} is missing {', '.join(missing)}")
+            for k in ("x", "y", "z", "sx", "sy", "sz"):
+                v = s.get(k)
+                if isinstance(v, bool) or not isinstance(v, (int, float)):
+                    raise ValueError(f"subtract {i} has a non-numeric {k}")
+            if s["sx"] <= 0 or s["sy"] <= 0 or s["sz"] <= 0:
+                raise ValueError(f"subtract {i} needs positive sx/sy/sz (a cube with no volume cuts nothing)")
     return doc
 
 

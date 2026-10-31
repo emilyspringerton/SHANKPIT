@@ -38,6 +38,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>   /* fabsf, for the subtract modifier's piece comparison */
 
 #ifndef _WIN32
 #include <sys/wait.h>
@@ -74,6 +75,34 @@ typedef struct {
         (mass + inertia of geometry that falls away). 0 / absent = use the engine default for the material
         kind (brick_fracture.h BF_DENSITY_*: brick 1.9, concrete 2.4, wood 0.6, glass 2.5). */
 } LevelBoxMaterial;
+
+/* ---- subtract modifier (founder, 2026-10-31) ------------------------------------------------
+ * "we need affordances for punching holes in level geometry in a sane way where it punches a hole
+ * cleanly with the faces being nice ... we build a building and then put a big cube with a subtract
+ * modifier on it and it subtracts from the geometry of the level wherever it intersects it ... that
+ * way we can thread an elevator through the floors and also punch holes through floors for the
+ * stairs to actually work".
+ *
+ * An authored box minus an authored cube, resolved at LOAD time into ordinary boxes: exact
+ * AABB-minus-AABB, so every new face is either an original outer face or a plane of the cut. That is
+ * the same geometry a shotgun leaves once it has carved cells out (brick_fracture.h also rebuilds a
+ * carved parent as plain boxes) -- this one is authored, deterministic, free at runtime, and it works
+ * on FLOORS, which weapon damage deliberately does not touch.
+ *
+ * Why not the cell grid: cells are ~3 units and rounded, so a stairwell authored through a floor
+ * would come out ragged and cell-sized instead of square. Why not runtime CSG: this is a
+ * server-authoritative tick, and a hole that only exists in the level file costs nothing per frame.
+ *
+ * Named limits: only axis-aligned boxes are cut -- a ramp or a rotated box is left whole, because its
+ * fracture pieces would not be axis-aligned either. Several cubes are applied in order; AABB
+ * subtraction is associative, so their union is the result regardless of order. */
+#define LEVEL_BOXES_MAX_SUBTRACT 32
+typedef struct {
+    float x, y, z;   /* centre, same convention as LevelBox */
+    float w, h, d;   /* full extents (parsed from sx/sy/sz, exactly like a wall) */
+} LevelSubtractBox;
+
+#define LEVEL_BOXES_SUBTRACT_EPS 0.02f
 
 #define LEVEL_BOXES_MAX_BRICK_CELLS 4096 /* = brick_fracture.h BF_MAX_RECORDS; IDUNA MaxBrickCells matches */
 typedef struct {
@@ -499,6 +528,9 @@ typedef struct {
        faces/normals are regenerated deterministically from box + cell grid on load. Absent = none. */
     int brick_damage_count;
     LevelBrickCell brick_damage[LEVEL_BOXES_MAX_BRICK_CELLS];
+    /* subtract modifier -- cubes that cut themselves out of the geometry they intersect, at load. */
+    int subtract_count;
+    LevelSubtractBox subtract[LEVEL_BOXES_MAX_SUBTRACT];
 } CustomLevelData;
 
 static inline const char *level_boxes_skip_ws(const char *p) {
@@ -632,6 +664,129 @@ static inline int level_boxes_resolve_material(const CustomLevelData *out, const
     return 0;
 }
 
+/* level_boxes_emit_piece -- one axis-aligned piece of `src` between the given planes. A sliver
+ * thinner than eps is not emitted at all: a 0.001-unit face is not a face, it is z-fighting. */
+static inline void level_boxes_emit_piece(const LevelBox *src, float x0, float x1, float y0, float y1,
+                                          float z0, float z1, LevelBox *out, int *n, int max,
+                                          float eps) {
+    if (*n >= max) return;
+    if (x1 - x0 <= eps || y1 - y0 <= eps || z1 - z0 <= eps) return;
+    LevelBox p = *src;
+    p.x = (x0 + x1) * 0.5f; p.w = x1 - x0;
+    p.y = (y0 + y1) * 0.5f; p.h = y1 - y0;
+    p.z = (z0 + z1) * 0.5f; p.d = z1 - z0;
+    out[(*n)++] = p;
+}
+
+/* level_boxes_subtract_one -- box minus cut, exactly. Writes 0..6 axis-aligned pieces into out and
+ * returns how many. 0 means the cut swallowed the box whole; 1 with the box's own extents means the
+ * cut did not touch it. */
+static inline int level_boxes_subtract_one(const LevelBox *box, const LevelSubtractBox *cut,
+                                           LevelBox *out, int max) {
+    const float eps = LEVEL_BOXES_SUBTRACT_EPS;
+    float bx0 = box->x - box->w * 0.5f, bx1 = box->x + box->w * 0.5f;
+    float by0 = box->y - box->h * 0.5f, by1 = box->y + box->h * 0.5f;
+    float bz0 = box->z - box->d * 0.5f, bz1 = box->z + box->d * 0.5f;
+    float cx0 = cut->x - cut->w * 0.5f, cx1 = cut->x + cut->w * 0.5f;
+    float cy0 = cut->y - cut->h * 0.5f, cy1 = cut->y + cut->h * 0.5f;
+    float cz0 = cut->z - cut->d * 0.5f, cz1 = cut->z + cut->d * 0.5f;
+
+    if (cx1 <= bx0 + eps || cx0 >= bx1 - eps || cy1 <= by0 + eps || cy0 >= by1 - eps ||
+        cz1 <= bz0 + eps || cz0 >= bz1 - eps) {
+        out[0] = *box;   /* miss: the box comes back untouched */
+        return 1;
+    }
+    /* the cut, clipped to the box */
+    float ix0 = cx0 > bx0 ? cx0 : bx0, ix1 = cx1 < bx1 ? cx1 : bx1;
+    float iy0 = cy0 > by0 ? cy0 : by0, iy1 = cy1 < by1 ? cy1 : by1;
+    float iz0 = cz0 > bz0 ? cz0 : bz0, iz1 = cz1 < bz1 ? cz1 : bz1;
+
+    int n = 0;
+    /* below and above the cut: full-footprint slabs */
+    level_boxes_emit_piece(box, bx0, bx1, by0, iy0, bz0, bz1, out, &n, max, eps);
+    level_boxes_emit_piece(box, bx0, bx1, iy1, by1, bz0, bz1, out, &n, max, eps);
+    /* the band the cut lives in: split in x, then the remaining middle in z */
+    level_boxes_emit_piece(box, bx0, ix0, iy0, iy1, bz0, bz1, out, &n, max, eps);
+    level_boxes_emit_piece(box, ix1, bx1, iy0, iy1, bz0, bz1, out, &n, max, eps);
+    level_boxes_emit_piece(box, ix0, ix1, iy0, iy1, bz0, iz0, out, &n, max, eps);
+    level_boxes_emit_piece(box, ix0, ix1, iy0, iy1, iz1, bz1, out, &n, max, eps);
+    return n;
+}
+
+/* level_boxes_apply_subtract -- resolves every subtract volume into the level's own box list.
+ * Returns how many boxes were changed (0 = no modifier, or none of them intersected).
+ *
+ * A carved box keeps its own index (its first piece stays there) and the extra pieces are appended,
+ * so doors, buttons and widgets that reference a box BY INDEX keep pointing at real geometry. A box
+ * wholly inside a cut is removed, and every index-bearing list is remapped once at the end -- -1 is
+ * "the box this pointed at is gone", which every consumer already reads as "not attached". */
+static inline int level_boxes_apply_subtract(CustomLevelData *lvl) {
+    if (!lvl || lvl->subtract_count <= 0 || lvl->count <= 0) return 0;
+    const float eps = LEVEL_BOXES_SUBTRACT_EPS;
+    unsigned char removed[LEVEL_BOXES_MAX];
+    memset(removed, 0, sizeof removed);
+    int changed = 0;
+
+    for (int s = 0; s < lvl->subtract_count; s++) {
+        const LevelSubtractBox *cut = &lvl->subtract[s];
+        if (!(cut->w > eps && cut->h > eps && cut->d > eps)) continue;   /* degenerate: ignored */
+        int before = lvl->count;   /* only boxes that exist when this pass starts (pieces do not re-cut) */
+        for (int i = 0; i < before; i++) {
+            LevelBox *b = &lvl->boxes[i];
+            if (removed[i]) continue;
+            /* a ramp or a rotated box is not axis-aligned; its pieces would not be either */
+            if (b->ramp || b->rot_x != 0.0f || b->rot_y != 0.0f || b->rot_z != 0.0f) continue;
+            if (!(b->w > eps && b->h > eps && b->d > eps)) continue;
+            LevelBox pieces[6];
+            int np = level_boxes_subtract_one(b, cut, pieces, 6);
+            if (np == 1 &&
+                fabsf(pieces[0].w - b->w) < eps && fabsf(pieces[0].h - b->h) < eps &&
+                fabsf(pieces[0].d - b->d) < eps && fabsf(pieces[0].x - b->x) < eps &&
+                fabsf(pieces[0].y - b->y) < eps && fabsf(pieces[0].z - b->z) < eps)
+                continue;   /* miss: untouched */
+            if (np <= 0) { removed[i] = 1; changed++; continue; }
+            /* Refuse WHOLE rather than half-apply: if the extra pieces do not fit under the cap this
+             * box stays solid, exactly like an over-budget brick carve is refused whole. */
+            if (lvl->count + (np - 1) > LEVEL_BOXES_MAX) continue;
+            *b = pieces[0];
+            for (int k = 1; k < np; k++) lvl->boxes[lvl->count++] = pieces[k];
+            changed++;
+        }
+    }
+    if (changed == 0) return 0;
+
+    int remap[LEVEL_BOXES_MAX];
+    int w = 0;
+    for (int i = 0; i < lvl->count; i++) {
+        if (removed[i]) { remap[i] = -1; continue; }
+        if (w != i) lvl->boxes[w] = lvl->boxes[i];
+        remap[i] = w++;
+    }
+    int old_count = lvl->count;
+    lvl->count = w;
+    for (int i = 0; i < lvl->door_count; i++)
+        if (lvl->doors[i].box_index >= 0 && lvl->doors[i].box_index < old_count)
+            lvl->doors[i].box_index = remap[lvl->doors[i].box_index];
+    for (int i = 0; i < lvl->button_count; i++)
+        if (lvl->buttons[i].box_index >= 0 && lvl->buttons[i].box_index < old_count)
+            lvl->buttons[i].box_index = remap[lvl->buttons[i].box_index];
+    for (int i = 0; i < lvl->edu_widget_count; i++)
+        if (lvl->edu_widgets[i].box_index >= 0 && lvl->edu_widgets[i].box_index < old_count)
+            lvl->edu_widgets[i].box_index = remap[lvl->edu_widgets[i].box_index];
+    /* Saved damage on a box that is gone is DROPPED, not re-pointed: it was damage to that geometry. */
+    int dn = 0;
+    for (int i = 0; i < lvl->brick_damage_count; i++) {
+        int wi = lvl->brick_damage[i].wall;
+        int nw = (wi >= 0 && wi < old_count) ? remap[wi] : wi;
+        if (nw < 0) continue;
+        lvl->brick_damage[dn] = lvl->brick_damage[i];
+        lvl->brick_damage[dn].wall = nw;
+        dn++;
+    }
+    lvl->brick_damage_count = dn;
+    return changed;
+}
+
 // level_boxes_parse_json parses buf (a null-terminated JSON document, the exact shape IDUNA's
 // GET /api/v1/shankpit-levels/:id/export returns) into *out. Returns 1 on success, 0 on any real
 // failure (missing "walls" array, a malformed wall object, more walls than LEVEL_BOXES_MAX) --
@@ -688,6 +843,43 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
     // brick_damage -- absent key (every undamaged / pre-2026-10-02 level) leaves the count at 0.
     // Keys are parsed with strtoul, not level_boxes_parse_number: a float mantissa can't hold a
     // 30-bit packed cell key exactly.
+    // subtract modifier -- "cut this shape out of whatever it intersects". Parsed before the walls
+    // are turned into the final list, so the pass at the end of this function can resolve it. An
+    // absent key is every pre-modifier level, and 0 of them is a bit-for-bit unchanged load.
+    out->subtract_count = 0;
+    const char *sub_key = level_boxes_find_key(buf, end, "subtract");
+    if (sub_key) {
+        const char *sub_arr = level_boxes_skip_ws(sub_key);
+        if (*sub_arr == '[') {
+            const char *sub_end = level_boxes_find_array_end(sub_arr, end);
+            if (sub_end) {
+                const char *sc = sub_arr + 1;
+                while (sc < sub_end && out->subtract_count < LEVEL_BOXES_MAX_SUBTRACT) {
+                    sc = level_boxes_skip_ws(sc);
+                    if (sc >= sub_end) break;
+                    if (*sc != '{') { sc++; continue; }
+                    const char *oe = strchr(sc, '}');
+                    if (!oe || oe > sub_end) break;
+                    float x = 0, y = 0, z = 0, w = 0, h = 0, d = 0;
+                    const char *v;
+                    int ok = 1;
+                    if ((v = level_boxes_find_key(sc, oe, "x"))) ok &= level_boxes_parse_number(v, &x); else ok = 0;
+                    if ((v = level_boxes_find_key(sc, oe, "y"))) ok &= level_boxes_parse_number(v, &y); else ok = 0;
+                    if ((v = level_boxes_find_key(sc, oe, "z"))) ok &= level_boxes_parse_number(v, &z); else ok = 0;
+                    if ((v = level_boxes_find_key(sc, oe, "sx"))) ok &= level_boxes_parse_number(v, &w); else ok = 0;
+                    if ((v = level_boxes_find_key(sc, oe, "sy"))) ok &= level_boxes_parse_number(v, &h); else ok = 0;
+                    if ((v = level_boxes_find_key(sc, oe, "sz"))) ok &= level_boxes_parse_number(v, &d); else ok = 0;
+                    if (ok) {
+                        LevelSubtractBox *sb = &out->subtract[out->subtract_count++];
+                        sb->x = x; sb->y = y; sb->z = z;
+                        sb->w = w; sb->h = h; sb->d = d;
+                    }
+                    sc = oe + 1;
+                }
+            }
+        }
+    }
+
     out->brick_damage_count = 0;
     const char *bd_key = level_boxes_find_key(buf, end, "brick_damage");
     if (bd_key) {
@@ -854,6 +1046,9 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
     }
 
     out->count = count;
+    /* Resolve the subtract modifier HERE, once, so every consumer (client, server, leveltool, NOCK's
+     * own round-trip) sees the geometry already carved and none of them can forget to do it. */
+    level_boxes_apply_subtract(out);
 
     // Spawners (S459-58) -- parsed the same real, small-scanner way as materials above. Absent
     // "spawners" key (a pre-S459-58 export) is a real, honest "no author-placed spawns" state,
@@ -1646,6 +1841,15 @@ static inline void level_boxes_write_json(FILE *f, const CustomLevelData *lvl) {
         if (ew->gate_pin >= 0) fprintf(f, ", \"gate_pin\": %d", ew->gate_pin);
         if (ew->delay_ticks > 0) fprintf(f, ", \"delay_ticks\": %d", ew->delay_ticks);
         fprintf(f, " }");
+    }
+    fprintf(f, "\n ]");
+
+    fprintf(f, ",\n \"subtract\": [");
+    for (int i = 0; i < lvl->subtract_count; i++) {
+        const LevelSubtractBox *sb = &lvl->subtract[i];
+        fprintf(f, "%s\n  { \"x\": %.4g, \"y\": %.4g, \"z\": %.4g, \"sx\": %.4g, \"sy\": %.4g, \"sz\": %.4g }",
+                i ? "," : "", (double)sb->x, (double)sb->y, (double)sb->z,
+                (double)sb->w, (double)sb->h, (double)sb->d);
     }
     fprintf(f, "\n ]");
 

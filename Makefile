@@ -372,6 +372,15 @@ test-material-draw: | $(BIN_DIR)
 # lighting reads (occlusion, scattered bleed, exposure, and a lightning strike that whitens as well as
 # brightens). Header-only and GL-free, so the exact model the lobby draws with is exercised with no GPU.
 .PHONY: test-ground-fog
+# LEVEL SUBTRACT MODIFIER (packages/world/level_boxes.h): an authored cube that cuts itself out of
+# whatever level geometry it intersects -- elevator shafts threaded through floors, stairwells punched
+# through decks. Exact AABB-minus-AABB at load time, so every new face is axis-aligned on the cut's own
+# plane (the same geometry the shotgun leaves, without the cell grid's 3-unit raggedness).
+.PHONY: test-level-subtract
+test-level-subtract: | $(BIN_DIR)
+	$(CC) -g -O1 -fsanitize=address,undefined -Wall -Wextra -Werror $(INCLUDES) packages/world/level_subtract_test.c -o $(BIN_DIR)/level_subtract_test $(LIBS_M)
+	./$(BIN_DIR)/level_subtract_test
+
 test-ground-fog: | $(BIN_DIR)
 	$(CC) -g -O1 -fsanitize=address,undefined -Wall -Wextra -Werror $(INCLUDES) packages/render/ground_fog_test.c -o $(BIN_DIR)/ground_fog_test $(LIBS_M)
 	./$(BIN_DIR)/ground_fog_test
