@@ -1,0 +1,62 @@
+{
+ "version": 1,
+ "id": 216,
+ "name": "loft_f",
+ "width": 80.0,
+ "height": 94.0,
+ "depth": 20.0,
+ "ground_plane_enabled": false,
+ "ground_plane_squares": 0,
+ "walls": [],
+ "objects": [
+  {
+   "ref_level_id": 206,
+   "x": 0,
+   "y": 0.0,
+   "z": 0,
+   "rot_y": 0
+  },
+  {
+   "ref_level_id": 205,
+   "x": 0,
+   "y": 8.0,
+   "z": 0,
+   "rot_y": 0
+  },
+  {
+   "ref_level_id": 205,
+   "x": 20.0,
+   "y": 24.0,
+   "z": 0,
+   "rot_y": 0
+  },
+  {
+   "ref_level_id": 205,
+   "x": 20.0,
+   "y": 40.0,
+   "z": 0,
+   "rot_y": 0
+  },
+  {
+   "ref_level_id": 205,
+   "x": 20.0,
+   "y": 56.0,
+   "z": 0,
+   "rot_y": 0
+  },
+  {
+   "ref_level_id": 205,
+   "x": 20.0,
+   "y": 72.0,
+   "z": 0,
+   "rot_y": 0
+  },
+  {
+   "ref_level_id": 207,
+   "x": 20.0,
+   "y": 88.0,
+   "z": 0,
+   "rot_y": 0
+  }
+ ]
+}

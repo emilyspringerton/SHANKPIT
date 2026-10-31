@@ -1,0 +1,91 @@
+{
+ "version": 1,
+ "id": 206,
+ "name": "loft_lobby",
+ "width": 60.0,
+ "height": 8.0,
+ "depth": 20.0,
+ "ground_plane_enabled": false,
+ "ground_plane_squares": 0,
+ "walls": [
+  {
+   "x": 0,
+   "y": 0.5,
+   "z": 0,
+   "sx": 60.0,
+   "sy": 1.0,
+   "sz": 20.0,
+   "r": 0.6,
+   "g": 0.6,
+   "b": 0.65,
+   "friction": 0.8,
+   "material": "concrete"
+  },
+  {
+   "x": 0,
+   "y": 4.0,
+   "z": 9.85,
+   "sx": 56.0,
+   "sy": 6.0,
+   "sz": 0.3,
+   "r": 0.6,
+   "g": 0.6,
+   "b": 0.65,
+   "friction": 0.8,
+   "material": "glass"
+  },
+  {
+   "x": 0,
+   "y": 4.0,
+   "z": -9.7,
+   "sx": 56.0,
+   "sy": 6.0,
+   "sz": 0.6,
+   "r": 0.6,
+   "g": 0.6,
+   "b": 0.65,
+   "friction": 0.8,
+   "material": "brick"
+  },
+  {
+   "x": 29.0,
+   "y": 4.0,
+   "z": 0,
+   "sx": 1.0,
+   "sy": 8.0,
+   "sz": 1.0,
+   "r": 0.6,
+   "g": 0.6,
+   "b": 0.65,
+   "friction": 0.8,
+   "material": "metal"
+  },
+  {
+   "x": -29.0,
+   "y": 4.0,
+   "z": 0,
+   "sx": 1.0,
+   "sy": 8.0,
+   "sz": 1.0,
+   "r": 0.6,
+   "g": 0.6,
+   "b": 0.65,
+   "friction": 0.8,
+   "material": "metal"
+  },
+  {
+   "x": 0,
+   "y": 7.6,
+   "z": 0,
+   "sx": 60.0,
+   "sy": 0.8,
+   "sz": 20.0,
+   "r": 0.6,
+   "g": 0.6,
+   "b": 0.65,
+   "friction": 0.8,
+   "material": "concrete"
+  }
+ ],
+ "objects": []
+}

@@ -129,10 +129,17 @@ test-structure: $(STRUCTURE_RULES_C)
 # ---- ARCHIPELAGO water (docs/ARCHIPELAGO_NORTHSTAR.md) ------------------------------------------------
 # Sea state, wave field, planing lift and drag are PARENA's (stdlib/shankpit/ocean_rules.prn); ocean.h samples and
 # integrates them. First water code in the engine, so the test is also the spec.
+# EVERY generated .c below is COMMITTED, so a checkout WITHOUT the sibling ../PARENA (or
+# ../NOOBTOPIA) must still build. Declaring these prerequisites unconditionally made make fail on
+# such a machine with `No rule to make target '../PARENA/stdlib/shankpit/lighting_rules.prn'`, which
+# is a build break with no code behind it -- the generator rule can only exist when its source is
+# actually here, and regeneration is an explicit `make regen-*` job.
 OCEAN_RULES_PRN ?= ../PARENA/stdlib/shankpit/ocean_rules.prn
 OCEAN_RULES_C   ?= packages/simulation/ocean.c
+ifneq ($(wildcard $(OCEAN_RULES_PRN)),)
 $(OCEAN_RULES_C): $(OCEAN_RULES_PRN)
 	./scripts/gen_ocean_rules.sh
+endif
 
 .PHONY: test-ocean
 test-ocean: $(OCEAN_RULES_C)
@@ -149,11 +156,15 @@ NOOBTOPIA_RULES_PRN ?= ../PARENA/stdlib/noobtopia/ambient_life.prn ../PARENA/std
 NOOBTOPIA_RULES_C   ?= packages/simulation/ambient_life.c packages/simulation/arena_rules.c
 AMBIENT_LINES_INC   ?= packages/simulation/ambient_lines.inc
 
+ifneq ($(wildcard $(firstword $(NOOBTOPIA_RULES_PRN))),)
 $(NOOBTOPIA_RULES_C): $(NOOBTOPIA_RULES_PRN)
 	./scripts/gen_noobtopia_rules.sh
+endif
 
+ifneq ($(wildcard ../NOOBTOPIA/data/noob_lines.lua),)
 $(AMBIENT_LINES_INC): ../NOOBTOPIA/data/noob_lines.lua
 	./scripts/gen_ambient_lines.sh
+endif
 
 .PHONY: test-ambient-life test-noobtopia-arena test-noobtopia
 test-ambient-life: $(NOOBTOPIA_RULES_C) $(AMBIENT_LINES_INC)
@@ -174,13 +185,17 @@ test-noobtopia: test-ambient-life test-noobtopia-arena
 
 STRUCTURE_RULES_PRN ?= ../PARENA/stdlib/shankpit/structure_rules.prn
 STRUCTURE_RULES_C   ?= packages/simulation/structure_rules.c
+ifneq ($(wildcard $(STRUCTURE_RULES_PRN)),)
 $(STRUCTURE_RULES_C): $(STRUCTURE_RULES_PRN)
 	./scripts/gen_structure_rules.sh
+endif
 
 LIGHTING_RULES_PRN ?= ../PARENA/stdlib/shankpit/lighting_rules.prn
 LIGHTING_RULES_C   ?= packages/simulation/lighting_rules.c
+ifneq ($(wildcard $(LIGHTING_RULES_PRN)),)
 $(LIGHTING_RULES_C): $(LIGHTING_RULES_PRN)
 	./scripts/gen_lighting_rules.sh
+endif
 
 .PHONY: test-hammer
 test-hammer:

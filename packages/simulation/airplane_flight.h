@@ -103,6 +103,37 @@ static inline float af_ground_y(float x, float z) {
     return gy + AF_TAXI_CLEARANCE;
 }
 
+/* af_level_floor -- the top of the highest level box under (x,z) at or below `ceiling`, or a value far
+ * below the world when there is none. A bridge deck is a FLOOR: terrain was the only surface this model
+ * knew, so a C-110 authored on a bridge spawned at terrain height underneath it and fell away from the
+ * map. map_geo/map_count are the same active geometry heli_point_collides already tests against, so this
+ * needs no host hook, no new dependency, and is exercised by the headless flight test with a real Box. */
+static inline float af_level_floor(float x, float z, float ceiling) {
+    float best = -1.0e30f;
+    for (int i = 1; i < map_count; i++) {
+        /* A destroyed brick is still in map_geo but not in the world -- do not land on it. */
+        if (map_geo == g_custom_level_geo && i < CUSTOM_LEVEL_SLOT_CAP && g_custom_level_hidden[i]) continue;
+        Box b = map_geo[i];
+        if (x <= b.x - b.w * 0.5f || x >= b.x + b.w * 0.5f) continue;
+        if (z <= b.z - b.d * 0.5f || z >= b.z + b.d * 0.5f) continue;
+        float top = b.y + b.h * 0.5f;
+        if (top <= ceiling && top > best) best = top;
+    }
+    return best;
+}
+
+/* af_world_y -- the surface under the gear: terrain, or a level box if there is one at or below the
+ * ceiling the caller cares about. Spawning passes a huge ceiling ("the highest thing under the wheels"),
+ * the per-tick clamp passes the hull's own height (so a plane flying OVER a building, or UNDER a bridge,
+ * does not get snapped onto it). */
+static inline float af_world_y(float x, float z, float ceiling) {
+    float gy = terrain_sample_height(&g_scene_terrain, x, z);
+    if (gy < 0.0f) gy = 0.0f;
+    float deck = af_level_floor(x, z, ceiling);
+    if (deck > gy) gy = deck;
+    return gy + AF_TAXI_CLEARANCE;
+}
+
 static inline void airplane_spawn_defaults(AirplaneState *a, int id, int scene_id,
                                           float x, float z, float yaw) {
     memset(a, 0, sizeof(*a));
@@ -112,7 +143,7 @@ static inline void airplane_spawn_defaults(AirplaneState *a, int id, int scene_i
     a->x = x;
     a->z = z;
     a->yaw = yaw;
-    a->y = af_ground_y(x, z);
+    a->y = af_world_y(x, z, 1.0e30f);   /* the highest surface under the gear: a bridge deck counts */
     a->health = (float)af_hull();
     a->occupant_player_id = -1;
     a->grounded = 1;
@@ -242,7 +273,7 @@ static inline void airplane_simulate_step(AirplaneState *a, float elevator, floa
         a->z = nz;
     }
     a->y += a->vy * dts;
-    float ground = af_ground_y(a->x, a->z);
+    float ground = af_world_y(a->x, a->z, a->y + 1.0f);   /* only surfaces at or below the hull */
     if (a->y <= ground) {
         a->y = ground;
         if (a->vy < 0.0f) a->vy = 0.0f;

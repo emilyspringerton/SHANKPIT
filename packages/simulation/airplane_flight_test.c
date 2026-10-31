@@ -30,6 +30,29 @@ int main(void) {
     airplane_rules_install();
     map_count = 1;
 
+    /* ---- a bridge deck is a floor: the C-110 sits on it instead of falling to the terrain ---- */
+    {
+        /* map_geo is a pointer to const Box (each scene owns its own table), so the test points it at
+           this little deck for the duration and puts the real table back afterwards. */
+        static const Box deck_geo[2] = {
+            [0] = { .x = 0.0f, .y = 0.0f, .z = 0.0f, .w = 1.0f, .h = 1.0f, .d = 1.0f },
+            [1] = { .x = 0.0f, .y = 10.0f, .z = 0.0f, .w = 400.0f, .h = 20.0f, .d = 200.0f } /* top = 20 */
+        };
+        const Box *saved_geo = map_geo;
+        map_geo = deck_geo;
+        map_count = 2;
+
+        AirplaneState a;
+        airplane_spawn_defaults(&a, 0, 1, 0.0f, 0.0f, -90.0f);
+        CHECK(fabsf(a.y - (20.0f + AF_TAXI_CLEARANCE)) < 0.05f,
+              "spawned at y=%.2f, not on the deck top (20.0)", a.y);
+        for (int i = 0; i < 240; i++) airplane_simulate_step(&a, 0.0f, 0.0f, a.yaw, 0, 0, SHANKPIT_NET_FIXED_DT);
+        CHECK(a.y > 19.0f && a.grounded, "sank through the bridge to y=%.2f (grounded=%d)", a.y, a.grounded);
+        printf("PASS: the C-110 rests on a bridge deck (y=%.2f) instead of falling to the terrain\n", a.y);
+        map_geo = saved_geo;
+        map_count = 1;
+    }
+
     /* ---- full throttle: it rolls, then it flies, and the roll is a real runway ---- */
     {
         AirplaneState a = on_runway();

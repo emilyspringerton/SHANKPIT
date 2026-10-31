@@ -302,6 +302,17 @@ test-shield-packs:
 	$(CC) -std=c99 -O2 -Wall -Wextra -pedantic -Werror -Ipackages/common -o /tmp/shield_packs_test packages/simulation/shield_packs_test.c packages/simulation/shield_packs.c -lm
 	/tmp/shield_packs_test
 
+# test-lofts -- the recursive lofts tree (levels/lofts/): every object reference resolves, nothing
+# cycles, the eight buildings flatten to genuinely destructible geometry under the same rule the
+# engine applies (brick_world_box_is_slab), and flattening into var/zombie/nextown_zombies.json is
+# idempotent and stays inside LEVEL_BOXES_MAX. No SDL/GL needed.
+.PHONY: test-lofts
+build-lofts:
+	python3 tools/build_loft_city.py
+
+test-lofts:
+	python3 tools/build_loft_city.py --check
+
 # bake-levels -- card #479: regenerate packages/world/baked_levels_gen.h from a live IDUNA (review + commit the diff).
 bake-levels:
 	python3 scripts/bake_levels.py

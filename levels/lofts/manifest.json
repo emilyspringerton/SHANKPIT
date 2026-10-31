@@ -1,0 +1,64 @@
+{
+ "levels": [
+  {
+   "id": 201,
+   "file": "loft_bay_glass.json"
+  },
+  {
+   "id": 202,
+   "file": "loft_bay_core.json"
+  },
+  {
+   "id": 203,
+   "file": "loft_bay_open.json"
+  },
+  {
+   "id": 204,
+   "file": "loft_floor.json"
+  },
+  {
+   "id": 205,
+   "file": "loft_pair.json"
+  },
+  {
+   "id": 206,
+   "file": "loft_lobby.json"
+  },
+  {
+   "id": 207,
+   "file": "loft_roof.json"
+  },
+  {
+   "id": 211,
+   "file": "loft_a.json"
+  },
+  {
+   "id": 212,
+   "file": "loft_b.json"
+  },
+  {
+   "id": 213,
+   "file": "loft_c.json"
+  },
+  {
+   "id": 214,
+   "file": "loft_d.json"
+  },
+  {
+   "id": 215,
+   "file": "loft_e.json"
+  },
+  {
+   "id": 216,
+   "file": "loft_f.json"
+  },
+  {
+   "id": 217,
+   "file": "loft_g.json"
+  },
+  {
+   "id": 218,
+   "file": "loft_h.json"
+  }
+ ]
+}

@@ -1,0 +1,78 @@
+{
+ "version": 1,
+ "id": 203,
+ "name": "loft_bay_open",
+ "width": 20.0,
+ "height": 8.0,
+ "depth": 20.0,
+ "ground_plane_enabled": false,
+ "ground_plane_squares": 0,
+ "walls": [
+  {
+   "x": 0,
+   "y": 0.5,
+   "z": 0,
+   "sx": 20.0,
+   "sy": 1.0,
+   "sz": 20.0,
+   "r": 0.6,
+   "g": 0.6,
+   "b": 0.65,
+   "friction": 0.8,
+   "material": "wood"
+  },
+  {
+   "x": 0,
+   "y": 2.0,
+   "z": 0,
+   "sx": 18.0,
+   "sy": 3.0,
+   "sz": 0.5,
+   "r": 0.6,
+   "g": 0.6,
+   "b": 0.65,
+   "friction": 0.8,
+   "material": "brick"
+  },
+  {
+   "x": 9.8,
+   "y": 4.0,
+   "z": 0,
+   "sx": 0.4,
+   "sy": 7.0,
+   "sz": 20.0,
+   "r": 0.6,
+   "g": 0.6,
+   "b": 0.65,
+   "friction": 0.8,
+   "material": "glass"
+  },
+  {
+   "x": 0,
+   "y": 7.6,
+   "z": 0,
+   "sx": 18.0,
+   "sy": 0.4,
+   "sz": 18.0,
+   "r": 0.6,
+   "g": 0.6,
+   "b": 0.65,
+   "friction": 0.8,
+   "material": "ips_light"
+  },
+  {
+   "x": -9.0,
+   "y": 4.0,
+   "z": 9.0,
+   "sx": 0.8,
+   "sy": 8.0,
+   "sz": 0.8,
+   "r": 0.6,
+   "g": 0.6,
+   "b": 0.65,
+   "friction": 0.8,
+   "material": "metal"
+  }
+ ],
+ "objects": []
+}
