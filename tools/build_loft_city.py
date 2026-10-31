@@ -230,6 +230,21 @@ def bay_open():
 
 
 # ---- the composition (depth 2..4) ------------------------------------------------------------
+# Loot per theme, in chests.h's own tiers (0 wooden / 1 reinforced / 2 rare). A lab is worth breaking
+# into, a cafe is not -- and because the tiers belong to the theme, two buildings carry different loot
+# instead of the same 0,1,2 rotation repeated eight times.
+THEME_LOOT = {
+    "office": (0, 1, 1),
+    "cafe": (0, 0, 1),
+    "lounge": (1, 1, 2),
+    "workshop": (0, 1, 2),
+    "lab": (2, 2, 1),
+    "shop": (0, 1, 1),
+    "clinic": (1, 2, 2),
+    "warehouse": (0, 0, 1),
+}
+
+
 def props_module(theme):
     """One building's interior: a 20x20 bay's worth of furniture, dropped on every storey of it."""
     return level("loft_props_" + theme, ID_PROPS[theme], BAY_W, STOREY, BAY_D,
@@ -571,17 +586,43 @@ def build(city_path=CITY, placements_path=PLACEMENTS, write=True):
             nw = transform_wall(w, p["x"], p["y"], p["z"], int(p["rot_y"]))
             nw["name"] = "%s_%d" % (name, len(placed) + 1)
             placed.append(nw)
-        # ---- dressing: loot and a population, on the ground floor, clear of the stair core ----
+        # ---- population + loot, per STOREY ----
+        # Each storey's own deck is used for its footprint, not the building's overall box: a
+        # stepped-back building's upper floors sit over a narrower stack, so whole-building fractions
+        # would put its people in the air where the lower stack used to be.
         fp = footprint(placed)
-        bw, bd = fp[2] - fp[0], fp[3] - fp[1]
-        for i, (fx, fz) in enumerate(((0.18, 0.55), (0.82, 0.50), (0.15, 0.85))):
-            chests.append({"tier": (len(chests) + i) % 3,
-                           "x": round(fp[0] + fx * bw, 2), "y": 1.05, "z": round(fp[1] + fz * bd, 2)})
+        spec = VARIANTS[name]
+        storeys = spec["pairs"] * 2 + (1 if spec["lobby"] else 0)
+
+        def storey_box(deck_y):
+            deck = [w for w in placed
+                    if abs(w["y"] - (deck_y + 0.5)) < 0.7 and w["sy"] <= 2.0 and w["sx"] >= 4.0]
+            return footprint(deck) if deck else fp
+
+        def spot(box, fx, fz, y):
+            return (round(box[0] + fx * (box[2] - box[0]), 2), round(y, 2),
+                    round(box[1] + fz * (box[3] - box[1]), 2))
+
+        # loot: the theme's own tiers, spread up the building rather than all on the ground floor
+        for i, tier in enumerate(THEME_LOOT[spec["theme"]]):
+            floor = i % storeys
+            x, y, z = spot(storey_box(floor * STOREY), (0.18, 0.82, 0.15)[i % 3],
+                           (0.55, 0.50, 0.85)[i % 3], 1.05 + floor * STOREY)
+            chests.append({"tier": tier, "x": x, "y": y, "z": z})
+
+        # ground floor: two, at opposite ends. Every floor above: one, so climbing a loft is a fight.
         for fx, fz in ((0.22, 0.28), (0.78, 0.72)):
+            x, y, z = spot(storey_box(0.0), fx, fz, 1.05)
             # archetype 2 = EU_ARCH_ZOMBIE, role 7 = the "Zombie" pursuer brain, faction/orders -1
             # so the archetype's own values win (that is what an unauthored EMPIRE character means)
             npcs.append({"role": 7, "kit": 0, "archetype": 2, "faction": -1, "orders": -1,
-                         "x": round(fp[0] + fx * bw, 2), "y": 1.05, "z": round(fp[1] + fz * bd, 2)})
+                         "x": x, "y": y, "z": z})
+        upper = ((0.30, 0.30), (0.70, 0.70), (0.20, 0.70), (0.80, 0.30))
+        for floor in range(1, storeys):
+            fx, fz = upper[floor % 4]
+            x, y, z = spot(storey_box(floor * STOREY), fx, fz, 1.05 + floor * STOREY)
+            npcs.append({"role": 7, "kit": 0, "archetype": 2, "faction": -1, "orders": -1,
+                         "x": x, "y": y, "z": z})
 
         groups.append(placed)
         stats.append((name, len(placed), fp))
@@ -668,18 +709,25 @@ def check():
         print("warn city has %d walls -- close to LEVEL_BOXES_MAX 2048" % len(city["walls"]))
     # the engine's own caps: LEVEL_BOXES_MAX_CHARACTERS is 64 in level_boxes.h (== STORY_AI_MAX) and
     # LEVEL_BOXES_MAX_CHESTS is 32 (== CHEST_MAX). Exceeding either is a silent truncation at load.
-    if len(city.get("characters", [])) > 64:
-        raise SystemExit("city authors %d characters, over LEVEL_BOXES_MAX_CHARACTERS 64"
+    if len(city.get("characters", [])) > 128:
+        raise SystemExit("city authors %d characters, over LEVEL_BOXES_MAX_CHARACTERS 128"
                          % len(city["characters"]))
     if len(city.get("chests", [])) > 32:
         raise SystemExit("city authors %d chests, over LEVEL_BOXES_MAX_CHESTS 32" % len(city["chests"]))
     authored = city.get("loft_city", {})
-    if len(authored.get("characters", [])) != 2 * len(VARIANTS):
-        raise SystemExit("expected two zombies per building, found %d"
-                         % len(authored.get("characters", [])))
-    if len(authored.get("chests", [])) != 3 * len(VARIANTS):
-        raise SystemExit("expected three chests per building, found %d"
-                         % len(authored.get("chests", [])))
+    want_npcs = sum(2 + (VARIANTS[n]["pairs"] * 2 + (1 if VARIANTS[n]["lobby"] else 0) - 1)
+                    for n in VARIANTS)
+    if len(authored.get("characters", [])) != want_npcs:
+        raise SystemExit("expected %d zombies (two per ground floor, one per floor above), found %d"
+                         % (want_npcs, len(authored.get("characters", []))))
+    want_chests = sum(len(v) for v in THEME_LOOT.values())
+    if len(authored.get("chests", [])) != want_chests:
+        raise SystemExit("expected %d chests (each theme's own), found %d"
+                         % (want_chests, len(authored.get("chests", []))))
+    if len({tuple(v) for v in THEME_LOOT.values()}) < 4:
+        raise SystemExit("the per-theme loot tables are not distinct enough to feel different")
+    if set(THEME_LOOT) != set(THEMES):
+        raise SystemExit("every theme needs a loot table")
     for name, n, fp in stats:
         print("ok  %-8s placed %3d walls at x=%.0f..%.0f z=%.0f..%.0f" % (name, n, fp[0], fp[2], fp[1], fp[3]))
     print("ok  city: %d walls, %d materials" % (len(city["walls"]), len(city.get("materials", []))))

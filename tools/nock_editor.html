@@ -62,6 +62,14 @@
   </select>
   <div class="dim" style="font-size:11px">Vehicle places a vehicle_spawn_&lt;kind&gt; tile where you click — the same name convention the buggy spawner uses, so IDUNA NOCK and this editor export the same thing.</div>
 
+  <h2>Lofts</h2>
+  <div class="row"><button id="rebuildBtn">Rebuild lofts → city</button></div>
+  <div id="rebuildInfo" class="dim" style="white-space:pre-wrap;font-size:11px"></div>
+  <div class="dim" style="font-size:11px">The lofts are composed levels (levels/lofts/): a bay has the geometry,
+    a floor references three bays, a pair stacks two floors, and the eight buildings reference pairs. Edit a bay
+    or a props module here, then rebuild — that flattens the whole tree into the zombies city and refreshes the
+    baked live default in one step.</div>
+
   <h2>Character clips</h2>
   <input id="clipsetName" placeholder="clip set name (mike, leo…)">
   <div class="row" style="align-items:center">
@@ -136,7 +144,8 @@ async function loadLevelList() {
     for (const l of levels) {
       const li = document.createElement("li");
       li.dataset.name = l.name;
-      li.innerHTML = `<span>${l.name}</span><span class="dim">${l.walls} walls</span>`;
+      const bits = l.walls ? `${l.walls} walls` : `${l.objects || 0} refs`;
+      li.innerHTML = `<span>${l.name}</span><span class="dim">${bits}</span>`;
       if (l.name === state.name) li.classList.add("sel");
       li.onclick = () => openLevel(l.name);
       box.appendChild(li);
@@ -170,15 +179,21 @@ function ensureShape(doc) {
   doc.name = doc.name || "untitled";
   doc.width = doc.width || 200; doc.height = doc.height || 50; doc.depth = doc.depth || 200;
   if (!Array.isArray(doc.walls)) doc.walls = [];
+  if (!Array.isArray(doc.objects)) doc.objects = [];
   if (typeof doc.ground_plane_enabled !== "boolean") doc.ground_plane_enabled = true;
   doc.ground_plane_squares = doc.ground_plane_squares || 16;
+  /* A COMPOSITION level (a floor, a pair, a building) is references and nothing else. Defaulting
+     materials and a spawner into one would rewrite it into a different kind of level on the next
+     save, so those defaults are only for levels that own geometry of their own. */
+  const composed = doc.objects.length > 0 && doc.walls.length === 0;
   if (!Array.isArray(doc.materials) || !doc.materials.length) {
-    doc.materials = [{ name: "brick", shader_name: "standard", specular: 0.04, shininess: 6, friction: 0.3 }];
+    doc.materials = composed ? [] :
+      [{ name: "brick", shader_name: "standard", specular: 0.04, shininess: 6, friction: 0.3 }];
   }
   if (!Array.isArray(doc.spawners)) doc.spawners = [];
   if (!Array.isArray(doc.vehicle_spawns)) doc.vehicle_spawns = [];
   if (!Array.isArray(doc.buggy_spawns)) doc.buggy_spawns = [];
-  if (!doc.spawners.length) {
+  if (!composed && !doc.spawners.length) {
     doc.spawners.push({ id: 1, x: 0, y: 1, z: 0, yaw: 0, team: -1 });
   }
   return doc;
@@ -187,7 +202,10 @@ function ensureShape(doc) {
 function newLevel() {
   const name = (prompt("new level name", "untitled") || "").trim();
   if (!name) return;
-  if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) { alert("letters, digits, - and _ only"); return; }
+  if (!/^[A-Za-z0-9_-]{1,64}(?:\/[A-Za-z0-9_-]{1,64})?$/.test(name)) {
+    alert("letters, digits, - and _ only (one subfolder allowed, e.g. lofts/my_bay)");
+    return;
+  }
   setLevel({ name, width: 200, height: 50, depth: 200, ground_plane_enabled: true,
              ground_plane_squares: 16, walls: [], materials: [], spawners: [] }, name);
   log(`new level ${name} — click to place boxes, then Save`);
@@ -239,6 +257,18 @@ function draw() {
     ctx.fillStyle = `rgb(${shade},${shade + 6},${shade + 14})`;
     ctx.fillRect(x0, z0, Math.max(1, x1 - x0), Math.max(1, z1 - z0));
   }
+  /* composed levels: each object is a reference, drawn as a dashed anchor with its target id --
+     the referenced level's own extents are not loaded here, so this is the reference, not a box */
+  for (const o of W.objects || []) {
+    const half = 10;
+    const [x0, z0] = v.toPx(o.x - half, o.z - half);
+    const [x1, z1] = v.toPx(o.x + half, o.z + half);
+    ctx.strokeStyle = "#6f8fd0"; ctx.setLineDash([3 * dpr, 3 * dpr]);
+    ctx.strokeRect(x0, z0, Math.max(1, x1 - x0), Math.max(1, z1 - z0));
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#8b93a1"; ctx.font = `${9 * dpr}px monospace`;
+    ctx.fillText(`#${o.ref_level_id}${o.rot_y ? " @" + o.rot_y : ""}`, x0 + 3 * dpr, z0 + 10 * dpr);
+  }
   ctx.strokeStyle = "#9aa3b2"; ctx.lineWidth = 1 * dpr;
   for (const sp of W.spawners || []) {
     const [x, z] = v.toPx(sp.x, sp.z);
@@ -279,7 +309,7 @@ function draw() {
   const g = v.g;
   ctx.fillStyle = "#7f8794";
   ctx.font = `${11 * dpr}px monospace`;
-  ctx.fillText(`${state.name || "untitled"}  ·  ${(W.walls || []).length} walls  ·  x ${g.minx.toFixed(1)}..${g.maxx.toFixed(1)}  z ${g.minz.toFixed(1)}..${g.maxz.toFixed(1)}  ·  -Z up`, 12 * dpr, canvas.height - 10 * dpr);
+  ctx.fillText(`${state.name || "untitled"}  ·  ${(W.walls || []).length} walls  ·  ${(W.objects || []).length} refs  ·  x ${g.minx.toFixed(1)}..${g.maxx.toFixed(1)}  z ${g.minz.toFixed(1)}..${g.maxz.toFixed(1)}  ·  -Z up`, 12 * dpr, canvas.height - 10 * dpr);
 }
 
 /* ---------- editing ---------- */
@@ -368,7 +398,9 @@ for (const b of document.querySelectorAll("[data-tool]"))
 
 async function save() {
   if (!state.level) return;
-  if (!/^[A-Za-z0-9_-]{1,64}$/.test(state.name)) { alert("bad level name"); return; }
+  if (!/^[A-Za-z0-9_-]{1,64}(?:\/[A-Za-z0-9_-]{1,64})?$/.test(state.name)) {
+    alert("bad level name"); return;
+  }
   try {
     state.level.name = state.name;
     const r = await api("PUT", "/api/levels/" + encodeURIComponent(state.name), state.level);
@@ -578,6 +610,26 @@ function applyEvents(events) {
   }
   draw();
 }
+
+/* ---------- lofts: flatten the composed tree into the city ---------- */
+
+async function rebuildLofts() {
+  el("rebuildInfo").textContent = "rebuilding…";
+  try {
+    const r = await api("POST", "/api/lofts/rebuild", {});
+    const g = r.git || {};
+    const tail = (r.output || "").split("\n").slice(-6).join("\n");
+    el("rebuildInfo").textContent =
+      (g.committed ? `committed ${g.commit}: ${g.message}\n` : `(${g.detail || "not committed"})\n`) + tail;
+    log("lofts rebuilt" + (g.committed ? ` and committed ${g.commit}` : ""));
+    loadLevelList();
+    if (state.name) openLevel(state.name);
+  } catch (e) {
+    el("rebuildInfo").textContent = "rebuild failed: " + e.message;
+    log(el("rebuildInfo").textContent);
+  }
+}
+el("rebuildBtn").onclick = rebuildLofts;
 
 /* ---------- boot ---------- */
 

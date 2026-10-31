@@ -313,9 +313,12 @@ typedef struct {
     float x, y, z;
 } LevelCharacter;
 
-#define LEVEL_BOXES_MAX_CHARACTERS 64 /* matches STORY_AI_MAX, packages/simulation/story_ai.h.
-                                          Was 16: a dressed city puts a population in every building,
-                                          and 16 was the story campaign's own cast size, not a map's. */
+#define LEVEL_BOXES_MAX_CHARACTERS 128 /* matches STORY_AI_MAX, packages/simulation/story_ai.h.
+                                           Was 16, then 64: a dressed city puts a population on every
+                                           FLOOR of every building (levels/lofts), and 16 was the story
+                                           campaign's own cast size, not a map's. Both numbers must move
+                                           together or the loader silently truncates what the brains
+                                           cannot hold. */
 #define LEVEL_BOXES_MAX_CHESTS 32      /* matches CHEST_MAX, packages/simulation/chests.h */
 
 /* Authored loot -- a level can place chests directly instead of relying on the road-ring seed.

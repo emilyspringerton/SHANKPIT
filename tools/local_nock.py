@@ -52,7 +52,10 @@ if HERE_FIRST not in sys.path:
 # the editor and `tools/mixamo_clipset.py` cannot disagree about what a valid bundle is.
 import mixamo_clipset  # noqa: E402
 
-SLUG_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+# A level name is one path segment, or TWO -- `lofts/loft_props_cafe` -- so the recursive loft tree in
+# levels/lofts/ is editable here. Deliberately not a general path: no dot segments, no absolute paths,
+# no deeper nesting, and path() re-checks containment after joining anyway.
+SLUG_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}(?:/[A-Za-z0-9_-]{1,64})?$")
 SESSION_PREFIX = "/api/v1/shankpit-edit-sessions"
 LEVELS_PREFIX = "/api/levels"
 CLIPSETS_PREFIX = "/api/clipsets"
@@ -72,18 +75,43 @@ class BodyTooLarge(Exception):
 
 
 def validate_level(doc):
-    """The minimum a level must have to be usable: an object with a walls array of boxes."""
+    """The minimum a level must be to be usable.
+
+    Either a `walls` array (an ordinary, playable level) OR an `objects` array (a COMPOSITION level:
+    a level whose geometry is nothing but references to other levels -- that is exactly what the
+    recursive loft tree in levels/lofts/ is made of). Both may be present; neither may be malformed.
+    """
     if not isinstance(doc, dict):
         raise ValueError("level must be a JSON object")
+    has_objects = "objects" in doc
     walls = doc.get("walls")
-    if not isinstance(walls, list):
-        raise ValueError('level needs a "walls" array')
-    for i, w in enumerate(walls):
+    if walls is None and not has_objects:
+        raise ValueError('level needs a "walls" array (or an "objects" array for a composed level)')
+    if walls is not None and not isinstance(walls, list):
+        raise ValueError('"walls" must be an array')
+    for i, w in enumerate(walls or []):
         if not isinstance(w, dict):
             raise ValueError(f"wall {i} is not an object")
         missing = [k for k in ("x", "y", "z", "sx", "sy", "sz") if k not in w]
         if missing:
             raise ValueError(f"wall {i} is missing {', '.join(missing)}")
+    if has_objects:
+        objs = doc.get("objects")
+        if not isinstance(objs, list):
+            raise ValueError('"objects" must be an array')
+        for i, o in enumerate(objs):
+            if not isinstance(o, dict):
+                raise ValueError(f"object {i} is not an object")
+            ref = o.get("ref_level_id")
+            if isinstance(ref, bool) or not isinstance(ref, int) or ref <= 0:
+                raise ValueError(f"object {i} needs a positive integer ref_level_id")
+            for k in ("x", "y", "z"):
+                v = o.get(k, 0)
+                if isinstance(v, bool) or not isinstance(v, (int, float)):
+                    raise ValueError(f"object {i} has a non-numeric {k}")
+            if o.get("rot_y", 0) not in (0, 90, 180, 270):
+                raise ValueError(f"object {i} rot_y must be 0/90/180/270 "
+                                 "(the engine composes quarter turns only)")
     return doc
 
 
@@ -141,13 +169,30 @@ class LevelStore:
         self.commit = commit
 
     def path(self, name):
-        return os.path.join(self.levels_dir, name + ".json")
+        if not SLUG_RE.match(name or ""):
+            raise ValueError("bad level name")
+        p = os.path.join(self.levels_dir, *name.split("/")) + ".json"
+        # both segments are slug-checked above, but resolve and confirm anyway: this function is what
+        # every read and write goes through, and a path that escapes levels/ is never acceptable.
+        root = os.path.realpath(self.levels_dir)
+        if os.path.commonpath([root, os.path.realpath(os.path.dirname(p))]) != root:
+            raise ValueError("level path escapes the levels directory")
+        return p
 
     def names(self):
+        """Levels directly under levels/, plus one level down (levels/lofts/*.json)."""
         if not os.path.isdir(self.levels_dir):
             return []
-        return sorted(fn[:-5] for fn in os.listdir(self.levels_dir)
-                      if fn.endswith(".json") and SLUG_RE.match(fn[:-5]))
+        out = []
+        for fn in os.listdir(self.levels_dir):
+            p = os.path.join(self.levels_dir, fn)
+            if os.path.isfile(p) and fn.endswith(".json") and SLUG_RE.match(fn[:-5]):
+                out.append(fn[:-5])
+            elif os.path.isdir(p) and SLUG_RE.match(fn):
+                for sub in os.listdir(p):
+                    if sub.endswith(".json") and SLUG_RE.match(fn + "/" + sub[:-5]):
+                        out.append(fn + "/" + sub[:-5])
+        return sorted(out)
 
     def listing(self):
         out = []
@@ -159,10 +204,12 @@ class LevelStore:
             except (OSError, ValueError):
                 continue
             walls = doc.get("walls") if isinstance(doc, dict) else None
+            objs = doc.get("objects") if isinstance(doc, dict) else None
             out.append({
                 "name": name,
                 "file": os.path.relpath(p, self.repo),
                 "walls": len(walls) if isinstance(walls, list) else 0,
+                "objects": len(objs) if isinstance(objs, list) else 0,
                 "bytes": os.path.getsize(p),
             })
         return out
@@ -176,8 +223,8 @@ class LevelStore:
 
     def write(self, name, doc):
         validate_level(doc)
-        os.makedirs(self.levels_dir, exist_ok=True)
         p = self.path(name)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
         tmp = p + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(json.dumps(doc, indent=1) + "\n")
@@ -189,7 +236,11 @@ class LevelStore:
             return {"committed": False, "detail": "commits disabled (--no-commit)"}
         rel = os.path.relpath(path, self.repo)
         walls = len(doc.get("walls") or [])
-        msg = f"level({name}): {walls} wall{'s' if walls != 1 else ''} from local NOCK"
+        objs = len(doc.get("objects") or [])
+        what = f"{walls} wall{'s' if walls != 1 else ''}"
+        if objs:
+            what += f", {objs} level reference{'s' if objs != 1 else ''}"
+        msg = f"level({name}): {what} from local NOCK"
         try:
             add = subprocess.run(["git", "-C", self.repo, "add", "--", rel],
                                  capture_output=True, text=True)
@@ -310,6 +361,56 @@ class ClipsetStore:
             return {"committed": True, "commit": head, "message": msg}
         except FileNotFoundError:
             return {"committed": False, "detail": "git not found"}
+
+
+def rebuild_loft_city(repo, commit=True):
+    """Flatten the recursive loft tree into the zombies city, then refresh the live baked level.
+
+    This is the half of composition authoring that a level editor cannot give you by saving a file:
+    a bay edited in NOCK has no geometry in the city until the tree is flattened, and a flattened
+    city has no effect on a connected game until the baked default is refreshed. Both are the same
+    two commands a human runs (`make build-lofts` + `tools/update_baked_level.py`), so the button and
+    the command line cannot drift apart.
+    """
+    steps = [
+        [sys.executable, os.path.join(repo, "tools", "build_loft_city.py")],
+        [sys.executable, os.path.join(repo, "tools", "update_baked_level.py"),
+         "--level", "var/zombie/nextown_zombies.json"],
+    ]
+    out = []
+    for cmd in steps:
+        r = subprocess.run(cmd, cwd=repo, capture_output=True, text=True)
+        text = (r.stdout or "").strip() or (r.stderr or "").strip()
+        if text:
+            out.append(text)
+        if r.returncode != 0:
+            return {"ok": False, "output": "\n".join(out),
+                    "detail": "failed: " + " ".join(os.path.basename(c) for c in cmd[1:])}
+    result = {"ok": True, "output": "\n".join(out)}
+    if not commit:
+        result["git"] = {"committed": False, "detail": "commits disabled (--no-commit)"}
+        return result
+    files = ["var/zombie/nextown_zombies.json", "packages/world/baked_levels_gen.h", "levels/lofts"]
+    try:
+        subprocess.run(["git", "-C", repo, "add", "--"] + files, capture_output=True, text=True)
+        status = subprocess.run(["git", "-C", repo, "status", "--porcelain", "--"] + files,
+                                capture_output=True, text=True)
+        if not status.stdout.strip():
+            result["git"] = {"committed": False, "detail": "no changes to commit"}
+            return result
+        msg = "level(lofts): flatten the composed tree into the city and refresh the live default"
+        c = subprocess.run(["git", "-C", repo, "commit", "-m", msg, "--"] + files,
+                           capture_output=True, text=True)
+        if c.returncode != 0:
+            result["git"] = {"committed": False,
+                             "detail": (c.stderr or c.stdout).strip()[:400] or "commit failed"}
+            return result
+        head = subprocess.run(["git", "-C", repo, "rev-parse", "--short", "HEAD"],
+                              capture_output=True, text=True).stdout.strip()
+        result["git"] = {"committed": True, "commit": head, "message": msg}
+    except FileNotFoundError:
+        result["git"] = {"committed": False, "detail": "git not found"}
+    return result
 
 
 class State:
@@ -485,6 +586,13 @@ class Handler(BaseHTTPRequestHandler):
             if error:
                 return self._error(400, error)
             return self._json(200, result)
+
+        if path == "/api/lofts/rebuild":
+            try:
+                result = rebuild_loft_city(st.store.repo, commit=st.store.commit)
+            except OSError as e:
+                return self._error(500, f"cannot rebuild: {e}")
+            return self._json(200 if result.get("ok") else 500, result)
 
         if path == SESSION_PREFIX:
             try:
