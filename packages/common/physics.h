@@ -4431,6 +4431,8 @@ void phys_respawn(PlayerState *p, unsigned int now) {
     p->carried_flag_team_id = -1;
     p->ctf_melee_cooldown_ms = 0;
     p->ability_cooldown = 0;
+    p->hammer_cast_ticks = 0;
+    p->hammer_tower_ready = 0;
     p->portal_cooldown_until_ms = 0;
     p->stunned_until_ms = 0;
     p->stun_immune_until_ms = 0;
@@ -4477,6 +4479,35 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
     if (p->attack_cooldown > 0) p->attack_cooldown--;
     if (p->is_shooting > 0) p->is_shooting--;
     if (p->ability_cooldown > 0) p->ability_cooldown--;
+
+    /* WPN_HAMMER's E cast -- the mini tower (packages/simulation/hammer_tower.h). The timer, the
+     * still requirement and the FFXI release live here rather than in the simulation layer so the
+     * offline match and the dedicated server run the identical rule; only the tower itself is a
+     * simulation-layer object.
+     *
+     * 180 ticks = 3.0 s. For the first 156 (2.6 s) ANY movement breaks the cast -- input or actual
+     * velocity, so sliding off a ledge counts the same as walking. The last 24 ticks (0.4 s) are
+     * the release window: you may start running and it still lands, which is the FFXI behaviour the
+     * founder asked for by name. While the still requirement holds you are rooted, which is what
+     * makes "when you first start casting you stop running if you are auto running" true even for
+     * momentum you did not ask for. */
+    if (p->hammer_cast_ticks > 0) {
+        int still_required = p->hammer_cast_ticks > HAMMER_CAST_FREE_TICKS;
+        int moving = (p->in_fwd > 0.05f || p->in_fwd < -0.05f ||
+                      p->in_strafe > 0.05f || p->in_strafe < -0.05f ||
+                      p->in_jump != 0 ||
+                      (p->vx * p->vx + p->vz * p->vz) > HAMMER_CAST_MOVE_SPEED2);
+        if (moving && still_required) {
+            p->hammer_cast_ticks = 0;
+            p->hammer_tower_ready = 0;
+            if (p->ability_cooldown > HAMMER_CAST_CANCEL_COOLDOWN)
+                p->ability_cooldown = HAMMER_CAST_CANCEL_COOLDOWN;
+        } else {
+            p->hammer_cast_ticks--;
+            if (still_required) { p->vx = 0.0f; p->vz = 0.0f; }
+            if (p->hammer_cast_ticks == 0) p->hammer_tower_ready = 1;
+        }
+    }
     // S459-66, real, found-live bug: founder real-time report of a "false positive" red kill
     // ring on the sniper, followed by a real one -- hit_feedback (the wire field driving the
     // red double-ring kill marker, apps/lobby's own draw_hud >=25 check) was NEVER reset back to
@@ -4552,6 +4583,20 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
             spawn_projectile(projectiles, p, AR_GRENADE_DAMAGE, 0, AR_GRENADE_SPEED_MULT,
                              AR_GRENADE_SPLASH_RADIUS, AR_GRENADE_GRAVITY, WPN_AR);
             p->ability_cooldown = AR_GRENADE_COOLDOWN;
+        } else if (w == WPN_HAMMER) {
+            /* Mini tower. The cast starts here and pays the cooldown up front, so holding E for the
+             * whole 3 s cannot start a second one; a broken cast refunds most of it (see the timer
+             * block above). Nothing is built in this function -- hammer_tower_ready is what
+             * local_game.h's tick consumes. */
+            if (p->ability_cooldown == 0 && p->hammer_cast_ticks == 0) {
+                p->hammer_cast_ticks = HAMMER_CAST_TICKS;
+                p->hammer_tower_ready = 0;
+                p->ability_cooldown = HAMMER_CAST_COOLDOWN;
+                p->vx = 0.0f; p->vz = 0.0f;      /* you plant your feet to build */
+                p->in_fwd = 0.0f; p->in_strafe = 0.0f;
+                p->is_shooting = 0;
+                p->recoil_anim = 0.0f;
+            }
         } else if (w == WPN_SHOTGUN && p->ability_cooldown == 0) {
             /* Ground Slam (S181-05): same real pipeline as Frag Toss above,
              * tuned for a close-range high-damage/bigger-splash burst
@@ -4567,6 +4612,9 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
             p->ability_cooldown = 480;
         }
     }
+
+    /* A cast roots you: no reload and no swing until it lands or breaks. */
+    if (p->hammer_cast_ticks > 0) return;
 
     if (reload && p->reload_timer == 0 && w != WPN_KNIFE && w != WPN_KATANA && w != WPN_HAMMER) {
         if (p->ammo[w] < WPN_STATS[w].ammo_max) {

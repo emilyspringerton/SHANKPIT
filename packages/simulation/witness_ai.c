@@ -386,6 +386,27 @@ int witness_ai_role_for_player(int player_id) {
     return WITNESS_AI_ROLE_NONE;
 }
 
+int witness_ai_npc_in_combat(ServerState *s, int player_id) {
+    for (int i = 0; i < WITNESS_AI_MAX_CITIZENS; i++) {
+        WitnessAiCitizen *c = &g_citizens[i];
+        if (!c->active || c->player_id != player_id) continue;
+        /* A Man walking to a hunt is in combat; the dispatch loop clears this to -1 the tick it has
+           nothing left to resolve, so it is a live read and not a mood. */
+        if (c->brain.archetype == NPC_ARCHETYPE_THE_MEN && c->men_last_target_pid >= 0) return 1;
+        if (c->npc_index >= 0 && c->npc_index < WITNESS_SIM_MAX_NPCS) {
+            int ws = g_sim.n[c->npc_index].state;
+            if (ws == WS_SILENCING || ws == WS_ENGAGE || ws == WS_PANIC) return 1;
+        }
+        if (s && player_id >= 0 && player_id < MAX_CLIENTS) {
+            const PlayerState *p = &s->players[player_id];
+            if (p->is_shooting > 0) return 1;
+            if (p->health < 100) return 1;   /* init_bot_player's own fresh-spawn value */
+        }
+        return 0;
+    }
+    return 0;
+}
+
 void witness_ai_set_player_costume(int costume) {
     witness_sim_set_costume(&g_sim, 0, costume);
 }

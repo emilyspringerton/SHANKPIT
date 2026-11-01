@@ -229,6 +229,19 @@ typedef struct {
 #define AR_GRENADE_GRAVITY 0.22f
 #define AR_GRENADE_COOLDOWN 260
 
+/* HAMMER mini-tower -- weapon 8's E power (packages/simulation/hammer_tower.h). The cast is 3.0 s,
+ * and for the first 2.6 s any movement breaks it; the last 0.4 s is the FFXI-style release where
+ * you may start running and the cast still lands. 60 ticks/s, so 180 / 156 / 24. Deliberately a
+ * root at the start ("when you first start casting you stop running if you are auto running") and
+ * a spent cooldown on a broken cast, shortened to HAMMER_CAST_CANCEL_COOLDOWN so a fizzle is a
+ * mistake you can retry rather than a two-minute timeout. */
+#define HAMMER_CAST_TICKS 180
+#define HAMMER_CAST_STILL_TICKS 156
+#define HAMMER_CAST_FREE_TICKS (HAMMER_CAST_TICKS - HAMMER_CAST_STILL_TICKS)   /* 24 = 0.4 s */
+#define HAMMER_CAST_COOLDOWN 600
+#define HAMMER_CAST_CANCEL_COOLDOWN 90
+#define HAMMER_CAST_MOVE_SPEED2 0.02f   /* (units/tick)^2 -- ~8.5 units/s: a walk breaks it, drift does not */
+
 typedef struct {
     int active;
     unsigned int last_heard_ms;
@@ -679,6 +692,13 @@ typedef struct {
        weapon_owned_mask can be equipped (local_update). 0/0 = every weapon, i.e. all other modes, unchanged. */
     int weapon_gated;
     unsigned int weapon_owned_mask;
+    /* hammer_cast_ticks -- remaining ticks of WPN_HAMMER's E cast (0 = not casting), and
+       hammer_tower_ready, raised exactly once when a cast lands and consumed by local_game.h's
+       tick, which actually builds the tower (physics.h cannot see the NPC population, see
+       packages/simulation/hammer_tower.h). Pure simulation state, never on the wire -- the same
+       class as in_roll/in_lift/in_boost above. */
+    int hammer_cast_ticks;
+    int hammer_tower_ready;
 } PlayerState;
 
 typedef struct {

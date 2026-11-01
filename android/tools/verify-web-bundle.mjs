@@ -96,6 +96,7 @@ getEl('btn-swap').attrs['data-btn'] = '5';
 const buttonEls = ['btn-fire', 'btn-jump', 'btn-crouch', 'btn-reload', 'btn-ability', 'btn-swap'].map(getEl);
 const timers = [];
 let observerCb = null;
+let lockEvents = 0;
 let realSocketsConstructed = 0;
 
 const sandbox = {
@@ -110,12 +111,19 @@ const sandbox = {
     getElementById: getEl,
     querySelectorAll: (sel) => (sel.includes('#sp-buttons') ? buttonEls : []),
     addEventListener() {},
+    dispatchEvent(ev) {
+      if (ev && ev.type === 'pointerlockchange') lockEvents++;
+      return true;
+    },
   },
   MutationObserver: class {
     constructor(cb) { observerCb = cb; }
     observe() {}
   },
   MouseEvent: class {
+    constructor(type) { this.type = type; }
+  },
+  Event: class {
     constructor(type) { this.type = type; }
   },
   performance: { now: () => 0 },
@@ -136,6 +144,17 @@ new vm.Script(controls, { filename: 'android-controls.js' }).runInContext(sandbo
 console.log('offline (no backend)');
 const api = sandbox.SPAndroidPad;
 ok(!!api, 'controls expose SPAndroidPad');
+
+// Android WebView has no Pointer Lock API. The host gates aim on lockedP() and
+// the wasm only ever gets sp_lock() from a pointerlockchange, so without a
+// presented lock the game sits behind click-to-play while the pad still moves
+// you -- the "can move, cannot shoot" bug this covers.
+ok(typeof api.claimLock === 'function', 'controls expose claimLock()');
+ok(sandbox.document.pointerLockElement === getEl('sp-canvas'),
+  'pointerLockElement reports the canvas, so the host reads lockedP() true');
+ok(lockEvents > 0, 'a pointerlockchange reaches the host so it can call sp_lock(1)', `events=${lockEvents}`);
+api.claimLock();
+ok(sandbox.document.pointerLockElement === getEl('sp-canvas'), 'claimLock() is safe to repeat');
 ok(api.offline === true, 'no backend configured means offline mode');
 const gps = sandbox.navigator.getGamepads();
 ok(Array.isArray(gps) && gps.length === 4 && gps[0] && gps[0].axes.length === 4, 'getGamepads() installs one synthetic pad');

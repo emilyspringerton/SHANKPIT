@@ -60,7 +60,18 @@ keeps simulating ticks, and **zero** sockets are constructed.
 
 The wasm takes a standard gamepad, so the touch layer overrides
 `navigator.getGamepads()` with a synthetic pad. Nothing in the generated host is
-patched, and no pointer lock is needed (Android WebView does not offer it).
+patched.
+
+Pointer lock is the exception, and it used to be a real bug. WebView offers no
+Pointer Lock API, but the wasm does ask for it — `sp_wants_lock()` is 1 for the
+whole match — and the host defines `lockedP()` as `document.pointerLockElement !=
+null`, handing the wasm `sp_lock(1)` only from its `pointerlockchange` listener.
+With no lock that listener never fired, so the game sat behind its click-to-play
+gate with FIRE dead while the pad still moved you (pad axes are polled every
+frame, unconditionally). `android-controls.js` therefore presents a locked canvas
+(`pointerLockElement` resolves to the canvas, `requestPointerLock` resolves,
+`exitPointerLock` is a no-op) and dispatches `pointerlockchange` — before the
+module runs and again at load, +250/+1000/+2500 ms and on the first tap.
 
 | On screen | Gamepad | Action |
 |---|---|---|

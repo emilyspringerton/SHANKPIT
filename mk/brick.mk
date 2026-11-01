@@ -212,6 +212,14 @@ test-hammer:
 		-o /tmp/shankpit_hammer_test -lm
 	/tmp/shankpit_hammer_test
 
+# HAMMER MINI-TOWER -- weapon 8's E power (packages/simulation/hammer_tower.h): the 3.0 s cast
+# with its 2.6 s still requirement and FFXI release window, and the gatling tower it builds --
+# zombies always, The Men and citizens only in combat, weak, expiring, never aimed at the player.
+.PHONY: test-hammer-tower
+test-hammer-tower: | $(BIN_DIR)
+	$(CC) -g -O1 -fsanitize=address,undefined -Wall $(INCLUDES) packages/simulation/hammer_tower_test.c packages/simulation/hammer_tower.c $(WAI_TEST_SRC) packages/world/terrain.c -o $(BIN_DIR)/hammer_tower_test $(LIBS_M)
+	./$(BIN_DIR)/hammer_tower_test
+
 # test-ar-grenade -- the assault rifle's underbarrel grenade (E and the right-mouse/LT secondary
 # bit): one real projectile with the grenade's own damage/splash/gravity/owning-weapon, a speed that
 # is faster than a missile but not instant, both inputs against one shared cooldown, and the

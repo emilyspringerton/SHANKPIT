@@ -11,7 +11,16 @@
 //      same input path a physical controller uses, which is why it needs no
 //      pointer-lock (unavailable in Android WebView) to aim.
 //
-//   2. Matchmaking. The web build talks to /api/v1/shankpit460/* on its own
+//   2. Pointer lock. Android WebView has no Pointer Lock API at all, and the
+//      generated host defines lockedP() as `document.pointerLockElement != null`
+//      -- and only onLockChange (a pointerlockchange listener) ever calls
+//      wasm.sp_lock(). With no lock the wasm stays behind its click-to-play gate:
+//      the pad keeps moving you (axes are polled unconditionally) while FIRE does
+//      nothing, because you are still "not playing" as far as the game knows. So
+//      we present a locked canvas and tell the host, which hands the wasm
+//      sp_lock(1) without any pointer lock ever being taken.
+//
+//   3. Matchmaking. The web build talks to /api/v1/shankpit460/* on its own
 //      origin. With a backend configured we rewrite those calls to it. With no
 //      backend (the current default) we install an inert WebSocket so the game
 //      drops straight into the local bot match instead of retrying a dead
@@ -146,6 +155,53 @@
   var stage = byId('sp-stage');
   var started = false;
 
+  // ------------------------------------------------------------ pointer lock
+  // Present a locked canvas. lockedP() then reads true, so the host stops asking
+  // for a lock it can never get (its requestPointerLock() call is what threw and
+  // stranded the left mouse button below), aim takes the sp_mouse path, and the
+  // dispatched pointerlockchange is what delivers wasm.sp_lock(1).
+  var lockPresented = false;
+
+  function tellHostLocked() {
+    // onLockChange is the only caller of wasm.sp_lock; it listens for this. Safe
+    // to repeat, and guarded because the wasm may not be instantiated yet.
+    try {
+      if (typeof doc.dispatchEvent === 'function' && typeof window.Event === 'function') {
+        doc.dispatchEvent(new window.Event('pointerlockchange'));
+      }
+    } catch (e) { /* instantiated later; the retries below cover it */ }
+  }
+
+  function presentLock() {
+    if (!lockPresented) {
+      lockPresented = true;
+      try {
+        Object.defineProperty(doc, 'pointerLockElement', {
+          configurable: true,
+          get: function () { return canvas; }
+        });
+        Object.defineProperty(doc, 'webkitPointerLockElement', {
+          configurable: true,
+          get: function () { return canvas; }
+        });
+      } catch (e) { /* very old engines: the pad path needs no lock anyway */ }
+      if (canvas) {
+        // The host does `r.catch(...)` on the result, so resolve instead of throw.
+        canvas.requestPointerLock = function () { return Promise.resolve(); };
+      }
+      // Stay "locked": the host calls this when the phase changes, and on Android
+      // there is no cursor to hand back.
+      doc.exitPointerLock = function () {};
+    }
+    tellHostLocked();
+  }
+
+  // Immediately (before the generated module runs) and again once it has, since
+  // its pointerlockchange listener does not exist yet at this point.
+  presentLock();
+  if (window.addEventListener) window.addEventListener('load', presentLock);
+  [250, 1000, 2500].forEach(function (ms) { window.setTimeout(presentLock, ms); });
+
   function setKnob(dx, dy) {
     if (!knob) return;
     knob.style.transform = 'translate(' + dx.toFixed(1) + 'px,' + dy.toFixed(1) + 'px)';
@@ -156,6 +212,7 @@
   }
 
   function startOnce() {
+    presentLock();
     if (started) return;
     started = true;
     // Unlock audio and satisfy any click-to-start: the host's mousedown handler
@@ -164,10 +221,16 @@
       if (canvas) {
         var r = canvas.getBoundingClientRect();
         var opts = { bubbles: true, cancelable: true, button: 0, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
-        canvas.dispatchEvent(new MouseEvent('mousedown', opts));
-        canvas.dispatchEvent(new MouseEvent('mouseup', opts));
+        // The release must always run: the host's mousedown handler used to throw
+        // (canvas.requestPointerLock is absent in WebView), which skipped the
+        // mouseup and left sp_button(0,1) latched down for the rest of the match.
+        try {
+          canvas.dispatchEvent(new MouseEvent('mousedown', opts));
+        } finally {
+          canvas.dispatchEvent(new MouseEvent('mouseup', opts));
+        }
       }
-    } catch (e) { /* pointer lock is unavailable in WebView; the pad path needs none */ }
+    } catch (e) { /* audio unlock is best-effort; the pad path needs no lock */ }
     press(BTN.JUMP);
     window.setTimeout(function () { release(BTN.JUMP); }, 120);
   }
@@ -315,6 +378,7 @@
     press: press,
     release: release,
     releaseAll: releaseAll,
-    startOnce: startOnce
+    startOnce: startOnce,
+    claimLock: presentLock
   };
 })();

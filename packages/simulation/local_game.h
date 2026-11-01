@@ -9,6 +9,7 @@
 #include "story_ai.h"
 #include "story_buttons.h"
 #include "witness_ai.h" /* BIG_O engine merge phase 7d -- MODE_STORY content cutover */
+#include "hammer_tower.h" /* WPN_HAMMER's E power: the mini gatling tower the cast builds */
 #include "zombies_hud_bridge.h" /* BIG_O engine merge phase 8 -- the first real REFLUX subscriber
     for witness_ai.c's own MODE_ZOMBIES/MODE_SURVIVAL population events (zombie mood escalation,
     citizen witness escalation, Giant Zombie Bug feeding, The Men dispatch/resolve) */
@@ -2183,6 +2184,20 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
         if (local_state.game_mode == MODE_CTFB) ctf_try_capture(p, cmd_time);
         p->use_was_down = p->in_use;
     }
+    /* WPN_HAMMER's mini tower. The cast itself finishes inside update_weapons (physics.h), which
+       raises hammer_tower_ready; building the body belongs here because only this layer can see
+       the NPC population the tower has to shoot. Works the same in a local match and on a
+       dedicated server, since both run this function. */
+    for (int tq = 0; tq < MAX_CLIENTS; tq++) {
+        PlayerState *caster = &local_state.players[tq];
+        if (!caster->hammer_tower_ready) continue;
+        caster->hammer_tower_ready = 0;
+        if (caster->state == STATE_DEAD) continue;
+        float tower_x = 0.0f, tower_y = 0.0f, tower_z = 0.0f;
+        if (!hammer_tower_place_for_owner(caster, &tower_x, &tower_y, &tower_z)) continue;
+        hammer_tower_spawn(&local_state, tq, tower_x, tower_y, tower_z, caster->yaw, cmd_time);
+    }
+    hammer_tower_tick(&local_state, cmd_time);
     buggy_tick_all(cmd_time);
     horse_tick_all();
     update_projectiles(cmd_time);
@@ -2324,6 +2339,8 @@ void local_init_match(int num_players, int mode) {
         init_genome(&local_state.players[i].brain);
     }
     scene_load(local_state.scene_id);
+    hammer_tower_reset();   /* every match starts with an empty world: towers belong to the fight
+                               that built them, not to the process */
     if (mode == MODE_ZOMBIES) { witness_ai_reset((unsigned int)time(NULL), 0); zombies_hud_bridge_reset(); }
     if (mode == MODE_SURVIVAL) { witness_ai_reset((unsigned int)time(NULL), 0); witness_ai_survival_reset(); zombies_hud_bridge_reset(); }
     if (mode == MODE_STORY) {

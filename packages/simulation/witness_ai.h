@@ -296,6 +296,16 @@ int witness_ai_citizen_zone(int player_id);
 #define WITNESS_AI_ROLE_BIRD 4
 int witness_ai_role_for_player(int player_id);
 
+/* Is this citizen/The Men NPC in a fight right now? 1/0, and 0 for anything that is not one of
+ * those two roles (a zombie is always a valid target and does not need asking).
+ *
+ * The definition, so callers do not invent their own: a live hunt (the witness state machine at
+ * SILENCING / ENGAGE / PANIC), a Man that has a dispatch target it is walking to, somebody shooting,
+ * or somebody hurt (health below the 100 a fresh NPC spawns with). It exists for the hammer's mini
+ * tower (packages/simulation/hammer_tower.h), whose founder-set rule is "the men if the men are in
+ * combat or citizens if the citizens are in combat" -- an innocent bystander must not be shot. */
+int witness_ai_npc_in_combat(ServerState *s, int player_id);
+
 /* Spawns one member of The Men (npc_archetype.h's NPC_ARCHETYPE_THE_MEN -- high base_vigilance,
  * focused mood bias, already real and tested since phase 3, never actually spawned anywhere until
  * now) into a free player slot. Same shape/contract as witness_ai_spawn_citizen, sharing that
