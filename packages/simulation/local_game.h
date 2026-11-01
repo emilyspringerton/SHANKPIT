@@ -10,6 +10,7 @@
 #include "story_buttons.h"
 #include "witness_ai.h" /* BIG_O engine merge phase 7d -- MODE_STORY content cutover */
 #include "hammer_tower.h" /* WPN_HAMMER's E power: the mini gatling tower the cast builds */
+#include "bioslurry.h"    /* what a killed zombie leaves, and the DNA the lab reads off it */
 #include "zombies_hud_bridge.h" /* BIG_O engine merge phase 8 -- the first real REFLUX subscriber
     for witness_ai.c's own MODE_ZOMBIES/MODE_SURVIVAL population events (zombie mood escalation,
     citizen witness escalation, Giant Zombie Bug feeding, The Men dispatch/resolve) */
@@ -2198,6 +2199,21 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
         hammer_tower_spawn(&local_state, tq, tower_x, tower_y, tower_z, caster->yaw, cmd_time);
     }
     hammer_tower_tick(&local_state, cmd_time);
+
+    /* BIOSLURRY (bioslurry.h): walking over a canister picks it up, and carrying it into the lab
+       delivers one -- the read is a roll against the dead body's own grade, so a shambler is
+       usually a wasted trip and an alpha usually is not. Deliberately automatic on arrival: this
+       engine has no lab-station interaction for a floor item yet, and "bring it back to the lab"
+       is the whole rule the founder asked for. */
+    bioslurry_collect(&local_state, cmd_time);
+    for (int bs = 0; bs < MAX_CLIENTS; bs++) {
+        PlayerState *carrier = &local_state.players[bs];
+        if (!carrier->active || carrier->state == STATE_DEAD) continue;
+        if (bioslurry_carried(bs) <= 0) continue;
+        if (carrier->scene_id != SCENE_VOXWORLD) continue;
+        if (!witness_ai_point_in_lab(carrier->x, carrier->z)) continue;
+        bioslurry_deliver(bs, cmd_time);
+    }
     buggy_tick_all(cmd_time);
     horse_tick_all();
     update_projectiles(cmd_time);
@@ -2341,6 +2357,7 @@ void local_init_match(int num_players, int mode) {
     scene_load(local_state.scene_id);
     hammer_tower_reset();   /* every match starts with an empty world: towers belong to the fight
                                that built them, not to the process */
+    bioslurry_reset();      /* ...and no leftover canisters from the last match */
     if (mode == MODE_ZOMBIES) { witness_ai_reset((unsigned int)time(NULL), 0); zombies_hud_bridge_reset(); }
     if (mode == MODE_SURVIVAL) { witness_ai_reset((unsigned int)time(NULL), 0); witness_ai_survival_reset(); zombies_hud_bridge_reset(); }
     if (mode == MODE_STORY) {

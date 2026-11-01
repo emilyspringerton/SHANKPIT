@@ -215,6 +215,14 @@ test-hammer:
 # HAMMER MINI-TOWER -- weapon 8's E power (packages/simulation/hammer_tower.h): the 3.0 s cast
 # with its 2.6 s still requirement and FFXI release window, and the gatling tower it builds --
 # zombies always, The Men and citizens only in combat, weak, expiring, never aimed at the player.
+# ZOMBIE ECOLOGY -- classes/levels and the DNA a body carries (zombie_taxonomy.h), the bioslurry a
+# kill leaves and what the lab can read off it (bioslurry.h), and citizens with their own lives and
+# secrets (citizen_life.h). Pure modules: no physics, no map, no clock.
+.PHONY: test-zombie-ecology
+test-zombie-ecology: | $(BIN_DIR)
+	$(CC) -g -O1 -fsanitize=address,undefined -Wall -Wextra -Ipackages/common -Ipackages/simulation packages/simulation/zombie_ecology_test.c packages/simulation/zombie_taxonomy.c packages/simulation/bioslurry.c packages/simulation/citizen_life.c -o $(BIN_DIR)/zombie_ecology_test $(LIBS_M)
+	./$(BIN_DIR)/zombie_ecology_test
+
 .PHONY: test-hammer-tower
 test-hammer-tower: | $(BIN_DIR)
 	$(CC) -g -O1 -fsanitize=address,undefined -Wall $(INCLUDES) packages/simulation/hammer_tower_test.c packages/simulation/hammer_tower.c $(WAI_TEST_SRC) packages/world/terrain.c -o $(BIN_DIR)/hammer_tower_test $(LIBS_M)

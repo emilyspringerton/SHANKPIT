@@ -13,6 +13,9 @@
 #include "../common/pheromone.h" /* PheromoneMarker, pheromone_claim_slot/expire/find_nearest -- pure
     targeting primitive, BIG_O engine merge phase 5, no live consumer until this pass */
 #include "../reflux/reflux_runtime.h" /* REFLUX_ACTION_ZOMBIE_SPAWNED/HARVESTED/MOOD_ESCALATED, WITNESS_ESCALATED */
+#include "zombie_taxonomy.h" /* classes/levels: what kind of body this is, and what its DNA reads */
+#include "bioslurry.h"       /* what a kill leaves on the ground */
+#include "citizen_life.h"    /* citizens' own personalities, priorities and secrets */
 
 /* Prototype for the PARENA-generated glue (reflux_mod.c, do-not-edit-by-hand) -- no shared .h
  * between generated units in this codebase, same convention world_alert_bridge.c's own identical
@@ -31,6 +34,7 @@ typedef struct {
     int npc_index;   /* index into g_sim.n[] */
     NpcBrain brain;
     unsigned int last_melee_ms; /* The Men only: cooldown for fighting zombies off */
+    CitizenLife life; /* this citizen's own persona/path/spy secret (citizen_life.h) */
     int men_last_target_pid; /* The Men only (brain.archetype == NPC_ARCHETYPE_THE_MEN): the
         player_id this Man was hunting as of last tick, or -1. Lets the dispatch loop fire
         REFLUX_ACTION_MEN_DISPATCHED once per real new-target edge instead of every tick a Man
@@ -42,6 +46,11 @@ typedef struct {
 typedef struct {
     int active;
     int player_id;
+    /* This body's class and level (zombie_taxonomy.h) -- rolled once at spawn and never again, so
+       a level 9 BRUTE stays that body for its whole unlife, and its DNA reads the same whenever the
+       lab gets to it. */
+    int cls;
+    int level;
     ZombieState zstate;
     unsigned int last_attack_ms; /* zombie perception/melee, see witness_ai.h's own doc comment */
     unsigned int last_tick_ms;   /* for zombie_tick_dt's real elapsed step (0 = first tick) */
@@ -354,6 +363,10 @@ static int spawn_human(ServerState *s, NpcArchetype archetype, int zone, int bas
     c->npc_index = npc_index;
     c->men_last_target_pid = -1;
     npc_brain_init(&c->brain, archetype, now_ms);
+    /* ...and a life of its own (citizen_life.h). Seeded from the slot and the archetype's own alertness
+       so it is stable for the session: the same body is the same person, spy handle included. */
+    citizen_life_roll(&c->life, (uint32_t)(slot + 1) * 2654435761u ^ (uint32_t)now_ms,
+                      slot, arrogance, base_vigilance, x, z);
     return slot;
 }
 
@@ -384,6 +397,12 @@ int witness_ai_role_for_player(int player_id) {
         if (g_birds[i].active && g_birds[i].player_id == player_id) return WITNESS_AI_ROLE_BIRD;
     }
     return WITNESS_AI_ROLE_NONE;
+}
+
+int witness_ai_point_in_lab(float x, float z) {
+    float dx = x - WITNESS_AI_LAB_ZONE_CX;
+    float dz = z - WITNESS_AI_LAB_ZONE_CZ;
+    return (dx * dx + dz * dz) <= (WITNESS_AI_LAB_ZONE_RADIUS * WITNESS_AI_LAB_ZONE_RADIUS);
 }
 
 int witness_ai_npc_in_combat(ServerState *s, int player_id) {
@@ -638,6 +657,17 @@ int witness_ai_spawn_zombie(ServerState *s, float x, float y, float z, unsigned 
     zc->pher_owner_pid1 = 0;
     zc->pher_grace_until_ms = 0;
     zombie_state_init(&zc->zstate, now_ms);
+    /* A real body, not one monster: class and level rolled from the slot and the clock, weighted
+       by whether it is night, and its health read straight off that profile -- which is what makes
+       the bioslurry and the DNA downstream of this mean something. */
+    {
+        int night = (day_night_clock_phase(&s->story_clock) == DNC_NIGHT) ? 1 : 0;
+        ZombieProfile prof;
+        zombie_taxonomy_roll(&prof, (uint32_t)(slot + 1) * 2654435761u ^ (uint32_t)now_ms, night);
+        zc->cls = prof.cls;
+        zc->level = prof.level;
+        s->players[slot].health = prof.max_health;
+    }
     /* not every zombie starts equally hungry -- desynchronises the wander->scent turn */
     zc->zstate.hunger = (float)((((unsigned int)slot * 2654435761u) ^ now_ms) % 40u) / 100.0f;
     reflux_dispatch(REFLUX_ACTION_ZOMBIE_SPAWNED, slot, 0, 0);
@@ -1246,6 +1276,32 @@ static int wai_nearest_marker_slot(float x, float z, float radius) {
     return best;
 }
 
+/* This body's derived stats -- the one place anything reads a zombie's class, so the melee damage
+ * and the pace cannot quietly disagree with the taxonomy. */
+static ZombieProfile wai_zombie_profile_of(const WitnessAiZombie *z) {
+    ZombieProfile p;
+    zombie_taxonomy_profile(&p, z ? z->cls : ZCLASS_WALKER, z ? z->level : 1);
+    return p;
+}
+
+void witness_ai_zombie_profile(int player_id, ZombieProfile *out) {
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    for (int i = 0; i < WITNESS_AI_MAX_ZOMBIES; i++) {
+        if (!g_zombies[i].active || g_zombies[i].player_id != player_id) continue;
+        zombie_taxonomy_profile(out, g_zombies[i].cls, g_zombies[i].level);
+        return;
+    }
+}
+
+const CitizenLife *witness_ai_citizen_life(int player_id) {
+    for (int i = 0; i < WITNESS_AI_MAX_CITIZENS; i++) {
+        if (!g_citizens[i].active || g_citizens[i].player_id != player_id) continue;
+        return &g_citizens[i].life;
+    }
+    return NULL;
+}
+
 void witness_ai_tick(ServerState *s, unsigned int now_ms) {
     if (!s) return;
     g_wai_now = now_ms;
@@ -1280,6 +1336,14 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
             zp->in_fwd = 0.0f;
             if (!z->harvested_reported) { /* fire exactly once per corpse, see this struct field's doc comment */
                 reflux_dispatch(REFLUX_ACTION_ZOMBIE_HARVESTED, z->player_id, (int)z->zstate.mood, 0);
+                /* BIOSLURRY: the body may leave a canister where it fell (bioslurry.h). Chances are
+                   the body's own, and the roll is a function of it, so a kill is reproducible. */
+                {
+                    ZombieProfile prof;
+                    zombie_taxonomy_profile(&prof, z->cls, z->level);
+                    if (zombie_taxonomy_slurry_roll((uint32_t)(z->player_id + 1) * 2654435761u ^ (uint32_t)now_ms, &prof))
+                        bioslurry_drop(zp->scene_id, zp->x, zp->y, zp->z, z->cls, z->level, now_ms);
+                }
                 z->harvested_reported = 1;
             }
             continue;
@@ -1454,7 +1518,10 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
         if (has_target && (z->zstate.mood == ZOMBIE_MOOD_HUNTING || z->zstate.mood == ZOMBIE_MOOD_FRENZIED) &&
             hdist > WITNESS_AI_ZOMBIE_MELEE_RANGE) {
             zp->yaw = atan2f(hdx, hdz) * (180.0f / 3.14159f);
-            zp->in_fwd = (z->zstate.mood == ZOMBIE_MOOD_FRENZIED) ? 1.0f : 0.7f;
+            /* A RUNNER closes faster than a WALKER and a BRUTE lumbers -- the class's own pace
+               (move_permille, 1000 = the old single zombie's speed). */
+            zp->in_fwd = ((z->zstate.mood == ZOMBIE_MOOD_FRENZIED) ? 1.0f : 0.7f) *
+                         ((float)wai_zombie_profile_of(z).move_permille / 1000.0f);
             g_wai_breach[z->player_id] = (unsigned char)wai_zombie_breach(s, zp, z->player_id, now_ms);
             if (!g_wai_breach[z->player_id] && zp->anim_override == 1) zp->anim_override = 0;
         } else {
@@ -1475,7 +1542,7 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
             zombie_get_agitated(&z->zstate, now_ms); /* landing a hit is a real stimulus */
             z->zstate.hunger -= WITNESS_AI_ZOMBIE_FEED_HUNGER; /* ...and a feeding one */
             if (z->zstate.hunger < 0.0f) z->zstate.hunger = 0.0f;
-            witness_ai_hero_melee_hit(s, hero_p, WITNESS_AI_ZOMBIE_MELEE_DAMAGE, hdx, hdz, now_ms);
+            witness_ai_hero_melee_hit(s, hero_p, wai_zombie_profile_of(z).melee_damage, hdx, hdz, now_ms);
         }
     }
 
@@ -1537,11 +1604,12 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
             cp->yaw = atan2f(away_dx, away_dz) * (180.0f / 3.14159f);
             cp->in_fwd = 0.85f;
         } else if (s->game_mode == MODE_ZOMBIES && c->brain.archetype != NPC_ARCHETYPE_THE_MEN) {
-            /* Sandbox wander: every ~6s pick a heading (or stand), deterministic per citizen. */
-            unsigned int ep = now_ms / 6000u + (unsigned int)c->player_id * 2654435761u;
-            ep ^= ep >> 13; ep *= 0x5bd1e995u; ep ^= ep >> 15;
-            if ((ep & 3u) == 0u) { cp->in_fwd = 0.0f; }
-            else { cp->yaw = (float)(ep % 360u) - 180.0f; cp->in_fwd = 0.35f; }
+            /* Sandbox wander is now an actual life (citizen_life.h): a persona with a path -- a
+               crafter working its own corner, a trader between posts, a duelist looking for
+               trouble, an endgame player on a long trip to the one place worth being -- walking to
+               where it means to be. A spy picks vantage points and holds them. Fleeing (above)
+               still wins: a citizen in a fight runs before it lives its afternoon. */
+            citizen_life_tick(&c->life, cp, now_ms);
         } else {
             cp->in_fwd = 0.0f;
         }

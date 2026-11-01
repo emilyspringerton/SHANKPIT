@@ -155,15 +155,19 @@ int main(void) {
     CHECK(ti >= 0);
     CHECK(hammer_tower_count() == 1);
     {
+        /* A body's health now comes from its own class/level (zombie_taxonomy.h), so the assertions
+           are relative to what it spawned with, not to a flat 100. */
+        int hp0 = g_srv.players[zid].health;
         unsigned int clock = 1000u;
         run_tower(&clock, 1000u);                              /* windup 0.5 s, then ~3 rounds */
         const HammerTower *t = hammer_tower_at(ti);
         CHECK(t != NULL && t->shots >= 2);
         CHECK(t->target_id == zid);
-        CHECK(g_srv.players[zid].health < 100);
-        CHECK(g_srv.players[zid].health >= 80);                /* "not that strong for now" */
-        printf("tower: zombie shot after %u ms, health %d/100 (%d rounds)\n",
-               clock - 1000u, g_srv.players[zid].health, t->shots);
+        CHECK(g_srv.players[zid].health < hp0);
+        CHECK(hp0 - g_srv.players[zid].health <= 40);           /* "not that strong for now" */
+        CHECK(g_srv.players[zid].health > 0);                   /* alive after a second of fire */
+        printf("tower: zombie shot after %u ms, health %d/%d (%d rounds)\n",
+               clock - 1000u, g_srv.players[zid].health, hp0, t->shots);
     }
 
     /* 7. a calm citizen is NOT a target */
@@ -217,11 +221,12 @@ int main(void) {
     {
         int z = witness_ai_spawn_zombie(&g_srv, 20.0f, 0.0f, 0.0f, 0u);
         int cid = witness_ai_spawn_citizen(&g_srv, ZONE_PUBLIC, 20, 30, 5.0f, 0.0f, 0.0f, 0u);
+        int zhp0 = g_srv.players[z].health;
         g_srv.players[cid].health = 50;
         spawn_tower(1000u);
         unsigned int clock = 1000u;
         run_tower(&clock, 2500u);
-        CHECK(g_srv.players[z].health < 100);
+        CHECK(g_srv.players[z].health < zhp0);
         CHECK(g_srv.players[cid].health == 50);
         printf("tower: zombie outranks a closer citizen in combat\n");
     }
@@ -248,10 +253,11 @@ int main(void) {
     world_setup();
     {
         int z = witness_ai_spawn_zombie(&g_srv, HAMMER_TOWER_RANGE + 5.0f, 0.0f, 0.0f, 0u);
+        int zhp0 = g_srv.players[z].health;
         spawn_tower(1000u);
         unsigned int clock = 1000u;
         run_tower(&clock, 2000u);
-        CHECK(g_srv.players[z].health == 100);
+        CHECK(g_srv.players[z].health == zhp0);
         CHECK(hammer_tower_at(0) && hammer_tower_at(0)->shots == 0);
         printf("tower: zombie just out of range untouched\n");
     }

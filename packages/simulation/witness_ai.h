@@ -137,6 +137,8 @@
 #include "../common/protocol.h"
 #include "../world/level_boxes.h" /* CustomLevelData, level_boxes_zone_for_position -- phase 7c */
 #include "witness_sim.h" /* WITNESS_SIM_MAX_NPCS */
+#include "zombie_taxonomy.h" /* ZombieProfile -- classes/levels/DNA (2026-11-01 population pass) */
+#include "citizen_life.h"    /* CitizenLife -- citizens' own personas, paths and secrets */
 
 #define WITNESS_AI_MAX_CITIZENS WITNESS_SIM_MAX_NPCS /* bounded by WitnessSim's own npc array */
 #define WITNESS_AI_MAX_ZOMBIES 16
@@ -305,6 +307,20 @@ int witness_ai_role_for_player(int player_id);
  * tower (packages/simulation/hammer_tower.h), whose founder-set rule is "the men if the men are in
  * combat or citizens if the citizens are in combat" -- an innocent bystander must not be shot. */
 int witness_ai_npc_in_combat(ServerState *s, int player_id);
+
+/* 1 when (x,z) is inside the engine's one hardcoded "the lab is here" circle (VOXWORLD), the same
+ * landmark the trespass/carry mechanics already use. Exposed so the host does not have to copy the
+ * coordinate -- the bioslurry delivery rule reads it. */
+int witness_ai_point_in_lab(float x, float z);
+
+/* A live zombie's own class/level/stats (zombie_taxonomy.h), or an all-zero profile when
+ * player_id is not one of this module's zombies. This is how a host reads "what did I just kill"
+ * -- for the HUD, for the lab, for a reward. */
+void witness_ai_zombie_profile(int player_id, ZombieProfile *out);
+
+/* A live citizen's own life (citizen_life.h), or NULL. The spy flag and the handle live here, so a
+ * host can reveal one, greet it by name, or report on it without re-deriving any of it. */
+const CitizenLife *witness_ai_citizen_life(int player_id);
 
 /* Spawns one member of The Men (npc_archetype.h's NPC_ARCHETYPE_THE_MEN -- high base_vigilance,
  * focused mood bias, already real and tested since phase 3, never actually spawned anywhere until
