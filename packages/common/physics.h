@@ -4558,8 +4558,9 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
                                          draw_flashlight_beam. */
     /* Secondary fire (BTN_ABILITY_2: right mouse, controller left trigger) is genuinely a second
      * input, not a copy of E: the sniper's zoom is the same right mouse button, so folding RMB into
-     * the BTN_ABILITY_1 bit would spend the storm charges every time someone scoped. Only the AR
-     * reads the secondary bit today, and E fires the same grenade, so both reach one cooldown. */
+     * the BTN_ABILITY_1 bit would spend the storm charges every time someone scoped. Two weapons
+     * read it: the AR's grenade (E fires the same thing, so both reach one cooldown) and the
+     * magnum's spray, which is a firing mode rather than an ability -- see magnum_spray below. */
     int secondary_press = ability2_press && w == WPN_AR;
     if (ability_press || secondary_press) {
         if (w == WPN_KATANA) {
@@ -4624,7 +4625,17 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
     }
     if (p->reload_timer == 1) p->ammo[w] = WPN_STATS[w].ammo_max;
     if (p->dash_timer > 0) return;
-    if (shoot && p->attack_cooldown == 0 && p->reload_timer == 0) {
+    /* Magnum secondary fire: the right mouse / LT bit fan-fires the revolver instead of acting as an
+     * ability. Founder real-time: "can we have it so that the right click for the magnum (pistol)
+     * does rapid fire high jitter full auto? it should basically turn into a spray and pray empty the
+     * mag ril quick". The bit is HELD, not edge-detected (net_sim.h copies the button state every
+     * tick), so this is true full auto: every tick the cylinder is off cooldown it fires again,
+     * with or without the left mouse held. It pays with the magnum's own 8-round magazine at
+     * MAGNUM_SPRAY_TICKS -- the mag is gone in about half a second -- and with MAGNUM_SPRAY_SPREAD's
+     * wild jitter. Each round is still the magnum's own 45, so a point-blank dump is genuinely
+     * lethal: the price is the whole mag and the reload, not a hidden damage nerf. */
+    int magnum_spray = (w == WPN_MAGNUM) && ability2_press;
+    if ((shoot || magnum_spray) && p->attack_cooldown == 0 && p->reload_timer == 0) {
         if (p->storm_charges > 0 && w == WPN_SNIPER) {
             int storm_damage = (int)(WPN_STATS[w].dmg * 0.7f);
             spawn_projectile(projectiles, p, storm_damage, 1, 1.5f, 0.0f, 0.0f, WPN_SNIPER);
@@ -4637,9 +4648,10 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
         else {
             p->is_shooting = 5; p->recoil_anim = 1.0f;
             /* Haste is a multiplier on the weapon's own ROF, never a rewrite of it -- a knife stays a
-               knife. No job installed: the ROF exactly as authored. */
-            p->attack_cooldown = g_phys_stats_rof_hook ? g_phys_stats_rof_hook(p, WPN_STATS[w].rof)
-                                                       : WPN_STATS[w].rof;
+               knife. No job installed: the ROF exactly as authored. The spray interval rides the same
+               hook, so a fast job fan-fires faster instead of the two numbers disagreeing. */
+            int rof = magnum_spray ? MAGNUM_SPRAY_TICKS : WPN_STATS[w].rof;
+            p->attack_cooldown = g_phys_stats_rof_hook ? g_phys_stats_rof_hook(p, rof) : rof;
             if (w != WPN_KNIFE && w != WPN_KATANA && w != WPN_HAMMER) p->ammo[w]--;
             if (w == WPN_KATANA) {
                 p->katana_slash_timer = KATANA_SLASH_ACTIVE_TICKS;
@@ -4668,10 +4680,11 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
             float r = -p->yaw * 0.0174533f; float rp = p->pitch * 0.0174533f;
             float dx = sinf(r) * cosf(rp); float dy = sinf(rp); float dz = -cosf(r) * cosf(rp);
             if (g_phys_map_hitscan_hook) g_phys_map_hitscan_hook(p->scene_id, p->x, p->y + EYE_HEIGHT, p->z, dx, dy, dz, w);
-            if (WPN_STATS[w].spr > 0) {
-                dx += phys_rand_f() * WPN_STATS[w].spr;
-                dy += phys_rand_f() * WPN_STATS[w].spr;
-                dz += phys_rand_f() * WPN_STATS[w].spr;
+            float spr = magnum_spray ? MAGNUM_SPRAY_SPREAD : WPN_STATS[w].spr;
+            if (spr > 0) {
+                dx += phys_rand_f() * spr;
+                dy += phys_rand_f() * spr;
+                dz += phys_rand_f() * spr;
             }
 
             for(int i=0; i<MAX_CLIENTS; i++) {

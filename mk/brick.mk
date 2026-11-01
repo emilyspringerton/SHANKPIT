@@ -237,6 +237,16 @@ test-ar-grenade:
 		-o /tmp/shankpit_ar_grenade_test -lm
 	/tmp/shankpit_ar_grenade_test
 
+# test-magnum-spray -- the magnum's right-mouse / LT secondary: a held, full-auto, wide-jitter mag dump
+# that needs no left mouse, empties the 8-round cylinder in half a second, leaves the stock 25-tick
+# left-click cadence alone, spends no ability cooldown or storm charges, misses a 200-unit target it
+# is pointed straight at while hitting one at 5, and leaves the AR's grenade on the same bit.
+.PHONY: test-magnum-spray
+test-magnum-spray:
+	gcc -std=gnu99 -Wall -g $(INCLUDES) packages/simulation/magnum_spray_test.c packages/world/terrain.c \
+		-o /tmp/shankpit_magnum_spray_test -lm
+	/tmp/shankpit_magnum_spray_test
+
 .PHONY: test-held-model
 test-held-model:
 	gcc -std=gnu99 -Wall -Wextra -g -fsanitize=address,undefined $(INCLUDES) packages/render/held_model_test.c \

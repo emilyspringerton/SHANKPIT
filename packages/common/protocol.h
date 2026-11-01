@@ -229,6 +229,18 @@ typedef struct {
 #define AR_GRENADE_GRAVITY 0.22f
 #define AR_GRENADE_COOLDOWN 260
 
+/* Magnum (WPN_MAGNUM) secondary fire -- the pistol's spray, on BTN_ABILITY_2 (right mouse / controller
+ * LT). Founder real-time: "can we have it so that the right click for the magnum (pistol) does rapid
+ * fire high jitter full auto? it should basically turn into a spray and pray empty the mag ril
+ * quick". Holding the bit fan-fires the revolver at a fixed interval far below its own 25-tick ROF:
+ * 4 ticks is 15 rounds/s, so the 8-round cylinder is empty in 32 ticks (~0.53 s), and then the normal
+ * auto-reload starts. MAGNUM_SPRAY_SPREAD is deliberately the widest player spread in the roster --
+ * well past the AR's 0.04, past even the shotgun's 0.15 -- because the trade for that rate is that
+ * most of the mag goes where it likes. Damage per round is unchanged: this is a mag dump, not a
+ * weaker gun. */
+#define MAGNUM_SPRAY_TICKS 4
+#define MAGNUM_SPRAY_SPREAD 0.16f
+
 /* HAMMER mini-tower -- weapon 8's E power (packages/simulation/hammer_tower.h). The cast is 3.0 s,
  * and for the first 2.6 s any movement breaks it; the last 0.4 s is the FFXI-style release where
  * you may start running and the cast still lands. 60 ticks/s, so 180 / 156 / 24. Deliberately a
@@ -375,8 +387,9 @@ typedef struct {
     trigger (fire is the right trigger, so the left one was the only unclaimed shoulder/shoulder-
     adjacent control). Deliberately its own bit rather than reusing BTN_ABILITY_1: the sniper's zoom
     IS the right mouse button, so folding RMB into the E bit would spend the sniper's storm charges
-    every time someone scoped. Only the assault rifle reads this bit today (underbarrel grenade,
-    update_weapons in physics.h); any future secondary gets it for free. */
+    every time someone scoped. Two weapons read this bit today: the assault rifle's underbarrel
+    grenade and the magnum's spray (update_weapons in physics.h); any future secondary gets it for
+    free. */
 
 #define VEH_NONE  0
 #define VEH_BUGGY 1

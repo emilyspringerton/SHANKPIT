@@ -260,7 +260,9 @@ static inline void shankpit_apply_usercmd_inputs(PlayerState *p, const UserCmd *
     p->in_reload = (cmd->buttons & BTN_RELOAD) != 0;
     p->in_use = (cmd->buttons & BTN_USE) != 0;
     p->in_ability = (cmd->buttons & BTN_ABILITY_1) != 0;
-    p->in_ability2 = (cmd->buttons & BTN_ABILITY_2) != 0; /* right mouse / controller LT (AR grenade) */
+    p->in_ability2 = (cmd->buttons & BTN_ABILITY_2) != 0; /* right mouse / controller LT (AR grenade,
+                                                            magnum spray) -- a held bit, which is what
+                                                            makes the magnum's spray full auto */
     p->in_bike = (cmd->buttons & BTN_VEHICLE_2) != 0;
     p->in_pheromone = (cmd->buttons & BTN_PHEROMONE) != 0;
     p->in_paint_next = (cmd->buttons & BTN_PAINT_NEXT) != 0;

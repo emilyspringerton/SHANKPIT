@@ -115,11 +115,14 @@ int main(void) {
     update_weapons(&ps[0], ps, g_proj, 0, 0, 1, 0, 5016u, 3000u);
     CHECK(ps[0].storm_charges == 5);
 
-    /* 6. a weapon with no secondary does nothing on that bit (no projectile, no cooldown burned) */
-    reset(ps, WPN_MAGNUM);
+    /* 6. a weapon with no secondary does nothing on that bit (no projectile, no cooldown burned).
+     *    This case was the magnum until the magnum got a secondary of its own -- the right-mouse
+     *    spray, see packages/simulation/magnum_spray_test.c -- so the knife is the honest case now. */
+    reset(ps, WPN_KNIFE);
     update_weapons(&ps[0], ps, g_proj, 0, 0, 0, 1, 6000u, 3000u);
     CHECK(active_projectiles() == 0);
     CHECK(ps[0].ability_cooldown == 0);
+    CHECK(ps[0].attack_cooldown == 0);
 
     /* 7. the other splash weapons keep their old shape: no gravity, their own weapon id */
     reset(ps, WPN_MISSILE);

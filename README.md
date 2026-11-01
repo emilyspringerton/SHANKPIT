@@ -650,6 +650,32 @@ the wire), so in a networked match the grenade is server-side only until that is
 of the shader is unverified here (no display/GPU in this sandbox) -- `make test-ar-grenade` covers
 the numbers, not the pixels.
 
+## Magnum spray: right click dumps the cylinder (2026-11-01)
+
+The magnum's secondary fire (right click, or the controller's left trigger) is a **held, full-auto
+mag dump**: while the bit is down the revolver fan-fires every 4 ticks -- 15 rounds/s, so all eight
+rounds are gone in about half a second -- and then the normal full reload starts on its own. No left
+mouse is needed; holding both is the same spray. Each round is still the magnum's own 45 damage, so
+the trade is the entire magazine and the reload, not a hidden damage nerf.
+
+Accuracy is the other half of the trade. `MAGNUM_SPRAY_SPREAD` (0.16) is the widest player spread in
+the roster -- four times the AR's 0.04, past even the shotgun's 0.15 -- so a spray that starts at
+point blank is lethal and one pointed at something 200 units away mostly does not land. It is the
+same `phys_rand_f()` jitter path every other spread weapon already uses, applied per round.
+
+Right click is `BTN_ABILITY_2`, the bit the AR's grenade already owns, and the two do not collide:
+the AR's grenade is an ability on a 260-tick cooldown, the magnum's spray is a firing mode that
+spends no ability cooldown and grants no storm charges, so aiming the sniper (also right click)
+still costs nothing. `protocol.h`'s `MAGNUM_SPRAY_TICKS` / `MAGNUM_SPRAY_SPREAD` are the knobs.
+
+`make test-magnum-spray` covers it through the real `update_weapons`: the spray fires with no left
+mouse, empties the 8-round cylinder in 37 ticks and starts `RELOAD_TIME_FULL` on that same tick, the
+stock 25-tick left-click cadence is unchanged, a target at 5 units is hit while one at 200 on the
+same line is never hit (where a single aimed shot does reach it), the bit does nothing for the
+knife, and the AR's grenade still fires on it. Honest limit: verified headless only -- no window,
+no muzzle flash, no audio in this sandbox, so the *feel* of the spray is unproven, and net clients
+still see it only as the shooter's `is_shooting` animation.
+
 ## Vehicle controls: buggy chase camera + PARENA helicopter flight model (2026-10-02)
 
 - **Buggy is warthog-style.** The camera is a true orbit around the buggy (mouse / right stick swing it, pitch is
