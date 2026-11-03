@@ -257,6 +257,7 @@ test-held-model:
 .PHONY: test-glass-render
 test-glass-render:
 	gcc -std=gnu99 -Wall -g $(INCLUDES) packages/render/glass_render_test.c packages/render/gl_shader.c \
+		packages/simulation/material_rules.c \
 		-o /tmp/shankpit_glass_render_test -lSDL2 -lGL -lm
 	xvfb-run -a -s "-screen 0 640x480x24" env LIBGL_ALWAYS_SOFTWARE=1 /tmp/shankpit_glass_render_test
 
