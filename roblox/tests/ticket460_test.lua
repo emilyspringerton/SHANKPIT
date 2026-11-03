@@ -1,7 +1,10 @@
--- A ticket: shape here, verdict elsewhere. These checks exist to prove the place costs no round trip on
--- garbage and never pretends to have verified anything itself.
+-- A connect ticket, read the way IDUNA actually writes one.
+--
+-- The ticket is 36 bytes hex-encoded: uuid (16) || expiry (4, LITTLE-endian) || mac (16). These checks build
+-- real tickets byte by byte, so the little-endian read is pinned by hand rather than trusted.
 package.path = "roblox/src/?.lua;" .. package.path
 local T = require("ticket460")
+local R = require("ticket460_rules")
 
 local checks, failures = 0, 0
 local function ok(cond, what)
@@ -16,50 +19,70 @@ local function eq(got, want, what)
     end
 end
 
-local sig = string.rep("a1", 32)   -- 64 hex characters, the honest shape
-local good = "s460:1234:" .. sig
+-- little-endian u32 as 4 bytes of hex -- the exact byte order IDUNA's binary.LittleEndian.PutUint32 produces
+local function le32(n)
+    local b1 = n % 256; n = (n - b1) / 256
+    local b2 = n % 256; n = (n - b2) / 256
+    local b3 = n % 256; n = (n - b3) / 256
+    local b4 = n % 256
+    return string.format("%02x%02x%02x%02x", b1, b2, b3, b4)
+end
 
-local p = T.parse(good)
-ok(p.ok, "a well-formed ticket parses")
-eq(p.pid, 1234, "the pid comes out of the middle field")
-eq(T.parse("s460:12:abc").reason, "short-signature", "a short signature is refused")
-eq(T.parse("nope:12:" .. sig).reason, "wrong-game", "another game's ticket is refused")
-eq(T.parse("s460:x:" .. sig).reason, "malformed", "a non-numeric pid is malformed")
-eq(T.parse("s460:0:" .. sig).reason, "bad-pid", "pid 0 is not a body")
+local UUID_HEX = "6f9619ff8b86d011b42d00c04fc964ff"
+local UUID_DASHED = "6f9619ff-8b86-d011-b42d-00c04fc964ff"
+local MAC = string.rep("ab", 16)          -- 32 hex chars = the 16-byte truncated MAC
+local function mint(expires) return UUID_HEX .. le32(expires) .. MAC end
+
+-- the helper itself: 2000000000 is 0x77359400, so the BYTES are 00 94 35 77
+eq(le32(2000000000), "00943577", "le32 encodes little-endian (0x77359400 -> 00943577)")
+
+local t = T.parse(mint(2000000000))
+ok(t.ok, "a real 72-hex ticket parses")
+eq(t.expires_at, 2000000000, "the expiry is read out of bytes 16..19 little-endian")
+eq(t.player_id, UUID_DASHED, "the uuid is read out of the first 16 bytes, dashed")
+eq(#t.hex, 72, "the parsed hex is 72 characters")
+ok(T.parse(string.upper(mint(2000000000))).ok, "uppercase hex is still a ticket")
 eq(T.parse(nil).reason, "not-a-ticket", "nil is not a ticket")
-eq(T.parse("").reason, "malformed", "empty is malformed")
+eq(T.parse("").reason, "bad-length", "empty is the wrong length")
+eq(T.parse("zz").reason, "not-hex", "non-hex is refused before any byte is interpreted")
+eq(T.parse(string.sub(mint(2000000000), 1, 70)).reason, "bad-length", "a truncated ticket is refused")
 
--- a malformed ticket must cost ZERO round trips
-local calls = 0
-local verdict, consulted = T.accept("garbage", function() calls = calls + 1; return { ok = true } end)
-ok(not verdict.ok, "garbage is refused")
-eq(consulted, false, "the verifier was not consulted for garbage")
-eq(calls, 0, "and was not even called")
+-- expiry: dead AT its second, not one later
+local u = T.usable(mint(2000000000), 1000)
+ok(u.ok, "a ticket with time left is usable")
+eq(u.remaining_s, 1999999000, "remaining seconds are expires - now")
+local near = T.usable(mint(2000000000), 1999999999)
+eq(near.remaining_s, 1, "one second left reads as 1")
+eq(T.usable(mint(2000000000), 2000000000).reason, "expired", "expired AT the expiry second")
+eq(T.usable(mint(2000000000), 2000000001).reason, "expired", "and after it")
+ok(T.usable(mint(2000000000)).ok, "no clock given means no expiry judgement, not a refusal")
 
-local counted = 0
-local accepted, wasCalled = T.accept(good, function(t)
-    counted = counted + 1
-    eq(t, good, "the verifier receives the ticket unchanged")
-    return { ok = true, pid = 77, name = "witness" }
-end)
-ok(accepted.ok, "a verifier saying yes means accepted")
-eq(accepted.pid, 77, "the verifier's pid wins over the shape's pid")
-eq(accepted.name, "witness", "the name comes through")
-eq(wasCalled, true, "and the flag says it was consulted")
-eq(counted, 1, "exactly one call")
+-- IDUNA's JSON answer must agree with the bytes it signed
+local good = { ticket = mint(2000000000), expires_at = 2000000000, player_id = UUID_DASHED }
+local f = T.from_mint(good, 1000)
+ok(f.ok, "a mint response whose fields agree is accepted")
+eq(f.player_id, UUID_DASHED, "the id survives")
+eq(T.from_mint(nil).reason, "no-answer", "no response is not a ticket")
+eq(T.from_mint({ ticket = mint(2000000000), expires_at = 2000000000 }).reason, "no-player-id",
+   "a response with no player_id is refused")
+eq(T.from_mint({ ticket = mint(2000000000), player_id = "other" }, 1000).reason, "id-disagrees",
+   "a player_id that disagrees with the signed uuid is refused")
+eq(T.from_mint({ ticket = mint(2000000000), expires_at = 1999999999, player_id = UUID_DASHED }, 1000).reason,
+   "expiry-disagrees", "an expires_at that disagrees with the payload is refused")
+eq(T.from_mint({ ticket = mint(500), expires_at = 500, player_id = UUID_DASHED }, 1000).reason, "expired",
+   "an expired ticket is refused through from_mint too")
 
-local refused = T.accept(good, function() return { ok = false, reason = "expired" } end)
-ok(not refused.ok, "a verifier saying no means refused")
-eq(refused.reason, "expired", "the verifier's reason survives")
-eq(T.accept(good, function() return { ok = false } end).reason, "refused", "no reason reads as refused")
-local nover = T.accept(good, nil)
-ok(not nover.ok, "no verifier means no acceptance")
-eq(nover.reason, "no-verifier", "...and it says so rather than guessing")
+-- the thresholds are PARENA's
+ok(T.RULES == R, "the ticket module runs the generated PARENA rules")
+eq(R.ticketShapeOk(72), 1, "generated: 72 hex chars is the shape")
+eq(R.ticketShapeOk(71), 0, "generated: 71 is not")
+eq(R.ticketExpired(10, 10), 1, "generated: expired at the boundary")
+eq(R.ticketExpired(9, 10), 0, "generated: not before it")
+eq(R.ticketRemainingS(10, 5), 0, "generated: remaining floors at zero")
+eq(R.ticketRemainingS(10, 15), 5, "generated: remaining is expires - now")
 
--- there is no local HMAC verification anywhere in this module, which is the point
--- COMMENTS ARE NOT CODE, and the first version of this check proved it by failing on the module's own
--- explanation ("there is no local HMAC here"). Strip the comment lines, then look at what is left: a module that
--- VERIFIES would have to mention hmac/md5/sha and hold something secret, and neither may appear in code.
+-- COMMENTS ARE NOT CODE: an earlier version of this check failed on the module's own explanation ("does NOT
+-- verify the MAC"). Strip comments, then look for what would have to exist if this file verified anything.
 local src = io.open("roblox/src/ticket460.lua", "r")
 local body = src and src:read("*a") or ""
 if src then src:close() end
@@ -69,9 +92,9 @@ for line in (body .. "\n"):gmatch("([^\n]*)\n") do
 end
 code = table.concat(code, "\n")
 ok(not code:find("SECRET", 1, true) and not code:find("hmac", 1, true),
-   "no secret and no local hmac in the ticket module\'s CODE")
+   "no secret and no MAC verification in the ticket module's CODE")
 ok(not code:find("sha256", 1, true) and not code:find("md5", 1, true),
-   "...and no digest routine either -- verifying is IDUNA\'s job")
+   "...and no digest routine either -- verifying is the C server's job")
 
 print(string.format("ticket460: %d checks, %d failures", checks, failures))
 os.exit(failures == 0 and 0 or 1)

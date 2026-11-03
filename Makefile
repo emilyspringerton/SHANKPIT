@@ -580,12 +580,14 @@ test-roblox:
 	lua roblox/tests/queue460_test.lua
 	lua roblox/tests/ticket460_test.lua
 	luac -p roblox/src/lobby.server.lua
+	luac -p roblox/src/lobby.client.lua
 
 roblox-model: test-roblox
 	python3 roblox/tools/build_rbxmx.py
 
-# The 460 queue's thresholds are PARENA's (stdlib/shankpit/queue_rules.prn), emitted to Luau. Never hand-edit
+# The 460 layer's thresholds and ticket arithmetic are PARENA's (stdlib/shankpit/{queue,ticket}_rules.prn),
+# emitted to Luau. Never hand-edit
 # roblox/src/queue460_rules.lua; change the .prn and regenerate.
 .PHONY: regen-roblox-rules
 regen-roblox-rules:
-	roblox/scripts/gen_queue460.sh
+	roblox/scripts/gen_460_rules.sh

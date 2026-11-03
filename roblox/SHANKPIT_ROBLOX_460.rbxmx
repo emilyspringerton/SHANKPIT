@@ -287,154 +287,272 @@ return M
     <Item class="ModuleScript" referent="RBX3">
       <Properties>
         <string name="Name">ticket460</string>
-        <ProtectedString name="Source">-- src/ticket460.lua -- a connect ticket is a claim, and this module does not believe claims.
+        <ProtectedString name="Source">-- src/ticket460.lua -- reading a SHANKPIT connect ticket, and never pretending to verify one.
 --
--- SHANKPIT-460 DNA is: IDUNA mints a connect ticket, the game server verifies it, nobody invents an identity in
--- between. A Roblox server cannot be the verifier, and the reason is not squeamishness -- it is that verifying
--- requires the signing secret, and every secret that reaches a place is a secret some client can read. So this
--- module does the ONE thing it is entitled to do:
+-- THE FORMAT IS CHECKED, NOT ASSUMED. `IDUNA/internal/http/handlers/shankpit_ticket.go`:
 --
---   * check the ticket's SHAPE locally, so a garbage string costs no round trip (fast, honest failure), and
---   * hand the real decision to an injected verifier -- in the place, a server-to-server call to IDUNA.
+--   POST /api/v1/shankpit/ticket   (Bearer IDUNA JWT)
+--     -&gt; {"ticket": "&lt;72 hex chars&gt;", "expires_at": &lt;unix seconds&gt;, "player_id": "&lt;uuid&gt;"}
 --
--- There is deliberately no `verify_hmac` here and no secret constant. If someone adds one, this file has failed
--- at its only job. The shape check is also not authentication: a well-formed ticket proves nothing on its own,
--- which is why `accept` reports whether the verifier was even consulted.
+-- and the ticket is 36 raw BYTES, hex-encoded:
+--
+--   player_id (16 bytes, raw UUID) || expires_at (4 bytes, LITTLE-endian u32) || hmac_sha256(secret, payload)[:16]
+--
+-- TTL is 5 minutes (`ShankpitTicketTTL`), because a ticket is presented ONCE at PACKET_CONNECT rather than held
+-- for a session. An earlier version of this file invented a `s460:&lt;pid&gt;:&lt;hex&gt;` string -- there is no such
+-- prefix anywhere in IDUNA, and the pid is a UUID rather than an integer; that is why this file now parses the
+-- bytes above and nothing else.
+--
+-- WHAT THIS MODULE IS ALLOWED TO SAY, and it is deliberately little: the SHAPE is right, the expiry has or has
+-- not passed, and which player it claims to be for. It does NOT verify the MAC and holds no secret -- the C
+-- server holds `SHANKPIT_TICKET_SECRET` and verifies with a constant-time compare
+-- (shankpit-460's `packages/common/hmac_sha256.h`). A place every client can read is the last place a signing
+-- secret belongs, so the honest thing for the Roblox side to do is mint, hand over, and shut up.
+--
+-- The shape and expiry arithmetic are `ticket460_rules.lua`, emitted from
+-- `PARENA/stdlib/shankpit/ticket_rules.prn` (`make regen-roblox-rules`) -- not restated here.
+
+local rules = require("ticket460_rules")
 
 local M = {}
 
-M.PREFIX = "s460"   -- the game this ticket is for; the C server's own tickets carry the game in the same slot
-M.MIN_SIG = 32      -- a hex signature shorter than this is a truncated string, not a signature
+M.RULES = rules
 
--- `s460:&lt;pid&gt;:&lt;hex signature&gt;` -- shape only. Returns {ok=true, pid=...} or {ok=false, reason=...}.
-function M.parse(ticket)
-    if type(ticket) ~= "string" then return { ok = false, reason = "not-a-ticket" } end
-    local prefix, id, sig = string.match(ticket, "^(%w+):(%d+):([0-9a-fA-F]+)$")
-    if not prefix then return { ok = false, reason = "malformed" } end
-    if prefix ~= M.PREFIX then return { ok = false, reason = "wrong-game" } end
-    if #sig &lt; M.MIN_SIG then return { ok = false, reason = "short-signature" } end
-    local pid = tonumber(id)
-    if not pid or pid &lt; 1 then return { ok = false, reason = "bad-pid" } end
-    return { ok = true, pid = pid }
+-- Bytes a ticket carries, and therefore the hex length. Kept for a reader; the rule itself lives in the .prn.
+M.BYTES = 36
+
+local function dashUuid(idHex)
+    return string.format("%s-%s-%s-%s-%s",
+        idHex:sub(1, 8), idHex:sub(9, 12), idHex:sub(13, 16), idHex:sub(17, 20), idHex:sub(21, 32))
 end
 
--- Returns the verdict and a second value saying whether the verifier was consulted. A caller that wants to
--- count round trips (or a test that wants to prove a malformed ticket costs none) reads that flag.
-function M.accept(ticket, verifier)
-    local shape = M.parse(ticket)
-    if not shape.ok then return shape, false end
-    if type(verifier) ~= "function" then
-        return { ok = false, reason = "no-verifier" }, false
+-- `s460` in the old tests is gone: a real ticket is 72 hex characters and nothing else.
+function M.parse(ticket)
+    if type(ticket) ~= "string" then return { ok = false, reason = "not-a-ticket" } end
+    local hex = ticket:lower()
+    if hex:find("[^0-9a-f]") then return { ok = false, reason = "not-hex" } end
+    if rules.ticketShapeOk(#hex) ~= 1 then return { ok = false, reason = "bad-length" } end
+
+    local idHex = hex:sub(1, 32)
+    local b = {}
+    for i = 1, 4 do
+        b[i] = tonumber(hex:sub(32 + i * 2 - 1, 32 + i * 2), 16)
     end
-    local v = verifier(ticket)
-    if type(v) ~= "table" or not v.ok then
-        local reason = "refused"
-        if type(v) == "table" and v.reason ~= nil then reason = tostring(v.reason) end
-        return { ok = false, reason = reason }, true
-    end
+    -- LITTLE-endian: the first byte is the least significant, which is the order the C server reads.
+    local expires = b[1] + b[2] * 256 + b[3] * 65536 + b[4] * 16777216
+
     return {
         ok = true,
-        pid = tonumber(v.pid) or shape.pid,
-        name = tostring(v.name or ""),
-    }, true
+        player_id = dashUuid(idHex),
+        expires_at = expires,
+        hex = hex,
+    }
+end
+
+-- Shape + expiry. Omit now_s and the expiry is not judged (there is nothing honest to judge it against), which
+-- is why every caller in the place passes one.
+function M.usable(ticket, now_s)
+    local t = M.parse(ticket)
+    if not t.ok then return t end
+    local now = tonumber(now_s)
+    if now ~= nil then
+        now = math.floor(now)
+        if rules.ticketExpired(now, t.expires_at) == 1 then
+            return { ok = false, reason = "expired", expires_at = t.expires_at, player_id = t.player_id }
+        end
+        t.remaining_s = rules.ticketRemainingS(now, t.expires_at)
+    end
+    return t
+end
+
+-- IDUNA's own JSON answer, checked against the bytes it signed. Two sources of truth for one ticket (the JSON
+-- fields and the ticket's own payload) must AGREE -- if they do not, one of them is not the ticket IDUNA meant
+-- to hand out, and the player should not be sent anywhere.
+function M.from_mint(decoded, now_s)
+    if type(decoded) ~= "table" then return { ok = false, reason = "no-answer" } end
+    local t = M.usable(decoded.ticket, now_s)
+    if not t.ok then return t end
+
+    local pid = decoded.player_id
+    if type(pid) ~= "string" or pid == "" then return { ok = false, reason = "no-player-id" } end
+    if pid:lower() ~= t.player_id then return { ok = false, reason = "id-disagrees" } end
+
+    local expires = tonumber(decoded.expires_at)
+    if expires ~= nil and math.floor(expires) ~= t.expires_at then
+        return { ok = false, reason = "expiry-disagrees" }
+    end
+
+    t.player_id = pid
+    return t
 end
 
 return M
 </ProtectedString>
       </Properties>
     </Item>
-    <Item class="Script" referent="RBX4">
+    <Item class="ModuleScript" referent="RBX4">
+      <Properties>
+        <string name="Name">queue460_rules</string>
+        <ProtectedString name="Source">-- Generated by parena build (Lua target) -- do not edit by hand.
+-- Source of truth: the .prn this was emitted from. SHANKPIT compiles the SAME file to C.
+
+local M = {}
+
+-- `a / b` in PARENA is C's integer division (truncation toward zero), not Lua's `//`
+-- (floor). They disagree on every negative dividend, so the emitter routes `/` here
+-- instead of pretending the two are the same operator.
+local function __idiv(a, b)
+    local q = a // b
+    if q &lt; 0 and q * b ~= a then q = q + 1 end
+    return q
+end
+
+function M.queueWindow(waitMs)
+    return (function() local v = (100 + (__idiv((function() if (waitMs &lt; 0) then return 0 else return waitMs end end)(), 1000) * 50)); return (function() if (v &gt; 600) then return 600 else return v end end)() end)()
+end
+
+function M.queueStrictWindow(waitA, waitB)
+    return (function() if (M.queueWindow(waitA) &lt; M.queueWindow(waitB)) then return M.queueWindow(waitA) else return M.queueWindow(waitB) end end)()
+end
+
+function M.queueGapFits(gap, waitA, waitB)
+    return (function() local g = (function() if (gap &lt; 0) then return (0 - gap) else return gap end end)(); return (function() if (g &lt;= M.queueStrictWindow(waitA, waitB)) then return 1 else return 0 end end)() end)()
+end
+
+function M.queueExpired(waitMs)
+    return (function() if (waitMs &gt; 120000) then return 1 else return 0 end end)()
+end
+
+function M.queueFillable(ranked, waitMs)
+    return (function() if (ranked == 1) then return 0 else return (function() if (waitMs &gt;= 30000) then return 1 else return 0 end end)() end end)()
+end
+
+return M
+</ProtectedString>
+      </Properties>
+    </Item>
+    <Item class="ModuleScript" referent="RBX5">
+      <Properties>
+        <string name="Name">ticket460_rules</string>
+        <ProtectedString name="Source">-- Generated by parena build (Lua target) -- do not edit by hand.
+-- Source of truth: the .prn this was emitted from. SHANKPIT compiles the SAME file to C.
+
+local M = {}
+
+-- `a / b` in PARENA is C's integer division (truncation toward zero), not Lua's `//`
+-- (floor). They disagree on every negative dividend, so the emitter routes `/` here
+-- instead of pretending the two are the same operator.
+local function __idiv(a, b)
+    local q = a // b
+    if q &lt; 0 and q * b ~= a then q = q + 1 end
+    return q
+end
+
+function M.ticketShapeOk(hexLen)
+    return (function() if (hexLen == 72) then return 1 else return 0 end end)()
+end
+
+function M.ticketExpired(nowS, expiresS)
+    return (function() if (nowS &gt;= expiresS) then return 1 else return 0 end end)()
+end
+
+function M.ticketRemainingS(nowS, expiresS)
+    return (function() local d = (expiresS - nowS); return (function() if (d &lt; 0) then return 0 else return d end end)() end)()
+end
+
+return M
+</ProtectedString>
+      </Properties>
+    </Item>
+    <Item class="Script" referent="RBX6">
       <Properties>
         <string name="Name">lobby</string>
-        <ProtectedString name="Source">-- src/lobby.server.lua -- the glue. Everything a test can reach lives in the three modules beside this file;
--- what is here is only what needs a running Roblox server: Players, HttpService, RemoteEvents, a loop.
+        <ProtectedString name="Source">-- src/lobby.server.lua -- the glue: tickets minted by IDUNA, seats taken here, pairs read by the world.
 --
--- What this server does, in 460 terms:
---   1. a body joins  -&gt; it brings a connect ticket (an opaque string from IDUNA)
---   2. the ticket's SHAPE is checked locally (ticket460), the real verdict comes from IDUNA over HTTP
---   3. the body takes a seat in casual or ranked (queue460)
---   4. a tick pairs bodies by the widening window; a pair asks the world for a real match
+-- Everything a test can reach is in the modules beside this file. What is here needs a running server: Players,
+-- HttpService, RemoteEvents, a loop.
+--
+-- The 460 flow, end to end:
+--   1. a body joins and presents its IDUNA session TOKEN (device-flow result; the place never mints one)
+--   2. the server asks IDUNA for a connect ticket with that token as a Bearer, and reads IDUNA's answer through
+--      ticket460.from_mint -- which refuses a ticket whose JSON fields disagree with the bytes IDUNA signed
+--   3. the body takes a seat in casual or ranked (queue460), keyed by Roblox UserId
+--   4. a tick pairs bodies by the widening window; each side is handed ITS OWN ticket to present to the C server
 --   5. the published ladder is re-read and pushed to the screens (net460)
 --
--- HONEST LIMITS, named here because they are the ones that bite in deployment:
---   * Roblox cannot reach 127.0.0.1. SHANKPIT_NET_URL must be the world's PUBLIC netd endpoint (nginx in front
---     of tools/shankpit_netd.c), not the local daemon a dev box runs.
---   * A pairing hands out a MATCH to join; this file does not implement the FPS. Roblox hosts the lobby, the
---     queue and the board -- the arena stays the C server, which is the whole point of 460's tickets.
---   * IDUNA's ticket endpoint is called as an opaque POST: the response is read for `ok`/`pid`/`name`/`ticket`
---     and nothing else is assumed about its shape.
+-- HONEST LIMITS, named where they bite:
+--   * Roblox cannot reach 127.0.0.1 -- NetUrl/TicketUrl must be public endpoints.
+--   * The place does not mint tokens. A player authenticates with IDUNA out of band (device flow) and hands the
+--     resulting token to this server; there is no login screen here yet, which is the next real piece.
+--   * There is NO binding yet between a Roblox UserId and a SHANKPIT pid, so a player queues at the default
+--     rating (1000) and the board is read-only. Inventing a binding would put a made-up number on a screen.
+--   * The arena is the C server. A pairing hands out a ticket; it does not host an FPS.
 
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 
 local queue460 = require(script.Parent.queue460)
 local ticket460 = require(script.Parent.ticket460)
 local net460 = require(script.Parent.net460)
 
 local CONFIG = {
-    -- The world's published snapshot (dw_net -&gt; tools/shankpit_netd.c). Public host only; see the limit above.
     NetUrl = "https://okemily.com/api/v1/shankpit-net/deadweight",
-    -- IDUNA's connect-ticket mint. Empty means "no auth configured": the lobby then refuses everyone rather
-    -- than inventing identities, which is the only safe default for a place anyone can join.
-    TicketUrl = "",
+    -- IDUNA's connect-ticket mint (IDUNA/internal/http/handlers/shankpit_ticket.go): 72 hex chars, 5 min TTL,
+    -- presented once at PACKET_CONNECT and verified by the C server's own shared secret.
+    TicketUrl = "https://iam.okemily.com/api/v1/shankpit/ticket",
     BoardEvery = 5,
     QueueEvery = 1,
 }
 
 local queue = queue460.new()
 local snapshot = nil
-local seats = {}      -- [player] = { pid = n, name = s, mode = "casual"|"ranked", queued_at = ms }
+local seats = {}          -- [player] = { user_id, uuid, name, mode, ticket, expires_at, queued_at }
 
-local matchFound = Instance.new("RemoteEvent")
-matchFound.Name = "SHANKPIT460_MatchFound"
-matchFound.Parent = ReplicatedStorage
+local function event(name)
+    local e = Instance.new("RemoteEvent")
+    e.Name = name
+    e.Parent = ReplicatedStorage
+    return e
+end
 
-local boardEvent = Instance.new("RemoteEvent")
-boardEvent.Name = "SHANKPIT460_Board"
-boardEvent.Parent = ReplicatedStorage
-
-local queueEvent = Instance.new("RemoteEvent")
-queueEvent.Name = "SHANKPIT460_Queue"
-queueEvent.Parent = ReplicatedStorage
+local matchFound = event("SHANKPIT460_MatchFound")
+local boardEvent = event("SHANKPIT460_Board")
+local queueEvent = event("SHANKPIT460_Queue")
 
 local function nowMs()
     return math.floor(os.clock() * 1000)
 end
 
-local function httpJson(url, method, body)
+local function httpJson(url, method, body, headers)
     if url == "" then return nil, "not-configured" end
     local ok, res = pcall(function()
         return HttpService:RequestAsync({
             Url = url,
             Method = method or "GET",
-            Headers = { ["Content-Type"] = "application/json" },
+            Headers = headers or { ["Content-Type"] = "application/json" },
             Body = body,
         })
     end)
     if not ok then return nil, "http-failed" end
     if not res.Success then return nil, "http-" .. tostring(res.StatusCode) end
     local decoded
-    local decodedOk, err = pcall(function()
+    local decodedOk = pcall(function()
         decoded = HttpService:JSONDecode(res.Body)
     end)
     if not decodedOk then return nil, "bad-json" end
     return decoded, nil
 end
 
--- The real verdict. The place never validates a signature itself (see ticket460's own header).
-local function verifyTicketWithIduna(ticket, player)
-    if CONFIG.TicketUrl == "" then return { ok = false, reason = "not-configured" } end
-    local body = HttpService:JSONEncode({ ticket = ticket, place = "shankpit-roblox", user_id = player.UserId })
-    local decoded, err = httpJson(CONFIG.TicketUrl, "POST", body)
+-- Step 2. IDUNA mints; this server only reads what came back, and only through the module that knows the bytes.
+local function mintTicket(token)
+    if type(token) ~= "string" or token == "" then return { ok = false, reason = "no-token" } end
+    local decoded, err = httpJson(CONFIG.TicketUrl, "POST", "{}", {
+        ["Authorization"] = "Bearer " .. token,
+        ["Content-Type"] = "application/json",
+    })
     if not decoded then return { ok = false, reason = err or "no-answer" } end
-    return {
-        ok = decoded.ok == true,
-        pid = tonumber(decoded.pid),
-        name = tostring(decoded.name or player.Name),
-        ticket = decoded.ticket,
-    }
+    return ticket460.from_mint(decoded, os.time())
 end
 
 local function pushBoard()
@@ -455,96 +573,107 @@ local function refreshSnapshot()
     pushBoard()
 end
 
+local function dropSeat(player)
+    local seat = seats[player]
+    if not seat then return end
+    queue460.remove(queue, seat.mode, seat.user_id)
+    seats[player] = nil
+end
+
 Players.PlayerAdded:Connect(function(player)
     player:SetAttribute("SHANKPIT460_State", "needs-ticket")
-    player:SetAttribute("SHANKPIT460_Pid", 0)
+    player:SetAttribute("SHANKPIT460_Pid", "")
 end)
 
--- The client hands its ticket over once it has one; the server decides, and a refusal is a refusal.
 queueEvent.OnServerEvent:Connect(function(player, action, arg)
     if action == "join" then
         local mode = tostring(arg and arg.mode or "casual")
-        local ticket = arg and arg.ticket
-        local verdict, consulted = ticket460.accept(ticket, function(t)
-            return verifyTicketWithIduna(t, player)
-        end)
+        local verdict = mintTicket(arg and arg.token)
         if not verdict.ok then
             player:SetAttribute("SHANKPIT460_State", "refused:" .. tostring(verdict.reason))
             return
         end
-        local seat = {
-            pid = verdict.pid,
-            name = verdict.name ~= "" and verdict.name or player.Name,
-            mode = mode,
-            queued_at = nowMs(),
-        }
         local rating = nil
-        local rec = snapshot and net460.record_for(snapshot, seat.pid) or nil
-        if rec then rating = tonumber(rec.rating) end
+        -- A record lookup needs a Roblox&lt;-&gt;pid binding this layer does not have yet; the queue's own default
+        -- (1000, the ladder's rating_start) stands in rather than a made-up rating.
         local entry, why = queue460.enqueue(queue, mode, {
-            pid = seat.pid, rating = rating, name = seat.name, joined_ms = seat.queued_at,
+            pid = player.UserId,
+            rating = rating,
+            name = player.Name,
+            joined_ms = nowMs(),
         })
         if not entry then
             player:SetAttribute("SHANKPIT460_State", "queue:" .. tostring(why))
             return
         end
-        seats[player] = seat
+        seats[player] = {
+            user_id = player.UserId,
+            uuid = verdict.player_id,
+            name = player.Name,
+            mode = mode,
+            ticket = verdict.hex,
+            expires_at = verdict.expires_at,
+            queued_at = entry.joined_ms,
+        }
         player:SetAttribute("SHANKPIT460_State", "queued:" .. mode)
-        player:SetAttribute("SHANKPIT460_Pid", seat.pid)
+        player:SetAttribute("SHANKPIT460_Pid", verdict.player_id)
         queueEvent:FireClient(player, {
-            position = queue460.position(queue, mode, seat.pid),
+            position = queue460.position(queue, mode, player.UserId),
             mode = mode,
             rating = entry.rating,
-            verifierConsulted = consulted,
+            expires_at = verdict.expires_at,
         })
     elseif action == "leave" then
-        local seat = seats[player]
-        if seat then
-            queue460.remove(queue, seat.mode, seat.pid)
-            seats[player] = nil
-        end
+        dropSeat(player)
         player:SetAttribute("SHANKPIT460_State", "needs-ticket")
     end
 end)
 
-Players.PlayerRemoving:Connect(function(player)
-    local seat = seats[player]
-    if seat then
-        queue460.remove(queue, seat.mode, seat.pid)
-        seats[player] = nil
-    end
-end)
+Players.PlayerRemoving:Connect(dropSeat)
 
--- One loop for the queue, one for the board. Both run on the server; a client can neither seat itself nor
--- declare who won.
+-- One loop: the queue every second, the board every five. A client can neither seat itself nor declare a result.
 task.spawn(function()
     local lastQueue, lastBoard = 0, 0
-    while RunService:IsRunning() or true do
+    while true do
         local now = nowMs()
         if now - lastQueue &gt;= CONFIG.QueueEvery * 1000 then
             lastQueue = now
+            local nowS = os.time()
             for _, mode in ipairs({ "casual", "ranked" }) do
                 local tick = queue460.tick(queue, mode, now)
                 for _, p in ipairs(tick.pairs) do
                     for player, seat in pairs(seats) do
-                        if seat.pid == p.first.pid or seat.pid == p.second.pid then
-                            seats[player] = nil
+                        if seat.user_id == p.first.pid or seat.user_id == p.second.pid then
+                            local iAmFirst = (seat.user_id == p.first.pid)
+                            -- A ticket has a 5-minute life and was minted when they queued, so tell each side
+                            -- what is actually left rather than what it was at mint time.
+                            local remaining = ticket460.usable(seat.ticket, nowS)
                             matchFound:FireClient(player, {
                                 mode = mode,
-                                pid = seat.pid,
-                                opponent = (seat.pid == p.first.pid) and p.second.name or p.first.name,
-                                opponent_rating = (seat.pid == p.first.pid) and p.second.rating or p.first.rating,
+                                uuid = seat.uuid,
+                                opponent = iAmFirst and p.second.name or p.first.name,
+                                opponent_rating = iAmFirst and p.second.rating or p.first.rating,
                                 gap = p.gap,
+                                ticket = seat.ticket,
+                                expires_at = seat.expires_at,
+                                ticket_ok = remaining.ok,
+                                ticket_reason = remaining.ok and nil or remaining.reason,
                             })
                             player:SetAttribute("SHANKPIT460_State", "matched:" .. mode)
+                            seats[player] = nil
                         end
                     end
                 end
                 for _, e in ipairs(tick.expired) do
-                    player:SetAttribute("SHANKPIT460_State", "expired")
+                    for player, seat in pairs(seats) do
+                        if seat.user_id == e.pid then
+                            player:SetAttribute("SHANKPIT460_State", "expired")
+                            seats[player] = nil
+                        end
+                    end
                 end
                 for _, e in ipairs(tick.fills) do
-                    -- casual only, and the body STAYS queued: a human who arrives first still wins.
+                    -- casual only; the body STAYS queued, because a human who arrives first still wins.
                     queueEvent:FireAllClients({ fillable = { pid = e.pid, name = e.name, mode = mode } })
                 end
             end
@@ -560,6 +689,191 @@ end)
 refreshSnapshot()
 </ProtectedString>
         <bool name="Disabled">true</bool>
+      </Properties>
+    </Item>
+    <Item class="LocalScript" referent="RBX7">
+      <Properties>
+        <string name="Name">lobby_client</string>
+        <ProtectedString name="Source">-- src/lobby.client.lua -- what a body actually sees: the queue, the board, and a match to join.
+--
+-- LocalScript. In Studio it belongs in STARTERPLAYERSCRIPTS (not beside the server Script), and the README says
+-- so, because putting it in the same folder is the mistake that makes a lobby look finished with nothing on
+-- screen.
+--
+-- It draws and it asks. It never decides: no seat, no result and no board row is computed here. Every number on
+-- this screen arrived from the server, which got it from the world (`SHANKPIT460_Board`) or from the queue
+-- (`SHANKPIT460_Queue`).
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local player = Players.LocalPlayer
+local queueEvent = ReplicatedStorage:WaitForChild("SHANKPIT460_Queue")
+local boardEvent = ReplicatedStorage:WaitForChild("SHANKPIT460_Board")
+local matchEvent = ReplicatedStorage:WaitForChild("SHANKPIT460_MatchFound")
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "SHANKPIT460"
+gui.ResetOnSpawn = false
+gui.Parent = player:WaitForChild("PlayerGui")
+
+local panel = Instance.new("Frame")
+panel.Size = UDim2.new(0, 320, 0, 372)
+panel.Position = UDim2.new(0, 16, 0, 16)
+panel.BackgroundColor3 = Color3.fromRGB(18, 18, 20)
+panel.BorderSizePixel = 0
+panel.Parent = gui
+
+local function label(text, y, height, size, color)
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(1, -16, 0, height)
+    l.Position = UDim2.new(0, 8, 0, y)
+    l.BackgroundTransparency = 1
+    l.Font = Enum.Font.Code
+    l.TextSize = size or 14
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.TextColor3 = color or Color3.fromRGB(232, 232, 232)
+    l.Text = text
+    l.Parent = panel
+    return l
+end
+
+local function button(text, y, x, width)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0, width, 0, 26)
+    b.Position = UDim2.new(0, x, 0, y)
+    b.BackgroundColor3 = Color3.fromRGB(38, 38, 44)
+    b.BorderSizePixel = 0
+    b.Font = Enum.Font.Code
+    b.TextSize = 13
+    b.TextColor3 = Color3.fromRGB(240, 240, 240)
+    b.Text = text
+    b.Parent = panel
+    return b
+end
+
+local title = label("SHANKPIT // 460", 8, 20, 16)
+title.TextColor3 = Color3.fromRGB(120, 220, 190)
+
+local state = label("state: connecting", 32, 18, 12, Color3.fromRGB(160, 160, 160))
+local boardHead = label("LADDER", 58, 16, 12, Color3.fromRGB(160, 160, 160))
+local board = Instance.new("TextLabel")
+board.Size = UDim2.new(1, -16, 0, 132)
+board.Position = UDim2.new(0, 8, 0, 76)
+board.BackgroundTransparency = 1
+board.Font = Enum.Font.Code
+board.TextSize = 12
+board.TextXAlignment = Enum.TextXAlignment.Left
+board.TextYAlignment = Enum.TextYAlignment.Top
+board.TextColor3 = Color3.fromRGB(220, 220, 220)
+board.Text = ""
+board.Parent = panel
+
+local selfLine = label("you: not queued", 214, 18, 12, Color3.fromRGB(200, 200, 140))
+local casual = button("CASUAL", 236, 8, 146)
+local ranked = button("RANKED", 236, 162, 146)
+local leave = button("LEAVE QUEUE", 266, 8, 300)
+
+local matchFrame = Instance.new("Frame")
+matchFrame.Size = UDim2.new(1, -16, 0, 64)
+matchFrame.Position = UDim2.new(0, 8, 0, 298)
+matchFrame.BackgroundColor3 = Color3.fromRGB(28, 46, 40)
+matchFrame.BorderSizePixel = 0
+matchFrame.Visible = false
+matchFrame.Parent = panel
+
+local matchText = Instance.new("TextLabel")
+matchText.Size = UDim2.new(1, -12, 1, -8)
+matchText.Position = UDim2.new(0, 6, 0, 4)
+matchText.BackgroundTransparency = 1
+matchText.Font = Enum.Font.Code
+matchText.TextSize = 12
+matchText.TextXAlignment = Enum.TextXAlignment.Left
+matchText.TextYAlignment = Enum.TextYAlignment.Top
+matchText.TextColor3 = Color3.fromRGB(210, 245, 235)
+matchText.Text = ""
+matchText.Parent = matchFrame
+
+-- The ticket is what the C server will verify, so it is shown rather than hidden: a player who cannot see it
+-- cannot tell a lobby bug from a server one.
+local match = nil
+local matchExpiresAt = 0
+
+local function requestJoin(mode)
+    queueEvent:FireServer("join", { mode = mode, token = _G.SHANKPIT460_IDUNA_TOKEN })
+end
+
+casual.MouseButton1Click:Connect(function() requestJoin("casual") end)
+ranked.MouseButton1Click:Connect(function() requestJoin("ranked") end)
+leave.MouseButton1Click:Connect(function()
+    match = nil
+    matchFrame.Visible = false
+    queueEvent:FireServer("leave")
+end)
+
+local function renderBoard(payload)
+    if type(payload) ~= "table" then return end
+    local lines = {}
+    local pop = payload.population or {}
+    lines[#lines + 1] = string.format("%d bodies, meta %s%s", pop.count or 0, tostring(pop.meta_kind or "none"),
+        payload.stale and "  (STALE)" or "")
+    local rows = payload.rows or {}
+    if #rows == 0 then
+        lines[#lines + 1] = "no bodies yet"
+    end
+    for i = 1, math.min(#rows, 8) do
+        local r = rows[i]
+        local rating = r.rating and tostring(r.rating) or "?"
+        lines[#lines + 1] = string.format("%d. %-12s %5s  %d/%d", r.standing, tostring(r.name), rating,
+            r.wins, r.games)
+    end
+    if payload.supports and payload.supports.stage then
+        lines[#lines + 1] = "stage: published"
+    end
+    board.Text = table.concat(lines, "\n")
+end
+
+boardEvent.OnClientEvent:Connect(renderBoard)
+
+queueEvent.OnClientEvent:Connect(function(payload)
+    if type(payload) ~= "table" then return end
+    if payload.fillable then
+        state.Text = string.format("state: a citizen may fill %s (still queued)", tostring(payload.fillable.mode))
+    elseif payload.position then
+        state.Text = string.format("state: queued %s at #%d (rating %s)", tostring(payload.mode),
+            payload.position, tostring(payload.rating))
+    end
+end)
+
+matchEvent.OnClientEvent:Connect(function(payload)
+    if type(payload) ~= "table" then return end
+    match = payload
+    matchExpiresAt = tonumber(payload.expires_at) or 0
+    matchFrame.Visible = true
+end)
+
+player:GetAttributeChangedSignal("SHANKPIT460_State"):Connect(function()
+    state.Text = "state: " .. tostring(player:GetAttribute("SHANKPIT460_State"))
+end)
+
+task.spawn(function()
+    while true do
+        if match then
+            local left = matchExpiresAt - os.time()
+            if left &lt; 0 then left = 0 end
+            local ticket = tostring(match.ticket or "")
+            matchText.Text = string.format(
+                "MATCH %s vs %s (gap %d)\nticket %s... %ds left\nopen SHANKPIT and paste the ticket",
+                tostring(match.mode), tostring(match.opponent), tonumber(match.gap) or 0,
+                string.sub(ticket, 1, 12), left)
+            if left == 0 then
+                matchFrame.BackgroundColor3 = Color3.fromRGB(58, 34, 34)
+            end
+        end
+        task.wait(1)
+    end
+end)
+</ProtectedString>
       </Properties>
     </Item>
   </Item>
