@@ -593,7 +593,11 @@ test-zombie-brain: | $(BIN_DIR)
 .PHONY: test-roblox roblox-model
 test-roblox:
 	@lua_bin=$$(command -v lua || command -v luajit); \
+	luac_bin=$$(command -v luac || true); \
 	if [ -z "$$lua_bin" ]; then echo "SKIP test-roblox: no lua/luajit interpreter on this host"; else \
+	  if [ -n "$$luac_bin" ]; then "$$luac_bin" -p roblox/src/*.lua roblox/tests/*.lua || exit 1; \
+	    echo "syntax: every roblox/src + roblox/tests file parses"; \
+	  else echo "note: no luac on this host -- syntax pass skipped"; fi; \
 	  "$$lua_bin" roblox/tests/net460_test.lua && \
 	  "$$lua_bin" roblox/tests/queue460_test.lua && \
 	  "$$lua_bin" roblox/tests/ticket460_test.lua && \
