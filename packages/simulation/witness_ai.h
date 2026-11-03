@@ -139,6 +139,7 @@
 #include "witness_sim.h" /* WITNESS_SIM_MAX_NPCS */
 #include "zombie_taxonomy.h" /* ZombieProfile -- classes/levels/DNA (2026-11-01 population pass) */
 #include "citizen_life.h"    /* CitizenLife -- citizens' own personas, paths and secrets */
+#include "citizen_avatar.h"   /* CitizenAvatar -- the body citizen_avatar_build derives from that persona */
 
 #define WITNESS_AI_MAX_CITIZENS WITNESS_SIM_MAX_NPCS /* bounded by WitnessSim's own npc array */
 #define WITNESS_AI_MAX_ZOMBIES 16
@@ -565,5 +566,12 @@ float witness_ai_zombie_aggression(int player_id);
 #define WITNESS_AI_MEN_FIGHT_RADIUS 14.0f
 #define WITNESS_AI_MEN_MELEE_DAMAGE 22
 int witness_ai_zombie_has_prey(int player_id);
+
+
+/* A citizen's own body and wardrobe (citizen_avatar.h), built from the persona citizen_life_roll
+ * just rolled -- so the citizen LOOKS like the way it plays, and can be rebuilt identically from
+ * the same seed. Returns NULL if player_id doesn't resolve to an active citizen spawned by this
+ * module. */
+const CitizenAvatar *witness_ai_citizen_avatar(int player_id);
 
 #endif

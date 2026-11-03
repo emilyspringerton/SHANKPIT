@@ -35,6 +35,7 @@ typedef struct {
     NpcBrain brain;
     unsigned int last_melee_ms; /* The Men only: cooldown for fighting zombies off */
     CitizenLife life; /* this citizen's own persona/path/spy secret (citizen_life.h) */
+    CitizenAvatar avatar; /* its body and wardrobe, derived from that persona (citizen_avatar.h) */
     int men_last_target_pid; /* The Men only (brain.archetype == NPC_ARCHETYPE_THE_MEN): the
         player_id this Man was hunting as of last tick, or -1. Lets the dispatch loop fire
         REFLUX_ACTION_MEN_DISPATCHED once per real new-target edge instead of every tick a Man
@@ -367,6 +368,11 @@ static int spawn_human(ServerState *s, NpcArchetype archetype, int zone, int bas
        so it is stable for the session: the same body is the same person, spy handle included. */
     citizen_life_roll(&c->life, (uint32_t)(slot + 1) * 2654435761u ^ (uint32_t)now_ms,
                       slot, arrogance, base_vigilance, x, z);
+    /* ...and a body to wear it in (citizen_avatar.h). A FUNCTION of that persona -- its own stream,
+       traits, path and slot -- never a second roll, so the citizen looks the same every time it is
+       rebuilt and its wardrobe agrees with how it plays. */
+    citizen_avatar_build(&c->avatar, c->life.rng, slot, c->life.path, c->life.industry,
+                         c->life.commerce, c->life.ambition, c->life.bravery, c->life.sociability);
     return slot;
 }
 
@@ -1292,6 +1298,14 @@ void witness_ai_zombie_profile(int player_id, ZombieProfile *out) {
         zombie_taxonomy_profile(out, g_zombies[i].cls, g_zombies[i].level);
         return;
     }
+}
+
+const CitizenAvatar *witness_ai_citizen_avatar(int player_id) {
+    for (int i = 0; i < WITNESS_AI_MAX_CITIZENS; i++) {
+        if (!g_citizens[i].active || g_citizens[i].player_id != player_id) continue;
+        return &g_citizens[i].avatar;
+    }
+    return NULL;
 }
 
 const CitizenLife *witness_ai_citizen_life(int player_id) {
