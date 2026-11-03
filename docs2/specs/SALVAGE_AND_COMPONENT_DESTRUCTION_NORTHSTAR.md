@@ -174,8 +174,35 @@ boundary; and the same car/tick/part rolls identically while still spreading acr
 Verified: `make check-vehicle-salvage-rules` (regen is byte-identical), `make test-vehicle-salvage`
 clean at `-Wall -Wextra -Werror` and again under ASan+UBSan.
 
-**Not done, named:** no component state on `BuggyState` yet, no shard spawn, no loot, no `origin_tag`,
-no wire. Those are S2-S5 and each needs a host decision this slice does not make.
+### S2 — the parts own the car (2026-11-03, built)
+
+**The split runs on the live car.** `vehicle_salvage_sync(v, hull, &fresh)` is the reconciliation the
+authority calls once per tick: the hull is not this layer's private property — a shot, a repair and
+`vehicle_burn.h`'s 0.25/tick drain all move it — so the real hull goes in and the parts are made to
+agree in **both directions**. Down is the proportional split. Up refills only what is still attached,
+so a repaired wreck is capped at the hull it can still hold and cannot grow a second engine. It returns
+the hull the car can represent, and `buggy_tick_all` writes that back: conservation is an invariant on
+every tick, not only while the number falls.
+
+**A proportional split does not single out a part**, and the test now says so: a 240-point hit on a full
+buggy wears all four parts to 18/24/12/6 and detaches none. A part comes off when the hit is more than
+the car can absorb — which is what a wreck is.
+
+**Effects folded into `PhysBuggyRules`.** `physics.h`'s `phys_set_buggy_salvage_permille` sits beside
+`g_phys_buggy_rules`, not inside it (the rules are one mod for every car; a missing engine is per-car
+state), and multiplies top/reverse speed, drive force, turn rate, steering authority and lateral grip.
+Exact passthrough at 1000 keeps an intact car and every existing physics test bit-identical.
+
+**Shards via `brick_bodies`.** `vehicle_salvage_shards.h` turns one detached part into one GOLDEN BAND
+body with the component's `BF_KIND_*` material, a nominal mass and a seeded tumble. `local_game.h` owns
+the hook, so the rules layer still never touches an entity: the lobby binds it to `g_brick_bodies`, the
+dedicated server leaves it NULL (it discards broken-brick bodies on purpose). A car first seen already
+damaged adopts its parts without throwing shards.
+
+**Not done, named:** component state is **not on the wire**, so a networked client derives parts from
+the replicated hull and can show a part off a tick before the server agrees (S5); `apps/lobby` cannot be
+compiled on this box, so its three binding lines are reviewed, not compiled; no loot entity yet, no
+`origin_tag`, no garage. Those are S3-S5.
 
 ---
 

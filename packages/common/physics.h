@@ -3622,46 +3622,86 @@ typedef struct {
 static const PhysBuggyRules *g_phys_buggy_rules = NULL;
 static inline void phys_set_buggy_rules(const PhysBuggyRules *r) { g_phys_buggy_rules = r; }
 
+/* ---- salvage multipliers --------------------------------------------------------------------------
+   What is LEFT of a car (packages/simulation/vehicle_salvage.h's stack) multiplies into whatever the
+   handling rules say, so a car with no engine is a smaller drive force and not a second physics path.
+   Kept BESIDE g_phys_buggy_rules rather than inside it because the rules are one mod for every car
+   while this is per-car state the host sets around each simulate call -- a missing engine does not
+   make a different mod. Channel order matches SALVAGE_CH_*: 0 drive, 1 top speed, 2 turn, 3 grip.
+   1000 = intact, and a process that never sets it is bit-identical to before (see the scale below). */
+#define PH_BUGGY_SALVAGE_CHANNELS 4
+static int g_phys_buggy_salvage[PH_BUGGY_SALVAGE_CHANNELS] = { 1000, 1000, 1000, 1000 };
+static inline void phys_set_buggy_salvage_permille(int drive, int top, int turn, int grip) {
+    const int in[PH_BUGGY_SALVAGE_CHANNELS] = { drive, top, turn, grip };
+    for (int i = 0; i < PH_BUGGY_SALVAGE_CHANNELS; i++)
+        g_phys_buggy_salvage[i] = in[i] < 0 ? 0 : (in[i] > 1000 ? 1000 : in[i]);
+}
+static inline int phys_buggy_salvage_permille(int channel) {
+    if (channel < 0 || channel >= PH_BUGGY_SALVAGE_CHANNELS) return 1000;
+    return g_phys_buggy_salvage[channel];
+}
+/* Exact passthrough at 1000, so an intact car -- and every test that never touches this -- is unchanged. */
+static inline float phys_buggy_salvage_scale(int channel, float v) {
+    int p = phys_buggy_salvage_permille(channel);
+    return p == 1000 ? v : v * ((float)p * 0.001f);
+}
+
 static inline int buggy_norm_permille(float n) {
     if (n < 0.0f) n = 0.0f;
     if (n > 1.0f) n = 1.0f;
     return (int)(n * 1000.0f + 0.5f);
 }
 static inline float buggy_top_speed(void) {
+    float out = BUGGY_TOP_SPEED;
     if (g_phys_buggy_rules && g_phys_buggy_rules->top_speed_milli) {
         float v = (float)g_phys_buggy_rules->top_speed_milli() * 0.001f;
-        if (v > 0.1f) return v;
+        if (v > 0.1f) out = v;
     }
-    return BUGGY_TOP_SPEED;
+    return phys_buggy_salvage_scale(1, out);
 }
 static inline float buggy_reverse_top_speed(void) {
+    float out = BUGGY_REVERSE_TOP_SPEED;
     if (g_phys_buggy_rules && g_phys_buggy_rules->reverse_top_speed_milli) {
         float v = (float)g_phys_buggy_rules->reverse_top_speed_milli() * 0.001f;
-        if (v > 0.05f) return v;
+        if (v > 0.05f) out = v;
     }
-    return BUGGY_REVERSE_TOP_SPEED;
+    /* reverse is the same engine: losing it costs reverse as much as forward */
+    return phys_buggy_salvage_scale(1, out);
 }
 static inline float buggy_drive_force(float speed_norm) {
+    float out;
     if (g_phys_buggy_rules && g_phys_buggy_rules->drive_force_permille) {
         float v = (float)g_phys_buggy_rules->drive_force_permille(buggy_norm_permille(speed_norm)) * 0.001f;
-        return v < 0.0f ? 0.0f : v;
+        out = v < 0.0f ? 0.0f : v;
+    } else {
+        out = buggy_drive_force_for_speed(speed_norm);
     }
-    return buggy_drive_force_for_speed(speed_norm);
+    return phys_buggy_salvage_scale(0, out);
 }
 static inline float buggy_turn_rate(float abs_norm) {
+    float out;
     if (g_phys_buggy_rules && g_phys_buggy_rules->turn_rate_milli)
-        return (float)g_phys_buggy_rules->turn_rate_milli(buggy_norm_permille(abs_norm)) * 0.001f;
-    return BUGGY_TURN_RATE_LOW + (BUGGY_TURN_RATE_HIGH - BUGGY_TURN_RATE_LOW) * abs_norm;
+        out = (float)g_phys_buggy_rules->turn_rate_milli(buggy_norm_permille(abs_norm)) * 0.001f;
+    else
+        out = BUGGY_TURN_RATE_LOW + (BUGGY_TURN_RATE_HIGH - BUGGY_TURN_RATE_LOW) * abs_norm;
+    return phys_buggy_salvage_scale(2, out);
 }
 static inline float buggy_steer_authority(float abs_norm) {
+    float out;
     if (g_phys_buggy_rules && g_phys_buggy_rules->steer_authority_permille)
-        return (float)g_phys_buggy_rules->steer_authority_permille(buggy_norm_permille(abs_norm)) * 0.001f;
-    return 0.38f + 0.62f * abs_norm;
+        out = (float)g_phys_buggy_rules->steer_authority_permille(buggy_norm_permille(abs_norm)) * 0.001f;
+    else
+        out = 0.38f + 0.62f * abs_norm;
+    /* steering authority is the turn channel: wheels off, the car answers the stick less */
+    return phys_buggy_salvage_scale(2, out);
 }
 static inline float buggy_lateral_grip(float abs_norm) {
+    float out;
     if (g_phys_buggy_rules && g_phys_buggy_rules->lateral_grip_permille)
-        return (float)g_phys_buggy_rules->lateral_grip_permille(buggy_norm_permille(abs_norm)) * 0.001f;
-    return BUGGY_LATERAL_GRIP * (0.62f + 0.68f * abs_norm);
+        out = (float)g_phys_buggy_rules->lateral_grip_permille(buggy_norm_permille(abs_norm)) * 0.001f;
+    else
+        out = BUGGY_LATERAL_GRIP * (0.62f + 0.68f * abs_norm);
+    return phys_buggy_salvage_scale(3, out);
 }
 
 static inline void buggy_sample_wheel_heights(const BuggyState *b, float heights[4]) {

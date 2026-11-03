@@ -37,6 +37,7 @@
 #include <stddef.h>
 #include "../../../packages/simulation/shield_packs.h"
 #include "../../../packages/simulation/buggy_rules_host.h"
+#include "../../../packages/simulation/vehicle_salvage_rules_host.h" /* PARENA car components */
 #include "../../../packages/simulation/heli_rules_host.h"
 #include "../../../packages/simulation/rocket_car_rules_host.h"   /* the rocket car's PARENA model */
 #include "../../../packages/simulation/kit_call.h"   /* PACKET_KIT_CALL: the kit's vehicle gadgets */
@@ -1822,6 +1823,7 @@ void server_broadcast_brick_state(void) {
 
 int main(int argc, char *argv[]) {
     buggy_rules_install(); /* PARENA buggy handling (#468) */
+    vehicle_salvage_rules_install(); /* PARENA car components: the parts own the split, hull mirrors them */
     eu_rules_install(); /* PARENA EMPIRE unit archetypes, the human baseline, order priorities */
     heli_rules_install(); /* PARENA helicopter flight model (#542) */
     rocket_car_rules_install(); /* PARENA rocket car (Bedrock Racers port) */

@@ -18,15 +18,16 @@ check-vehicle-salvage-rules:
 	PARENA_DIR=$(PARENA_DIR) scripts/gen_vehicle_salvage_rules.sh $(SALVAGE_REGEN)
 	cmp $(SALVAGE_REGEN) packages/simulation/vehicle_salvage_rules.c
 
+# S2 links the brick-body path too: a sheared part is a real body on grb (vehicle_salvage_shards.h).
+SALVAGE_TEST_SRC := packages/simulation/vehicle_salvage_test.c packages/simulation/vehicle_salvage_rules.c \
+	packages/simulation/vehicle_burn_rules.c packages/simulation/brick_bodies.c packages/goldenband/grb.c
+SALVAGE_TEST_FLAGS := -Ipackages/simulation -Ipackages/goldenband -DSHANKPIT_VEHICLE_SALVAGE_PARENA
+
 test-vehicle-salvage: | $(BIN_DIR)
-	$(CC) -O1 -Wall -Wextra -Werror -Ipackages/simulation -DSHANKPIT_VEHICLE_SALVAGE_PARENA \
-		packages/simulation/vehicle_salvage_test.c packages/simulation/vehicle_salvage_rules.c \
-		packages/simulation/vehicle_burn_rules.c \
+	$(CC) -O1 -Wall -Wextra -Werror $(SALVAGE_TEST_FLAGS) $(SALVAGE_TEST_SRC) \
 		-o $(BIN_DIR)/vehicle_salvage_test $(LIBS_M)
 	./$(BIN_DIR)/vehicle_salvage_test
 	$(CC) -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra -Werror \
-		-Ipackages/simulation -DSHANKPIT_VEHICLE_SALVAGE_PARENA \
-		packages/simulation/vehicle_salvage_test.c packages/simulation/vehicle_salvage_rules.c \
-		packages/simulation/vehicle_burn_rules.c \
+		$(SALVAGE_TEST_FLAGS) $(SALVAGE_TEST_SRC) \
 		-o $(BIN_DIR)/vehicle_salvage_test_asan $(LIBS_M)
 	./$(BIN_DIR)/vehicle_salvage_test_asan

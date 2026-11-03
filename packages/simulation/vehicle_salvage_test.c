@@ -15,6 +15,8 @@
 #include <stdio.h>
 
 #include "vehicle_salvage.h"
+#include "vehicle_salvage_shards.h"   /* S2: a part off the car is a body in the brick world */
+#include <math.h>
 #ifdef SHANKPIT_VEHICLE_SALVAGE_PARENA
 #include "vehicle_salvage_rules_host.h"
 #include "vehicle_burn_rules_host.h"   /* vehicle_hull -- the car this salvage table must agree with */
@@ -208,6 +210,93 @@ int main(void) {
         CHECK(vehicle_salvage_material(SALVAGE_COMP_LOGIC) == 3, "logic material");
         CHECK(vehicle_salvage_material(SALVAGE_COMP_WHEELS) == 2, "wheels material");
         CHECK(vehicle_salvage_material(SALVAGE_COMP_CHASSIS) == 1, "chassis material");
+    }
+
+    /* ---- 6. the parts follow the authority's hull (sync, BOTH directions) ------------------------ */
+    {   SalvageVehicle v;
+        unsigned int fresh = 123;
+        vehicle_salvage_reset(&v, 0, 20);
+        CHECK(vehicle_salvage_sync(&v, 300, &fresh) == 300 && fresh == 0,
+              "an intact car at 300 moved something");
+        int h = vehicle_salvage_sync(&v, 270, &fresh);
+        CHECK(h == 270, "hull 270 became %d", h);
+        CHECK(vehicle_salvage_total(&v) == 270, "parts %d after sync", vehicle_salvage_total(&v));
+        CHECK(fresh == 0, "nothing should be off at 270 (mask %u)", fresh);
+        /* the same split apply() makes for 30: 9/12/6/3 by weight */
+        CHECK(v.hp[0] == 81 && v.hp[1] == 108 && v.hp[2] == 54 && v.hp[3] == 27,
+              "sync split %d/%d/%d/%d", v.hp[0], v.hp[1], v.hp[2], v.hp[3]);
+        /* a repair refills every attached part, exactly, back to the wall */
+        h = vehicle_salvage_sync(&v, 300, &fresh);
+        CHECK(h == 300, "repair to 300 gave %d", h);
+        CHECK(v.hp[0] == 90 && v.hp[1] == 120 && v.hp[2] == 60 && v.hp[3] == 30,
+              "repair left %d/%d/%d/%d", v.hp[0], v.hp[1], v.hp[2], v.hp[3]);
+        CHECK(fresh == 0, "a repair detaches nothing");
+    }
+    {   /* a repaired WRECK does not grow its parts back: the lost part stays lost, and the hull the car
+           can hold is only what is still attached -- otherwise a weld would duplicate a component */
+        SalvageVehicle v;
+        unsigned int fresh = 0;
+        vehicle_salvage_reset(&v, 0, 21);
+        v.alive_mask &= ~(1u << SALVAGE_COMP_LOGIC);
+        v.detached_mask |= (1u << SALVAGE_COMP_LOGIC);
+        v.hp[SALVAGE_COMP_LOGIC] = 0;
+        v.hp[0] = 40; v.hp[1] = 50; v.hp[2] = 20;          /* 110 live, logic board gone */
+        int cap = 90 + 120 + 60;
+        int h = vehicle_salvage_sync(&v, 300, &fresh);
+        CHECK(h == cap, "a repaired wreck held %d, want its attached cap %d", h, cap);
+        CHECK(vehicle_salvage_total(&v) == h, "parts %d != hull %d after repair",
+              vehicle_salvage_total(&v), h);
+        CHECK(v.hp[SALVAGE_COMP_LOGIC] == 0, "a detached part came back: %d", v.hp[SALVAGE_COMP_LOGIC]);
+        CHECK((v.alive_mask & (1u << SALVAGE_COMP_LOGIC)) == 0, "detached logic rejoined the car");
+        CHECK(v.hp[0] == 90 && v.hp[1] == 120 && v.hp[2] == 60, "repair did not fill the attached parts");
+    }
+    {   /* The split is PROPORTIONAL, so wearing the whole car down does not single a part out: the hull
+           falls and the parts wear together, each still attached. A part comes off when the damage is
+           more than the car can absorb -- which is exactly what a destroyed car is. */
+        SalvageVehicle v;
+        unsigned int fresh = 99;
+        vehicle_salvage_reset(&v, 0, 22);
+        int h = vehicle_salvage_sync(&v, 60, &fresh);
+        CHECK(h == 60, "sync to 60 gave %d", h);
+        CHECK(fresh == 0, "a proportional split singled out a part (mask %u)", fresh);
+        CHECK(v.hp[0] == 18 && v.hp[1] == 24 && v.hp[2] == 12 && v.hp[3] == 6,
+              "sync to 60 left %d/%d/%d/%d", v.hp[0], v.hp[1], v.hp[2], v.hp[3]);
+        /* a wreck: the hull reaches zero and every part comes off -- once */
+        h = vehicle_salvage_sync(&v, 0, &fresh);
+        CHECK(h == 0 && vehicle_salvage_total(&v) == 0, "wreck left %d hull / %d in parts",
+              h, vehicle_salvage_total(&v));
+        CHECK(fresh == 0xFu, "a wreck parted %u (want 0xF)", fresh);
+        CHECK(v.detached_mask == 0xFu, "detached_mask %u", v.detached_mask);
+        unsigned int again = 99;
+        vehicle_salvage_sync(&v, 0, &again);
+        CHECK(again == 0, "a second sync re-reported parts off (mask %u)", again);
+    }
+
+    /* ---- 7. a sheared part becomes a body in the brick world ----------------------------------- */
+    {   BrickBodies bb;
+        bb_init(&bb, NULL, NULL);
+        vehicle_salvage_shards_bind(&bb);
+        CHECK(bb_active_count(&bb) == 0, "fresh world has bodies");
+        vehicle_salvage_shards_hook(SALVAGE_COMP_CHASSIS, vehicle_salvage_material(SALVAGE_COMP_CHASSIS),
+                                    10.0f, 5.0f, 20.0f, 1.0f, 0.0f, -1.0f, 4242u);
+        CHECK(bb_active_count(&bb) == 1, "one part off spawned %d bodies", bb_active_count(&bb));
+        CHECK(bb.slot[0].kind == 1 /* BF_KIND_CONCRETE */, "chassis shard material %d", bb.slot[0].kind);
+        CHECK(bb_slot_mass(&bb, 0) > 300.0 && bb_slot_mass(&bb, 0) < 340.0,
+              "chassis shard mass %.1f", bb_slot_mass(&bb, 0));
+        CHECK(fabs(bb.world.bodies[0].pos[0] - 10.0) < 0.6 && fabs(bb.world.bodies[0].pos[2] - 20.0) < 0.6,
+              "shard spawned at %.2f/%.2f", bb.world.bodies[0].pos[0], bb.world.bodies[0].pos[2]);
+        /* the logic board is the glass one, and a lighter lump */
+        vehicle_salvage_shards_hook(SALVAGE_COMP_LOGIC, vehicle_salvage_material(SALVAGE_COMP_LOGIC),
+                                    0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 7u);
+        CHECK(bb_active_count(&bb) == 2, "two parts off made %d bodies", bb_active_count(&bb));
+        CHECK(bb.slot[1].kind == 3 /* BF_KIND_GLASS */, "logic shard material %d", bb.slot[1].kind);
+        CHECK(bb_slot_mass(&bb, 1) < 10.0, "logic shard mass %.1f", bb_slot_mass(&bb, 1));
+        bb_clear(&bb);
+        /* an unbound host (the dedicated server) spawns nothing and cannot crash */
+        vehicle_salvage_shards_bind(NULL);
+        vehicle_salvage_shards_hook(SALVAGE_COMP_ENGINE, 1, 0, 0, 0, 0, 0, 0, 1u);
+        CHECK(bb_active_count(&bb) == 0, "an unbound world spawned a body");
+        bb_clear(&bb);
     }
 
     if (fails) { printf("vehicle_salvage: %d FAILED\n", fails); return 1; }

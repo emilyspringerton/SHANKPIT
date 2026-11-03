@@ -30,6 +30,26 @@ int main(void) {
     static Box curb[3];
     curb[1] = (Box){5000, 0.2f, -60, 40, 0.4f, 4};    /* low curb: drivable */
 
+    /* ---- salvage fold: a car with no engine is the SAME handling mod scaled down, not a second
+       physics path. vehicle_salvage.h's stack -> phys_set_buggy_salvage_permille -> these getters. */
+    {
+        phys_set_buggy_salvage_permille(1000, 1000, 1000, 1000);
+        float drive_ok = buggy_drive_force(0.0f), top_ok = buggy_top_speed();
+        float turn_ok = buggy_turn_rate(0.0f), grip_ok = buggy_lateral_grip(0.0f);
+        float rev_ok = buggy_reverse_top_speed();
+        phys_set_buggy_salvage_permille(300, 600, 1000, 1000);          /* engine gone */
+        CHECK(fabsf(buggy_drive_force(0.0f) - drive_ok * 0.300f) < 1e-4f);
+        CHECK(fabsf(buggy_top_speed() - top_ok * 0.600f) < 1e-4f);
+        CHECK(fabsf(buggy_reverse_top_speed() - rev_ok * 0.600f) < 1e-4f);
+        CHECK(fabsf(buggy_turn_rate(0.0f) - turn_ok) < 1e-4f);         /* the engine is not the steering */
+        CHECK(fabsf(buggy_lateral_grip(0.0f) - grip_ok) < 1e-4f);
+        phys_set_buggy_salvage_permille(300, 600, 500, 400);            /* and the wheels */
+        CHECK(fabsf(buggy_lateral_grip(0.0f) - grip_ok * 0.400f) < 1e-4f);
+        CHECK(fabsf(buggy_steer_authority(0.0f) - 0.38f * 0.500f) < 1e-4f);
+        phys_set_buggy_salvage_permille(1000, 1000, 1000, 1000);
+        CHECK(buggy_drive_force(0.0f) == drive_ok && buggy_top_speed() == top_ok);   /* exact passthrough */
+    }
+
     float z_open = drive(open_, 1, 400, NULL);
     CHECK(z_open < -150.0f);                           /* control: open ground really is fast */
 

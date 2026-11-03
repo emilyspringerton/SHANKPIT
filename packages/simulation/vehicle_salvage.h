@@ -230,6 +230,74 @@ static inline unsigned int vehicle_salvage_apply(SalvageVehicle *v, int damage) 
     return fresh;
 }
 
+/* vehicle_salvage_sync -- reconcile the parts with the authority's own hull number.
+ *
+ * The hull is NOT this layer's private property: a shot, a repair and vehicle_burn.h's own 0.25/tick
+ * drain all move it without asking. So once per tick the host hands the real hull in and this makes the
+ * parts agree with it, in both directions:
+ *
+ *   down   exactly vehicle_salvage_apply -- the proportional split, the leftovers, the detach bits.
+ *   up     a repair refills what is still ATTACHED, proportional to the room each part has. A part that
+ *          came off stays off: a repaired wreck is still a wreck until the car is replaced. Without
+ *          this, a car welded back from 0 would silently grow a second engine, and sum(parts) == hull
+ *          would only be true while the number fell.
+ *
+ * Returns the hull this car can actually represent; the caller writes THAT back (it is below the
+ * request only when the request exceeds what is still attached). *fresh is the mask of parts that came
+ * off on this call -- the host's cue to throw shards -- and is set to 0 when nothing did. */
+static inline int vehicle_salvage_sync(SalvageVehicle *v, int hull, unsigned int *fresh) {
+    if (fresh) *fresh = 0;
+    if (!v || !v->active) return hull;
+    int n = vehicle_salvage_count(v);
+    int total = vehicle_salvage_total(v);
+
+    if (hull < total) {
+        unsigned int f = vehicle_salvage_apply(v, total - hull);
+        if (fresh) *fresh = f;
+        return vehicle_salvage_total(v);
+    }
+    if (hull == total) return total;
+
+    int need = hull - total;
+    int room_total = 0;
+    for (int i = 0; i < n; i++) {
+        if (!(v->alive_mask & (1u << i))) continue;
+        int room = v->max_hp[i] - v->hp[i];
+        if (room > 0) room_total += room;
+    }
+    if (room_total <= 0) return total;   /* nothing attached left to refill: the car cannot hold the number */
+
+    int remaining = need;
+    /* pass 1: proportional to the room each attached part has left */
+    for (int i = 0; i < n && remaining > 0; i++) {
+        if (!(v->alive_mask & (1u << i))) continue;
+        int room = v->max_hp[i] - v->hp[i];
+        if (room <= 0) continue;
+        int share = (int)(((long long)need * room) / room_total);
+        if (share > room) share = room;
+        if (share > remaining) share = remaining;
+        v->hp[i] += share;
+        remaining -= share;
+    }
+    /* pass 2: the integer remainder, in authoring order */
+    for (int i = 0; i < n && remaining > 0; i++) {
+        if (!(v->alive_mask & (1u << i))) continue;
+        int room = v->max_hp[i] - v->hp[i];
+        int take = remaining < room ? remaining : room;
+        if (take <= 0) continue;
+        v->hp[i] += take;
+        remaining -= take;
+    }
+    return vehicle_salvage_total(v);
+}
+
+/* vehicle_salvage_offset_centi -- where a part sits in the car's own frame, integer centi-units: the
+ * host rotates this by the car's yaw to throw the shard from where the part actually was. */
+static inline int vehicle_salvage_offset_centi(const SalvageVehicle *v, int comp, int axis) {
+    if (!v || comp < 0 || comp >= SALVAGE_MAX_COMPONENTS || axis < 0 || axis > 2) return 0;
+    return g_vehicle_salvage_rules->component_offset_centi(v->kind, comp, axis);
+}
+
 /* vehicle_salvage_handling_permille -- the live multiplier for one channel, 0..1000. Every detached
  * part multiplies in, in authoring order, so the stack is deterministic (integer division truncates
  * the same way everywhere). */

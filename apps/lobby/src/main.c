@@ -106,6 +106,8 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/world/spraypaint.h"
 #include "../../../packages/world/brick_debris.h"
 #include "../../../packages/simulation/brick_world.h"
+#include "../../../packages/simulation/vehicle_salvage_rules_host.h" /* PARENA car components */
+#include "../../../packages/simulation/vehicle_salvage_shards.h"     /* a sheared part is a brick body */
 #include "../../../packages/simulation/buggy_rules_host.h"
 #include "../../../packages/simulation/heli_rules_host.h"
 #include "../../../packages/simulation/rocket_car_rules_host.h"   /* the rocket car's PARENA model */
@@ -15950,6 +15952,9 @@ int main(int argc, char* argv[]) {
     drone_rules_install(); /* PARENA quadcopters (RECON / micro FLY) */
     airplane_rules_install(); /* PARENA fixed-wing transport (C-110) */
     vehicle_burn_rules_install(); /* PARENA car fire ladder (smoke -> fire -> blast), drawn with BR's fire curve */
+    vehicle_salvage_rules_install(); /* PARENA car components: what breaks, what it yields */
+    vehicle_salvage_shards_bind(&g_brick_bodies); /* a part that comes off falls as a real body */
+    buggy_set_shard_spawn(vehicle_salvage_shards_hook); /* ...thrown by local_game's tick */
     slide_rules_install(); /* PARENA slope curve for the crouch-slide (a hill speeds you up) */
     widget_rules_install(); /* PARENA widget circuit (lever / plate / relay / transistor / machine) */
     zone_rules_install();   /* PARENA shared-zone lifecycle + procedural dungeon parameters */

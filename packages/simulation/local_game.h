@@ -519,6 +519,48 @@ static inline int buggy_try_exit(PlayerState *p, BuggyState *b) {
 
 static VehicleBurn g_local_buggy_burn[MAX_BUGGIES];
 
+/* ---- vehicle components, authoritative ---------------------------------------------------------
+ * Which part of each car is still there (vehicle_salvage.h). Lives beside the burn array, not inside
+ * BuggyState: the wire header stays what the wire carries, exactly like g_local_buggy_burn and the
+ * snap_* extrapolation scratch fields. The parts own the split; b->health is mirrored from them once
+ * per tick, so every damage source that already writes health (a shot, a blast, a repair) is
+ * reconciled without teaching each one about components. */
+#include "vehicle_salvage.h"
+
+static SalvageVehicle g_local_buggy_salvage[MAX_BUGGIES];
+
+/* A part coming off is a fact this layer records and the HOST renders: vehicle_salvage.h never touches
+ * entities. A host with a brick-body world (the lobby) installs one of these and spawns a body through
+ * brick_bodies/grb; the dedicated server leaves it NULL on purpose, because it deliberately keeps no
+ * broken-brick bodies at all (brick_world_discard_bodies) -- the wreck's parts are visual only. */
+typedef void (*BuggyShardFn)(int comp, int material, float x, float y, float z,
+                             float vx, float vy, float vz, unsigned int seed);
+static BuggyShardFn g_buggy_shard_spawn = NULL;
+static inline void buggy_set_shard_spawn(BuggyShardFn fn) { g_buggy_shard_spawn = fn; }
+
+/* buggy_shard_throw -- throw ONE detached part from where it actually sat: the rules' integer local
+ * offset rotated by the car's yaw, plus the car's own velocity and a seeded kick (never the clock, so
+ * two hosts watching the same car throw it the same way). */
+static inline void buggy_shard_throw(const BuggyState *b, const SalvageVehicle *sv, int comp) {
+    if (!g_buggy_shard_spawn) return;
+    float r = -b->yaw * 0.0174532925f;
+    float fwd_x = sinf(r), fwd_z = -cosf(r);      /* forward, the same convention the wheels use */
+    float right_x = cosf(r), right_z = sinf(r);
+    float ox = (float)vehicle_salvage_offset_centi(sv, comp, 0) * 0.01f;
+    float oy = (float)vehicle_salvage_offset_centi(sv, comp, 1) * 0.01f;
+    float oz = (float)vehicle_salvage_offset_centi(sv, comp, 2) * 0.01f;
+    float wx = b->x + right_x * ox + fwd_x * oz;
+    float wy = b->y + oy + 0.35f;                  /* where the part sat, a little above the ground */
+    float wz = b->z + right_z * ox + fwd_z * oz;
+    unsigned int seed = vehicle_burn_hash((unsigned int)(sv->entity_id ? sv->entity_id : 1) * 2654435761u
+                                          ^ (unsigned int)comp * 3266489917u);
+    float h = (float)(vehicle_burn_hash(seed) & 0xFFFFu) / 65535.0f;
+    float kick = (comp == SALVAGE_COMP_CHASSIS) ? 1.2f : 2.6f;   /* a light part flies further */
+    g_buggy_shard_spawn(comp, vehicle_salvage_material(comp), wx, wy, wz,
+                        b->vx + (h - 0.5f) * 2.0f * kick, 1.5f + h * 2.0f * kick,
+                        b->vz + (0.5f - h) * kick, seed);
+}
+
 /* Forward declaration: explode_splash is defined further down (it needs the projectile and brick
    machinery). Same reason the header's own prototype block exists -- buggy_tick_all runs first. */
 static void explode_splash(float ex, float ey, float ez, unsigned char scene_id, int owner_id, int damage,
@@ -528,6 +570,22 @@ static inline void buggy_tick_all(unsigned int now_ms) {
     for (int i = 0; i < MAX_BUGGIES; i++) {
         BuggyState *b = &local_state.buggies[i];
         if (!b->active) continue;
+        /* Adopt this car's component state on first sight (and on a respawn/replacement, detected by
+           identity rather than by being told). A car first seen already at 240 hull has genuinely lost
+           parts, but nobody SAW them go, so its detach bits throw no shards. */
+        SalvageVehicle *sv = &g_local_buggy_salvage[i];
+        int adopted = 0;
+        if (!sv->active || sv->entity_id != b->id + 1 || sv->kind != (b->rocket ? 1 : 0)) {
+            vehicle_salvage_reset(sv, b->rocket ? 1 : 0, b->id + 1);
+            adopted = 1;
+        }
+        /* The handling fold: what is left of this car multiplies into the SAME PARENA handling rules,
+           set per car right before its own simulate call (a car is not a different mod). */
+        phys_set_buggy_salvage_permille(
+            vehicle_salvage_handling_permille(sv, SALVAGE_CH_DRIVE_FORCE),
+            vehicle_salvage_handling_permille(sv, SALVAGE_CH_TOP_SPEED),
+            vehicle_salvage_handling_permille(sv, SALVAGE_CH_TURN_RATE),
+            vehicle_salvage_handling_permille(sv, SALVAGE_CH_GRIP));
         float throttle = 0.0f;
         float steer_intent = 0.0f;
         float lift = 0.0f;
@@ -570,6 +628,18 @@ static inline void buggy_tick_all(unsigned int now_ms) {
                                WPN_MISSILE, now_ms);
             }
             b->health = (int)ceilf(vb->hull);
+        }
+        {
+            /* The parts follow the authoritative hull -- whichever of the three moved it (a shot, a
+               repair, the ladder above), the split is reconciled HERE, and a part that came off on
+               this tick is thrown as a shard. Conservation is what makes this safe to do every tick:
+               sync returns the hull it could represent, and the car is set to exactly that, so the
+               two can never drift apart. */
+            unsigned int fresh = 0;
+            b->health = vehicle_salvage_sync(sv, b->health, &fresh);
+            if (fresh && !adopted)
+                for (int c = 0; c < SALVAGE_MAX_COMPONENTS; c++)
+                    if (fresh & (1u << c)) buggy_shard_throw(b, sv, c);
         }
         if (b->occupant_player_id >= 0 && b->occupant_player_id < MAX_CLIENTS) {
             PlayerState *occ = &local_state.players[b->occupant_player_id];
