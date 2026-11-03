@@ -169,32 +169,14 @@ of merely asserted in a unit test.
 | What | Bytes |
 |---|---|
 | `CAST` payload | 6 |
-| its envelope (header 12 + length 1 + frame buffer 64, padded) | 80 |
+| its datagram (header 12 + length 1 + frame 6) | 19 |
 | one `ACK` datagram (header 12 + 1 + 5) | 18 |
-| **one successful cast, round trip** | **98** |
-| give-up on the slow preset (`1 + wow_retry_max(1)` = 3 sends, no ACK) | 240 |
+| **one successful cast, round trip** | **37** |
+| give-up on the slow preset (`1 + wow_retry_max(1)` = 3 sends, no ACK) | 57 |
 
-At the 1 kbit/s link this format exists for (125 B/s), one successful cast costs **784 ms** of air and a
-give-up costs **1920 ms** with nothing coming back. The 6-byte payload is 7% of its own envelope, which is
-the number to attack in lane 9 of `docs/WOW_WIRE_NEXT_STEPS.md`: pack the header or drop the 64-byte
-padding before reaching for a compressor. `wow_wire_test` pins every figure above, so a larger header
-fails the build instead of quietly costing the radio.
-
-## GoblinFoxDragon / MUD: what is real today
-
-`GoblinFoxDragon` is now cloned at `MONOREPO/GoblinFoxDragon`. Its MUD is Go under `apps2/mud`
-(line-oriented sessions over SSH/WebSocket: `ssh_listener.go`, `ws_listener.go`), with party state in
-`server/party/party.go` and the product northstar in `docs2/MMO_NORTHSTAR.md`.
-
-**No Go toolchain exists in this environment**, so no Go-side adapter was written or compiled — shipping
-untested Go into a fork and calling it "glued" would be a lie. What exists here is the contract the
-adapter has to satisfy: fixed frames, per-client target slots, ack sequencing, and macro ids. The adapter
-is the next slice, and it is a Go package in `apps2/mud` that:
-
-1. binds a second, binary listener (UDP) next to the line-based one,
-2. maps a client's target slots onto its MUD session's own target state,
-3. turns `CAST` into the MUD's existing attack/spell path rather than a new one,
-4. ACKs with the same sequence it received.
-
-Until that exists, nothing in this file has been on a radio or in a MUD session. It is a byte contract
-with tests, which is the part that can be verified headlessly.
+The 64-byte frame buffer is no longer transmitted: the length byte already frames the datagram and the
+server validates `header + 1 + len <= size`, so a cast datagram went from 80 bytes to **19**. At the
+1 kbit/s link this format exists for (125 B/s), one successful cast now costs **296 ms** of air and a
+give-up **456 ms**, down from 784 ms and 1920 ms. `wow_wire_test` pins every figure above, so a larger
+header fails the build instead of quietly costing the radio, and the E2E exercises the short datagram
+against the real server.

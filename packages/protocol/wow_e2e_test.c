@@ -111,7 +111,10 @@ static int send_frame(int s, const struct sockaddr_in *to, const uint8_t *bytes,
     pkt.hdr.type = PACKET_WOW_WIRE;
     pkt.len = (unsigned char)len;
     memcpy(pkt.bytes, bytes, (size_t)len);
-    return (int)sendto(s, (const char *)&pkt, sizeof pkt, 0, (const struct sockaddr *)to, sizeof *to);
+    /* The same trim the lobby makes: header + length byte + frame, not the padded 64-byte buffer.
+       This is also what proves the server accepts a variable-length datagram. */
+    return (int)sendto(s, (const char *)&pkt, (size_t)(sizeof(NetHeader) + 1 + len), 0,
+                       (const struct sockaddr *)to, sizeof *to);
 }
 
 /* Wait for a WOW_WIRE datagram; everything else (WELCOME, snapshots) is ignored, because a real client

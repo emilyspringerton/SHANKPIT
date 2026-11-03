@@ -386,25 +386,26 @@ static void test_fuzz_decoders(void) {
     }
 }
 
-/* The air budget, measured rather than described. A CAST is 6 bytes of payload inside an 80-byte
- * envelope; with its 18-byte ACK the round trip is 98 bytes, and on the slow preset (retry max 2) a
- * give-up costs three sends -- 240 bytes -- with nothing coming back. At the 1 kbit/s link this format
- * exists for (125 B/s) that is 784 ms for one successful cast and 1920 ms for the worst case. If the
- * header, the frame buffer or the ACK ever grows, these assertions are what says the radio budget moved. */
+/* The air budget, measured rather than described AND trimmed. A CAST is 6 bytes of payload in a 19-byte
+ * datagram (header 12 + length byte + the frame; the 64-byte buffer is no longer sent); with its 18-byte
+ * ACK the round trip is 37 bytes, and on the slow preset (retry max 2) a give-up costs three sends --
+ * 57 bytes -- with nothing coming back. At the 1 kbit/s link this format exists for (125 B/s) that is
+ * 296 ms for one successful cast and 456 ms for the worst case, down from 784/1920 when the padded
+ * buffer went on the wire. If the header or the ACK grows, these assertions say the radio budget moved. */
 static void test_air_budget(void) {
     const int ack_dgram = (int)(sizeof(NetHeader) + 1 + WOW_WIRE_ACK_BYTES);
-    const int cast_dgram = (int)sizeof(NetWowWire);
+    const int cast_dgram = (int)(sizeof(NetHeader) + 1 + WOW_WIRE_CAST_BYTES);
     const int sends = 1 + wow_retry_max(1);       /* slow preset: initial send + retries */
     const int link_bps = 125;                     /* 1 kbit/s, as bytes per second */
     CHECK(WOW_WIRE_CAST_BYTES == 6, "a cast payload is %d bytes", WOW_WIRE_CAST_BYTES);
-    CHECK(cast_dgram == 80, "the cast envelope grew to %d bytes", cast_dgram);
+    CHECK(cast_dgram == 19, "the cast datagram is %d bytes, not 19", cast_dgram);
     CHECK(ack_dgram == 18, "the ACK datagram is %d bytes, not 18", ack_dgram);
-    CHECK(cast_dgram + ack_dgram == 98, "one successful cast is %d bytes on the air", cast_dgram + ack_dgram);
+    CHECK(cast_dgram + ack_dgram == 37, "one successful cast is %d bytes on the air", cast_dgram + ack_dgram);
     CHECK(sends == 3, "a slow-preset give-up takes %d sends", sends);
-    CHECK(sends * cast_dgram == 240, "a slow-preset give-up costs %d bytes", sends * cast_dgram);
-    CHECK((cast_dgram + ack_dgram) * 1000 / link_bps == 784,
+    CHECK(sends * cast_dgram == 57, "a slow-preset give-up costs %d bytes", sends * cast_dgram);
+    CHECK((cast_dgram + ack_dgram) * 1000 / link_bps == 296,
           "one successful cast costs %d ms of a 1 kbit link", (cast_dgram + ack_dgram) * 1000 / link_bps);
-    CHECK(sends * cast_dgram * 1000 / link_bps == 1920,
+    CHECK(sends * cast_dgram * 1000 / link_bps == 456,
           "a give-up costs %d ms of a 1 kbit link", sends * cast_dgram * 1000 / link_bps);
 }
 

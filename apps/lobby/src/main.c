@@ -2503,7 +2503,10 @@ static void net_send_wow_frame(const unsigned char *bytes, int len) {
     pkt.hdr.type = PACKET_WOW_WIRE;
     pkt.len = (unsigned char)len;
     memcpy(pkt.bytes, bytes, (size_t)len);
-    sendto(sock, (const char *)&pkt, sizeof(pkt), 0, (struct sockaddr*)&server_addr, sizeof(server_addr));
+    /* Send the frame, not the 64-byte buffer it lives in: len already frames it and the server
+       validates header+1+len <= size (apps/server/src/main.c). This is 19 bytes for a cast, not 80. */
+    sendto(sock, (const char *)&pkt, (size_t)(sizeof(NetHeader) + 1 + len), 0,
+           (struct sockaddr*)&server_addr, sizeof(server_addr));
     NET_CLIENT_LOG("WOW_TX op=%u len=%d", (unsigned)bytes[1], len);
 }
 

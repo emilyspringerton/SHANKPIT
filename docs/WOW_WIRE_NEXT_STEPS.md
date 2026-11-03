@@ -112,16 +112,17 @@ bind/close race, the CONNECT retry times out and the failure names the port it t
 
 *Done when (met):* `make test-wow-e2e` passes with a dev server already listening on 6979.
 
-### 9. Bytes on a 1 kbit link -- measured 2026-11-03, trim still open
-`wow_wire_test` now pins the air cost instead of describing it: 6-byte payload, 80-byte envelope
-(`NetHeader` is 12 + length byte + the padded 64-byte frame buffer), 18-byte ACK, **98 bytes** per
-successful cast and **240 bytes** for a slow-preset give-up (3 sends, nothing back). At 125 B/s that is
-**784 ms** and **1920 ms**: one cast costs most of a second of air, and the payload is 7% of its envelope.
-The first run of this test failed against my own table -- I had assumed a 10-byte header and it is 12 --
-which is the point of pinning `sizeof` rather than writing prose. The trim itself is still open and now has
-a target: pack the header or drop the 64-byte frame padding before reaching for LZ4, because at 6 bytes of
-payload a compressor cannot win. `docs/WOW_WIRE.md` carries the table.
+### 9. ~~Bytes on a 1 kbit link~~ -- measured and trimmed 2026-11-03
+The envelope no longer carries the 64-byte frame buffer: the length byte already frames the datagram and
+the server validates `header + 1 + len <= size`, so both senders (lobby and E2E) now send exactly
+`header + 1 + len`. A cast went from **80 bytes to 19**, the round trip from 98 to **37**, and a
+slow-preset give-up from 240 to **57**. At 125 B/s that is **296 ms** per successful cast (was 784 ms) and
+**456 ms** for a give-up (was 1920 ms). `wow_wire_test` pins the new figures, and the E2E now proves the
+server accepts the short datagram for real -- auth frames arrive at 51 bytes and casts at 19.
 
-*Done when (partial):* measured -- yes, and the numbers corrected an assumption. Trimmed -- no; the next
-step is a packed envelope carrying the same `wow_wire_*` frames, plus this table updated to show the after.
+The first attempt at this patch aborted because the lobby's `sendto` line is byte-identical in three
+functions; the fix is anchored on the unique `memcpy` + send pair, which is worth knowing before the next
+trim.
+
+*Done when (met):* measured before and after, with the after pinned by the test.
 
