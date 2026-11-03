@@ -157,8 +157,10 @@ int dw_net_export(const DwLadder *l, char *buf, size_t cap, unsigned now_ms) {
         jw_put(&w, ",\"player\":%d,\"hero\":%d,\"path\":", m->is_player,
                (l->hero_pid >= 0 && m->pid == l->hero_pid) ? 1 : 0);
         jw_str(&w, citizen_life_path_name(m->path));
-        jw_put(&w, ",\"wins\":%d,\"games\":%d,\"winrate_permille\":%d,\"aggression\":%d,\"deck\":[",
-               m->wins, m->games, dw_ladder_citizen_winrate(l, i), m->aggression);
+        /* `rating` is the number a leaderboard climbs, and it comes from the SAME field the game ranks on
+           (dw_rating.c <- PARENA/stdlib/deadweight/rating.prn), not from a second calculation here. */
+        jw_put(&w, ",\"wins\":%d,\"games\":%d,\"rating\":%d,\"winrate_permille\":%d,\"aggression\":%d,\"deck\":[",
+               m->wins, m->games, m->rating, dw_ladder_citizen_winrate(l, i), m->aggression);
         for (int c = 0; c < DW_DECK; c++) jw_put(&w, "%s%d", c ? "," : "", m->deck[c]);
         jw_put(&w, "]}");
         first = 0;

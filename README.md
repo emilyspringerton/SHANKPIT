@@ -1551,7 +1551,11 @@ drops below 100, and `gain(w, l) == loss(l, w)` holds for every pair: it is zero
 `dw_ladder_record` — the single recorder an instant match and a watched duel both go through — so two
 ways of playing one game cannot price it differently. The save carries it (format 2), and a format-1
 file written before the rating existed still LOADS, with every member starting at 1000 rather than the
-whole file being refused: a ladder from yesterday's binary is a real ladder.
+whole file being refused: a ladder from yesterday's binary is a real ladder. **The published
+snapshot carries it too** (`dw_net` schema 2 adds `rating` to every record, straight off the
+ladder rather than recalculated), so WOTAN's Citizens page ranks the same population by the
+same number the game ranks it by — the tie-break is rating, then wins, then pid, and it lives
+in the page's one client module instead of being shipped twice in the JSON.
 
 Records survive a restart when a world names a file: `SHANKPIT_LADDER_FILE=var/deadweight/ladder.db`
 makes every finished match autosave the members (pid, person-or-citizen, path, aggression, wins,

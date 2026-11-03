@@ -24,13 +24,19 @@
  * and pays for nothing -- no stat, no allocation, no file. The shim is switched on by the host that
  * wants to serve a world, not imposed on a client.
  *
- * THE SHAPE IS THE CONTRACT (schema 1). Changing a key or a bracket is a schema bump, because the
- * WOTAN page (WOTAN/js/shankpit-net.js) reads it and its node test pins it. */
+ * THE SHAPE IS THE CONTRACT (schema 2). Changing a key or a bracket is a schema bump, because the
+ * WOTAN page (WOTAN/js/shankpit-net.js) reads it and its node test pins it.
+ *
+ * Schema 2 added `rating` to every record -- the number the ladder climbs
+ * (PARENA/stdlib/deadweight/rating.prn, compiled into dw_rating.c). It is NOT accompanied by a
+ * pre-sorted ranking array on purpose: the order is (rating desc, wins desc, pid asc), which is a
+ * one-line sort a reader can do, and shipping the same fact twice is how two pages start disagreeing
+ * about who is first. The WOTAN page sorts; the export stays a record of what the world knows. */
 
 #include <stddef.h>
 #include "dw_ladder.h"
 
-#define DW_NET_SCHEMA 1
+#define DW_NET_SCHEMA 2
 
 /* How many finished matches the feed remembers. Newest first; a match older than this is gone, which
  * is fine because WOTAN's real match history is IDUNA's (this is the live ticker, not the archive). */

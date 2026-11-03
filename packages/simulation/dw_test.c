@@ -366,7 +366,17 @@ int main(void) {
         CHECK(slot >= 0, "the shim's challenge was refused");
         int n = dw_net_export(&l, buf, sizeof buf, 2000u);
         CHECK(n > 0, "the export refused a ladder it can describe");
-        CHECK(strstr(buf, "\"schema\":1") != NULL, "no schema in the export");
+        CHECK(strstr(buf, "\"schema\":2") != NULL, "no schema in the export");
+        /* schema 2 carries the rating, and it must be the LADDER's field rather than the exporter's idea of
+           it -- otherwise the page and the game could rank the same population differently */
+        {
+            int m4 = dw_ladder_member_for_pid(&l, 4);
+            char want[64];
+            CHECK(m4 >= 0, "the citizen is not on the ladder");
+            snprintf(want, sizeof want, "\"rating\":%d", l.members[m4].rating);
+            CHECK(strstr(buf, want) != NULL, "the export's rating is not the ladder's own");
+            CHECK(l.members[m4].rating == 1000, "a citizen joined below the starting rating");
+        }
         CHECK(strstr(buf, "\"population\":{\"citizens\":1,\"players\":1}") != NULL,
               "population not counted");
         CHECK(strstr(buf, "\"name\":\"a\\\"b\\\\c\"") != NULL, "the name was not JSON-escaped");
@@ -381,6 +391,15 @@ int main(void) {
         n = dw_net_export(&l, buf, sizeof buf, 3000u);
         CHECK(n > 0, "the export failed after the match");
         CHECK(strstr(buf, "\"rounds\":") != NULL, "the finished match is not in the ticker");
+        /* the match priced itself, and the export follows the ladder rather than a second calculation */
+        {
+            int m4 = dw_ladder_member_for_pid(&l, 4);
+            char want[64];
+            CHECK(m4 >= 0, "the citizen left the ladder after one match");
+            snprintf(want, sizeof want, "\"rating\":%d", l.members[m4].rating);
+            CHECK(strstr(buf, want) != NULL, "the export did not follow the post-match rating");
+            CHECK(l.members[m4].rating >= 100, "a snprintf'd match drove the rating under the floor");
+        }
         CHECK(strstr(buf, "\"name\":\"a\\\"b\\\\c\"") != NULL, "the record lost its name");
         {
             DwNetMatch rec[4];
