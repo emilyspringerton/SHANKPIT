@@ -353,6 +353,22 @@ int main(void) {
         CHECK(lora_host_request(&rq, &w, &hist, 0, 5000 + gap, &pump, frames, LORA_MAX_FRAMES) == 2,
               "the budget never expired");
 
+        /* the budget is PER CLIENT: a second asker is served while the first is still waiting */
+        rq.entity = 10;
+        CHECK(lora_host_request(&rq, &w, &hist, 0, 5000 + gap, &pump, frames, LORA_MAX_FRAMES) == 2,
+              "a second client was refused while the first was inside its budget");
+        CHECK(lora_host_request(&rq, &w, &hist, 0, 5000 + gap, &pump, frames, LORA_MAX_FRAMES) == 0,
+              "the second client was served twice inside its own budget");
+        for (i = 11; i < 17; i++) {
+            rq.entity = (uint16_t)i;
+            CHECK(lora_host_request(&rq, &w, &hist, 0, 900000, &pump, frames, LORA_MAX_FRAMES) == 2,
+                  "client %d was refused a free slot", i);
+        }
+        rq.entity = 17;
+        CHECK(lora_host_request(&rq, &w, &hist, 0, 900000, &pump, frames, LORA_MAX_FRAMES) == -1,
+              "a ninth distinct client was served from an 8-slot table");
+        CHECK(LORA_SNAPSHOT_CLIENTS == 8, "the client table is %d slots", LORA_SNAPSHOT_CLIENTS);
+
         /* a tick resend: one frame out of the ring, and it does NOT spend the snapshot budget */
         for (i = 0; i < 3; i++) {
             rec[i].entity = (uint16_t)(i + 1);

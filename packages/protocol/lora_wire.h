@@ -623,17 +623,48 @@ static int lora_history_get(const LoraHistory *h, uint16_t tick, LoraDeltaRecord
     return -1;
 }
 
-/* The host's budget. ONE pump: the interval is a host-wide budget on full-state frames, because the air
-   is shared by everyone and a per-client fairness table is a different (later) decision, named as such
-   in the doc rather than half-built here. A TICK resend does NOT spend this budget: it is one frame and
-   it is what stops a lost tick from becoming a lost world. */
+/* The host's budget, PER CLIENT. A host-wide budget let one client spend everybody's snapshot; a bounded
+   table of the clients that have asked makes the budget mean what it says, while still bounding the
+   total rate: at most LORA_SNAPSHOT_CLIENTS snapshots per interval, which is a number the doc states
+   rather than hides. A TICK resend does NOT spend this budget -- it is one frame, and it is what stops
+   a lost tick from becoming a lost world. */
+#define LORA_SNAPSHOT_CLIENTS 8
+
 typedef struct {
+    uint16_t entity;
     uint32_t last_ms;
-    uint8_t  served;
+    uint8_t  used;
+} LoraSnapshotClient;
+
+typedef struct {
+    LoraSnapshotClient c[LORA_SNAPSHOT_CLIENTS];
 } LoraSnapshotPump;
 
 static void lora_snapshot_pump_begin(LoraSnapshotPump *p) {
     if (p) memset(p, 0, sizeof *p);
+}
+
+/* 0 = allowed (the slot's clock moves), 1 = this client must wait, -1 = no slot for a new client. The
+   table never evicts: a ninth distinct asker is refused rather than resetting somebody else's clock,
+   because eviction would let a rotating client spend everyone's budget. */
+static int lora_snapshot_gate(LoraSnapshotPump *p, uint16_t entity, int preset, uint32_t now_ms) {
+    int i, free_slot = -1;
+    uint32_t interval;
+    if (!p) return -1;
+    interval = (uint32_t)lora_snapshot_interval_ms(preset);
+    for (i = 0; i < LORA_SNAPSHOT_CLIENTS; i++) {
+        if (p->c[i].used && p->c[i].entity == entity) {
+            if ((uint32_t)(now_ms - p->c[i].last_ms) < interval) return 1;
+            p->c[i].last_ms = now_ms;
+            return 0;
+        }
+        if (!p->c[i].used && free_slot < 0) free_slot = i;
+    }
+    if (free_slot < 0) return -1;
+    p->c[free_slot].entity = entity;
+    p->c[free_slot].last_ms = now_ms;
+    p->c[free_slot].used = 1;
+    return 0;
 }
 
 /* Serve a client's request.
@@ -654,12 +685,12 @@ static int lora_host_request(const LoraRequest *req, const LoraWorld *w, const L
         return lora_frames_build(rec, count, req->tick, frames, max_frames);
     }
     if (req->kind != LORA_REQ_SNAPSHOT) return -1;
-    if (pump->served && (uint32_t)(now_ms - pump->last_ms) < (uint32_t)lora_snapshot_interval_ms(preset))
-        return 0;
+    {   int gate = lora_snapshot_gate(pump, req->entity, preset, now_ms);
+        if (gate < 0) return -1;      /* the client table is full: this asker cannot be served */
+        if (gate > 0) return 0;       /* inside its OWN budget: "wait" */
+    }
     built = lora_world_snapshot(w, frames, max_frames);
     if (built < 0) return -1;
-    pump->served = 1;
-    pump->last_ms = now_ms;
     return built;
 }
 
