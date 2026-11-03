@@ -10,6 +10,7 @@ int wow_ack_ms(int preset);
 int wow_target_resend_ms(int preset);
 int wow_retry_max(int preset);
 int wow_cast_range_yd(int preset);
+int wow_cast_range_yd_for(int weapon);   /* per-weapon, in yards; unknown ids fall back to the generic 40 */
 
 int wow_entity_lo(int e);
 int wow_entity_hi(int e);

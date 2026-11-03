@@ -60,9 +60,9 @@ factors and the F32 entry points.
 - **Mass, not weight.** "Ton" is the short ton (2000 lb). There is no pound-force, no gravity-dependent
   weight, and no pressure/stress unit here.
 - **One engine path consumes it: the server's cast range.** `PARENA/stdlib/shankpit/wow_wire.prn` states
-  the rule in **yards** (`wow_cast_range_yd` = 40, the unit a designer says out loud) and
-  `apps/server/src/main.c` converts it once with `units_author_length_m(..., 5)` before comparing squared
-  distances, so 36.576 is never restated in C. Beyond that range a `[@target]` cast fires along the
+  the rule in **yards** (`wow_cast_range_yd_for`, per weapon (2 yd knife to 120 yd sniper), the unit a designer says out loud) and
+  `apps/server/src/main.c` converts the chosen value once with `units_author_length_m(..., 5)` before comparing squared
+  distances, so no metre value is restated in C. Beyond that range a `[@target]` cast fires along the
   player's own aim instead of swinging the crosshair. Level/brick/editor authoring is still unconsumed;
   `units_author_*` is its entry point.
 - **The syntax this layer was first written around now compiles.** `fn`, `F32`, `I64`, bare

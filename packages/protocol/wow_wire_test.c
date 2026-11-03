@@ -6,6 +6,7 @@
 #include "wow_wire.h"
 #include "wow_mod.h"
 #include "wow_server.h"
+#include "../common/protocol.h"   /* WPN_*, so the range table is asserted by name, not by magic number */
 
 static int fails = 0;
 #define CHECK(cond, ...) do { if (!(cond)) { printf("wowwire: FAIL line %d: ", __LINE__); printf(__VA_ARGS__); printf("\n"); fails++; } } while (0)
@@ -22,6 +23,23 @@ static void test_layout(void) {
           "cast queue is not the PARENA table's");
     CHECK(wow_ack_ms(0) == 250 && wow_ack_ms(1) == 500 && wow_ack_ms(2) == 120, "ack period is not PARENA's");
     CHECK(wow_target_resend_ms(0) == 500 && wow_target_resend_ms(1) == 1000, "resend period is not PARENA's");
+}
+
+/* A knife and a sniper must not share one reach. The fallback is asserted too: an id the table does not
+ * know is bounded by the generic rule instead of being trusted or refused. */
+static void test_cast_range(void) {
+    CHECK(wow_cast_range_yd_for(WPN_MAGNUM) == 25, "the magnum's range is %d yd", wow_cast_range_yd_for(WPN_MAGNUM));
+    CHECK(wow_cast_range_yd_for(WPN_AR) == 55, "the rifle's range is %d yd", wow_cast_range_yd_for(WPN_AR));
+    CHECK(wow_cast_range_yd_for(WPN_SNIPER) == 120, "the sniper's range is %d yd", wow_cast_range_yd_for(WPN_SNIPER));
+    CHECK(wow_cast_range_yd_for(WPN_KNIFE) == 2 && wow_cast_range_yd_for(WPN_HAMMER) == 2,
+          "melee is not a lunge");
+    CHECK(wow_cast_range_yd_for(WPN_KNIFE) < wow_cast_range_yd_for(WPN_SHOTGUN) &&
+          wow_cast_range_yd_for(WPN_SHOTGUN) < wow_cast_range_yd_for(WPN_MAGNUM) &&
+          wow_cast_range_yd_for(WPN_MAGNUM) < wow_cast_range_yd_for(WPN_AR) &&
+          wow_cast_range_yd_for(WPN_AR) < wow_cast_range_yd_for(WPN_SNIPER),
+          "the range table does not order knife < shotgun < magnum < rifle < sniper");
+    CHECK(wow_cast_range_yd_for(200) == wow_cast_range_yd(0),
+          "an unknown weapon did not fall back to the generic range");
 }
 
 static void test_targets(void) {
@@ -295,6 +313,7 @@ static void test_server(void) {
 
 int main(void) {
     test_layout();
+    test_cast_range();
     test_targets();
     test_cast();
     test_macro_bytecode();

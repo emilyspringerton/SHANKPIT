@@ -43,13 +43,17 @@ The flag is test-only and defaults to 0, so a production server's ACK path is un
 
 *Done when (met):* `make test-wow-e2e` passes all three phases with the ACK drops actually happening.
 
-### 2. Make the range per weapon, and give it a vertical tolerance
-`wow_cast_range_yd` is one global number: a knife and a rifle currently share 40 yd. Move the table into
-PARENA beside the weapon ids (`WPN_*` already come from the generated rules), keep the yard unit, and add
-a vertical band so a shot at a target on a roof parapet is judged the same way a player expects. The
-conversion stays in one place (`units_author_length_m`) — do not add a second one.
-*Done when:* a test shows 25 yd refused at 30 and 55 yd accepted at 50 for two different weapons, and a
-target 12 m up at 10 m horizontal is still in range for the rifle.
+### 2. ~~Make the range per weapon~~ -- done 2026-11-03
+`wow_cast_range_yd_for(WPN_*)` owns the table in yards: knife/hammer 2, spray can 8, flashlight 15,
+shotgun 20, magnum 25, rifle 55, missile 90, sniper 120; an id the table does not know falls back to the
+generic 40. The server converts the chosen value once with `units_author_length_m` and compares squared
+distances. The vertical question was answered by measuring in 3D instead of adding an artificial band: a
+target 12 m up and 10 m away is 15.6 m from the muzzle and in range for a rifle, while one straight
+overhead at 40 m is out. Asserted by `make test-wow-wire` (the table, its ordering, and the fallback, by
+`WPN_*` name) and kept honest by `make check-wow-wire-rules`.
+
+*Done when (met):* two weapons disagree, elevation is a consequence of the measurement rather than an
+afterthought, and both are assertions instead of intentions.
 
 ### 3. Fuzz the decoders
 Malformed input is asserted today by hand-picked cases (bad version, unknown op, slot out of range,

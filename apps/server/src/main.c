@@ -1293,12 +1293,15 @@ int process_user_cmd(int client_id, UserCmd *cmd) {
                     if (e > 0 && e < MAX_CLIENTS && e != client_id) {
                         PlayerState *t = &local_state.players[e];
                         if (t->active && t->state != STATE_DEAD && t->scene_id == p->scene_id) {
-                            /* Range is a GAME RULE written in yards (PARENA wow_cast_range_yd, 40) and
-                               converted through the unit layer -- 36.576 is never restated here. A
-                               target past it fires along the player's own aim: a client's word must
-                               not swing the server's crosshair across the map. The units layer is F32
-                               because the geometry it feeds is, which is exactly this comparison. */
-                            float range_m = units_author_length_m((float)wow_cast_range_yd(g_wow_server.preset), 5);
+                            /* Range is a GAME RULE written in yards, PER WEAPON (PARENA
+                               wow_cast_range_yd_for) and converted through the unit layer -- no metre
+                               value is restated here. The comparison is 3D on purpose, so elevation is
+                               paid out of the same budget: a target 12 m up and 10 m away is 15.6 m
+                               from the muzzle, inside a rifle's 55 yd (50.29 m), while one straight
+                               overhead at 40 m is out. Past range the shot fires along the player's
+                               own aim: a client's word must not swing the server's crosshair. */
+                            float range_m = units_author_length_m(
+                                (float)wow_cast_range_yd_for((int)cast.weapon), 5);
                             float ddx = t->x - p->x, ddy = t->y - p->y, ddz = t->z - p->z;
                             if (ddx * ddx + ddy * ddy + ddz * ddz <= range_m * range_m) {
                                 tp_yaw_pitch_to_point(p->x, p->y + EYE_HEIGHT, p->z,

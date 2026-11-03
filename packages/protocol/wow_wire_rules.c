@@ -12,6 +12,7 @@ int wow_ack_ms(int);
 int wow_target_resend_ms(int);
 int wow_retry_max(int);
 int wow_cast_range_yd(int);
+int wow_cast_range_yd_for(int);
 int wow_entity_lo(int);
 int wow_entity_hi(int);
 int wow_entity_valid(int);
@@ -76,6 +77,50 @@ int wow_retry_max(int preset __attribute__((unused))) {
 
 int wow_cast_range_yd(int preset __attribute__((unused))) {
     return 40;
+}
+
+int wow_cast_range_yd_for(int weapon __attribute__((unused))) {
+    if ((weapon == 0)) {
+    return 2;
+    } else {
+    if ((weapon == 1)) {
+    return 25;
+    } else {
+    if ((weapon == 2)) {
+    return 55;
+    } else {
+    if ((weapon == 3)) {
+    return 20;
+    } else {
+    if ((weapon == 4)) {
+    return 120;
+    } else {
+    if ((weapon == 5)) {
+    return 2;
+    } else {
+    if ((weapon == 6)) {
+    return 90;
+    } else {
+    if ((weapon == 7)) {
+    return 15;
+    } else {
+    if ((weapon == 8)) {
+    return 2;
+    } else {
+    if ((weapon == 9)) {
+    return 8;
+    } else {
+    return 40;
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
 }
 
 int wow_entity_lo(int e __attribute__((unused))) {

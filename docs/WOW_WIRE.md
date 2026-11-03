@@ -140,14 +140,18 @@ The lobby is wired end to end: `wow_net_send_tracked()` sends and tracks, `wow_n
 per input pass, and a `PACKET_WOW_WIRE` received from the server is decoded as an ACK and retires the pending
 frame. An abandoned frame is logged (`WOW_GIVEUP`) rather than silently forgotten.
 
-## Cast range: a rule in yards, enforced in metres
+## Cast range: a per-weapon rule in yards, measured in 3D
 
-A cast aimed at `[@target]` / `[@focus]` only turns the player's aim when the target is within
-`wow_cast_range_yd` (**40 yards**) of them. The rule lives in PARENA because it is a game rule, and it is
-written in yards because that is the unit it is reasoned about in; `apps/server/src/main.c` converts it once
-through `units_author_length_m(..., 5)` and compares squared distances, so no C file restates 36.576. Past
-range the shot still fires, along the player's own aim, and the refusal is logged -- a client cannot swing
-the server's crosshair across the map by naming a distant entity.
+A cast aimed at `[@target]` / `[@focus]` only turns the player's aim when the target is within that
+weapon's range: `wow_cast_range_yd_for(WPN_*)` in PARENA -- 2 yd for a knife or hammer, 8 for the spray
+can, 15 for the flashlight, 20 for the shotgun, 25 for the magnum, 55 for the rifle, 90 for the missile
+launcher, 120 for the sniper, falling back to the generic 40 for an id the table does not know. The numbers
+are yards because that is the unit the rule is reasoned about in; `apps/server/src/main.c` converts the
+chosen value once through `units_author_length_m(..., 5)` and compares squared **3D** distances. Elevation
+is therefore paid out of the same budget rather than capped: a target 12 m up and 10 m away is 15.6 m from
+the muzzle and inside a rifle's 55 yd (50.29 m), while one straight overhead at 40 m is out. No C file
+restates a metre value. Past range the shot still fires, along the player's own aim, and the refusal is
+logged -- a client cannot swing the server's crosshair across the map by naming a distant entity.
 
 ## End to end, over a real socket
 
