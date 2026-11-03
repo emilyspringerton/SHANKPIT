@@ -37,13 +37,21 @@ but bounded to a 64×64 world, and an out-of-grid tile is **refused by the decod
 
 | Delta (≤237 B) | field |
 | --- | --- |
-| 0 | version (1) |
-| 1 | record count (≤38) |
+| 0 | version (2) |
+| 1 | record count in THIS frame (≤38) |
 | 2–3 | tick |
-| 4+ | records of 6 B: entity u16, kind u8, value u16, extra u8 |
+| 4 | chunk index (0-based) |
+| 5 | chunk count — a tick may span frames |
+| 6+ | records of 6 B: entity u16, kind u8, value u16, extra u8 |
 
-38 records × 6 B + 4 B header = 232 bytes, inside the ceiling. Kinds: `MOVE` (x, y), `DAMAGE` (dealt,
-hp left), `XP` (gained), `ITEM` (id, quantity).
+38 records × 6 B + 6 B header = 234 bytes, inside the ceiling. Kinds: `MOVE` (x, y), `DAMAGE` (dealt,
+hp left), `XP` (gained), `ITEM` (id, quantity), **`ACK`** (value = the intent's sequence number).
+
+The ACK is the answer to "did my click land?": every **accepted** intent — including a swing that
+missed, or a move to the tile you are already on — comes back with its sequence number, so a client
+resends only what was never acknowledged and needs no timer of its own. A receiver that is missing a
+chunk stays incomplete; a duplicate, a foreign tick or a contradictory chunk count is a hard reject,
+because half a tick is a client that silently diverges.
 
 ## The tick
 
@@ -51,8 +59,10 @@ hp left), `XP` (gained), `ITEM` (id, quantity).
 contract). Moves apply on the grid; melee requires **Chebyshev adjacency** (the old games' "you must be
 next to it"); the swing is a hit if `lora_roll(attacker, target, tick) < hit_permille`, where the roll is
 an FNV-style hash — **no `rand()`, no clock**, so a replay grades identically and two peers can check
-each other. A tick that would not fit in one frame returns **-1 and changes nothing**, so the caller can
-split it rather than ship half a tick nobody can reconstruct.
+each other. Resolving happens into a **copy** of the world that is committed only once the frames exist, so a tick
+that cannot be sent changes nothing. `lora_world_tick()` is the one-frame path and returns **-1** when
+the tick needs more; `lora_world_tick_frames()` is the general path and splits into chunks. With 64
+actors and three records per intent, a full tick is 192 records = 6 frames of 38.
 
 ## The numbers are PARENA's
 
@@ -86,9 +96,10 @@ Python daemon and `ForwardToWotanMatchmaker` do not exist in this repo and were 
 
 ## Open questions for the next slice
 
-1. **Loss** is the real problem, not size: does a client resend its intent until it sees its own entity
-   in a delta, or does every delta carry a tick the client can re-request? (A replay window is the
-   honest answer; it needs a second frame type.)
-2. **Multiple frames per tick** when more than 19 actions resolve — the -1 return is the seam for it.
+1. **Loss** is still the real problem, not size: ACKs now tell a client what landed, but the resend
+   POLICY (how long, how many, whether a full-state frame exists to resync a client that lost
+   everything) is not built.
+2. **Multiple frames per tick** — done (v2 header, chunk reassembly); the remaining question is what a
+   receiver does when chunk 2 of 3 never arrives: re-request by tick, or wait for the next full state.
 3. **Persistence** of the slow world (the camp host can sleep between ticks) — IDUNA already holds
    accounts; the world file is the missing piece.
