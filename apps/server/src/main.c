@@ -1512,6 +1512,21 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
             if (!warned) { NET_WARN_LOG("WOW_WIRE refused: no IDUNA ticket verifier installed (fail closed)"); warned = 1; }
             return;
         }
+        if (r == 0) {
+            /* Adjudicated and refused: the cast queue was full, the macro id does not exist, the weapon
+               name is not one of ours, or the target intent was older than the one already applied. The
+               wire stays SILENT on purpose -- an ACK means the server took the op, and ACKing a macro it
+               did not store would be a lie -- so the client retries and then reports "never
+               acknowledged", which is literally true and reads like packet loss. Log it here, or the
+               refusal leaves no trace on either side but that misleading message. Counted, not spammed:
+               a retrying client would otherwise fill the log with its own retransmissions. */
+            static unsigned int refused = 0;
+            refused++;
+            if (refused <= 3 || (refused % 100) == 0)
+                NET_WARN_LOG("WOW_REFUSED client_id=%d op=%u total=%u (silent on the wire by design)",
+                             client_id, (unsigned)w->bytes[1], refused);
+            return;
+        }
         if (r > 0 && g_server_sock >= 0) {
             NetWowWire out;
             WowAck parsed;
