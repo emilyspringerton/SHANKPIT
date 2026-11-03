@@ -61,6 +61,24 @@ function M.describe(tree)
     return out
 end
 
+-- A place is not frozen: a Studio session adds the pads after the server script starts, and a publish can take
+-- one away. So the arena is re-read -- but a re-read is allowed to be WORSE than what we had (Workspace is
+-- briefly empty while a place rebuilds, a team edit lands before its pad does), and a lobby that forgot its
+-- arena mid-session would refuse rounds it could actually host. A usable read replaces; an unusable read keeps
+-- the last usable arena and reports what the re-read could not see, so the reason is still inspectable.
+function M.refresh(previous, tree)
+    local fresh = M.describe(tree)
+    if fresh.ok then return fresh, nil end
+    if type(previous) == "table" and previous.ok then
+        return {
+            ok = true, stale = true,
+            teams = previous.teams, spawns = previous.spawns, weapons = previous.weapons,
+            missing = {}, fresh_missing = fresh.missing,
+        }, "kept-last-usable:" .. table.concat(fresh.missing, ",")
+    end
+    return fresh, nil
+end
+
 -- Seats in, assignments out. Teams alternate in seat order, deterministically, so two players never land on the
 -- same side by accident of dictionary ordering. A SpawnLocation is re-usable (that is what it is for), so more
 -- seats than pads is not a failure; no pad at all already failed in describe().
@@ -69,6 +87,7 @@ function M.seat(arena, seats)
     if type(seats) ~= "table" or #seats == 0 then return nil, "no-seats" end
     local out = {}
     for i, seat in ipairs(seats) do
+        -- teams[i] is the team this seat is on; a pad is found by THAT name, never by seat parity alone
         local team = arena.teams[((i - 1) % #arena.teams) + 1]
         local spawn = nil
         for _, pad in ipairs(arena.spawns) do

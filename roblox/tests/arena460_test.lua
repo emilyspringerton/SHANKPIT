@@ -123,5 +123,41 @@ eq(drawn[1].won, false, "a draw wins nobody")
 eq(drawn[2].won, false, "on either side")
 eq(#arena.outcomes(nil, win), 0, "no assignments, no outcomes")
 
+-- ---- 7. a re-read may replace the arena, but a worse read does not erase a usable one -------------------
+local same = arena.refresh(a, LASER_TAG)
+ok(same.ok, "re-reading the same place keeps it usable")
+eq(same.stale, nil, "and is not marked as a kept old one")
+eq(#same.spawns, 3, "the pads offered are the fresh read's")
+
+ok(arena.refresh(nil, LASER_TAG).ok, "a first read of a real place is usable")
+eq(arena.refresh(nil, {}).ok, false, "a first read of an empty place is not")
+
+local emptied = arena.refresh(a, { teams = LASER_TAG.teams, spawns = {}, tools = LASER_TAG.tools })
+ok(emptied.ok, "a transient empty read does not erase a usable arena")
+eq(emptied.stale, true, "it is marked as the arena kept from before")
+ok(has(emptied.fresh_missing, "no-spawns"), "and says what the re-read could not see")
+eq(#emptied.spawns, 3, "the pads that were there are still the ones offered")
+
+-- Down to ONE team is still a usable arena (everyone seats on it), so it REPLACES rather than being kept --
+-- keeping the old two-team arena would seat players on a side the place no longer has.
+local oneTeam = arena.refresh(a, {
+    teams = { { name = "Red Team" } },
+    spawns = { { name = "SpawnLocation", team = "Red Team" } },
+    tools = LASER_TAG.tools,
+})
+ok(oneTeam.ok, "a place down to one team is still usable")
+eq(oneTeam.stale, nil, "so it replaces the old arena instead of being kept")
+eq(#oneTeam.teams, 1, "and offers only the team the place actually has")
+
+-- A team whose PAD is gone is the broken case: that is what describe() refuses, so refresh keeps the old one.
+local padless = arena.refresh(a, {
+    teams = LASER_TAG.teams,
+    spawns = { { name = "SpawnLocation", team = "Red Team" } },
+    tools = LASER_TAG.tools,
+})
+eq(padless.stale, true, "a team whose pad disappeared keeps the previous arena")
+eq(#padless.teams, 2, "with both teams still seatable")
+ok(has(padless.fresh_missing, "no-spawn-for-team:Blue Team"), "and names the pad the re-read could not find")
+
 print(string.format("arena460: %d checks, %d failures", checks, failures))
 if failures > 0 then os.exit(1) end

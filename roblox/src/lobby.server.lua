@@ -63,6 +63,17 @@ local CONFIG = {
 -- SpawnLocations the checked-in base place already ships. Nothing here creates, renames or clones any of it --
 -- it reads what is there and says plainly when it is not, so a round either has an arena or has a reason. This
 -- closes the gap with SHANKPIT-460: a round you can actually play, not only a ticket to one.
+-- A Tool inside a player's Backpack is not the place's loadout: it is what somebody is carrying, and it sits
+-- under Workspace the moment they equip it. Counting it would let one player's inventory become the arena.
+local function insidePlayer(inst)
+    local p = inst.Parent
+    while p ~= nil do
+        if p.ClassName == "Player" then return true end
+        p = p.Parent
+    end
+    return false
+end
+
 local function collectArena()
     local tree = { teams = {}, spawns = {}, tools = {} }
     for _, serviceName in ipairs({ "Workspace", "ServerStorage", "StarterPack" }) do
@@ -76,7 +87,7 @@ local function collectArena()
                             name = inst.Name,
                             team = (inst.Team ~= nil) and inst.Team.Name or nil,
                         }
-                    elseif inst.ClassName == "Tool" then
+                    elseif inst.ClassName == "Tool" and not insidePlayer(inst) then
                         tree.tools[#tree.tools + 1] = { name = inst.Name }
                     end
                 end
@@ -98,6 +109,32 @@ if not ARENA.ok then
     warn("arena460: this place has no usable arena -- " .. table.concat(ARENA.missing, ",") ..
          " (players can still queue; a round will say why it cannot start)")
 end
+
+-- The arena is not read once and frozen: a Studio session adds its pads after this script starts, and a publish
+-- can take a team away. Only pads, tools and teams matter, and the loop re-reads at most every two seconds, so a
+-- place full of effects does not turn GetDescendants into a per-frame job. `arena460.refresh` keeps the last
+-- usable arena when a re-read comes back worse; this only decides WHEN to look again.
+local ARENA_MIN_REREAD_MS = 2000
+local arenaDirty, arenaStale = false, (ARENA.stale == true)
+local function arenaRelevant(inst)
+    return inst.ClassName == "SpawnLocation" or inst.ClassName == "Tool"
+end
+for _, serviceName in ipairs({ "Workspace", "ServerStorage", "StarterPack" }) do
+    pcall(function()
+        local service = game:GetService(serviceName)
+        service.DescendantAdded:Connect(function(inst)
+            if arenaRelevant(inst) then arenaDirty = true end
+        end)
+        service.DescendantRemoved:Connect(function(inst)
+            if arenaRelevant(inst) then arenaDirty = true end
+        end)
+    end)
+end
+pcall(function()
+    local teamsService = game:GetService("Teams")
+    teamsService.TeamAdded:Connect(function() arenaDirty = true end)
+    teamsService.TeamRemoved:Connect(function() arenaDirty = true end)
+end)
 
 local queue = queue460.new()
 local snapshot = nil
@@ -379,9 +416,25 @@ Players.PlayerRemoving:Connect(dropSeat)
 
 -- One loop: the queue every second, the board every five. A client can neither seat itself nor declare a result.
 task.spawn(function()
-    local lastQueue, lastBoard = 0, 0
+    local lastQueue, lastBoard, lastArena = 0, 0, 0
     while true do
         local now = nowMs()
+        if arenaDirty and now - lastArena >= ARENA_MIN_REREAD_MS then
+            lastArena = now
+            arenaDirty = false
+            ARENA = arena460.refresh(ARENA, collectArena())
+            if (ARENA.stale == true) ~= arenaStale then
+                arenaStale = (ARENA.stale == true)
+                if arenaStale then
+                    warn("arena460: this place no longer reads as a usable arena (" ..
+                         table.concat(ARENA.fresh_missing or {}, ",") ..
+                         ") -- rounds keep the last arena it did")
+                else
+                    print(string.format("arena460: arena re-read -- %d pads, %d weapons, %d teams",
+                        #ARENA.spawns, #ARENA.weapons, #ARENA.teams))
+                end
+            end
+        end
         if now - lastQueue >= CONFIG.QueueEvery * 1000 then
             lastQueue = now
             local nowS = os.time()

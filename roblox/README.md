@@ -18,7 +18,7 @@ it: a real sign-in, a queue, real connect tickets, and a read-only board. Nothin
 | `src/ticket460.lua` | ModuleScript | reading a real IDUNA connect ticket: shape, expiry, claimed player. **Never** verifies one |
 | `src/queue460.lua` | ModuleScript | casual vs ranked, the closest-pair search, seat bookkeeping |
 | `src/stats460.lua` | ModuleScript | the authorities' stats as a **cache**: optimistic write, reconcile, rollback, fan-out. Never invents a stat |
-| `src/arena460.lua` | ModuleScript | the arena the place already ships: which pad per team, which blaster, who won. Reads, never invents |
+| `src/arena460.lua` | ModuleScript | the arena the place already ships: which pad per team, which blaster, who won. Reads, never invents; re-reads without losing a usable arena |
 | `src/net460.lua` | ModuleScript | the published ladder: schema support, the ladder's own order, staleness, rows |
 | `src/lobby.server.lua` | Script | sign-in, minting, seating, the tick, the board push |
 | `src/lobby.client.lua` | LocalScript | the screen: SIGN IN, queue buttons, ladder, the match prompt with its ticket |
@@ -97,7 +97,7 @@ The base place is a **binary** `.rbxl` and there is no rbx-dom/rojo toolchain on
 it — hand-writing binary INST/PROP/PRNT chunks would be a good way to corrupt the one file hardest to reconstruct.
 
 1. Open `shankpit_roblox.rbxl` in Studio.
-2. **Insert from file** → `roblox/SHANKPIT_ROBLOX_460.rbxmx` → it lands as a `SHANKPIT460` folder (9 instances).
+2. **Insert from file** → `roblox/SHANKPIT_ROBLOX_460.rbxmx` → it lands as a `SHANKPIT460` folder (11 instances).
 3. Drag the **Script** (`lobby`) and the ModuleScripts into **ServerScriptService**.
 4. Drag **`lobby_client` (a LocalScript) into StarterPlayerScripts** — leaving it beside the server Script is the
    mistake that makes a lobby look finished with nothing on screen.
@@ -106,7 +106,7 @@ it — hand-writing binary INST/PROP/PRNT chunks would be a good way to corrupt 
 6. To point the place at a dev backend instead of production, set the attributes `IdunaBase` / `WotanBase`
    on the `lobby.server` Script (for the IDUNA Space: `https://<space>.hf.space/api/v1`). Unset means the
    production hosts, and the stats stay a cache of them either way (`src/stats460.lua`).
-6. Fill in `CONFIG` in `lobby.server.lua`, un-tick **Disabled**, publish.
+7. Fill in `CONFIG` in `lobby.server.lua`, un-tick **Disabled**, publish.
 
 ## Honest limits
 
@@ -121,4 +121,12 @@ it — hand-writing binary INST/PROP/PRNT chunks would be a good way to corrupt 
   starts as a new guest until the published secret is present.
 - **The C verifier is not in this checkout.** The harness reimplements the documented algorithm
   (`hmac_sha256.h` lives in the separate shankpit-460 repo) — verified logic, not the C function itself.
-- **No gameplay.** A pair hands out a ticket; the arena stays the C server, which is what a 460 ticket is for.
+- **The round is played here; its result is still not the ladder's.** The arena adapter reads the place's own Laser
+  Tag content (pads, tools, teams) and `arena460.result` says who won from final tag counts — but nothing publishes
+  a Roblox round to WOTAN or IDUNA: `shankpit_netd` is read-only (`POST` answers 405) and there is no ingest
+  endpoint, so the board stays a cache of the matches the world itself played (`src/stats460.lua`). A round that
+  ends in this place changes nothing on the ladder, and no code here pretends otherwise.
+- **A re-read can be worse than the last read.** `arena460.refresh` keeps the last usable arena when Workspace is
+  briefly empty (a place rebuild, a team edit before its pad lands) and says what the re-read could not see. That
+  keeps a lobby from refusing rounds it can host, but it also means `arena_ok` can describe a pad that a publish
+  has just removed, for as long as the place stays unusable.
