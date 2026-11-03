@@ -98,6 +98,23 @@ function M.seat(arena, seats)
     return out
 end
 
+-- The pairing path. Two seats in, each seat's OWN team and pad out, keyed by pid -- because telling both sides
+-- of a pair the same spawn is the failure this exists to prevent: it stands two players on one team's pad and
+-- calls it a match. A place that cannot seat the pair is reported, never half-seated.
+function M.assign_pair(arena, first, second)
+    if type(arena) ~= "table" or not arena.ok then return nil, "arena-not-ok" end
+    if type(first) ~= "table" or type(second) ~= "table" then return nil, "no-seats" end
+    local assignments, why = M.seat(arena, { first, second })
+    if not assignments then return nil, why end
+    local by_pid = {}
+    for _, a in ipairs(assignments) do
+        if type(a.seat) == "table" and a.seat.user_id ~= nil then
+            by_pid[tostring(a.seat.user_id)] = a
+        end
+    end
+    return { first = assignments[1], second = assignments[2], by_pid = by_pid }
+end
+
 -- The tools a seat is given. This layer does not decide what a Blaster does -- Roblox's own Tool does.
 function M.loadout(arena)
     if type(arena) ~= "table" or not arena.ok then return nil, "arena-not-ok" end

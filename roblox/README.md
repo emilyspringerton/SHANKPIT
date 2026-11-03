@@ -18,7 +18,7 @@ it: a real sign-in, a queue, real connect tickets, and a read-only board. Nothin
 | `src/ticket460.lua` | ModuleScript | reading a real IDUNA connect ticket: shape, expiry, claimed player. **Never** verifies one |
 | `src/queue460.lua` | ModuleScript | casual vs ranked, the closest-pair search, seat bookkeeping |
 | `src/stats460.lua` | ModuleScript | the authorities' stats as a **cache**: optimistic write, reconcile, rollback, fan-out. Never invents a stat |
-| `src/arena460.lua` | ModuleScript | the arena the place already ships: which pad per team, which blaster, who won. Reads, never invents; re-reads without losing a usable arena |
+| `src/arena460.lua` | ModuleScript | the arena the place already ships: which pad per team, which blaster, which side of a pair, who won. Reads, never invents; re-reads without losing a usable arena |
 | `src/net460.lua` | ModuleScript | the published ladder: schema support, the ladder's own order, staleness, rows |
 | `src/lobby.server.lua` | Script | sign-in, minting, seating, the tick, the board push |
 | `src/lobby.client.lua` | LocalScript | the screen: SIGN IN, queue buttons, ladder, the match prompt with its ticket |
@@ -126,6 +126,9 @@ it — hand-writing binary INST/PROP/PRNT chunks would be a good way to corrupt 
   a Roblox round to WOTAN or IDUNA: `shankpit_netd` is read-only (`POST` answers 405) and there is no ingest
   endpoint, so the board stays a cache of the matches the world itself played (`src/stats460.lua`). A round that
   ends in this place changes nothing on the ladder, and no code here pretends otherwise.
+- **Seating a pair does not move anybody.** `arena460.assign_pair` says which team and which pad each side of a
+  pair got, and the lobby shows it — but nothing teleports, gives out a Tool, or counts a tag. That is the base
+  place's own Laser Tag behaviour, and this layer deliberately owns none of it.
 - **A re-read can be worse than the last read.** `arena460.refresh` keeps the last usable arena when Workspace is
   briefly empty (a place rebuild, a team edit before its pad lands) and says what the re-read could not see. That
   keeps a lobby from refusing rounds it can host, but it also means `arena_ok` can describe a pad that a publish

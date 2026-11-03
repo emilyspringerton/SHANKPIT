@@ -159,5 +159,21 @@ eq(padless.stale, true, "a team whose pad disappeared keeps the previous arena")
 eq(#padless.teams, 2, "with both teams still seatable")
 ok(has(padless.fresh_missing, "no-spawn-for-team:Blue Team"), "and names the pad the re-read could not find")
 
+-- ---- 8. a pair gets two DIFFERENT sides, each with its own pad -----------------------------------------
+-- This is the wiring the lobby uses: both sides being told the same spawn would put two players on one team's
+-- pad and call it a match, which is what the lobby did before it called this.
+local pair = arena.assign_pair(a, { user_id = 11, name = "one" }, { user_id = 22, name = "two" })
+ok(pair ~= nil, "a pair of seats is assigned")
+eq(pair.first.team, "Red Team", "the first seat is on the first team")
+eq(pair.second.team, "Blue Team", "the second seat is on the other team")
+eq(pair.first.spawn, "SpawnLocation", "each side is sent to its own pad")
+eq(pair.second.spawn, "BlueSpawn", "not the same pad for both")
+ok(pair.first.spawn ~= pair.second.spawn, "the two pads really differ")
+eq(pair.by_pid["22"].team, "Blue Team", "the second side is reachable by pid")
+eq(select(2, arena.assign_pair({ ok = false, teams = {}, spawns = {} }, { user_id = 1 }, { user_id = 2 })), "arena-not-ok",
+    "an unusable arena seats no pair")
+eq(select(2, arena.assign_pair(a, nil, { user_id = 2 })), "no-seats", "a half pair is refused, not half seated")
+eq(select(2, arena.assign_pair(a, { user_id = 1 }, nil)), "no-seats", "either side missing")
+
 print(string.format("arena460: %d checks, %d failures", checks, failures))
 if failures > 0 then os.exit(1) end

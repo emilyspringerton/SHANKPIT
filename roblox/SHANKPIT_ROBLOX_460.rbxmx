@@ -1074,9 +1074,15 @@ task.spawn(function()
             for _, mode in ipairs({ "casual", "ranked" }) do
                 local tick = queue460.tick(queue, mode, now)
                 for _, p in ipairs(tick.pairs) do
+                    -- Each side gets ITS OWN team and pad. The payload used to carry one `arena_spawn` for both,
+                    -- which stands two players on the same team's spawn and calls it a match.
+                    local pair = arena460.assign_pair(ARENA,
+                        { user_id = p.first.pid, name = p.first.name },
+                        { user_id = p.second.pid, name = p.second.name })
                     for player, seat in pairs(seats) do
                         if seat.user_id == p.first.pid or seat.user_id == p.second.pid then
                             local iAmFirst = (seat.user_id == p.first.pid)
+                            local mine = pair and pair.by_pid[tostring(seat.user_id)] or nil
                             -- A ticket has a 5-minute life and was minted when they queued, so tell each side
                             -- what is actually left rather than what it was at mint time.
                             local remaining = ticket460.usable(seat.ticket, nowS)
@@ -1093,7 +1099,8 @@ task.spawn(function()
                                 -- What the round needs from the place itself, read once from its own Laser Tag
                                 -- content. nil + a reason when the place cannot host one; never a default.
                                 arena_ok = ARENA.ok,
-                                arena_spawn = ARENA.ok and ARENA.spawns[1].name or nil,
+                                arena_team = mine and mine.team or nil,
+                                arena_spawn = mine and mine.spawn or nil,
                                 arena_weapon = ARENA.ok and ARENA.weapons[1] or nil,
                                 arena_teams = ARENA.ok and ARENA.teams or nil,
                                 arena_reason = ARENA.ok and nil or table.concat(ARENA.missing, ","),
@@ -1345,9 +1352,19 @@ task.spawn(function()
             local left = matchExpiresAt - os.time()
             if left &lt; 0 then left = 0 end
             local ticket = tostring(match.ticket or "")
+            -- Which side and which pad are the server's answer, not this client's guess: a pair is seated on two
+            -- different teams, so "the arena" is not one place for both players.
+            local arenaLine = ""
+            if match.arena_ok then
+                arenaLine = string.format("\nteam %s | spawn %s | %s",
+                    tostring(match.arena_team or "?"), tostring(match.arena_spawn or "?"),
+                    tostring(match.arena_weapon or "?"))
+            elseif match.arena_reason then
+                arenaLine = "\nno arena: " .. tostring(match.arena_reason)
+            end
             matchText.Text = string.format(
-                "MATCH %s vs %s (gap %d)\nticket %s... %ds left\nopen SHANKPIT and paste the ticket",
-                tostring(match.mode), tostring(match.opponent), tonumber(match.gap) or 0,
+                "MATCH %s vs %s (gap %d)%s\nticket %s... %ds left\nopen SHANKPIT and paste the ticket",
+                tostring(match.mode), tostring(match.opponent), tonumber(match.gap) or 0, arenaLine,
                 string.sub(ticket, 1, 12), left)
             if left == 0 then
                 matchFrame.BackgroundColor3 = Color3.fromRGB(58, 34, 34)
@@ -1460,6 +1477,23 @@ function M.seat(arena, seats)
         out[#out + 1] = { seat = seat, team = team, spawn = spawn }
     end
     return out
+end
+
+-- The pairing path. Two seats in, each seat's OWN team and pad out, keyed by pid -- because telling both sides
+-- of a pair the same spawn is the failure this exists to prevent: it stands two players on one team's pad and
+-- calls it a match. A place that cannot seat the pair is reported, never half-seated.
+function M.assign_pair(arena, first, second)
+    if type(arena) ~= "table" or not arena.ok then return nil, "arena-not-ok" end
+    if type(first) ~= "table" or type(second) ~= "table" then return nil, "no-seats" end
+    local assignments, why = M.seat(arena, { first, second })
+    if not assignments then return nil, why end
+    local by_pid = {}
+    for _, a in ipairs(assignments) do
+        if type(a.seat) == "table" and a.seat.user_id ~= nil then
+            by_pid[tostring(a.seat.user_id)] = a
+        end
+    end
+    return { first = assignments[1], second = assignments[2], by_pid = by_pid }
 end
 
 -- The tools a seat is given. This layer does not decide what a Blaster does -- Roblox's own Tool does.

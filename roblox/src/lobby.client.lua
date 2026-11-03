@@ -210,9 +210,19 @@ task.spawn(function()
             local left = matchExpiresAt - os.time()
             if left < 0 then left = 0 end
             local ticket = tostring(match.ticket or "")
+            -- Which side and which pad are the server's answer, not this client's guess: a pair is seated on two
+            -- different teams, so "the arena" is not one place for both players.
+            local arenaLine = ""
+            if match.arena_ok then
+                arenaLine = string.format("\nteam %s | spawn %s | %s",
+                    tostring(match.arena_team or "?"), tostring(match.arena_spawn or "?"),
+                    tostring(match.arena_weapon or "?"))
+            elseif match.arena_reason then
+                arenaLine = "\nno arena: " .. tostring(match.arena_reason)
+            end
             matchText.Text = string.format(
-                "MATCH %s vs %s (gap %d)\nticket %s... %ds left\nopen SHANKPIT and paste the ticket",
-                tostring(match.mode), tostring(match.opponent), tonumber(match.gap) or 0,
+                "MATCH %s vs %s (gap %d)%s\nticket %s... %ds left\nopen SHANKPIT and paste the ticket",
+                tostring(match.mode), tostring(match.opponent), tonumber(match.gap) or 0, arenaLine,
                 string.sub(ticket, 1, 12), left)
             if left == 0 then
                 matchFrame.BackgroundColor3 = Color3.fromRGB(58, 34, 34)

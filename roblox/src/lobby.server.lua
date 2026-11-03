@@ -441,9 +441,15 @@ task.spawn(function()
             for _, mode in ipairs({ "casual", "ranked" }) do
                 local tick = queue460.tick(queue, mode, now)
                 for _, p in ipairs(tick.pairs) do
+                    -- Each side gets ITS OWN team and pad. The payload used to carry one `arena_spawn` for both,
+                    -- which stands two players on the same team's spawn and calls it a match.
+                    local pair = arena460.assign_pair(ARENA,
+                        { user_id = p.first.pid, name = p.first.name },
+                        { user_id = p.second.pid, name = p.second.name })
                     for player, seat in pairs(seats) do
                         if seat.user_id == p.first.pid or seat.user_id == p.second.pid then
                             local iAmFirst = (seat.user_id == p.first.pid)
+                            local mine = pair and pair.by_pid[tostring(seat.user_id)] or nil
                             -- A ticket has a 5-minute life and was minted when they queued, so tell each side
                             -- what is actually left rather than what it was at mint time.
                             local remaining = ticket460.usable(seat.ticket, nowS)
@@ -460,7 +466,8 @@ task.spawn(function()
                                 -- What the round needs from the place itself, read once from its own Laser Tag
                                 -- content. nil + a reason when the place cannot host one; never a default.
                                 arena_ok = ARENA.ok,
-                                arena_spawn = ARENA.ok and ARENA.spawns[1].name or nil,
+                                arena_team = mine and mine.team or nil,
+                                arena_spawn = mine and mine.spawn or nil,
                                 arena_weapon = ARENA.ok and ARENA.weapons[1] or nil,
                                 arena_teams = ARENA.ok and ARENA.teams or nil,
                                 arena_reason = ARENA.ok and nil or table.concat(ARENA.missing, ","),
