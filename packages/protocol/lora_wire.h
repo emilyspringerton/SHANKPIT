@@ -638,6 +638,8 @@ typedef struct {
 
 typedef struct {
     LoraSnapshotClient c[LORA_SNAPSHOT_CLIENTS];
+    uint32_t last_any_ms;   /* the last snapshot of ANY kind: the global airtime gap */
+    uint8_t  any_served;
 } LoraSnapshotPump;
 
 static void lora_snapshot_pump_begin(LoraSnapshotPump *p) {
@@ -649,13 +651,19 @@ static void lora_snapshot_pump_begin(LoraSnapshotPump *p) {
    because eviction would let a rotating client spend everyone's budget. */
 static int lora_snapshot_gate(LoraSnapshotPump *p, uint16_t entity, int preset, uint32_t now_ms) {
     int i, free_slot = -1;
-    uint32_t interval;
+    uint32_t interval, global_gap;
     if (!p) return -1;
     interval = (uint32_t)lora_snapshot_interval_ms(preset);
+    global_gap = (uint32_t)lora_snapshot_global_ms(preset);
+    /* The air is shared, so the global gap is checked FIRST and spends nothing when it blocks: eight
+       clients inside one interval would otherwise be eight full-state frames in a row. */
+    if (p->any_served && (uint32_t)(now_ms - p->last_any_ms) < global_gap) return 1;
     for (i = 0; i < LORA_SNAPSHOT_CLIENTS; i++) {
         if (p->c[i].used && p->c[i].entity == entity) {
             if ((uint32_t)(now_ms - p->c[i].last_ms) < interval) return 1;
             p->c[i].last_ms = now_ms;
+            p->last_any_ms = now_ms;
+            p->any_served = 1;
             return 0;
         }
         if (!p->c[i].used && free_slot < 0) free_slot = i;
@@ -664,6 +672,8 @@ static int lora_snapshot_gate(LoraSnapshotPump *p, uint16_t entity, int preset, 
     p->c[free_slot].entity = entity;
     p->c[free_slot].last_ms = now_ms;
     p->c[free_slot].used = 1;
+    p->last_any_ms = now_ms;
+    p->any_served = 1;
     return 0;
 }
 

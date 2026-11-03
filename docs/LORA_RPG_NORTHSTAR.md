@@ -60,13 +60,18 @@ everything, not just one chunk.
 
 **Requests** are their own 8-byte frame (first byte **3**, a delta's is **2**, so a receiver tells them
 apart before parsing), carrying kind, the asking entity, the asker's sequence number and a tick. Two
-kinds: `SNAPSHOT` — "give me the world", expensive and **budgeted per client** (`lora-snapshot-interval-ms`:
-30 s at LONG_FAST, 60 s at LONG_SLOW, 15 s at SHORT_TURBO), answered `0` for "wait"; and `TICK` —
-"resend tick N", answered straight out of an 8-tick history ring as one frame, and deliberately **not**
-charged against the snapshot budget. The per-client table holds **8** clients and never evicts: a ninth
-distinct asker is refused rather than resetting somebody else's clock, because eviction would let a
-rotating client spend everyone's budget. The total snapshot rate is therefore bounded by 8 per interval
-— one every 3.75 s worst case at LONG_FAST — which is stated here rather than assumed harmless.
+kinds: `SNAPSHOT` — "give me the world", expensive, and answered `0` for "wait"; and `TICK` — "resend
+tick N", answered straight out of an 8-tick history ring as one frame, deliberately **not** charged
+against the snapshot budget.
+
+`SNAPSHOT` is gated **twice**, and both numbers are PARENA's:
+
+- **per client** (`lora-snapshot-interval-ms`: 30 s / 60 s / 15 s by preset) in an **8-slot table that
+  never evicts** — a ninth distinct asker is refused rather than resetting somebody else's clock, because
+  eviction would let a rotating client spend everyone's budget;
+- **globally** (`lora-snapshot-global-ms`: 4 s / 8 s / 2 s) — no snapshot at all inside that gap,
+  whoever is asking. Without it, eight clients could pull eight full-state frames back to back; with it,
+  the worst case is one snapshot per global gap and the air keeps carrying the game.
 
 ## The tick
 
@@ -112,10 +117,9 @@ Python daemon and `ForwardToWotanMatchmaker` do not exist in this repo and were 
 ## Open questions for the next slice
 
 1. **Loss**: policy, requests and catch-up exist -- `lora_client_send/ack/due` with a retry budget,
-   `SNAPSHOT` budgeted **per client** in an 8-slot table, and `TICK` resends from an 8-tick ring. What is
-   NOT built: a **global airtime cap** on top of the per-client budget (the worst case is 8 snapshots per
-   interval), a ranged "everything since tick N" request (the client walks the ring a tick at a time),
-   and nothing persists between host restarts.
+   `SNAPSHOT` gated per client (8 slots, no eviction) **and** by a global airtime gap, `TICK` resends from
+   an 8-tick ring. What is NOT built: a ranged "everything since tick N" request (the client walks the
+   ring a tick at a time), and nothing persists between host restarts.
 2. **Multiple frames per tick** — done (v2 header, chunk reassembly); the remaining question is what a
    receiver does when chunk 2 of 3 never arrives: re-request by tick, or wait for the next full state.
 3. **Persistence** of the slow world (the camp host can sleep between ticks) — IDUNA already holds

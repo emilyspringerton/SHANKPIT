@@ -13,5 +13,6 @@ int lora_xp_move(int preset);
 int lora_resend_ms(int preset);
 int lora_max_sends(int preset);
 int lora_snapshot_interval_ms(int preset);
+int lora_snapshot_global_ms(int preset);
 
 #endif /* SHANKPIT_PROTOCOL_LORA_RULES_H */
