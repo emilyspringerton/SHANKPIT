@@ -150,5 +150,34 @@ authoritative entities.
 
 ---
 
+## 10. Status — S1 is built (2026-11-03)
+
+Slice 1 exists and is green, with **no gameplay wiring yet** (deliberately: a car cannot be parted out
+until the split is proven against hand-derived numbers).
+
+**PARENA** — `stdlib/shankpit/vehicle_salvage_rules.prn`: `salvage-hull` (300, asserted equal to
+`vehicle_burn_rules.prn`'s own `vehicle-hull`), `salvage-component-count`, `salvage-component-hp`
+(buggy 90/120/60/30, rocket 80/100/50/30/40 — both exactly 300), `salvage-component-material`
+(BF_KIND values), `salvage-component-offset-centi`, `salvage-handling-permille`, `salvage-tier`,
+`salvage-quantity`.
+
+**SHANKPIT** — `packages/simulation/vehicle_salvage.h` (state, hull-conserving split, handling stack,
+seeded roll), `vehicle_salvage_rules.c` (generated, checked in), `vehicle_salvage_rules_host.h`,
+`vehicle_salvage_test.c`, `scripts/gen_vehicle_salvage_rules.sh`, `mk/salvage.mk`.
+
+What the test actually asserts: parts sum to the hull; a 120-point hit lands 36/48/24/12; a part comes
+off once and never absorbs damage again; **400 random hits conserve the hull exactly** (`before -
+damage`, floored at 0); the handling stack is the product of live parts (engine off = 300 drive, and
+engine+wheels = 240); the logic board changes no handling; the tier table is hand-checked at every
+boundary; and the same car/tick/part rolls identically while still spreading across ticks.
+
+Verified: `make check-vehicle-salvage-rules` (regen is byte-identical), `make test-vehicle-salvage`
+clean at `-Wall -Wextra -Werror` and again under ASan+UBSan.
+
+**Not done, named:** no component state on `BuggyState` yet, no shard spawn, no loot, no `origin_tag`,
+no wire. Those are S2-S5 and each needs a host decision this slice does not make.
+
+---
+
 Written 2026-11-03. Every file path in §1 was checked in this tree; every "does not exist" was
 grepped, not assumed.

@@ -110,6 +110,10 @@ jobs:
           make test-held-model
           make test-camera-rig
           make test-stream-out
+          # vehicle salvage: the five components sum to the hull, every hit is conserved across 400
+          # random hits, and the salvage table is hand-derived (plain gcc + libm, ASan+UBSan)
+          make check-vehicle-salvage-rules
+          make test-vehicle-salvage
 
       # MODE_TYLER (TYLER VALHANNA cold open) voice + the P0 fixes it needed. Headless, plain gcc,
       # ASan+UBSan, no SDL, no audio device: the scripted actors really walk (story_ai gate +
