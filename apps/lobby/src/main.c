@@ -1239,6 +1239,7 @@ static ProcTexture g_wall_brick_tex = {0};
 // materials if you could have a some kind of metal or shiny texture i dunno" -- three more real
 // procedural textures, same generate-once-at-startup convention as g_wall_brick_tex above.
 static ProcTexture g_wall_concrete_tex = {0};
+static ProcTexture g_wall_rock_tex = {0};
 static ProcTexture g_wall_wood_tex = {0};
 static ProcTexture g_wall_metal_tex = {0};
 // g_wall_ips_panel_tex -- SHADER_IPS_LIGHT's own real texture (founder real-time, 2026-09-14:
@@ -2047,6 +2048,10 @@ static void draw_phone_app(Phone *p) {
 static GLuint material_texture_for_name(const char *name) {
     if (name) {
         if (strcmp(name, "concrete") == 0) return g_wall_concrete_tex.tex_id;
+        if (strcmp(name, "rock") == 0) return g_wall_rock_tex.tex_id;
+        if (strcmp(name, "stone") == 0) return g_wall_rock_tex.tex_id;
+        if (strcmp(name, "granite") == 0) return g_wall_rock_tex.tex_id;
+        if (strcmp(name, "cliff") == 0) return g_wall_rock_tex.tex_id;
         if (strcmp(name, "wood") == 0) return g_wall_wood_tex.tex_id;
         if (strcmp(name, "metal") == 0) return g_wall_metal_tex.tex_id;
         if (strcmp(name, "ips_light") == 0) return g_wall_ips_panel_tex.tex_id;
@@ -16961,6 +16966,9 @@ int main(int argc, char* argv[]) {
     proc_tex_create(&g_wall_concrete_tex, 128, 128);
     proctex_make_concrete_rgba(&g_wall_concrete_tex, 128, 128, 0x1177u);
     proctex_upload_to_gl(&g_wall_concrete_tex);
+    proc_tex_create(&g_wall_rock_tex, 128, 128);
+    proctex_make_rock_rgba(&g_wall_rock_tex, 128, 128, 0x2244u);
+    proctex_upload_to_gl(&g_wall_rock_tex);
     proc_tex_create(&g_wall_wood_tex, 128, 128);
     proctex_make_wood_rgba(&g_wall_wood_tex, 128, 128, 0x3399u);
     proctex_upload_to_gl(&g_wall_wood_tex);

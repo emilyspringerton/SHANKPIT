@@ -275,6 +275,34 @@ void proctex_make_concrete_rgba(ProcTexture *t, int w, int h, uint32_t seed) {
     }
 }
 
+/* Rock/stone. Layers three things that all wrap: strata on whole-cycle sines in u and v (so the top
+ * edge continues the bottom edge), a blotch lattice quantised to 8 cells across the texture (so cell 8
+ * is cell 0 again), and per-pixel grain that only breaks the surface up at close range. Grey-blue, with
+ * darker crevices where the strata bands trough -- the flat-vertex-colour look this replaces had no
+ * way to say "this wall is stone" at all. */
+void proctex_make_rock_rgba(ProcTexture *t, int w, int h, uint32_t seed) {
+    if (!t || !t->pixels || t->width != w || t->height != h || w <= 0 || h <= 0) return;
+    const float two_pi = 6.283185307179586f;
+    const float phase = (float)(seed % 13u) * 0.37f;
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            size_t idx = ((size_t)y * (size_t)w + (size_t)x) * 4u;
+            float u = (float)x / (float)w, v = (float)y / (float)h;
+            float band = 0.5f + 0.5f * sinf(two_pi * (3.0f * v + 1.0f * u) + phase);
+            int gx = (x * 8) / w, gy = (y * 8) / h;
+            float blotch = hash_2d(gx % 8, gy % 8, (int)seed + 131);
+            float grain = hash_2d(x, y, (int)seed) - 0.5f;
+            float n = 0.55f * band + 0.30f * blotch + 0.15f * (grain + 0.5f);
+            float crevice = band < 0.28f ? 0.72f : 1.0f;   /* dark seams where the strata trough */
+            unsigned char c = (unsigned char)(58.0f + 104.0f * n * crevice);
+            t->pixels[idx + 0] = (unsigned char)((float)c * 0.97f);
+            t->pixels[idx + 1] = (unsigned char)((float)c * 0.98f);
+            t->pixels[idx + 2] = c;
+            t->pixels[idx + 3] = 255;
+        }
+    }
+}
+
 /* proctex_make_wood_rgba: horizontal plank rows with a darker seam between planks, plus a fine
  * horizontal grain-noise streak within each plank -- reads as a distinct built material from both
  * brick (vertical mortar joints) and concrete (no pattern at all). */

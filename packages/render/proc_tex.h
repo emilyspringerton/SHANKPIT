@@ -38,6 +38,12 @@ void proctex_make_wall_brick_rgba(ProcTexture *t, int w, int h, uint32_t seed);
  * material_shaders.h), not from this texture -- this just gives it a real brushed-streak base
  * coat so it doesn't look flat-gray even where the highlight isn't hitting. */
 void proctex_make_concrete_rgba(ProcTexture *t, int w, int h, uint32_t seed);
+
+/* Rock/stone -- a world material this native build had no generator for, so a level naming
+ * "rock"/"stone"/"granite"/"cliff" silently fell back to brick (material_texture_for_name's own
+ * documented default). No checked-in level names one yet; the fallback is why that was invisible. Same file-free, compile-time, GL_REPEAT-tiled convention as concrete above: strata bands
+ * on whole-cycle sines plus a wrapped blotch lattice, so the pattern meets itself at every edge. */
+void proctex_make_rock_rgba(ProcTexture *t, int w, int h, uint32_t seed);
 void proctex_make_wood_rgba(ProcTexture *t, int w, int h, uint32_t seed);
 void proctex_make_metal_rgba(ProcTexture *t, int w, int h, uint32_t seed);
 void proctex_make_ips_panel_rgba(ProcTexture *t, int w, int h, uint32_t seed);
