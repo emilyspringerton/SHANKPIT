@@ -1511,9 +1511,20 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
         }
         r = wow_server_rx(&g_wow_server, client_id, w->bytes, w->len, ack, (int)sizeof ack);
         if (r == -2) {
-            /* fail closed: no IDUNA verifier installed yet, so nothing is acted on */
-            static int warned = 0;
-            if (!warned) { NET_WARN_LOG("WOW_WIRE refused: no IDUNA ticket verifier installed (fail closed)"); warned = 1; }
+            /* -2 means "refused", and there are two different reasons: no verifier is installed, or an
+               installed verifier rejected the ticket (bad MAC, or past its 5-minute expiry). They used to
+               share one message that always blamed the verifier's absence, so a genuinely rejected ticket
+               -- an expired one, say -- read as a server misconfiguration. Say which one it was. */
+            if (!g_wow_server.auth) {
+                static int warned = 0;
+                if (!warned) { NET_WARN_LOG("WOW_WIRE refused: no IDUNA ticket verifier installed (fail closed)"); warned = 1; }
+            } else {
+                static unsigned int refused_auth = 0;
+                refused_auth++;
+                if (refused_auth <= 3 || (refused_auth % 100) == 0)
+                    NET_WARN_LOG("WOW_AUTH_REFUSED client_id=%d ticket rejected by the installed verifier (bad MAC or expired) total=%u",
+                                 client_id, refused_auth);
+            }
             return;
         }
         if (r == 0) {
