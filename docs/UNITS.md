@@ -63,8 +63,8 @@ factors and the F32 entry points.
   the rule in **yards** (`wow_cast_range_yd_for`, per weapon (2 yd knife to 120 yd sniper), the unit a designer says out loud) and
   `apps/server/src/main.c` converts the chosen value once with `units_author_length_m(..., 5)` before comparing squared
   distances, so no metre value is restated in C. Beyond that range a `[@target]` cast fires along the
-  player's own aim instead of swinging the crosshair. Level/brick/editor authoring is still unconsumed;
-  `units_author_*` is its entry point. The second consumer is a geometry dimension a designer states
+  player's own aim instead of swinging the crosshair. Geometry *generation* is consumed now (the gate);
+  the level editor's own authoring is not, and `units_author_*` is the entry point for it. The second consumer is a geometry dimension a designer states
   in feet: `zone-door-height-ft` (7 ft) in `PARENA/stdlib/shankpit/zone_rules.prn`, converted once in
   `packages/simulation/proc_dungeon.h` with `units_author_length_m(..., 4)`, so 2.1336 m is never
   restated and the dungeon's gate box is exactly the authored height.
