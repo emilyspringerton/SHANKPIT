@@ -10,6 +10,11 @@ int wow_cast_queue(int);
 int wow_macro_max_clauses(int);
 int wow_ack_ms(int);
 int wow_target_resend_ms(int);
+int wow_entity_lo(int);
+int wow_entity_hi(int);
+int wow_entity_valid(int);
+int wow_def_bytes(int, int);
+int wow_seq_next(int);
 
 int wow_target_slots(int preset __attribute__((unused))) {
     return 4;
@@ -52,6 +57,38 @@ int wow_target_resend_ms(int preset __attribute__((unused))) {
     } else {
     return 500;
     }
+    }
+}
+
+int wow_entity_lo(int e __attribute__((unused))) {
+    return (e - ((e / 256) * 256));
+}
+
+int wow_entity_hi(int e __attribute__((unused))) {
+    return (e / 256);
+}
+
+int wow_entity_valid(int e __attribute__((unused))) {
+    if ((e < 1)) {
+    return 0;
+    } else {
+    if ((e > 65535)) {
+    return 0;
+    } else {
+    return 1;
+    }
+    }
+}
+
+int wow_def_bytes(int clauses __attribute__((unused)), int argbytes __attribute__((unused))) {
+    return (5 + ((6 * clauses) + argbytes));
+}
+
+int wow_seq_next(int seq __attribute__((unused))) {
+    if ((seq > 65534)) {
+    return 1;
+    } else {
+    return (seq + 1);
     }
 }
 

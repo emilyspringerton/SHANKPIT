@@ -37,6 +37,10 @@
 #define WOW_WIRE_ACK_BYTES     5
 #define WOW_WIRE_DEF_HEADER    5
 #define WOW_WIRE_CLAUSE_HEADER 6
+/* AUTH is deliberately 48 bytes: an IDUNA PLAYER TICKET, never the 4 KB SSO JWT. The ticket is the
+   thing a game server is allowed to see; the token stays in the client. */
+#define WOW_WIRE_AUTH_BYTES    48
+#define WOW_WIRE_TICKET_BYTES  46
 
 enum {
     WOW_OP_SET_TARGET   = 1,
@@ -44,7 +48,8 @@ enum {
     WOW_OP_CAST         = 3,
     WOW_OP_DEFINE_MACRO = 4,
     WOW_OP_INVOKE_MACRO = 5,
-    WOW_OP_ACK          = 6
+    WOW_OP_ACK          = 6,
+    WOW_OP_AUTH         = 7
 };
 
 /* ---- multiple targets, per client ------------------------------------------------------------- */
@@ -66,7 +71,7 @@ static inline int wow_targets_get(const WowTargets *t, int slot) {
 /* 1 changed, 0 already that value, -1 bad slot / bad entity. Entity 0 is not a unit. */
 static inline int wow_targets_set(WowTargets *t, int slot, int entity) {
     if (!t || slot < 0 || slot >= WOW_TARGET_SLOTS) return -1;
-    if (entity <= 0 || entity > 0xFFFF) return -1;
+    if (!wow_entity_valid(entity)) return -1;
     if (t->used[slot] && t->entity[slot] == (uint16_t)entity) return 0;
     t->entity[slot] = (uint16_t)entity;
     t->used[slot] = 1;
@@ -90,16 +95,15 @@ static inline int wow_targets_intent(WowTargets *t, int slot, int entity, uint8_
     changed = (entity < 0) ? wow_targets_clear(t, slot) : wow_targets_set(t, slot, entity);
     if (changed < 0) return -1;
     if (changed == 0) return 0;
-    t->seq++;
-    if (!t->seq) t->seq = 1;              /* 0 is "never sent" so a stale datagram can't win */
+    t->seq = (uint16_t)wow_seq_next((int)t->seq);   /* PARENA: skip 0, wrap at 16 bits */
     t->have_seq = 1;
     out[0] = (uint8_t)WOW_WIRE_VERSION;
     out[1] = (uint8_t)(entity < 0 ? WOW_OP_CLEAR_TARGET : WOW_OP_SET_TARGET);
     out[2] = (uint8_t)(t->seq & 0xFF);
     out[3] = (uint8_t)(t->seq >> 8);
     out[4] = (uint8_t)slot;
-    out[5] = (uint8_t)((entity < 0 ? 0 : entity) & 0xFF);
-    out[6] = (uint8_t)((entity < 0 ? 0 : entity) >> 8);
+    out[5] = (uint8_t)wow_entity_lo(entity < 0 ? 0 : entity);
+    out[6] = (uint8_t)wow_entity_hi(entity < 0 ? 0 : entity);
     return WOW_WIRE_INTENT_BYTES;
 }
 
@@ -111,7 +115,7 @@ static inline int wow_targets_apply(WowTargets *t, const uint8_t *in, int len) {
     if (!t || !in || len != WOW_WIRE_INTENT_BYTES) return -1;
     if (in[0] != WOW_WIRE_VERSION) return -1;
     if (in[1] != WOW_OP_SET_TARGET && in[1] != WOW_OP_CLEAR_TARGET) return -1;
-    seq = (uint16_t)(in[2] | (in[3] << 8));
+    seq = (uint16_t)(in[2] | (in[3] << 8));   /* byte order is the frame's, PARENA checks the sequence */
     slot = in[4];
     if (slot >= WOW_TARGET_SLOTS || seq == 0) return -1;
     if (t->have_seq && (int16_t)(seq - t->seq) <= 0) return 0;   /* wrap-safe: strictly newer or drop */
@@ -168,12 +172,13 @@ typedef struct {
    Layout: [ver, op, id, cmd, clause_count] then per clause
            [require lo, require hi, forbid lo, forbid hi, token, arg_len, arg...]. */
 static inline int wow_macro_encode_def(unsigned char id, const WowMacroLine *m, uint8_t *out, int cap) {
-    int i, used = WOW_WIRE_DEF_HEADER;
+    int i, used, argbytes = 0;
     if (!m || !out || id == 0) return -1;
     if (m->clause_count < 1 || m->clause_count > WOW_WIRE_MAX_CLAUSES) return -1;
     if (m->cmd == 0) return -1;
     for (i = 0; i < m->clause_count; i++)
-        used += WOW_WIRE_CLAUSE_HEADER + (int)strlen(m->clause[i].arg);
+        argbytes += (int)strlen(m->clause[i].arg);
+    used = wow_def_bytes(m->clause_count, argbytes);   /* PARENA owns the size formula */
     if (used > cap) return -1;
     out[0] = (uint8_t)WOW_WIRE_VERSION;
     out[1] = (uint8_t)WOW_OP_DEFINE_MACRO;
@@ -266,6 +271,34 @@ static inline int wow_ack_decode(const uint8_t *in, int len, WowAck *a) {
     a->seq = (uint16_t)(in[2] | (in[3] << 8));
     a->kind = in[4];
     return WOW_WIRE_ACK_BYTES;
+}
+
+/* ---- auth: an IDUNA ticket, not a token ------------------------------------------------------- */
+
+typedef struct { char ticket[WOW_WIRE_TICKET_BYTES + 1]; } WowAuthFrame;
+
+static inline int wow_auth_encode(const WowAuthFrame *a, uint8_t *out, int cap) {
+    int i;
+    if (!a || !out || cap < WOW_WIRE_AUTH_BYTES) return -1;
+    out[0] = (uint8_t)WOW_WIRE_VERSION;
+    out[1] = (uint8_t)WOW_OP_AUTH;
+    for (i = 0; i < WOW_WIRE_TICKET_BYTES; i++) out[2 + i] = (uint8_t)a->ticket[i];
+    return WOW_WIRE_AUTH_BYTES;
+}
+
+/* The ticket is copied out NUL-terminated so the verifier gets a C string and a length. */
+static inline int wow_auth_decode(const uint8_t *in, int len, WowAuthFrame *a) {
+    int i, n = 0;
+    if (!in || !a || len != WOW_WIRE_AUTH_BYTES) return -1;
+    if (in[0] != WOW_WIRE_VERSION || in[1] != WOW_OP_AUTH) return -1;
+    memset(a, 0, sizeof *a);
+    for (i = 0; i < WOW_WIRE_TICKET_BYTES; i++) {
+        a->ticket[i] = (char)in[2 + i];
+        if (a->ticket[i]) n = i + 1;
+    }
+    a->ticket[n] = '\0';
+    if (n == 0) return -1;
+    return WOW_WIRE_AUTH_BYTES;
 }
 
 #endif /* SHANKPIT_PROTOCOL_WOW_WIRE_H */

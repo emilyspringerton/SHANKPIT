@@ -9,4 +9,10 @@ int wow_macro_max_clauses(int preset);
 int wow_ack_ms(int preset);
 int wow_target_resend_ms(int preset);
 
+int wow_entity_lo(int e);
+int wow_entity_hi(int e);
+int wow_entity_valid(int e);
+int wow_def_bytes(int clauses, int argbytes);
+int wow_seq_next(int seq);
+
 #endif

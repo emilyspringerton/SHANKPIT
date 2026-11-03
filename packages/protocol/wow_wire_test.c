@@ -5,6 +5,7 @@
 #include <string.h>
 #include "wow_wire.h"
 #include "wow_mod.h"
+#include "wow_server.h"
 
 static int fails = 0;
 #define CHECK(cond, ...) do { if (!(cond)) { printf("wowwire: FAIL line %d: ", __LINE__); printf(__VA_ARGS__); printf("\n"); fails++; } } while (0)
@@ -159,6 +160,125 @@ static void test_mods(void) {
     CHECK(wow_mod_register_spell(&r, "BOLT", "knife") == -1, "a duplicate alias was accepted");
 }
 
+/* ---- the server end: fail closed, then IDUNA-authenticated intents ---------------------------- */
+
+static int fake_auth(void *ctx, const char *ticket, int len, char *pid, int cap) {
+    (void)ctx;
+    if (len == 9 && memcmp(ticket, "TICKET-OK", 9) == 0) {
+        if (cap > 9) memcpy(pid, "player-7", 9);
+        return 1;
+    }
+    return 0;
+}
+
+static void truth_hostile(void *ctx, int client, uint16_t entity, WowUnit *u) {
+    (void)ctx; (void)client;
+    if (entity == 7) { u->hostile = 1; u->dead = 0; }
+}
+
+static void test_server(void) {
+    WowServer s;
+    WowTargets tx;
+    WowAuthFrame af;
+    uint8_t frame[128], ack[WOW_WIRE_ACK_BYTES];
+    int n;
+    WowCastIntent ci, taken;
+
+    wow_server_begin(&s);
+    CHECK(s.require_auth == 1, "the server started open (must fail closed)");
+
+    /* no verifier installed: even a well-formed AUTH is refused */
+    memset(&af, 0, sizeof af);
+    memcpy(af.ticket, "TICKET-OK", 9);
+    n = wow_auth_encode(&af, frame, sizeof frame);
+    CHECK(n == WOW_WIRE_AUTH_BYTES, "auth frame is %d bytes", n);
+    CHECK(wow_server_rx(&s, 1, frame, n, ack, sizeof ack) == -2, "auth was accepted with no verifier");
+
+    s.auth = fake_auth;
+    af.ticket[0] = 'N';
+    n = wow_auth_encode(&af, frame, sizeof frame);   /* the FRAME is what the server reads */
+    CHECK(wow_server_rx(&s, 1, frame, n, ack, sizeof ack) == -2, "a bad ticket was accepted");
+
+    memset(&af, 0, sizeof af);
+    memcpy(af.ticket, "TICKET-OK", 9);
+    n = wow_auth_encode(&af, frame, sizeof frame);
+    CHECK(wow_server_rx(&s, 1, frame, n, ack, sizeof ack) == 1 && s.c[1].authed == 1 &&
+          strcmp(s.c[1].player_id, "player-7") == 0 && ack[1] == WOW_OP_ACK,
+          "the IDUNA verifier's identity was not bound to the client");
+
+    /* an unauthenticated other client is refused */
+    {
+        WowTargets t2;
+        uint8_t b2[16];
+        int n2;
+        wow_targets_begin(&t2);
+        n2 = wow_targets_intent(&t2, 0, 7, b2, sizeof b2);
+        CHECK(wow_server_rx(&s, 2, b2, n2, ack, sizeof ack) == -2, "an unauthenticated target was applied");
+    }
+
+    /* targets: applied, then a duplicate is dropped */
+    wow_targets_begin(&tx);
+    n = wow_targets_intent(&tx, 0, 7, frame, sizeof frame);
+    CHECK(wow_server_rx(&s, 1, frame, n, ack, sizeof ack) == 1 && wow_targets_get(&s.c[1].targets, 0) == 7,
+          "the server did not take the target");
+    CHECK(wow_server_rx(&s, 1, frame, n, ack, sizeof ack) == 0, "a duplicate target intent was acknowledged");
+
+    /* casts: queued, taken, bounded by PARENA's queue */
+    memset(&ci, 0, sizeof ci);
+    ci.weapon = (uint8_t)wow_weapon_from_name("magnum");
+    ci.token = WOW_TOKEN_TARGET;
+    ci.seq = 5;
+    n = wow_cast_encode(&ci, frame, sizeof frame);
+    CHECK(wow_server_rx(&s, 1, frame, n, ack, sizeof ack) == 1, "a valid cast was refused");
+    CHECK(wow_server_take_cast(&s, 1, &taken) == 1 && taken.weapon == ci.weapon && taken.seq == 5,
+          "the cast did not come out of the queue");
+    CHECK(wow_server_take_cast(&s, 1, &taken) == 0, "the queue did not drain");
+
+    ci.seq = 6; wow_cast_encode(&ci, frame, sizeof frame);
+    CHECK(wow_server_rx(&s, 1, frame, n, ack, sizeof ack) == 1, "cast 1 refused");
+    ci.seq = 7; wow_cast_encode(&ci, frame, sizeof frame);
+    CHECK(wow_server_rx(&s, 1, frame, n, ack, sizeof ack) == 1, "cast 2 refused");
+    ci.seq = 8; wow_cast_encode(&ci, frame, sizeof frame);
+    CHECK(wow_server_rx(&s, 1, frame, n, ack, sizeof ack) == 0,
+          "a third cast was queued past PARENA's depth (2 by default)");
+    ci.weapon = 99; ci.seq = 9; wow_cast_encode(&ci, frame, sizeof frame);
+    CHECK(wow_server_rx(&s, 1, frame, n, ack, sizeof ack) == -1, "a cast for a weapon that does not exist was queued");
+
+    while (wow_server_take_cast(&s, 1, &taken)) { }   /* the earlier casts must not fill this queue */
+
+    /* macro define + invoke, evaluated against the server's own target table */
+    {
+        WowMacroLine line;
+        WowInvoke inv;
+        uint8_t def[128];
+        int dn;
+        CHECK(wow_macro_parse("cast [harm] magnum; [@player] knife", &line) == 1, "compile failed");
+        dn = wow_macro_encode_def(4, &line, def, sizeof def);
+        CHECK(dn > 0 && wow_server_rx(&s, 1, def, dn, ack, sizeof ack) == 1, "a macro definition was refused");
+        s.unit_truth = truth_hostile;
+        s.unit_ctx = NULL;
+        inv.macro_id = 4; inv.seq = 11;
+        n = wow_invoke_encode(&inv, def, sizeof def);
+        CHECK(wow_server_rx(&s, 1, def, n, ack, sizeof ack) == 1, "invoking a defined macro failed");
+        CHECK(wow_server_take_cast(&s, 1, &taken) == 1 &&
+              taken.weapon == (uint8_t)wow_weapon_from_name("magnum") && taken.token == WOW_TOKEN_TARGET,
+              "[harm] against a hostile target did not queue the magnum at the target");
+        wow_targets_clear(&s.c[1].targets, 0);
+        inv.seq = 12;
+        n = wow_invoke_encode(&inv, def, sizeof def);
+        CHECK(wow_server_rx(&s, 1, def, n, ack, sizeof ack) == 1, "the fallback clause did not run");
+        CHECK(wow_server_take_cast(&s, 1, &taken) == 1 &&
+              taken.weapon == (uint8_t)wow_weapon_from_name("knife") && taken.token == WOW_TOKEN_PLAYER,
+              "with no target the macro did not fall through to [@player] knife");
+        inv.macro_id = 9;
+        n = wow_invoke_encode(&inv, def, sizeof def);
+        CHECK(wow_server_rx(&s, 1, def, n, ack, sizeof ack) == 0, "an undefined macro id was served");
+    }
+
+    CHECK(wow_server_rx(&s, WOW_SERVER_CLIENTS, frame, n, ack, sizeof ack) == -1, "an out-of-range client was served");
+    CHECK(wow_server_rx(NULL, 0, frame, n, ack, sizeof ack) == -1, "a null server was served");
+}
+
 int main(void) {
     test_layout();
     test_targets();
@@ -166,6 +286,7 @@ int main(void) {
     test_macro_bytecode();
     test_invoke_ack();
     test_mods();
+    test_server();
     if (fails) { printf("wowwire: %d FAILED\n", fails); return 1; }
     printf("wowwire: all checks passed\n");
     return 0;

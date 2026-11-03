@@ -42,6 +42,7 @@
 #include "../../../packages/simulation/heli_rules_host.h"
 #include "../../../packages/simulation/rocket_car_rules_host.h"   /* the rocket car's PARENA model */
 #include "../../../packages/simulation/kit_call.h"   /* PACKET_KIT_CALL: the kit's vehicle gadgets */
+#include "../../../packages/protocol/wow_server.h"   /* PACKET_WOW_WIRE: targets, casts, macro bytecode */
 
 /* cutscene handshake globals — defined in lobby/main.c for the client;
    server sim uses local_game.h but never renders cutscenes, so stub to 0. */
@@ -96,6 +97,12 @@ typedef struct {
 } ClientSlot;
 
 static ClientSlot slots[MAX_CLIENTS];
+
+/* Per-client target tables, macro definitions and cast queues. Begin()'d lazily on the first wire
+   frame, which also sets require_auth=1: until an IDUNA verifier is installed every op is refused. */
+static WowServer g_wow_server;
+static int g_wow_server_inited;
+static int g_server_sock = -1;   /* captured where the listening socket is created, for wire ACKs */
 
 typedef struct {
     int enabled;
@@ -1214,6 +1221,7 @@ void server_net_init(int port) {
     WSADATA wsa; WSAStartup(MAKEWORD(2,2), &wsa);
     #endif
     sock = socket(AF_INET, SOCK_DGRAM, 0);
+    g_server_sock = sock;
     if (sock < 0) {
         NET_ERR_LOG("SOCKET_CREATE_FAILED");
         exit(1);
@@ -1269,7 +1277,7 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
     NetHeader *head = (NetHeader*)buffer;
     int client_id = -1;
 
-    if (head->type == PACKET_CONNECT || head->type == PACKET_USERCMD || head->type == PACKET_DISCONNECT || head->type == PACKET_SPRAY_DECAL || head->type == PACKET_KIT_CALL) {
+    if (head->type == PACKET_CONNECT || head->type == PACKET_USERCMD || head->type == PACKET_DISCONNECT || head->type == PACKET_SPRAY_DECAL || head->type == PACKET_KIT_CALL || head->type == PACKET_WOW_WIRE) {
         client_id = ensure_slot_for_sender(sender, head->type == PACKET_CONNECT);
     }
     if (client_id == -1) return;
@@ -1394,6 +1402,41 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
         int spawned = kit_call_server_apply(&local_state.players[client_id], item);
         NET_SERVER_LOG("KIT_CALL client_id=%d item=%s -> veh=%d scene=%d", client_id, kit_item_name(item),
                        spawned, local_state.players[client_id].scene_id);
+        return;
+    }
+
+    // --- WOW WIRE: per-client targets, casts, macro bytecode (packages/protocol/wow_server.h) ---
+    if (client_id != -1 && head->type == PACKET_WOW_WIRE) {
+        NetWowWire *w = (NetWowWire *)buffer;
+        uint8_t ack[WOW_WIRE_ACK_BYTES];
+        int r;
+        if (!g_wow_server_inited) { wow_server_begin(&g_wow_server); g_wow_server_inited = 1; }
+        if (client_id >= WOW_SERVER_CLIENTS) {
+            static int warned = 0;
+            if (!warned) { NET_WARN_LOG("WOW_WIRE ignored: slot %d is beyond the %d wire clients", client_id, WOW_SERVER_CLIENTS); warned = 1; }
+            return;
+        }
+        if (size < (int)(sizeof(NetHeader) + 1) || w->len > (int)sizeof(w->bytes) ||
+            (int)(sizeof(NetHeader) + 1 + w->len) > size) {
+            g_net_diag.malformed++;
+            return;
+        }
+        r = wow_server_rx(&g_wow_server, client_id, w->bytes, w->len, ack, (int)sizeof ack);
+        if (r == -2) {
+            /* fail closed: no IDUNA verifier installed yet, so nothing is acted on */
+            static int warned = 0;
+            if (!warned) { NET_WARN_LOG("WOW_WIRE refused: no IDUNA ticket verifier installed (fail closed)"); warned = 1; }
+            return;
+        }
+        if (r > 0 && g_server_sock >= 0) {
+            NetWowWire out;
+            memset(&out, 0, sizeof out);
+            out.hdr.type = PACKET_WOW_WIRE;
+            out.len = (unsigned char)sizeof ack;
+            memcpy(out.bytes, ack, sizeof ack);
+            sendto(g_server_sock, (const char *)&out, (int)(sizeof(NetHeader) + 1 + sizeof ack), 0,
+                   (struct sockaddr *)sender, sizeof *sender);
+        }
         return;
     }
 

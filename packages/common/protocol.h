@@ -150,6 +150,11 @@
  * client's own reconcile would then invent damage. Masks are untrusted input and are clipped to the
  * components the car actually has. No shard velocities, ever: shards stay per-client cosmetic. */
 #define PACKET_VEHICLE_STATE 20
+/* PACKET_WOW_WIRE -- the macro/mod wire (packages/protocol/wow_server.h). ONE frame carries ONE
+ * WOW_WIRE_* frame verbatim (targets, cast, macro definition, invoke, ack); the envelope only adds
+ * a length, because the wire already has its own version byte and its own op byte. 64 bytes is more
+ * than a two-clause macro definition needs, and a bigger definition is refused rather than fragmented. */
+#define PACKET_WOW_WIRE 21
 
 #define NET_EMPIRE_MAX_NODES 16 /* must match EU_MAX_NODES (empire_units.h) */
 #define NET_EMPIRE_MAX_CELLS 32 /* must match EU_MAX_CLAIM_CELLS (empire_units.h) */
@@ -356,6 +361,12 @@ typedef struct {
     unsigned char item;
     unsigned char pad[3];
 } NetKitCall;
+
+typedef struct {
+    NetHeader hdr;
+    unsigned char len;
+    unsigned char bytes[64];
+} NetWowWire;
 
 /* NetBrickState -- see PACKET_BRICK_STATE's own doc comment above. key_lo/key_hi are the two halves
  * of the 30-bit cell key (ix | iy<<10 | iz<<20) so the entry has no padding or endianness trap. */

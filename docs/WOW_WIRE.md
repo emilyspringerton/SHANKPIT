@@ -62,6 +62,30 @@ the compiler. Trailing bytes after a definition are a refusal, not something to 
 A mod cannot shadow another mod's macro, cannot register something the compiler rejects, and cannot add
 a weapon. That is the entire capability boundary, which is why it fits in a header.
 
+## The server end (PACKET_WOW_WIRE 21)
+
+`apps/server/src/main.c` routes `PACKET_WOW_WIRE` through `wow_server_rx()`
+(`packages/protocol/wow_server.h`) and sends back the ACK it produces. The envelope is a `NetHeader`,
+a length byte and up to 64 bytes of wire frame — one frame per datagram, no fragmentation.
+
+Per connected client the server keeps its **own** four-slot target table, up to 8 macro definitions by
+id, and a cast queue bounded by `wow_cast_queue(preset)` (2 by default, 1 on a slow link, 3 on a fast
+one). `wow_server_take_cast()` is the FIFO the simulation drains; `[harm]` is evaluated against
+`WowServer.unit_truth`, which the simulation installs, and with no hook a target is "exists, unknown
+otherwise" so `[harm]` does not hold.
+
+**Identity is IDUNA's.** The `AUTH` frame carries a 48-byte **player ticket**, never the 4 KB SSO JWT —
+the token stays in the client. Verification is a `WowAuthFn`; the server starts with `require_auth = 1`
+and **no verifier installed**, so every wire op is refused (fail closed) until the IDUNA call is wired.
+That is deliberate: a server that silently accepts unauthenticated casts is worse than one that does
+nothing until SSO is connected. The test suite covers both the refusal and a verified flow (fake
+verifier), including that an unauthenticated *other* client cannot set a target.
+
+Honest gaps: the server stores targets and queues casts but **does not yet fire them** — nothing drains
+`wow_server_take_cast()` in the tick loop, so a queued cast is currently a validated intent, not a shot.
+The IDUNA verifier is not installed (no HTTP client on the server), and `WOW_SERVER_CLIENTS` is 8 while
+`MAX_CLIENTS` is larger, so slots beyond 8 are ignored with a one-time log.
+
 ## GoblinFoxDragon / MUD: what is real today
 
 `GoblinFoxDragon` is now cloned at `MONOREPO/GoblinFoxDragon`. Its MUD is Go under `apps2/mud`
