@@ -603,10 +603,20 @@ test-roblox:
 	  "$$lua_bin" roblox/tests/ticket460_test.lua && \
 	  "$$lua_bin" roblox/tests/login460_test.lua && \
 	  "$$lua_bin" roblox/tests/stats460_test.lua && \
-	  "$$lua_bin" roblox/tests/arena460_test.lua; fi
+	  "$$lua_bin" roblox/tests/arena460_test.lua && \
+	  "$$lua_bin" roblox/tests/install460_test.lua; fi
 
+# Both artifacts come from ONE PARTS list (roblox/tools/build_rbxmx.py), so the model and the paste script cannot
+# disagree about what the layer contains. install460_test runs the paste script against a stubbed Roblox API and
+# compares every embedded source to src/, so a stale artifact fails the suite instead of a Studio session.
 roblox-model: test-roblox
 	python3 roblox/tools/build_rbxmx.py
+	python3 roblox/tools/build_installer.py
+
+# One Command Bar paste: the same layer, no Insert From File and no drag-and-drop.
+.PHONY: roblox-install
+roblox-install:
+	python3 roblox/tools/build_installer.py
 
 # The 460 layer's thresholds and ticket arithmetic are PARENA's (stdlib/shankpit/{queue,ticket}_rules.prn),
 # emitted to Luau. Never hand-edit

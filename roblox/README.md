@@ -85,28 +85,48 @@ secret, mints a connect ticket, verifies the MAC the way the C server does, and 
 `live_mint_test.lua` — so the module the place runs is proven against a live ticket, not a fixture.
 
 ```bash
-make test-roblox                        # net460 / queue460 / ticket460 / login460 under plain Lua + luac -p
+make test-roblox                        # all six modules + the installer, under plain Lua, plus luac -p
 make regen-roblox-rules                 # queue_rules.prn + ticket_rules.prn -> src/*_rules.lua (needs ../PARENA)
-make roblox-model                       # -> roblox/SHANKPIT_ROBLOX_460.rbxmx
+make roblox-model                       # -> SHANKPIT_ROBLOX_460.rbxmx AND SHANKPIT_460_INSTALL.luau
+make roblox-install                     # -> just the Command Bar paste script
 roblox/scripts/live_ticket_check.sh     # real IDUNA, real ticket, verified MAC
 ```
 
-## Loading it into the base place
+## Getting it into the base place
 
 The base place is a **binary** `.rbxl` and there is no rbx-dom/rojo toolchain on this box, so nothing here rewrites
 it — hand-writing binary INST/PROP/PRNT chunks would be a good way to corrupt the one file hardest to reconstruct.
+Two routes, the same eleven instances, built from one `PARTS` list.
+
+### Paste it in (one step, nothing to drag)
+
+`roblox/SHANKPIT_460_INSTALL.luau` is generated from the same `PARTS` list as the model. Open
+`shankpit_roblox.rbxl` in Studio, **View → Command Bar**, paste the whole file, press Enter once. It:
+
+- creates `ServerScriptService.SHANKPIT460` holding the nine server-side instances (`lobby` is a `Script`, and it
+  arrives **Disabled** so it cannot run blind before you have looked at it);
+- creates `StarterPlayer.StarterPlayerScripts.lobby_client` — a LocalScript runs nowhere else, which is the mistake
+  that makes a lobby look finished with nothing on screen;
+- **replaces** a previous install instead of duplicating it, so re-pasting is safe;
+- prints the two settings it deliberately does not change: HTTP requests, and Studio API access.
+
+Then, when you are ready: un-tick **Disabled** on `lobby`, and publish. `make roblox-install` regenerates the paste
+script; `roblox/tests/install460_test.lua` runs the committed file against a stubbed Roblox API and compares every
+embedded source to `src/` byte for byte, so a stale paste script fails the suite instead of a Studio session.
+
+### Or insert the model
 
 1. Open `shankpit_roblox.rbxl` in Studio.
 2. **Insert from file** → `roblox/SHANKPIT_ROBLOX_460.rbxmx` → it lands as a `SHANKPIT460` folder (11 instances).
 3. Drag the **Script** (`lobby`) and the ModuleScripts into **ServerScriptService**.
-4. Drag **`lobby_client` (a LocalScript) into StarterPlayerScripts** — leaving it beside the server Script is the
-   mistake that makes a lobby look finished with nothing on screen.
+4. Drag **`lobby_client` (a LocalScript) into StarterPlayerScripts** (see above for why).
 5. Enable **HttpService** and **API Services → Studio Access to APIs** (Game Settings → Security) — DataStore needs
    the second one, and without it identity persistence quietly becomes "a new guest every session".
-6. To point the place at a dev backend instead of production, set the attributes `IdunaBase` / `WotanBase`
-   on the `lobby.server` Script (for the IDUNA Space: `https://<space>.hf.space/api/v1`). Unset means the
-   production hosts, and the stats stay a cache of them either way (`src/stats460.lua`).
-7. Fill in `CONFIG` in `lobby.server.lua`, un-tick **Disabled**, publish.
+6. To point the place at a dev backend instead of production, set the attributes `IdunaBase` / `WotanBase` on the
+   `lobby` Script (for the IDUNA Space: `https://<space>.hf.space/api/v1`). Unset means the production hosts, and
+   the stats stay a cache of them either way (`src/stats460.lua`). There is nothing to fill in in `CONFIG`: it is
+   derived from those two attributes.
+7. Un-tick **Disabled** on `lobby`, publish.
 
 ## Honest limits
 
