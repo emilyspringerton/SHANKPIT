@@ -26,7 +26,7 @@ This section is the part the earlier builds could not check. Read it before writ
 |---|---|---|
 | `packages/world/level_props.h`, `LevelPropInstance`, `PropTypeId` | **DOES NOT EXIST** | never present; no `PROP_OFFICE_TABLE` / `LevelPropInstance` anywhere in `packages/` or `apps/` |
 | `packages/world/level_boxes.h` | **EXISTS** | the real level schema: `LevelBox` (x/y/z centre, w/h/d extents, r/g/b, `material_idx`), `LevelSpawner`, `LevelBrickCell`, `LevelSubtractBox` |
-| `packages/common/obb.h` | **EXISTS** | OBB maths; `LevelBox` is **axis-aligned** — it has no rotation field, so "a table on its side" cannot be authored today |
+| `packages/common/obb.h` | **EXISTS** | OBB maths; `LevelBox` carries `rot_x`/`rot_y`/`rot_z` (Euler degrees, three.js XYZ order, matching NOCK) plus a `ramp` flag -- parsed, saved, collided (`phys_set_custom_level_orient` -> `orient_from_euler_deg`, with all-zero boxes kept on the AABB fast path) and rendered (the lobby hands the renderer all three arrays), pinned by `oriented_boxes_test` and `level_save_test`; a "table on its side" is authorable today |
 | `packages/common/fluid_state.h` | **DOES NOT EXIST** | no fluid system of any kind; a sink is geometry only |
 | `packages/render/retro_lighting.c`, `packages/render/env_matrix.c`, `packages/simulation/lighting_rules.c` | **EXIST** | lighting is **global** (env matrix built from PARENA rules), not per-prop lamps |
 | `packages/simulation/lab_station_rules.c`, `widget_rules.c`, `brick_bodies.c`, `packages/reflux/reflux_runtime.c` | **EXIST** | all generated from `PARENA/stdlib/shankpit/*.prn` |
@@ -117,7 +117,7 @@ it is a lighting/UI/audio state, not geometry.
 
 | Prop | Evidence | Proposed token | Nearest real engine path [verified] | Status |
 |---|---|---|---|---|
-| Table, on its side | 0:00 | PROP_OFFICE_TABLE | `LevelBox` (axis-aligned; no rotation field) | PLACE NOW as a box; **toppled state needs a rotation field** (NEW) |
+| Table, on its side | 0:00 | PROP_OFFICE_TABLE | `LevelBox` with `rot_x`/`rot_z` | PLACE NOW -- tip it with a rotation; only *animated* rotation would be new |
 | Kitchen sink | 0:40 | PROP_BREED_SINK | `LevelBox` + material | PLACE NOW as geometry; **no fluid** → tap/used state is NEW |
 | Door | 0:55 | PROP_DOOR | door `LevelBox` + `DoorRuntime`/`script_url`, or `MACHINE(2)` + `box_index` | **PLACE NOW / WIDGET** |
 | Coin | 1:10 | — | no held-item schema; only weapons are held | **NEW SYSTEM** (item + focus readout); date flicker is UI |
@@ -134,7 +134,7 @@ it is a lighting/UI/audio state, not geometry.
 | Vinyl booth | Act I | PROP_DINER_BOOTH | `LevelBox` | PLACE NOW (two-sided seating is dressing, not a mechanic) |
 | Booth table | Act I | PROP_DINER_TABLE | `LevelBox`; item-on-surface is not a system | PLACE NOW; **holding an item is NEW** |
 | Counter | Act II, V | PROP_DINER_COUNTER | `LevelBox` | PLACE NOW |
-| Counter stool | Act II | PROP_DINER_STOOL | `LevelBox` | PLACE NOW; **swivel (rotation) is NEW** |
+| Counter stool | Act II | PROP_DINER_STOOL | `LevelBox` with `rot_y` | PLACE NOW -- a fixed swivel angle is authorable; a stool that actually *turns* needs a runtime re-orient (NEW) |
 | Coffee cup | Acts I–II | PROP_COFFEE_CUP | none | NEW SYSTEM (held/fillable item) |
 | Coffee pot + burner | Act I | PROP_COFFEE_POT | `LevelBox` | PLACE NOW as dressing |
 | Sugar dispenser | Act I | PROP_SUGAR_DISPENSER | none | NEW SYSTEM (pour interaction) |
@@ -204,9 +204,8 @@ call are ambient beds the audio chain can play. UI: only the pilot's tags are su
    remote player can use is new wire work.
 4. **Episode 4 provenance:** labelled [ai-authored] at Build 0134, and the operator separately said to ignore
    that script. Canon, provisional, or dropped?
-5. **Rotation:** `LevelBox` has no rotation field, so "on its side" and the swivel stool ship upright.
-   **Recommendation:** treat rotation as its own separable piece (parsing, saving, collision, the level
-   wire); both blocked props are dressing, not mechanics.
+5. **Rotation:** corrected 2026-11-03 -- `LevelBox` does carry `rot_x`/`rot_y`/`rot_z` (Euler degrees, matching NOCK), parsed, saved, collided and rendered, so "on its side" and a fixed swivel angle are authorable today. The real gap is *animated* rotation: a box is oriented once at level load and never re-oriented after.
+   **Recommendation:** no schema or wire work; add a runtime re-orient hook only if a prop must move while the level runs.
 6. **Meshes:** a widget is a box; there are no prop models. Is box-representation acceptable for the trailer,
    or does the library wait on art?
 7. The Build 0185 canon flags (Tuesday vs unmeasured, Law 2 cap, Order of Service, "AH SHOCK", 1901 lighting,
@@ -221,3 +220,28 @@ call are ambient beds the audio chain can play. UI: only the pilot's tags are su
 | 0184 (draft) | Trailer extraction; fridge/vault/bench unassigned; chair/towel/glass inferred; lighting register LGT-001..011 |
 | 0185 (draft) | Episode 4 extraction (13 props), bell variant, LGT-012/013, audio register AUD-001..004, provisional canon, flags 8–14 |
 | **0186** | **Repo verification:** `level_props.h`, `LevelPropInstance`, `fluid_state.h` do not exist; the real widget schema and machine types are quoted; `--edit-map`, local NOCK, `make check-levels`, `widget_runtime`/`widget_circuit` verified; every prop row now carries a real engine path and a status; the pasted PARENA modules marked as non-compiling design notes; questions narrowed to decisions the repo cannot make |
+
+## Audited 2026-11-03 (normal maps, faked mountains, climbable heightfields)
+
+A pasted design pass proposed faking mountains with normal maps on low-poly shells, then upgrading them to
+climbable Skyrim-style terrain by sampling a heightfield inside an OBB. Checked against the repo:
+
+- **Real and already shipped:** rotated boxes (`LevelBox.rot_x/rot_y/rot_z`, Euler degrees, matching NOCK;
+  parsed, saved, collided, rendered, tested -- see the table above); ramp wedges; procedural textures
+  (`packages/render/proc_tex.c`); per-vertex normals (`a_normal` in `packages/render/gl_shader.c`);
+  generated global lighting (`packages/simulation/lighting_rules.c`, PARENA output, hands off);
+  weather/fog (`packages/render/sky_weather.c`); terrain height sampling (`terrain_sample_height`, used
+  throughout `packages/common/physics.h`); authoring via `--edit-map`, the local NOCK host, and
+  `make bake-levels`.
+- **Not in the repo, and would be new systems:** tangent-space normal-map import and sampling (the texture
+  path is fixed-function `GL_TEXTURE_2D` enable/disable in `retro_material.c`, and `a_normal` is per-vertex,
+  never read from a texture); any `GEOM_BACKGROUND_ONLY` collision-skip flag; a `TEXTURE_SAMPLED_OBB`
+  collider; a `nock_textures` service. Collision height comes from the global terrain, not from a texture
+  sampled per box.
+- **Wrong premise:** a normal map cannot "feed directly into `retro_lighting.c`". That file is generated from
+  PARENA and produces a global environment matrix; there is no per-pixel lighting stage to feed.
+
+A map builder arriving from Unreal/Godot would therefore find the geometry affordances (rotated boxes,
+ramps, spawners with yaw, prefab widgets) already present, and the material affordances (normal maps,
+material instances, per-pixel shading) absent. The cheap next step is not a normal-map pipeline but
+procedural rock texture variety on the existing rotated-box geometry.
