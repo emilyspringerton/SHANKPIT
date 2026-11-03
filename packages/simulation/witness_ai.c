@@ -15,7 +15,9 @@
 #include "../reflux/reflux_runtime.h" /* REFLUX_ACTION_ZOMBIE_SPAWNED/HARVESTED/MOOD_ESCALATED, WITNESS_ESCALATED */
 #include "zombie_taxonomy.h" /* classes/levels: what kind of body this is, and what its DNA reads */
 #include "bioslurry.h"       /* what a kill leaves on the ground */
-#include "citizen_life.h"    /* citizens' own personalities, priorities and secrets */
+#include "citizen_life.h"
+#include "citizen_avatar.h"
+#include "dw_ladder.h"   /* DEADWEIGHT: the citizens' ladder (rules are PARENA) */    /* citizens' own personalities, priorities and secrets */
 
 /* Prototype for the PARENA-generated glue (reflux_mod.c, do-not-edit-by-hand) -- no shared .h
  * between generated units in this codebase, same convention world_alert_bridge.c's own identical
@@ -122,6 +124,13 @@ static unsigned char g_wai_breach[MAX_CLIENTS];
 
 static WitnessSim g_sim;
 static WitnessAiCitizen g_citizens[WITNESS_AI_MAX_CITIZENS];
+
+/* The citizens' DEADWEIGHT ladder (dw_ladder.h): their own records, their own decks, and the
+ * challenges they open on each other -- and on the player, who can answer or ignore them. Kept
+ * here rather than in a second module because a citizen is the only thing that plays in it, and
+ * this file already owns every citizen's lifetime. */
+static DwLadder g_dw_ladder;
+static int g_dw_ladder_ready = 0;
 static WitnessAiZombie g_zombies[WITNESS_AI_MAX_ZOMBIES];
 static WitnessAiGiantBug g_giant_bugs[WITNESS_AI_MAX_GIANT_BUGS];
 static unsigned int g_last_sim_tick_ms;
@@ -289,6 +298,12 @@ static void witness_ai_hero_melee_hit(ServerState *s, PlayerState *hero_p, int d
 }
 
 void witness_ai_reset(unsigned int seed, unsigned int now_ms) {
+
+    /* the DEADWEIGHT ladder starts empty with the world: citizens join it as they spawn, and it
+       keeps its own records for as long as this world does */
+    dw_ladder_reset(&g_dw_ladder, seed ^ 0x5bd1e995u);
+    g_dw_ladder_ready = 1;
+    dw_ladder_set_hero(&g_dw_ladder, 0);   /* slot 0 is the local player in the sandbox */
     (void)now_ms;
     if (!g_sim_log) {
         g_sim_log = fopen("/dev/null", "w");
@@ -373,6 +388,11 @@ static int spawn_human(ServerState *s, NpcArchetype archetype, int zone, int bas
        rebuilt and its wardrobe agrees with how it plays. */
     citizen_avatar_build(&c->avatar, c->life.rng, slot, c->life.path, c->life.industry,
                          c->life.commerce, c->life.ambition, c->life.bravery, c->life.sociability);
+    /* ...and a seat in the DEADWEIGHT ladder (dw_ladder.h), if this body is a citizen rather than
+       The Men. Its aggression is its own personality: bravery does most of it, ambition the rest. */
+    if (g_dw_ladder_ready && archetype == NPC_ARCHETYPE_CITIZEN)
+        dw_ladder_add_citizen(&g_dw_ladder, slot, c->life.path,
+                              (c->life.bravery * 6 + c->life.ambition * 4) / 10, now_ms);
     return slot;
 }
 
@@ -1300,6 +1320,8 @@ void witness_ai_zombie_profile(int player_id, ZombieProfile *out) {
     }
 }
 
+DwLadder *witness_ai_deadweight(void) { return g_dw_ladder_ready ? &g_dw_ladder : NULL; }
+
 const CitizenAvatar *witness_ai_citizen_avatar(int player_id) {
     for (int i = 0; i < WITNESS_AI_MAX_CITIZENS; i++) {
         if (!g_citizens[i].active || g_citizens[i].player_id != player_id) continue;
@@ -1319,6 +1341,7 @@ const CitizenLife *witness_ai_citizen_life(int player_id) {
 void witness_ai_tick(ServerState *s, unsigned int now_ms) {
     if (!s) return;
     g_wai_now = now_ms;
+    if (g_dw_ladder_ready) dw_ladder_tick(&g_dw_ladder, now_ms);
     witness_ai_pheromone_step(s, now_ms);
 
     if (!g_have_last_sim_tick || now_ms - g_last_sim_tick_ms >= WITNESS_AI_SIM_TICK_INTERVAL_MS) {

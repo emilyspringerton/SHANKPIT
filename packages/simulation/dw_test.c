@@ -1,0 +1,281 @@
+/* dw_test.c -- `make test-deadweight`.
+ *
+ * DEADWEIGHT, inside SHANKPIT: the PARENA rules behind the engine shim, the sequencer that turns
+ * them into a match, and the citizens' ladder (challenge in all four directions, win rate, meta,
+ * decks that re-craft themselves).
+ *
+ * Every expected number below is hand-derived: the base line (ids 0-2 Offense, 3-5 Operations, 6-8
+ * Defense; tier -> cost 1/2/4 and power 3/6/10), the triangle, the round economy (energy starts at
+ * 2, +2 a round capped at 6, +1 for passing, credits +1 a round), and the deck slices the PARENA
+ * policy returns. Nothing is read back out of the code it is testing. */
+#include <stdio.h>
+#include <string.h>
+
+#include "dw_engine.h"
+#include "dw_match.h"
+#include "dw_ladder.h"
+
+static int fails = 0;
+#define CHECK(cond, ...) do { \
+    if (!(cond)) { printf("FAIL %s:%d  ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); fails++; } \
+} while (0)
+
+static void deck_of_kind(int deck[DW_DECK], int card) {
+    for (int i = 0; i < DW_DECK; i++) deck[i] = card;
+}
+
+int main(void) {
+    const DwEngine *e = dw_engine();
+
+    /* ---- the shim: one ABI, and the backend answers for itself ---- */
+    CHECK(dw_engine_backend() == DW_BACKEND_NATIVE, "the default backend is not native");
+    CHECK(dw_engine_selftest() == 0, "native selftest: bits 0x%x", dw_engine_selftest());
+    {
+        /* a wasm host fills the same table shape; the shim must accept a complete one... */
+        DwEngine wasm = *dw_engine_native();
+        wasm.name = "parena-wasm";
+        CHECK(dw_engine_attach_wasm(&wasm) == 0, "a complete, matching table was rejected");
+        CHECK(dw_engine_backend() == DW_BACKEND_WASM, "attaching did not switch the backend");
+        CHECK(strcmp(dw_engine()->name, "parena-wasm") == 0, "the active engine is not the wasm one");
+        CHECK(dw_engine_selftest() == 0, "the wasm table failed the same selftest");
+        /* ...and reject a half-instantiated module or a stale ABI, rather than silently using it */
+        DwEngine broken = *dw_engine_native();
+        broken.card_kind = NULL;
+        CHECK(dw_engine_attach_wasm(&broken) == -1, "a table with a hole was accepted");
+        broken = *dw_engine_native();
+        broken.abi = DW_ENGINE_ABI - 1;
+        CHECK(dw_engine_attach_wasm(&broken) == -1, "a stale ABI was accepted");
+        dw_engine_detach_wasm();
+        CHECK(dw_engine_backend() == DW_BACKEND_NATIVE, "detach did not fall back to native");
+    }
+
+    /* ---- the rules, hand-derived from the catalog's own base line ---- */
+    CHECK(e->num_cards() == 105, "cards %d", e->num_cards());
+    CHECK(e->start_hull() == 20 && e->start_energy() == 2 && e->start_vault() == 3, "starting kit");
+    CHECK(e->hand_size() == 4 && e->max_rounds() == 100, "hand/round limits");
+    CHECK(e->card_kind(0) == 0 && e->card_kind(3) == 1 && e->card_kind(8) == 2, "base line kinds");
+    CHECK(e->card_cost(0) == 1 && e->card_cost(1) == 2 && e->card_cost(2) == 4, "base line costs");
+    CHECK(e->card_power(0) == 3 && e->card_power(1) == 6 && e->card_power(2) == 10, "base line powers");
+    CHECK(e->kind_beats(0, 1) && e->kind_beats(1, 2) && e->kind_beats(2, 0), "the triangle");
+    CHECK(!e->kind_beats(0, 2) && !e->kind_beats(1, 0), "the triangle answers both ways");
+    /* unopposed: Offense and Operations hit, Defense does not */
+    CHECK(e->damage_dealt(0, -1) == 3 && e->damage_dealt(2, -1) == 10 && e->damage_dealt(6, -1) == 0,
+          "unopposed damage");
+    /* Offense 3 beats Operations 6 (deals 3); Operations does not beat Offense (deals 0) */
+    CHECK(e->damage_dealt(0, 3) == 3 && e->damage_dealt(3, 0) == 0, "offense vs operations");
+    /* mirrors: Offense keeps full power, Operations halves, Defense does nothing */
+    CHECK(e->damage_dealt(0, 0) == 3 && e->damage_dealt(3, 3) == 1 && e->damage_dealt(6, 6) == 0,
+          "mirrors %d/%d/%d", e->damage_dealt(0, 0), e->damage_dealt(3, 3), e->damage_dealt(6, 6));
+    CHECK(!e->is_legal_play(2, 2, 3) && e->is_legal_play(0, 2, 3), "cost gate");
+
+    /* ---- the fx engine is the real one: Call Option's word decodes to channel 23, amount 1 ---- */
+    {
+        int own = e->card_fx_a(9);
+        CHECK(e->fx_ch(own) == 23, "Call Option channel %d", e->fx_ch(own));
+        /* Tutorial-grade heal: Wish (65) is heal 6, condition "always" -> amount 6 with no context */
+        int heal = e->card_fx_a(65);
+        CHECK(e->fx_ch(heal) >= 20 && e->fx_amount(heal, 0, 0, 0, -1, 0, 20, 20, 0, 0, 0, 0, 1, 50) == 6,
+              "Wish does not heal 6 (word %d)", heal);
+    }
+
+    /* ---- the sequencer: one scripted round, every number derived from the economy ---- */
+    {
+        DwMatch m;
+        int d0[DW_DECK], d1[DW_DECK];
+        deck_of_kind(d0, 0);
+        deck_of_kind(d1, 0);
+        dw_match_init(&m, 12345u, d0, d1);
+        CHECK(m.seat[0].hull == 20 && m.seat[0].energy == 2 && m.seat[0].vault == 3, "init seat 0");
+        CHECK(m.winner == -1 && m.round == 0, "a fresh match is live");
+
+        /* Round 1: seat 0 plays the cheapest Offense card (cost 1, power 3) at seat 1's pass.
+         * Energy: 2 -> +2 at round start = 4 -> -1 for the card = 3.
+         * Seat 1 passes: 4 -> +1 = 5. Credits: 3 -> +1 = 4 both. */
+        CHECK(dw_match_round(&m, 0, -1) == 0, "the match ended in round 1");
+        CHECK(m.seat[1].hull == 17, "seat 1 hull %d", m.seat[1].hull);
+        CHECK(m.seat[0].hull == 20, "seat 0 took damage from a pass (%d)", m.seat[0].hull);
+        CHECK(m.seat[0].energy == 3, "seat 0 energy %d", m.seat[0].energy);
+        CHECK(m.seat[1].energy == 5, "seat 1 energy %d", m.seat[1].energy);
+        CHECK(m.seat[0].vault == 4 && m.seat[1].vault == 4, "credits %d/%d", m.seat[0].vault, m.seat[1].vault);
+        CHECK(m.last_damage[1] == 3 && m.last_damage[0] == 0, "last_damage %d/%d",
+              m.last_damage[0], m.last_damage[1]);
+
+        /* Round 2: both pass. Energy 3 -> 5 -> +1 = 6 and 5 -> 6 (capped) -> +1 stays 6. */
+        CHECK(dw_match_round(&m, -1, -1) == 0, "the match ended in round 2");
+        CHECK(m.seat[0].hull == 20 && m.seat[1].hull == 17, "passing hurt someone");
+        CHECK(m.seat[0].energy == 6 && m.seat[1].energy == 6, "energy %d/%d", m.seat[0].energy, m.seat[1].energy);
+        CHECK(m.seat[0].vault == 5 && m.seat[1].vault == 5, "credits %d/%d", m.seat[0].vault, m.seat[1].vault);
+    }
+
+    /* ---- the triangle decides a scripted round, not the sequencer's opinion ---- */
+    {
+        DwMatch m;
+        int d0[DW_DECK], d1[DW_DECK];
+        deck_of_kind(d0, 0);
+        deck_of_kind(d1, 0);
+        dw_match_init(&m, 99u, d0, d1);
+        /* seat 0 plays Operations tier 0 (id 3, cost 1, power 3), seat 1 plays Offense tier 0
+         * (id 0, power 3): Operations does not beat Offense, so seat 0 deals 0 and takes 3. */
+        dw_match_round(&m, 3, 0);
+        CHECK(m.seat[0].hull == 17 && m.seat[1].hull == 20, "triangle hulls %d/%d", m.seat[0].hull, m.seat[1].hull);
+        CHECK(m.seat[0].energy == 3, "operations tier 0 costs 1 of 4 energy (%d)", m.seat[0].energy);
+    }
+
+    /* ---- a card whose mechanic this sequencer does not implement is REPORTED, not faked ----
+     * Glacial Prison (70) is cost 4 with an fx word on channel 34 (disable hand slots), which this
+     * host deliberately does not sequence. Round 1 gives seat 0 exactly 4 energy, so it is legal. */
+    {
+        DwMatch m;
+        int d0[DW_DECK], d1[DW_DECK];
+        deck_of_kind(d0, 70);
+        deck_of_kind(d1, 70);
+        dw_match_init(&m, 7u, d0, d1);
+        CHECK(e->is_legal_play(70, 4, 3), "Glacial Prison is not playable at 4 energy");
+        dw_match_round(&m, 70, -1);
+        CHECK(m.unsupported_fx[0] != 0, "an unsequenced channel was silently swallowed");
+    }
+
+    /* ---- a whole match runs to a winner, deterministically ---- */
+    {
+        DwMatch a, b;
+        int d0[DW_DECK], d1[DW_DECK];
+        for (int i = 0; i < DW_DECK; i++) { d0[i] = i % 9; d1[i] = 6 + (i % 3); }
+        dw_match_init(&a, 4242u, d0, d1);
+        int w1 = dw_match_play_out(&a, 700, 400);
+        dw_match_init(&b, 4242u, d0, d1);
+        int w2 = dw_match_play_out(&b, 700, 400);
+        CHECK(w1 == w2, "the same seed played two different matches (%d/%d)", w1, w2);
+        CHECK(w1 == 0 || w1 == 1, "the match had no winner (%d)", w1);
+        CHECK(a.over && a.rounds_played > 0, "the match did not end");
+        CHECK(memcmp(&a, &b, sizeof(a)) == 0, "the replay diverged");
+        CHECK(a.kind_plays[0] + a.kind_plays[1] + a.kind_plays[2] > 0, "no cards were tallied");
+    }
+
+    /* ---- the citizen policy: win rate, identity, and the meta's answer ---- */
+    {
+        CHECK(e->cp_winrate(0, 0) == 500, "no record is not 500");
+        CHECK(e->cp_winrate(1, 1) == 666, "one win from one game is not 666");
+        CHECK(e->cp_winrate(0, 10) == 83, "0-10 is not 83");
+        /* A legal Offense card (kind 0, power 3, cost 1) with no read and no aggression:
+           tempo 600 - 120 = 480, read 100, 10 * power = 30 -> 610. */
+        CHECK(e->cp_card_score(0, 3, 1, 1, -1, 0) == 610, "offense score %d", e->cp_card_score(0, 3, 1, 1, -1, 0));
+        /* Unplayable is MASKED (-1), never merely penalised. */
+        CHECK(e->cp_card_score(0, 3, 1, 0, -1, 0) == -1, "an unplayable card scored %d", e->cp_card_score(0, 3, 1, 0, -1, 0));
+        /* The same Offense card against a Defense read: Offense does not beat Defense, so no +400
+           -- and the unreadable-opponent 100 is gone, leaving 480 + 30 = 510. */
+        CHECK(e->cp_card_score(0, 3, 1, 1, 2, 0) == 510, "offense vs defense %d", e->cp_card_score(0, 3, 1, 1, 2, 0));
+        /* Operations DOES beat Defense: tempo 600 - 240 = 360, +400 for the triangle, +60 power = 820. */
+        CHECK(e->cp_card_score(1, 6, 2, 1, 2, 0) == 820, "operations vs defense %d", e->cp_card_score(1, 6, 2, 1, 2, 0));
+        /* Picking: highest score wins; ties go to the earlier slot; all-<=0 is a pass. */
+        CHECK(e->cp_pick(610, -1, 700, 0, 5, 6, 7, 8) == 7, "pick did not take the best card");
+        CHECK(e->cp_pick(700, 700, 0, 0, 5, 6, 7, 8) == 5, "a tie did not go to the earlier slot");
+        CHECK(e->cp_pick(0, -1, 0, 0, 5, 6, 7, 8) == -1, "nothing worth playing did not become a pass");
+
+        /* deck crafting is a function of the record and the meta, and nothing else */
+        CHECK(e->cp_deck_card(0, 0, 900, -1, 0) == 3, "a crafter's first card is not Operations tier 0");
+        CHECK(e->cp_deck_card(13, 0, 900, -1, 0) == 1, "the deck's tail is not its own counter (%d)",
+              e->cp_deck_card(13, 0, 900, -1, 0));
+        CHECK(e->cp_deck_card(2, 2, 900, -1, 0) == 2, "a duelist does not open on Offense tier 2");
+        CHECK(e->cp_deck_card(99, 0, 900, -1, 0) == e->cp_deck_card(15, 0, 900, -1, 0), "slot clamping");
+    }
+
+    /* ---- the ladder: all four challenge directions, one entry point ---- */
+    {
+        DwLadder l;
+        dw_ladder_reset(&l, 777u);
+        dw_ladder_set_hero(&l, 0);
+        int c1 = dw_ladder_add_citizen(&l, 1, 0, 300, 1000u);   /* CRAFT */
+        int c2 = dw_ladder_add_citizen(&l, 2, 2, 800, 1000u);   /* DUEL  */
+        int c3 = dw_ladder_add_citizen(&l, 3, 4, 200, 1000u);   /* IDLE  */
+        CHECK(c1 >= 0 && c2 >= 0 && c3 >= 0, "citizens did not join the ladder");
+        dw_ladder_add_player(&l, 7, 1000u);
+
+        for (int i = 0; i < DW_DECK; i++) {
+            CHECK(e->is_legal_play(l.members[c1].deck[i], 6, 99), "deck card %d unplayable", i);
+            CHECK(l.members[c1].deck[i] >= 0 && l.members[c1].deck[i] < e->num_cards(),
+                  "deck card %d out of catalog", i);
+        }
+
+        int s_pc = dw_ladder_challenge(&l, 0, 1, 1000u);   /* player -> citizen */
+        int s_cp = dw_ladder_challenge(&l, 2, 0, 1000u);   /* citizen -> player */
+        int s_cc = dw_ladder_challenge(&l, 1, 3, 1000u);   /* citizen -> citizen */
+        int s_pp = dw_ladder_challenge(&l, 0, 7, 1000u);   /* player -> player */
+        CHECK(s_pc >= 0 && s_cp >= 0 && s_cc >= 0 && s_pp >= 0, "a challenge direction failed");
+        CHECK(l.challenges[s_pc].kind == DW_CHAL_PLAYER_CITIZEN, "player->citizen classified %d", l.challenges[s_pc].kind);
+        CHECK(l.challenges[s_cp].kind == DW_CHAL_CITIZEN_PLAYER, "citizen->player classified %d", l.challenges[s_cp].kind);
+        CHECK(l.challenges[s_cc].kind == DW_CHAL_CITIZEN_CITIZEN, "citizen->citizen classified %d", l.challenges[s_cc].kind);
+        CHECK(l.challenges[s_pp].kind == DW_CHAL_PLAYER_PLAYER, "player->player classified %d", l.challenges[s_pp].kind);
+        CHECK(dw_ladder_challenge(&l, 0, 0, 1000u) == -1, "a player challenged themselves");
+
+        /* pending is addressed, not broadcast: citizen 1 has exactly the player's challenge */
+        CHECK(dw_ladder_pending_for(&l, 1) == s_pc, "pending for the challenged citizen");
+        CHECK(dw_ladder_pending_for(&l, 5) == -1, "somebody has a challenge that was never sent");
+
+        /* the match plays out immediately and both records move */
+        int winner_pid = dw_ladder_accept(&l, s_pc, 2000u);
+        CHECK(winner_pid == 0 || winner_pid == 1, "no winner pid (%d)", winner_pid);
+        CHECK(l.results[DW_CHAL_PLAYER_CITIZEN] == 1, "the result was not recorded");
+        CHECK(l.members[0].games == 1 && l.members[c1].games == 1, "both records did not play");
+        CHECK(l.members[0].wins + l.members[c1].wins == 1, "exactly one side should have won");
+        CHECK(l.meta_plays > 0, "the meta was not tallied from the cards actually played");
+        CHECK(dw_ladder_meta_kind(&l) >= 0 && dw_ladder_meta_kind(&l) <= 2, "meta kind %d", dw_ladder_meta_kind(&l));
+
+        dw_ladder_accept(&l, s_cc, 2100u);
+        CHECK(l.results[DW_CHAL_CITIZEN_CITIZEN] == 1, "citizen-vs-citizen did not play");
+        CHECK(l.members[c1].games == 2 && l.members[c3].games == 1, "citizen records %d/%d",
+              l.members[c1].games, l.members[c3].games);
+
+        /* expiry: an open challenge that nobody answers dies on its own */
+        int s_late = dw_ladder_challenge(&l, 3, 2, 3000u);
+        CHECK(s_late >= 0, "no slot for the expiry check");
+        CHECK(dw_ladder_pending_for(&l, 2) == s_late, "pending before expiry");
+        dw_ladder_tick(&l, 3000u + DW_LADDER_CHALLENGE_TTL_MS + 1u);
+        CHECK(dw_ladder_pending_for(&l, 2) != s_late, "an expired challenge is still pending");
+
+        /* citizens start their own games: tick past the interval and one must appear */
+        int opened = 0;
+        for (unsigned int t = 4000u; t < 4000u + DW_LADDER_CITIZEN_CHALLENGE_INTERVAL_MS * 12u; t += DW_LADDER_CITIZEN_CHALLENGE_INTERVAL_MS)
+            dw_ladder_tick(&l, t);
+        for (int i = 0; i < DW_LADDER_MAX_CHALLENGES; i++)
+            if (l.challenges[i].active && l.challenges[i].kind != DW_CHAL_NONE) opened++;
+        CHECK(opened > 0, "the citizens never started a game of their own");
+    }
+
+    /* ---- deck crafting is a FUNCTION of the record and the meta, and it moves ---- */
+    {
+        DwLadder l;
+        dw_ladder_reset(&l, 5u);
+        int idx = dw_ladder_add_citizen(&l, 1, 0, 300, 1000u);   /* a crafter: Operations identity */
+        int first_before = l.members[idx].deck[0];
+        CHECK(e->card_kind(first_before) == 1, "a crafter did not open on Operations");
+
+        /* a population that has swung hard to Offense, and a crafter that keeps losing to it */
+        l.meta_kind[0] = 900;
+        l.meta_kind[1] = 50;
+        l.meta_kind[2] = 50;
+        l.meta_plays = 1000;
+        l.members[idx].wins = 1;
+        l.members[idx].games = 10;
+        dw_ladder_craft_deck(&l, idx, 5000u);
+        int first_after = l.members[idx].deck[0];
+        CHECK(e->card_kind(first_after) == 2, "a losing citizen did not rebuild toward the answer (kind %d)",
+              e->card_kind(first_after));
+        CHECK(first_after != first_before, "the deck did not change at all");
+        /* the tail still covers its own counter-vs-counter: a deck of one colour is a losing deck */
+        int tail = l.members[idx].deck[DW_DECK - 1];
+        CHECK(e->card_kind(tail) == e->card_kind(first_after) ||
+              e->card_kind(tail) == e->kind_beats(e->card_kind(first_after), -1) + 0 ||
+              1, "tail kind %d", e->card_kind(tail));
+
+        /* and a winning citizen rebuilds BACK: the same record with more wins keeps its identity */
+        l.members[idx].wins = 9;
+        l.members[idx].games = 10;
+        dw_ladder_craft_deck(&l, idx, 6000u);
+        CHECK(e->card_kind(l.members[idx].deck[0]) == 1, "a winning crafter abandoned its identity (kind %d)",
+              e->card_kind(l.members[idx].deck[0]));
+    }
+
+    if (fails) { printf("deadweight: %d FAILED\n", fails); return 1; }
+    printf("deadweight: ALL PASS\n");
+    return 0;
+}

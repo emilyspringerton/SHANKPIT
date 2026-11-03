@@ -139,7 +139,8 @@
 #include "witness_sim.h" /* WITNESS_SIM_MAX_NPCS */
 #include "zombie_taxonomy.h" /* ZombieProfile -- classes/levels/DNA (2026-11-01 population pass) */
 #include "citizen_life.h"    /* CitizenLife -- citizens' own personas, paths and secrets */
-#include "citizen_avatar.h"   /* CitizenAvatar -- the body citizen_avatar_build derives from that persona */
+#include "citizen_avatar.h"
+#include "dw_ladder.h"   /* DwLadder -- the citizens' DEADWEIGHT ladder */   /* CitizenAvatar -- the body citizen_avatar_build derives from that persona */
 
 #define WITNESS_AI_MAX_CITIZENS WITNESS_SIM_MAX_NPCS /* bounded by WitnessSim's own npc array */
 #define WITNESS_AI_MAX_ZOMBIES 16
@@ -573,5 +574,11 @@ int witness_ai_zombie_has_prey(int player_id);
  * the same seed. Returns NULL if player_id doesn't resolve to an active citizen spawned by this
  * module. */
 const CitizenAvatar *witness_ai_citizen_avatar(int player_id);
+
+
+/* The citizens' DEADWEIGHT ladder (dw_ladder.h), or NULL before the population exists. The player's
+ * own end of it: dw_ladder_pending_for(ladder, your_player_id) is a challenge waiting to be
+ * answered, and dw_ladder_accept(ladder, slot, now) plays it and records the result. */
+DwLadder *witness_ai_deadweight(void);
 
 #endif

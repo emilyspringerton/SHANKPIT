@@ -1502,3 +1502,29 @@ The phone's GFD app is a live chat terminal on IDUNA's cross-game chat bus. Sign
 
 ### In-phone browser on Windows (2026-10-16)
 Windows builds previously linked a stub, so the phone's PELLEGRINO app said "embed surface unavailable". `scripts/build_pgb_windows.sh` now cross-compiles the real embed (mbedTLS + HTTP/3) with mingw and ships `cacert.pem` beside the exe; if that build fails it falls back to the stub. **Untested:** no mingw/Windows machine here — verified only that Linux still builds; CI builds it.
+
+## DEADWEIGHT — the card game, played by the citizens (2026-11-03)
+
+DEADWEIGHT's whole rule set is PARENA (`PARENA/stdlib/deadweight/card_rules.prn`: 105 cards, three
+kinds in a triangle, energy, credits, hull, and a packed effect engine), and it now runs inside
+SHANKPIT. `packages/simulation/dw_engine.*` is the shim: that engine plus the citizens' policy
+(`stdlib/deadweight/citizen_policy.prn`) behind one flat integer ABI, native by default and swappable
+for a wasm module — `dw_engine_attach_wasm` validates the table and `dw_engine_selftest` asks the
+live backend for the numbers it owns. `dw_match.*` is the sequencer (20 hull, 2 energy, 3 credits, a
+4-card hand, the triangle, armour, burn/regen, both fx phases for 26 of 32 channels, bankruptcy, a
+100-round draw) and `dw_ladder.*` is the citizens' ladder.
+
+Citizens challenge each other, citizens challenge you, you challenge citizens, and you can challenge
+another player — all four through one call, `dw_ladder_challenge`. They play without you: every few
+seconds a citizen opens a game of its own. And they **craft their own decks from their win rate and
+the current meta**: a citizen losing to the top deck rebuilds toward the answer to it, a citizen that
+keeps winning keeps its identity, and both re-craft after every match, because the deck is a function
+of the record and the meta rather than a stored preference.
+
+Status, honestly: **the game plays headlessly and the citizens play it — nobody has watched a match
+on screen yet.** There is no challenge prompt, no board and no card art, no wasm module is actually
+attached (SHANKPIT has no interpreter in-tree; the seam is real, the module is not), records are
+RAM-only, decks come from the game's core nine cards, and players cannot choose a deck yet. Every
+next step, in order, is in `docs/DEADWEIGHT_IN_SHANKPIT_NEXT_STEPS.md` — including the previous
+step's (the citizens' generated bodies) outstanding work. Run `make test-deadweight` for the whole
+thing headless, or `make regen-dw-engine` after editing the PARENA rules.
