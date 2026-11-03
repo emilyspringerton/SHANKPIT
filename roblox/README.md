@@ -126,9 +126,10 @@ it — hand-writing binary INST/PROP/PRNT chunks would be a good way to corrupt 
   a Roblox round to WOTAN or IDUNA: `shankpit_netd` is read-only (`POST` answers 405) and there is no ingest
   endpoint, so the board stays a cache of the matches the world itself played (`src/stats460.lua`). A round that
   ends in this place changes nothing on the ladder, and no code here pretends otherwise.
-- **Seating a pair does not move anybody.** `arena460.assign_pair` says which team and which pad each side of a
-  pair got, and the lobby shows it — but nothing teleports, gives out a Tool, or counts a tag. That is the base
-  place's own Laser Tag behaviour, and this layer deliberately owns none of it.
+- **Seating sets two engine properties; the engine does the placing.** On a match the server sets `Player.Team`
+  and `Player.RespawnLocation` from `arena460.placement`, so Roblox puts the body on its team's pad — but only on
+  the engine's own next respawn. Nothing teleports a character, forces a respawn, hands out a Tool, or counts a
+  tag: that is the base place's own Laser Tag behaviour, and this layer deliberately owns none of it.
 - **A re-read can be worse than the last read.** `arena460.refresh` keeps the last usable arena when Workspace is
   briefly empty (a place rebuild, a team edit before its pad lands) and says what the re-read could not see. That
   keeps a lobby from refusing rounds it can host, but it also means `arena_ok` can describe a pad that a publish

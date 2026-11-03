@@ -175,5 +175,20 @@ eq(select(2, arena.assign_pair({ ok = false, teams = {}, spawns = {} }, { user_i
 eq(select(2, arena.assign_pair(a, nil, { user_id = 2 })), "no-seats", "a half pair is refused, not half seated")
 eq(select(2, arena.assign_pair(a, { user_id = 1 }, nil)), "no-seats", "either side missing")
 
+-- ---- 9. placement: what the ENGINE is told, and a pad the arena no longer has is refused ----------------
+local pl = arena.placement(a, assigned[1])
+ok(pl ~= nil, "a seated body has a placement")
+eq(pl.team, "Red Team", "the team the assignment gave it")
+eq(pl.respawn, "SpawnLocation", "and the pad it names")
+eq(select(2, arena.placement({ ok = false, teams = {}, spawns = {} }, assigned[1])), "arena-not-ok",
+    "an unusable arena places nobody")
+eq(select(2, arena.placement(a, nil)), "no-assignment", "no assignment is its own reason")
+eq(select(2, arena.placement(a, { team = "Red Team", spawn = "PadThatIsGone" })), "unknown-spawn",
+    "a pad the arena does not have is refused, not guessed")
+eq(select(2, arena.placement(a, { team = "Blue Team", spawn = "SpawnLocation" })), "unknown-spawn",
+    "a pad that belongs to the other team is refused too")
+eq(select(2, arena.placement(a, { team = "Red Team", spawn = "GreenSpawnLocation" })), "unknown-spawn",
+    "the green pad has no team, so it is nobody's team spawn")
+
 print(string.format("arena460: %d checks, %d failures", checks, failures))
 if failures > 0 then os.exit(1) end

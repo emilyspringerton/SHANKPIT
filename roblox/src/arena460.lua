@@ -115,6 +115,21 @@ function M.assign_pair(arena, first, second)
     return { first = assignments[1], second = assignments[2], by_pid = by_pid }
 end
 
+-- What the ENGINE should be told about a seated body: which team, and which pad it should respawn it at. This is
+-- a decision, not a teleport -- Roblox's own Player.Team / Player.RespawnLocation do the placing, on the engine's
+-- own next respawn. It refuses a pad that is no longer part of the arena, because an assignment taken before a
+-- re-read can name a pad the place has since lost (`refresh` keeps the old arena, and this is where that shows).
+function M.placement(arena, assignment)
+    if type(arena) ~= "table" or not arena.ok then return nil, "arena-not-ok" end
+    if type(assignment) ~= "table" or type(assignment.team) ~= "string" then return nil, "no-assignment" end
+    for _, pad in ipairs(arena.spawns) do
+        if pad.name == assignment.spawn and pad.team == assignment.team then
+            return { team = assignment.team, respawn = pad.name }
+        end
+    end
+    return nil, "unknown-spawn"
+end
+
 -- The tools a seat is given. This layer does not decide what a Blaster does -- Roblox's own Tool does.
 function M.loadout(arena)
     if type(arena) ~= "table" or not arena.ok then return nil, "arena-not-ok" end

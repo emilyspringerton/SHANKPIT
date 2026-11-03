@@ -446,10 +446,36 @@ task.spawn(function()
                     local pair = arena460.assign_pair(ARENA,
                         { user_id = p.first.pid, name = p.first.name },
                         { user_id = p.second.pid, name = p.second.name })
+                    -- The place's own loadout, so the payload carries every blaster it offers rather than an
+                    -- assumed "first one is the only one".
+                    local kit = ARENA.ok and arena460.loadout(ARENA) or nil
                     for player, seat in pairs(seats) do
                         if seat.user_id == p.first.pid or seat.user_id == p.second.pid then
                             local iAmFirst = (seat.user_id == p.first.pid)
                             local mine = pair and pair.by_pid[tostring(seat.user_id)] or nil
+                            local placed, placeWhy = nil, nil
+                            if mine then placed, placeWhy = arena460.placement(ARENA, mine) end
+                            if placed then
+                                -- Roblox's own two properties do the placing: Team chooses the side, RespawnLocation
+                                -- chooses the pad the engine respawns this body at. Nothing is teleported and no
+                                -- respawn is forced -- when a body comes back is the place's round, not this lobby.
+                                local positioned = pcall(function()
+                                    for _, team in ipairs(game:GetService("Teams"):GetTeams()) do
+                                        if team.Name == placed.team then player.Team = team end
+                                    end
+                                    for _, inst in ipairs(game:GetService("Workspace"):GetDescendants()) do
+                                        if inst.ClassName == "SpawnLocation" and inst.Name == placed.respawn then
+                                            player.RespawnLocation = inst
+                                        end
+                                    end
+                                end)
+                                if not positioned then
+                                    warn("arena460: could not set team/pad for " .. player.Name .. " (" ..
+                                         placed.team .. " / " .. placed.respawn .. ")")
+                                end
+                            elseif placeWhy then
+                                warn("arena460: " .. player.Name .. " has no placement -- " .. placeWhy)
+                            end
                             -- A ticket has a 5-minute life and was minted when they queued, so tell each side
                             -- what is actually left rather than what it was at mint time.
                             local remaining = ticket460.usable(seat.ticket, nowS)
@@ -466,9 +492,10 @@ task.spawn(function()
                                 -- What the round needs from the place itself, read once from its own Laser Tag
                                 -- content. nil + a reason when the place cannot host one; never a default.
                                 arena_ok = ARENA.ok,
-                                arena_team = mine and mine.team or nil,
-                                arena_spawn = mine and mine.spawn or nil,
-                                arena_weapon = ARENA.ok and ARENA.weapons[1] or nil,
+                                arena_team = placed and placed.team or nil,
+                                arena_spawn = placed and placed.respawn or nil,
+                                arena_weapon = kit and kit.weapons[1] or nil,
+                                arena_weapons = kit and kit.weapons or nil,
                                 arena_teams = ARENA.ok and ARENA.teams or nil,
                                 arena_reason = ARENA.ok and nil or table.concat(ARENA.missing, ","),
                             })
