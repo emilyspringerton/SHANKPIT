@@ -83,7 +83,7 @@ it — hand-writing binary INST/PROP/PRNT chunks to be "helpful" would be a good
 to reconstruct.
 
 1. Open `shankpit_roblox.rbxl` in Studio.
-2. **Insert from file** → `roblox/SHANKPIT_ROBLOX_460.rbxmx` → it lands as a `SHANKPIT460` folder (7 instances).
+2. **Insert from file** → `roblox/SHANKPIT_ROBLOX_460.rbxmx` → it lands as a `SHANKPIT460` folder (8 instances).
 3. Drag the **Script** (`lobby`) and the ModuleScripts into **ServerScriptService**.
 4. Drag **`lobby_client` (a LocalScript) into StarterPlayerScripts** — leaving it beside the server Script is the
    mistake that makes a lobby look finished with nothing on screen.
