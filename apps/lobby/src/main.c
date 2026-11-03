@@ -93,6 +93,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/world/level_boxes.h"
 #include "../../../packages/gfd_chat/gfd_chat.h" /* GFD phone app <-> cross-game chat bus (IDUNA /chat/messages) */
 #include "../../../packages/iduna_login/iduna_login.h" /* #623: IDUNA SSO login (native loopback profile) */
+#include "../../../packages/protocol/wow_client.h"   /* the client half of the macro/mod wire */
 #include "../../../packages/pellegrino_embed/os_menu_gl.h" /* #627: OS menu = HTML+CSS painted by PELLEGRINO */
 #include "../../../packages/pellegrino_browser_embed/phone_browser_gl.h" /* SHANKPIT-PELLEGRINO-APP-02: real embedded browser phone app */
 #include <sys/stat.h>
@@ -2490,6 +2491,20 @@ static void net_send_kit_call(int item) {
     kit_call_build(&pkt, item, my_client_id);
     sendto(sock, (const char *)&pkt, sizeof(pkt), 0, (struct sockaddr*)&server_addr, sizeof(server_addr));
     NET_CLIENT_LOG("KIT_CALL_TX item=%s client_id=%d", kit_item_name(item), my_client_id);
+}
+
+/* net_send_wow_frame -- one PACKET_WOW_WIRE datagram carrying ONE wow_wire frame verbatim. Fire and
+ * forget, like a kit call: the wire's own ACK is the only receipt, and a lost target intent is covered
+ * by the next change (the server drops anything not strictly newer). */
+static void net_send_wow_frame(const unsigned char *bytes, int len) {
+    NetWowWire pkt;
+    if (sock < 0 || !bytes || len <= 0 || len > (int)sizeof pkt.bytes) return;
+    memset(&pkt, 0, sizeof pkt);
+    pkt.hdr.type = PACKET_WOW_WIRE;
+    pkt.len = (unsigned char)len;
+    memcpy(pkt.bytes, bytes, (size_t)len);
+    sendto(sock, (const char *)&pkt, sizeof(pkt), 0, (struct sockaddr*)&server_addr, sizeof(server_addr));
+    NET_CLIENT_LOG("WOW_TX op=%u len=%d", (unsigned)bytes[1], len);
 }
 
 static void net_check_diag_timeouts(unsigned int now_ms) {
@@ -13644,6 +13659,7 @@ static void macro_save_file(void) {
 
 static int macro_run(const char *body);   /* a macro may name another macro, one level down */
 static int wow_macro_cmd(const char *text);      /* /cast et al: compiled by packages/ui/wow_macro.h */
+static int wow_ticket_cmd(const char *text);      /* /ticket <72 hex>: IDUNA's player ticket */
 
 static int macro_cmd(const char *text) {
     const char *p = text;
@@ -13658,6 +13674,7 @@ static int macro_cmd(const char *text) {
     if (macro_ci_eq(word, "cast") || macro_ci_eq(word, "use") || macro_ci_eq(word, "target") ||
         macro_ci_eq(word, "focus") || macro_ci_eq(word, "cleartarget") ||
         macro_ci_eq(word, "clearfocus") || macro_ci_eq(word, "startattack"))
+    if (strncmp(text, "/ticket", 7) == 0 && (text[7] == '\0' || text[7] == ' ')) return wow_ticket_cmd(text);
         return wow_macro_cmd(text);
 
     if (macro_ci_eq(word, "help")) {
@@ -13784,8 +13801,10 @@ static int macro_cmd(const char *text) {
        engine's spell; an unknown name is refused, never mapped to something close. The name table is
        GENERATED from protocol.h (wow_weapons.h), so it cannot drift from the number keys.
      - [stealth] never holds: the engine does not track it. That is a refusal, not a lie.
-     - the target/focus pointers are this client's own (g_wow_target/g_wow_focus); they are not the
-       server's idea of your target and are not on the wire yet. */
+     - the target/focus pointers are this client's own (g_wow_target/g_wow_focus). In a net match they
+       are also sent as SET_TARGET/CLEAR_TARGET intents, and only when they change
+       (wow_net_sync_targets / wow_client.h) -- but a net match still cannot *choose* a target through
+       this API, because the unit query above refuses to guess a remote index. */
 static int g_wow_target = -1;      /* actor slot, or -1 */
 static int g_wow_focus = -1;
 static int g_wow_fire_ticks = 0;   /* pull the trigger for this many input passes (/cast, /startattack) */
@@ -13793,6 +13812,79 @@ static int g_wow_weapon_req = -1;  /* equip on the next input pass, then clear *
 static int g_wow_mo_slot = -1;     /* cached [@mouseover] hit for one macro evaluation */
 static int g_wow_mo_valid = 0;
 static WowModRegistry g_wow_mods;    /* mods register here; empty until a mod does */
+
+/* ---- the client end of the macro/mod wire (packages/protocol/wow_client.h) ---------------------
+ * The lobby already compiles macros; this is what makes the same actions reach a server. Targets go
+ * out only when they change, a cast goes out on every press, and the IDUNA ticket goes out once per
+ * connection. Nothing here mints a ticket or invents an identity. */
+static WowClient g_wow_client;
+static unsigned char g_wow_ticket[WOW_WIRE_TICKET_BYTES];
+static int g_wow_ticket_ready;
+
+static int wow_net_wire_ready(void) { return app_state == STATE_GAME_NET && sock >= 0; }
+
+static int wow_hexval(int c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+/* IDUNA mints the ticket as 36 RAW bytes and returns it as 72 hex chars. We keep the bytes: the wire
+   never carries the text (AUTH is 38 bytes), and the server never parses hex. */
+static int wow_ticket_parse(const char *hex) {
+    int i;
+    if (!hex || strlen(hex) != 2 * WOW_WIRE_TICKET_BYTES) return 0;
+    for (i = 0; i < WOW_WIRE_TICKET_BYTES; i++) {
+        int hi = wow_hexval(hex[2 * i]), lo = wow_hexval(hex[2 * i + 1]);
+        if (hi < 0 || lo < 0) return 0;
+        g_wow_ticket[i] = (unsigned char)((hi << 4) | lo);
+    }
+    g_wow_ticket_ready = 1;
+    return 1;
+}
+
+/* /ticket <72 hex>: the paste-in path until the client can POST to IDUNA for its own ticket. */
+static int wow_ticket_cmd(const char *text) {
+    const char *hex = text + 7;
+    while (*hex == ' ') hex++;
+    if (*hex == '\0') {
+        chat_pane_push("TICKET: paste the 72-hex ticket from IDUNA's POST /api/v1/shankpit/ticket");
+        return 1;
+    }
+    if (!wow_ticket_parse(hex)) {
+        chat_pane_push("TICKET: that is not 72 hex characters");
+        return 1;
+    }
+    chat_pane_push("TICKET: stored (36 bytes); it is sent on the next connect");
+    return 1;
+}
+
+/* Once per connect attempt: a fresh session forgets the target mirror, and sends the ticket if one is
+   held (from /ticket or SHANKPIT_TICKET). An expired ticket is the server's to refuse. */
+static void wow_net_begin_session(void) {
+    uint8_t frame[WOW_WIRE_AUTH_BYTES];
+    int n;
+    wow_client_begin(&g_wow_client);
+    if (!g_wow_ticket_ready) {
+        const char *env = getenv("SHANKPIT_TICKET");
+        if (env && env[0]) wow_ticket_parse(env);
+    }
+    if (!wow_net_wire_ready() || !g_wow_ticket_ready) return;
+    n = wow_client_auth(g_wow_ticket, frame, sizeof frame);
+    if (n > 0) net_send_wow_frame(frame, n);
+}
+
+/* Per input pass. Change detection lives in WowClient, so a held target costs nothing on the air. */
+static void wow_net_sync_targets(void) {
+    uint8_t frame[WOW_WIRE_INTENT_BYTES];
+    int n;
+    if (!wow_net_wire_ready()) return;
+    n = wow_client_target(&g_wow_client, 0, g_wow_target, frame, sizeof frame);
+    if (n > 0) net_send_wow_frame(frame, n);
+    n = wow_client_target(&g_wow_client, 1, g_wow_focus, frame, sizeof frame);
+    if (n > 0) net_send_wow_frame(frame, n);
+}
 
 /* The hero this client controls, or -1 when there is nothing to control (menu, net match, dead). */
 static int wow_hero_slot(void) {
@@ -13872,6 +13964,20 @@ static int wow_h_cast(void *c, const char *name, int token) {
         snprintf(m, sizeof m, "CAST: no weapon called '%s'", name);
         chat_pane_push(m);
         return 0;
+    }
+    if (app_state == STATE_GAME_NET && sock >= 0) {
+        /* A net match's shot is the server's to fire. Send the intent; the cast queue owns it, the
+           server's own weapon gate still applies, and the aim comes from the resolved target. */
+        uint8_t frame[WOW_WIRE_CAST_BYTES];
+        int n = wow_client_cast(&g_wow_client, w, token, frame, sizeof frame);
+        if (n > 0) net_send_wow_frame(frame, n);
+        {
+            char m[96];
+            snprintf(m, sizeof m, "CAST: %s%s (sent to the server)", wow_weapon_name(w),
+                     token == WOW_TOKEN_TARGET ? " @target" : "");
+            chat_pane_push(m);
+        }
+        return n > 0;
     }
     g_wow_weapon_req = w;
     g_wow_fire_ticks = 2;           /* this tick and the next: the same pull the mouse gives */
@@ -15508,6 +15614,7 @@ void net_connect() {
         net_diag.connect_started = 1;
         net_diag.connect_start_ms = SDL_GetTicks();
         net_diag.last_connect_send_ms = SDL_GetTicks();
+        wow_net_begin_session();   /* fresh target mirror + the IDUNA ticket, if one is held */
         net_diag.got_welcome = 0;
         net_diag.got_any_snapshot = 0;
         net_diag.got_local_snapshot = 0;
@@ -17755,6 +17862,7 @@ int main(int argc, char* argv[]) {
                         input_reload    |= kit_pulse_take(KIT_ITEM_RELOAD, now_ms);
                         UserCmd cmd = client_create_cmd(input_fwd, input_str, net_aim_yaw, net_aim_pitch, input_shoot, input_jump, input_crouch, input_reload, input_use, input_ability, input_secondary, input_bike, input_pheromone, wpn_req);
                         client_apply_cmd_movement(&local_state.players[net_local_pid], &cmd, now_ms);
+                        wow_net_sync_targets();
                         net_send_cmd(cmd);
                         net_last_cmd_send_ms = now_ms;
                         if (net_spawn_protect_cmds > 0) net_spawn_protect_cmds--;

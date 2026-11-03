@@ -127,6 +127,7 @@ jobs:
           make test-aim
           make test-hmac
           make test-wow-ticket
+          make test-wow-client
           make check-lora-rules
           make test-lora-wire
 

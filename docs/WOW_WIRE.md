@@ -87,6 +87,31 @@ Honest gaps: a cast whose token is `target` or `focus` **does** aim at that enti
 path is compiled, not driven: there is still no client in this environment to send a cast to a running
 server.
 
+## The client half: one sender, and when it stays quiet
+
+`packages/protocol/wow_client.h` is what turns the client's own actions into frames, and its whole job is
+deciding **not** to send:
+
+- `wow_client_target(&c, slot, entity, out, cap)` returns 7 bytes only when this client's mirror of the
+  slot changes, and `0` otherwise -- holding a target costs no air at all. `entity < 0` clears the slot,
+  so `/cleartarget` and `/clearfocus` are the same path as `/target` and `/focus`.
+- `wow_client_cast` always returns 6 bytes: a cast is an event, not a state, and suppressing a repeat
+  press would drop a shot. The sequence advances with PARENA's `wow_seq_next` (never 0, wraps at 16 bits),
+  which is exactly the "strictly newer or drop" rule the receiver enforces.
+- `wow_client_auth` copies the 36-byte ticket verbatim into the 38-byte AUTH frame. It does not mint,
+  retry or refresh -- that is IDUNA's business and the caller's.
+
+The lobby is the first caller (`apps/lobby/src/main.c`): `net_send_wow_frame` wraps one frame in a
+`PACKET_WOW_WIRE` datagram beside the other fire-and-forget sends; `wow_net_begin_session()` resets the
+mirror and sends AUTH on each connect attempt; `wow_net_sync_targets()` runs once per input pass and
+sends target/focus only when they moved; and `/cast` in a net match sends a CAST intent instead of arming
+the local trigger, because the server's cast queue is what fires in a net match.
+
+The ticket itself comes from IDUNA (`POST /api/v1/shankpit/ticket`, 72 hex chars). The client has no HTTP
+client, so it takes that text from `/ticket <72 hex>` or `SHANKPIT_TICKET` and keeps the 36 bytes. That is
+a paste-in bridge, named as such: it is not an SSO login, and a missing or expired ticket leaves the
+client exactly where the server puts it -- unauthenticated and refused.
+
 ## GoblinFoxDragon / MUD: what is real today
 
 `GoblinFoxDragon` is now cloned at `MONOREPO/GoblinFoxDragon`. Its MUD is Go under `apps2/mud`
