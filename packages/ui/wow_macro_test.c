@@ -7,6 +7,7 @@
 #include "wow_macro.h"
 #include "wow_api.h"
 #include "addon_toc.h"
+#include "wow_weapons.h"
 
 static int fails = 0;
 #define CHECK(cond, ...) do { if (!(cond)) { printf("wow: FAIL line %d: ", __LINE__); printf(__VA_ARGS__); printf("\n"); fails++; } } while (0)
@@ -209,6 +210,31 @@ static void test_execute(void) {
           "command names are wrong");
 }
 
+static void test_weapons(void) {
+    int i, j;
+    CHECK(WOW_WEAPON_COUNT >= 6, "only %d weapons in the generated table", WOW_WEAPON_COUNT);
+    for (i = 0; i < WOW_WEAPON_COUNT; i++) {
+        CHECK(wow_weapons[i].name && *wow_weapons[i].name, "unnamed weapon at %d", i);
+        for (j = i + 1; j < WOW_WEAPON_COUNT; j++)
+            CHECK(wow_weapons[i].id != wow_weapons[j].id, "duplicate weapon id %d", wow_weapons[i].id);
+    }
+    CHECK(wow_weapon_from_name("knife") == wow_weapons[0].id, "knife is not the first weapon");
+    CHECK(wow_weapon_from_name("MAGNUM") == wow_weapon_from_name("magnum"), "weapon names are case-sensitive");
+    CHECK(wow_weapon_from_name("magnum") >= 0, "the generated magnum is missing");
+    CHECK(wow_weapon_from_name("nope") == -1 && wow_weapon_from_name("") == -1 &&
+          wow_weapon_from_name(NULL) == -1, "an unknown weapon name resolved");
+    CHECK(wow_weapon_name(0) != NULL && strcmp(wow_weapon_name(0), "?") != 0, "id 0 has no name");
+    CHECK(strcmp(wow_weapon_name(WOW_WEAPON_COUNT + 99), "?") == 0, "an unknown id invented a name");
+    CHECK(wow_weapon_from_slot(1) == wow_weapons[0].id, "slot 1 is not the first weapon");
+    CHECK(wow_weapon_from_slot(0) == -1 && wow_weapon_from_slot(10) == -1, "an invalid slot resolved");
+    CHECK(wow_weapon_from_slot(7) == wow_weapon_from_name("flashlight") &&
+          wow_weapon_from_slot(8) == wow_weapon_from_name("hammer") &&
+          wow_weapon_from_slot(9) == wow_weapon_from_name("spraycan"),
+          "slots 7/8/9 disagree with the engine's flashlight/hammer/spraycan");
+    CHECK(wow_weapon_from_name("flashlight") >= 0 && wow_weapon_from_name("hammer") >= 0 &&
+          wow_weapon_from_name("spraycan") >= 0, "a trailing-comment WPN_ define fell out of the table");
+}
+
 static void test_api_contract(void) {
     int i, j;
     static const char *const states[] = { "host", "frame", "event", "todo" };
@@ -318,6 +344,7 @@ int main(void) {
     test_errors();
     test_resolve();
     test_execute();
+    test_weapons();
     test_api_contract();
     test_toc();
     test_toc_order();

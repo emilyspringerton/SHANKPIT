@@ -125,6 +125,8 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/render/stream_filters.h"      /* the program feed's post chain */
 #include "../../../packages/render/filter_rules_host.h"    /* PARENA presets */
 #include "../../../packages/ui/macro.h"                    /* shankpit_macros.cfg: bind a key to commands */
+#include "../../../packages/ui/wow_api.h"                     /* the host contract a WoW macro/Lua binding talks to */
+#include "../../../packages/ui/wow_weapons.h"                 /* generated: WPN_* names, so /cast magnum is the same id as key 2 */
 #include "../../../packages/render/proc_tex.h"
 #include "../../../packages/render/retro_sky.h"
 #include "../../../packages/render/sky_weather.h"
@@ -13640,6 +13642,7 @@ static void macro_save_file(void) {
 }
 
 static int macro_run(const char *body);   /* a macro may name another macro, one level down */
+static int wow_macro_cmd(const char *text);      /* /cast et al: compiled by packages/ui/wow_macro.h */
 
 static int macro_cmd(const char *text) {
     const char *p = text;
@@ -13649,10 +13652,18 @@ static int macro_cmd(const char *text) {
     snprintf(arg, sizeof arg, "%s", p);
     macro_trim(arg);
 
+    /* The WoW-language commands are the macro engine's, not this table's: one compile path for chat
+       and for a bind. A macro line may mix them: "cast magnum; stream.grade gritty". */
+    if (macro_ci_eq(word, "cast") || macro_ci_eq(word, "use") || macro_ci_eq(word, "target") ||
+        macro_ci_eq(word, "focus") || macro_ci_eq(word, "cleartarget") ||
+        macro_ci_eq(word, "clearfocus") || macro_ci_eq(word, "startattack"))
+        return wow_macro_cmd(text);
+
     if (macro_ci_eq(word, "help")) {
         chat_pane_push("MACROS: stream.grade off|crisp|cinematic|gritty|retro|+|-   stream.detail full|light|toggle");
         chat_pane_push("MACROS: ambient 0..10|+|-   stream on|off   broadcast off|auto|manual   fullscreen on|off");
         chat_pane_push("MACROS: bullet.holes   brick.debris   say <text>   bind <KEY> <cmds>   macro <KEY>");
+        chat_pane_push("WOW: cast <weapon> [@token] [harm|help|dead|nodead|combat|noexists]   target/focus/cleartarget/clearfocus/startattack   use <1-9>");
         return 1;
     }
     if (macro_ci_eq(word, "stream.grade")) {
@@ -13755,6 +13766,215 @@ static int macro_cmd(const char *text) {
         return 1;
     }
     { char m[96]; snprintf(m, sizeof m, "MACROS: unknown command '%s' (try /help)", word); chat_pane_push(m); }
+    return 1;
+}
+
+/* ---- WOW-STYLE MACRO WIRING: compiled text -> the ACTUAL actor pool -----------------------------
+   Founder (2026-11-03): "everything needs to be macroable via WOW like lua macros ... so for
+   targeting and spell casting etc all needs to be there". packages/ui/wow_macro.h owns the grammar,
+   the condition bits and the first-match-wins rule. THIS is the host those clauses run against:
+   local_state.players[] for units, the same crosshair ray the bullets use for [@mouseover], and the
+   same weapon request the number keys use for /cast.
+
+   GROUNDED AND NAMED:
+     - LOCAL MATCHES ONLY. In a net match this client has no locally authoritative target slot, so a
+       unit query answers "no unit" rather than guessing somebody else's index.
+     - /cast <weapon> equips that weapon and pulls the trigger for the next tick. A gun is this
+       engine's spell; an unknown name is refused, never mapped to something close. The name table is
+       GENERATED from protocol.h (wow_weapons.h), so it cannot drift from the number keys.
+     - [stealth] never holds: the engine does not track it. That is a refusal, not a lie.
+     - the target/focus pointers are this client's own (g_wow_target/g_wow_focus); they are not the
+       server's idea of your target and are not on the wire yet. */
+static int g_wow_target = -1;      /* actor slot, or -1 */
+static int g_wow_focus = -1;
+static int g_wow_fire_ticks = 0;   /* pull the trigger for this many input passes (/cast, /startattack) */
+static int g_wow_weapon_req = -1;  /* equip on the next input pass, then clear */
+static int g_wow_mo_slot = -1;     /* cached [@mouseover] hit for one macro evaluation */
+static int g_wow_mo_valid = 0;
+
+/* The hero this client controls, or -1 when there is nothing to control (menu, net match, dead). */
+static int wow_hero_slot(void) {
+    if (app_state != STATE_GAME_LOCAL) return -1;
+    if (!local_state.players[0].active) return -1;
+    return 0;
+}
+
+/* The actor under the crosshair: the same eye ray and the same hit test the guns use. Nearest
+   hostile FIRST, so [@mouseover] means what a player means by it. */
+static int wow_mouseover_slot(void) {
+    int hero = wow_hero_slot(), i, best = -1;
+    float best_d2 = 0.0f;
+    if (hero < 0) return -1;
+    {
+        PlayerState *h = &local_state.players[hero];
+        float r = -cam_yaw * 0.0174533f, rp = cam_pitch * 0.0174533f;
+        float dx = sinf(r) * cosf(rp), dy = sinf(rp), dz = -cosf(r) * cosf(rp);
+        for (i = 0; i < MAX_CLIENTS; i++) {
+            PlayerState *p = &local_state.players[i];
+            float ox, oy, oz, d2;
+            if (i == hero || !p->active || p->state == STATE_DEAD) continue;
+            if (p->scene_id != h->scene_id) continue;
+            if (phys_is_friendly(h, p)) continue;
+            if (check_hit_location(h->x, h->y + EYE_HEIGHT, h->z, dx, dy, dz, p) <= 0) continue;
+            ox = p->x - h->x; oy = p->y - h->y; oz = p->z - h->z;
+            d2 = ox * ox + oy * oy + oz * oz;
+            if (best < 0 || d2 < best_d2) { best = i; best_d2 = d2; }
+        }
+    }
+    return best;
+}
+
+static int wow_slot_of(int token) {
+    switch (token) {
+        case WOW_TOKEN_PLAYER:     return wow_hero_slot();
+        case WOW_TOKEN_TARGET:     return g_wow_target;
+        case WOW_TOKEN_FOCUS:      return g_wow_focus;
+        case WOW_TOKEN_MOUSEOVER:
+            if (!g_wow_mo_valid) { g_wow_mo_slot = wow_mouseover_slot(); g_wow_mo_valid = 1; }
+            return g_wow_mo_slot;
+        default:                   return -1;   /* arena/party tokens: no such pool here */
+    }
+}
+
+static WowUnit wow_unit_at(int slot) {
+    WowUnit u;
+    int hero = wow_hero_slot();
+    memset(&u, 0, sizeof u);
+    if (slot < 0 || slot >= MAX_CLIENTS) return u;
+    {
+        PlayerState *p = &local_state.players[slot];
+        if (!p->active) return u;
+        if (hero >= 0 && slot != hero && p->scene_id != local_state.players[hero].scene_id) return u;
+        u.exists = 1;
+        u.dead = (unsigned char)(p->state == STATE_DEAD || p->health <= 0);
+        u.hostile = (unsigned char)(hero >= 0 && slot != hero &&
+                                    !phys_is_friendly(&local_state.players[hero], p));
+    }
+    return u;
+}
+
+static int wow_h_exists(void *c, int token) { (void)c; return (int)wow_unit_at(wow_slot_of(token)).exists; }
+static int wow_h_dead(void *c, int token) { (void)c; return (int)wow_unit_at(wow_slot_of(token)).dead; }
+static int wow_h_hostile(void *c, int token) { (void)c; return (int)wow_unit_at(wow_slot_of(token)).hostile; }
+static long wow_h_health(void *c, int token) {
+    int slot = wow_slot_of(token);
+    (void)c;
+    return slot < 0 ? 0 : (long)local_state.players[slot].health;
+}
+
+static int wow_h_cast(void *c, const char *name, int token) {
+    int w = wow_weapon_from_name(name);
+    (void)c;
+    if (w < 0) {
+        char m[96];
+        snprintf(m, sizeof m, "CAST: no weapon called '%s'", name);
+        chat_pane_push(m);
+        return 0;
+    }
+    g_wow_weapon_req = w;
+    g_wow_fire_ticks = 2;           /* this tick and the next: the same pull the mouse gives */
+    {
+        char m[96];
+        snprintf(m, sizeof m, "CAST: %s%s", wow_weapon_name(w),
+                 token == WOW_TOKEN_TARGET ? " @target" : "");
+        chat_pane_push(m);
+    }
+    return 1;
+}
+
+static int wow_h_use(void *c, int slot) {
+    int w = wow_weapon_from_slot(slot);
+    (void)c;
+    if (w < 0) {
+        char m[64];
+        snprintf(m, sizeof m, "USE: slot %d is not a weapon here", slot);
+        chat_pane_push(m);
+        return 0;
+    }
+    g_wow_weapon_req = w;
+    g_wow_fire_ticks = 2;
+    {
+        char m[64];
+        snprintf(m, sizeof m, "USE: %s (slot %d)", wow_weapon_name(w), slot);
+        chat_pane_push(m);
+    }
+    return 1;
+}
+
+static int wow_h_target(void *c, int token) {
+    int slot = wow_slot_of(token);
+    (void)c;
+    if (slot < 0) { chat_pane_push("TARGET: nothing there"); return 0; }
+    g_wow_target = slot;
+    {
+        char m[64];
+        snprintf(m, sizeof m, "TARGET: %s %d", local_state.players[slot].is_bot ? "bot" : "player", slot);
+        chat_pane_push(m);
+    }
+    return 1;
+}
+
+static void wow_h_clear_target(void *c) { (void)c; g_wow_target = -1; }
+
+static int wow_h_focus(void *c, int token) {
+    int slot = wow_slot_of(token);
+    (void)c;
+    if (slot < 0) { chat_pane_push("FOCUS: nothing there"); return 0; }
+    g_wow_focus = slot;
+    {
+        char m[64];
+        snprintf(m, sizeof m, "FOCUS: slot %d", slot);
+        chat_pane_push(m);
+    }
+    return 1;
+}
+
+static void wow_h_clear_focus(void *c) { (void)c; g_wow_focus = -1; }
+
+static const char *wow_error_text(int rc) {
+    switch (rc) {
+        case -1: return "unknown command -- cast, use, target, focus, cleartarget, clearfocus, startattack";
+        case -2: return "bad [condition] or [@token]";
+        case -3: return "too many clauses (4 max)";
+        case -4: return "argument too long (48 max)";
+        case -5: return "missing argument";
+        case -6: return "line too long (192 max)";
+        default: return "could not compile";
+    }
+}
+
+static int wow_macro_cmd(const char *text) {
+    WowMacroLine line;
+    WowHostApi api;
+    int rc;
+    if (!text) return 0;
+    rc = wow_macro_parse(text, &line);
+    if (rc == 0) return 0;
+    if (rc < 0) {
+        char m[160];
+        snprintf(m, sizeof m, "MACROS: %s", wow_error_text(rc));
+        chat_pane_push(m);
+        return 1;
+    }
+    if (wow_hero_slot() < 0) {
+        chat_pane_push("MACROS: unit targeting needs a live local match (net targeting is not wired yet)");
+        return 1;
+    }
+    g_wow_mo_valid = 0;
+    memset(&api, 0, sizeof api);
+    api.unit_exists = wow_h_exists;
+    api.unit_dead = wow_h_dead;
+    api.unit_hostile = wow_h_hostile;
+    api.unit_health = wow_h_health;
+    api.cast_spell = wow_h_cast;
+    api.use_action = wow_h_use;
+    api.set_target = wow_h_target;
+    api.clear_target = wow_h_clear_target;
+    api.set_focus = wow_h_focus;
+    api.clear_focus = wow_h_clear_focus;
+    rc = wow_macro_execute(&line, &api, NULL);
+    if (rc == 0) chat_pane_push("MACROS: no clause matched (nothing there, or every condition was false)");
+    else if (rc < 0) chat_pane_push("MACROS: the engine refused that action");
     return 1;
 }
 
@@ -17440,6 +17660,7 @@ int main(int argc, char* argv[]) {
             local_state.players[control_pid].in_boost =
                 (k[SDL_SCANCODE_LSHIFT] || k[SDL_SCANCODE_RSHIFT]) ? 1 : 0;
             int shoot = (SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_LEFT));
+            if (g_wow_fire_ticks > 0) { shoot = 1; g_wow_fire_ticks--; }   /* /cast pull, same trigger */
             int reload = in_heli ? 0 : k[SDL_SCANCODE_R];
             int bike = in_heli ? (k[SDL_SCANCODE_Q] || k[SDL_SCANCODE_J]) : 0;   /* heli bank left: Q or J */
             int use = k[SDL_SCANCODE_F];
@@ -17486,6 +17707,7 @@ int main(int argc, char* argv[]) {
                 if(k[SDL_SCANCODE_7]) wpn_req=WPN_FLASHLIGHT;
                 if(k[SDL_SCANCODE_8]) wpn_req=WPN_HAMMER;
                 if(k[SDL_SCANCODE_9]) wpn_req=WPN_SPRAYCAN;
+                if (g_wow_weapon_req >= 0) { wpn_req = g_wow_weapon_req; g_wow_weapon_req = -1; }   /* /cast magnum */
             }
 
             int fov_pid = (app_state == STATE_GAME_NET && net_local_pid > 0 && local_state.players[net_local_pid].active)

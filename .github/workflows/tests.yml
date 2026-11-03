@@ -121,6 +121,7 @@ jobs:
           make test-stream-filters
           make test-macros
           make test-wow-macros
+          make check-wow-weapons
           make check-lora-rules
           make test-lora-wire
 

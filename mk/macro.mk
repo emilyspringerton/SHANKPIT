@@ -16,3 +16,13 @@ test-macros: | $(BIN_DIR)
 test-wow-macros: | $(BIN_DIR)
 	$(CC) -O1 -Wall -Wextra -Werror -Ipackages/ui packages/ui/wow_macro_test.c -o $(BIN_DIR)/wow_macro_test
 	./$(BIN_DIR)/wow_macro_test
+
+# The /cast name table is GENERATED from packages/common/protocol.h, so a new weapon cannot exist in
+# the engine and be unknown to a macro (or worse, mean a different id).
+.PHONY: regen-wow-weapons check-wow-weapons
+
+regen-wow-weapons:
+	python3 scripts/gen_wow_weapons.py
+
+check-wow-weapons:
+	python3 scripts/gen_wow_weapons.py --check

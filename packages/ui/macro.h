@@ -163,7 +163,10 @@ static int macro_save_text(const MacroBook *b, char *out, int cap) {
             "# SPEC is a key with optional ALT+/SHIFT+/CTRL+, e.g. F6, ALT+1, SHIFT+F7.\n"
             "# The same text works typed into chat with a leading '/' -- test it there first.\n"
             "# Commands: stream.grade, stream.detail, stream, ambient, bullet.holes, brick.debris,\n"
-            "#           fullscreen, broadcast, say, bind, macro, help\n";
+            "#           fullscreen, broadcast, say, bind, macro, help\n"
+            "# WoW-style: cast <weapon> [@token] [harm|help|dead|nodead|combat|noexists], use <1-9>,\n"
+            "#           target, focus, cleartarget, clearfocus, startattack -- e.g.\n"
+            "#           bind F6 cast [harm,nodead,@mouseover] magnum; [@player] knife\n";
         int n = snprintf(out + used, (size_t)(cap - used), "%s", header);
         if (n < 0 || n >= cap - used) return -1;
         used += n;

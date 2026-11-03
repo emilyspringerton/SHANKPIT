@@ -80,8 +80,33 @@ load, no alphabetical fallback.
 - **No combat log framing** (`COMBAT_LOG_EVENT_UNFILTERED` and its parameter tuples).
 - **No secure templates** and therefore no protected/combat-lock model. That model exists in WoW to stop
   add-ons automating targeting; it is a security boundary, and a half-built one is worse than none.
-- **Not yet wired into the client.** `apps/lobby` still dispatches its own command table; connecting
-  `macro_cmd` to `wow_macro_execute` and the unit tokens to the local/net actor pool is the next slice.
+## Wired into the lobby (local matches)
+
+`apps/lobby/src/main.c` now dispatches `cast`, `use`, `target`, `focus`, `cleartarget`, `clearfocus` and
+`startattack` through `wow_macro_parse` + `wow_macro_execute`, so the same text works typed in chat with
+a `/`, in `shankpit_macros.cfg`, and on a bound key (binds are checked before the built-in keys):
+
+```
+bind F6 cast [harm,nodead,@mouseover] magnum; [@player] knife
+```
+
+- **`[@mouseover]`** is the actor under the crosshair: the same eye ray and the same `check_hit_location`
+  the guns use, nearest hostile first.
+- **`[@player]`** is slot 0 while `app_state == STATE_GAME_LOCAL`.
+- **`/cast magnum`** equips that weapon and pulls the trigger for the next input pass — the engine's
+  "spell" is a gun. The name table is **generated** from `packages/common/protocol.h`
+  (`scripts/gen_wow_weapons.py` → `packages/ui/wow_weapons.h`), so a weapon cannot exist in the engine and
+  be misspelled in a macro; `make check-wow-weapons` fails CI on drift. Unknown names are refused.
+- **`/use 7`** = the number keys' own slot mapping (1..6 → weapons 0..5, 7 flashlight, 8 hammer,
+  9 spraycan), one generated table, not a second copy.
+- **Target/focus** are this client's pointers (`g_wow_target`, `g_wow_focus`), set and cleared by the
+  commands; `[harm]` is the engine's own `phys_is_friendly` rule, so FFA targets read hostile and team
+  targets do not.
+
+Named limits, not hidden ones: **local matches only** — in a net match a unit query answers "no unit"
+rather than guessing somebody else's actor slot, and the attempt says so in chat. `[stealth]` never
+holds because the engine does not track stealth. Target/focus are not on the wire. `/cast` fires; it
+does not queue a cast through a server-authoritative ability buffer (there is no such buffer).
 
 Stated plainly: the macro language, the unit-token model, the host vtable, and the add-on loader are
 real and tested headless (`make test-wow-macros`). The Lua runtime, the UI toolkit and the event/combat
