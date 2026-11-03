@@ -17,6 +17,7 @@ it: a real sign-in, a queue, real connect tickets, and a read-only board. Nothin
 | `src/login460.lua` | ModuleScript | a real IDUNA identity: guest-register, guest-login, token freshness, what may be persisted |
 | `src/ticket460.lua` | ModuleScript | reading a real IDUNA connect ticket: shape, expiry, claimed player. **Never** verifies one |
 | `src/queue460.lua` | ModuleScript | casual vs ranked, the closest-pair search, seat bookkeeping |
+| `src/stats460.lua` | ModuleScript | the authorities' stats as a **cache**: optimistic write, reconcile, rollback, fan-out. Never invents a stat |
 | `src/net460.lua` | ModuleScript | the published ladder: schema support, the ladder's own order, staleness, rows |
 | `src/lobby.server.lua` | Script | sign-in, minting, seating, the tick, the board push |
 | `src/lobby.client.lua` | LocalScript | the screen: SIGN IN, queue buttons, ladder, the match prompt with its ticket |

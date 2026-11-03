@@ -32,15 +32,28 @@ local queue460 = require(script.Parent.queue460)
 local ticket460 = require(script.Parent.ticket460)
 local net460 = require(script.Parent.net460)
 local login460 = require(script.Parent.login460)
+local stats460 = require(script.Parent.stats460)
+
+-- The three hosts used to be three hardcoded strings. They are now one switch: set the attributes
+-- `IdunaBase` / `WotanBase` on this Script (e.g. `https://<space>.hf.space/api/v1` for a dev backend) and the
+-- place points somewhere else without editing code. Empty/unset = exactly the production hosts it had before.
+local function baseAttr(name, default)
+    local v = script:GetAttribute(name)
+    if type(v) == "string" and v ~= "" then return v end
+    return default
+end
+
+local IDUNA_BASE = baseAttr("IdunaBase", "https://iam.okemily.com/api/v1")
+local WOTAN_BASE = baseAttr("WotanBase", "https://okemily.com/api/v1")
 
 local CONFIG = {
-    NetUrl = "https://okemily.com/api/v1/shankpit-net/deadweight",
+    NetUrl = WOTAN_BASE .. "/shankpit-net/deadweight",
     -- IDUNA's connect-ticket mint (IDUNA/internal/http/handlers/shankpit_ticket.go): 72 hex chars, 5 min TTL,
     -- presented once at PACKET_CONNECT and verified by the C server's own shared secret.
-    TicketUrl = "https://iam.okemily.com/api/v1/shankpit/ticket",
+    TicketUrl = IDUNA_BASE .. "/shankpit/ticket",
     -- IDUNA's generic game accounts, scoped to the game the ticket endpoint is scoped to ("shankpit").
     -- A game player token's subject is "guest:<uuid>"; its player_id claim is what the ticket reads.
-    GameUrl = "https://iam.okemily.com/api/v1/games/shankpit",
+    GameUrl = IDUNA_BASE .. "/games/shankpit",
     BoardEvery = 5,
     QueueEvery = 1,
 }
@@ -57,6 +70,22 @@ local storeOk, identityStore = pcall(function()
     return game:GetService("DataStoreService"):GetDataStore("SHANKPIT460_Identity_v1")
 end)
 if not storeOk then identityStore = nil end
+
+-- WOTAN and IDUNA are the truth; this is the place's cache of what they publish (src/stats460.lua). The board
+-- is still pushed whole to the screens; the fan-out is for anything that needs a per-record write.
+local statsCache = stats460.new()
+local statsSinks = {}
+do
+    local haveStore, statsStore = pcall(function()
+        return game:GetService("DataStoreService"):GetDataStore("SHANKPIT460_Stats_v1")
+    end)
+    if haveStore then
+        statsSinks[#statsSinks + 1] = {
+            name = "datastore",
+            write = function(record) statsStore:SetAsync("p" .. tostring(record.pid), record) end,
+        }
+    end
+end
 
 local function loadSaved(userId)
     if not identityStore then return nil end
@@ -129,9 +158,24 @@ local function pushBoard()
 end
 
 local function refreshSnapshot()
-    local decoded = httpJson(CONFIG.NetUrl, "GET", nil)
+    local decoded, err = httpJson(CONFIG.NetUrl, "GET", nil)
     if type(decoded) == "table" then
         snapshot = decoded
+        local records = type(decoded.records) == "table" and decoded.records or {}
+        local pids = {}
+        for _, record in ipairs(records) do
+            if type(record.pid) == "string" and record.pid ~= "" then pids[#pids + 1] = record.pid end
+        end
+        local reconciled = stats460.reconcile(statsCache, records, nowMs())
+        local fanned = stats460.fan_out(statsCache, pids, statsSinks)
+        if reconciled.conflicts > 0 or reconciled.expired > 0 or #fanned.failed > 0 then
+            print(string.format(
+                "stats460: %d written, %d conflicts, %d expired; fan-out %d ok, %d failed",
+                reconciled.written, reconciled.conflicts, reconciled.expired, fanned.ok, #fanned.failed))
+        end
+    elseif err then
+        -- a dead authority leaves the cache exactly as it was: stale is readable, invented is not
+        print("stats460: board read failed (" .. tostring(err) .. ") -- keeping the last cache")
     end
     pushBoard()
 end
