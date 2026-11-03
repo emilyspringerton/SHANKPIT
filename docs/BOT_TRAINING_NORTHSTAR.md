@@ -440,3 +440,40 @@ SHANKPIT, each a real, adapted port, not a copy-paste). That's a genuinely notab
 on its own — the actual "SHANKPIT as a training platform" question isn't whether the ML works (it
 does, today, verified), it's whether anyone plays against a checkpoint that's actually running in
 the real game, which is exactly what step (1) above closes.
+
+
+## 2026-11-03 — the OG train-mode net drives the ZOMBIES horde (a merge, and a measured split of authority)
+
+Founder: *"FOR ZOMBIES MODE CAN WE MERGE IN THE OG TRAIN MODE NEURAL NET OPPONENTS SO THE ZOMBIES ARE MORE
+DYNAMIC?"* Yes -- and the merge found something worth writing down here rather than in the code alone.
+
+**The net, checked.** `packages/simulation/brain_weights.h` is exported from `shank_brain_horde.pth`:
+8 -> 256 -> 128 -> 4, driven by `neural_net.h`'s `bot_brain_forward`, fed exactly the features `bot_ai.h` builds
+(self x/z /500, yaw as sin/cos, target x/z /500, distance /500, own health /100), answering
+[fwd, strafe, yaw-rate, shoot]. Nothing else in the C tree includes `neural_net.h`, so `zombie_brain.c` is the
+single owner of that forward pass.
+
+**What it does in a zombie.** `zombie_brain_think` builds the 8 inputs from the zombie's own body, runs the net,
+and `zombie_brain_map` shapes the answer per class using `PARENA/stdlib/shankpit/zombie_brain_rules.prn`
+(distance bias, health bias, weave cap, lunge threshold, deterministic per-body phase). It hands back an INTENT;
+`witness_ai.c` still owns pheromone steering, the hero lock, hunger infighting, melee range/cooldown/damage, and
+the class's pace.
+
+**The measurement that changed the design.** Applied the way `bot_ai.h` applies it, the net makes every class walk
+a zombie away from a hero 100 units ahead -- fwd -0.80..-0.85, 86 units of retreat over 600 ticks, no lunges --
+in three frames tried (absolute world; the zombie's own frame; its own frame with true yaw, where it just spins).
+Cause: the 8 inputs are ABSOLUTE coordinates and the policy was trained to kite with a rifle. Consequences:
+
+- The BEARING decides WHERE (unchanged hand-tuned heading -- it converges).
+- The NET decides HOW: a class-capped weave on the bearing, lateral jink, a 0.55..1.0 forward commitment
+  (never a reverse -- a zombie has no retreat affordance), and the lunge commit, which can fire from AGITATED
+  before the mood arc would have reached HUNTING.
+
+Under that mapping, all five classes close 100 units to 0.00 in 600 ticks, and
+`make test-zombie-brain` pins it (76 checks).
+
+**Next steps this implies, in order.** (1) A checkpoint trained on HORDE observations in the zombie's own frame
+would let the net be a controller again instead of a stylist -- that is the real unlock, and it is a training-pipeline
+job, not a wiring job. (2) Per-class heads (or a class-conditioned input) would replace today's scalar biases.
+(3) Nothing here learns: no sampling, no exploration, no update -- this is inference only, and the Go bot pool's
+native inference work is still separate and unbuilt.

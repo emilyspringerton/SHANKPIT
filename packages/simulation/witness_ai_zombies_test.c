@@ -246,8 +246,16 @@ int main(void) {
     zid = witness_ai_spawn_zombie(&S, 0.0f, 0.0f, 0.0f, 0);
     witness_ai_force_zombie_mood(zid, 2);
     for (int i = 0; i < 60; i++) { t += 50; witness_ai_tick(&S, t); walk(0.05f); }
-    assert(S.players[zid].in_fwd > 0.0f && S.players[zid].x > 0.5f);
-    printf("PASS: zombie 18 from the hero senses it and chases (x=%.1f)\n", S.players[zid].x);
+    /* The scenario is "it sensed the hero and closed on it", and 60 ticks used to leave the body
+     * mid-chase with in_fwd > 0. Since the OG train-mode net drives MODE_ZOMBIES it commits at ~0.9 of
+     * its pace instead of 0.7 and ARRIVES inside melee reach within the same window, where the chase
+     * block correctly stops the body (in_fwd = 0, x = 15.2 of an 18-unit gap, yaw 90.6 straight at the
+     * hero) -- so asserting in_fwd alone was asserting that it had NOT arrived. Assert the closure
+     * instead: most of the gap covered, and either still pressing or already in reach. */
+    assert(S.players[zid].x > 9.0f);
+    assert(S.players[zid].in_fwd > 0.0f || S.players[zid].x > 14.0f);
+    printf("PASS: zombie 18 from the hero senses it and chases (x=%.1f, in_fwd %.2f)\n",
+           S.players[zid].x, S.players[zid].in_fwd);
 
     /* ---- card #486: with a building available, zombies spawn out of the hero's sight ---- */
     memset(&S, 0, sizeof S);

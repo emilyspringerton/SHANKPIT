@@ -739,6 +739,23 @@ ZOMBIES zombies **wander and get hungry** (2026-10-04) rather than always huntin
 window, a far one is eventually found by hunger scent, and they still spawn 72-130 units out preferring spots
 **walled off by a building** so they come round a corner instead of popping into view.
 
+ZOMBIES zombies also **think with the OG train-mode neural net** (2026-11-03) -- the shipped
+`shank_brain_horde.pth` checkpoint (`packages/simulation/brain_weights.h`, 8 -> 256 -> 128 -> 4) runs once per
+zombie per tick in `packages/simulation/zombie_brain.c`, and `PARENA/stdlib/shankpit/zombie_brain_rules.prn`
+decides how each CLASS reads that intent: a BRUTE believes a hero 100 units away is 1200 permille away (so it
+commits late and hard) and may only weave 0.35 deg, where a RUNNER reads 900 and weaves 1.5 deg, and the net's
+own shoot channel commits a lunge at 300 permille on a BRUTE but needs 700 on a SHAMBLER -- so the same net
+charges from AGITATED on one body and hesitates on another. This was MEASURED, not assumed: fed raw the net
+walks a zombie **backwards** (fwd -0.8, 86 units of retreat in 600 ticks, in its absolute frame, its own frame,
+and its own frame with true yaw -- it was trained to kite a rifle, which a zombie has no affordance for), so the
+target bearing still decides *where* and the net decides *how*: the weave, the jink, the 0.55..1.0 commitment and
+when to lunge. After that mapping every class closes 100 units to 0.00 in 600 ticks. Enabled in ZOMBIES only and
+switchable off with `SHANKPIT_ZOMBIE_BRAIN=0`, which leaves the hand-tuned chase exactly as it was.
+`make test-zombie-brain` (76 checks) and `make test-witness-ai-zombies` (ASan/UBSan) both green. Honest limits:
+nothing here learns -- it is a forward pass over the shipped weights, no training path; the checkpoint's
+absolute-coordinate inputs make it map-specific, and the real fix is a checkpoint trained on horde observations;
+and no renderer on this box means the weave has never been watched, only measured.
+
 Population events are now **REFLUX**-evented (2026-10-08) -- `REFLUX_ACTION_ZOMBIE_SPAWNED`/`_HARVESTED`/
 `_MOOD_ESCALATED`/`_WITNESS_ESCALATED`/`_GIANT_BUG_ATE_ZOMBIE`/`_MEN_DISPATCHED`/`_MEN_RESOLVED`
 (`packages/reflux/reflux_runtime.h`) dispatch at the real moment a zombie spawns/dies/goes loud, a citizen

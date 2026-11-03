@@ -19,6 +19,8 @@
 #include "citizen_life.h"
 #include "citizen_avatar.h"
 #include "dw_ladder.h"   /* DEADWEIGHT: the citizens' ladder (rules are PARENA) */    /* citizens' own personalities, priorities and secrets */
+#include "zombie_brain.h"   /* the OG train-mode net (brain_weights.h, from shank_brain_horde.pth) driving a
+                               zombie's own body -- see that header's top comment for what it does NOT own */
 
 /* Prototype for the PARENA-generated glue (reflux_mod.c, do-not-edit-by-hand) -- no shared .h
  * between generated units in this codebase, same convention world_alert_bridge.c's own identical
@@ -1513,7 +1515,6 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
            prey for up to 10 s, bites on contact (feeding itself), and the victim fights back. A
            prey inside arm's reach beats a pheromone pull -- a horde piled on a canister turns on
            itself. */
-        int targeting_prey = 0;
         if (wander_mode && !targeting_hero) {
             /* "attack the player and the citizens when they are hungry or aggressive" -- one
                PARENA decision over both meters, so the aggression a pheromone canister feeds is a
@@ -1546,9 +1547,41 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
                 if (!has_target || pd <= WITNESS_AI_ZOMBIE_MELEE_RANGE * 2.0f) {
                     hdx = pdx; hdz = pdz; hdist = pd;
                     has_target = 1;
-                    targeting_prey = 1;
                 }
             }
+        }
+        /* ---- THE OG TRAIN-MODE NET (zombie_brain.h). One forward pass over the 8 features
+           shank_brain_horde.pth was trained on, fed from THIS body's own frame and shaped by its
+           class (PARENA/stdlib/shankpit/zombie_brain_rules.prn). It produces an INTENT and nothing
+           more: pheromone steering, the hero lock, hunger infighting, the melee range/cooldown/damage
+           below and the class's own pace all still decide what actually happens.
+
+           Off in MODE_SURVIVAL (its zombies are a different, slower thing) and behind
+           SHANKPIT_ZOMBIE_BRAIN=0, and `used_net == 0` leaves the hand-tuned chase exactly as it was --
+           there is one implementation of the old behaviour, not two. */
+        ZombieIntent brain;
+        memset(&brain, 0, sizeof brain);
+        ZombieProfile brain_prof = wai_zombie_profile_of(z);
+        {
+            static int brain_env = -1;
+            if (brain_env < 0) {
+                const char *e = getenv("SHANKPIT_ZOMBIE_BRAIN");
+                brain_env = (e && *e) ? atoi(e) : 1;
+            }
+            zombie_brain_enabled = brain_env && (s->game_mode == MODE_ZOMBIES);
+            ZombieBrainCtx bctx;
+            bctx.x = zp->x;
+            bctx.z = zp->z;
+            bctx.yaw_deg = zp->yaw;
+            bctx.health_frac = (brain_prof.max_health > 0)
+                                   ? (float)zp->health / (float)brain_prof.max_health
+                                   : 0.0f;
+            bctx.target_x = zp->x + hdx;
+            bctx.target_z = zp->z + hdz;
+            bctx.target_dist = has_target ? hdist : 1.0e9f;
+            bctx.cls = z->cls;
+            bctx.level = z->level;
+            brain = zombie_brain_think(&bctx);
         }
         z->target_dist = has_target ? hdist : 1.0e9f; /* see the movement pass's breach-vs-route test */
         {
@@ -1601,13 +1634,34 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
         /* Chase via the SAME generic accelerate() pipeline story_ai.c's own bots already move
            through -- local_game.h's per-player loop applies p->in_fwd/p->yaw for any active i>0
            player in MODE_STORY, no separate movement system needed here. */
-        if (has_target && (z->zstate.mood == ZOMBIE_MOOD_HUNTING || z->zstate.mood == ZOMBIE_MOOD_FRENZIED) &&
+        if (has_target && (z->zstate.mood == ZOMBIE_MOOD_HUNTING || z->zstate.mood == ZOMBIE_MOOD_FRENZIED ||
+                           brain.attack) &&
             hdist > WITNESS_AI_ZOMBIE_MELEE_RANGE) {
-            zp->yaw = atan2f(hdx, hdz) * (180.0f / 3.14159f);
             /* A RUNNER closes faster than a WALKER and a BRUTE lumbers -- the class's own pace
                (move_permille, 1000 = the old single zombie's speed). */
-            zp->in_fwd = ((z->zstate.mood == ZOMBIE_MOOD_FRENZIED) ? 1.0f : 0.7f) *
-                         ((float)wai_zombie_profile_of(z).move_permille / 1000.0f);
+            float class_speed = (float)brain_prof.move_permille / 1000.0f;
+            if (brain.used_net) {
+                /* THE NET'S STEERING. Yaw is a RATE now rather than a snap to the target bearing, capped by
+                   the class's own turn limit (a BRUTE physically cannot pivot like a RUNNER), and forward is
+                   the net's own choice scaled by the class's pace. Two zombies of one class disagree because
+                   their observations differ; two classes disagree because one observation is read
+                   differently. That is the "dynamic" being bought, and it costs one forward pass. */
+                /* THE BEARING STILL DECIDES WHERE, THE NET DECIDES HOW -- see zombie_brain.h's own mapping
+                   note for the measurement behind this split (fed raw, the net walks a zombie backwards). So
+                   the heading stays the target bearing, which converges, and the net's yaw arrives as a
+                   class-capped weave on top of it; its forward channel is a commitment in 0.55..1. */
+                zp->yaw = atan2f(hdx, hdz) * (180.0f / 3.14159f) + brain.yaw_delta_deg;
+                zp->in_fwd = brain.fwd * class_speed;
+                zp->in_strafe = brain.strafe;
+                /* the net may commit from AGITATED, before the mood arc would have -- "already charging" is
+                   a thing the hand-tuned chase could not express, and it is what makes a lunge feel decided */
+                if (brain.attack && z->zstate.mood < ZOMBIE_MOOD_HUNTING) {
+                    zombie_get_agitated(&z->zstate, now_ms);
+                }
+            } else {
+                zp->yaw = atan2f(hdx, hdz) * (180.0f / 3.14159f);
+                zp->in_fwd = ((z->zstate.mood == ZOMBIE_MOOD_FRENZIED) ? 1.0f : 0.7f) * class_speed;
+            }
             g_wai_breach[z->player_id] = (unsigned char)wai_zombie_breach(s, zp, z->player_id, now_ms);
             if (!g_wai_breach[z->player_id] && zp->anim_override == 1) zp->anim_override = 0;
         } else {
@@ -1621,7 +1675,10 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
            just a background prop. targeting_hero (not just has_target) guards this -- a zombie
            that's merely standing on a thrown marker's own (x,z) must never register as hdist to
            the hero being in range. */
-        if (targeting_hero && has_target && (z->zstate.mood == ZOMBIE_MOOD_HUNTING || z->zstate.mood == ZOMBIE_MOOD_FRENZIED) &&
+        /* ...and the net can commit a lunge the mood arc has not caught up to yet (brain.attack). Range,
+           cooldown and damage are untouched: the net decides WHEN, the rules decide WHAT HAPPENS. */
+        if (targeting_hero && has_target &&
+            (z->zstate.mood == ZOMBIE_MOOD_HUNTING || z->zstate.mood == ZOMBIE_MOOD_FRENZIED || brain.attack) &&
             hdist <= WITNESS_AI_ZOMBIE_MELEE_RANGE &&
             now_ms - z->last_attack_ms >= WITNESS_AI_ZOMBIE_ATTACK_COOLDOWN_MS) {
             z->last_attack_ms = now_ms;

@@ -105,9 +105,10 @@ static int advance_round(DwStage *s) {
     if (!round_complete(s, s->round)) return 0;
     int slots = s->slots >> (s->round - 1);
     int n = slots / 2;
+    if (n <= 0) return 0; /* degenerate bracket: nothing to advance, and NOT a champion */
     int winners[DW_STAGE_MAX_MATCHES];
     for (int i = 0; i < n; i++) winners[i] = s->matches[s->round - 1][i].winner;
-    if (n <= 1) {
+    if (n == 1) {
         s->champion = winners[0];
         s->over = 1;
         s->ended_ms = s->last_ms;
