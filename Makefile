@@ -587,6 +587,15 @@ test-zombie-brain: | $(BIN_DIR)
 	$(CC) -O1 -Wall -Wextra -Werror -Ipackages/simulation packages/simulation/zombie_brain_test.c packages/simulation/zombie_brain.c packages/simulation/zombie_brain_rules.c -o $(BIN_DIR)/zombie_brain_test $(LIBS_M)
 	./$(BIN_DIR)/zombie_brain_test
 
+# The lighting/material parity fixtures are asserted from BOTH sides: this repo's env_parity_test.c and
+# NOOBTOPIA's tests/{lighting,material}_test.lua read the same two files under PARENA/stdlib/shankpit/. The C
+# emitted from those .prn files is authoritative, so a drifting Luau port goes red instead of diverging quietly.
+.PHONY: test-env-parity
+test-env-parity: | $(BIN_DIR)
+	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/simulation packages/render/env_parity_test.c \
+		packages/simulation/lighting_rules.c packages/simulation/material_rules.c -o $(BIN_DIR)/env_parity_test $(LIBS_M)
+	./$(BIN_DIR)/env_parity_test
+
 # ---- SHANKPIT on Roblox (roblox/): the 460 layer that sits beside the base place -------------------
 # The base place (shankpit_roblox.rbxl) is binary and stays untouched; these targets test the pure Lua modules
 # under plain Lua and pack them into one insertable .rbxmx model.
