@@ -155,6 +155,28 @@ int main(void) {
         CHECK(filter_grain(p) == filter_def_grain(p), "PARENA grain preset %d", p);
     }
 
+    /* ---- 6. LIGHT (the player setting): dropping the kernel removes ONLY the neighbourhood pass ---- */
+    {   unsigned char img[5 * 4 * 3], full[5 * 4 * 3], light[5 * 4 * 3];
+        FilterConfig f;
+        FilterChain ch;
+        memset(&f, 0, sizeof f);
+        f.divisor = 1; f.white = 255; f.gamma_permille = 1000; f.saturation_permille = 1000; f.seed = 1u;
+        f.kernel[1] = f.kernel[3] = f.kernel[5] = f.kernel[7] = -1;
+        f.kernel[4] = 5;
+        for (int i = 0; i < (int)sizeof img; i++) img[i] = (unsigned char)((i * 37) % 256);
+        memcpy(full, img, sizeof img);
+        filter_chain_build(&ch, &f);
+        CHECK(filter_apply(&ch, full, 5, 4) == 1, "a graded frame reported no work");
+        CHECK(memcmp(full, img, sizeof img) != 0, "the sharpen kernel changed nothing on a contrast image");
+        /* same config, kernel dropped to a centre pass: the colour grade stays, the neighbours are not read */
+        f.kernel[1] = f.kernel[3] = f.kernel[5] = f.kernel[7] = 0;
+        f.kernel[4] = 1;
+        memcpy(light, img, sizeof img);
+        filter_chain_build(&ch, &f);
+        filter_apply(&ch, light, 5, 4);
+        CHECK(memcmp(light, img, sizeof img) == 0, "LIGHT still changed pixels with a neutral LUT");
+    }
+
     if (fails) { printf("stream_filters: %d FAILED\n", fails); return 1; }
     printf("stream_filters: all checks passed\n");
     return 0;

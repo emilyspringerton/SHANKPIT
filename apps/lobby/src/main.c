@@ -1069,8 +1069,9 @@ static int g_pause_sel = 0;
 #define PAUSE_STREAM     5
 #define PAUSE_FULLSCREEN 6
 #define PAUSE_SNAPSHOT   7
-#define PAUSE_QUIT       8
-#define PAUSE_ITEMS      9
+#define PAUSE_GRADE      8
+#define PAUSE_QUIT       9
+#define PAUSE_ITEMS      10
 /* g_opt_bullet_holes -- founder real-time, 2026-10-01: "always ensure all features have menu items".
    The per-gun bullet-hole decals (draw_bullet_holes) are a real, always-on rendering feature; this
    is their pause-menu toggle (default ON), persisted in shankpit_display.cfg line 2. Tracking
@@ -1102,8 +1103,55 @@ static StreamOut g_stream;
    Preset 0 is neutral, which filter_apply() short-circuits without touching a byte -- so an unconfigured
    build streams exactly what it streamed before this existed. */
 static FilterChain g_stream_filters;
-static int g_stream_filters_ready = 0;               /* native stream out (stream_out.h): the program feed -> encoder */
+static int g_stream_filters_ready = 0;
+/* PLAYER SETTINGS for the program feed (speedrunners / low-end machines), not env vars: the grade is a
+   plain int, 0 = OFF and the speedrun/purist default -- zero work, the frame is not touched. It is
+   persisted in shankpit_display.cfg and adjustable from the lobby SETTINGS page and the pause menu.
+   g_stream_skip_kernel is the LIGHT detail level: it keeps the colour grade (levels/gamma/saturation/
+   vignette/grain, all single-pass) and drops the 3x3 kernel, the only pass that reads neighbours. */
+static int g_stream_grade = 0;
+static int g_stream_skip_kernel = 0;
 static int g_stream_on = 0;
+
+/* Display names for the presets. The NUMBERS come from PARENA (filter_rules.prn); these strings are
+   presentation only, and a preset the table grows past this list is still selectable, just named "ON". */
+static const char *stream_grade_label(void) {
+    static const char *NAMES[] = { "OFF", "CRISP", "CINEMATIC", "GRITTY", "RETRO" };
+    int n = filter_preset_count();
+    if (g_stream_grade <= 0 || g_stream_grade >= n) return "OFF";
+    if (g_stream_grade < (int)(sizeof NAMES / sizeof NAMES[0])) return NAMES[g_stream_grade];
+    return "ON";
+}
+
+/* Rebuild the chain from the current setting. Called at startup, on every settings change, and after a
+   cfg load -- never per frame. Grade OFF means g_stream_filters_ready stays 0, so filter_apply is not
+   even called and the capture path costs exactly what it did before the post stack existed. */
+static void stream_grade_apply(void) {
+    FilterConfig fc;
+    if (g_stream_grade <= 0 || g_stream_grade >= filter_preset_count()) {
+        g_stream_filters_ready = 0;
+        SDL_Log("stream grade: OFF (no post work on the program feed)");
+        return;
+    }
+    filter_rules_install();
+    filter_config_from_rules(&fc, g_stream_grade, 0xF17E1234u);
+    if (g_stream_skip_kernel) {
+        for (int i = 0; i < 9; i++) fc.kernel[i] = (i == 4) ? 1 : 0;
+        fc.divisor = 1;
+        fc.offset = 0;
+    }
+    filter_chain_build(&g_stream_filters, &fc);
+    g_stream_filters_ready = 1;
+    SDL_Log("stream grade: %s, detail %s (vignette %d, grain %d)",
+            stream_grade_label(), g_stream_skip_kernel ? "LIGHT" : "FULL", fc.vignette_permille, fc.grain_permille);
+}
+
+static void stream_grade_cycle(int dir) {
+    int n = filter_preset_count();
+    if (n <= 0) return;
+    g_stream_grade = (g_stream_grade + (dir >= 0 ? 1 : n - 1)) % n;
+    stream_grade_apply();
+}
 static char g_stream_msg[96] = "";
 static int g_opt_ambient_level = 3;
 static void apply_ambient_level(void) {
@@ -3332,7 +3380,8 @@ static const char *CUSTOMIZE_LABELS[CUSTOMIZE_COUNT] = { "SKINS", "SPRAYS" };
 // APPS toggle opens it. Items are toggles that mutate in place and persist via save_display_config; the
 // in-game pause menu keeps its own copies of the shared ones (bullet holes, brick debris, fullscreen).
 #define LOBBY_PAGE_SETTINGS 3
-typedef enum { SETTINGS_LIVE_LEVELS = 0, SETTINGS_BULLET_HOLES, SETTINGS_BRICK_DEBRIS, SETTINGS_FULLSCREEN, SETTINGS_COUNT } SettingsAction;
+typedef enum { SETTINGS_LIVE_LEVELS = 0, SETTINGS_BULLET_HOLES, SETTINGS_BRICK_DEBRIS, SETTINGS_FULLSCREEN,
+               SETTINGS_STREAM_GRADE, SETTINGS_STREAM_DETAIL, SETTINGS_COUNT } SettingsAction;
 // lobby_page 4 = MODES (card #496, "ensure survival mode has a menu -- nest zombies and queue and
 // survival and levels ... and tyler too sub menu"). Opened from the SURVIVAL tile on the GAMES page;
 // each entry maps to the same LobbyAction the GAMES page already launches, so nothing about how a
@@ -5251,14 +5300,15 @@ static const char *DISPLAY_CONFIG_PATH = "shankpit_display.cfg";
 static void save_display_config(void) {
     FILE *f = fopen(DISPLAY_CONFIG_PATH, "w");
     if (!f) return;
-    fprintf(f, "%d\n%d\n%d\n%d\n%d\n", g_fullscreen, g_opt_bullet_holes, g_opt_brick_debris, g_opt_ambient_level, level_boxes_live_download);
+    fprintf(f, "%d\n%d\n%d\n%d\n%d\n%d\n%d\n", g_fullscreen, g_opt_bullet_holes, g_opt_brick_debris,
+            g_opt_ambient_level, level_boxes_live_download, g_stream_grade, g_stream_skip_kernel);
     fclose(f);
 }
 
 static void load_display_config(void) {
     g_opt_ambient_level = ambient_level_default();
     FILE *f = fopen(DISPLAY_CONFIG_PATH, "r");
-    if (!f) { apply_ambient_level(); return; }
+    if (!f) { apply_ambient_level(); stream_grade_apply(); return; }
     int fs = 0, holes = 1, debris = 1, ambient = -1, live_levels = 0;
     if (fscanf(f, "%d", &fs) == 1 && fs) {
         g_fullscreen = 1;
@@ -5269,8 +5319,17 @@ static void load_display_config(void) {
     if (fscanf(f, "%d", &debris) == 1) g_opt_brick_debris = debris ? 1 : 0;
     if (fscanf(f, "%d", &ambient) == 1) g_opt_ambient_level = ambient; /* old 3-line cfg keeps the PARENA default */
     if (fscanf(f, "%d", &live_levels) == 1) level_boxes_set_live_download(live_levels); /* old cfg: baked levels (card #479) */
+    {   /* the program-feed grade and its detail level; an older cfg without them keeps OFF / FULL */
+        int grade = -1, skip = 0;
+        if (fscanf(f, "%d", &grade) == 1) {
+            int n = filter_preset_count();
+            g_stream_grade = (grade >= 0 && grade < n) ? grade : 0;
+        }
+        if (fscanf(f, "%d", &skip) == 1) g_stream_skip_kernel = skip ? 1 : 0;
+    }
     fclose(f);
     apply_ambient_level();
+    stream_grade_apply();
 }
 
 static void remap_mouse(int wx, int wy, int *vx, int *vy) {
@@ -5332,6 +5391,13 @@ static const char *lobby_menu_label(int idx) {
             case SETTINGS_BULLET_HOLES: return g_opt_bullet_holes ? "BULLET HOLES: ON" : "BULLET HOLES: OFF";
             case SETTINGS_BRICK_DEBRIS: return g_opt_brick_debris ? "BRICK DEBRIS: ON" : "BRICK DEBRIS: OFF";
             case SETTINGS_FULLSCREEN:   return g_fullscreen ? "FULLSCREEN: ON" : "FULLSCREEN: OFF";
+            case SETTINGS_STREAM_GRADE: {   /* the PROGRAM FEED look; OFF is free and is the default */
+                static char grade_label[48];
+                snprintf(grade_label, sizeof grade_label, "STREAM GRADE: %s", stream_grade_label());
+                return grade_label;
+            }
+            case SETTINGS_STREAM_DETAIL:
+                return g_stream_skip_kernel ? "STREAM DETAIL: LIGHT" : "STREAM DETAIL: FULL";
         }
         return "";
     }
@@ -5992,6 +6058,13 @@ static void lobby_start_action(int action) {
             save_display_config();
         } else if (action == SETTINGS_FULLSCREEN) {
             toggle_fullscreen();
+        } else if (action == SETTINGS_STREAM_GRADE) {
+            stream_grade_cycle(1);      /* OFF -> CRISP -> CINEMATIC -> GRITTY -> RETRO -> OFF */
+            save_display_config();
+        } else if (action == SETTINGS_STREAM_DETAIL) {
+            g_stream_skip_kernel = !g_stream_skip_kernel;
+            stream_grade_apply();
+            save_display_config();
         }
         return;
     }
@@ -13525,6 +13598,9 @@ static void draw_pause_overlay(void) {
         bar[10] = 0;
         snprintf(ambient_label, sizeof(ambient_label), "AMBIENT LIGHT: [%s]", bar);
     }
+    char grade_label[64];
+    snprintf(grade_label, sizeof grade_label, "STREAM GRADE: %s%s", stream_grade_label(),
+             g_stream_skip_kernel ? " (LIGHT)" : "");
     const char *items[PAUSE_ITEMS] = {
         "RESUME",
         g_opt_bullet_holes ? "BULLET HOLES: ON" : "BULLET HOLES: OFF",
@@ -13534,10 +13610,11 @@ static void draw_pause_overlay(void) {
         g_stream_on ? "STREAM OUT: LIVE" : (g_stream_msg[0] ? g_stream_msg : "STREAM OUT: OFF"),
         g_fullscreen ? "FULLSCREEN: ON" : "FULLSCREEN: OFF",
         lobby_snapshot_label(),
+        grade_label,
         "QUIT TO LOBBY"
     };
     for (int i = 0; i < PAUSE_ITEMS; i++) {
-        float y = 392.0f - (float)i * 32.0f;   /* nine items, now size 3: was size 4, size 6 before that */
+        float y = 400.0f - (float)i * 30.0f;   /* ten items, size 3 (was 392/32 with nine) */
         if (i == g_pause_sel) {
             glColor3f(1.0f, 1.0f, 0.0f);
             draw_string(">", 296, y, 3);
@@ -13547,7 +13624,7 @@ static void draw_pause_overlay(void) {
         draw_string(items[i], 330, y, 3);
     }
     glColor3f(0.38f, 0.38f, 0.38f);
-    draw_string("ESC: RESUME   ENTER: SELECT   LEFT/RIGHT: AMBIENT", 300, 92, 2.3f);
+    draw_string("ESC: RESUME   ENTER: SELECT   LEFT/RIGHT: ADJUST", 300, 92, 2.3f);
     glEnable(GL_DEPTH_TEST);
     glMatrixMode(GL_PROJECTION); glPopMatrix();
     glMatrixMode(GL_MODELVIEW); glPopMatrix();
@@ -16010,15 +16087,13 @@ int main(int argc, char* argv[]) {
     vehicle_salvage_rules_install(); /* PARENA car components: what breaks, what it yields */
     garage_rules_install(); /* PARENA garage: what this car's origin is worth, what a bay takes */
     filter_rules_install(); /* PARENA program-feed look: levels, gamma, 3x3 kernel, vignette, grain */
-    {   /* which look: SHANKPIT_STREAM_FILTER=<preset>, 0 (neutral) when unset or out of range */
+    {   /* SHANKPIT_STREAM_FILTER=<preset> is the DEFAULT only -- the player's saved setting and the
+           SETTINGS page / pause menu override it, because a streamer should not need an env var. */
         const char *fp = getenv("SHANKPIT_STREAM_FILTER");
-        int preset = fp ? atoi(fp) : 0;
-        FilterConfig fc;
-        if (preset < 0 || preset >= filter_preset_count()) preset = 0;
-        filter_config_from_rules(&fc, preset, 0xF17E1234u);
-        filter_chain_build(&g_stream_filters, &fc);
-        g_stream_filters_ready = 1;
-        SDL_Log("stream filters: preset %d, vignette %d, grain %d", preset, fc.vignette_permille, fc.grain_permille);
+        if (fp) {
+            int preset = atoi(fp);
+            if (preset >= 0 && preset < filter_preset_count()) g_stream_grade = preset;
+        }
     }
     vehicle_salvage_shards_bind(&g_brick_bodies); /* a part that comes off falls as a real body */
     buggy_set_shard_spawn(vehicle_salvage_shards_hook); /* ...thrown by local_game's tick */
@@ -16848,6 +16923,9 @@ int main(int argc, char* argv[]) {
                             g_opt_ambient_level = ambient_step(g_opt_ambient_level, e.key.keysym.sym == SDLK_RIGHT ? 1 : -1);
                             apply_ambient_level();
                             save_display_config();
+                        } else if ((e.key.keysym.sym == SDLK_LEFT || e.key.keysym.sym == SDLK_RIGHT) && g_pause_sel == PAUSE_GRADE) {
+                            stream_grade_cycle(e.key.keysym.sym == SDLK_RIGHT ? 1 : -1);   /* OFF is one step away */
+                            save_display_config();
                         } else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) {
                             if (g_pause_sel == PAUSE_RESUME) {
                                 g_paused = 0;
@@ -16876,6 +16954,9 @@ int main(int argc, char* argv[]) {
                                 stream_set(!g_stream_on);
                             } else if (g_pause_sel == PAUSE_FULLSCREEN) {
                                 toggle_fullscreen();
+                            } else if (g_pause_sel == PAUSE_GRADE) {
+                                stream_grade_cycle(1);
+                                save_display_config();
                             } else if (g_pause_sel == PAUSE_SNAPSHOT) {
                                 lobby_level_snapshot(1);
                             } else if (g_pause_sel == PAUSE_QUIT) {
