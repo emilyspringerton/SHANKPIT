@@ -666,6 +666,60 @@ int main(void) {
         }
     }
 
+    /* ---- the player's deck is a CHOICE (dw_play_set_path) ----
+     * Five playstyles, the same crafting function citizens use, and a refusal while a duel is live: a
+     * deck swapped mid-match would make the result a fact about two decks. */
+    {
+        DwLadder l;
+        DwPlay p;
+        int signatures[DW_PLAY_DECKS][DW_DECK];
+
+        dw_ladder_reset(&l, 0x99u);
+        dw_ladder_set_hero(&l, 0);
+        dw_ladder_add_citizen(&l, 5, CILIFE_CRAFT, 400, 1000u);
+        dw_play_init(&p, 0);
+
+        int mi = dw_ladder_member_for_pid(&l, 0);
+        CHECK(mi >= 0, "the player is not on the ladder");
+        CHECK(dw_play_path(&l, 0) == DW_PLAYER_PATH, "a player does not start on the player path");
+        int wins_before = l.members[mi].wins, games_before = l.members[mi].games;
+
+        for (int path = 0; path < DW_PLAY_DECKS; path++) {
+            CHECK(dw_play_set_path(&l, &p, path) == 0, "playstyle %d was refused", path);
+            CHECK(dw_play_path(&l, 0) == path, "playstyle %d did not stick", path);
+            for (int i = 0; i < DW_DECK; i++) {
+                signatures[path][i] = l.members[mi].deck[i];
+                CHECK(signatures[path][i] >= 0 && signatures[path][i] < e->num_cards(),
+                      "playstyle %d built an id outside the catalogue (%d)", path, signatures[path][i]);
+            }
+            CHECK(l.members[mi].wins == wins_before && l.members[mi].games == games_before,
+                  "changing the deck moved the record");
+        }
+        {
+            int distinct = 0;
+            for (int a = 0; a < DW_PLAY_DECKS; a++) {
+                int dup = 0;
+                for (int b = 0; b < a; b++)
+                    if (memcmp(signatures[a], signatures[b], sizeof signatures[a]) == 0) dup = 1;
+                if (!dup) distinct++;
+            }
+            CHECK(distinct >= 2, "only %d distinct decks among the %d playstyles", distinct, DW_PLAY_DECKS);
+        }
+        CHECK(dw_play_set_path(&l, &p, -1) == -1, "playstyle -1 was accepted");
+        CHECK(dw_play_set_path(&l, &p, DW_PLAY_DECKS) == -1, "an out-of-range playstyle was accepted");
+
+        /* refused mid-duel, allowed again once the duel is over */
+        int slot = dw_ladder_challenge(&l, 5, 0, 2000u);
+        CHECK(slot >= 0, "the citizen could not challenge the player");
+        CHECK(dw_ladder_accept_watched(&l, slot, 2000u, 1000u) == 0, "the duel did not start");
+        CHECK(dw_play_set_path(&l, &p, 1) == -5, "the deck was swapped in the middle of a duel");
+        int done = 0;
+        for (unsigned int t = 3000u; t < 3000u + 200u * 1000u && done != 1; t += 1000u)
+            done = dw_ladder_watch_step(&l, t);
+        CHECK(done == 1, "the duel did not finish");
+        CHECK(dw_play_set_path(&l, &p, 1) == 0, "the deck could not change after the duel");
+    }
+
     if (fails) { printf("deadweight: %d FAILED\n", fails); return 1; }
     printf("deadweight: ALL PASS\n");
     return 0;

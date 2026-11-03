@@ -1533,6 +1533,11 @@ per world tick (1.2 s), with the page showing ROUND / HULL / ENERGY as it goes; 
 lands the result is recorded through the same recorder an instant match uses. Under the score is the
 last few rounds, each side's card shown as `OPS T2 P6` — kind, tier and power, because the catalogue
 holds no name strings at all, and deriving them from the engine beats a second catalogue that drifts.
+Your deck is a **choice of playstyle** — CRAFTER, TRADER, DUELIST, ENDGAME or DRIFTER — and the
+sixteen cards are then built by the same function that builds a citizen's, from your record and the
+current meta (so it answers the meta the way the population does). The live deck is counted by kind on
+the page, and it cannot be swapped while a duel is playing.
+
 Watching is scheduling, not a second game — `make test-deadweight` plays one challenge both ways and asserts the winner, the
 round count, both hulls, the meta, every record and every re-crafted deck are identical. Citizens'
 own matches still resolve instantly: nobody is watching those.

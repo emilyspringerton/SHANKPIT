@@ -31,8 +31,10 @@
  * host resolves them. */
 
 #include "dw_ladder.h"
+#include "citizen_life.h"   /* CILIFE_* -- the five playstyles a deck is built from */
 
 #define DW_PLAY_ROSTER DW_LADDER_MAX_CITIZENS
+#define DW_PLAY_DECKS CILIFE_PATH_COUNT   /* one per playstyle: CRAFTER / TRADER / DUELIST / ENDGAME / DRIFTER */
 
 typedef struct {
     int my_pid;
@@ -98,6 +100,16 @@ int dw_play_watch_board(const DwLadder *l, const DwPlay *p, DwPlayBoard *out);
 /* Opens a challenge against members[member_index]. Returns the challenge slot, or -1 (not on the
  * ladder, yourself, or no free slot). */
 int dw_play_challenge(DwLadder *l, DwPlay *p, int member_index, unsigned int now);
+
+/* Chooses how this player's deck is BUILT. Not a card list handed in from outside: the same function
+ * citizens use (`cp_deck_card`, driven by the record and the meta) builds the sixteen cards, so a
+ * player is choosing a playstyle and the catalogue answers it -- and a player's deck therefore reacts
+ * to the meta the same way a citizen's does. Refused mid-duel (-5): the deck the match was seeded with
+ * is the deck it finishes with. Returns 0, -1 (not on the ladder / bad path), -5 (a duel is live). */
+int dw_play_set_path(DwLadder *l, DwPlay *p, int path);
+
+/* The playstyle this player's deck is currently built for, or -1 when they are not on the ladder. */
+int dw_play_path(const DwLadder *l, int my_pid);
 
 /* Who this player could ask RIGHT NOW, as member indices: everyone still on the ladder except
  * themselves, minus anyone they already have an open challenge with (asking twice is what a cursor

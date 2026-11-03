@@ -110,9 +110,13 @@ screen, and the player cannot yet click "accept".**
    `PARENA/scripts/build_d2_wasm.sh`'s proven toolchain, then either embed wasm3 (small, C99,
    zero-dependency) or expose the table from the browser/Android host that already runs D2's wasm.
    `dw_engine_selftest()` is the acceptance test — it asks the live backend the numbers it owns.
-5. **Real card choice for the player.** Players currently get `DW_PLAYER_PATH` (DUEL) and a crafted
-   deck: a placeholder, named as such in `dw_ladder.h`. Players should pick a deck (and see the
-   meta-ranked best) — the ladder already computes what a citizen would build.
+5. ~~Real card choice for the player~~ — **DONE, at playstyle level (same day, `dw_play_set_path`).**
+   Five playstyles (CRAFTER / TRADER / DUELIST / ENDGAME / DRIFTER), and the sixteen cards are built by
+   the same `cp_deck_card` a citizen's are — from the player's record and the population's meta — so a
+   player's deck answers the meta the way the population does. The phone shows the five rows, marks the
+   live one, and counts the built deck by kind; the swap is refused mid-duel (`-5`).
+   **Still open:** card-by-card choice. That needs the deck walk over all 105 cards, which is B3, which
+   is blocked on the emitter gap in B10.
 6. ~~Pacing and watchers~~ — **DONE (same day, `DwWatch` + `dw_match_step_policy`).**
    `dw_ladder_accept_watched` sets a duel up, `dw_ladder_watch_step` plays one round when it is due
    (called from `witness_ai`'s tick), and the finish goes through `dw_ladder_record` — the same

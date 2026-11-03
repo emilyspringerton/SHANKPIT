@@ -75,6 +75,10 @@ typedef enum {
 #define BP_DW_NAME_LEN 20
 #define BP_DW_LINE_LEN 64
 #define BP_DW_WATCH_LOG_ROWS 4   /* rounds of play a watched duel shows on the page */
+#define BP_DW_DECKS 5            /* the playstyles a player may build their deck for */
+static const char *const BP_DW_DECK_NAMES[BP_DW_DECKS] = {
+    "CRAFTER", "TRADER", "DUELIST", "ENDGAME", "DRIFTER"
+};
 static const char *const BP_DW_KIND_NAMES[3] = { "OFFENSE", "OPS", "DEFENSE" };
 
 typedef enum { BP_UP, BP_DOWN, BP_LEFT, BP_RIGHT, BP_SELECT, BP_BACK } BpAction;
@@ -103,8 +107,9 @@ typedef enum {
     BP_FX_EMPIRE_CLONE,     /* arg = troop kind -> same, at the clone premium, needs a veteran */
     BP_FX_DW_ACCEPT,        /* DEADWEIGHT: play the challenge that is waiting on you */
     BP_FX_DW_DECLINE,       /* ...or close it without playing. No record and no result move. */
-    BP_FX_DW_CHALLENGE      /* arg = ROSTER index (not a pid, not a member index) -> host re-derives
+    BP_FX_DW_CHALLENGE,     /* arg = ROSTER index (not a pid, not a member index) -> host re-derives
                                the roster and asks that person */
+    BP_FX_DW_DECK           /* arg = playstyle (CILIFE_*) -> the host re-crafts the player's deck for it */
 } BpEffectKind;
 
 typedef struct { BpEffectKind kind; int arg; } BpEffect;
@@ -288,6 +293,8 @@ typedef struct {
     int dw_watch_energy_mine, dw_watch_energy_theirs;
     int dw_watch_log_count;                            /* rounds shown, newest last */
     char dw_watch_log[BP_DW_WATCH_LOG_ROWS][BP_DW_LINE_LEN];
+    int dw_deck_path;                                  /* CILIFE_* the deck is built for, -1 none */
+    char dw_deck_summary[BP_DW_LINE_LEN];              /* what the built deck actually is, by kind */
 } Phone;
 
 static inline void phone_init(Phone *p) {
@@ -333,7 +340,7 @@ static inline int bp_rows(const Phone *p) {
     case BP_APP_KITBUILD: return KIT_SLOTS;
     case BP_APP_EMPIRE: return BP_EMPIRE_ROWS;
     case BP_APP_DEADWEIGHT:
-        return (p->dw_pending ? 2 : 0) + (p->dw_roster_count > 0 ? p->dw_roster_count : 1);
+        return (p->dw_pending ? 2 : 0) + (p->dw_roster_count > 0 ? p->dw_roster_count : 1) + BP_DW_DECKS;
     default: return 1;
     }
 }
@@ -640,11 +647,15 @@ static inline BpEffect phone_input(Phone *p, BpAction a, int unspent_points) {
          * one bp_rows and the draw pass use: the waiting challenge first, then the roster. */
         if (a == BP_SELECT && p->dw_live) {
             int base = p->dw_pending ? 2 : 0;
+            int roster_rows = p->dw_roster_count > 0 ? p->dw_roster_count : 1;
             if (p->dw_pending && p->cursor == 0) fx.kind = BP_FX_DW_ACCEPT;
             else if (p->dw_pending && p->cursor == 1) fx.kind = BP_FX_DW_DECLINE;
             else if (p->cursor - base >= 0 && p->cursor - base < p->dw_roster_count) {
                 fx.kind = BP_FX_DW_CHALLENGE;
                 fx.arg = p->cursor - base;
+            } else {
+                int k = p->cursor - base - roster_rows;
+                if (k >= 0 && k < BP_DW_DECKS) { fx.kind = BP_FX_DW_DECK; fx.arg = k; }
             }
         }
         break;

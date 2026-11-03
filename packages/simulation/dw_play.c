@@ -123,6 +123,24 @@ int dw_play_watch_board(const DwLadder *l, const DwPlay *p, DwPlayBoard *out) {
     return 1;
 }
 
+int dw_play_set_path(DwLadder *l, DwPlay *p, int path) {
+    if (!l || !p) return -1;
+    if (path < 0 || path >= CILIFE_PATH_COUNT) return -1;
+    /* the deck a match was seeded with is the deck it finishes with: swapping mid-duel would make the
+       result a fact about two decks */
+    if (l->watch.active) return -5;
+    int idx = dw_ladder_member_for_pid(l, p->my_pid);
+    if (idx < 0) return -1;
+    l->members[idx].path = path;
+    dw_ladder_craft_deck(l, idx, l->now_ms);
+    return 0;
+}
+
+int dw_play_path(const DwLadder *l, int my_pid) {
+    int idx = dw_ladder_member_for_pid(l, my_pid);
+    return idx < 0 ? -1 : l->members[idx].path;
+}
+
 int dw_play_challenge(DwLadder *l, DwPlay *p, int member_index, unsigned int now) {
     if (!l || !p) return -1;
     if (member_index < 0 || member_index >= DW_LADDER_MAX_CITIZENS) return -1;

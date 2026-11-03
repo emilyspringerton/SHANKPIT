@@ -1555,6 +1555,8 @@ static void dw_phone_sync(void) {
     ph->dw_meta_share = 0;
     ph->dw_watch = 0;
     ph->dw_watch_log_count = 0;
+    ph->dw_deck_path = -1;
+    ph->dw_deck_summary[0] = '\0';
     if (!l) return;
     if (!g_dw_play_ready) { dw_play_init(&g_dw_play, l->hero_pid); g_dw_play_ready = 1; }
 
@@ -1587,7 +1589,20 @@ static void dw_phone_sync(void) {
     }
 
     int mi = dw_ladder_member_for_pid(l, g_dw_play.my_pid);
-    if (mi >= 0) { ph->dw_wins = l->members[mi].wins; ph->dw_games = l->members[mi].games; }
+    if (mi >= 0) {
+        ph->dw_wins = l->members[mi].wins;
+        ph->dw_games = l->members[mi].games;
+        /* the deck as BUILT, counted by kind -- so choosing a playstyle has a visible answer rather
+           than being a word on a row */
+        int counts[3] = { 0, 0, 0 };
+        for (int i = 0; i < DW_DECK; i++) {
+            int k = dw_engine()->card_kind(l->members[mi].deck[i]);
+            if (k >= 0 && k < 3) counts[k]++;
+        }
+        ph->dw_deck_path = dw_play_path(l, g_dw_play.my_pid);
+        snprintf(ph->dw_deck_summary, sizeof ph->dw_deck_summary, "DECK %d/16 OFF %d OPS %d DEF %d",
+                 counts[0] + counts[1] + counts[2], counts[0], counts[1], counts[2]);
+    }
     ph->dw_meta_kind = dw_ladder_meta_kind(l);
     ph->dw_meta_share = dw_ladder_meta_share(l);
 
@@ -1900,6 +1915,21 @@ static void draw_phone_app(Phone *p) {
                 glColor3f(row == p->cursor ? 1.0f : 0.6f, row == p->cursor ? 1.0f : 0.72f,
                           row == p->cursor ? 1.0f : 0.82f);
                 draw_string(buf, col_x, y, 2.4f);
+                y -= row_h;
+            }
+            /* the playstyle rows: choosing one re-crafts the deck from the record and the meta */
+            for (int i = 0; i < BP_DW_DECKS; i++, row++) {
+                int live = (i == p->dw_deck_path);
+                if (live && p->dw_deck_summary[0]) {
+                    glColor3f(0.55f, 0.75f, 0.65f);
+                    draw_string(p->dw_deck_summary, col_x, y, 2.0f);
+                    y -= 22.0f;
+                }
+                snprintf(buf, sizeof buf, "DECK: %s%s", BP_DW_DECK_NAMES[i], live ? "  [LIVE]" : "");
+                glColor3f(row == p->cursor ? 1.0f : (live ? 0.85f : 0.6f),
+                          row == p->cursor ? 1.0f : (live ? 0.9f : 0.72f),
+                          row == p->cursor ? 1.0f : (live ? 0.7f : 0.82f));
+                draw_string(buf, col_x, y, 2.2f);
                 y -= row_h;
             }
             if (p->dw_last[0]) {
@@ -16643,6 +16673,18 @@ int main(int argc, char* argv[]) {
                                     } else if (dw_play_answer(dl, &g_dw_play, 0, now) == -4) {
                                         printf("[DEADWEIGHT] declined\n");
                                     }
+                                    dw_phone_sync();
+                                }
+                            } else if (fx.kind == BP_FX_DW_DECK) {
+                                /* the playstyle the player picked: the same crafting function that
+                                   builds a citizen's deck builds theirs, so it answers the meta too */
+                                DwLadder *dl = witness_ai_deadweight();
+                                if (dl) {
+                                    if (!g_dw_play_ready) { dw_play_init(&g_dw_play, dl->hero_pid); g_dw_play_ready = 1; }
+                                    int r = dw_play_set_path(dl, &g_dw_play, fx.arg);
+                                    printf("[DEADWEIGHT] deck -> %s%s\n",
+                                           (fx.arg >= 0 && fx.arg < BP_DW_DECKS) ? BP_DW_DECK_NAMES[fx.arg] : "?",
+                                           r == -5 ? " (refused: a duel is live)" : (r == 0 ? "" : " (refused)"));
                                     dw_phone_sync();
                                 }
                             } else if (fx.kind == BP_FX_DW_CHALLENGE) {
