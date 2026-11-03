@@ -1542,6 +1542,17 @@ Watching is scheduling, not a second game — `make test-deadweight` plays one c
 round count, both hulls, the meta, every record and every re-crafted deck are identical. Citizens'
 own matches still resolve instantly: nobody is watching those.
 
+**Every member carries a RATING**, which is the number a leaderboard climbs and now the same number in
+both worlds: `packages/simulation/dw_rating.c` is emitted from `PARENA/stdlib/deadweight/rating.prn`
+— the file NOOBTOPIA emits to Luau — by `make regen-dw-engine`. Beating somebody 200 stronger pays 20,
+beating somebody 200 weaker pays 12, a draw moves both by a tenth of the gap (clamped ±4), nothing
+drops below 100, and `gain(w, l) == loss(l, w)` holds for every pair: it is zero-sum because
+`rating-loss` takes its term from the WINNER's side. One delta is applied per match, in
+`dw_ladder_record` — the single recorder an instant match and a watched duel both go through — so two
+ways of playing one game cannot price it differently. The save carries it (format 2), and a format-1
+file written before the rating existed still LOADS, with every member starting at 1000 rather than the
+whole file being refused: a ladder from yesterday's binary is a real ladder.
+
 Records survive a restart when a world names a file: `SHANKPIT_LADDER_FILE=var/deadweight/ladder.db`
 makes every finished match autosave the members (pid, person-or-citizen, path, aggression, wins,
 games), the meta tally, the results and the hero, and a boot loads them back. The **decks are not

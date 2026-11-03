@@ -7,9 +7,16 @@
 #include "dw_net.h"   /* the publish side: every finished match goes on the wire's ticker */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-#define DW_LADDER_FORMAT "shankpit-deadweight-ladder 1"
+#include "dw_rating_host.h"   /* the PARENA-emitted rating: the number a leaderboard climbs */
+
+/* v2 adds each member's RATING to the member line. v1 files still load (their members come back on
+ * rating_start), because a ladder written by yesterday's binary is a real ladder -- refusing it would
+ * throw away every record to gain a field. */
+#define DW_LADDER_FORMAT "shankpit-deadweight-ladder 2"
+#define DW_LADDER_FORMAT_PREFIX "shankpit-deadweight-ladder "
 
 /* The autosave target, set once by the host (witness_ai.c reads SHANKPIT_LADDER_FILE). Empty means
  * no autosave, which is the default: a normal run writes nothing at all, the same discipline
@@ -94,6 +101,7 @@ int dw_ladder_add_citizen(DwLadder *l, int pid, int path, int aggression, unsign
     m->pid = pid;
     m->path = path;
     m->aggression = aggression < 0 ? 0 : (aggression > 1000 ? 1000 : aggression);
+    m->rating = rating_start();
     l->count++;
     dw_ladder_craft_deck(l, idx, now);
     return idx;
@@ -115,6 +123,7 @@ int dw_ladder_add_player(DwLadder *l, int pid, unsigned int now) {
     m->pid = pid;
     m->path = DW_PLAYER_PATH;
     m->aggression = 500;
+    m->rating = rating_start();
     l->count++;
     dw_ladder_craft_deck(l, idx, now);
     return idx;
@@ -202,6 +211,25 @@ static int dw_ladder_record(DwLadder *l, int i0, int i1, int kind, int winner,
     } else {
         a->games++;
         b->games++;
+    }
+
+    /* THE RATING. Computed from the ratings the pair walked in with, and applied as ONE delta so the match
+     * is zero-sum: the winner's gain is literally the loser's loss. Both sides are floored through
+     * rating_apply, which is why the pair can stop summing to exactly 2x start at the floor -- the floor is
+     * a floor, not a conservation law, and a ladder that can bury somebody at zero is a ladder nobody
+     * returns to. */
+    {
+        int r0 = a->rating, r1 = b->rating;
+        int delta;
+        if (winner == 0 || winner == 1) {
+            delta = winner == 0 ? rating_gain(r0, r1) : rating_gain(r1, r0);
+            a->rating = rating_apply(r0, winner == 0 ? delta : -delta);
+            b->rating = rating_apply(r1, winner == 1 ? delta : -delta);
+        } else {
+            delta = rating_draw(r0, r1);
+            a->rating = rating_apply(r0, delta);
+            b->rating = rating_apply(r1, -delta);
+        }
     }
 
     /* ...and the match itself is kept, in the seats' own order, so a screen can report what happened
@@ -330,8 +358,8 @@ int dw_ladder_save(const DwLadder *l, const char *path) {
     for (int i = 0; i < DW_LADDER_MAX_CITIZENS; i++) {
         const DwLadderMember *m = &l->members[i];
         if (!m->active) continue;
-        fprintf(f, "member %d %d %d %d %d %d\n", m->pid, m->is_player, m->path, m->aggression,
-                m->wins, m->games);
+        fprintf(f, "member %d %d %d %d %d %d %d\n", m->pid, m->is_player, m->path, m->aggression,
+                m->wins, m->games, m->rating);
     }
     int ok = fflush(f) == 0;
     if (fclose(f) != 0) ok = 0;
@@ -346,16 +374,19 @@ int dw_ladder_load(DwLadder *l, const char *path, unsigned int now) {
     if (!f) return 0;   /* nothing saved yet: a first boot, not a failure */
 
     char line[256];
-    if (!fgets(line, sizeof line, f) || strncmp(line, DW_LADDER_FORMAT, strlen(DW_LADDER_FORMAT)) != 0) {
+    if (!fgets(line, sizeof line, f) ||
+        strncmp(line, DW_LADDER_FORMAT_PREFIX, strlen(DW_LADDER_FORMAT_PREFIX)) != 0) {
         fclose(f);
         return -2;
     }
+    int version = atoi(line + strlen(DW_LADDER_FORMAT_PREFIX));
+    if (version != 1 && version != 2) { fclose(f); return -2; }
 
     int mk[3] = { 0, 0, 0 };
     long plays = -1;
     int res[5] = { 0, 0, 0, 0, 0 };
     int hero = -1;
-    struct { int pid, is_player, path, aggression, wins, games; } pend[DW_LADDER_MAX_CITIZENS];
+    struct { int pid, is_player, path, aggression, wins, games, rating; } pend[DW_LADDER_MAX_CITIZENS];
     int np = 0;
 
     while (fgets(line, sizeof line, f)) {
@@ -363,11 +394,16 @@ int dw_ladder_load(DwLadder *l, const char *path, unsigned int now) {
         if (sscanf(line, "meta %d %d %d %ld", &mk[0], &mk[1], &mk[2], &plays) == 4) continue;
         if (sscanf(line, "results %d %d %d %d", &res[1], &res[2], &res[3], &res[4]) == 4) continue;
         if (sscanf(line, "hero %d", &hero) == 1) continue;
-        if (np < DW_LADDER_MAX_CITIZENS &&
-            sscanf(line, "member %d %d %d %d %d %d", &pend[np].pid, &pend[np].is_player,
-                   &pend[np].path, &pend[np].aggression, &pend[np].wins, &pend[np].games) == 6) {
-            np++;
-            continue;
+        if (np < DW_LADDER_MAX_CITIZENS) {
+            /* v2 carries the rating; a v1 line simply has one fewer field, so the default stands */
+            pend[np].rating = rating_start();
+            int got = sscanf(line, "member %d %d %d %d %d %d %d", &pend[np].pid, &pend[np].is_player,
+                             &pend[np].path, &pend[np].aggression, &pend[np].wins, &pend[np].games,
+                             &pend[np].rating);
+            if (got == 6 || got == 7) {
+                np++;
+                continue;
+            }
         }
         fclose(f);
         return -2;   /* one unreadable line refuses the file, rather than half-loading a record */
@@ -398,6 +434,7 @@ int dw_ladder_load(DwLadder *l, const char *path, unsigned int now) {
         m->aggression = pend[i].aggression;
         m->wins = pend[i].wins;
         m->games = pend[i].games;
+        m->rating = pend[i].rating;
         /* the deck was never saved: it is rebuilt from the record and the meta, which is exactly the
            rule the living ladder follows after every match */
         dw_ladder_craft_deck(l, idx, now);

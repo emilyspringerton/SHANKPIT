@@ -217,3 +217,30 @@ gcc -std=gnu99 -O1 -c apps/lobby/src/main.c  -> 0 errors (GLU prototypes stubbed
 
 Not run, and why: no GL driver (nothing rendered), `make -B lobby` (missing sibling artifact, A7), no
 emulator/device, and no IDUNA/emily session (no Apple, no kanban).
+
+---
+
+## C. Landed since this report (same day) — the rating, and the Roblox surface
+
+This section exists because two of the "not done" items above are now done, and a stale report is
+worse than no report.
+
+1. **The C ladder carries a rating.** `PARENA/stdlib/deadweight/rating.prn` is emitted to
+   `packages/simulation/dw_rating.c` by `make regen-dw-engine` (beside `dw_rules.c` and
+   `dw_citizen_rules.c`), `DwLadderMember` carries `rating`, and `dw_ladder_record` applies ONE
+   zero-sum delta per match — the same recorder a watched duel and an instant match share, so a game
+   cannot be priced two ways. The save format is 2 and still LOADS a v1 file. The ladder parity fixture
+   prints the rating in every member line, so both worlds pin the pricing.
+   *Not done:* nothing inside the game RANKS on it yet (the phone's roster still lists records), and
+   `dw_net.c`'s published snapshot does not carry the field, so WOTAN cannot show it.
+2. **The Roblox surface exists** — in NOOBTOPIA, not here: `src/deadweight_room.lua` (seats, offers,
+   one prompt, `frame()`), `src/deadweight_ui.lua` (tabletop + `ProximityPrompt` + a server-written
+   panel) and `src/deadweight_server.lua` (one ladder per server). It has **never been run** (no
+   Studio). A real bug came out of writing it: `memberForPid` answers -1 for any negative pid — the C's
+   own "-1 means nobody" — so the server's negative citizen pids were unreachable bodies. Citizens now
+   mint positive pids from a documented base.
+3. **Still the biggest gap on this list:** nobody has LOOKED at any of it. No GL driver here, no
+   Roblox Studio, and `make -B lobby` still cannot link (pre-existing, missing
+   `../EDITOR.GAME/gen/editor_stdlib_gen.c`). Item A6 (a headless frame dump through
+   `stdlib/forgedinface/render.prn`) is the cheapest way to change that, and it is now the one that
+   unblocks the most.

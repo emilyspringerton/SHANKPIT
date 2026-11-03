@@ -49,6 +49,11 @@ typedef struct {
     int path;           /* CILIFE_* for citizens; DW_PLAYER_PATH for people */
     int aggression;     /* 0..1000, from the citizen's own traits; 500 for people */
     int wins, games;
+    /* The ladder's NUMBER -- what a player climbs, and what the per-server Roblox leaderboard ranks by.
+     * Defined in PARENA/stdlib/deadweight/rating.prn and emitted to BOTH worlds, so a board on a Roblox
+     * server and this ladder cannot disagree about what a win was worth. Zero-sum by construction: the
+     * winner's gain is the loser's loss (see dw_ladder_record). */
+    int rating;
     int deck[DW_DECK];
     unsigned int last_craft_ms;
 } DwLadderMember;

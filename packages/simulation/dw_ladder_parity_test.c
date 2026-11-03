@@ -83,8 +83,8 @@ static void emit(FILE *f, const DwLadder *l, int lid) {
     for (int i = 0; i < DW_LADDER_MAX_CITIZENS; i++) {
         const DwLadderMember *m = &l->members[i];
         if (!m->active) continue;
-        fprintf(f, "member %d pid %d player %d path %d aggr %d wins %d games %d deck",
-                lid, m->pid, m->is_player, m->path, m->aggression, m->wins, m->games);
+        fprintf(f, "member %d pid %d player %d path %d aggr %d wins %d games %d rating %d deck",
+                lid, m->pid, m->is_player, m->path, m->aggression, m->wins, m->games, m->rating);
         for (int d = 0; d < DW_DECK; d++) fprintf(f, " %d", m->deck[d]);
         fprintf(f, "\n");
     }
@@ -153,7 +153,7 @@ static void dump(void) {
     printf("#                               remove pid\n");
     printf("# ladder <lid> meta <kind> <share> <plays> results <x4> count <n> hero <pid>\n");
     printf("#        last <valid> <kind> <pid0> <pid1> <winner> <rounds> <hull0> <hull1> <at_ms>\n");
-    printf("# member <lid> pid <p> player <0/1> path <p> aggr <a> wins <w> games <g> deck <16 ids>\n");
+    printf("# member <lid> pid <p> player <0/1> path <p> aggr <a> wins <w> games <g> rating <r> deck <16 ids>\n");
     printf("# chal   <lid> slot <i> id <id> from <f> to <t> kind <k> opened <ms> expires <ms>\n");
     printf("#\n");
     printf("# The decks are NOT in the save format on purpose -- a deck is a function of the record and\n");
