@@ -1363,6 +1363,9 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
         // NET_VERBOSE_LOG=1 is turned on to verify this same feature. Captured here, before either
         // activate_match call below can change local_state.game_mode.
         int mode_before = local_state.game_mode;
+        (void)mode_before;   /* read only by the CONNECT_ACCEPT log below, which the logging macro strips
+                                when verbose is off; the capture must survive either way, so this is a
+                                use, not a dead variable to delete */
         if (requested_mode == MODE_TDMO && local_state.game_mode != MODE_TDMO) {
             tdmo_activate_match(get_server_time());
         } else if (requested_mode == MODE_QUEUE && local_state.game_mode != MODE_QUEUE) {
@@ -1466,6 +1469,7 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
             return;
         }
         int spawned = kit_call_server_apply(&local_state.players[client_id], item);
+        (void)spawned;   /* read only by the KIT_CALL log, which compiles out when verbose is off */
         NET_SERVER_LOG("KIT_CALL client_id=%d item=%s -> veh=%d scene=%d", client_id, kit_item_name(item),
                        spawned, local_state.players[client_id].scene_id);
         return;
@@ -1816,7 +1820,12 @@ static void server_zone_generate_and_apply(const char *zone_id, unsigned int see
     proc_dungeon_generate(&lvl, zone_id, seed);
     probe = fopen("var/maps", "rb");
     if (probe) fclose(probe);
-    else (void)system("mkdir -p var/maps");
+    else {
+        /* The save below reports its own failure, but not why: without this the operator cannot tell a
+           missing directory from an unwritable one, and "could not write" is the only clue. */
+        int rc = system("mkdir -p var/maps");
+        if (rc != 0) printf("[ZONE] could not create var/maps (system() returned %d)\n", rc);
+    }
     snprintf(path, sizeof path, "var/maps/proc_%s.json", zone_id);
     if (!proc_dungeon_save(path, &lvl)) printf("[ZONE] could not write %s\n", path);
     server_apply_custom_level(&lvl);
