@@ -407,7 +407,7 @@ regen-drone-rules:
 regen-airplane-rules:
 	scripts/gen_airplane_rules.sh
 
-# VEHICLE BURN rules: PARENA/stdlib/shankpit/vehicle_burn_rules.prn -> packages/simulation/vehicle_salvage_rules.c packages/simulation/vehicle_burn_rules.c
+# VEHICLE BURN rules: PARENA/stdlib/shankpit/vehicle_burn_rules.prn -> packages/simulation/vehicle_burn_rules.c
 # (the smoke -> fire -> detonation ladder, and Bedrock Racers' br_fx fire-fx curve it is drawn with)
 .PHONY: regen-vehicle-burn-rules
 regen-vehicle-burn-rules:
@@ -417,7 +417,7 @@ regen-vehicle-burn-rules:
 # and crash damage that warns rather than kills.
 .PHONY: test-vehicle-burn
 test-vehicle-burn: | $(BIN_DIR)
-	$(CC) -O1 -Wall -Wextra -Werror -Ipackages/simulation -DSHANKPIT_VEHICLE_BURN_PARENA packages/simulation/vehicle_burn_test.c packages/simulation/vehicle_salvage_rules.c packages/simulation/vehicle_burn_rules.c -o $(BIN_DIR)/vehicle_burn_test $(LIBS_M)
+	$(CC) -O1 -Wall -Wextra -Werror -Ipackages/simulation -DSHANKPIT_VEHICLE_BURN_PARENA packages/simulation/vehicle_burn_test.c packages/simulation/vehicle_burn_rules.c -o $(BIN_DIR)/vehicle_burn_test $(LIBS_M)
 	./$(BIN_DIR)/vehicle_burn_test
 
 # EMPIRE rules: PARENA/stdlib/shankpit/empire_rules.prn -> packages/simulation/empire_rules.c
