@@ -140,6 +140,23 @@ The lobby is wired end to end: `wow_net_send_tracked()` sends and tracks, `wow_n
 per input pass, and a `PACKET_WOW_WIRE` received from the server is decoded as an ACK and retires the pending
 frame. An abandoned frame is logged (`WOW_GIVEUP`) rather than silently forgotten.
 
+## Cast range: a rule in yards, enforced in metres
+
+A cast aimed at `[@target]` / `[@focus]` only turns the player's aim when the target is within
+`wow_cast_range_yd` (**40 yards**) of them. The rule lives in PARENA because it is a game rule, and it is
+written in yards because that is the unit it is reasoned about in; `apps/server/src/main.c` converts it once
+through `units_author_length_m(..., 5)` and compares squared distances, so no C file restates 36.576. Past
+range the shot still fires, along the player's own aim, and the refusal is logged -- a client cannot swing
+the server's crosshair across the map by naming a distant entity.
+
+## End to end, over a real socket
+
+`make test-wow-e2e` is the difference between "the state machine agrees with itself" and "a server, a
+socket and a ticket agree". It forks the real `bin/shank_server` on a private port (`--beacon-port 0`,
+`SHANKPIT_BAKED_LEVELS=1`, so it is headless and never advertises), retries CONNECT until WELCOME (a single
+CONNECT races the server's own startup), shows a ticket signed with another secret is never ACKed, then
+drives a real IDUNA-shaped ticket, a target intent and its re-send, and a cast through loopback UDP.
+
 ## GoblinFoxDragon / MUD: what is real today
 
 `GoblinFoxDragon` is now cloned at `MONOREPO/GoblinFoxDragon`. Its MUD is Go under `apps2/mud`

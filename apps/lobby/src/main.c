@@ -13912,9 +13912,23 @@ static void wow_net_poll_retries(void) {
         net_send_wow_frame(frame, n);
         NET_CLIENT_LOG("WOW_RETRY op=%u len=%d pending=%d", (unsigned)frame[1], n, wow_client_pending(&g_wow_client));
     } else if (n == -2) {
-        NET_WARN_LOG("WOW_GIVEUP unacked=%d tracked=%u acked=%u retried=%u abandoned=%u",
-                     wow_client_pending(&g_wow_client), g_wow_client.tracked, g_wow_client.acked,
-                     g_wow_client.retried, g_wow_client.abandoned);
+        /* Say it in the chat pane, not only in the log: a cast the server never acknowledged is a shot
+           the player believes they took, and silence here is how "it didn't fire" becomes
+           unexplainable. The kind comes from the abandoned frame itself, not from a guess. */
+        char msg[160];
+        const char *what = g_wow_client.last_abandoned_kind == WOW_OP_CAST ? "cast"
+                         : (g_wow_client.last_abandoned_kind == WOW_OP_SET_TARGET ||
+                            g_wow_client.last_abandoned_kind == WOW_OP_CLEAR_TARGET) ? "target change"
+                         : g_wow_client.last_abandoned_kind == WOW_OP_AUTH ? "login ticket"
+                         : g_wow_client.last_abandoned_kind == WOW_OP_DEFINE_MACRO ? "macro upload"
+                         : "macro activation";
+        snprintf(msg, sizeof msg, "WOW: the server never acknowledged a %s -- dropped after %d tries",
+                 what, wow_retry_max(g_wow_client.preset));
+        chat_pane_push(msg);
+        NET_WARN_LOG("WOW_GIVEUP op=%u unacked=%d tracked=%u acked=%u retried=%u abandoned=%u",
+                     (unsigned)g_wow_client.last_abandoned_kind, wow_client_pending(&g_wow_client),
+                     g_wow_client.tracked, g_wow_client.acked, g_wow_client.retried,
+                     g_wow_client.abandoned);
     }
 }
 

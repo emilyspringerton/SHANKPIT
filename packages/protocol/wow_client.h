@@ -36,6 +36,7 @@ typedef struct {
     uint16_t   cast_seq;  /* last cast sequence sent; 0 means "none yet" */
     WowPending pending[WOW_CLIENT_PENDING];
     int        preset;    /* 0 LAN / 1 slow / 2 fast -- selects PARENA's ack period and retry cap */
+    uint8_t    last_abandoned_kind;  /* WOW_OP_* of the last frame dropped by wow_client_retry */
     unsigned   tracked, acked, retried, abandoned;
 } WowClient;
 
@@ -119,6 +120,7 @@ static inline int wow_client_retry(WowClient *c, uint32_t now_ms, uint8_t *out, 
         if ((int32_t)(now_ms - p->due_ms) < 0) continue;
         if (p->tries >= wow_retry_max(c->preset)) {
             p->used = 0;
+            c->last_abandoned_kind = p->kind;   /* so the caller can say WHAT was lost */
             c->abandoned++;
             return -2;
         }

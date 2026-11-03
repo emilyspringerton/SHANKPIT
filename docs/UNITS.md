@@ -59,9 +59,12 @@ factors and the F32 entry points.
 
 - **Mass, not weight.** "Ton" is the short ton (2000 lb). There is no pound-force, no gravity-dependent
   weight, and no pressure/stress unit here.
-- **Nothing in the engine calls this yet.** It is generated, linked and tested standalone
-  (`make test-units`, `make check-units`); wiring it into the level editor, the brick solver or the renderer
-  is the next change, and `units_author_*` is the entry point that work should use.
+- **One engine path consumes it: the server's cast range.** `PARENA/stdlib/shankpit/wow_wire.prn` states
+  the rule in **yards** (`wow_cast_range_yd` = 40, the unit a designer says out loud) and
+  `apps/server/src/main.c` converts it once with `units_author_length_m(..., 5)` before comparing squared
+  distances, so 36.576 is never restated in C. Beyond that range a `[@target]` cast fires along the
+  player's own aim instead of swinging the crosshair. Level/brick/editor authoring is still unconsumed;
+  `units_author_*` is its entry point.
 - **The syntax this layer was first written around now compiles.** `fn`, `F32`, `I64`, bare
   `(defenum E A B)` variants and `case` were all refused by the C emitter when this file was written; the
   same session fixed them in PARENA (`src/emit.c` + the shared `ast_sugar.h` pass), and the layer now uses

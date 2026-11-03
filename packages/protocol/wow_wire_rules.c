@@ -11,6 +11,7 @@ int wow_macro_max_clauses(int);
 int wow_ack_ms(int);
 int wow_target_resend_ms(int);
 int wow_retry_max(int);
+int wow_cast_range_yd(int);
 int wow_entity_lo(int);
 int wow_entity_hi(int);
 int wow_entity_valid(int);
@@ -71,6 +72,10 @@ int wow_retry_max(int preset __attribute__((unused))) {
     return 4;
     }
     }
+}
+
+int wow_cast_range_yd(int preset __attribute__((unused))) {
+    return 40;
 }
 
 int wow_entity_lo(int e __attribute__((unused))) {

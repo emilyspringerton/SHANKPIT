@@ -129,6 +129,7 @@ jobs:
           make test-wow-ticket
           make test-wow-client
           make test-units
+          make test-wow-e2e
           make check-lora-rules
           make test-lora-wire
 

@@ -43,6 +43,7 @@
 #include "../../../packages/simulation/rocket_car_rules_host.h"   /* the rocket car's PARENA model */
 #include "../../../packages/simulation/kit_call.h"   /* PACKET_KIT_CALL: the kit's vehicle gadgets */
 #include "../../../packages/protocol/wow_server.h"   /* PACKET_WOW_WIRE: targets, casts, macro bytecode */
+#include "../../../packages/common/units_rules.h"        /* the cast range's yards -> metres conversion */
 #include "../../../packages/common/third_person.h"   /* tp_yaw_pitch_to_point: aim a cast at its target */
 #include "../../../packages/protocol/wow_ticket.h"   /* the IDUNA player ticket, verified locally */
 
@@ -1291,9 +1292,22 @@ int process_user_cmd(int client_id, UserCmd *cmd) {
                     if (e > 0 && e < MAX_CLIENTS && e != client_id) {
                         PlayerState *t = &local_state.players[e];
                         if (t->active && t->state != STATE_DEAD && t->scene_id == p->scene_id) {
-                            tp_yaw_pitch_to_point(p->x, p->y + EYE_HEIGHT, p->z,
-                                                  t->x, t->y + EYE_HEIGHT, t->z,
-                                                  &p->yaw, &p->pitch);
+                            /* Range is a GAME RULE written in yards (PARENA wow_cast_range_yd, 40) and
+                               converted through the unit layer -- 36.576 is never restated here. A
+                               target past it fires along the player's own aim: a client's word must
+                               not swing the server's crosshair across the map. The units layer is F32
+                               because the geometry it feeds is, which is exactly this comparison. */
+                            float range_m = units_author_length_m((float)wow_cast_range_yd(g_wow_server.preset), 5);
+                            float ddx = t->x - p->x, ddy = t->y - p->y, ddz = t->z - p->z;
+                            if (ddx * ddx + ddy * ddy + ddz * ddz <= range_m * range_m) {
+                                tp_yaw_pitch_to_point(p->x, p->y + EYE_HEIGHT, p->z,
+                                                      t->x, t->y + EYE_HEIGHT, t->z,
+                                                      &p->yaw, &p->pitch);
+                            } else {
+                                NET_SERVER_LOG("WOW_CAST client_id=%d target=%d out of range (%.2f m > %.2f m)",
+                                               client_id, e,
+                                               sqrtf(ddx * ddx + ddy * ddy + ddz * ddz), range_m);
+                            }
                         }
                     }
                 }

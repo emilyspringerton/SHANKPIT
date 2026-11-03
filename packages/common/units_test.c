@@ -78,6 +78,11 @@ int main(void) {
     CHECK(near((double)units_author_snap(0.61f, 1), 0.8, 1e-6), "an F32 snap did not land on the grid");
     CHECK(units_author_length_mm(1.0f, 9) == 0.0f, "a bad authoring code did not return 0");
 
+    /* The server's cast range is a GAME RULE in yards (PARENA wow_cast_range_yd = 40) and is converted
+     * through this layer at the call site, so this pins the number the server actually compares against. */
+    CHECK(near((double)units_author_length_m(40.0f, 5), 36.576, 1e-5),
+          "40 yd (the cast range) is %f m", (double)units_author_length_m(40.0f, 5));
+
     if (fails) { printf("units: %d FAILED\n", fails); return 1; }
     printf("units: all checks passed\n");
     return 0;
