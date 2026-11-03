@@ -291,6 +291,41 @@ static inline int vehicle_salvage_sync(SalvageVehicle *v, int hull, unsigned int
     return vehicle_salvage_total(v);
 }
 
+/* vehicle_salvage_set_state -- adopt an ABSOLUTE component state, the form the wire carries
+ * (PACKET_VEHICLE_STATE). Masks arrive from the network and are therefore untrusted: they are clipped
+ * to the components this car kind actually has, and each hp is clamped into [0, its own max]. Returns
+ * the hull the state represents, so the caller can mirror it into BuggyState.health and the two never
+ * disagree. */
+static inline int vehicle_salvage_set_state(SalvageVehicle *v, int kind, int entity_id,
+                                            unsigned int alive_mask, unsigned int detached_mask,
+                                            const int hp[SALVAGE_MAX_COMPONENTS]) {
+    if (!v || !hp) return 0;
+    const VehicleSalvageRules *r = g_vehicle_salvage_rules;
+    memset(v, 0, sizeof *v);
+    v->active = 1;
+    v->kind = kind;
+    v->entity_id = entity_id ? entity_id : 1;
+    int n = vehicle_salvage_count(v);
+    unsigned int valid = n >= 32 ? 0xFFFFFFFFu : ((n <= 0) ? 0u : ((1u << n) - 1u));
+    v->alive_mask = alive_mask & valid;
+    v->detached_mask = detached_mask & valid;
+    for (int i = 0; i < n; i++) {
+        v->max_hp[i] = r->component_hp(kind, i);
+        int h = hp[i];
+        if (h < 0) h = 0;
+        if (h > v->max_hp[i]) h = v->max_hp[i];
+        /* a part that is not alive holds nothing, and vice versa: the two masks and hp must agree, or
+           the sum the authority reads would include a part the wire says is gone */
+        if (!(v->alive_mask & (1u << i))) h = 0;
+        v->hp[i] = h;
+        if (v->hp[i] <= 0) {
+            v->alive_mask &= ~(1u << i);
+            if (v->max_hp[i] > 0) v->detached_mask |= (1u << i);
+        }
+    }
+    return vehicle_salvage_total(v);
+}
+
 /* vehicle_salvage_offset_centi -- where a part sits in the car's own frame, integer centi-units: the
  * host rotates this by the car's yaw to throw the shard from where the part actually was. */
 static inline int vehicle_salvage_offset_centi(const SalvageVehicle *v, int comp, int axis) {

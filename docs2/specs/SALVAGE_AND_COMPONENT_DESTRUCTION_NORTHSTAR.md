@@ -199,10 +199,30 @@ the hook, so the rules layer still never touches an entity: the lobby binds it t
 dedicated server leaves it NULL (it discards broken-brick bodies on purpose). A car first seen already
 damaged adopts its parts without throwing shards.
 
-**Not done, named:** component state is **not on the wire**, so a networked client derives parts from
-the replicated hull and can show a part off a tick before the server agrees (S5); `apps/lobby` cannot be
-compiled on this box, so its three binding lines are reviewed, not compiled; no loot entity yet, no
-`origin_tag`, no garage. Those are S3-S5.
+### S3 + S5 — the parts reach other players, and the part lands on the ground (2026-11-03, built)
+
+**The wire.** `PACKET_VEHICLE_STATE` (type 20) carries `(slot, kind, alive mask, detached mask,
+per-component hp, seed)` for every car in the recipient's scene, absolute and idempotent like
+`PACKET_BRICK_STATE` — no acks, a late joiner heals on the next send. It exists because **the split is
+not a function of the hull**: the same 240-hull car is intact-but-worn or missing an engine depending on
+the order the hits landed, so a client deriving parts from replicated health is guessing. hp travels as
+absolute points in a byte (every component is at most 120) and never as a fraction, because a fraction
+rounds and the client's reconcile would read the rounding as damage and invent it. `vehicle_salvage_set_state`
+clips untrusted masks to the car's own components, forces hp and mask to agree, and returns the hull the
+state holds — which the client writes back, so health and parts cannot disagree.
+
+**The ground.** `vehicle_salvage_loot.h`: a part drops where it fell, and the four tiers map onto four
+**existing** consumables (KEY / RATION PACK / ENERGY BAR / COFFEE) — the placeholder the spec asked for,
+not a new inventory, with the tier still carried on the drop so a real economy can reinterpret it without
+touching the protocol. Walk-over pickup, a three-minute rot, and a full pool that discards the oldest drop
+rather than the newest. Client-local, the contract `bioslurry.h` already states.
+
+**Not done, named:** `apps/lobby` cannot be compiled on this box, so the client's apply handler, its loot
+install and its pickup loop are reviewed, not compiled, and no one has watched the packet arrive; loot is
+not authoritative; there is no end-to-end net test for this packet (the `PACKET_BRICK_STATE` e2e pattern
+would have to be rebuilt for vehicles); and **S4 — `origin_tag`, the garage `PLATE`, `garage_quest.prn` —
+is untouched**, because it is a feature decision (what provenance means, what a garage accepts) rather
+than wiring.
 
 ---
 

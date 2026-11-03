@@ -538,6 +538,14 @@ typedef void (*BuggyShardFn)(int comp, int material, float x, float y, float z,
 static BuggyShardFn g_buggy_shard_spawn = NULL;
 static inline void buggy_set_shard_spawn(BuggyShardFn fn) { g_buggy_shard_spawn = fn; }
 
+/* ... and what the part is WORTH, which is another host decision (vehicle_salvage_loot.h maps a tier
+ * onto an existing consumable; a host with no ground items simply leaves this NULL). Same seam, same
+ * reason: the rules layer decides the tier, the host decides the world. */
+typedef void (*BuggyLootFn)(int comp, int tier, int quantity, float x, float y, float z,
+                            int scene_id, unsigned int now_ms);
+static BuggyLootFn g_buggy_loot_spawn = NULL;
+static inline void buggy_set_loot_spawn(BuggyLootFn fn) { g_buggy_loot_spawn = fn; }
+
 /* buggy_shard_throw -- throw ONE detached part from where it actually sat: the rules' integer local
  * offset rotated by the car's yaw, plus the car's own velocity and a seeded kick (never the clock, so
  * two hosts watching the same car throw it the same way). */
@@ -638,8 +646,19 @@ static inline void buggy_tick_all(unsigned int now_ms) {
             unsigned int fresh = 0;
             b->health = vehicle_salvage_sync(sv, b->health, &fresh);
             if (fresh && !adopted)
-                for (int c = 0; c < SALVAGE_MAX_COMPONENTS; c++)
-                    if (fresh & (1u << c)) buggy_shard_throw(b, sv, c);
+                for (int c = 0; c < SALVAGE_MAX_COMPONENTS; c++) {
+                    if (!(fresh & (1u << c))) continue;
+                    buggy_shard_throw(b, sv, c);
+                    if (g_buggy_loot_spawn) {
+                        /* the tier is the deterministic roll at THIS tick; quantity is condition, and a
+                           part destroyed in place has none left -- 1 (the garage's intact unbolt is
+                           what yields 3, and that is S4's, not this slice's) */
+                        unsigned int tick = (unsigned int)((unsigned long long)now_ms * 64ull / 1000ull); /* ~64 Hz tick index */
+                        g_buggy_loot_spawn(c, vehicle_salvage_tier(sv, c, tick),
+                                           vehicle_salvage_quantity(sv, c), b->x, b->y + 0.5f, b->z,
+                                           b->scene_id, now_ms);
+                    }
+                }
         }
         if (b->occupant_player_id >= 0 && b->occupant_player_id < MAX_CLIENTS) {
             PlayerState *occ = &local_state.players[b->occupant_player_id];

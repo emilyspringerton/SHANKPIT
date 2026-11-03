@@ -134,6 +134,23 @@
  * Fixed size and self-contained: a datagram is one call, or it is garbage. */
 #define PACKET_KIT_CALL 19
 
+/* PACKET_VEHICLE_STATE -- which part of each car is still there (packages/simulation/vehicle_salvage.h).
+ * Server -> client, alongside PACKET_SNAPSHOT, every welcomed client, any mode with cars in it.
+ *
+ * Why a packet at all: `NetBuggy` carries the HULL, and the component split is NOT a function of the
+ * hull -- the same 240-hull car can be intact-but-worn or missing an engine, depending on the order the
+ * hits landed in. A client deriving parts from the replicated health would therefore be guessing, and
+ * would show a part off a tick before the server agreed. This packet removes the guess by sending the
+ * parts themselves.
+ *
+ * Absolute and idempotent, exactly like PACKET_BRICK_STATE: an entry says "car N currently has these
+ * components at these hull points", so applying one twice, late, or out of order cannot desync. hp is
+ * ABSOLUTE points in a byte (no component is over 120, and NET_VEHICLE_HP_MAX pins that), never a
+ * fraction -- quantization error would make the client's component sum differ from the hull, and the
+ * client's own reconcile would then invent damage. Masks are untrusted input and are clipped to the
+ * components the car actually has. No shard velocities, ever: shards stay per-client cosmetic. */
+#define PACKET_VEHICLE_STATE 20
+
 #define NET_EMPIRE_MAX_NODES 16 /* must match EU_MAX_NODES (empire_units.h) */
 #define NET_EMPIRE_MAX_CELLS 32 /* must match EU_MAX_CLAIM_CELLS (empire_units.h) */
 #define NET_ZONE_ID_MAX 32
@@ -357,6 +374,30 @@ typedef struct {
     unsigned char pad[3];
     NetBrickEntry e[NET_BRICK_MAX_ENTRIES];
 } NetBrickState;
+
+/* NetVehicleState -- see PACKET_VEHICLE_STATE's own doc comment above. NET_VEHICLE_MAX_COMPONENTS must
+ * match SALVAGE_MAX_COMPONENTS and NET_VEHICLE_MAX_ENTRIES must match MAX_BUGGIES; vehicle_salvage_test
+ * asserts both. NET_VEHICLE_HP_MAX is the ceiling an entry's hp byte may carry (SALVAGE_HULL is 300 for
+ * the WHOLE car, and no single component is above 120). */
+#define NET_VEHICLE_MAX_COMPONENTS 5
+#define NET_VEHICLE_MAX_ENTRIES    16
+#define NET_VEHICLE_HP_MAX         255
+typedef struct {
+    unsigned char id;                                   /* buggy slot, 0..MAX_BUGGIES-1 */
+    unsigned char kind;                                 /* 0 buggy, 1 rocket car */
+    unsigned char alive_mask;                           /* bit per component, set = still attached */
+    unsigned char detached_mask;                        /* cumulative: what has EVER come off */
+    unsigned char hp[NET_VEHICLE_MAX_COMPONENTS];       /* absolute hull points, not a fraction */
+    unsigned char pad[3];                               /* keeps the entry 16 bytes and aligned */
+    unsigned int seed;                                  /* the car's identity, for the salvage roll */
+} NetVehicleEntry;
+
+typedef struct {
+    NetHeader hdr;
+    unsigned char count;
+    unsigned char pad[3];
+    NetVehicleEntry e[NET_VEHICLE_MAX_ENTRIES];
+} NetVehicleState;
 
 typedef struct {
     unsigned int sequence;

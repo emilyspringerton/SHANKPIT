@@ -1817,6 +1817,53 @@ void server_broadcast_brick_state(void) {
     }
 }
 
+/* server_broadcast_vehicle_state -- which part of each car is still there (PACKET_VEHICLE_STATE,
+ * packages/simulation/vehicle_salvage.h). Server -> client, alongside the snapshot, one packet per
+ * welcomed client holding only the cars in THAT client's scene (the same filter the snapshot uses, so
+ * a car in another scene is never described to someone who cannot see it).
+ *
+ * Absolute and idempotent by construction: the mask and the per-component hull points are the whole
+ * state, so a dropped datagram or a late joiner heals on the next one, and no acknowledgement traffic
+ * exists. hp travels as absolute points in a byte (no component is over 120) precisely so the client's
+ * component sum still equals the hull it was sent -- a fraction would round, and the client's own
+ * reconcile would read the rounding as damage and invent it. */
+void server_broadcast_vehicle_state(void) {
+    for (int i = 1; i < MAX_CLIENTS; i++) {
+        if (!slots[i].active || !slots[i].welcomed) continue;
+        int scene = local_state.players[i].scene_id;
+        NetVehicleState pkt;
+        memset(&pkt, 0, sizeof(pkt));
+        int n = 0;
+        for (int bi = 0; bi < MAX_BUGGIES && n < NET_VEHICLE_MAX_ENTRIES; bi++) {
+            BuggyState *b = &local_state.buggies[bi];
+            if (!b->active || b->scene_id != scene) continue;
+            const SalvageVehicle *sv = &g_local_buggy_salvage[bi];
+            if (!sv->active) continue;
+            NetVehicleEntry *e = &pkt.e[n++];
+            e->id = (unsigned char)bi;
+            e->kind = (unsigned char)(b->rocket ? 1 : 0);
+            e->alive_mask = (unsigned char)sv->alive_mask;
+            e->detached_mask = (unsigned char)sv->detached_mask;
+            for (int c = 0; c < NET_VEHICLE_MAX_COMPONENTS; c++) {
+                int hp = (c < SALVAGE_MAX_COMPONENTS) ? sv->hp[c] : 0;
+                if (hp < 0) hp = 0;
+                if (hp > NET_VEHICLE_HP_MAX) hp = NET_VEHICLE_HP_MAX;
+                e->hp[c] = (unsigned char)hp;
+            }
+            e->seed = (unsigned int)(sv->entity_id ? sv->entity_id : 1);
+        }
+        if (n <= 0) continue;
+        pkt.hdr.type = PACKET_VEHICLE_STATE;
+        pkt.hdr.client_id = 0;
+        pkt.hdr.timestamp = get_server_time();
+        pkt.hdr.scene_id = (unsigned char)(scene < 0 ? 0 : scene);
+        pkt.hdr.entity_count = (unsigned char)n;
+        pkt.count = (unsigned char)n;
+        int len = (int)(sizeof(NetHeader) + 4 + (size_t)n * sizeof(NetVehicleEntry));
+        sendto(sock, (const char *)&pkt, len, 0, (struct sockaddr*)&slots[i].addr, sizeof(struct sockaddr_in));
+    }
+}
+
 /* EMPIRE unit rules from PARENA -- included here because this file has no block of rules includes yet;
    the server spawns authored units, so it must read the same archetype/order table the lobby does. */
 #include "../../../packages/simulation/empire_units_rules_host.h"
@@ -2282,6 +2329,7 @@ int main(int argc, char *argv[]) {
             server_broadcast();
             server_broadcast_world_clock();
             server_broadcast_brick_state();
+            server_broadcast_vehicle_state(); /* PACKET_VEHICLE_STATE: which part of each car is still there */
             server_broadcast_queue_level();
             server_broadcast_zone_state();   /* PACKET_ZONE_STATE: the zone's id + seed, 1 Hz */
             server_broadcast_empire_state(); /* PACKET_EMPIRE_STATE: stockpiles, node amounts, ground, 1 Hz */

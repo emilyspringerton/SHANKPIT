@@ -16,6 +16,8 @@
 
 #include "vehicle_salvage.h"
 #include "vehicle_salvage_shards.h"   /* S2: a part off the car is a body in the brick world */
+#include "vehicle_salvage_loot.h"    /* S3: what the part is worth on the ground */
+#include "../common/protocol.h"      /* S5: the wire struct itself, so its shape is pinned here */
 #include <math.h>
 #ifdef SHANKPIT_VEHICLE_SALVAGE_PARENA
 #include "vehicle_salvage_rules_host.h"
@@ -297,6 +299,102 @@ int main(void) {
         vehicle_salvage_shards_hook(SALVAGE_COMP_ENGINE, 1, 0, 0, 0, 0, 0, 0, 1u);
         CHECK(bb_active_count(&bb) == 0, "an unbound world spawned a body");
         bb_clear(&bb);
+    }
+
+
+    /* ---- 8. the wire form: absolute, byte hp, and NO quantization error ------------------------ */
+    {   SalvageVehicle v, w;
+        unsigned int fresh = 0;
+        vehicle_salvage_reset(&v, 0, 30);
+        vehicle_salvage_sync(&v, 210, &fresh);          /* 90 of 300 gone, nothing detached */
+        int hp[NET_VEHICLE_MAX_COMPONENTS] = { 0 };
+        for (int c = 0; c < SALVAGE_MAX_COMPONENTS; c++) hp[c] = v.hp[c];
+        int on_the_server = vehicle_salvage_total(&v);
+        int on_the_client = vehicle_salvage_set_state(&w, 0, 30, v.alive_mask, v.detached_mask, hp);
+        CHECK(on_the_client == on_the_server, "wire round trip held %d, the car had %d",
+              on_the_client, on_the_server);
+        CHECK(vehicle_salvage_total(&w) == on_the_server, "wire round trip sum %d", vehicle_salvage_total(&w));
+        CHECK(w.alive_mask == v.alive_mask && w.detached_mask == v.detached_mask,
+              "wire round trip masks %u/%u vs %u/%u", w.alive_mask, w.detached_mask,
+              v.alive_mask, v.detached_mask);
+        for (int c = 0; c < SALVAGE_MAX_COMPONENTS; c++)
+            CHECK(w.hp[c] == v.hp[c], "part %d crossed the wire as %d, was %d", c, w.hp[c], v.hp[c]);
+
+        /* untrusted input: hp over a part's max is clamped, and a bit the car does not have is dropped */
+        int hostile[NET_VEHICLE_MAX_COMPONENTS] = { 50, 50, 50, 50, 50 };
+        int h = vehicle_salvage_set_state(&w, 0, 30, 0xFFu, 0xFFu, hostile);
+        CHECK(w.alive_mask == 0xFu, "a 4-part car accepted mask %u", w.alive_mask);
+        CHECK(w.detached_mask == 0xFu, "a 4-part car accepted detached mask %u", w.detached_mask);
+        CHECK(w.hp[3] == 30, "hull points were not clamped to the part's max: %d", w.hp[3]);
+        CHECK(h == 50 + 50 + 50 + 30, "clamped state holds %d", h);
+
+        /* hp and the mask must agree: a part the wire says is OFF holds nothing, whatever hp said */
+        int lying[NET_VEHICLE_MAX_COMPONENTS] = { 90, 120, 60, 30, 0 };
+        h = vehicle_salvage_set_state(&w, 0, 30, 0xEu /* engine off */, 0x1u, lying);
+        CHECK(w.hp[SALVAGE_COMP_ENGINE] == 0, "an off part kept %d hull points", w.hp[SALVAGE_COMP_ENGINE]);
+        CHECK(h == 120 + 60 + 30, "state with the engine off holds %d", h);
+        CHECK(w.detached_mask == 0x1u, "detached mask grew on its own: %u", w.detached_mask);
+    }
+    {   /* the packet's own shape, pinned: a layout change must break a test, not a client */
+        CHECK(PACKET_VEHICLE_STATE == 20, "packet id moved to %d", PACKET_VEHICLE_STATE);
+        CHECK(sizeof(NetVehicleEntry) == 16, "NetVehicleEntry is %d bytes, not 16", (int)sizeof(NetVehicleEntry));
+        CHECK(NET_VEHICLE_MAX_COMPONENTS == SALVAGE_MAX_COMPONENTS,
+              "wire carries %d components, the table has %d", NET_VEHICLE_MAX_COMPONENTS, SALVAGE_MAX_COMPONENTS);
+        CHECK(NET_VEHICLE_MAX_ENTRIES == MAX_BUGGIES, "wire caps %d cars, MAX_BUGGIES is %d",
+              NET_VEHICLE_MAX_ENTRIES, MAX_BUGGIES);
+        /* the TOTAL is never sent -- each part travels in its own byte, so what has to fit is
+           the largest single component, checked right below */
+        CHECK(NET_VEHICLE_HP_MAX * SALVAGE_MAX_COMPONENTS >= SALVAGE_HULL,
+              "%d bytes cannot describe a %d hull", NET_VEHICLE_HP_MAX * SALVAGE_MAX_COMPONENTS, SALVAGE_HULL);
+        for (int kind = 0; kind <= 1; kind++)
+            for (int c = 0; c < SALVAGE_MAX_COMPONENTS; c++)
+                CHECK(salvage_def_component_hp(kind, c) <= NET_VEHICLE_HP_MAX,
+                      "component %d of kind %d needs %d bytes", c, kind, salvage_def_component_hp(kind, c));
+    }
+
+    /* ---- 9. the ground half: a tier is worth an EXISTING item, and you can pick it up ---------- */
+    {   vehicle_salvage_loot_reset();
+        CHECK(vehicle_salvage_loot_item(SALVAGE_TIER_LOGIC) == FOOD_KEY, "the logic tier item");
+        CHECK(vehicle_salvage_loot_item(SALVAGE_TIER_COMPOSITE) == FOOD_RATION_PACK, "the composite tier item");
+        CHECK(vehicle_salvage_loot_item(SALVAGE_TIER_REBAR) == FOOD_ENERGY_BAR, "the rebar tier item");
+        CHECK(vehicle_salvage_loot_item(SALVAGE_TIER_SCRAP) == FOOD_COFFEE, "the scrap tier item");
+        CHECK(vehicle_salvage_loot_points(SALVAGE_TIER_LOGIC) > vehicle_salvage_loot_points(SALVAGE_TIER_COMPOSITE),
+              "the board must be worth more than the mesh");
+        CHECK(vehicle_salvage_loot_points(SALVAGE_TIER_COMPOSITE) > vehicle_salvage_loot_points(SALVAGE_TIER_REBAR),
+              "the mesh must be worth more than the rebar");
+        CHECK(vehicle_salvage_loot_points(SALVAGE_TIER_REBAR) > vehicle_salvage_loot_points(SALVAGE_TIER_SCRAP),
+              "the rebar must be worth more than the scrap");
+
+        int k = vehicle_salvage_loot_drop(4, 10.0f, 2.0f, 20.0f, SALVAGE_COMP_ENGINE, SALVAGE_TIER_LOGIC, 2, 1000u);
+        CHECK(k >= 0, "the drop was refused");
+        CHECK(vehicle_salvage_loot_count() == 1, "drop count %d", vehicle_salvage_loot_count());
+        int qty = 0, item = -1;
+        CHECK(vehicle_salvage_loot_collect(5, 10.0f, 2.0f, 20.0f, &qty, &item) == -1,
+              "collected a drop from another scene");
+        CHECK(vehicle_salvage_loot_collect(4, 40.0f, 2.0f, 20.0f, &qty, &item) == -1,
+              "collected a drop 30 units away");
+        CHECK(vehicle_salvage_loot_collect(4, 11.0f, 2.0f, 20.0f, &qty, &item) == SALVAGE_TIER_LOGIC,
+              "walking over the board did not pick it up");
+        CHECK(qty == 2 && item == FOOD_KEY, "picked up item %d x%d", item, qty);
+        CHECK(vehicle_salvage_loot_count() == 0, "the drop is still on the ground after pickup");
+
+        /* it rots */
+        vehicle_salvage_loot_drop(4, 0.0f, 0.0f, 0.0f, SALVAGE_COMP_CHASSIS, SALVAGE_TIER_SCRAP, 1, 1000u);
+        vehicle_salvage_loot_tick(1000u + VS_LOOT_ROT_MS);
+        CHECK(vehicle_salvage_loot_count() == 1, "a part rotted early");
+        vehicle_salvage_loot_tick(1000u + VS_LOOT_ROT_MS + 1u);
+        CHECK(vehicle_salvage_loot_count() == 0, "a part never rotted");
+
+        /* a full pool must not lose the part it just produced */
+        for (int i = 0; i < VS_LOOT_MAX_DROPS; i++)
+            vehicle_salvage_loot_drop(4, 0.0f, 0.0f, 0.0f, SALVAGE_COMP_WHEELS, SALVAGE_TIER_SCRAP, 1, 2000u);
+        int newest = vehicle_salvage_loot_drop(4, 1.0f, 1.0f, 1.0f, SALVAGE_COMP_ENGINE, SALVAGE_TIER_LOGIC, 1, 2000u);
+        CHECK(newest >= 0 && vehicle_salvage_loot_count() == VS_LOOT_MAX_DROPS,
+              "full pool holds %d", vehicle_salvage_loot_count());
+        CHECK(vehicle_salvage_loot_at(newest) && vehicle_salvage_loot_at(newest)->tier == SALVAGE_TIER_LOGIC,
+              "the newest part was the one lost");
+        vehicle_salvage_loot_reset();
+        CHECK(vehicle_salvage_loot_count() == 0, "reset left drops behind");
     }
 
     if (fails) { printf("vehicle_salvage: %d FAILED\n", fails); return 1; }

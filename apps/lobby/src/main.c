@@ -108,6 +108,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/simulation/brick_world.h"
 #include "../../../packages/simulation/vehicle_salvage_rules_host.h" /* PARENA car components */
 #include "../../../packages/simulation/vehicle_salvage_shards.h"     /* a sheared part is a brick body */
+#include "../../../packages/simulation/vehicle_salvage_loot.h"      /* ... and what it is worth on the ground */
 #include "../../../packages/simulation/buggy_rules_host.h"
 #include "../../../packages/simulation/heli_rules_host.h"
 #include "../../../packages/simulation/rocket_car_rules_host.h"   /* the rocket car's PARENA model */
@@ -15812,6 +15813,34 @@ void net_tick() {
                 if (!still) { g_pack_gone_x = old->x; g_pack_gone_y = old->y; g_pack_gone_z = old->z; g_pack_gone_ms = SDL_GetTicks(); }
             }
             shield_packs_set_all(xyz, n);
+        } else if (head->type == PACKET_VEHICLE_STATE) {
+            /* PACKET_VEHICLE_STATE: the server's component state is the truth. A part it says is
+               attached IS attached, whatever this client's own reconcile predicted from the replicated
+               hull -- that guess is exactly what this packet removes. Fields are untrusted:
+               vehicle_salvage_set_state clips the masks to the car's own components and the hp to each
+               part's max, and returns the hull the state holds, which is written back so health and
+               parts cannot disagree. */
+            if (len >= (int)(sizeof(NetHeader) + 4) && len <= (int)sizeof(NetVehicleState)) {
+                NetVehicleState vs;
+                memset(&vs, 0, sizeof(vs));
+                int copy = len < (int)sizeof(vs) ? len : (int)sizeof(vs);
+                memcpy(&vs, buffer, (size_t)copy);
+                int vn = vs.count > NET_VEHICLE_MAX_ENTRIES ? NET_VEHICLE_MAX_ENTRIES : vs.count;
+                for (int ve_i = 0; ve_i < vn; ve_i++) {
+                    const NetVehicleEntry *ve = &vs.e[ve_i];
+                    if (ve->id >= MAX_BUGGIES) continue;
+                    if ((int)sizeof(NetVehicleEntry) * (ve_i + 1) > copy - (int)(sizeof(NetHeader) + 4)) break;
+                    int hp[SALVAGE_MAX_COMPONENTS];
+                    for (int c = 0; c < SALVAGE_MAX_COMPONENTS; c++)
+                        hp[c] = (c < NET_VEHICLE_MAX_COMPONENTS) ? (int)ve->hp[c] : 0;
+                    int hull = vehicle_salvage_set_state(&g_local_buggy_salvage[ve->id],
+                                                         ve->kind ? 1 : 0, (int)ve->id + 1,
+                                                         (unsigned int)ve->alive_mask,
+                                                         (unsigned int)ve->detached_mask, hp);
+                    BuggyState *vb_car = &local_state.buggies[ve->id];
+                    if (vb_car->active) vb_car->health = hull;
+                }
+            }
         } else if (head->type == PACKET_BRICK_STATE) {
             /* destructible brick: mirror the server's authoritative cell state (validated inside) */
             brick_world_net_apply(buffer, len);
@@ -15955,6 +15984,8 @@ int main(int argc, char* argv[]) {
     vehicle_salvage_rules_install(); /* PARENA car components: what breaks, what it yields */
     vehicle_salvage_shards_bind(&g_brick_bodies); /* a part that comes off falls as a real body */
     buggy_set_shard_spawn(vehicle_salvage_shards_hook); /* ...thrown by local_game's tick */
+    vehicle_salvage_loot_reset(); /* ground half: a tier maps onto an EXISTING consumable */
+    buggy_set_loot_spawn(vehicle_salvage_loot_hook); /* ...dropped where the part came off */
     slide_rules_install(); /* PARENA slope curve for the crouch-slide (a hill speeds you up) */
     widget_rules_install(); /* PARENA widget circuit (lever / plate / relay / transistor / machine) */
     zone_rules_install();   /* PARENA shared-zone lifecycle + procedural dungeon parameters */
@@ -17300,6 +17331,20 @@ int main(int argc, char* argv[]) {
                                                    : ((roll_keys[SDL_SCANCODE_L] || roll_keys[SDL_SCANCODE_RIGHT]) ? 1 : 0);
                 }
                 local_update(input_fwd, input_str, local_aim_yaw, local_aim_pitch, input_shoot, wpn_req, input_jump, input_crouch, input_reload, input_ability, input_secondary, input_bike, NULL, now_ms);
+    {   /* vehicle salvage loot: walking over a part picks it up -- client-local, the same honest
+           contract food_pickup.h and bioslurry.h already state (a networked player's drops are
+           their own until a server-authoritative ground-item story exists). */
+        for (int loot_i = 0; loot_i < MAX_CLIENTS; loot_i++) {
+            PlayerState *loot_p = &local_state.players[loot_i];
+            if (!loot_p->active) continue;
+            int loot_qty = 1, loot_item = 0;
+            if (vehicle_salvage_loot_collect(loot_p->scene_id, loot_p->x, loot_p->y, loot_p->z,
+                                             &loot_qty, &loot_item) >= 0)
+                printf("[SALVAGE] player %d picked up %s x%d\n", loot_p->id,
+                       FOOD_ITEM_NAMES[loot_item], loot_qty);
+        }
+        vehicle_salvage_loot_tick(SDL_GetTicks());
+    }
                 if (bigo_wiring_active() && !g_story_phone.open) bigo_board_tick(&local_state.players[0], (float)input_fwd, (float)input_str, TICK_DT);
                 bigo_wiring_tick(now_ms);
                 lobby_check_story_level_exits(now_ms);
