@@ -57,6 +57,27 @@ static void sleep_ms(int ms) {
     nanosleep(&ts, NULL);
 }
 
+/* Let the OS pick a free UDP port instead of a fixed default that a running dev server already owns.
+ * The bind/close/report dance has a tiny race window; if the child loses it, the CONNECT retry times out
+ * and the failure names the port, which is a better error than "the wire is broken". */
+static int pick_free_port(void) {
+    struct sockaddr_in a;
+    socklen_t alen = sizeof a;
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return -1;
+    memset(&a, 0, sizeof a);
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    a.sin_port = 0;
+    if (bind(fd, (struct sockaddr *)&a, sizeof a) < 0 ||
+        getsockname(fd, (struct sockaddr *)&a, &alen) < 0) {
+        close(fd);
+        return -1;
+    }
+    close(fd);
+    return (int)ntohs(a.sin_port);
+}
+
 static pid_t spawn_server(int port, int drop_cast_acks) {
     pid_t pid = fork();
     if (pid != 0) return pid;
@@ -145,7 +166,7 @@ static void send_connect(int s, const struct sockaddr_in *to) {
 }
 
 int main(int argc, char **argv) {
-    int port = (argc > 1) ? atoi(argv[1]) : 6979;
+    int port = (argc > 1) ? atoi(argv[1]) : 0;   /* 0 (or absent) = ask the OS for a free port */
     /* 0 = happy path, N <= wow_retry_max = the server swallows N CAST ACKs and the resend must recover,
        N > wow_retry_max = every ACK is lost and the client must abandon exactly once with the kind set. */
     int drop = (argc > 2) ? atoi(argv[2]) : 0;
@@ -163,6 +184,11 @@ int main(int argc, char **argv) {
     int i;
 
     for (i = 0; i < 16; i++) player_id[i] = (uint8_t)(0x40 + i);
+    if (port <= 0) port = pick_free_port();
+    if (port <= 0) {
+        printf("e2e: could not pick a free UDP port\n");
+        return 1;
+    }
 
     pid = spawn_server(port, drop);
     printf("e2e: server pid=%d port=%d drop_cast_acks=%d\n", (int)pid, port, drop);

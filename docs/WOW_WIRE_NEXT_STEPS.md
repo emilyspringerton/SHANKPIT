@@ -55,13 +55,16 @@ overhead at 40 m is out. Asserted by `make test-wow-wire` (the table, its orderi
 *Done when (met):* two weapons disagree, elevation is a consequence of the measurement rather than an
 afterthought, and both are assertions instead of intentions.
 
-### 3. Fuzz the decoders
-Malformed input is asserted today by hand-picked cases (bad version, unknown op, slot out of range,
-sequence 0, trailing bytes). That proves the cases someone thought of. `wow_wire_decode`,
-`wow_targets_apply` and the macro decoder are pure functions over a byte buffer — ideal for a fuzz
-target that asserts only "never coerces, never reads past `len`".
-*Done when:* a fuzz target runs under ASan/UBSan for a fixed budget in CI with no findings, and the same
-harness replays the corpus from `make test-wow-wire`.
+### 3. ~~Fuzz the decoders~~ -- done 2026-11-03
+`test-wow-wire` now ends with a deterministic randomized sweep: 20,000 buffers of length 0..96 through
+`wow_ack_decode`, `wow_cast_decode`, `wow_invoke_decode`, `wow_targets_apply` and `wow_server_rx`, each
+read from an exactly-sized heap buffer (so an overread is an ASan report rather than a lucky pass) with
+encoder caps deliberately smaller than the frames. Then 2,000 single-bit mutations of a valid cast: when a
+mutated frame still decodes, the decoded fields must equal the mutated bytes -- the decoder may refuse, it
+may not invent. The ASan/UBSan half of the target runs all of it, and the seed is fixed, so any failure
+reproduces. Honest scope: this is a randomized sweep, not a coverage-guided fuzzer with a persisted corpus.
+
+*Done when (met):* the sweep runs in CI under the sanitizers and every decoder refuses instead of coercing.
 
 ### 4. The GoblinFoxDragon adapter — still blocked, deliberately unwritten
 The seam is already named and stable: the MUD tick calls `wow_server_take_cast()` and installs
@@ -108,11 +111,13 @@ PARENA in feet, convert through `units_author_length_m` and pin it with a test.
 *Done when:* changing one authored foot value visibly changes the geometry, with no second conversion
 site in C.
 
-### 8. Port hygiene in the E2E
-`test-wow-e2e` defaults to a fixed port (6979). A dev server already on that port makes the test look
-like a wire failure. Let the test bind an ephemeral port and tell the child which one, or fail fast with
-a message that names the collision.
-*Done when:* `make test-wow-e2e` passes with a dev server already listening on the default port.
+### 8. ~~Port hygiene in the E2E~~ -- done 2026-11-03
+`make test-wow-e2e` now defaults all three phases to `E2E_PORT=0`, which makes the test bind an ephemeral
+UDP port, ask the OS for its number, close it and hand that port to the child; an explicit port still
+overrides. A dev server on 6979 can no longer make the wire look broken. If the child loses the tiny
+bind/close race, the CONNECT retry times out and the failure names the port it tried.
+
+*Done when (met):* `make test-wow-e2e` passes with a dev server already listening on 6979.
 
 ### 9. Bytes on a 1 kbit link
 A 6-byte CAST currently travels in an 80-byte envelope (`NetHeader` 10 + length byte + the padded frame

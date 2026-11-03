@@ -2,6 +2,7 @@
  * and the mod registry. The interesting assertion is the equivalence one: a macro compiled from text,
  * serialised to bytes and decoded again must be the SAME macro -- same masks, tokens and arguments. */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "wow_wire.h"
 #include "wow_mod.h"
@@ -311,6 +312,80 @@ static void test_server(void) {
     CHECK(wow_server_rx(NULL, 0, frame, n, ack, sizeof ack) == -1, "a null server was served");
 }
 
+/* Deterministic randomized sweep over every decoder, run under ASan/UBSan by the second half of
+ * `make test-wow-wire`. Not a coverage-guided fuzzer: the seed is fixed, so a failure reproduces, and
+ * every input lives in an exactly-sized heap buffer so an overread is a sanitizer report instead of a
+ * lucky pass. The contract asserted is the header's own: refuse, never coerce, never read past `len`. */
+static unsigned rng_state = 0x9e3779b9u;
+static unsigned rng_next(void) {
+    unsigned x = rng_state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    rng_state = x;
+    return x;
+}
+
+static void test_fuzz_decoders(void) {
+    WowServer s;
+    WowTargets t;
+    WowAck a;
+    WowCastIntent ci;
+    WowInvoke inv;
+    uint8_t src[96];
+    int i, j;
+    wow_server_begin(&s);      /* no verifier installed: fail closed, every op refused */
+    wow_targets_begin(&t);
+    for (i = 0; i < 20000; i++) {
+        int len = (int)(rng_next() % (sizeof src + 1u));
+        int cap = (int)(rng_next() % 40u);          /* deliberately smaller than many real frames */
+        uint8_t *buf = (uint8_t *)malloc((size_t)(len ? len : 1));
+        uint8_t *out = (uint8_t *)malloc((size_t)(cap ? cap : 1));
+        CHECK(buf && out, "allocation failed in the decoder sweep");
+        if (!buf || !out) { free(buf); free(out); return; }
+        for (j = 0; j < len; j++) src[j] = (uint8_t)rng_next();
+        memcpy(buf, src, (size_t)len);
+        memset(&a, 0, sizeof a);
+        memset(&ci, 0, sizeof ci);
+        memset(&inv, 0, sizeof inv);
+
+        (void)wow_ack_decode(buf, len, &a);
+        (void)wow_cast_decode(buf, len, &ci);
+        (void)wow_invoke_decode(buf, len, &inv);
+        (void)wow_targets_apply(&t, buf, len);
+        (void)wow_server_rx(&s, 0, buf, len, out, cap);
+        /* Encoders get the same hostile caps: a small cap must refuse, never truncate a frame. */
+        (void)wow_cast_encode(&ci, out, cap);
+        (void)wow_invoke_encode(&inv, out, cap);
+        free(buf);
+        free(out);
+    }
+
+    /* A mutated frame that still decodes must agree with its own bytes: the decoder may refuse, never
+       invent. (Cast layout: ver, op, weapon, token, seq_lo, seq_hi.) */
+    {
+        WowCastIntent good, back;
+        uint8_t frame[WOW_WIRE_CAST_BYTES];
+        memset(&good, 0, sizeof good);
+        good.weapon = 1;
+        good.token = WOW_TOKEN_TARGET;
+        good.seq = 7;
+        CHECK(wow_cast_encode(&good, frame, sizeof frame) == WOW_WIRE_CAST_BYTES,
+              "a valid cast did not encode");
+        for (i = 0; i < 2000; i++) {
+            uint8_t mutated[WOW_WIRE_CAST_BYTES];
+            memcpy(mutated, frame, sizeof frame);
+            mutated[rng_next() % sizeof frame] ^= (uint8_t)(1u << (rng_next() % 8u));
+            memset(&back, 0, sizeof back);
+            if (wow_cast_decode(mutated, (int)sizeof mutated, &back) > 0) {
+                CHECK(back.weapon == mutated[2] && back.token == mutated[3] &&
+                      (uint16_t)(mutated[4] | (mutated[5] << 8)) == back.seq,
+                      "a decoded cast disagrees with its own bytes");
+            }
+        }
+    }
+}
+
 int main(void) {
     test_layout();
     test_cast_range();
@@ -320,6 +395,7 @@ int main(void) {
     test_invoke_ack();
     test_mods();
     test_server();
+    test_fuzz_decoders();
     if (fails) { printf("wowwire: %d FAILED\n", fails); return 1; }
     printf("wowwire: all checks passed\n");
     return 0;
