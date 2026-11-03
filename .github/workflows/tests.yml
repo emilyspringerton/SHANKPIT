@@ -120,6 +120,7 @@ jobs:
           make check-filter-rules
           make test-stream-filters
           make test-macros
+          make test-wow-macros
           make check-lora-rules
           make test-lora-wire
 
