@@ -91,12 +91,18 @@ changed -- the fixed point is still the right call where exactness matters.
 *Done when (met):* the grep now returns only the two hoverboard comments that explain a deliberate integer
 choice, not a missing feature.
 
-### 7. A second consumer for the unit layer: geometry authoring
-The cast range is the first real consumer; the level boxes, the brick solver and the editor still author
-in raw metres. Pick one dimension a designer would state in feet (a doorway, a jump span), put it in
-PARENA in feet, convert through `units_author_length_m` and pin it with a test.
-*Done when:* changing one authored foot value visibly changes the geometry, with no second conversion
-site in C.
+### 7. ~~A second consumer for the unit layer: geometry authoring~~ -- done 2026-11-03
+The procedural dungeon's gate is now a dimension a designer states in feet: `zone-door-height-ft` (**7 ft**)
+sits in `PARENA/stdlib/shankpit/zone_rules.prn` beside the rest of the zone layout, and
+`packages/simulation/proc_dungeon.h` converts it exactly once with `units_author_length_m(..., 4)` before
+building the gate box. 2.1336 m appears nowhere in C. Two things make this a real consumer rather than a
+decoration: the gate used to span the full wall height (18-30 world units), so the dungeon geometry visibly
+changed, and the test now asserts the gate box's height equals the authored feet value, that 7 ft converts
+to 2.1336 m, and that the gate is shorter than the wall. `test-proc-dungeon` also keeps the PARENA rule and
+the header's compiled-in default in agreement sample for sample, and the lobby had to link
+`packages/common/units_rules.c` -- which is how you can tell the call is really there.
+
+*Done when (met):* changing the authored feet value changes one box, with a single conversion site.
 
 ### 8. ~~Port hygiene in the E2E~~ -- done 2026-11-03
 `make test-wow-e2e` now defaults all three phases to `E2E_PORT=0`, which makes the test bind an ephemeral

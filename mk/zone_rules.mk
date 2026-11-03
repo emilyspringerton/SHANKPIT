@@ -15,9 +15,9 @@ regen-zone-rules:
 # relay's delay, a second entrant joins the same layout, and the zone survives fifteen empty minutes (and
 # only then regenerates from a new seed).
 test-proc-dungeon: | $(BIN_DIR)
-	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/simulation -Ipackages/world \
+	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/simulation -Ipackages/world -Ipackages/common \
 		packages/simulation/proc_dungeon_test.c packages/simulation/zone_rules.c \
-		packages/simulation/widget_rules.c \
+		packages/simulation/widget_rules.c packages/common/units_rules.c \
 		-o $(BIN_DIR)/proc_dungeon_test $(LIBS_M)
 	./$(BIN_DIR)/proc_dungeon_test
 

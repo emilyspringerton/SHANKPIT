@@ -14,6 +14,7 @@ int zone_room_depth(int, int);
 int zone_wall_height(int);
 int zone_wall_thickness();
 int zone_door_width();
+int zone_door_height_ft();
 int zone_ring_distance();
 int zone_ring_dir_x(int);
 int zone_ring_dir_z(int);
@@ -68,6 +69,10 @@ int zone_wall_thickness(void) {
 
 int zone_door_width(void) {
     return 8;
+}
+
+int zone_door_height_ft(void) {
+    return 7;
 }
 
 int zone_ring_distance(void) {

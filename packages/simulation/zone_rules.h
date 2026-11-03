@@ -22,6 +22,7 @@ typedef struct {
     int (*wall_height)(int seed);
     int (*wall_thickness)(void);
     int (*door_width)(void);
+    int (*door_height_ft)(void);   /* authored in FEET; the host converts it once, in metres */
     int (*ring_distance)(void);
     int (*ring_dir_x)(int dir);
     int (*ring_dir_z)(int dir);
@@ -44,6 +45,7 @@ static inline int zr_c_room_depth(int seed, int room) { return 24 + 8 * zr_clamp
 static inline int zr_c_wall_height(int seed) { return 18 + 6 * zr_clamp(0, 2, seed % 3); }
 static inline int zr_c_wall_thickness(void) { return 2; }
 static inline int zr_c_door_width(void) { return 8; }
+static inline int zr_c_door_height_ft(void) { return 7; }
 static inline int zr_c_ring_distance(void) { return 52; }
 static inline int zr_c_ring_dir_x(int dir) {
     dir = zr_clamp(0, 3, dir);
@@ -68,7 +70,8 @@ static inline int zr_c_elapsed_ms(int now_ms, int since_ms) { return now_ms > si
 
 static ZoneRules g_zone_rules = {
     zr_c_grace_seconds, zr_c_max_zones, zr_c_room_count, zr_c_room_width, zr_c_room_depth,
-    zr_c_wall_height, zr_c_wall_thickness, zr_c_door_width, zr_c_ring_distance, zr_c_ring_dir_x,
+    zr_c_wall_height, zr_c_wall_thickness, zr_c_door_width, zr_c_door_height_ft, zr_c_ring_distance,
+    zr_c_ring_dir_x,
     zr_c_ring_dir_z, zr_c_spawn_count, zr_c_mob_count, zr_c_material_count, zr_c_material_for,
     zr_c_difficulty, zr_c_should_expire, zr_c_elapsed_ms
 };

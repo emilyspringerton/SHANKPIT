@@ -8,6 +8,7 @@
  * so determinism is checked by saving two levels from one seed and comparing the bytes, and the lifecycle
  * is checked against a fake clock, not a sleep.
  */
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -63,6 +64,8 @@ int main(void) {
         ZoneRules saved = g_zone_rules;
         int mismatches = 0, samples = 0;
         zone_rules_install();
+        samples++;
+        if (saved.door_height_ft() != zone_door_height_ft()) mismatches++;
         for (int seed = 0; seed < 64; seed++) {
             samples++;
             if (saved.room_count(seed) != zone_room_count(seed)) mismatches++;
@@ -97,6 +100,15 @@ int main(void) {
        "and the pins point backwards, which is the circuit's own rule");
     ok(a.edu_widgets[2].box_index >= 0 && a.edu_widgets[2].box_index < a.count,
        "the machine drives a gate box that exists");
+    /* The second consumer for the unit layer: the gate's height is authored in FEET in PARENA and
+       converted exactly once, to metres, here. 7 ft = 2.1336 m; changing the rule changes this box. */
+    {
+        const float gate_h = a.boxes[a.edu_widgets[2].box_index].h;
+        const float want_h = units_author_length_m((float)zone_door_height_ft(), 4);
+        ok(want_h > 2.10f && want_h < 2.16f, "7 ft is 2.1336 m through the unit layer");
+        ok(fabsf(gate_h - want_h) < 1e-4f, "the gate box is exactly the authored door height");
+        ok(gate_h < a.height, "the gate is a doorway, not a full-height wall");
+    }
     ok(a.spawner_count >= 3, "the layout seeds real spawners");
 
     ok(proc_dungeon_save("/tmp/proc_a1.json", &a) && proc_dungeon_save("/tmp/proc_a2.json", &b),

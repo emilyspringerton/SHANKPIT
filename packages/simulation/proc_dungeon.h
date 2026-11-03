@@ -37,6 +37,7 @@
 
 #include "../world/level_boxes.h"
 #include "zone_rules.h"
+#include "../common/units_rules.h"   /* the one conversion site for the feet-authored door height */
 
 #define PROC_DUNGEON_MAX_ROOMS 8
 
@@ -156,7 +157,7 @@ static inline int proc_dungeon_side_has_room(const ProcDungeonInfo *info, int si
 static inline int proc_dungeon_generate(CustomLevelData *out, const char *zone_id, unsigned seed) {
     static ProcDungeonInfo info;
     CustomLevelData *lvl = out;
-    float h, t, door_w, ring;
+    float h, t, door_w, door_h, ring;
     int mat_hub, gate_side = 0;
 
     if (!lvl) return 0;
@@ -170,6 +171,9 @@ static inline int proc_dungeon_generate(CustomLevelData *out, const char *zone_i
     h = (float)g_zone_rules.wall_height(info.seed);
     t = (float)g_zone_rules.wall_thickness();
     door_w = (float)g_zone_rules.door_width();
+    /* A designer's number, in feet, converted exactly once here. Changing zone-door-height-ft in PARENA
+       changes this box and nothing else; no metre value is restated below. */
+    door_h = units_author_length_m((float)g_zone_rules.door_height_ft(), 4);
     ring = (float)g_zone_rules.ring_distance();
 
     snprintf(lvl->name, sizeof lvl->name, "PROC %s %08x", (zone_id && zone_id[0]) ? zone_id : "zone", seed);
@@ -237,7 +241,7 @@ static inline int proc_dungeon_generate(CustomLevelData *out, const char *zone_i
     {
         float hd_hub = info.depth[0] * 0.5f;
         int mat = g_zone_rules.material_for(info.seed, 7);
-        info.gate_box = proc_dungeon_add_box(lvl, 0.0f, -hd_hub + t * 0.5f, door_w, h, t, mat);
+        info.gate_box = proc_dungeon_add_box(lvl, 0.0f, -hd_hub + t * 0.5f, door_w, door_h, t, mat);
     }
 
     /* spawners: one at the hub, one per room, FFA */

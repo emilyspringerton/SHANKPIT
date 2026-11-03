@@ -59,12 +59,15 @@ factors and the F32 entry points.
 
 - **Mass, not weight.** "Ton" is the short ton (2000 lb). There is no pound-force, no gravity-dependent
   weight, and no pressure/stress unit here.
-- **One engine path consumes it: the server's cast range.** `PARENA/stdlib/shankpit/wow_wire.prn` states
+- **Two engine paths consume it: the server's cast range and the dungeon gate.** `PARENA/stdlib/shankpit/wow_wire.prn` states
   the rule in **yards** (`wow_cast_range_yd_for`, per weapon (2 yd knife to 120 yd sniper), the unit a designer says out loud) and
   `apps/server/src/main.c` converts the chosen value once with `units_author_length_m(..., 5)` before comparing squared
   distances, so no metre value is restated in C. Beyond that range a `[@target]` cast fires along the
   player's own aim instead of swinging the crosshair. Level/brick/editor authoring is still unconsumed;
-  `units_author_*` is its entry point.
+  `units_author_*` is its entry point. The second consumer is a geometry dimension a designer states
+  in feet: `zone-door-height-ft` (7 ft) in `PARENA/stdlib/shankpit/zone_rules.prn`, converted once in
+  `packages/simulation/proc_dungeon.h` with `units_author_length_m(..., 4)`, so 2.1336 m is never
+  restated and the dungeon's gate box is exactly the authored height.
 - **The syntax this layer was first written around now compiles.** `fn`, `F32`, `I64`, bare
   `(defenum E A B)` variants and `case` were all refused by the C emitter when this file was written; the
   same session fixed them in PARENA (`src/emit.c` + the shared `ast_sugar.h` pass), and the layer now uses

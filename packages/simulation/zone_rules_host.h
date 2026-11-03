@@ -17,6 +17,7 @@ int zone_room_depth(int seed, int room);
 int zone_wall_height(int seed);
 int zone_wall_thickness(void);
 int zone_door_width(void);
+int zone_door_height_ft(void);
 int zone_ring_distance(void);
 int zone_ring_dir_x(int dir);
 int zone_ring_dir_z(int dir);
@@ -30,7 +31,8 @@ int zone_elapsed_ms(int now_ms, int since_ms);
 
 static const ZoneRules g_zone_rules_parena = {
     zone_grace_seconds, zone_max_zones, zone_room_count, zone_room_width, zone_room_depth,
-    zone_wall_height, zone_wall_thickness, zone_door_width, zone_ring_distance, zone_ring_dir_x,
+    zone_wall_height, zone_wall_thickness, zone_door_width, zone_door_height_ft, zone_ring_distance,
+    zone_ring_dir_x,
     zone_ring_dir_z, zone_spawn_count, zone_mob_count, zone_material_count, zone_material_for,
     zone_difficulty, zone_should_expire, zone_elapsed_ms
 };
