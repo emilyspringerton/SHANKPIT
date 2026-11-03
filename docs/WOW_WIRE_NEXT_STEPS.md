@@ -136,3 +136,16 @@ One pass, after lanes 1-3 and 6-9 landed, run rather than remembered: `check-wow
 
 Lanes 4 and 5 are blocked, and the same pass re-checked instead of assuming: no `go` binary, no `DISPLAY`,
 zero `/dev/dri` entries, no IDUNA-issued ticket. Nothing above claims anything about them.
+
+## Re-verified 2026-11-03 (wire integration)
+
+The pass below was re-run after the client/server integration fixes in `7b904f2` (retry poll off the
+snapshot gate), `9cf42b8` (that change's rationale corrected -- `wow_net_wire_ready()` requires
+`STATE_GAME_NET`, so there is no menu AUTH path) and `9274712` (refused wire ops are logged instead of
+discarded). All fifteen targets exit 0, `test-wow-e2e` ran **three times** and produced 3/3 phases each
+time (the ports are ephemeral, so a collision would have flaked rather than failed), and PARENA is
+374 passed / 0 failed.
+
+What this does and does not cover: the E2E drives the real server over UDP, so retry, ACK reprieve and
+give-up are proven on the wire. The lobby's own call sites are compile-verified only -- no `DISPLAY` and
+no IDUNA ticket here, so nothing has yet watched a player take a shot.
