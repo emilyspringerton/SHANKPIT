@@ -25,7 +25,18 @@ PARTS = [
     ("ticket460_rules.lua", "ModuleScript", "ticket460_rules"),
     ("lobby.server.lua", "Script", "lobby"),
     ("lobby.client.lua", "LocalScript", "lobby_client"),
+    ("stats460.lua", "ModuleScript", "stats460"),
 ]
+
+# Every .lua in src/ must be listed above. A module missing from PARTS is a module the INSERTABLE MODEL does not
+# contain: the tests pass, the source is in the repo, and the game simply does not have it. That is exactly how
+# stats460 was absent while its 92 checks were green, and how login460_test was missing from the test target.
+# Refuse to build an incomplete model instead of shipping one that looks fine.
+_listed = set(part[0] for part in PARTS)
+_present = set(name for name in os.listdir(SRC) if name.endswith(".lua"))
+_missing = sorted(_present - _listed)
+if _missing:
+    raise SystemExit("src/ has .lua files missing from PARTS: " + ", ".join(_missing))
 
 def main(argv):
     out_path = argv[1] if len(argv) > 1 else os.path.join(ROOT, "SHANKPIT_ROBLOX_460.rbxmx")
