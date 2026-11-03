@@ -596,7 +596,8 @@ test-roblox:
 	if [ -z "$$lua_bin" ]; then echo "SKIP test-roblox: no lua/luajit interpreter on this host"; else \
 	  "$$lua_bin" roblox/tests/net460_test.lua && \
 	  "$$lua_bin" roblox/tests/queue460_test.lua && \
-	  "$$lua_bin" roblox/tests/ticket460_test.lua; fi
+	  "$$lua_bin" roblox/tests/ticket460_test.lua && \
+	  "$$lua_bin" roblox/tests/login460_test.lua; fi
 
 roblox-model: test-roblox
 	python3 roblox/tools/build_rbxmx.py
