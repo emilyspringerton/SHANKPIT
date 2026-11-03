@@ -10,5 +10,7 @@ int lora_hit_permille(int preset);
 int lora_damage(int preset);
 int lora_xp_hit(int preset);
 int lora_xp_move(int preset);
+int lora_resend_ms(int preset);
+int lora_max_sends(int preset);
 
 #endif /* SHANKPIT_PROTOCOL_LORA_RULES_H */

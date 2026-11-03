@@ -58,8 +58,15 @@ enum {
     LORA_DELTA_XP     = 3,   /* value = xp gained */
     LORA_DELTA_ITEM   = 4,   /* value = item id, extra = quantity */
     LORA_DELTA_ACK    = 5,   /* value = the intent's sequence number: "your action was resolved" */
-    LORA_DELTA_COUNT  = 6
+    LORA_DELTA_STATE  = 6,   /* a whole actor for a snapshot: value = packed x/y, extra = hp */
+    LORA_DELTA_COUNT  = 7
 };
+
+/* x and y are < 64, so both fit one uint16 with room to spare; hp rides in extra. This is what makes a
+   full-state frame cost ONE record per actor instead of two. */
+#define LORA_STATE_PACK(x, y) ((uint16_t)(((x) & 0x3F) | (((y) & 0x3F) << 6)))
+#define LORA_STATE_X(v)       ((uint16_t)((v) & 0x3F))
+#define LORA_STATE_Y(v)       ((uint16_t)(((v) >> 6) & 0x3F))
 
 typedef struct {
     uint16_t seq;      /* out-of-order / duplicate filtering, and the key the ACK echoes back */
@@ -420,6 +427,106 @@ static int lora_world_tick_frames(LoraWorld *w, const LoraIntent *in, int n, int
     if (built < 0) return -1;
     *w = tmp;
     return built;
+}
+
+/* ---- a snapshot: the whole world, for a client that lost everything ---------------------------- */
+
+/* Same framing as a delta (chunked, reassembled by the same code), but every record is STATE: "this is
+   the world at tick T, replace your copy". It does NOT advance the tick, because it resolves nothing. */
+static int lora_world_snapshot(const LoraWorld *w, LoraDelta *frames, int max_frames) {
+    LoraDeltaRecord rec[LORA_MAX_ACTORS];
+    int i;
+    if (!w || !frames || max_frames <= 0) return -1;
+    if (w->count > LORA_MAX_ACTORS) return -1;
+    for (i = 0; i < w->count; i++) {
+        rec[i].entity = w->actors[i].id;
+        rec[i].kind = LORA_DELTA_STATE;
+        rec[i].value = LORA_STATE_PACK(w->actors[i].x, w->actors[i].y);
+        rec[i].extra = (uint8_t)(w->actors[i].hp > 255 ? 255 : w->actors[i].hp);
+    }
+    return lora_frames_build(rec, w->count, w->tick, frames, max_frames);
+}
+
+/* ---- the client's resend queue ---------------------------------------------------------------- */
+
+#define LORA_CLIENT_PENDING 16
+
+typedef struct {
+    LoraIntent in;
+    uint32_t   last_ms;
+    uint8_t    sends;
+    uint8_t    used;
+} LoraPending;
+
+typedef struct {
+    LoraPending p[LORA_CLIENT_PENDING];
+    int preset;
+} LoraClient;
+
+static void lora_client_begin(LoraClient *c, int preset) {
+    if (!c) return;
+    memset(c, 0, sizeof *c);
+    c->preset = preset;
+}
+
+static int lora_client_pending(const LoraClient *c) {
+    int i, n = 0;
+    if (!c) return 0;
+    for (i = 0; i < LORA_CLIENT_PENDING; i++) if (c->p[i].used) n++;
+    return n;
+}
+
+/* Queue a NEW intent. 0 = the queue is full, which the caller must surface, not hide. */
+static int lora_client_send(LoraClient *c, const LoraIntent *in, uint32_t now_ms) {
+    int i;
+    if (!c || !in) return 0;
+    for (i = 0; i < LORA_CLIENT_PENDING; i++) {
+        if (!c->p[i].used) {
+            c->p[i].in = *in;
+            c->p[i].sends = 1;
+            c->p[i].last_ms = now_ms;
+            c->p[i].used = 1;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* An ACK nails an intent by (entity, seq): two clients' sequence spaces may overlap, and an ACK for
+   somebody else must never clear our queue. */
+static int lora_client_ack(LoraClient *c, uint16_t entity, uint16_t seq) {
+    int i;
+    if (!c) return 0;
+    for (i = 0; i < LORA_CLIENT_PENDING; i++) {
+        if (c->p[i].used && c->p[i].in.entity == entity && c->p[i].in.seq == seq) {
+            c->p[i].used = 0;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* What is due to be (re)sent now. The caller supplies the time: this header owns no clock.
+   An intent past the budget is DROPPED, so the player learns on the next tick instead of retrying into
+   a link that is not carrying it. */
+static int lora_client_due(LoraClient *c, uint32_t now_ms, LoraIntent *out, int cap) {
+    int i, n = 0;
+    uint32_t after;
+    int max_sends;
+    if (!c || !out || cap <= 0) return 0;
+    after = (uint32_t)lora_resend_ms(c->preset);
+    max_sends = lora_max_sends(c->preset);
+    if (max_sends < 1) max_sends = 1;
+    for (i = 0; i < LORA_CLIENT_PENDING; i++) {
+        if (!c->p[i].used) continue;
+        if (c->p[i].sends >= max_sends) { c->p[i].used = 0; continue; }
+        if ((uint32_t)(now_ms - c->p[i].last_ms) < after) continue;
+        if (n >= cap) break;
+        out[n++] = c->p[i].in;
+        c->p[i].sends++;
+        c->p[i].last_ms = now_ms;
+    }
+    return n;
 }
 
 #endif /* SHANKPIT_PROTOCOL_LORA_WIRE_H */

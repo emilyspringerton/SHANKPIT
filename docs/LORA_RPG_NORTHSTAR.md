@@ -96,9 +96,11 @@ Python daemon and `ForwardToWotanMatchmaker` do not exist in this repo and were 
 
 ## Open questions for the next slice
 
-1. **Loss** is still the real problem, not size: ACKs now tell a client what landed, but the resend
-   POLICY (how long, how many, whether a full-state frame exists to resync a client that lost
-   everything) is not built.
+1. **Loss**: the policy now exists (parity with the old notes) -- `lora_client_send/ack/due` queue
+   intents, clear them on an ACK by `(entity, seq)`, resend after `lora-resend-ms` and **drop** after
+   `lora-max-sends` so a dead link is reported rather than retried forever, and `lora_world_snapshot`
+   builds the full-state frame. What is still missing is the REQUEST side: nothing yet lets a client ask
+   for a snapshot at a chosen tick, so resync is currently "wait for the host to send one".
 2. **Multiple frames per tick** — done (v2 header, chunk reassembly); the remaining question is what a
    receiver does when chunk 2 of 3 never arrives: re-request by tick, or wait for the next full state.
 3. **Persistence** of the slow world (the camp host can sleep between ticks) — IDUNA already holds

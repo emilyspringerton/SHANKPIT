@@ -247,6 +247,75 @@ int main(void) {
     CHECK(lora_damage(0) == 3 && lora_damage(1) == 4, "damage moved");
     CHECK(lora_xp_hit(0) == 10 && lora_xp_hit(1) == 12 && lora_xp_move(0) == 1, "xp moved");
 
+    /* ---- 8. a snapshot: the whole world in frames, reassembled like any tick ---- */
+    {   LoraWorld w, empty;
+        LoraDelta frames[LORA_MAX_FRAMES];
+        LoraReassembly r;
+        int i, f, n;
+        memset(&w, 0, sizeof w);
+        for (i = 0; i < LORA_MAX_ACTORS; i++)
+            CHECK(lora_world_add(&w, (uint16_t)(i + 1), (uint16_t)(i % LORA_GRID_MAX),
+                                 (uint16_t)((i * 3) % LORA_GRID_MAX), (uint16_t)(10 + i)) == 1, "actor %d", i);
+        n = lora_world_snapshot(&w, frames, LORA_MAX_FRAMES);
+        CHECK(n == 2, "64 actors took %d snapshot frames, want 2", n);
+        CHECK(frames[0].count == LORA_MAX_DELTA_RECORDS &&
+              frames[1].count == LORA_MAX_ACTORS - LORA_MAX_DELTA_RECORDS,
+              "snapshot counts %d/%d", frames[0].count, frames[1].count);
+        lora_reassembly_begin(&r);
+        for (f = 0; f < n; f++) CHECK(lora_reassembly_put(&r, frames[f].buf, frames[f].len) >= 0, "chunk %d", f);
+        CHECK(r.count == LORA_MAX_ACTORS, "snapshot reassembled %d actors", r.count);
+        for (i = 0; i < LORA_MAX_ACTORS; i++) {
+            LoraActor *a = lora_world_find(&w, (uint16_t)(i + 1));
+            if (r.rec[i].kind != LORA_DELTA_STATE || r.rec[i].entity != a->id ||
+                LORA_STATE_X(r.rec[i].value) != a->x || LORA_STATE_Y(r.rec[i].value) != a->y ||
+                r.rec[i].extra != (uint8_t)a->hp) {
+                CHECK(0, "snapshot record %d does not match the world", i);
+                break;
+            }
+        }
+        CHECK(lora_world_snapshot(NULL, frames, LORA_MAX_FRAMES) == -1, "a null world snapshotted");
+        memset(&empty, 0, sizeof empty);
+        CHECK(lora_world_snapshot(&empty, frames, 1) == 1 && frames[0].count == 0,
+              "an empty world did not produce one empty frame");
+        CHECK(lora_world_snapshot(&empty, frames, 0) == -1, "a zero-slot snapshot was accepted");
+    }
+
+    /* ---- 9. the resend policy: wait, resend, then give up and say nothing more ---- */
+    {   LoraClient c;
+        LoraIntent in, out[LORA_CLIENT_PENDING];
+        int i;
+        uint32_t window = (uint32_t)lora_resend_ms(0);
+        memset(&in, 0, sizeof in);
+        in.entity = 7; in.seq = 100; in.action = LORA_ACT_MOVE; in.x = 1; in.y = 2;
+        lora_client_begin(&c, 0);
+        CHECK(lora_client_send(&c, &in, 1000) == 1, "the first intent was not queued");
+        CHECK(lora_client_pending(&c) == 1, "pending %d", lora_client_pending(&c));
+        CHECK(lora_client_due(&c, 1000 + window - 1, out, LORA_CLIENT_PENDING) == 0, "it resent before the window");
+        CHECK(lora_client_due(&c, 1000 + window, out, LORA_CLIENT_PENDING) == 1 && out[0].seq == 100,
+              "it did not resend after the window");
+        CHECK(lora_client_ack(&c, 8, 100) == 0, "an ack for another entity cleared the intent");
+        CHECK(lora_client_ack(&c, 7, 100) == 1, "the ack did not clear the intent");
+        CHECK(lora_client_pending(&c) == 0, "an acked intent is still pending");
+        CHECK(lora_client_due(&c, 100000, out, LORA_CLIENT_PENDING) == 0, "an acked intent was resent");
+
+        lora_client_begin(&c, 0);
+        CHECK(lora_client_send(&c, &in, 0) == 1, "queue failed");
+        for (i = 1; i < lora_max_sends(0); i++)
+            CHECK(lora_client_due(&c, (uint32_t)(i * 100000), out, LORA_CLIENT_PENDING) == 1,
+                  "resend %d was not due", i);
+        CHECK(lora_client_due(&c, 1000000, out, LORA_CLIENT_PENDING) == 0, "it resends past the budget");
+        CHECK(lora_client_pending(&c) == 0, "an intent past the budget is still pending");
+
+        lora_client_begin(&c, 0);
+        for (i = 0; i < LORA_CLIENT_PENDING; i++) {
+            in.seq = (uint16_t)i;
+            CHECK(lora_client_send(&c, &in, 0) == 1, "queue slot %d refused", i);
+        }
+        CHECK(lora_client_send(&c, &in, 0) == 0, "a %dth outstanding intent was accepted", LORA_CLIENT_PENDING + 1);
+        CHECK(lora_client_ack(&c, 7, 9999) == 0, "an unknown seq was acked");
+        CHECK(lora_client_due(&c, 10, out, 0) == 0, "a zero-capacity due call emitted something");
+    }
+
     if (fails) { printf("lora: %d FAILED\n", fails); return 1; }
     printf("lora: all checks passed\n");
     return 0;
