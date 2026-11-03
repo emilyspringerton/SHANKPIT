@@ -26,9 +26,13 @@ M.REFRESH_MARGIN_S = 300
 
 function M.routes(base)
     return {
-        register = base .. "/guest-register",
-        login    = base .. "/guest-login",
-        set_name = base .. "/set-display-name",
+        register   = base .. "/guest-register",
+        login      = base .. "/guest-login",
+        set_name   = base .. "/set-display-name",
+        -- Linking an email onto the SAME player row (guest-upgrade), and signing in with it later
+        -- (email-login). IDUNA keeps one player_id across both, so seats and history carry over.
+        upgrade    = base .. "/guest-upgrade",
+        email_in   = base .. "/email-login",
     }
 end
 
@@ -109,12 +113,46 @@ function M.identity_for(http, base, store, user_id, now_s)
     return nil, "not-saved", false
 end
 
+-- Linking an email is what turns a throwaway guest into an account that survives: IDUNA's guest-upgrade
+-- adds credentials to the SAME player row (same player_id, same history) and answers with a fresh player
+-- token. The password is never stored here or by the place -- it is sent once because IDUNA needs it.
+function M.link_email(http, base, identity, email, password, now_s)
+    if type(identity) ~= "table" or struggles(identity.token) then return nil, "not-signed-in" end
+    if struggles(email) or struggles(password) then return nil, "email-and-password-required" end
+    local decoded, reason = http("POST", M.routes(base).upgrade,
+        string.format('{"email":"%s","password":"%s"}', email:gsub('[\"]', ""), password:gsub('[\"]', "")),
+        { ["Content-Type"] = "application/json", ["Authorization"] = "Bearer " .. identity.token })
+    if not decoded then return nil, reason or "no-answer" end
+    local linked, why = M.from_answer(decoded, now_s)
+    if not linked then return nil, why end
+    -- guest-upgrade does not repeat the guest secret; keep the one this identity already had so the
+    -- account can still be opened the old way if the email is ever lost.
+    linked.guest_secret = linked.guest_secret or identity.guest_secret
+    linked.email = email
+    return linked
+end
+
+-- Signing in with a linked email, from ANY place: this is what makes the account per-person rather than
+-- per-place. Same token shape as guest-login (subject "email:<uuid>"), so the ticket mint accepts it.
+function M.email_sign_in(http, base, email, password, now_s)
+    if struggles(email) or struggles(password) then return nil, "email-and-password-required" end
+    local decoded, reason = http("POST", M.routes(base).email_in,
+        string.format('{"email":"%s","password":"%s"}', email:gsub('[\"]', ""), password:gsub('[\"]', "")),
+        { ["Content-Type"] = "application/json" })
+    if not decoded then return nil, reason or "no-answer" end
+    local identity, why = M.from_answer(decoded, now_s)
+    if not identity then return nil, why end
+    identity.email = email
+    return identity
+end
+
 -- What may be persisted for a player. The token is deliberately NOT in it: a token lives 24 h and is
--- cheaper to re-earn from the secret than to store in a place many people can read.
+-- cheaper to re-earn from the secret than to store in a place many people can read. The password is
+-- never in it either -- the email is recorded so a screen can say what the account is linked to.
 function M.to_save(identity)
     if type(identity) ~= "table" or struggles(identity.player_id) then return nil end
     return { player_id = identity.player_id, guest_secret = identity.guest_secret,
-             display_name = identity.display_name }
+             display_name = identity.display_name, email = identity.email }
 end
 
 return M

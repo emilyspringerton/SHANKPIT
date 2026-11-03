@@ -48,6 +48,18 @@ Roblox player can perform minted a token that endpoint then refused (`400 token 
 handler now resolves `player_id` first and falls back to a UUID — bare or provider-prefixed — subject, still
 refusing `local:<uid>` accounts and agent names.
 
+## Keeping the account
+
+A guest is throwaway by design — no email, no recovery. **LINK EMAIL** in the lobby calls IDUNA's
+`guest-upgrade`, which adds credentials to the SAME player row: the `player_id` does not change, so seats and
+any history stay theirs, and the answer is a fresh player token (subject `email:<uuid>`) that the ticket mint
+accepts like any other. The password is sent once, used by IDUNA, and never stored here; the persisted form
+carries `player_id`, the guest secret and the email, never a token or a password.
+
+That is what makes an account portable: `email-login` from any place lands on the same player. What is still
+missing is the *form* for it on this screen — a returning player who did not bring their published secret is
+signed up as a new guest, which the limits below say plainly.
+
 ## The ticket is real, not invented
 
 ```
@@ -99,8 +111,9 @@ it — hand-writing binary INST/PROP/PRNT chunks would be a good way to corrupt 
   public tunnel. `CONFIG.GameUrl` / `TicketUrl` / `NetUrl` are the three to change.
 - **No rating linkage.** The queue seats everyone at the ladder's `rating_start` (1000): the world's ladder is keyed
   by its own pid and no Roblox↔pid binding exists. The board is read-only for the same reason.
-- **Identity is per-place, not per-person.** A guest secret persisted here does not follow a player to another
-  place, and there is no link-email flow in this UI (WOTAN has one; it is not wired here).
+- **The ACCOUNT is portable; the SESSION is not.** A player who links an email can sign in from any place with
+  `email-login` — but this UI has no sign-in-by-email form yet, so a returning player on a fresh place still
+  starts as a new guest until the published secret is present.
 - **The C verifier is not in this checkout.** The harness reimplements the documented algorithm
   (`hmac_sha256.h` lives in the separate shankpit-460 repo) — verified logic, not the C function itself.
 - **No gameplay.** A pair hands out a ticket; the arena stays the C server, which is what a 460 ticket is for.

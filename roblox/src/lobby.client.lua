@@ -22,7 +22,7 @@ gui.ResetOnSpawn = false
 gui.Parent = player:WaitForChild("PlayerGui")
 
 local panel = Instance.new("Frame")
-panel.Size = UDim2.new(0, 320, 0, 372)
+panel.Size = UDim2.new(0, 320, 0, 470)
 panel.Position = UDim2.new(0, 16, 0, 16)
 panel.BackgroundColor3 = Color3.fromRGB(18, 18, 20)
 panel.BorderSizePixel = 0
@@ -79,9 +79,32 @@ local ranked = button("RANKED", 236, 112, 96)
 local signin = button("SIGN IN", 236, 216, 96)
 local leave = button("LEAVE QUEUE", 266, 8, 300)
 
+-- Keeping the account: a guest is throwaway (no email, no recovery). Linking one turns it into an
+-- account that can be signed into from any place, and keeps the same player id.
+local function field(placeholder, y)
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(1, -16, 0, 24)
+    box.Position = UDim2.new(0, 8, 0, y)
+    box.BackgroundColor3 = Color3.fromRGB(28, 28, 32)
+    box.BorderSizePixel = 0
+    box.Font = Enum.Font.Code
+    box.TextSize = 12
+    box.TextColor3 = Color3.fromRGB(235, 235, 235)
+    box.PlaceholderText = placeholder
+    box.PlaceholderColor3 = Color3.fromRGB(120, 120, 120)
+    box.Text = ""
+    box.ClearTextOnFocus = false
+    box.Parent = panel
+    return box
+end
+
+local emailBox = field("email (to keep this account)", 296)
+local passBox = field("password, 8+ characters", 324)
+local link = button("LINK EMAIL", 352, 8, 300)
+
 local matchFrame = Instance.new("Frame")
 matchFrame.Size = UDim2.new(1, -16, 0, 64)
-matchFrame.Position = UDim2.new(0, 8, 0, 298)
+matchFrame.Position = UDim2.new(0, 8, 0, 384)
 matchFrame.BackgroundColor3 = Color3.fromRGB(28, 46, 40)
 matchFrame.BorderSizePixel = 0
 matchFrame.Visible = false
@@ -116,6 +139,11 @@ signin.MouseButton1Click:Connect(function()
     state.Text = "state: signing in with IDUNA"
     queueEvent:FireServer("signin")
 end)
+link.MouseButton1Click:Connect(function()
+    state.Text = "state: linking email with IDUNA"
+    -- The server forwards this once; it is not stored here and never comes back.
+    queueEvent:FireServer("link", { email = emailBox.Text, password = passBox.Text })
+end)
 leave.MouseButton1Click:Connect(function()
     match = nil
     matchFrame.Visible = false
@@ -148,7 +176,12 @@ boardEvent.OnClientEvent:Connect(renderBoard)
 
 queueEvent.OnClientEvent:Connect(function(payload)
     if type(payload) ~= "table" then return end
-    if payload.signed_in then
+    if payload.linked then
+        state.Text = "state: linked to " .. tostring(payload.email)
+        selfLine.Text = "iduna: kept (" .. tostring(payload.email) .. ")"
+    elseif payload.link_error then
+        state.Text = "state: link refused (" .. tostring(payload.link_error) .. ")"
+    elseif payload.signed_in then
         state.Text = string.format("state: signed in as %s (%s)", tostring(payload.display_name),
             tostring(payload.account_state))
         selfLine.Text = "iduna: " .. tostring(payload.player_id):sub(1, 8)

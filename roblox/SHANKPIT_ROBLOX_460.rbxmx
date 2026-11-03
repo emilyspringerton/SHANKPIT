@@ -421,9 +421,13 @@ M.REFRESH_MARGIN_S = 300
 
 function M.routes(base)
     return {
-        register = base .. "/guest-register",
-        login    = base .. "/guest-login",
-        set_name = base .. "/set-display-name",
+        register   = base .. "/guest-register",
+        login      = base .. "/guest-login",
+        set_name   = base .. "/set-display-name",
+        -- Linking an email onto the SAME player row (guest-upgrade), and signing in with it later
+        -- (email-login). IDUNA keeps one player_id across both, so seats and history carry over.
+        upgrade    = base .. "/guest-upgrade",
+        email_in   = base .. "/email-login",
     }
 end
 
@@ -504,12 +508,46 @@ function M.identity_for(http, base, store, user_id, now_s)
     return nil, "not-saved", false
 end
 
+-- Linking an email is what turns a throwaway guest into an account that survives: IDUNA's guest-upgrade
+-- adds credentials to the SAME player row (same player_id, same history) and answers with a fresh player
+-- token. The password is never stored here or by the place -- it is sent once because IDUNA needs it.
+function M.link_email(http, base, identity, email, password, now_s)
+    if type(identity) ~= "table" or struggles(identity.token) then return nil, "not-signed-in" end
+    if struggles(email) or struggles(password) then return nil, "email-and-password-required" end
+    local decoded, reason = http("POST", M.routes(base).upgrade,
+        string.format('{"email":"%s","password":"%s"}', email:gsub('[\"]', ""), password:gsub('[\"]', "")),
+        { ["Content-Type"] = "application/json", ["Authorization"] = "Bearer " .. identity.token })
+    if not decoded then return nil, reason or "no-answer" end
+    local linked, why = M.from_answer(decoded, now_s)
+    if not linked then return nil, why end
+    -- guest-upgrade does not repeat the guest secret; keep the one this identity already had so the
+    -- account can still be opened the old way if the email is ever lost.
+    linked.guest_secret = linked.guest_secret or identity.guest_secret
+    linked.email = email
+    return linked
+end
+
+-- Signing in with a linked email, from ANY place: this is what makes the account per-person rather than
+-- per-place. Same token shape as guest-login (subject "email:&lt;uuid&gt;"), so the ticket mint accepts it.
+function M.email_sign_in(http, base, email, password, now_s)
+    if struggles(email) or struggles(password) then return nil, "email-and-password-required" end
+    local decoded, reason = http("POST", M.routes(base).email_in,
+        string.format('{"email":"%s","password":"%s"}', email:gsub('[\"]', ""), password:gsub('[\"]', "")),
+        { ["Content-Type"] = "application/json" })
+    if not decoded then return nil, reason or "no-answer" end
+    local identity, why = M.from_answer(decoded, now_s)
+    if not identity then return nil, why end
+    identity.email = email
+    return identity
+end
+
 -- What may be persisted for a player. The token is deliberately NOT in it: a token lives 24 h and is
--- cheaper to re-earn from the secret than to store in a place many people can read.
+-- cheaper to re-earn from the secret than to store in a place many people can read. The password is
+-- never in it either -- the email is recorded so a screen can say what the account is linked to.
 function M.to_save(identity)
     if type(identity) ~= "table" or struggles(identity.player_id) then return nil end
     return { player_id = identity.player_id, guest_secret = identity.guest_secret,
-             display_name = identity.display_name }
+             display_name = identity.display_name, email = identity.email }
 end
 
 return M
@@ -786,7 +824,30 @@ queueEvent.OnServerEvent:Connect(function(player, action, arg)
             player_id = identity.player_id,
             display_name = identity.display_name,
             account_state = identity.account_state,
+            email = identity.email,
         })
+    elseif action == "link" then
+        -- "Keep this account": IDUNA adds credentials to the SAME player row, so history carries over.
+        -- The password is forwarded once and never stored by this server or this place.
+        local identity = identities[player]
+        if not identity then identity, _ = ensureIdentity(player) end
+        if not identity then
+            player:SetAttribute("SHANKPIT460_State", "refused:not-signed-in")
+            return
+        end
+        local linked, why = login460.link_email(
+            function(method, url, body, headers) return httpJson(url, method, body, headers) end,
+            CONFIG.GameUrl, identity,
+            tostring(arg and arg.email or ""), tostring(arg and arg.password or ""), os.time())
+        if not linked then
+            player:SetAttribute("SHANKPIT460_State", "refused:link:" .. tostring(why))
+            queueEvent:FireClient(player, { link_error = tostring(why) })
+            return
+        end
+        identities[player] = linked
+        saveIdentity(player.UserId, linked)
+        player:SetAttribute("SHANKPIT460_State", "linked")
+        queueEvent:FireClient(player, { linked = true, email = linked.email })
     elseif action == "join" then
         local mode = tostring(arg and arg.mode or "casual")
         -- A hand-passed token still works (a player who signed in on IDUNA's own page), otherwise this
@@ -938,7 +999,7 @@ gui.ResetOnSpawn = false
 gui.Parent = player:WaitForChild("PlayerGui")
 
 local panel = Instance.new("Frame")
-panel.Size = UDim2.new(0, 320, 0, 372)
+panel.Size = UDim2.new(0, 320, 0, 470)
 panel.Position = UDim2.new(0, 16, 0, 16)
 panel.BackgroundColor3 = Color3.fromRGB(18, 18, 20)
 panel.BorderSizePixel = 0
@@ -995,9 +1056,32 @@ local ranked = button("RANKED", 236, 112, 96)
 local signin = button("SIGN IN", 236, 216, 96)
 local leave = button("LEAVE QUEUE", 266, 8, 300)
 
+-- Keeping the account: a guest is throwaway (no email, no recovery). Linking one turns it into an
+-- account that can be signed into from any place, and keeps the same player id.
+local function field(placeholder, y)
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(1, -16, 0, 24)
+    box.Position = UDim2.new(0, 8, 0, y)
+    box.BackgroundColor3 = Color3.fromRGB(28, 28, 32)
+    box.BorderSizePixel = 0
+    box.Font = Enum.Font.Code
+    box.TextSize = 12
+    box.TextColor3 = Color3.fromRGB(235, 235, 235)
+    box.PlaceholderText = placeholder
+    box.PlaceholderColor3 = Color3.fromRGB(120, 120, 120)
+    box.Text = ""
+    box.ClearTextOnFocus = false
+    box.Parent = panel
+    return box
+end
+
+local emailBox = field("email (to keep this account)", 296)
+local passBox = field("password, 8+ characters", 324)
+local link = button("LINK EMAIL", 352, 8, 300)
+
 local matchFrame = Instance.new("Frame")
 matchFrame.Size = UDim2.new(1, -16, 0, 64)
-matchFrame.Position = UDim2.new(0, 8, 0, 298)
+matchFrame.Position = UDim2.new(0, 8, 0, 384)
 matchFrame.BackgroundColor3 = Color3.fromRGB(28, 46, 40)
 matchFrame.BorderSizePixel = 0
 matchFrame.Visible = false
@@ -1032,6 +1116,11 @@ signin.MouseButton1Click:Connect(function()
     state.Text = "state: signing in with IDUNA"
     queueEvent:FireServer("signin")
 end)
+link.MouseButton1Click:Connect(function()
+    state.Text = "state: linking email with IDUNA"
+    -- The server forwards this once; it is not stored here and never comes back.
+    queueEvent:FireServer("link", { email = emailBox.Text, password = passBox.Text })
+end)
 leave.MouseButton1Click:Connect(function()
     match = nil
     matchFrame.Visible = false
@@ -1064,7 +1153,12 @@ boardEvent.OnClientEvent:Connect(renderBoard)
 
 queueEvent.OnClientEvent:Connect(function(payload)
     if type(payload) ~= "table" then return end
-    if payload.signed_in then
+    if payload.linked then
+        state.Text = "state: linked to " .. tostring(payload.email)
+        selfLine.Text = "iduna: kept (" .. tostring(payload.email) .. ")"
+    elseif payload.link_error then
+        state.Text = "state: link refused (" .. tostring(payload.link_error) .. ")"
+    elseif payload.signed_in then
         state.Text = string.format("state: signed in as %s (%s)", tostring(payload.display_name),
             tostring(payload.account_state))
         selfLine.Text = "iduna: " .. tostring(payload.player_id):sub(1, 8)

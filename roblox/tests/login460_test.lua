@@ -107,5 +107,44 @@ local http6, calls6 = transport({})
 eq(select(2, L.identity_for(http6, BASE, {}, 7, 1)), "not-saved", "an unknown player has no identity yet")
 eq(#calls6, 0, "and nothing is requested behind their back")
 
+-- 7) linking an email keeps the SAME player and turns a guest into a portable account
+local signed = { player_id = PID, token = TOKEN, expires_at = 20000, guest_secret = "s3cret" }
+local http7, calls7 = transport({ { player_id = PID, token = "linked-token", expires_at = 99999,
+    display_name = "Runner-A7B2" } })
+local linked = L.link_email(http7, BASE, signed, "a@b.co", "longenough1", 1000)
+ok(linked ~= nil, "a link answers an identity")
+eq(calls7[1].url, BASE .. "/guest-upgrade", "guest-upgrade URL")
+eq(calls7[1].headers["Authorization"], "Bearer " .. TOKEN, "the link is made with the player's own token")
+ok(calls7[1].body:find("longenough1") ~= nil, "the password is sent (IDUNA needs it to verify)")
+eq(linked.player_id, PID, "the player id does not change when an email is linked")
+eq(linked.token, "linked-token", "the fresh token is used")
+eq(linked.email, "a@b.co", "the email is recorded")
+eq(linked.guest_secret, "s3cret", "the existing secret is kept as a second way in")
+eq(L.to_save(linked).email, "a@b.co", "the saved form remembers the email")
+ok(L.to_save(linked).password == nil and L.to_save(linked).token == nil,
+   "and never the password or the token")
+eq(select(2, L.link_email(http7, BASE, { player_id = PID }, "a@b.co", "x", 1)), "not-signed-in",
+   "linking needs a signed-in identity")
+eq(select(2, L.link_email(http7, BASE, signed, "", "x", 1)), "email-and-password-required",
+   "an empty email is refused before a request")
+eq(select(2, L.link_email(transport({ { __fail = "http-409" } }), BASE, signed, "a@b.co", "x", 1)), "http-409",
+   "an email already in use is reported, not hidden")
+eq(select(2, L.link_email(transport({ { player_id = PID, expires_at = 1 } }), BASE, signed, "a@b.co", "x", 1)),
+   "no-token", "a malformed link answer is not an identity")
+
+-- 8) signing in by email, from any place
+local http9, calls9 = transport({ { player_id = PID, token = "email-token", expires_at = 99999,
+    display_name = "Runner-A7B2", account_state = "base" } })
+local back9 = L.email_sign_in(http9, BASE, "a@b.co", "longenough1", 1000)
+ok(back9 ~= nil, "email sign-in answers an identity")
+eq(calls9[1].url, BASE .. "/email-login", "email-login URL")
+eq(calls9[1].headers["Authorization"], nil, "email sign-in needs no bearer")
+eq(back9.player_id, PID, "same player id as the guest account")
+eq(back9.account_state, "base", "a linked account reports base, not guest")
+eq(back9.email, "a@b.co", "the email is carried")
+eq(select(2, L.email_sign_in(http9, BASE, "", "x", 1)), "email-and-password-required", "no email -> refused")
+eq(select(2, L.email_sign_in(transport({ { __fail = "http-401" } }), BASE, "a@b.co", "wrong", 1)), "http-401",
+   "a wrong password is reported as such")
+
 print(string.format("login460: %d checks, %d failures", checks, failures))
 os.exit(failures == 0 and 0 or 1)

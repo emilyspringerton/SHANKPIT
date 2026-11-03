@@ -191,7 +191,30 @@ queueEvent.OnServerEvent:Connect(function(player, action, arg)
             player_id = identity.player_id,
             display_name = identity.display_name,
             account_state = identity.account_state,
+            email = identity.email,
         })
+    elseif action == "link" then
+        -- "Keep this account": IDUNA adds credentials to the SAME player row, so history carries over.
+        -- The password is forwarded once and never stored by this server or this place.
+        local identity = identities[player]
+        if not identity then identity, _ = ensureIdentity(player) end
+        if not identity then
+            player:SetAttribute("SHANKPIT460_State", "refused:not-signed-in")
+            return
+        end
+        local linked, why = login460.link_email(
+            function(method, url, body, headers) return httpJson(url, method, body, headers) end,
+            CONFIG.GameUrl, identity,
+            tostring(arg and arg.email or ""), tostring(arg and arg.password or ""), os.time())
+        if not linked then
+            player:SetAttribute("SHANKPIT460_State", "refused:link:" .. tostring(why))
+            queueEvent:FireClient(player, { link_error = tostring(why) })
+            return
+        end
+        identities[player] = linked
+        saveIdentity(player.UserId, linked)
+        player:SetAttribute("SHANKPIT460_State", "linked")
+        queueEvent:FireClient(player, { linked = true, email = linked.email })
     elseif action == "join" then
         local mode = tostring(arg and arg.mode or "casual")
         -- A hand-passed token still works (a player who signed in on IDUNA's own page), otherwise this

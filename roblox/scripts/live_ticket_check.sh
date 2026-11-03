@@ -78,22 +78,30 @@ if [ "$status" != "200" ]; then
     echo "ticket mint failed: HTTP $status" >&2; cat "$work/ticket.json" >&2; exit 1
 fi
 
-python3 - "$work/ticket.json" "$secret" <<'PY'
-import binascii, hashlib, hmac, json, sys, time
-answer = json.load(open(sys.argv[1]))
-secret = sys.argv[2].encode("utf-8")  # []byte(env), exactly as shankpit_ticket.go keys the HMAC
-ticket = answer["ticket"]
-raw = binascii.unhexlify(ticket)
-assert len(raw) == 36, f"ticket is {len(raw)} bytes, not 36"
-payload, mac = raw[:20], raw[20:]
-expires = int.from_bytes(payload[16:20], "little")
-want = hmac.new(secret, payload, hashlib.sha256).digest()[:16]
-assert hmac.compare_digest(mac, want), "MAC does not verify under the shared secret"
-assert expires == answer["expires_at"], "JSON expiry disagrees with the bytes"
-assert expires > time.time(), "ticket is already expired"
-assert len(answer["player_id"]) == 36, "player_id is not a uuid"
-print(f"MAC verified: 16-byte truncated HMAC-SHA256 over {len(payload)} payload bytes, {expires - int(time.time())} s left")
-PY
+python3 "$root/roblox/tests/verify_ticket.py" "$work/ticket.json" "$secret" "$player"
+
+echo "linking an email onto the SAME player (the 'keep this account' path)..."
+live_email="roblox$$@example.com"
+curl -sf -X POST "$base/api/v1/games/shankpit/guest-upgrade" \
+    -H "Authorization: Bearer $token2" -H 'Content-Type: application/json' \
+    -d "{\"email\":\"$live_email\",\"password\":\"shankpit-live-1\"}" >"$work/link.json"
+linked_pid="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["player_id"])' "$work/link.json")"
+[ "$linked_pid" = "$player" ] || { echo "link changed the player id: $linked_pid != $player" >&2; exit 1; }
+echo "  linked $live_email to $linked_pid (same player)"
+
+echo "signing in by email, the way another place would..."
+curl -sf -X POST "$base/api/v1/games/shankpit/email-login" \
+    -H 'Content-Type: application/json' \
+    -d "{\"email\":\"$live_email\",\"password\":\"shankpit-live-1\"}" >"$work/email.json"
+email_token="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["token"])' "$work/email.json")"
+
+echo "minting a ticket with the EMAIL token (a credential this place never saw issued)..."
+status="$(curl -s -o "$work/ticket2.json" -w '%{http_code}' -X POST "$base/api/v1/shankpit/ticket" \
+    -H "Authorization: Bearer $email_token" -H 'Content-Type: application/json' -d '{}')"
+if [ "$status" != "200" ]; then
+    echo "email-token ticket mint failed: HTTP $status" >&2; cat "$work/ticket2.json" >&2; exit 1
+fi
+python3 "$root/roblox/tests/verify_ticket.py" "$work/ticket2.json" "$secret" "$player"
 
 echo "reading IDUNA's live answer with the place's own module..."
 ticket_hex="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["ticket"])' "$work/ticket.json")"
