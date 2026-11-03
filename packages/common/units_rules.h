@@ -17,9 +17,11 @@
  *   family 2 volume: 0 ml, 1 L, 2 m3, 3 cu in, 4 cu ft, 5 US gallon
  * Append only; never renumber.
  *
- * HONEST: the emitter this repo has cannot take F32 or I64, so these are doubles (F64) rather than the
- * F32 the original sketch used. Nothing in the engine calls this layer yet -- it is generated, tested
- * and linked only by `make test-units`. */
+ * HONEST: these are doubles (F64) rather than the F32 the original sketch used, because the exact
+ * factors are not representable in F32 (1 cu ft = 28.316846592 L exceeds float's precision) -- a choice
+ * about this layer's arithmetic, not a limit of the emitter, which has accepted F32 and I64 since
+ * 2026-11-03. Two engine paths consume it today: the server's per-weapon cast range and the procedural
+ * dungeon's feet-authored gate height. `units_author_*` is the entry point for the next one. */
 
 int    units_code_valid(int family, int code);
 double units_length_mm(double v, int unit);
