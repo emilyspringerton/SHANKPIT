@@ -17939,9 +17939,10 @@ int main(int argc, char* argv[]) {
                         NET_WARN_LOG("INPUT_BLOCKED reason=awaiting_local_snapshot_sync client_id=%d", my_client_id);
                     }
                 }
-                /* Polled every frame, not only inside the in-game input gate above: the AUTH ticket is
-                   sent from the menu, so with this call gated on gameplay an unacknowledged ticket could
-                   never reach its give-up and "login ticket" would be a message that cannot happen. */
+                /* Polled whenever the wire is usable, not only inside the input gate above. That gate also
+                   waits for the first snapshot sync, so a frame sent between connect and sync -- the AUTH
+                   ticket, the first target change -- could not be retried or given up until a snapshot had
+                   already arrived, which is exactly the window where a lost AUTH is unrecoverable. */
                 wow_net_poll_retries();
                 client_decay_pending_correction(now_ms);
                 net_apply_remote_interpolation(now_ms);
