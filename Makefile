@@ -490,6 +490,30 @@ test-deadweight: | $(BIN_DIR)
 	$(CC) -O1 -Wall -Wextra -Werror -Ipackages/simulation packages/simulation/dw_test.c packages/simulation/dw_engine.c packages/simulation/dw_match.c packages/simulation/dw_ladder.c packages/simulation/dw_play.c packages/simulation/dw_net.c packages/simulation/dw_rules.c packages/simulation/dw_citizen_rules.c packages/simulation/citizen_life.c -o $(BIN_DIR)/dw_test $(LIBS_M)
 	./$(BIN_DIR)/dw_test
 
+# ---- the sequencer's PARITY vectors (the three-way merge, DEADWEIGHT half) ----------------------
+# PARENA/stdlib/deadweight/match_parity.txt is asserted by BOTH this test and
+# NOOBTOPIA/tests/deadweight_match_test.lua -- the same convention walk_parity.txt set for movement.
+# The sequencer itself is the one piece still hand-written per world (dw_match.c here,
+# src/deadweight_game.lua there); these rows are what stops the two drifting.
+#
+# One binary writes AND reads the file: `--dump` is the generator, so the writer and the reader can
+# never disagree about the columns. The vectors are the C answers (the C emitted from the .prn is
+# authoritative; the Luau port is the bug if it disagrees) -- so after `make regen-dw-parity`, re-check
+# a couple of rows BY HAND, or a garbled column would be "parity" with itself.
+DW_PARITY_SRC := packages/simulation/dw_match_parity_test.c packages/simulation/dw_engine.c \
+                 packages/simulation/dw_match.c packages/simulation/dw_rules.c \
+                 packages/simulation/dw_citizen_rules.c
+DW_PARITY_TXT ?= ../PARENA/stdlib/deadweight/match_parity.txt
+
+test-dw-parity: | $(BIN_DIR)
+	$(CC) -O1 -Wall -Wextra -Werror -Ipackages/simulation $(DW_PARITY_SRC) -o $(BIN_DIR)/dw_parity_test $(LIBS_M)
+	./$(BIN_DIR)/dw_parity_test
+
+regen-dw-parity: | $(BIN_DIR)
+	$(CC) -O1 -Wall -Wextra -Werror -Ipackages/simulation $(DW_PARITY_SRC) -o $(BIN_DIR)/dw_parity_test $(LIBS_M)
+	./$(BIN_DIR)/dw_parity_test --dump > $(DW_PARITY_TXT)
+	@echo "wrote $(DW_PARITY_TXT) -- now: lua ../NOOBTOPIA/tests/deadweight_match_test.lua"
+
 # shankpit_netd -- the internet-of-SHANKPIT shim's HTTP half (tools/shankpit_netd.c). It serves the
 # snapshot dw_net.c writes; nothing here links the game. POSIX only, by design: a deployment daemon
 # behind WOTAN's nginx, never something a player runs.

@@ -43,6 +43,9 @@ void dw_match_init(DwMatch *m, uint32_t seed, const int deck0[DW_DECK], const in
         for (int i = 0; i < DW_DECK; i++) m->deck[s][i] = s == 0 ? deck0[i] : deck1[i];
         m->deck_pos[s] = 0;
         m->last_card[s] = -1;
+        /* "no hand yet" is -1 everywhere, never 0: a zero-filled slot is a REAL card id (the cheapest
+         * Offense card), which is how a policy reading a pre-deal hand used to play a card nobody held. */
+        for (int i = 0; i < DW_HAND; i++) m->seat[s].hand[i] = -1;
     }
     m->winner = -1;
     m->rng = seed ? seed : 0x9e3779b9u;
@@ -189,9 +192,12 @@ static void dw_end_of_round_dots(DwMatch *m) {
     }
 }
 
-int dw_match_round(DwMatch *m, int card0, int card1) {
+/* BEGIN: the clock, the roll, the economy, the deal and DISABLE. Split from the exchange so a policy
+ * can choose from the hand it will actually play -- see the header for the bug this fixes. */
+static int dw_round_begin(DwMatch *m) {
     if (!m) return 1;
     if (m->over) return 1;
+    if (m->started) return 1;   /* already begun: the missing call is FINISH, not another BEGIN */
     const DwEngine *e = dw_engine();
     if (m->round >= e->max_rounds()) { m->over = 1; m->winner = e->round_winner(m->seat[0].hull, m->seat[1].hull, m->seat[0].vault, m->seat[1].vault); return 1; }
 
@@ -219,6 +225,15 @@ int dw_match_round(DwMatch *m, int card0, int card1) {
         }
         if (m->seat[s].blind_rounds > 0) m->seat[s].blind_rounds--;
     }
+
+    m->started = 1;
+    return 0;
+}
+
+/* FINISH: the declared cards, every effect channel, and the end of the match. */
+static int dw_round_finish(DwMatch *m, int card0, int card1) {
+    const DwEngine *e = dw_engine();
+    m->started = 0;
 
     int card[2];
     card[0] = card0;
@@ -326,9 +341,16 @@ int dw_match_round(DwMatch *m, int card0, int card1) {
     return 0;
 }
 
+/* Both halves in one call, for a scripted caller (a replay, a test, a UI that has already taken its
+ * clicks). The deal-then-resolve order is the game's, so a scripted round and a policy round agree. */
+int dw_match_round(DwMatch *m, int card0, int card1) {
+    if (dw_round_begin(m)) return 1;
+    return dw_round_finish(m, card0, card1);
+}
+
 int dw_match_step_policy(DwMatch *m, int aggression0, int aggression1) {
-    if (!m) return 1;
-    if (m->over) return 1;
+    /* BEGIN first: the policy has to see the hand of the round it is playing. */
+    if (dw_round_begin(m)) return 1;
     const DwEngine *e = dw_engine();
     int pick[2];
     int aggr[2] = { aggression0, aggression1 };
@@ -346,7 +368,7 @@ int dw_match_step_policy(DwMatch *m, int aggression0, int aggression1) {
                              m->seat[s].hand[0], m->seat[s].hand[1], m->seat[s].hand[2],
                              m->seat[s].hand[3]);
     }
-    return dw_match_round(m, pick[0], pick[1]);
+    return dw_round_finish(m, pick[0], pick[1]);
 }
 
 int dw_match_play_out(DwMatch *m, int aggression0, int aggression1) {

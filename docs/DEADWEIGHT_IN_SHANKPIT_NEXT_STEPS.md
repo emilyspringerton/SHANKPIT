@@ -141,9 +141,20 @@ screen, and the player cannot yet click "accept".**
    packet type (a new `PACKET_CHALLENGE`/`PACKET_DW_STATE`), authoritative resolution on the server,
    and a client board. The determinism (one seed, one deck pair) is what makes this cheap — send the
    seed, replay the match.
-9. **Per-card golden vectors.** The rules are DEADWEIGHT's and already have parity vectors upstream;
-   the SEQUENCER does not. Add a vector file (deck pair, per-round plays, expected hull/energy/vault
-   after each round) so a future change to effect order is caught by data instead of by reading code.
+9. ~~Per-card golden vectors~~ — **DONE (2026-11-03), and it paid for itself immediately.**
+   `PARENA/stdlib/deadweight/match_parity.txt` holds five whole matches (seed, each seat's
+   deck-crafting inputs, aggression, every round's cards, hulls, energy, credits and damage), written
+   and read by `packages/simulation/dw_match_parity_test.c` — `make test-dw-parity` asserts it,
+   `make regen-dw-parity` regenerates it — and asserted by NOOBTOPIA's
+   `tests/deadweight_match_test.lua` against its Luau port of the sequencer. **Two bugs fell out of the
+   first comparison, one in each world:** the emitter's `if` lowering mangled Bool ladders (fixed in
+   PARENA), and this file's policy chose each card BEFORE the round dealt, so round 1 played card 0,
+   which neither seat held (see the CHANGELOG entry). A third thing it exposed is worth keeping in
+   mind: `make test-deadweight` had passed over that bug because every scripted round names its own
+   cards — the fixture is the only test here that asserts WHICH card a policy plays.
+   **Still open:** the fixture pins the C and the Luau against each other, not against
+   `DEADWEIGHT/core/match.c` upstream (that file is not in this tree), so effect ORDER is pinned to
+   this sequencer's own answers plus a hand-checked row or two.
 10. **Fix the emitter gap that shaped this design.** `parena build` types an imported call's result as
     `void *`, so `(let [k (card-kind id)] ...)` does not compile in C. That is why
     `citizen_policy.prn` is import-free and takes facts as arguments. Fixing the emitter (propagate

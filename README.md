@@ -1549,15 +1549,26 @@ saved** — a deck is a function of the record and the meta, so loading re-craft
 restores it exactly and proves the function is deterministic. Off by default, like the published
 snapshot.
 
+The sequencer is the one piece still hand-written per world (NOOBTOPIA carries its own Luau port for
+Roblox), so it is pinned by DATA: `PARENA/stdlib/deadweight/match_parity.txt` holds five whole matches
+— seed, both seats' deck-crafting inputs, aggression, and every round's cards, hulls, energy, credits
+and damage — and **both** `make test-dw-parity` here and NOOBTOPIA's
+`lua tests/deadweight_match_test.lua` assert the same rows. Writing it found a real bug in this file:
+the policy chose its card BEFORE the round dealt, so it read the previous hand, and on a fresh match
+four zero-filled slots — round 1 played card 0, which neither seat held. A round is now BEGIN (clock,
+economy, deal, DISABLE) and FINISH, with the policy choosing in between.
+
 Status, honestly: **the game plays headlessly, the citizens play it, and a match you accept is read
 round by round on the phone's own scoreboard — but nobody has yet seen it happen on a screen.** There
 is no card art (the board shows numbers, not cards), no wasm module is actually
 attached (SHANKPIT has no interpreter in-tree; the seam is real, the module is not), records live in
-a file only when `SHANKPIT_LADDER_FILE` names one (otherwise they are RAM-only), decks come from the
-game's core nine cards, and players cannot choose a deck yet. Every
+a file only when `SHANKPIT_LADDER_FILE` names one (otherwise they are RAM-only), and decks come from
+the game's core nine cards — a player picks a playstyle, not individual cards, which needs the
+catalogue walk still blocked on the emitter's cross-module call typing. Every
 next step, in order, is in `docs/DEADWEIGHT_IN_SHANKPIT_NEXT_STEPS.md` — including the previous
-step's (the citizens' generated bodies) outstanding work. Run `make test-deadweight` for the whole
-thing headless, or `make regen-dw-engine` after editing the PARENA rules.
+step's (the citizens' generated bodies) outstanding work. Run `make test-deadweight` and
+`make test-dw-parity` for the whole thing headless, `make regen-dw-engine` after editing the PARENA
+rules, or `make regen-dw-parity` after changing the sequencer.
 
 ### The internet of SHANKPIT (the shim, 2026-11-03)
 

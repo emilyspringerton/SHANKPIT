@@ -34,7 +34,18 @@
  *
  * Determinism: one 32-bit LCG inside the match, advanced only for the round roll and the deck draw,
  * and the hands are dealt from the deck in order -- so the same seed and the same two deck lists
- * replay byte-for-byte, which is what makes a match testable and a citizen's record trustworthy. */
+ * replay byte-for-byte, which is what makes a match testable and a citizen's record trustworthy.
+ *
+ * THE POLICY SEAM, and a real bug this split fixes. A round is two halves: BEGIN (clock, roll, the
+ * economy, the deal, DISABLE) and FINISH (every effect channel, and the end of the match).
+ * `dw_match_round` is both halves in one call for a scripted caller; `dw_match_step_policy` picks in
+ * between, which is the only way a policy can choose from the hand it is actually going to play.
+ * Before that split it chose FIRST, so it read the hand dealt the round before -- and on a fresh match,
+ * four zero-filled slots, so round 1 always played card 0, a card neither seat held, and every later
+ * round played a card from the wrong hand. Found by the three-way-merge parity vectors
+ * (PARENA/stdlib/deadweight/match_parity.txt) against NOOBTOPIA's Luau sequencer, which had the same
+ * shape and the same bug; there it surfaced as a first-round pass instead, because its hands start at
+ * -1 rather than at zero. */
 
 #include <stdint.h>
 
@@ -72,6 +83,7 @@ typedef struct {
     int kind_plays[3];      /* every card actually played, by kind -- the population's meta tally */
     int unsupported_fx[2];  /* bitmask of unsequenced channels each seat played, per round */
     int rounds_played;
+    int started;            /* a round has been BEGUN but not FINISHED (the policy seam) */
 } DwMatch;
 
 /* Builds a match from two 16-card decks. Both hull/energy/vault start from the engine. */
