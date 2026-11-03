@@ -50,3 +50,8 @@ test-garage-rules: | $(BIN_DIR)
 		-Ipackages/simulation packages/simulation/garage_rules_test.c packages/simulation/garage_rules.c \
 		-o $(BIN_DIR)/garage_rules_test_asan $(LIBS_M)
 	./$(BIN_DIR)/garage_rules_test_asan
+
+# S5 end to end: the real server, a real UDP client, and PACKET_VEHICLE_STATE observed on a wire.
+.PHONY: test-vehicle-state-e2e
+test-vehicle-state-e2e: server
+	timeout 150 python3 scripts/vehicle_state_e2e.py

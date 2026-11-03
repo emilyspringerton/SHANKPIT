@@ -74,4 +74,20 @@ static inline int garage_value(int hull, int origin) {
     return (hull * p) / 1000;
 }
 
+/* The one answer a host needs when a car is standing on a bay. `occupied` comes from the PLATE (fed from
+ * bodies AND, since this slice, from cars); `objective` from whatever the host is doing. 0 = the bay is
+ * empty, 1 = it takes the car, 2 = it refuses it -- three states, because "empty" and "refused" are very
+ * different things to show a player. */
+static inline int garage_bay_verdict(int occupied, int origin, int objective) {
+    if (!occupied) return 0;
+    return garage_accepts_for(origin, objective) ? 1 : 2;
+}
+
+/* What the bay would pay for the car on it: zero when it will not take it, so a refused car can never
+ * be read as a cheap one. */
+static inline int garage_bay_value(int occupied, int origin, int objective, int hull) {
+    if (garage_bay_verdict(occupied, origin, objective) != 1) return 0;
+    return garage_value(hull, origin);
+}
+
 #endif /* SHANKPIT_GARAGE_H */

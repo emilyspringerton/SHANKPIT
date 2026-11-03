@@ -234,11 +234,20 @@ header's defaults for **every** pair including invalid ones.
 vendored mbedtls), which also surfaced two real repo bugs fixed here: `dw_play.c` missing from
 `LOBBY_SRC`, and no link route to mbedtls when PELLEGRINO's tree is absent.
 
-**Not done, named:** the bay-side TRIGGER. A `PLATE` already knows who is standing on it
-(`widget_runtime.h`), but no vehicle-aware objective exists in `mission.h`, so the garage is a rulebook
-with no one calling it yet — that is the next decision, not a missing wire. Still true: nobody has
-launched the lobby binary (needs a display), loot is client-local, and there is no e2e net test for
-`PACKET_VEHICLE_STATE`.
+**The bay can now SEE a car.** Plates were fed only from bodies on foot, so a car on a garage `PLATE`
+read as empty — the trigger was impossible, not merely unwired. `lobby_widgets_tick` now puts the
+scene's cars into the same actor array, and `garage_bay_verdict` gives the host three states (empty /
+takes it / refuses it) with `garage_bay_value` returning 0 for a refusal.
+
+**`PACKET_VEHICLE_STATE` is now tested on a real wire.** `scripts/vehicle_state_e2e.py` starts the real
+server, connects over UDP, calls a buggy through `PACKET_KIT_CALL`, and checks the packet: masks fit the
+kind, an off part holds nothing, parts sum within the hull, and no part's hull grows between packets. The
+lobby binary also runs (`SDL_VIDEODRIVER=dummy`) — it loads a level, spawns the roster, and falls back on
+every GL pass rather than dying.
+
+**Not done, named:** nothing calls the garage with a real objective — `mission.h` has no vehicle-aware
+objective, so the verdict is computed and shown to no one. Loot is still client-local. The e2e proves the
+packet, not a played match.
 
 ---
 

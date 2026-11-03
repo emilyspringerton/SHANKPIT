@@ -116,6 +116,7 @@ jobs:
           make test-vehicle-salvage
           make check-garage-rules
           make test-garage-rules
+          make test-vehicle-state-e2e
 
       # MODE_TYLER (TYLER VALHANNA cold open) voice + the P0 fixes it needed. Headless, plain gcc,
       # ASan+UBSan, no SDL, no audio device: the scripted actors really walk (story_ai gate +

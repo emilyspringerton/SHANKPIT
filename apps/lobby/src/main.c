@@ -10998,7 +10998,10 @@ static void lobby_widgets_load(const CustomLevelData *lvl) {
 /* One tick for the whole circuit. `busy` suppresses the F PROMPT without stopping the circuit: a lift
    that is already moving keeps moving while you are on the phone. */
 static void lobby_widgets_tick(unsigned int now_ms, int busy) {
-    WidgetActor actors[MAX_CLIENTS];
+    /* Cars are actors too. Before this the array only ever held bodies on FOOT, so a car parked on a
+       garage bay's PLATE read as EMPTY -- which makes "a garage that takes vehicles" impossible no matter
+       what the rules say. Half the array is players, half is cars. */
+    WidgetActor actors[MAX_CLIENTS * 2];
     int count = 0, dt = 16;
     if (g_widget_rt.c.count <= 0) { g_widget_tick_ms = 0; return; }
     if (g_widget_tick_ms && now_ms > g_widget_tick_ms) {
@@ -11011,6 +11014,13 @@ static void lobby_widgets_tick(unsigned int now_ms, int busy) {
         if (!p->active || p->state == STATE_DEAD || p->in_vehicle) continue;
         if (p->scene_id != local_state.players[0].scene_id) continue;
         actors[count].x = p->x; actors[count].y = p->y; actors[count].z = p->z;
+        count++;
+    }
+    for (int bi = 0; bi < MAX_BUGGIES && count < MAX_CLIENTS * 2; bi++) {
+        const BuggyState *b = &local_state.buggies[bi];
+        if (!b->active) continue;
+        if (b->scene_id != local_state.players[0].scene_id) continue;
+        actors[count].x = b->x; actors[count].y = b->y; actors[count].z = b->z;
         count++;
     }
     widget_runtime_tick(&g_widget_rt, actors, count, lobby_widget_reg_sink, lobby_widget_box_sink, NULL);

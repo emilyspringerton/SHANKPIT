@@ -48,6 +48,16 @@ int main(void) {
         CHECK(garage_pays_for(origin) == garage_def_pays(origin),
               "PARENA pays(%d) = %d, header says %d", origin, garage_pays_for(origin), garage_def_pays(origin));
 
+    /* the bay's own three states: empty, taken, refused -- and a refused car is worth nothing */
+    CHECK(garage_bay_verdict(0, GARAGE_ORIGIN_STOLEN, GARAGE_OBJECTIVE_DISAPPEAR) == 0, "an empty bay is empty");
+    CHECK(garage_bay_verdict(1, GARAGE_ORIGIN_STOLEN, GARAGE_OBJECTIVE_DISAPPEAR) == 1, "a stolen car for DISAPPEAR is taken");
+    CHECK(garage_bay_verdict(1, GARAGE_ORIGIN_CIVILIAN, GARAGE_OBJECTIVE_DISAPPEAR) == 2, "a clean car for DISAPPEAR is refused");
+    CHECK(garage_bay_value(1, GARAGE_ORIGIN_STOLEN, GARAGE_OBJECTIVE_DISAPPEAR, 300) == 210,
+          "stolen car on the bay: 700 permille of 300");
+    CHECK(garage_bay_value(1, GARAGE_ORIGIN_CIVILIAN, GARAGE_OBJECTIVE_DISAPPEAR, 300) == 0,
+          "a refused car must not be worth a cheap one instead");
+    CHECK(garage_bay_value(0, GARAGE_ORIGIN_CIVILIAN, GARAGE_OBJECTIVE_ANY, 300) == 0, "no car, no value");
+
     if (fails) { printf("garage: %d FAILED\n", fails); return 1; }
     printf("garage: all checks passed\n");
     return 0;
