@@ -18,6 +18,11 @@ double units_convert(double, int, int, int);
 double units_box_volume_m3(double, double, double, int);
 double units_box_mass_kg(double, double);
 double units_snap(double, int);
+float units_author_length_mm(float, int);
+float units_author_length_m(float, int);
+float units_author_box_m3(float, float, float, int);
+float units_author_mass_kg(float, int);
+float units_author_snap(float, int);
 
 int units_code_valid(int family __attribute__((unused)), int code __attribute__((unused))) {
     if ((code < 0)) {
@@ -262,5 +267,25 @@ double units_snap(double x __attribute__((unused)), int profile __attribute__((u
     } else {
     return (floor(((x / step) + 0.5)) * step);
     }
+}
+
+float units_author_length_mm(float v __attribute__((unused)), int u __attribute__((unused))) {
+    return units_length_mm(v, u);
+}
+
+float units_author_length_m(float v __attribute__((unused)), int u __attribute__((unused))) {
+    return units_length_m(v, u);
+}
+
+float units_author_box_m3(float w __attribute__((unused)), float h __attribute__((unused)), float d __attribute__((unused)), int u __attribute__((unused))) {
+    return units_box_volume_m3(w, h, d, u);
+}
+
+float units_author_mass_kg(float v __attribute__((unused)), int u __attribute__((unused))) {
+    return units_mass_kg(v, u);
+}
+
+float units_author_snap(float x __attribute__((unused)), int profile __attribute__((unused))) {
+    return units_snap(x, profile);
 }
 

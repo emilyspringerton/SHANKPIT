@@ -110,7 +110,9 @@ static inline int wow_targets_intent(WowTargets *t, int slot, int entity, uint8_
     return WOW_WIRE_INTENT_BYTES;
 }
 
-/* Server side. 2 applied, 0 stale/duplicate (dropped on purpose), -1 malformed. */
+/* Server side. 2 applied, 1 already applied (same sequence re-sent -- idempotent, the caller re-ACKs it
+   so a lost ACK cannot strand a retransmitting client), 0 genuinely older (dropped on purpose),
+   -1 malformed. */
 static inline int wow_targets_apply(WowTargets *t, const uint8_t *in, int len) {
     int slot;
     uint16_t seq;
@@ -121,7 +123,11 @@ static inline int wow_targets_apply(WowTargets *t, const uint8_t *in, int len) {
     seq = (uint16_t)(in[2] | (in[3] << 8));   /* byte order is the frame's, PARENA checks the sequence */
     slot = in[4];
     if (slot >= WOW_TARGET_SLOTS || seq == 0) return -1;
-    if (t->have_seq && (int16_t)(seq - t->seq) <= 0) return 0;   /* wrap-safe: strictly newer or drop */
+    if (t->have_seq) {
+        int16_t age = (int16_t)(seq - t->seq);   /* wrap-safe comparison, not a plain < */
+        if (age == 0) return 1;                  /* the frame we already applied: idempotent */
+        if (age < 0) return 0;                   /* strictly older: a reordered datagram, drop */
+    }
     entity = in[5] | (in[6] << 8);
     if (in[1] == WOW_OP_CLEAR_TARGET) {
         t->used[slot] = 0;

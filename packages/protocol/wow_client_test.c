@@ -83,6 +83,62 @@ int main(void) {
     CHECK(wow_client_cast(&cl, -1, 0, frame, sizeof frame) == -1, "a negative weapon id was accepted");
     CHECK(wow_client_cast(&cl, 999, 0, frame, sizeof frame) == -1, "a weapon id above 255 was accepted");
 
+    /* ---- retry + ACK: a lost ACK is resent UNCHANGED, an ACK retires the frame, duplicates are
+     * re-ACKed, and the retry count is bounded by PARENA's wow_retry_max ---- */
+    {
+        WowClient rc;
+        uint8_t f[WOW_WIRE_AUTH_BYTES], out[WOW_WIRE_AUTH_BYTES], a[WOW_WIRE_ACK_BYTES];
+        WowAck wa;
+        uint32_t t0 = 1000;
+        int m;
+
+        wow_client_begin(&rc);
+        wow_client_set_preset(&rc, 1);                 /* slow link: 500 ms period, 2 retries */
+        m = wow_client_target(&rc, 0, 21, f, sizeof f);
+        CHECK(m == WOW_WIRE_INTENT_BYTES, "a retry-test target encoded to %d bytes", m);
+        CHECK(wow_client_track(&rc, f, m, t0) == 1, "a sent frame was not tracked for retry");
+        CHECK(wow_client_retry(&rc, t0 + 499, out, sizeof out) == 0, "a frame was resent early");
+        CHECK(wow_client_retry(&rc, t0 + 500, out, sizeof out) == m && memcmp(out, f, (size_t)m) == 0,
+              "the resend was not byte-identical (a fresh sequence would be dropped as stale)");
+
+        wa.seq = (uint16_t)(f[2] | (f[3] << 8));
+        wa.kind = WOW_OP_SET_TARGET;
+        CHECK(wow_ack_encode(&wa, a, sizeof a) == WOW_WIRE_ACK_BYTES, "an ACK did not encode");
+        CHECK(wow_client_ack(&rc, a, sizeof a) == 1, "an ACK did not retire the frame it names");
+        CHECK(wow_client_pending(&rc) == 0, "an ACKed frame stayed pending");
+        CHECK(wow_client_retry(&rc, t0 + 9000, out, sizeof out) == 0, "an ACKed frame was still retried");
+        CHECK(wow_client_ack(&rc, a, sizeof a) == 0, "a duplicate ACK retired something");
+
+        /* bounded: preset 1 allows 2 resends, then the frame is abandoned instead of looping */
+        wow_client_begin(&rc);
+        wow_client_set_preset(&rc, 1);
+        m = wow_client_target(&rc, 0, 22, f, sizeof f);
+        CHECK(wow_client_track(&rc, f, m, t0) == 1, "the second frame was not tracked");
+        CHECK(wow_client_retry(&rc, t0 + 500, out, sizeof out) == m, "retry 1 was not sent");
+        CHECK(wow_client_retry(&rc, t0 + 1000, out, sizeof out) == m, "retry 2 was not sent");
+        CHECK(wow_client_retry(&rc, t0 + 1500, out, sizeof out) == -2, "the retry cap was not enforced");
+        CHECK(wow_client_pending(&rc) == 0 && rc.abandoned == 1, "the abandoned frame was not dropped");
+        CHECK(wow_client_track(NULL, f, m, t0) == -1, "a null client was tracked");
+        CHECK(wow_client_track(&rc, f, 1, t0) == -1, "a truncated frame was tracked");
+
+        /* a resend the server already applied is re-ACKed, so the LOST-FIRST-ACK case recovers */
+        {
+            WowServer rs;
+            WowClient cc;
+            uint8_t f2[WOW_WIRE_INTENT_BYTES], ack2[WOW_WIRE_ACK_BYTES];
+            int q;
+            wow_server_begin(&rs);
+            rs.require_auth = 0;                       /* this block is about idempotence, not identity */
+            wow_client_begin(&cc);
+            q = wow_client_target(&cc, 0, 31, f2, sizeof f2);
+            CHECK(q == WOW_WIRE_INTENT_BYTES, "the idempotence target encoded to %d bytes", q);
+            CHECK(wow_server_rx(&rs, 2, f2, q, ack2, sizeof ack2) == 1, "a first intent was not ACKed");
+            CHECK(wow_server_rx(&rs, 2, f2, q, ack2, sizeof ack2) == 1,
+                  "a resent intent was not re-ACKed (a lost ACK would strand the client)");
+            CHECK(wow_targets_get(&rs.c[2].targets, 0) == 31, "the resent intent changed the target");
+        }
+    }
+
     if (fails) { printf("client: %d FAILED\n", fails); return 1; }
     printf("client: all checks passed\n");
     return 0;

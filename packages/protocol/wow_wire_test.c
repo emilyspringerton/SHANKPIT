@@ -58,6 +58,14 @@ static void test_targets(void) {
           wow_targets_get(&server, 1) == -1, "clearing a slot failed");
     CHECK(wow_targets_intent(&client, 1, -1, buf, sizeof buf) == 0, "clearing an empty slot was sent");
 
+    /* A resend of the CURRENT sequence is idempotent, not stale: it reports 1 so the server can re-ACK
+       it. Without that distinction a client whose first ACK was lost would resend until it gave up on a
+       target the server had already applied. */
+    n = wow_targets_intent(&client, 2, 40, buf, sizeof buf);
+    CHECK(n > 0 && wow_targets_apply(&server, buf, n) == 2, "a third intent did not apply");
+    CHECK(wow_targets_apply(&server, buf, n) == 1 && wow_targets_get(&server, 2) == 40,
+          "the current sequence re-sent was not reported as already applied");
+
     CHECK(wow_targets_intent(&client, WOW_TARGET_SLOTS, 1, buf, sizeof buf) == -1, "a bad slot encoded");
     CHECK(wow_targets_intent(&client, 0, 0, buf, sizeof buf) == -1, "entity 0 was treated as a unit");
     CHECK(wow_targets_apply(&server, buf, 3) == -1, "a truncated intent applied");
@@ -218,12 +226,16 @@ static void test_server(void) {
         CHECK(wow_server_rx(&s, 2, b2, n2, ack, sizeof ack) == -2, "an unauthenticated target was applied");
     }
 
-    /* targets: applied, then a duplicate is dropped */
+    /* targets: applied, then the SAME sequence re-sent is re-ACKed -- idempotent on purpose, because
+       a client only resends when the first ACK was lost, and silence would strand an applied target.
+       A genuinely older intent is still dropped (asserted above, by sequence). */
     wow_targets_begin(&tx);
     n = wow_targets_intent(&tx, 0, 7, frame, sizeof frame);
     CHECK(wow_server_rx(&s, 1, frame, n, ack, sizeof ack) == 1 && wow_targets_get(&s.c[1].targets, 0) == 7,
           "the server did not take the target");
-    CHECK(wow_server_rx(&s, 1, frame, n, ack, sizeof ack) == 0, "a duplicate target intent was acknowledged");
+    CHECK(wow_server_rx(&s, 1, frame, n, ack, sizeof ack) == 1 &&
+          wow_targets_get(&s.c[1].targets, 0) == 7,
+          "a resent target intent was not re-ACKed (a lost ACK would strand the client)");
 
     /* casts: queued, taken, bounded by PARENA's queue */
     memset(&ci, 0, sizeof ci);

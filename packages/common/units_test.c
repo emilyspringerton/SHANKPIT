@@ -66,6 +66,18 @@ int main(void) {
     CHECK(near(units_snap(-0.5, 4), -0.4064, 1e-12), "negative snaps went the wrong way: %f", units_snap(-0.5, 4));
     CHECK(near(units_snap(0.0, 2), 0.0, 1e-12), "zero moved off zero");
 
+    /* ---- authoring entry points: F32 in and out, the exact F64 core underneath ---- */
+    CHECK(near((double)units_author_length_mm(12.0f, 4), 3657.6, 1e-2), "12 ft as F32 is %f mm",
+          (double)units_author_length_mm(12.0f, 4));
+    CHECK(near((double)units_author_length_m(12.0f, 4), 3.6576, 1e-5), "12 ft as F32 is %f m",
+          (double)units_author_length_m(12.0f, 4));
+    CHECK(near((double)units_author_box_m3(2.0f, 1.0f, 0.5f, 4), 0.028316846592, 1e-7),
+          "2x1x0.5 ft as F32 is %f m3", (double)units_author_box_m3(2.0f, 1.0f, 0.5f, 4));
+    CHECK(near((double)units_author_mass_kg(3.0f, 3), 1.36077711, 1e-6), "3 lb as F32 is %f kg",
+          (double)units_author_mass_kg(3.0f, 3));
+    CHECK(near((double)units_author_snap(0.61f, 1), 0.8, 1e-6), "an F32 snap did not land on the grid");
+    CHECK(units_author_length_mm(1.0f, 9) == 0.0f, "a bad authoring code did not return 0");
+
     if (fails) { printf("units: %d FAILED\n", fails); return 1; }
     printf("units: all checks passed\n");
     return 0;

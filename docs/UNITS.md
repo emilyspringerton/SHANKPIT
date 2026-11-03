@@ -39,15 +39,30 @@ code is `0.0`, not a guess. Renumbering a code is a breaking change; append inst
   4 brick/8 in 0.2032 m, 0 none. The imperial steps are the exact metric equivalents, which is what lets a
   16-inch wall meet a metric wall on the same grid.
 
+## Authoring: `units_author_*`, F32 in and out
+
+New level, brick and editor work should call the `units_author_*` entry points (`length_mm`, `length_m`,
+`box_m3`, `mass_kg`, `snap`). They take and return **F32** because the geometry they feed
+(`packages/world/*.h`) is F32: `units_author_length_m(12, 4)` is 12 feet in metres, as a float, with no
+`0.3048` written at the call site. They are deliberately thin -- the factor arithmetic stays in the F64 core
+below -- so an authoring path cannot grow its own rounded copy of 25.4, and the only error introduced is one
+narrowing at the very end, on an already-correct number.
+
+## Why the core is F64
+
+1 cu ft is 28.316846592 L, which is more significant digits than a float holds (24-bit mantissa, ~7 decimal
+digits). A ft3 -> L -> ft3 round trip performed in F32 drifts by roughly 1e-7 relative per pass; in F64 the
+only rounding is the final narrowing at an authoring call. `make test-units` asserts both the exact F64
+factors and the F32 entry points.
+
 ## Honest limits
 
-- **F64, not F32.** The PARENA emitter in this repo accepts `Unit/I32/Bool/F64/String/Bytes` and rejects
-  `F32` with `parena: defn: unsupported return type symbol 'F32'`. The original sketch's F32 signatures
-  and `(fn ...)`/`(defenum Name Variant)` forms are not this language; this layer is written in the syntax
-  the compiler actually accepts (nested `if` over I32 codes, because the C emitter's `case` output does
-  not compile for I32 either).
 - **Mass, not weight.** "Ton" is the short ton (2000 lb). There is no pound-force, no gravity-dependent
   weight, and no pressure/stress unit here.
 - **Nothing in the engine calls this yet.** It is generated, linked and tested standalone
-  (`make test-units`, `make check-units`); wiring it into level authoring, the brick solver or the renderer
-  is a separate change.
+  (`make test-units`, `make check-units`); wiring it into the level editor, the brick solver or the renderer
+  is the next change, and `units_author_*` is the entry point that work should use.
+- **The syntax this layer was first written around now compiles.** `fn`, `F32`, `I64`, bare
+  `(defenum E A B)` variants and `case` were all refused by the C emitter when this file was written; the
+  same session fixed them in PARENA (`src/emit.c` + the shared `ast_sugar.h` pass), and the layer now uses
+  `fn` and `case` directly. The checked-in `units_rules.c` is generated from that source, not hand-edited.

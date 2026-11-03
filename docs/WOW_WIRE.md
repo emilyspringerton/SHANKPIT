@@ -112,6 +112,34 @@ client, so it takes that text from `/ticket <72 hex>` or `SHANKPIT_TICKET` and k
 a paste-in bridge, named as such: it is not an SSO login, and a missing or expired ticket leaves the
 client exactly where the server puts it -- unauthenticated and refused.
 
+## Retry and ACK: when the receipt is the packet that got lost
+
+The server always ACKed what it accepted, but nothing on the client noticed the ACK, so a dropped datagram
+was simply a dropped action. `wow_client.h` now keeps a **bounded** table of frames it has sent and not had
+acknowledged (`WOW_CLIENT_PENDING` = 4: AUTH, two targets, one cast) and resends the **same bytes** when the
+receipt does not arrive.
+
+- `wow_client_track(&c, frame, len, now_ms)` remembers a just-sent frame. Only frames the server ACKs are
+tracked; an ACK is not.
+- `wow_client_ack(&c, frame, len)` retires the pending frame whose `kind` and `seq` the ACK names, so a late
+  ACK cannot retire a newer frame that reused the slot.
+- `wow_client_retry(&c, now_ms, out, cap)` returns the oldest due frame unchanged, `0` when none is due, or
+  `-2` when that frame exhausted its retries and was dropped. The period is PARENA's `wow_ack_ms(preset)` and
+  the cap is `wow_retry_max(preset)` (2 / 4 / 5 by preset), so a slow link waits longer instead of flooding
+  itself, and a dead server cannot turn a 7-byte intent into an endless loop.
+- **The resend is byte-identical.** Rebuilding it with a fresh sequence would be dropped by the receiver's
+  "strictly newer" rule -- the exact failure retransmission exists to avoid.
+
+That only works if the receiver is idempotent, so the server re-ACKs a frame it already applied:
+`wow_targets_apply` answers **1** for "this is the sequence I already have" (re-ACK it) and **0** only for a
+genuinely older sequence (a reordered datagram, still dropped), and `wow_server_queue_cast` answers 2 for an
+already-accepted cast. A client whose first ACK was lost therefore recovers on the first resend, instead of
+being left holding a target the server took.
+
+The lobby is wired end to end: `wow_net_send_tracked()` sends and tracks, `wow_net_poll_retries()` runs once
+per input pass, and a `PACKET_WOW_WIRE` received from the server is decoded as an ACK and retires the pending
+frame. An abandoned frame is logged (`WOW_GIVEUP`) rather than silently forgotten.
+
 ## GoblinFoxDragon / MUD: what is real today
 
 `GoblinFoxDragon` is now cloned at `MONOREPO/GoblinFoxDragon`. Its MUD is Go under `apps2/mud`

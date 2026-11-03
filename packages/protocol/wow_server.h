@@ -76,13 +76,16 @@ static inline uint16_t wow_server_entity_of(const WowServerClient *c, int token)
     return e > 0 ? (uint16_t)e : 0;
 }
 
-/* Bounded by PARENA's cast queue for the preset. Duplicates (same seq) are dropped, not queued twice. */
+/* Bounded by PARENA's cast queue for the preset. A duplicate (same seq) is NOT queued twice, but it is
+   reported as 2 "already accepted" rather than 0 -- the caller re-ACKs it. That distinction is what
+   makes client retransmission work: the first ACK can be the packet that got lost, and a server that
+   stays silent on the resend would strand a cast that it actually took. */
 static inline int wow_server_queue_cast(WowServer *s, int client, unsigned char weapon,
                                         unsigned char token, uint16_t seq) {
     WowServerClient *c = wow_server_client(s, client);
     int cap;
     if (!c) return -1;
-    if (seq == c->last_cast_seq) return 0;
+    if (seq == c->last_cast_seq) return 2;
     cap = wow_cast_queue(s->preset);
     if (cap > WOW_SERVER_CASTS) cap = WOW_SERVER_CASTS;
     if (c->cast_count >= cap) return 0;
@@ -157,14 +160,20 @@ static inline int wow_server_rx(WowServer *s, int client, const uint8_t *frame, 
 
     if (frame[1] == WOW_OP_SET_TARGET || frame[1] == WOW_OP_CLEAR_TARGET) {
         int r = wow_targets_apply(&c->targets, frame, len);
-        if (r == 2) { wow_server_ack(ack, c->targets.seq, frame[1]); return 1; }
+        /* 2 = applied, 1 = already applied (a resend of the current sequence). Both are ACKed: a
+           retransmission exists because the first ACK was lost, so silence here would strand the
+           client until it gave up. A genuinely older intent (0) stays unacknowledged on purpose. */
+        if (r == 2 || r == 1) { wow_server_ack(ack, c->targets.seq, frame[1]); return 1; }
         return r == 0 ? 0 : -1;
     }
     if (frame[1] == WOW_OP_CAST) {
+        int q;
         WowCastIntent ci;
         if (wow_cast_decode(frame, len, &ci) < 0) return -1;
         if (strcmp(wow_weapon_name(ci.weapon), "?") == 0) return -1;   /* no such weapon: refuse */
-        if (!wow_server_queue_cast(s, client, ci.weapon, ci.token, ci.seq)) return 0;
+        q = wow_server_queue_cast(s, client, ci.weapon, ci.token, ci.seq);
+        if (q == 0) return 0;          /* queue full: refuse quietly, the client will retry */
+        if (q < 0) return -1;
         wow_server_ack(ack, ci.seq, (uint8_t)WOW_OP_CAST);
         return 1;
     }
@@ -197,13 +206,13 @@ static inline int wow_server_rx(WowServer *s, int client, const uint8_t *frame, 
             case WOW_CMD_CAST: {
                 int w = wow_weapon_from_name(arg ? arg : "");
                 if (w < 0) return 0;
-                if (!wow_server_queue_cast(s, client, (unsigned char)w, (unsigned char)token, v.seq)) return 0;
+                if (wow_server_queue_cast(s, client, (unsigned char)w, (unsigned char)token, v.seq) == 0) return 0;
                 break;
             }
             case WOW_CMD_USE: {
                 int w = wow_weapon_from_slot(arg ? atoi(arg) : 0);
                 if (w < 0) return 0;
-                if (!wow_server_queue_cast(s, client, (unsigned char)w, (unsigned char)token, v.seq)) return 0;
+                if (wow_server_queue_cast(s, client, (unsigned char)w, (unsigned char)token, v.seq) == 0) return 0;
                 break;
             }
             case WOW_CMD_TARGET: {

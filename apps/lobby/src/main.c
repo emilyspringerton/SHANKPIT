@@ -13823,6 +13823,10 @@ static int g_wow_ticket_ready;
 
 static int wow_net_wire_ready(void) { return app_state == STATE_GAME_NET && sock >= 0; }
 
+/* Defined beside wow_net_sync_targets below; declared here because the AUTH send in
+   wow_net_begin_session() is the first caller. */
+static void wow_net_send_tracked(const uint8_t *frame, int len);
+
 static int wow_hexval(int c) {
     if (c >= '0' && c <= '9') return c - '0';
     if (c >= 'a' && c <= 'f') return c - 'a' + 10;
@@ -13872,7 +13876,7 @@ static void wow_net_begin_session(void) {
     }
     if (!wow_net_wire_ready() || !g_wow_ticket_ready) return;
     n = wow_client_auth(g_wow_ticket, frame, sizeof frame);
-    if (n > 0) net_send_wow_frame(frame, n);
+    if (n > 0) wow_net_send_tracked(frame, n);
 }
 
 /* Per input pass. Change detection lives in WowClient, so a held target costs nothing on the air. */
@@ -13881,9 +13885,37 @@ static void wow_net_sync_targets(void) {
     int n;
     if (!wow_net_wire_ready()) return;
     n = wow_client_target(&g_wow_client, 0, g_wow_target, frame, sizeof frame);
-    if (n > 0) net_send_wow_frame(frame, n);
+    if (n > 0) wow_net_send_tracked(frame, n);
     n = wow_client_target(&g_wow_client, 1, g_wow_focus, frame, sizeof frame);
-    if (n > 0) net_send_wow_frame(frame, n);
+    if (n > 0) wow_net_send_tracked(frame, n);
+}
+
+/* Send ONE wow_wire frame and remember it until the server ACKs it. A target change and a cast are the
+   only frames whose loss matters (AUTH is retried by reconnecting), and both are small enough that one
+   resent copy costs less than a lost action. Bounded by WowClient.pending, so a dead server cannot make
+   this grow without limit. */
+static void wow_net_send_tracked(const uint8_t *frame, int len) {
+    net_send_wow_frame(frame, len);
+    if (wow_client_track(&g_wow_client, frame, len, SDL_GetTicks()) < 0)
+        NET_WARN_LOG("WOW_TRACK_FULL op=%u len=%d", frame ? (unsigned)frame[1] : 0u, len);
+}
+
+/* Once per input pass: resend the oldest frame whose ACK is overdue, using PARENA's wow_ack_ms(preset)
+   and wow_retry_max(preset). A frame that exhausts its retries is abandoned with a log line, never
+   retried forever -- on a 1k2 link an unbounded retry loop is worse than a dropped cast. */
+static void wow_net_poll_retries(void) {
+    uint8_t frame[WOW_WIRE_AUTH_BYTES];
+    int n;
+    if (!wow_net_wire_ready()) return;
+    n = wow_client_retry(&g_wow_client, SDL_GetTicks(), frame, sizeof frame);
+    if (n > 0) {
+        net_send_wow_frame(frame, n);
+        NET_CLIENT_LOG("WOW_RETRY op=%u len=%d pending=%d", (unsigned)frame[1], n, wow_client_pending(&g_wow_client));
+    } else if (n == -2) {
+        NET_WARN_LOG("WOW_GIVEUP unacked=%d tracked=%u acked=%u retried=%u abandoned=%u",
+                     wow_client_pending(&g_wow_client), g_wow_client.tracked, g_wow_client.acked,
+                     g_wow_client.retried, g_wow_client.abandoned);
+    }
 }
 
 /* The hero this client controls, or -1 when there is nothing to control (menu, net match, dead). */
@@ -13970,7 +14002,7 @@ static int wow_h_cast(void *c, const char *name, int token) {
            server's own weapon gate still applies, and the aim comes from the resolved target. */
         uint8_t frame[WOW_WIRE_CAST_BYTES];
         int n = wow_client_cast(&g_wow_client, w, token, frame, sizeof frame);
-        if (n > 0) net_send_wow_frame(frame, n);
+        if (n > 0) wow_net_send_tracked(frame, n);
         {
             char m[96];
             snprintf(m, sizeof m, "CAST: %s%s (sent to the server)", wow_weapon_name(w),
@@ -16393,6 +16425,22 @@ void net_tick() {
             net_diag.last_snapshot_rx_ms = now_ms;
             net_diag.server_disconnected = 0;
             net_process_snapshot(buffer, len);
+        } else if (head->type == PACKET_WOW_WIRE) {
+            /* The server sends ACKs on this channel. Retiring the matching pending frame is what stops
+               a resend loop; an ACK for a frame already retired (the duplicate the resend provoked) is
+               harmless and counted by wow_client_ack's own return value. */
+            NetWowWire *wp = (NetWowWire*)buffer;
+            if (len >= (int)(sizeof(NetHeader) + 1) && wp->len >= 2 &&
+                (int)(sizeof(NetHeader) + 1 + wp->len) <= len) {
+                int got = wow_client_ack(&g_wow_client, wp->bytes, wp->len);
+                if (got == 1)
+                    NET_CLIENT_LOG("WOW_ACK op=%u len=%u pending=%d", (unsigned)wp->bytes[1], (unsigned)wp->len,
+                                   wow_client_pending(&g_wow_client));
+                else if (got < 0)
+                    NET_WARN_LOG("WOW_ACK_BAD len=%u", (unsigned)wp->len);
+            } else {
+                NET_WARN_LOG("WOW_ACK_SHORT len=%d", len);
+            }
         } else if (head->type == PACKET_WELCOME) {
             my_client_id = head->client_id;
             unsigned int now_ms = SDL_GetTicks();
@@ -17863,6 +17911,7 @@ int main(int argc, char* argv[]) {
                         UserCmd cmd = client_create_cmd(input_fwd, input_str, net_aim_yaw, net_aim_pitch, input_shoot, input_jump, input_crouch, input_reload, input_use, input_ability, input_secondary, input_bike, input_pheromone, wpn_req);
                         client_apply_cmd_movement(&local_state.players[net_local_pid], &cmd, now_ms);
                         wow_net_sync_targets();
+                        wow_net_poll_retries();
                         net_send_cmd(cmd);
                         net_last_cmd_send_ms = now_ms;
                         if (net_spawn_protect_cmds > 0) net_spawn_protect_cmds--;

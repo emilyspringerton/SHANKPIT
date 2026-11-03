@@ -35,4 +35,13 @@ double units_box_volume_m3(double w, double h, double d, int unit);
 double units_box_mass_kg(double volume_m3, double density_kg_m3);
 double units_snap(double x, int profile);
 
+/* Authoring entry points: F32 in, F32 out, exact F64 arithmetic underneath. New level/editor/brick
+ * work should use these rather than re-deriving a factor; the double->float narrowing happens once, at
+ * the end, on an already-correct number. */
+float  units_author_length_mm(float v, int unit);
+float  units_author_length_m(float v, int unit);
+float  units_author_box_m3(float w, float h, float d, int unit);
+float  units_author_mass_kg(float v, int unit);
+float  units_author_snap(float x, int profile);
+
 #endif /* SHANKPIT_UNITS_RULES_H */
