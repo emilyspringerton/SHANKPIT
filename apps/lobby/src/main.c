@@ -1647,8 +1647,12 @@ static void dw_phone_sync(void) {
                 char mine[32], theirs[32];
                 dw_card_label(board.log_card_mine[j], mine, sizeof mine);
                 dw_card_label(board.log_card_theirs[j], theirs, sizeof theirs);
+                /* the card is one fixed-width row: split what fits between the two labels */
+                int room = (int)sizeof ph->dw_watch_log[i] - 1;
+                int half = (room - 17) / 2; if (half < 8) half = 8;
                 snprintf(ph->dw_watch_log[i], sizeof ph->dw_watch_log[i],
-                         "R%d YOU %s / THEM %s", board.log_round[j], mine, theirs);
+                         "R%d YOU %.*s / THEM %.*s", board.log_round[j], half, mine,
+                         room - 17 - half, theirs);
             }
         }
     }
@@ -2894,7 +2898,8 @@ static int      g_chat_open = 0;
 
 static void chat_pane_push(const char *msg) {
     if (!msg) return;
-    snprintf(g_chat.lines[g_chat.head], CHAT_LINE_MAX, "%s", msg);
+    /* a chat line is one fixed slot: a longer message is clamped, deliberately, not silently */
+    snprintf(g_chat.lines[g_chat.head], CHAT_LINE_MAX, "%.*s", CHAT_LINE_MAX - 1, msg);
     g_chat.head = (g_chat.head + 1) % CHAT_CAPACITY;
 }
 
@@ -4318,7 +4323,9 @@ static EditLog g_edit_log;
 static char g_edit_msg[96] = "";
 #define EDIT_BOX_SIZE 4.0f
 
-static void edit_say(const char *m) { snprintf(g_edit_msg, sizeof g_edit_msg, "%s", m); SDL_Log("EDIT MAP: %s", m); }
+/* the HUD slot is one fixed 96-byte line: clamp it here on purpose, while the SDL_Log below still
+   carries the whole message */
+static void edit_say(const char *m) { snprintf(g_edit_msg, sizeof g_edit_msg, "%.*s", (int)sizeof g_edit_msg - 1, m); SDL_Log("EDIT MAP: %s", m); }
 
 static int edit_load_source(CustomLevelData *lvl) {
     if (g_edit_pick[0] && strstr(g_edit_pick, ".json")) {
@@ -4328,7 +4335,7 @@ static int edit_load_source(CustomLevelData *lvl) {
         const char *base = g_edit_pick;
         for (const char *p = g_edit_pick; *p; p++) if (*p == '/' || *p == '\\') base = p + 1;
         char stem[LEVEL_BOXES_MAX_NAME];
-        snprintf(stem, sizeof stem, "%s", base);
+        snprintf(stem, sizeof stem, "%.*s", (int)sizeof stem - 1, base);
         char *dot = strrchr(stem, '.');
         if (dot) *dot = '\0';
         if (!stem[0]) snprintf(stem, sizeof stem, "untitled");
@@ -4342,7 +4349,7 @@ static int edit_load_source(CustomLevelData *lvl) {
         if (g_edit_pick[0] && strcasecmp(entries[i].name, g_edit_pick) != 0) continue;
         if (level_boxes_fetch_export(entries[i].id, lvl)) return 1;
     }
-    /* offline / unnamed fallback: the checked-in local map, or any var/maps/*.json */
+    /* offline / unnamed fallback: the checked-in local map, or any var/maps/<name>.json */
     return level_boxes_load_from_file("var/zombie/nextown_zombies.json", lvl);
 }
 
@@ -4390,7 +4397,7 @@ static void edit_key(SDL_Keycode k) {
             char edits[328]; snprintf(edits, sizeof edits, "var/maps/%s.edits.json", g_edit_name);
             remove(edits);
             memset(&g_edit_log, 0, sizeof g_edit_log);
-            char msg[96]; snprintf(msg, sizeof msg, "saved level %s (%d boxes)", path, g_edit_lvl->count);
+            char msg[400]; snprintf(msg, sizeof msg, "saved level %s (%d boxes)", path, g_edit_lvl->count);
             edit_say(msg);
         } else edit_say("SAVE LEVEL FAILED");
         return;
@@ -4670,7 +4677,10 @@ static int lobby_start_proc_dungeon(const char *zone) {
     if (created) {
         FILE *probe = fopen("var/maps", "rb");
         if (probe) fclose(probe);
-        else (void)system("mkdir -p var/maps");
+        else {
+            int mk = system("mkdir -p var/maps");
+            if (mk != 0) SDL_Log("DUNGEON: could not create var/maps (system status %d)", mk);
+        }
         if (proc_dungeon_save(path, &lvl))
             SDL_Log("DUNGEON: generated '%s' seed %08x -> %s (%d boxes)", zone, seed, path, lvl.count);
         else
@@ -5858,7 +5868,8 @@ static void lobby_launch_nock(void) {
                 (void)dup2(lf, STDERR_FILENO);
                 if (lf > 2) close(lf);
             }
-            if (root[0]) (void)chdir(root);
+            if (root[0] && chdir(root) != 0)
+                nock_logf("chdir(%s) failed: %s", root, strerror(errno));
             execl(server, server, "--port", "8787", "--root", root, (char *)NULL);
             _exit(127); /* execl only returns on failure */
         } else if (pid > 0) {
@@ -8297,7 +8308,6 @@ typedef struct PlayerAnimPose {
 } PlayerAnimPose;
 
 static float g_player_run_phase[MAX_CLIENTS];
-static float g_player_run_phase_prev[MAX_CLIENTS];
 static int   g_player_step_count[MAX_CLIENTS];
 static unsigned int g_player_anim_last_ms[MAX_CLIENTS];
 
@@ -14882,7 +14892,11 @@ void draw_scene(PlayerState *render_p) {
     overlay_begin_frame(&g_overlay);
     overlay_collect_items(render_p, now_ms);
     overlay_render(&g_overlay, render_p);
-    if (!render_p->third_person && render_p->state != STATE_SPECTATOR) draw_weapon_p(render_p); draw_hud(render_p); draw_widget_affordances(render_p); draw_garage_overlay(render_p); draw_tab_scoreboard(render_p);
+    if (!render_p->third_person && render_p->state != STATE_SPECTATOR) draw_weapon_p(render_p);
+    draw_hud(render_p);
+    draw_widget_affordances(render_p);
+    draw_garage_overlay(render_p);
+    draw_tab_scoreboard(render_p);
     draw_travel_overlay();
     draw_tdmb_match_over_overlay();
     draw_survival_hud();
@@ -15088,7 +15102,10 @@ static void phone_iduna_pump(void) {
     GfdChatMsg gm;
     while (gfd_chat_take(&gm)) {   /* inbound bus chat -> GFD phone terminal + chat pane */
         char line[BP_TERM_LINE_LEN + 64];
-        snprintf(line, sizeof line, "%s%.30s: %s", strcmp(gm.source, "shankpit_client") == 0 ? "" : "[GFD] ", gm.name, gm.body);
+        /* the body is clamped to this line's own window on purpose: phone_term_line splits it again */
+        snprintf(line, sizeof line, "%s%.30s: %.*s",
+                 strcmp(gm.source, "shankpit_client") == 0 ? "" : "[GFD] ", gm.name,
+                 (int)sizeof line - 40, gm.body);
         chat_pane_push(line);
         for (size_t o = 0; o < strlen(line); o += BP_TERM_LINE_LEN - 1) {
             char seg[BP_TERM_LINE_LEN]; snprintf(seg, sizeof seg, "%.*s", BP_TERM_LINE_LEN - 1, line + o);
@@ -15688,7 +15705,8 @@ UserCmd client_create_cmd(float fwd, float str, float yaw, float pitch, int shoo
     cmd.sequence = ++net_cmd_seq; cmd.timestamp = SDL_GetTicks();
     cmd.yaw = yaw; cmd.pitch = pitch;
     cmd.fwd = fwd; cmd.str = str;
-    if(shoot) cmd.buttons |= BTN_ATTACK; if(jump) cmd.buttons |= BTN_JUMP;
+    if(shoot) cmd.buttons |= BTN_ATTACK;
+    if(jump) cmd.buttons |= BTN_JUMP;
     if(crouch) cmd.buttons |= BTN_CROUCH;
     if(reload) cmd.buttons |= BTN_RELOAD;
     if(use) cmd.buttons |= BTN_USE;
@@ -16722,14 +16740,19 @@ static int lobby_coop_host_start(const char *zone, int port) {
     }
     CoopHostResult r;
     if (!coop_host_start(server, &cfg, &r)) {
-        snprintf(app_launch_status, sizeof app_launch_status, "COOP: %s", r.error);
+        snprintf(app_launch_status, sizeof app_launch_status, "COOP: %.*s",
+                 (int)sizeof app_launch_status - 7, r.error);
         return 0;
     }
     snprintf(SERVER_HOST, sizeof SERVER_HOST, "127.0.0.1");
     SERVER_PORT = cfg.port;
-    snprintf(app_launch_status, sizeof app_launch_status, "COOP: zone %s %s on :%d",
-             cfg.zone, r.attached ? "already running" : "hosted", cfg.port);
-    printf("[coop] %s\n", app_launch_status);
+    {
+        char line[256];
+        snprintf(line, sizeof line, "COOP: zone %s %s on :%d",
+                 cfg.zone, r.attached ? "already running" : "hosted", cfg.port);
+        snprintf(app_launch_status, sizeof app_launch_status, "%.*s",
+                 (int)sizeof app_launch_status - 1, line);
+    }
     return 1;
 }
 
@@ -17455,7 +17478,7 @@ int main(int argc, char* argv[]) {
                                     continue;
                                 }
                                 char echo[BP_TERM_LINE_LEN];
-                                snprintf(echo, sizeof(echo), "%.30s: %s", gname, say);
+                                snprintf(echo, sizeof(echo), "%.30s: %.*s", gname, (int)sizeof echo - 33, say);
                                 phone_term_line(&g_story_phone, echo);
                                 chat_pane_push(echo);
                             } else if (fx.kind == BP_FX_EMPIRE_SPAWN || fx.kind == BP_FX_EMPIRE_CLONE) {
@@ -17661,7 +17684,7 @@ int main(int argc, char* argv[]) {
                             if (g_chat.input_len > 0 && g_chat.input[0] == '/') {
                                 /* the same command language the macro file uses: test a macro by typing it first */
                                 char line[CHAT_LINE_MAX];
-                                snprintf(line, sizeof(line), "%s", g_chat.input + 1);
+                                snprintf(line, sizeof(line), "%.*s", (int)sizeof line - 1, g_chat.input + 1);
                                 macro_run(line);
                             } else if (g_chat.input_len > 0) {
                                 char out[CHAT_LINE_MAX];
@@ -17768,9 +17791,11 @@ int main(int argc, char* argv[]) {
                     if (app_state == STATE_GAME_LOCAL && PHONE_SANDBOX() && g_story_phone.open) continue;
                     float sens = (current_fov < 50.0f) ? 0.05f : 0.15f; 
                     cam_yaw -= e.motion.xrel * sens;
-                    if(cam_yaw > 360) cam_yaw -= 360; if(cam_yaw < 0) cam_yaw += 360;
+                    if(cam_yaw > 360) cam_yaw -= 360;
+                    if(cam_yaw < 0) cam_yaw += 360;
                     cam_pitch -= e.motion.yrel * sens;
-                    if(cam_pitch > 89) cam_pitch = 89; if(cam_pitch < -89) cam_pitch = -89;
+                    if(cam_pitch > 89) cam_pitch = 89;
+                    if(cam_pitch < -89) cam_pitch = -89;
                     drone_gimbal_clamp();
                 }
             }
@@ -17829,12 +17854,14 @@ int main(int argc, char* argv[]) {
             int control_pid = (app_state == STATE_GAME_NET && my_client_id > 0 && my_client_id < MAX_CLIENTS) ? my_client_id : 0;
             int in_heli = local_state.players[control_pid].in_vehicle && local_state.players[control_pid].vehicle_type == VEH_HELICOPTER;
             float fwd=0, str=0;
-            if(k[SDL_SCANCODE_W]) fwd+=1; if(k[SDL_SCANCODE_S]) fwd-=1;
+            if(k[SDL_SCANCODE_W]) fwd+=1;
+            if(k[SDL_SCANCODE_S]) fwd-=1;
             if (in_heli) {
                 if(k[SDL_SCANCODE_A]) str-=1;
                 if(k[SDL_SCANCODE_D]) str+=1;
             } else {
-                if(k[SDL_SCANCODE_D]) str+=1; if(k[SDL_SCANCODE_A]) str-=1;
+                if(k[SDL_SCANCODE_D]) str+=1;
+                if(k[SDL_SCANCODE_A]) str-=1;
             }
             float move_len = sqrtf(fwd * fwd + str * str);
             if (move_len > 1.0f) {
@@ -17893,8 +17920,12 @@ int main(int argc, char* argv[]) {
             input_fwd = fwd; input_str = str;
             input_jump = jump; input_crouch = crouch; input_shoot = shoot; input_reload = reload; input_use = use; input_ability = ability; input_secondary = secondary; input_bike = bike; input_pheromone = pheromone;
             if (!g_paused) {
-                if(k[SDL_SCANCODE_1]) wpn_req=0; if(k[SDL_SCANCODE_2]) wpn_req=1;
-                if(k[SDL_SCANCODE_3]) wpn_req=2; if(k[SDL_SCANCODE_4]) wpn_req=3; if(k[SDL_SCANCODE_5]) wpn_req=4; if(k[SDL_SCANCODE_6]) wpn_req=5;
+                if(k[SDL_SCANCODE_1]) wpn_req=0;
+                if(k[SDL_SCANCODE_2]) wpn_req=1;
+                if(k[SDL_SCANCODE_3]) wpn_req=2;
+                if(k[SDL_SCANCODE_4]) wpn_req=3;
+                if(k[SDL_SCANCODE_5]) wpn_req=4;
+                if(k[SDL_SCANCODE_6]) wpn_req=5;
                 if(k[SDL_SCANCODE_7]) wpn_req=WPN_FLASHLIGHT;
                 if(k[SDL_SCANCODE_8]) wpn_req=WPN_HAMMER;
                 if(k[SDL_SCANCODE_9]) wpn_req=WPN_SPRAYCAN;
@@ -17966,11 +17997,11 @@ int main(int argc, char* argv[]) {
                 buggy_advance_remote_positions(now_ms);
                 net_emit_client_summaries(now_ms);
             } else {
-                if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
-                    (local_state.story_phase == STORY_PHASE_CUTSCENE ||
-                     local_state.story_phase == STORY_PHASE_COMPLETE ||
-                     local_state.story_phase == STORY_PHASE_FAILED ||
-                     g_story_phone.open) || g_orb_open ||
+                if (((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
+                     (local_state.story_phase == STORY_PHASE_CUTSCENE ||
+                      local_state.story_phase == STORY_PHASE_COMPLETE ||
+                      local_state.story_phase == STORY_PHASE_FAILED ||
+                      g_story_phone.open)) || g_orb_open ||
                     (PHONE_SANDBOX() && g_story_phone.open) ||
                     widget_runtime_panel_open(&g_widget_rt)) {
                     input_fwd = 0.0f; input_str = 0.0f;

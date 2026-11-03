@@ -444,18 +444,18 @@ static inline int phone_term_take(Phone *p, char *out, int out_cap) {
  * discipline phone_term_line's own overflow handling already establishes, not a crash. */
 static inline void phone_iduna_set_pending(Phone *p, const char *user_code, const char *verification_url) {
     p->iduna_stage = BP_IDUNA_PENDING;
-    snprintf(p->iduna_user_code, sizeof(p->iduna_user_code), "%s", user_code);
-    snprintf(p->iduna_verification_url, sizeof(p->iduna_verification_url), "%s", verification_url);
+    snprintf(p->iduna_user_code, sizeof(p->iduna_user_code), "%.*s", (int)sizeof(p->iduna_user_code) - 1, user_code);
+    snprintf(p->iduna_verification_url, sizeof(p->iduna_verification_url), "%.*s", (int)sizeof(p->iduna_verification_url) - 1, verification_url);
     p->iduna_error[0] = '\0';
 }
 static inline void phone_iduna_set_linked(Phone *p, const char *handle) {
     p->iduna_stage = BP_IDUNA_LINKED;
-    snprintf(p->iduna_handle, sizeof(p->iduna_handle), "%s", handle);
+    snprintf(p->iduna_handle, sizeof(p->iduna_handle), "%.*s", (int)sizeof(p->iduna_handle) - 1, handle);
     p->iduna_error[0] = '\0';
 }
 static inline void phone_iduna_set_error(Phone *p, const char *msg) {
     p->iduna_stage = BP_IDUNA_ERROR;
-    snprintf(p->iduna_error, sizeof(p->iduna_error), "%s", msg);
+    snprintf(p->iduna_error, sizeof(p->iduna_error), "%.*s", (int)sizeof(p->iduna_error) - 1, msg);
 }
 
 /* phone_set_tech -- the host feeds the tech-tree node list (BP_APP_TECHTREE, kanban #577).

@@ -89,7 +89,7 @@ static int macro_set(MacroBook *b, const char *spec, const char *body) {
     return 1;
 }
 
-static int macro_unset(MacroBook *b, const char *spec) {
+static inline int macro_unset(MacroBook *b, const char *spec) {
     int i;
     if (!b || !spec) return 0;
     for (i = 0; i < b->count; i++) {

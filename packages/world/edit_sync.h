@@ -94,10 +94,18 @@ static inline int edit_sync_create(const char *base, int level_id, const char *l
 }
 
 static inline int edit_sync_post_event(const char *base, const char *id, const char *kind, const char *data_json) {
-    char url[320], body[640];
+    char url[320];
     snprintf(url, sizeof url, "%s/%s/events", base, id);
-    snprintf(body, sizeof body, "{\"source\":\"shankpit\",\"kind\":\"%s\",\"data\":%s}", kind, data_json);
-    return edit_sync_http(url, body, NULL);
+    /* data_json is caller data and can be kilobytes: a fixed 640-byte body clipped the JSON into an
+       unparseable event, so size the frame from the inputs */
+    int need = snprintf(NULL, 0, "{\"source\":\"shankpit\",\"kind\":\"%s\",\"data\":%s}", kind, data_json);
+    if (need < 0) return -1;
+    char *body = malloc((size_t)need + 1);
+    if (!body) return -1;
+    snprintf(body, (size_t)need + 1, "{\"source\":\"shankpit\",\"kind\":\"%s\",\"data\":%s}", kind, data_json);
+    int rc = edit_sync_http(url, body, NULL);
+    free(body);
+    return rc;
 }
 
 /* Long-poll for events after `since`. Returns events parsed (>=0), -1 on transport error / 404. */

@@ -53,7 +53,7 @@ static void pbg_draw(float x0, float top) {
 
 /* click in bottom-left-origin virtual space, same panel placement pbg_draw used -> forwards to the
  * real browser if inside the panel, returns 1 if it landed inside. */
-static int pbg_click(float x0, float top, float mx, float my) {
+static inline int pbg_click(float x0, float top, float mx, float my) {
     if (mx < x0 || mx >= x0 + PBG_W || my > top || my <= top - PBG_H) return 0;
     phone_browser_click((int)(mx - x0), (int)(top - my));
     return 1;
