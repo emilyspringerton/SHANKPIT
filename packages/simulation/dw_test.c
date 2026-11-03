@@ -121,18 +121,88 @@ int main(void) {
         CHECK(m.seat[0].energy == 3, "operations tier 0 costs 1 of 4 energy (%d)", m.seat[0].energy);
     }
 
-    /* ---- a card whose mechanic this sequencer does not implement is REPORTED, not faked ----
-     * Glacial Prison (70) is cost 4 with an fx word on channel 34 (disable hand slots), which this
-     * host deliberately does not sequence. Round 1 gives seat 0 exactly 4 energy, so it is legal. */
+    /* ---- the hand-lifecycle channels, each with the catalog's own card ----
+     * Every card here is made legal the way a mid-game seat is: 6 energy and plenty of credits, which
+     * is exactly what round_start_energy/round_start_vault produce by round 3. */
     {
         DwMatch m;
         int d0[DW_DECK], d1[DW_DECK];
-        deck_of_kind(d0, 70);
-        deck_of_kind(d1, 70);
-        dw_match_init(&m, 7u, d0, d1);
-        CHECK(e->is_legal_play(70, 4, 3), "Glacial Prison is not playable at 4 energy");
-        dw_match_round(&m, 70, -1);
-        CHECK(m.unsupported_fx[0] != 0, "an unsequenced channel was silently swallowed");
+        deck_of_kind(d0, 0);
+        deck_of_kind(d1, 6);
+        dw_match_init(&m, 11u, d0, d1);
+        m.seat[0].energy = 6;
+        m.seat[0].vault = 99;
+        CHECK(e->is_legal_play(70, 6, 99), "Glacial Prison is not playable at 6 energy");
+        dw_match_round(&m, 70, -1);                  /* DISABLE 2 of seat 1's slots next round */
+        CHECK(m.seat[1].disabled_next == 2, "a disable did not queue (%d)", m.seat[1].disabled_next);
+        CHECK(m.unsupported_fx[0] == 0, "a sequenced channel was reported unsupported");
+        dw_match_round(&m, -1, -1);                  /* the next hand is dealt two slots short */
+        CHECK(m.seat[1].hand[0] == -1 && m.seat[1].hand[1] == -1, "disabled slots were playable");
+        CHECK(m.seat[1].hand[2] != -1 && m.seat[1].hand[3] != -1, "a disable ate too many slots");
+        CHECK(m.seat[1].disabled_next == 0, "the disable did not clear after one round");
+    }
+    {
+        DwMatch m;
+        int d0[DW_DECK], d1[DW_DECK];
+        deck_of_kind(d0, 0);
+        deck_of_kind(d1, 6);
+        dw_match_init(&m, 12u, d0, d1);
+        m.seat[0].energy = 6;
+        m.seat[0].vault = 99;
+        dw_match_round(&m, 47, -1);                  /* BLIND: hide my meters for 3 rounds */
+        CHECK(m.seat[0].blind_rounds == 3, "blind rounds %d", m.seat[0].blind_rounds);
+        dw_match_round(&m, -1, -1);
+        CHECK(m.seat[0].blind_rounds == 2, "blind did not tick down (%d)", m.seat[0].blind_rounds);
+    }
+    {
+        /* REDRAW vs a control match on the same seed: the deck cursor is the observable. */
+        DwMatch m, ctrl;
+        int d0[DW_DECK], d1[DW_DECK];
+        deck_of_kind(d0, 0);
+        deck_of_kind(d1, 6);
+        dw_match_init(&m, 13u, d0, d1);
+        dw_match_init(&ctrl, 13u, d0, d1);
+        m.seat[0].energy = 6;
+        m.seat[0].vault = 99;
+        dw_match_round(&m, 49, -1);                  /* Fire Sale: redraw my hand */
+        dw_match_round(&ctrl, -1, -1);
+        CHECK(m.deck_pos[0] == ctrl.deck_pos[0] + DW_HAND, "a redraw did not draw a fresh hand (%d vs %d)",
+              m.deck_pos[0], ctrl.deck_pos[0]);
+    }
+    {
+        DwMatch m;
+        int d0[DW_DECK], d1[DW_DECK];
+        deck_of_kind(d0, 0);
+        deck_of_kind(d1, 6);
+        dw_match_init(&m, 14u, d0, d1);
+        m.seat[0].energy = 6;
+        m.seat[0].vault = 99;
+        dw_match_round(&m, 51, -1);                  /* Realm Warp: swap hands */
+        CHECK(m.seat[0].hand[0] == 6 && m.seat[1].hand[0] == 0,
+              "hands were not swapped (%d/%d)", m.seat[0].hand[0], m.seat[1].hand[0]);
+    }
+    {
+        /* COPY and CANCEL are the SAME card: Hostile Takeover (36) carries CANCEL on fx-a and COPY on
+         * fx-b, and it is the catalog's only COPY carrier. So the honest assertion is the interaction,
+         * not a clean copy: the cancel makes the opponent's declaration "treated as a pass", and the
+         * copy then copies a pass -- a stalemate at 0 damage. Both seat cards end up as passes, which
+         * is what last_card records. (A COPY-only card would copy a live declaration; there is none.) */
+        DwMatch m;
+        int d0[DW_DECK], d1[DW_DECK];
+        deck_of_kind(d0, 36);
+        deck_of_kind(d1, 3);
+        dw_match_init(&m, 15u, d0, d1);
+        m.seat[0].energy = 6;
+        m.seat[0].vault = 99;
+        CHECK(e->is_legal_play(36, 6, 99), "Hostile Takeover is not playable");
+        CHECK(e->fx_ch(e->card_fx_a(36)) == 7 && e->fx_ch(e->card_fx_b(36)) == 8,
+              "card 36 is not cancel-then-copy (%d/%d)", e->fx_ch(e->card_fx_a(36)), e->fx_ch(e->card_fx_b(36)));
+        dw_match_round(&m, 36, 3);
+        CHECK(m.seat[0].hull == 20 && m.seat[1].hull == 20,
+              "cancel+copy should be a stalemate (%d/%d hull)", m.seat[0].hull, m.seat[1].hull);
+        CHECK(m.last_card[0] == -1 && m.last_card[1] == -1,
+              "the cancelled declaration was not treated as a pass (%d/%d)", m.last_card[0], m.last_card[1]);
+        CHECK(m.unsupported_fx[0] == 0, "copy/cancel were reported as unsequenced");
     }
 
     /* ---- a whole match runs to a winner, deterministically ---- */

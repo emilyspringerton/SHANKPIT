@@ -1511,8 +1511,8 @@ SHANKPIT. `packages/simulation/dw_engine.*` is the shim: that engine plus the ci
 (`stdlib/deadweight/citizen_policy.prn`) behind one flat integer ABI, native by default and swappable
 for a wasm module — `dw_engine_attach_wasm` validates the table and `dw_engine_selftest` asks the
 live backend for the numbers it owns. `dw_match.*` is the sequencer (20 hull, 2 energy, 3 credits, a
-4-card hand, the triangle, armour, burn/regen, both fx phases for 26 of 32 channels, bankruptcy, a
-100-round draw) and `dw_ladder.*` is the citizens' ladder.
+4-card hand, the triangle, armour, burn/regen, both fx phases for EVERY channel the catalogue carries (COPY, DISABLE, BLIND, SWAP,
+REDRAW and DISCARD included), bankruptcy, a 100-round draw and `dw_ladder.*` is the citizens' ladder.
 
 Citizens challenge each other, citizens challenge you, you challenge citizens, and you can challenge
 another player — all four through one call, `dw_ladder_challenge`. They play without you: every few

@@ -20,11 +20,17 @@
  * 32 burn, 33 regen, 39 equalize hulls, 40 chronobreak, 41 convert energy to armor, 42 cleanse,
  * 43 debt-free.
  *
- * WHAT IS NOT (named, not faked): 08 COPY (play the opponent's declared card), 34 DISABLE (hand
- * slots next round), 35 BLIND, 36 SWAP hands, 37 REDRAW, 38 DISCARD -- every one of them needs a
- * hand-slot lifecycle this sequencer does not model yet. They are counted in `unsupported_fx` when
- * a played card carries them, so a match can report "this deck leaned on mechanics the host does
- * not implement" instead of silently playing a different game. That count is the next slice.
+ * The hand-lifecycle channels the catalog carries are sequenced too: 08 COPY (play the opponent's
+ * declared card -- note its only carrier, Hostile Takeover (36), ALSO cancels, so in practice a copy
+ * copies a cancelled declaration; a COPY-only card would copy a live one), 34 DISABLE (opponent loses
+ * N hand slots next round), 35 BLIND (my meters are
+ * hidden -- state the UI reads, no mechanical effect in a perfect-information headless sim),
+ * 36 SWAP hands, 37 REDRAW my hand, 38 DISCARD N of the opponent's cards (no catalog card carries 38
+ * today; the sequencer handles it anyway).
+ *
+ * `unsupported_fx` is therefore no longer a description of known gaps -- it is a GUARD: a channel
+ * this sequencer does not recognise sets a bit instead of being silently ignored, so a future card
+ * cannot quietly play a different game.
  *
  * Determinism: one 32-bit LCG inside the match, advanced only for the round roll and the deck draw,
  * and the hands are dealt from the deck in order -- so the same seed and the same two deck lists
@@ -45,6 +51,8 @@ typedef struct {
     int regen;          /* healing per round */
     int regen_rounds;
     int pending_energy; /* banked by channels 25/26/27, applied next round */
+    int disabled_next;  /* hand slots the opponent's DISABLE will cost me next round */
+    int blind_rounds;   /* my meters are hidden from the opponent for this many rounds */
     int hand[DW_HAND];
 } DwSeat;
 

@@ -6,9 +6,12 @@
 
 #include <string.h>
 
-/* Unsequenced channels, named in dw_match.h. Counted in unsupported_fx so a caller can see it. */
-static int dw_is_unsupported_channel(int ch) {
-    return ch == 8 || ch == 34 || ch == 35 || ch == 36 || ch == 37 || ch == 38;
+/* The phase-1 channels this sequencer handles. Anything else is a GUARD case: it sets a bit in
+ * unsupported_fx rather than being silently skipped, so a future card cannot quietly play a
+ * different game. */
+static int dw_phase1_channel(int ch) {
+    return ch == 1 || ch == 2 || ch == 3 || ch == 4 || ch == 5 || ch == 6 || ch == 7 || ch == 8 ||
+           ch == 9 || ch == 22;
 }
 
 static uint32_t dw_next_rng(DwMatch *m) {
@@ -63,6 +66,7 @@ typedef struct {
     int reflect;        /* channel 06 */
     int bypass_floor;   /* channel 03 */
     int bypass_no_reflect;
+    int copy;           /* channel 08: play the opponent's declared card instead */
 } DwSeatFx;
 
 static int dw_fx_amount_for(const DwMatch *m, const DwSeatFx *f, int s, int word) {
@@ -90,7 +94,7 @@ static void dw_phase1(DwMatch *m, DwSeatFx fx[2], int pass) {
             if (word == 0) continue;
             int ch = e->fx_ch(word);
             if (e->fx_phase(ch) != 1) continue;
-            if (dw_is_unsupported_channel(ch)) { m->unsupported_fx[s] |= 1 << (ch % 32); continue; }
+            if (!dw_phase1_channel(ch)) { m->unsupported_fx[s] |= 1 << (ch % 32); continue; }
             int amt = dw_fx_amount_for(m, &fx[s], s, word);
             if (pass == 0) {
                 if (ch == 7 && amt > 0) fx[s].cancel = 1;
@@ -98,6 +102,7 @@ static void dw_phase1(DwMatch *m, DwSeatFx fx[2], int pass) {
                 if (ch == 4 && amt > 0) fx[s].immune = 1;
                 if (ch == 5 && amt > 0) fx[s].lifeline = 1;
                 if (ch == 3 && amt > fx[s].bypass_floor) fx[s].bypass_floor = amt;
+                if (ch == 8 && amt > 0) fx[s].copy = 1;
             } else {
                 if (ch == 1 && amt > 0) fx[s].dealt += amt;
                 if (ch == 2 && amt > 0) fx[s].ignore_armor = 1;
@@ -120,7 +125,6 @@ static void dw_phase2(DwMatch *m, const DwSeatFx fx[2]) {
             if (word == 0) continue;
             int ch = e->fx_ch(word);
             if (e->fx_phase(ch) != 2) continue;
-            if (dw_is_unsupported_channel(ch)) { m->unsupported_fx[s] |= 1 << (ch % 32); continue; }
             int amt = dw_fx_amount_for(m, &fx[s], s, word);
             if (amt <= 0 && ch != 43) continue;
             switch (ch) {
@@ -137,6 +141,18 @@ static void dw_phase2(DwMatch *m, const DwSeatFx fx[2]) {
                 case 31: m->seat[opp].vault -= amt; break;
                 case 32: m->seat[opp].burn += amt / 16; m->seat[opp].burn_rounds += amt % 16; break;
                 case 33: m->seat[s].regen += amt / 16; m->seat[s].regen_rounds += amt % 16; break;
+                case 34: { int n = m->seat[opp].disabled_next + amt;
+                           m->seat[opp].disabled_next = n > DW_HAND ? DW_HAND : n; } break;
+                case 35: m->seat[s].blind_rounds += amt; break;
+                case 36: { int tmp[DW_HAND];
+                           memcpy(tmp, m->seat[s].hand, sizeof(tmp));
+                           memcpy(m->seat[s].hand, m->seat[opp].hand, sizeof(tmp));
+                           memcpy(m->seat[opp].hand, tmp, sizeof(tmp)); } break;
+                case 37: dw_draw_hand(m, s); break;
+                case 38: { int left = amt;
+                           for (int i = 0; i < DW_HAND && left > 0; i++)
+                               if (m->seat[opp].hand[i] >= 0) { m->seat[opp].hand[i] = -1; left--; }
+                         } break;
                 case 39: { /* equalize hulls: both to the average, rounded down */
                     int avg = (m->seat[0].hull + m->seat[1].hull) / 2;
                     m->seat[0].hull = avg; m->seat[1].hull = avg;
@@ -193,6 +209,15 @@ int dw_match_round(DwMatch *m, int card0, int card1) {
         m->seat[s].vault = e->round_start_vault(m->seat[s].vault);
         m->round_start_hull[s] = m->seat[s].hull;
         dw_draw_hand(m, s);
+        /* DISABLE: the slots the opponent's last card cost me. Applied AFTER the deal, because the
+         * point of the mechanic is that you were dealt a hand you cannot fully use. */
+        if (m->seat[s].disabled_next > 0) {
+            int n = m->seat[s].disabled_next;
+            if (n > DW_HAND) n = DW_HAND;
+            for (int i = 0; i < n; i++) m->seat[s].hand[i] = -1;
+            m->seat[s].disabled_next = 0;
+        }
+        if (m->seat[s].blind_rounds > 0) m->seat[s].blind_rounds--;
     }
 
     int card[2];
@@ -226,6 +251,15 @@ int dw_match_round(DwMatch *m, int card0, int card1) {
             fx[1 - s].opp_card = fx[s].card;
             card[1 - s] = -1;
         }
+    }
+
+    /* COPY (08): play the opponent's declared card instead. Resolved AFTER the cancels, because a
+     * cancel makes the opponent's card "treated as a pass" and a copy of a pass is a pass. */
+    for (int s = 0; s < 2; s++) {
+        if (!fx[s].copy) continue;
+        fx[s].card = fx[1 - s].card;
+        card[s] = fx[s].card;
+        fx[1 - s].opp_card = fx[s].card;
     }
 
     /* The exchange, as the rules compute it (triangle only; riders are the fx words). */

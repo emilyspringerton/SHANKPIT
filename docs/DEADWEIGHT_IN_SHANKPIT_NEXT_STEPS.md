@@ -14,7 +14,7 @@ is missing and where the seam is.
 | Citizen bodies + wardrobes (`stdlib/forgedinface/citizen.prn`, `packages/simulation/citizen_avatar.*`) | a citizen's proportions and clothes are a total function of its own persona (seed, slot, path, 5 traits); 256/256 distinct in a 256-citizen sweep | `make test-citizen-avatar` ALL PASS |
 | Citizens drawn in that body (`apps/lobby/src/main.c`) | each citizen draws in its generated coat colour and at its generated height; every non-citizen path untouched | `gcc -c apps/lobby/src/main.c` → 0 errors (GLU prototypes stubbed: this box has no `libglu` headers) |
 | DEADWEIGHT engine in SHANKPIT (`dw_engine.*`, `dw_rules.c`, `dw_citizen_rules.c`) | PARENA's 105-card rule set and the citizen policy, emitted to C behind one flat integer ABI, with a switching/validating backend seam | `make test-deadweight` ALL PASS (backend swap, selftest, base line, triangle, fx decode) |
-| The sequencer (`dw_match.*`) | 20 hull / 2 energy / 3 credits, 4-card hands, the triangle, armour, burn/regen, both fx phases for 26 of the 32 channels, bankruptcy, 100-round draw | scripted rounds with hand-derived hull/energy/credit numbers; a deterministic replay compared byte-for-byte |
+| The sequencer (`dw_match.*`) | 20 hull / 2 energy / 3 credits, 4-card hands, the triangle, armour, burn/regen, both fx phases for EVERY channel the catalogue carries (including the six hand-lifecycle ones), bankruptcy, 100-round draw | scripted rounds with hand-derived hull/energy/credit numbers; a deterministic replay compared byte-for-byte |
 | The citizens' ladder (`dw_ladder.*`, wired into `witness_ai.c`) | all four challenge directions through one entry point, records, meta tally, decks that re-craft on the record + meta | all four kinds classified; records and meta move; a losing citizen rebuilds to the answer, a winning one keeps its identity |
 
 Honest headline: **the game plays headlessly and the citizens play it. Nobody has watched a match on
@@ -75,12 +75,15 @@ screen, and the player cannot yet click "accept".**
 
 ## B. Next steps for DEADWEIGHT in SHANKPIT
 
-1. **The six unsequenced fx channels** — 08 COPY (play the opponent's declared card), 34 DISABLE,
-   35 BLIND, 36 SWAP hands, 37 REDRAW, 38 DISCARD. All six need a hand lifecycle the sequencer does
-   not model: today a hand is dealt fresh each round and never mutated. `DwMatch.unsupported_fx`
-   already counts them when a played card carries one, so the work is visible. Shape: add
-   `int disabled, blind_rounds, declared; int discard[DW_HAND]` to `DwSeat` and a declared-then-reveal
-   pre-pass, since COPY and SWAP both need both cards known before the exchange.
+1. ~~The six unsequenced fx channels~~ — **DONE** (same day, `dw_match.c`). COPY, DISABLE, BLIND,
+   SWAP, REDRAW and DISCARD are sequenced; `DwSeat` gained `disabled_next` and `blind_rounds`, DISABLE
+   applies after the deal (a hand you cannot fully use is the point), and `unsupported_fx` is now only
+   a GUARD for a channel that does not exist yet. One real finding from writing the test: the
+   catalogue's ONLY COPY carrier is Hostile Takeover (36), which also carries CANCEL on its first word
+   — so in practice COPY copies a cancelled declaration, i.e. a pass, and the card is a stalemate.
+   That ordering is deliberate (cancels resolve before copies) and is now asserted rather than
+   assumed. Remaining work in this area: no catalogue card carries DISCARD, so that path is
+   implemented but untested by a real card — worth a card of its own.
 2. **The player's end of the ladder — a UI.** The data path exists and is one call away:
    `witness_ai_deadweight()` → `dw_ladder_pending_for(ladder, your_pid)` → `dw_ladder_accept(...)`.
    Missing: a prompt (a key to accept/decline), a notice when a citizen challenges you, and a board
@@ -143,7 +146,7 @@ screen, and the player cannot yet click "accept".**
 ## Verification actually run on 2026-11-03
 
 ```
-make test-deadweight            -> deadweight: ALL PASS
+make test-deadweight            -> deadweight: ALL PASS (hand-lifecycle channels covered)
 make test-citizen-avatar        -> citizen_avatar: ALL PASS
 make test-witness-ai-zombies    -> ALL PASS
 make -B server                  -> links (one pre-existing unused-variable warning)
