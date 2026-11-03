@@ -49,6 +49,19 @@ static inline void tp_dir_from_yaw_pitch(float yaw_deg, float pitch_deg, float *
     *z = -cosf(yr) * cosf(pr);
 }
 
+/* The INVERSE of tp_dir_from_yaw_pitch: the yaw/pitch (degrees, SHANKPIT convention) that aim from an
+ * eye position at a world point. tp_aim_yaw_pitch below is one caller; a server-side cast that has
+ * resolved its target is another, and it is the reason this lives here instead of being written twice. */
+static inline void tp_yaw_pitch_to_point(float eye_x, float eye_y, float eye_z,
+                                         float tx, float ty, float tz,
+                                         float *out_yaw, float *out_pitch) {
+    float dx = tx - eye_x, dy = ty - eye_y, dz = tz - eye_z;
+    float planar = sqrtf(dx * dx + dz * dz);
+    if (planar < 0.0001f && fabsf(dy) < 0.0001f) { *out_yaw = 0.0f; *out_pitch = 0.0f; return; }
+    *out_yaw = atan2f(-dx, -dz) * 57.2957795f;
+    *out_pitch = atan2f(dy, planar > 0.0001f ? planar : 0.0001f) * 57.2957795f;
+}
+
 static inline void tp_aim_yaw_pitch(float cam_x, float cam_y, float cam_z, float cam_yaw, float cam_pitch,
                                     float eye_x, float eye_y, float eye_z,
                                     float *out_yaw, float *out_pitch) {
@@ -57,11 +70,13 @@ static inline void tp_aim_yaw_pitch(float cam_x, float cam_y, float cam_z, float
     float tx = cam_x + fx * TP_AIM_RANGE, ty = cam_y + fy * TP_AIM_RANGE, tz = cam_z + fz * TP_AIM_RANGE;
     float hx, hy, hz, nx, ny, nz;
     if (trace_map(cam_x, cam_y, cam_z, tx, ty, tz, &hx, &hy, &hz, &nx, &ny, &nz)) { tx = hx; ty = hy; tz = hz; }
-    float dx = tx - eye_x, dy = ty - eye_y, dz = tz - eye_z;
-    float planar = sqrtf(dx * dx + dz * dz);
-    if (planar < 0.0001f && fabsf(dy) < 0.0001f) { *out_yaw = cam_yaw; *out_pitch = cam_pitch; return; }
-    *out_yaw = atan2f(-dx, -dz) * 57.2957795f;
-    *out_pitch = atan2f(dy, planar > 0.0001f ? planar : 0.0001f) * 57.2957795f;
+    {
+        float dx = tx - eye_x, dy = ty - eye_y, dz = tz - eye_z;
+        float planar = sqrtf(dx * dx + dz * dz);
+        /* a degenerate aim keeps the camera's own angles, which is what it always did */
+        if (planar < 0.0001f && fabsf(dy) < 0.0001f) { *out_yaw = cam_yaw; *out_pitch = cam_pitch; return; }
+    }
+    tp_yaw_pitch_to_point(eye_x, eye_y, eye_z, tx, ty, tz, out_yaw, out_pitch);
 }
 
 #endif

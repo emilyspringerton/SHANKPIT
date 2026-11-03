@@ -43,6 +43,7 @@
 #include "../../../packages/simulation/rocket_car_rules_host.h"   /* the rocket car's PARENA model */
 #include "../../../packages/simulation/kit_call.h"   /* PACKET_KIT_CALL: the kit's vehicle gadgets */
 #include "../../../packages/protocol/wow_server.h"   /* PACKET_WOW_WIRE: targets, casts, macro bytecode */
+#include "../../../packages/common/third_person.h"   /* tp_yaw_pitch_to_point: aim a cast at its target */
 
 /* cutscene handshake globals — defined in lobby/main.c for the client;
    server sim uses local_game.h but never renders cutscenes, so stub to 0. */
@@ -1265,6 +1266,23 @@ int process_user_cmd(int client_id, UserCmd *cmd) {
             int w = (int)cast.weapon;
             if (w >= 0 && w < MAX_WEAPONS) {
                 p->current_weapon = w;
+                /* Aim, not just fire. The entity id the client's target slot holds is the player slot
+                   here, which is the same pool the simulation ticks, so a cast at [@target] points the
+                   shot at that entity instead of wherever the player's own crosshair was. Anything the
+                   simulation cannot vouch for (out of range, dead, other scene, self) is left alone:
+                   the shot fires along the player's own aim rather than a crosshair that teleports. */
+                if (cast.token == WOW_TOKEN_TARGET || cast.token == WOW_TOKEN_FOCUS) {
+                    int slot = (cast.token == WOW_TOKEN_FOCUS) ? 1 : 0;
+                    int e = wow_targets_get(&g_wow_server.c[client_id].targets, slot);
+                    if (e > 0 && e < MAX_CLIENTS && e != client_id) {
+                        PlayerState *t = &local_state.players[e];
+                        if (t->active && t->state != STATE_DEAD && t->scene_id == p->scene_id) {
+                            tp_yaw_pitch_to_point(p->x, p->y + EYE_HEIGHT, p->z,
+                                                  t->x, t->y + EYE_HEIGHT, t->z,
+                                                  &p->yaw, &p->pitch);
+                        }
+                    }
+                }
                 p->in_shoot = 1;
                 NET_SERVER_LOG("WOW_CAST client_id=%d weapon=%d token=%d", client_id, w, (int)cast.token);
             }

@@ -124,6 +124,7 @@ jobs:
           make check-wow-weapons
           make check-wow-wire-rules
           make test-wow-wire
+          make test-aim
           make check-lora-rules
           make test-lora-wire
 

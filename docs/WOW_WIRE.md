@@ -86,8 +86,7 @@ A queued cast **fires**: `process_user_cmd` drains `wow_server_take_cast()` righ
 into the usercmd is the point — the shot is ordered against that client's own movement exactly like a
 mouse click, and it cannot fire from the receive path, outside the simulation.
 
-Honest gaps: the unit token is carried and evaluated but **does not aim** the shot yet (the engine shoots
-along the player's yaw/pitch; aiming at the target entity is the next step). The IDUNA verifier is not
+Honest gaps: a cast whose token is `target` or `focus` **does** aim at that entity -- the server resolves the slot in the per-client target table to a simulation slot and points the caster's yaw/pitch at its eye with `tp_yaw_pitch_to_point` (the inverse of the math the third-person camera already used) -- but only when that slot is a live player in the caster's own scene and not the caster; otherwise the shot leaves along the player's own aim rather than a crosshair that teleports. Other tokens and server-side aim assist are not built. The IDUNA verifier is not
 installed (the server has no HTTP client), so authentication still fails closed. `WOW_SERVER_CLIENTS` is
 8 while `MAX_CLIENTS` is larger, so slots beyond 8 are ignored with a one-time log. And the cast → fire
 path is compiled, not driven: there is still no client in this environment to send a cast to a running
