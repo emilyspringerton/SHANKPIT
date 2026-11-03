@@ -162,16 +162,29 @@ local function refreshSnapshot()
     if type(decoded) == "table" then
         snapshot = decoded
         local records = type(decoded.records) == "table" and decoded.records or {}
-        local pids = {}
-        for _, record in ipairs(records) do
-            if type(record.pid) == "string" and record.pid ~= "" then pids[#pids + 1] = record.pid end
-        end
-        local reconciled = stats460.reconcile(statsCache, records, nowMs())
-        local fanned = stats460.fan_out(statsCache, pids, statsSinks)
-        if reconciled.conflicts > 0 or reconciled.expired > 0 or #fanned.failed > 0 then
-            print(string.format(
-                "stats460: %d written, %d conflicts, %d expired; fan-out %d ok, %d failed",
-                reconciled.written, reconciled.conflicts, reconciled.expired, fanned.ok, #fanned.failed))
+        -- `recent[]` is the per-match ticker (pid0/pid1/winner/ms). `results[]` is an aggregate per challenge
+        -- kind and cannot drive a per-player update, so it is deliberately not read here.
+        local recent = type(decoded.recent) == "table" and decoded.recent or {}
+        if not statsCache.booted then
+            -- Cold start: load the ladder, REMEMBER the ticker, replay nothing. Those matches already happened.
+            stats460.boot(statsCache, records, recent)
+        else
+            local applied = 0
+            for _, match in ipairs(recent) do
+                if stats460.apply_result(statsCache, match, nowMs()) then applied = applied + 1 end
+            end
+            local reconciled = stats460.reconcile(statsCache, records, nowMs())
+            local pids = {}
+            for _, record in ipairs(records) do
+                if record.pid ~= nil then pids[#pids + 1] = stats460.key(record.pid) end
+            end
+            local fanned = stats460.fan_out(statsCache, pids, statsSinks)
+            if applied > 0 or reconciled.conflicts > 0 or reconciled.expired > 0 or #fanned.failed > 0 then
+                print(string.format(
+                    "stats460: %d results, %d confirmed, %d conflicts, %d expired; fan-out %d ok, %d failed",
+                    applied, reconciled.confirmed, reconciled.conflicts, reconciled.expired,
+                    fanned.ok, #fanned.failed))
+            end
         end
     elseif err then
         -- a dead authority leaves the cache exactly as it was: stale is readable, invented is not
