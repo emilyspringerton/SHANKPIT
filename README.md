@@ -1530,8 +1530,10 @@ host plays it through the real sequencer.
 
 **Accept a challenge and the duel is read, not resolved.** The match is set up, then played one round
 per world tick (1.2 s), with the page showing ROUND / HULL / ENERGY as it goes; when the last round
-lands the result is recorded through the same recorder an instant match uses. Watching is scheduling,
-not a second game — `make test-deadweight` plays one challenge both ways and asserts the winner, the
+lands the result is recorded through the same recorder an instant match uses. Under the score is the
+last few rounds, each side's card shown as `OPS T2 P6` — kind, tier and power, because the catalogue
+holds no name strings at all, and deriving them from the engine beats a second catalogue that drifts.
+Watching is scheduling, not a second game — `make test-deadweight` plays one challenge both ways and asserts the winner, the
 round count, both hulls, the meta, every record and every re-crafted deck are identical. Citizens'
 own matches still resolve instantly: nobody is watching those.
 

@@ -39,6 +39,7 @@
    the SKINS menu both live above that point. */
 #include "../../../packages/simulation/skin_registry.h"
 #include "../../../packages/simulation/dw_play.h" /* the player's end of the citizens' DEADWEIGHT ladder */
+#include "../../../packages/simulation/dw_engine.h" /* card_kind/card_tier/card_power: how a card ID reads as a card */
 /* EMPIRE, both halves, from PARENA: the influence economy + district sphere (empire_rules.c, declared by
    its own host header -- the phone app calls empire_* and the Windows build was compiling those calls as
    implicit declarations because nothing included it) and the unit layer (empire_units_rules.c: archetypes,
@@ -1531,6 +1532,18 @@ static void techtree_sync(void) {
 static DwPlay g_dw_play;
 static int g_dw_play_ready;
 
+/* One card, described from the numbers the ENGINE owns. The catalogue carries no name strings at all
+ * (PARENA/stdlib/deadweight/card_rules.prn), so a screen shows kind / tier / power rather than this
+ * repo inventing a second catalogue that would drift from the real one the moment a card is retuned. */
+static void dw_card_label(int id, char *out, size_t cap) {
+    if (!out || cap == 0) return;
+    if (id < 0) { snprintf(out, cap, "PASS"); return; }
+    const DwEngine *e = dw_engine();
+    int k = e->card_kind(id);
+    snprintf(out, cap, "%s T%d P%d", (k >= 0 && k < 3) ? BP_DW_KIND_NAMES[k] : "?",
+             e->card_tier(id), e->card_power(id));
+}
+
 static void dw_phone_sync(void) {
     Phone *ph = &g_story_phone;
     DwLadder *l = witness_ai_deadweight();
@@ -1541,6 +1554,7 @@ static void dw_phone_sync(void) {
     ph->dw_meta_kind = -1;
     ph->dw_meta_share = 0;
     ph->dw_watch = 0;
+    ph->dw_watch_log_count = 0;
     if (!l) return;
     if (!g_dw_play_ready) { dw_play_init(&g_dw_play, l->hero_pid); g_dw_play_ready = 1; }
 
@@ -1556,6 +1570,19 @@ static void dw_phone_sync(void) {
             ph->dw_watch_hull_theirs = board.hull_theirs;
             ph->dw_watch_energy_mine = board.energy_mine;
             ph->dw_watch_energy_theirs = board.energy_theirs;
+            /* the last few rounds, newest last, so the page shows a GAME being played rather than
+               only a score that moves */
+            int n = board.log_count < BP_DW_WATCH_LOG_ROWS ? board.log_count : BP_DW_WATCH_LOG_ROWS;
+            int base = board.log_count - n;
+            ph->dw_watch_log_count = n;
+            for (int i = 0; i < n; i++) {
+                int j = base + i;
+                char mine[32], theirs[32];
+                dw_card_label(board.log_card_mine[j], mine, sizeof mine);
+                dw_card_label(board.log_card_theirs[j], theirs, sizeof theirs);
+                snprintf(ph->dw_watch_log[i], sizeof ph->dw_watch_log[i],
+                         "R%d YOU %s / THEM %s", board.log_round[j], mine, theirs);
+            }
         }
     }
 
@@ -1827,6 +1854,10 @@ static void draw_phone_app(Phone *p) {
             snprintf(b, sizeof b, "ENERGY YOU %d   THEM %d", p->dw_watch_energy_mine, p->dw_watch_energy_theirs);
             glColor3f(0.6f, 0.78f, 0.88f);
             draw_string(b, col_x, row_y - 2 * row_h, 2.2f);
+            for (int i = 0; i < p->dw_watch_log_count; i++) {
+                glColor3f(0.7f, 0.82f, 0.9f);
+                draw_string(p->dw_watch_log[i], col_x, row_y - (3 + i) * row_h, 2.0f);
+            }
             glColor3f(0.55f, 0.75f, 0.65f);
             draw_string("BEING PLAYED -- THE RESULT LANDS HERE", col_x, PHONE_PANEL_Y0 + 46.0f, 2.0f);
         } else if (!p->dw_live) {

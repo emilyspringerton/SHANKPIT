@@ -74,6 +74,7 @@ typedef enum {
 #define BP_DW_ROSTER 8
 #define BP_DW_NAME_LEN 20
 #define BP_DW_LINE_LEN 64
+#define BP_DW_WATCH_LOG_ROWS 4   /* rounds of play a watched duel shows on the page */
 static const char *const BP_DW_KIND_NAMES[3] = { "OFFENSE", "OPS", "DEFENSE" };
 
 typedef enum { BP_UP, BP_DOWN, BP_LEFT, BP_RIGHT, BP_SELECT, BP_BACK } BpAction;
@@ -285,6 +286,8 @@ typedef struct {
     int dw_watch_round;
     int dw_watch_hull_mine, dw_watch_hull_theirs;
     int dw_watch_energy_mine, dw_watch_energy_theirs;
+    int dw_watch_log_count;                            /* rounds shown, newest last */
+    char dw_watch_log[BP_DW_WATCH_LOG_ROWS][BP_DW_LINE_LEN];
 } Phone;
 
 static inline void phone_init(Phone *p) {

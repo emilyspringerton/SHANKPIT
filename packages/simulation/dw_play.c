@@ -114,6 +114,12 @@ int dw_play_watch_board(const DwLadder *l, const DwPlay *p, DwPlayBoard *out) {
     out->energy_theirs = l->watch.match.seat[1 - my_seat].energy;
     out->vault_mine = l->watch.match.seat[my_seat].vault;
     out->vault_theirs = l->watch.match.seat[1 - my_seat].vault;
+    out->log_count = l->watch.log_count;
+    for (int i = 0; i < l->watch.log_count && i < DW_WATCH_LOG; i++) {
+        out->log_round[i] = l->watch.log_round[i];
+        out->log_card_mine[i] = l->watch.log_card[my_seat][i];
+        out->log_card_theirs[i] = l->watch.log_card[1 - my_seat][i];
+    }
     return 1;
 }
 

@@ -85,6 +85,7 @@ typedef struct {
  * published ticker and the save file. A watched match therefore cannot disagree with an instant one
  * -- the test proves it by playing the same challenge both ways and comparing every number. */
 #define DW_LADDER_DEFAULT_ROUND_MS 1200u
+#define DW_WATCH_LOG 6   /* rounds of "what did each seat play" a board can read (newest last) */
 
 typedef struct {
     int active;
@@ -95,6 +96,13 @@ typedef struct {
     unsigned int round_ms;
     unsigned int next_round_ms;
     DwMatch match;      /* the live board: hulls, energy, credits, hands, round */
+    /* What each seat actually PLAYED, per round, newest last. Card IDS, not names: the catalogue
+     * (PARENA/stdlib/deadweight/card_rules.prn) carries no name strings at all, and a screen can
+     * describe an id from the numbers the engine already owns (kind / tier / power) instead of this
+     * repo inventing a second catalogue that would drift from the real one. */
+    int log_count;
+    int log_round[DW_WATCH_LOG];
+    int log_card[2][DW_WATCH_LOG];   /* seat order = the challenge's order */
 } DwWatch;
 
 typedef struct {

@@ -272,6 +272,7 @@ int dw_ladder_accept_watched(DwLadder *l, int slot, unsigned int now, unsigned i
     l->watch.pid1 = l->members[i1].pid;
     l->watch.round_ms = round_ms ? round_ms : DW_LADDER_DEFAULT_ROUND_MS;
     l->watch.next_round_ms = now + l->watch.round_ms;
+    l->watch.log_count = 0;   /* a new duel does not inherit the last one's plays */
     dw_match_init(&l->watch.match, dw_ladder_seed(c, l->watch.pid0, l->watch.pid1),
                   l->members[i0].deck, l->members[i1].deck);
     /* the invitation is answered the moment the duel starts; the duel is the live thing now */
@@ -286,6 +287,19 @@ int dw_ladder_watch_step(DwLadder *l, unsigned int now) {
     int i0 = l->watch.i0, i1 = l->watch.i1;
     int ended = dw_match_step_policy(&l->watch.match, l->members[i0].aggression,
                                      l->members[i1].aggression);
+    /* what each seat PLAYED, kept for the board: ids only (see DwWatch's own note on why) */
+    if (l->watch.log_count == DW_WATCH_LOG) {
+        for (int i = 0; i < DW_WATCH_LOG - 1; i++) {
+            l->watch.log_round[i] = l->watch.log_round[i + 1];
+            l->watch.log_card[0][i] = l->watch.log_card[0][i + 1];
+            l->watch.log_card[1][i] = l->watch.log_card[1][i + 1];
+        }
+        l->watch.log_count = DW_WATCH_LOG - 1;
+    }
+    l->watch.log_round[l->watch.log_count] = l->watch.match.round;
+    l->watch.log_card[0][l->watch.log_count] = l->watch.match.last_card[0];
+    l->watch.log_card[1][l->watch.log_count] = l->watch.match.last_card[1];
+    l->watch.log_count++;
     l->watch.next_round_ms = now + l->watch.round_ms;
     if (!ended) return 0;
 

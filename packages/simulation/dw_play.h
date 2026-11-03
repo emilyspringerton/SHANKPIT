@@ -58,6 +58,11 @@ typedef struct {
     int hull_mine, hull_theirs;
     int energy_mine, energy_theirs;
     int vault_mine, vault_theirs;
+    /* the last few rounds, newest last, as CARD IDS read from the player's seat (-1 = passed) */
+    int log_count;
+    int log_round[DW_WATCH_LOG];
+    int log_card_mine[DW_WATCH_LOG];
+    int log_card_theirs[DW_WATCH_LOG];
 } DwPlayBoard;
 
 /* `my_pid` is the player's own ladder pid -- the ladder's hero_pid, not the render slot. */

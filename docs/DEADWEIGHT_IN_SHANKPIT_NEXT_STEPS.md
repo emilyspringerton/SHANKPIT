@@ -121,8 +121,9 @@ screen, and the player cannot yet click "accept".**
    plays. The test plays one challenge both ways and asserts identical winner, rounds, hulls, meta,
    records and decks, so watching cannot drift from playing.
    **Still open here:** citizens' own matches resolve instantly (deliberate — nobody watches those),
-   there is no per-round log line or replay, and no "thinking" pause per citizen beyond the fixed
-   round interval.
+   no replay, and no "thinking" pause per citizen beyond the fixed round interval. The per-round log
+   landed the same day (last 6 rounds, each seat's card as kind/tier/power — the catalogue carries no
+   name strings, so a name would mean inventing a second catalogue).
 7. ~~Records that survive a restart~~ — **DONE (same day, `dw_ladder_save/load`).** The ladder is
    written as line-oriented text (members, meta tally, results, hero) behind `SHANKPIT_LADDER_FILE`,
    autosaved at `dw_ladder_accept` — the one place a record moves — with write-then-rename.

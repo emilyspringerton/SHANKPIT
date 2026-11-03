@@ -601,6 +601,18 @@ int main(void) {
         int first = dw_ladder_watch_step(&watched, 4000u);
         CHECK(first == 0, "one round finished the whole match (%d)", first);
         {
+            /* the play log: one round, and it says what was actually played */
+            CHECK(watched.watch.log_count == 1, "the first round left %d log entries, expected 1",
+                  watched.watch.log_count);
+            CHECK(watched.watch.log_round[0] == watched.watch.match.round,
+                  "the log's round (%d) is not the board's (%d)", watched.watch.log_round[0],
+                  watched.watch.match.round);
+            CHECK(watched.watch.log_card[0][0] == watched.watch.match.last_card[0],
+                  "the log's seat-0 card is not what seat 0 played");
+            CHECK(watched.watch.log_card[1][0] == watched.watch.match.last_card[1],
+                  "the log's seat-1 card is not what seat 1 played");
+        }
+        {
             const DwMatch *board = dw_ladder_watch_match(&watched);
             CHECK(board != NULL && board->round >= 1, "the live board shows no played round");
             if (board)
@@ -624,6 +636,22 @@ int main(void) {
               "watched hulls %d-%d, instant %d-%d", watched.last.hull[0], watched.last.hull[1],
               instant.last.hull[0], instant.last.hull[1]);
         CHECK(watched.meta_plays == instant.meta_plays, "the meta tallies disagree");
+        /* the log is bounded, ordered, and only ever names real cards (or a pass) */
+        {
+            int want = watched.last.rounds < DW_WATCH_LOG ? watched.last.rounds : DW_WATCH_LOG;
+            CHECK(watched.watch.log_count == want, "the log holds %d rounds, the match played %d",
+                  watched.watch.log_count, watched.last.rounds);
+            int ascending = 1;
+            for (int i = 1; i < watched.watch.log_count; i++)
+                if (watched.watch.log_round[i] <= watched.watch.log_round[i - 1]) ascending = 0;
+            CHECK(ascending, "the log's rounds are not ascending");
+            for (int s = 0; s < 2; s++)
+                for (int i = 0; i < watched.watch.log_count; i++) {
+                    int c = watched.watch.log_card[s][i];
+                    CHECK(c == -1 || (c >= 0 && c < e->num_cards()),
+                          "logged card %d is not in the catalogue", c);
+                }
+        }
         for (int i = 0; i < DW_LADDER_MAX_CITIZENS; i++) {
             const DwLadderMember *x = &instant.members[i];
             if (!x->active) continue;
