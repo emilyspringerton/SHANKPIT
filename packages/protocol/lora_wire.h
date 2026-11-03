@@ -535,17 +535,19 @@ static int lora_client_due(LoraClient *c, uint32_t now_ms, LoraIntent *out, int 
    a receiver can tell them apart before anything else. Six bytes total -- a request is the cheapest thing
    on the air and should stay that way. */
 #define LORA_REQUEST_VERSION 3u
-#define LORA_REQUEST_BYTES   6
+#define LORA_REQUEST_BYTES   8
 
 enum {
-    LORA_REQ_SNAPSHOT = 0,
-    LORA_REQ_COUNT    = 1
+    LORA_REQ_SNAPSHOT = 0,   /* "give me the world" -- expensive, budgeted */
+    LORA_REQ_TICK     = 1,   /* "resend tick N" -- cheap, needs the history ring below */
+    LORA_REQ_COUNT    = 2
 };
 
 typedef struct {
     uint8_t  kind;     /* LORA_REQ_* */
     uint16_t entity;   /* who is asking, so the answer can be addressed (and logged) */
     uint16_t seq;      /* the asker's own counter: two requests are not the same request */
+    uint16_t tick;     /* LORA_REQ_TICK: which tick to resend. Ignored by SNAPSHOT. */
 } LoraRequest;
 
 static int lora_request_encode(const LoraRequest *r, uint8_t *out) {
@@ -557,6 +559,8 @@ static int lora_request_encode(const LoraRequest *r, uint8_t *out) {
     out[3] = (uint8_t)(r->entity >> 8);
     out[4] = (uint8_t)(r->seq & 0xFF);
     out[5] = (uint8_t)(r->seq >> 8);
+    out[6] = (uint8_t)(r->tick & 0xFF);
+    out[7] = (uint8_t)(r->tick >> 8);
     return LORA_REQUEST_BYTES;
 }
 
@@ -566,12 +570,63 @@ static int lora_request_decode(const uint8_t *in, int len, LoraRequest *r) {
     r->kind = in[1];
     r->entity = (uint16_t)(in[2] | (in[3] << 8));
     r->seq = (uint16_t)(in[4] | (in[5] << 8));
+    r->tick = (uint16_t)(in[6] | (in[7] << 8));
     return r->kind < LORA_REQ_COUNT;
+}
+
+/* ---- a bounded history, so a lost tick can be resent instead of the world ------------------------ */
+
+/* The host keeps the last few ticks' records. A client that missed tick 41 asks for tick 41 (one frame,
+   usually) instead of a full snapshot (two to six frames); a tick older than the ring is gone, and the
+   honest answer is "ask for a snapshot" rather than a silent partial replay. */
+#define LORA_HISTORY_TICKS 8
+
+typedef struct {
+    LoraDeltaRecord rec[LORA_MAX_RECORDS];
+    int      count;
+    uint16_t tick;
+    uint8_t  used;
+} LoraHistorySlot;
+
+typedef struct {
+    LoraHistorySlot s[LORA_HISTORY_TICKS];
+    int next;
+} LoraHistory;
+
+static void lora_history_begin(LoraHistory *h) {
+    if (h) memset(h, 0, sizeof *h);
+}
+
+static void lora_history_record(LoraHistory *h, const LoraDeltaRecord *rec, int count, uint16_t tick) {
+    LoraHistorySlot *slot;
+    if (!h || count < 0 || count > LORA_MAX_RECORDS) return;
+    slot = &h->s[h->next % LORA_HISTORY_TICKS];
+    slot->count = count;
+    slot->tick = tick;
+    slot->used = 1;
+    if (rec && count > 0) memcpy(slot->rec, rec, (size_t)count * sizeof rec[0]);
+    h->next++;
+}
+
+/* Copy one tick's records out. Returns the count (0 is a real, empty tick) or -1 when that tick is not
+   in the window. */
+static int lora_history_get(const LoraHistory *h, uint16_t tick, LoraDeltaRecord *out, int cap) {
+    int i;
+    if (!h || !out || cap < 0) return -1;
+    for (i = 0; i < LORA_HISTORY_TICKS; i++) {
+        const LoraHistorySlot *slot = &h->s[i];
+        if (!slot->used || slot->tick != tick) continue;
+        if (slot->count > cap) return -1;
+        if (slot->count > 0) memcpy(out, slot->rec, (size_t)slot->count * sizeof out[0]);
+        return slot->count;
+    }
+    return -1;
 }
 
 /* The host's budget. ONE pump: the interval is a host-wide budget on full-state frames, because the air
    is shared by everyone and a per-client fairness table is a different (later) decision, named as such
-   in the doc rather than half-built here. */
+   in the doc rather than half-built here. A TICK resend does NOT spend this budget: it is one frame and
+   it is what stops a lost tick from becoming a lost world. */
 typedef struct {
     uint32_t last_ms;
     uint8_t  served;
@@ -585,10 +640,19 @@ static void lora_snapshot_pump_begin(LoraSnapshotPump *p) {
      >0  frames written (the snapshot, chunked like any tick)
       0  a snapshot was just sent: rate-limited, the asker must wait
      -1  not a request this host can serve (wrong kind, null world, no frame slots) */
-static int lora_host_request(const LoraRequest *req, const LoraWorld *w, int preset, uint32_t now_ms,
-                             LoraSnapshotPump *pump, LoraDelta *frames, int max_frames) {
+static int lora_host_request(const LoraRequest *req, const LoraWorld *w, const LoraHistory *hist,
+                             int preset, uint32_t now_ms, LoraSnapshotPump *pump,
+                             LoraDelta *frames, int max_frames) {
     int built;
     if (!req || !w || !pump || !frames || max_frames <= 0) return -1;
+    if (req->kind == LORA_REQ_TICK) {
+        LoraDeltaRecord rec[LORA_MAX_RECORDS];
+        int count;
+        if (!hist) return -1;
+        count = lora_history_get(hist, req->tick, rec, LORA_MAX_RECORDS);
+        if (count < 0) return -1;                 /* older than the ring: ask for a snapshot instead */
+        return lora_frames_build(rec, count, req->tick, frames, max_frames);
+    }
     if (req->kind != LORA_REQ_SNAPSHOT) return -1;
     if (pump->served && (uint32_t)(now_ms - pump->last_ms) < (uint32_t)lora_snapshot_interval_ms(preset))
         return 0;

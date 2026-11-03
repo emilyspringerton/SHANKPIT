@@ -316,43 +316,79 @@ int main(void) {
         CHECK(lora_client_due(&c, 10, out, 0) == 0, "a zero-capacity due call emitted something");
     }
 
-    /* ---- 10. a client can ask for the world, and the host will not be flooded ---- */
+    /* ---- 10. requests: the world, or one tick, under a budget ---- */
     {   LoraRequest rq, got, bad;
         uint8_t buf[LORA_REQUEST_BYTES];
         LoraWorld w;
         LoraDelta frames[LORA_MAX_FRAMES];
         LoraSnapshotPump pump;
+        static LoraHistory hist;
+        LoraDeltaRecord rec[4], out1;
+        LoraDeltaView v;
         uint32_t gap = (uint32_t)lora_snapshot_interval_ms(0);
-        int i;
+        int i, n;
         memset(&w, 0, sizeof w);
         for (i = 0; i < 40; i++)
             CHECK(lora_world_add(&w, (uint16_t)(i + 1), (uint16_t)(i % LORA_GRID_MAX),
                                  (uint16_t)(i % LORA_GRID_MAX), 20) == 1, "actor %d", i);
-        rq.kind = LORA_REQ_SNAPSHOT; rq.entity = 9; rq.seq = 5;
+        rq.kind = LORA_REQ_SNAPSHOT; rq.entity = 9; rq.seq = 5; rq.tick = 0;
+        CHECK(LORA_REQUEST_BYTES == 8, "the request is %d bytes, expected 8", LORA_REQUEST_BYTES);
         CHECK(lora_request_encode(&rq, buf) == LORA_REQUEST_BYTES, "a request did not encode");
         CHECK(buf[0] == LORA_REQUEST_VERSION, "first byte %d is not the request marker", buf[0]);
         CHECK(lora_request_decode(buf, LORA_REQUEST_BYTES, &got) == 1, "a request did not decode");
-        CHECK(got.kind == LORA_REQ_SNAPSHOT && got.entity == 9 && got.seq == 5, "request round trip wrong");
-        CHECK(lora_request_decode(buf, LORA_REQUEST_BYTES - 1, &got) == 0, "a 5-byte request decoded");
-        buf[0] = (uint8_t)LORA_DELTA_VERSION;    /* a delta frame is not a request */
+        CHECK(got.kind == LORA_REQ_SNAPSHOT && got.entity == 9 && got.seq == 5 && got.tick == 0,
+              "request round trip wrong");
+        CHECK(lora_request_decode(buf, LORA_REQUEST_BYTES - 1, &got) == 0, "a short request decoded");
+        buf[0] = (uint8_t)LORA_DELTA_VERSION;
         CHECK(lora_request_decode(buf, LORA_REQUEST_BYTES, &got) == 0, "a delta frame decoded as a request");
         buf[0] = (uint8_t)LORA_REQUEST_VERSION; buf[1] = 7;
         CHECK(lora_request_decode(buf, LORA_REQUEST_BYTES, &got) == 0, "an unknown request kind decoded");
 
         lora_snapshot_pump_begin(&pump);
-        CHECK(lora_host_request(&rq, &w, 0, 5000, &pump, frames, LORA_MAX_FRAMES) == 2,
-              "the first request did not produce 2 frames for 40 actors");
-        CHECK(lora_host_request(&rq, &w, 0, 5000 + gap - 1, &pump, frames, LORA_MAX_FRAMES) == 0,
-              "a second request was served inside the budget");
-        CHECK(lora_host_request(&rq, &w, 0, 5000 + gap, &pump, frames, LORA_MAX_FRAMES) == 2,
+        lora_history_begin(&hist);
+        CHECK(lora_host_request(&rq, &w, &hist, 0, 5000, &pump, frames, LORA_MAX_FRAMES) == 2,
+              "40 actors did not snapshot into 2 frames");
+        CHECK(lora_host_request(&rq, &w, &hist, 0, 5000 + gap - 1, &pump, frames, LORA_MAX_FRAMES) == 0,
+              "a second snapshot was served inside the budget");
+        CHECK(lora_host_request(&rq, &w, &hist, 0, 5000 + gap, &pump, frames, LORA_MAX_FRAMES) == 2,
               "the budget never expired");
+
+        /* a tick resend: one frame out of the ring, and it does NOT spend the snapshot budget */
+        for (i = 0; i < 3; i++) {
+            rec[i].entity = (uint16_t)(i + 1);
+            rec[i].kind = LORA_DELTA_MOVE;
+            rec[i].value = (uint16_t)i;
+            rec[i].extra = 0;
+        }
+        lora_history_record(&hist, rec, 3, 100);
+        rec[0].value = 55;
+        lora_history_record(&hist, rec, 1, 101);
+        rq.kind = LORA_REQ_TICK; rq.tick = 100; rq.seq = 6;
+        n = lora_host_request(&rq, &w, &hist, 0, 5000 + gap, &pump, frames, LORA_MAX_FRAMES);
+        CHECK(n == 1, "a tick resend took %d frames", n);
+        CHECK(lora_delta_read(frames[0].buf, frames[0].len, &v) == 1 && v.tick == 100 && v.count == 3,
+              "the resent tick is wrong (%d records, tick %d)", v.count, v.tick);
+        CHECK(lora_delta_get(&v, 0, &out1) == 1 && out1.value == 0, "the resent records are not the stored ones");
+        CHECK(lora_host_request(&rq, &w, &hist, 0, 5000 + gap, &pump, frames, LORA_MAX_FRAMES) == 1,
+              "a tick resend was charged against the snapshot budget");
+        rq.tick = 999;
+        CHECK(lora_host_request(&rq, &w, &hist, 0, 0, &pump, frames, LORA_MAX_FRAMES) == -1,
+              "a tick outside the history was served");
+        CHECK(lora_history_get(&hist, 101, rec, 4) == 1, "the newer tick is not in the ring");
+
+        for (i = 0; i < LORA_HISTORY_TICKS + 2; i++) lora_history_record(&hist, rec, 1, (uint16_t)(200 + i));
+        CHECK(lora_history_get(&hist, 100, rec, 4) == -1, "a tick survived the ring");
+        CHECK(lora_history_get(&hist, 200 + LORA_HISTORY_TICKS + 1, rec, 4) == 1, "the newest tick is missing");
+        CHECK(lora_history_get(&hist, 100, rec, -1) == -1, "a negative capacity was accepted");
+
         bad = rq;
         bad.kind = LORA_REQ_COUNT;
-        CHECK(lora_host_request(&bad, &w, 0, 900000, &pump, frames, LORA_MAX_FRAMES) == -1,
+        CHECK(lora_host_request(&bad, &w, &hist, 0, 900000, &pump, frames, LORA_MAX_FRAMES) == -1,
               "an unknown request kind was served");
-        CHECK(lora_host_request(NULL, &w, 0, 0, &pump, frames, LORA_MAX_FRAMES) == -1, "a null request was served");
-        CHECK(lora_host_request(&rq, NULL, 0, 0, &pump, frames, LORA_MAX_FRAMES) == -1, "a null world was served");
-        CHECK(lora_host_request(&rq, &w, 0, 900000, &pump, frames, 0) == -1, "a zero-slot request was served");
+        CHECK(lora_host_request(NULL, &w, &hist, 0, 0, &pump, frames, LORA_MAX_FRAMES) == -1, "a null request was served");
+        CHECK(lora_host_request(&rq, NULL, &hist, 0, 0, &pump, frames, LORA_MAX_FRAMES) == -1, "a null world was served");
+        CHECK(lora_host_request(&rq, &w, NULL, 0, 0, &pump, frames, LORA_MAX_FRAMES) == -1, "a null history was served");
+        CHECK(lora_host_request(&rq, &w, &hist, 0, 900000, &pump, frames, 0) == -1, "a zero-slot request was served");
         CHECK(lora_snapshot_interval_ms(0) == 30000 && lora_snapshot_interval_ms(1) == 60000 &&
               lora_snapshot_interval_ms(2) == 15000, "the snapshot budget is not the PARENA table's");
     }
