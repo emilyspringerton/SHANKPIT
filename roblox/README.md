@@ -102,6 +102,9 @@ it — hand-writing binary INST/PROP/PRNT chunks would be a good way to corrupt 
    mistake that makes a lobby look finished with nothing on screen.
 5. Enable **HttpService** and **API Services → Studio Access to APIs** (Game Settings → Security) — DataStore needs
    the second one, and without it identity persistence quietly becomes "a new guest every session".
+6. To point the place at a dev backend instead of production, set the attributes `IdunaBase` / `WotanBase`
+   on the `lobby.server` Script (for the IDUNA Space: `https://<space>.hf.space/api/v1`). Unset means the
+   production hosts, and the stats stay a cache of them either way (`src/stats460.lua`).
 6. Fill in `CONFIG` in `lobby.server.lua`, un-tick **Disabled**, publish.
 
 ## Honest limits
