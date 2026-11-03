@@ -61,3 +61,18 @@ float citizen_avatar_scale(const CitizenAvatar *a, int part) {
         default: return 1.0f;
     }
 }
+
+void citizen_avatar_rgb(const CitizenAvatar *a, int kind, float out[3]) {
+    if (!out) return;
+    const unsigned char *c;
+    if (!a) { out[0] = out[1] = out[2] = 0.5f; return; }
+    switch (kind) {
+        case 0: c = a->coat; break;
+        case 1: c = a->pants; break;
+        case 2: c = a->accent; break;
+        default: out[0] = out[1] = out[2] = 0.5f; return;
+    }
+    out[0] = (float)c[0] / 255.0f;
+    out[1] = (float)c[1] / 255.0f;
+    out[2] = (float)c[2] / 255.0f;
+}

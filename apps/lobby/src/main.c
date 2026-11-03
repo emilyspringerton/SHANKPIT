@@ -433,6 +433,12 @@ static void outline_shader_init(void) {
  * thread through -- this module-level flag is the real, minimal way to swap tint for one draw
  * call, same "static drives the next callback" convention g_gband_frame_dt_ms already uses. */
 static int g_skel_npc_evil_tint = 0; /* 0 base, 1 evil-red, 2 zombie, 3 the men, 4 bird, 5..8 citizen variants, 9 queue-yellow */
+/* A GENERATED body colour, in place of one of role_color's presets. A citizen's coat is not one of
+ * four hand-picked colours any more -- it comes from its own persona (citizen_avatar.h), and
+ * skel_npc_draw_skinned's callback signature has no colour parameter to thread it through, so this
+ * is the same "static drives the next callback" convention g_skel_npc_evil_tint already uses. */
+static float g_skel_npc_tint_rgb[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+static int g_skel_npc_tint_use = 0;
 
 static void skel_npc_draw_skinned(const float *verts6, int vert_count, const Mat4 *mvp, const Mat4 *model) {
     (void)model; /* world transform pre-baked into verts6, same contract as gband_draw_skinned */
@@ -473,7 +479,8 @@ static void skel_npc_draw_skinned(const float *verts6, int vert_count, const Mat
     }
     gl_use_program(g_gband_program);
     gl_uniform_matrix4fv(gl_get_uniform_location(g_gband_program, "u_mvp"), mvp->m);
-    gl_uniform4fv(gl_get_uniform_location(g_gband_program, "u_color"), role_color[tint]);
+    gl_uniform4fv(gl_get_uniform_location(g_gband_program, "u_color"),
+                  g_skel_npc_tint_use ? g_skel_npc_tint_rgb : role_color[tint]);
     gl_dynamic_vbo_draw(&g_skel_npc_vbo, verts6, vert_count, GL_TRIANGLES);
     gl_use_program(0);
 }
@@ -9535,9 +9542,23 @@ static void draw_player_skin_mannequin(PlayerState *p, float draw_pitch, float d
         is_bird ? 4 :
         role == WITNESS_AI_ROLE_CITIZEN ? 5 + (p->id & 3) : 0;
     if (queue_yellow) g_skel_npc_evil_tint = 9;
+    /* A citizen wears its OWN generated body (citizen_avatar.h, built from its persona in
+       witness_ai.c): its real coat colour instead of one of four preset citizen tints, and its real
+       standing height instead of one shared scale. 1710 mm is the neutral body, so an average
+       citizen is drawn exactly as before and only the deviations move. */
+    float citizen_height_scale = 1.0f;
+    if (role == WITNESS_AI_ROLE_CITIZEN) {
+        const CitizenAvatar *av = witness_ai_citizen_avatar(p->id);
+        if (av) {
+            citizen_avatar_rgb(av, 0, g_skel_npc_tint_rgb);
+            g_skel_npc_tint_use = 1;
+            citizen_height_scale = (float)av->height_mm / 1710.0f;
+        }
+    }
     /* The skinned draw bakes the world transform into the vertices (vp only), so GL matrix calls
        around it do nothing -- gband_skel_npc_set_scale is the real scale hook. */
-    gband_skel_npc_set_scale(MANNEQUIN_DRAW_SCALE * (is_giant_bug ? 2.5f : is_bird ? 0.3f : 1.0f));
+    gband_skel_npc_set_scale(MANNEQUIN_DRAW_SCALE * (is_giant_bug ? 2.5f : is_bird ? 0.3f : 1.0f)
+                             * citizen_height_scale);
     g_outline_mode = outline_mode_for(p, role); /* #538: yellow enemy outline, red while it is fighting */
     /* An imported skin bundles all thirteen contract states, so drive the one the player is actually in
        -- run, crouch-walk, jump, in-air, fire, reload, swing, ability, climb -- instead of idle/walk plus
@@ -9555,6 +9576,7 @@ static void draw_player_skin_mannequin(PlayerState *p, float draw_pitch, float d
     g_outline_mode = 0;
     gband_skel_npc_set_scale(1.0f);
     g_skel_npc_evil_tint = 0;
+    g_skel_npc_tint_use = 0;
 }
 
 static void draw_player_skin_emiree(PlayerState *p, float draw_pitch, float draw_recoil) {

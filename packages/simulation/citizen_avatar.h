@@ -60,4 +60,9 @@ enum {
  * returns 1.0, so a caller can never accidentally scale a body to zero. */
 float citizen_avatar_scale(const CitizenAvatar *a, int part);
 
+/* One garment as 0..1 RGB, because that is what a shader uniform takes. kind: 0 = coat (the body's
+ * own colour), 1 = pants, 2 = accent. An out-of-range kind fills mid grey rather than leaving the
+ * caller's buffer untouched. */
+void citizen_avatar_rgb(const CitizenAvatar *a, int kind, float out[3]);
+
 #endif

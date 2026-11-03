@@ -214,6 +214,26 @@ int main(void) {
         CHECK(near_f(citizen_avatar_scale(NULL, CITIZEN_AVATAR_PART_TORSO), 1.0f), "NULL did not fall back to 1.0");
     }
 
+    /* ---- the renderer's colour surface: a shader uniform takes 0..1, not 0..255 ---- */
+    {
+        CitizenAvatar av;
+        float c[3];
+        memset(&av, 0, sizeof(av));
+        av.coat[0] = 255; av.coat[1] = 51; av.coat[2] = 0;
+        av.pants[0] = 10; av.pants[1] = 20; av.pants[2] = 30;
+        citizen_avatar_rgb(&av, 0, c);
+        CHECK(near_f(c[0], 1.0f) && near_f(c[1], 0.2f) && near_f(c[2], 0.0f),
+              "coat rgb %f %f %f", c[0], c[1], c[2]);
+        citizen_avatar_rgb(&av, 1, c);
+        CHECK(near_f(c[0], 10.0f / 255.0f) && near_f(c[2], 30.0f / 255.0f),
+              "pants rgb %f %f %f", c[0], c[1], c[2]);
+        citizen_avatar_rgb(&av, 7, c);
+        CHECK(near_f(c[0], 0.5f) && near_f(c[1], 0.5f) && near_f(c[2], 0.5f), "an unknown garment was not grey");
+        citizen_avatar_rgb(NULL, 0, c);
+        CHECK(near_f(c[0], 0.5f) && near_f(c[2], 0.5f), "a NULL avatar was not grey");
+        citizen_avatar_rgb(&av, 0, NULL);
+    }
+
     /* ---- total on bad input ---- */
     {
         CitizenAvatar av;
