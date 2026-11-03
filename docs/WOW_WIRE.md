@@ -164,6 +164,22 @@ drives a real IDUNA-shaped ticket, a target intent and its re-send, and a cast t
 99 -- and the resend is *demonstrated* recovering, and abandoning once with the cast named, instead
 of merely asserted in a unit test.
 
+## Air budget, measured (`make test-wow-wire`)
+
+| What | Bytes |
+|---|---|
+| `CAST` payload | 6 |
+| its envelope (header 12 + length 1 + frame buffer 64, padded) | 80 |
+| one `ACK` datagram (header 12 + 1 + 5) | 18 |
+| **one successful cast, round trip** | **98** |
+| give-up on the slow preset (`1 + wow_retry_max(1)` = 3 sends, no ACK) | 240 |
+
+At the 1 kbit/s link this format exists for (125 B/s), one successful cast costs **784 ms** of air and a
+give-up costs **1920 ms** with nothing coming back. The 6-byte payload is 7% of its own envelope, which is
+the number to attack in lane 9 of `docs/WOW_WIRE_NEXT_STEPS.md`: pack the header or drop the 64-byte
+padding before reaching for a compressor. `wow_wire_test` pins every figure above, so a larger header
+fails the build instead of quietly costing the radio.
+
 ## GoblinFoxDragon / MUD: what is real today
 
 `GoblinFoxDragon` is now cloned at `MONOREPO/GoblinFoxDragon`. Its MUD is Go under `apps2/mud`

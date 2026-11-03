@@ -106,30 +106,16 @@ bind/close race, the CONNECT retry times out and the failure names the port it t
 
 *Done when (met):* `make test-wow-e2e` passes with a dev server already listening on 6979.
 
-### 9. Bytes on a 1 kbit link
-A 6-byte CAST currently travels in an 80-byte envelope (`NetHeader` 10 + length byte + the padded frame
-buffer). That is the right trade for a LAN and the wrong one for the radio this format exists for. Measure
-first: bytes per cast on the slow preset, then trim (pack the header, drop the padding) or compress — LZ4
-is this monorepo's default codec, but at 6 bytes of payload a hand-packed envelope will beat it.
-*Done when:* there is a measured bytes-per-cast number for the slow preset, before and after.
+### 9. Bytes on a 1 kbit link -- measured 2026-11-03, trim still open
+`wow_wire_test` now pins the air cost instead of describing it: 6-byte payload, 80-byte envelope
+(`NetHeader` is 12 + length byte + the padded 64-byte frame buffer), 18-byte ACK, **98 bytes** per
+successful cast and **240 bytes** for a slow-preset give-up (3 sends, nothing back). At 125 B/s that is
+**784 ms** and **1920 ms**: one cast costs most of a second of air, and the payload is 7% of its envelope.
+The first run of this test failed against my own table -- I had assumed a 10-byte header and it is 12 --
+which is the point of pinning `sizeof` rather than writing prose. The trim itself is still open and now has
+a target: pack the header or drop the 64-byte frame padding before reaching for LZ4, because at 6 bytes of
+payload a compressor cannot win. `docs/WOW_WIRE.md` carries the table.
 
-## Known-good commands
+*Done when (partial):* measured -- yes, and the numbers corrected an assumption. Trimmed -- no; the next
+step is a packed envelope carrying the same `wow_wire_*` frames, plus this table updated to show the after.
 
-```bash
-cd SHANKPIT
-make test-wow-e2e        # real UDP, real server, real ticket shape
-make test-wow-wire       # byte layouts
-make test-wow-client     # retry + ACK state machine
-make test-wow-ticket     # MAC/expiry
-make test-units check-units
-make check-wow-wire-rules
-make lobby server
-```
-
-PARENA: `make test` (374 assertions), `make test-units`, `make check-units`.
-
-## What would make this report wrong
-
-If a real IDUNA ticket lands (lane 5), lanes 1-2 become the only real risk left on the wire, and lane 4
-becomes the largest remaining unit of work. If the Go toolchain appears, lane 4 is a day of adapter code
-against a seam that already has a test harness on the C side.
