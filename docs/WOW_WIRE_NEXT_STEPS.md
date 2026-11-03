@@ -151,3 +151,27 @@ give-up are proven on the wire. The lobby's own call sites are compile-verified 
 no IDUNA ticket here, so nothing has yet watched a player take a shot.
 
 Re-run again after `d64fe41` regenerated `packages/world/png_decode_gen.c` from the fixed PARENA emitter (and `cdac1bb` corrected the pellegrino note): all fifteen targets exit 0, E2E 3/3 phases, PARENA 374/0. The decoder change is real code in the lobby, so the earlier green pass would not have covered it.
+
+## Verified 2026-11-03 (headless client)
+
+The client half is no longer compile-only. `SDL_VIDEODRIVER=dummy` is enough to run the real lobby --
+it needs no X server -- and `--coop-host 0` points it at a local server. Three things were needed to
+see the wire, each discovered by a failed attempt rather than assumed:
+
+1. the binary must sit in `bin/`, because the coop host looks for `shank_server` beside `argv[0]`;
+2. verbose logging must be compiled in (`-DNET_VERBOSE_LOG=1` on the Makefile's own compile line, output
+   to `/tmp`, `bin/` untouched) or `NET_CLIENT_LOG`/`NET_SERVER_LOG` strip their arguments;
+3. the ticket must be fresh -- it carries a 4-byte expiry and lives 5 minutes.
+
+With those, `SHANKPIT_TICKET=<72 hex>` and `SHANKPIT_TICKET_SECRET` on the server produce:
+
+    [NET_CLIENT] WOW_TX op=7 len=38
+    [NET_CLIENT] WOW_ACK op=6 len=5 pending=0
+
+so AUTH is sent, acknowledged and retired against the real server. Before that, an aged ticket produced
+`WOW_RETRY` x4 and `WOW_GIVEUP op=7 acked=0`; the server meanwhile claimed no verifier was installed
+while having just logged that it installed one -- `-2` conflated "no verifier" with "ticket rejected".
+That is now `WOW_AUTH_REFUSED ... (bad MAC or expired)`.
+
+Still needing a person: a target change and a cast originating from input, and anything visual. The
+handshake, the tracked resend and the retirement are exercised; the gameplay call sites are not.
