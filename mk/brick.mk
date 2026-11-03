@@ -83,6 +83,7 @@ test-litbox-render:
 test-ambient-boost:
 	gcc -std=gnu99 -Wall -g -fsanitize=address,undefined $(INCLUDES) packages/render/ambient_boost_test.c \
 		packages/render/retro_lighting.c packages/render/env_matrix.c packages/render/retro_sky.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/sky_weather.c packages/simulation/ambient_rules.c \
+		packages/simulation/lighting_rules.c \
 		packages/world/parena_runtime.c -o /tmp/shankpit_ambient_boost_test -lm -lGL
 	/tmp/shankpit_ambient_boost_test
 
