@@ -80,29 +80,16 @@ plate, the 40 yd range feedback and the give-up chat line.
 *Done when:* a screenshot exists showing a cast fired at a real target through a real login. Not
 claimable from here — say so rather than substituting "it compiles".
 
-### 6. Stale-claim sweep in PARENA's stdlib (comment-only, cheap)
-The compiler accepts F32, I64, `fn`, bare `defenum` and `case` as of `PARENA@aa0b8ec`, but several
-stdlib headers still justify their integer ABI with "VS0 has no F32 params yet". The BIG_O and SHANKPIT
-hoverboard files are already corrected; these still carry the old wording:
+### 6. ~~Stale-claim sweep in PARENA's stdlib~~ -- done 2026-11-03
+The headers that justified an integer ABI with "VS0 has no F32 params" now say what is true: the boundary
+is integer **by design**, and F32 params exist in the emitter as of 2026-11-03. Touched:
+`brawlpit/commander_mod.prn`, `ecowar/card_effect_mod.prn`, `racer/bike_gear_mod.prn`,
+`redgarden/abraham_fireball_mod.prn`, seven `papercraft/*_mod.prn` headers, and
+`docs/TTS_VITS_PORT_PLAN.md` (whose `emit.c` reading predates the F32/I64 rows). No constants or signatures
+changed -- the fixed point is still the right call where exactness matters.
 
-- `PARENA/stdlib/brawlpit/commander_mod.prn:17`
-- `PARENA/stdlib/ecowar/card_effect_mod.prn:15`
-- `PARENA/stdlib/racer/bike_gear_mod.prn:17,19`
-- `PARENA/stdlib/redgarden/abraham_fireball_mod.prn:33`
-- `PARENA/stdlib/papercraft/interact_falloff_mod.prn:6`
-- `PARENA/stdlib/papercraft/pickup_mod.prn:10`
-- `PARENA/stdlib/papercraft/explosion_mod.prn:11`
-- `PARENA/stdlib/papercraft/level_mod.prn:8`
-- `PARENA/stdlib/papercraft/stat_effects_mod.prn:9`
-- `PARENA/stdlib/papercraft/slide_jump_mod.prn:12`
-- `PARENA/stdlib/papercraft/talent_mod.prn:11`
-- `PARENA/stdlib/papercraft/paper_fragment_mod.prn:9`
-- `PARENA/docs/TTS_VITS_PORT_PLAN.md:32` (describes `emit.c`'s type table, which now has an F32 row)
-
-Keep the fixed point where it is genuinely the right call (exactness, per-tick determinism) — the point
-is to stop citing a limitation that no longer exists, not to convert the constants.
-*Done when:* `grep -rn "no F32\|F32 params\|F32 is missing" PARENA/stdlib` returns only comments that
-explain a deliberate integer choice.
+*Done when (met):* the grep now returns only the two hoverboard comments that explain a deliberate integer
+choice, not a missing feature.
 
 ### 7. A second consumer for the unit layer: geometry authoring
 The cast range is the first real consumer; the level boxes, the brick solver and the editor still author
