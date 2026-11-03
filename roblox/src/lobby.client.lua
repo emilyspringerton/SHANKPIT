@@ -74,8 +74,9 @@ board.Text = ""
 board.Parent = panel
 
 local selfLine = label("you: not queued", 214, 18, 12, Color3.fromRGB(200, 200, 140))
-local casual = button("CASUAL", 236, 8, 146)
-local ranked = button("RANKED", 236, 162, 146)
+local casual = button("CASUAL", 236, 8, 96)
+local ranked = button("RANKED", 236, 112, 96)
+local signin = button("SIGN IN", 236, 216, 96)
 local leave = button("LEAVE QUEUE", 266, 8, 300)
 
 local matchFrame = Instance.new("Frame")
@@ -103,12 +104,18 @@ matchText.Parent = matchFrame
 local match = nil
 local matchExpiresAt = 0
 
+-- A token may still be handed in by hand (_G) for testing; leaving it unset is the normal path, where the
+-- SERVER signs the player in with IDUNA's guest account and never shows a secret to this client.
 local function requestJoin(mode)
     queueEvent:FireServer("join", { mode = mode, token = _G.SHANKPIT460_IDUNA_TOKEN })
 end
 
 casual.MouseButton1Click:Connect(function() requestJoin("casual") end)
 ranked.MouseButton1Click:Connect(function() requestJoin("ranked") end)
+signin.MouseButton1Click:Connect(function()
+    state.Text = "state: signing in with IDUNA"
+    queueEvent:FireServer("signin")
+end)
 leave.MouseButton1Click:Connect(function()
     match = nil
     matchFrame.Visible = false
@@ -141,7 +148,11 @@ boardEvent.OnClientEvent:Connect(renderBoard)
 
 queueEvent.OnClientEvent:Connect(function(payload)
     if type(payload) ~= "table" then return end
-    if payload.fillable then
+    if payload.signed_in then
+        state.Text = string.format("state: signed in as %s (%s)", tostring(payload.display_name),
+            tostring(payload.account_state))
+        selfLine.Text = "iduna: " .. tostring(payload.player_id):sub(1, 8)
+    elseif payload.fillable then
         state.Text = string.format("state: a citizen may fill %s (still queued)", tostring(payload.fillable.mode))
     elseif payload.position then
         state.Text = string.format("state: queued %s at #%d (rating %s)", tostring(payload.mode),

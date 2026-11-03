@@ -20,6 +20,7 @@ PARTS = [
     ("net460.lua", "ModuleScript", "net460"),
     ("queue460.lua", "ModuleScript", "queue460"),
     ("ticket460.lua", "ModuleScript", "ticket460"),
+    ("login460.lua", "ModuleScript", "login460"),
     ("queue460_rules.lua", "ModuleScript", "queue460_rules"),
     ("ticket460_rules.lua", "ModuleScript", "ticket460_rules"),
     ("lobby.server.lua", "Script", "lobby"),

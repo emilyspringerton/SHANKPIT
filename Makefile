@@ -579,6 +579,7 @@ test-roblox:
 	lua roblox/tests/net460_test.lua
 	lua roblox/tests/queue460_test.lua
 	lua roblox/tests/ticket460_test.lua
+	lua roblox/tests/login460_test.lua
 	luac -p roblox/src/lobby.server.lua
 	luac -p roblox/src/lobby.client.lua
 

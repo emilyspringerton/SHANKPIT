@@ -4,7 +4,9 @@
 -- HttpService, RemoteEvents, a loop.
 --
 -- The 460 flow, end to end:
---   1. a body joins and presents its IDUNA session TOKEN (device-flow result; the place never mints one)
+--   1. a body signs in: IDUNA's generic game account (guest-register) makes a REAL player row and token --
+--      no password, no OAuth inside the engine. login460 does the reading and the validation; a secret is
+--      persisted per Roblox UserId so the next session is the same account (guest-login), not a new one.
 --   2. the server asks IDUNA for a connect ticket with that token as a Bearer, and reads IDUNA's answer through
 --      ticket460.from_mint -- which refuses a ticket whose JSON fields disagree with the bytes IDUNA signed
 --   3. the body takes a seat in casual or ranked (queue460), keyed by Roblox UserId
@@ -13,8 +15,11 @@
 --
 -- HONEST LIMITS, named where they bite:
 --   * Roblox cannot reach 127.0.0.1 -- NetUrl/TicketUrl must be public endpoints.
---   * The place does not mint tokens. A player authenticates with IDUNA out of band (device flow) and hands the
---     resulting token to this server; there is no login screen here yet, which is the next real piece.
+--   * The login is an IDUNA GUEST account: real player_id, real ES256 token, no email and no recovery -- the
+--     secret is the account. A player who wants to keep it across places needs IDUNA's own link-email flow,
+--     which is a WOTAN page today and not wired to this lobby.
+--   * Identity persistence uses DataStore keyed by Roblox UserId (player_id + guest_secret, never the token).
+--     It is best-effort and pcall-guarded: a place with DataStore disabled still works, and simply forgets.
 --   * There is NO binding yet between a Roblox UserId and a SHANKPIT pid, so a player queues at the default
 --     rating (1000) and the board is read-only. Inventing a binding would put a made-up number on a screen.
 --   * The arena is the C server. A pairing hands out a ticket; it does not host an FPS.
@@ -26,12 +31,16 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local queue460 = require(script.Parent.queue460)
 local ticket460 = require(script.Parent.ticket460)
 local net460 = require(script.Parent.net460)
+local login460 = require(script.Parent.login460)
 
 local CONFIG = {
     NetUrl = "https://okemily.com/api/v1/shankpit-net/deadweight",
     -- IDUNA's connect-ticket mint (IDUNA/internal/http/handlers/shankpit_ticket.go): 72 hex chars, 5 min TTL,
     -- presented once at PACKET_CONNECT and verified by the C server's own shared secret.
     TicketUrl = "https://iam.okemily.com/api/v1/shankpit/ticket",
+    -- IDUNA's generic game accounts, scoped to the game the ticket endpoint is scoped to ("shankpit").
+    -- A game player token's subject is "guest:<uuid>"; its player_id claim is what the ticket reads.
+    GameUrl = "https://iam.okemily.com/api/v1/games/shankpit",
     BoardEvery = 5,
     QueueEvery = 1,
 }
@@ -39,6 +48,29 @@ local CONFIG = {
 local queue = queue460.new()
 local snapshot = nil
 local seats = {}          -- [player] = { user_id, uuid, name, mode, ticket, expires_at, queued_at }
+local identities = {}     -- [player] = login460 identity (player_id, token, expires_at, guest_secret)
+local savedFor = {}       -- [user_id] = what may be persisted (player_id + guest_secret, never the token)
+
+-- Identity persistence. DataStore is optional on purpose: a place that cannot reach it still runs, and the
+-- ONLY thing lost is that a returning player is a new guest instead of the same one.
+local storeOk, identityStore = pcall(function()
+    return game:GetService("DataStoreService"):GetDataStore("SHANKPIT460_Identity_v1")
+end)
+if not storeOk then identityStore = nil end
+
+local function loadSaved(userId)
+    if not identityStore then return nil end
+    local ok, saved = pcall(function() return identityStore:GetAsync("u" .. tostring(userId)) end)
+    if not ok or type(saved) ~= "table" then return nil end
+    return saved
+end
+
+local function saveIdentity(userId, identity)
+    local saved = login460.to_save(identity)
+    if not saved or not identityStore then return end
+    savedFor[userId] = saved
+    pcall(function() identityStore:SetAsync("u" .. tostring(userId), saved) end)
+end
 
 local function event(name)
     local e = Instance.new("RemoteEvent")
@@ -104,6 +136,35 @@ local function refreshSnapshot()
     pushBoard()
 end
 
+-- Step 1. Sign in for real. Reuse what was saved for this UserId, otherwise register a real IDUNA player.
+local function ensureIdentity(player)
+    local existing = identities[player]
+    if existing and login460.token_ok(existing, os.time()) then return existing, nil end
+
+    local saved = savedFor[player.UserId] or loadSaved(player.UserId)
+    if saved then
+        local identity, why, wasSaved = login460.identity_for(
+            function(method, url, body, headers) return httpJson(url, method, body, headers) end,
+            CONFIG.GameUrl, { [player.UserId] = saved }, player.UserId, os.time())
+        if identity then
+            identities[player] = identity
+            saveIdentity(player.UserId, identity)
+            return identity, nil
+        end
+        -- A saved secret IDUNA no longer accepts is a real refusal; registering a second account behind the
+        -- player's back would silently split their history, so it is reported instead.
+        if wasSaved or why == "http-401" or why == "http-403" then return nil, "signin:" .. tostring(why) end
+    end
+
+    local identity, why = login460.sign_in(
+        function(method, url, body, headers) return httpJson(url, method, body, headers) end,
+        CONFIG.GameUrl, player.DisplayName, os.time())
+    if not identity then return nil, "signup:" .. tostring(why) end
+    identities[player] = identity
+    saveIdentity(player.UserId, identity)
+    return identity, nil
+end
+
 local function dropSeat(player)
     local seat = seats[player]
     if not seat then return end
@@ -117,20 +178,53 @@ Players.PlayerAdded:Connect(function(player)
 end)
 
 queueEvent.OnServerEvent:Connect(function(player, action, arg)
-    if action == "join" then
+    if action == "signin" then
+        local identity, why = ensureIdentity(player)
+        if not identity then
+            player:SetAttribute("SHANKPIT460_State", "refused:" .. tostring(why))
+            return
+        end
+        player:SetAttribute("SHANKPIT460_Pid", identity.player_id)
+        player:SetAttribute("SHANKPIT460_State", "signed-in")
+        queueEvent:FireClient(player, {
+            signed_in = true,
+            player_id = identity.player_id,
+            display_name = identity.display_name,
+            account_state = identity.account_state,
+        })
+    elseif action == "join" then
         local mode = tostring(arg and arg.mode or "casual")
-        local verdict = mintTicket(arg and arg.token)
+        -- A hand-passed token still works (a player who signed in on IDUNA's own page), otherwise this
+        -- server signs the player in itself.
+        local identity = identities[player]
+        if type(arg) == "table" and type(arg.token) == "string" and arg.token ~= "" then
+            identity = nil
+        else
+            identity, _ = ensureIdentity(player)
+        end
+        if not identity and not (type(arg) == "table" and arg.token) then
+            player:SetAttribute("SHANKPIT460_State", "refused:not-signed-in")
+            return
+        end
+        local verdict = mintTicket(type(arg) == "table" and arg.token or identity.token)
         if not verdict.ok then
             player:SetAttribute("SHANKPIT460_State", "refused:" .. tostring(verdict.reason))
             return
         end
+        -- The ticket is for whoever IDUNA says the token belongs to; a mismatch means the token and the
+        -- seat disagree and the player is not sent anywhere.
+        if identity and verdict.player_id ~= identity.player_id then
+            player:SetAttribute("SHANKPIT460_State", "refused:signed-in-as-someone-else")
+            return
+        end
         local rating = nil
-        -- A record lookup needs a Roblox<->pid binding this layer does not have yet; the queue's own default
-        -- (1000, the ladder's rating_start) stands in rather than a made-up rating.
+        -- A rating needs the world's ladder row for this identity, and the ladder is keyed by the world's
+        -- own pid -- a binding that does not exist yet. The queue's default (1000, the ladder's own
+        -- rating_start) stands in rather than a made-up number.
         local entry, why = queue460.enqueue(queue, mode, {
             pid = player.UserId,
             rating = rating,
-            name = player.Name,
+            name = (identity and identity.display_name ~= "" and identity.display_name) or player.Name,
             joined_ms = nowMs(),
         })
         if not entry then
@@ -140,7 +234,7 @@ queueEvent.OnServerEvent:Connect(function(player, action, arg)
         seats[player] = {
             user_id = player.UserId,
             uuid = verdict.player_id,
-            name = player.Name,
+            name = (identity and identity.display_name ~= "" and identity.display_name) or player.Name,
             mode = mode,
             ticket = verdict.hex,
             expires_at = verdict.expires_at,
