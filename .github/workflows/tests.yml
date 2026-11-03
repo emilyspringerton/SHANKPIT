@@ -122,6 +122,8 @@ jobs:
           make test-macros
           make test-wow-macros
           make check-wow-weapons
+          make check-wow-wire-rules
+          make test-wow-wire
           make check-lora-rules
           make test-lora-wire
 

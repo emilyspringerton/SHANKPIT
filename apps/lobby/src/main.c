@@ -127,6 +127,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/ui/macro.h"                    /* shankpit_macros.cfg: bind a key to commands */
 #include "../../../packages/ui/wow_api.h"                     /* the host contract a WoW macro/Lua binding talks to */
 #include "../../../packages/ui/wow_weapons.h"                 /* generated: WPN_* names, so /cast magnum is the same id as key 2 */
+#include "../../../packages/ui/wow_mod.h"                     /* mod-registered macros and /cast aliases */
 #include "../../../packages/render/proc_tex.h"
 #include "../../../packages/render/retro_sky.h"
 #include "../../../packages/render/sky_weather.h"
@@ -13791,6 +13792,7 @@ static int g_wow_fire_ticks = 0;   /* pull the trigger for this many input passe
 static int g_wow_weapon_req = -1;  /* equip on the next input pass, then clear */
 static int g_wow_mo_slot = -1;     /* cached [@mouseover] hit for one macro evaluation */
 static int g_wow_mo_valid = 0;
+static WowModRegistry g_wow_mods;    /* mods register here; empty until a mod does */
 
 /* The hero this client controls, or -1 when there is nothing to control (menu, net match, dead). */
 static int wow_hero_slot(void) {
@@ -13863,7 +13865,7 @@ static long wow_h_health(void *c, int token) {
 }
 
 static int wow_h_cast(void *c, const char *name, int token) {
-    int w = wow_weapon_from_name(name);
+    int w = wow_mod_spell_weapon(&g_wow_mods, name);   /* a mod alias first, then the engine's own */
     (void)c;
     if (w < 0) {
         char m[96];
