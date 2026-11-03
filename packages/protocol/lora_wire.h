@@ -529,4 +529,74 @@ static int lora_client_due(LoraClient *c, uint32_t now_ms, LoraIntent *out, int 
     return n;
 }
 
+/* ---- a client asking for the world -------------------------------------------------------------- */
+
+/* A request is NOT a delta and must never be parsed as one: its first byte is 3 while a delta's is 2, so
+   a receiver can tell them apart before anything else. Six bytes total -- a request is the cheapest thing
+   on the air and should stay that way. */
+#define LORA_REQUEST_VERSION 3u
+#define LORA_REQUEST_BYTES   6
+
+enum {
+    LORA_REQ_SNAPSHOT = 0,
+    LORA_REQ_COUNT    = 1
+};
+
+typedef struct {
+    uint8_t  kind;     /* LORA_REQ_* */
+    uint16_t entity;   /* who is asking, so the answer can be addressed (and logged) */
+    uint16_t seq;      /* the asker's own counter: two requests are not the same request */
+} LoraRequest;
+
+static int lora_request_encode(const LoraRequest *r, uint8_t *out) {
+    if (!r || !out) return 0;
+    if (r->kind >= LORA_REQ_COUNT) return 0;
+    out[0] = (uint8_t)LORA_REQUEST_VERSION;
+    out[1] = r->kind;
+    out[2] = (uint8_t)(r->entity & 0xFF);
+    out[3] = (uint8_t)(r->entity >> 8);
+    out[4] = (uint8_t)(r->seq & 0xFF);
+    out[5] = (uint8_t)(r->seq >> 8);
+    return LORA_REQUEST_BYTES;
+}
+
+static int lora_request_decode(const uint8_t *in, int len, LoraRequest *r) {
+    if (!in || !r || len < LORA_REQUEST_BYTES) return 0;
+    if (in[0] != LORA_REQUEST_VERSION) return 0;   /* a delta frame is not a request */
+    r->kind = in[1];
+    r->entity = (uint16_t)(in[2] | (in[3] << 8));
+    r->seq = (uint16_t)(in[4] | (in[5] << 8));
+    return r->kind < LORA_REQ_COUNT;
+}
+
+/* The host's budget. ONE pump: the interval is a host-wide budget on full-state frames, because the air
+   is shared by everyone and a per-client fairness table is a different (later) decision, named as such
+   in the doc rather than half-built here. */
+typedef struct {
+    uint32_t last_ms;
+    uint8_t  served;
+} LoraSnapshotPump;
+
+static void lora_snapshot_pump_begin(LoraSnapshotPump *p) {
+    if (p) memset(p, 0, sizeof *p);
+}
+
+/* Serve a client's request.
+     >0  frames written (the snapshot, chunked like any tick)
+      0  a snapshot was just sent: rate-limited, the asker must wait
+     -1  not a request this host can serve (wrong kind, null world, no frame slots) */
+static int lora_host_request(const LoraRequest *req, const LoraWorld *w, int preset, uint32_t now_ms,
+                             LoraSnapshotPump *pump, LoraDelta *frames, int max_frames) {
+    int built;
+    if (!req || !w || !pump || !frames || max_frames <= 0) return -1;
+    if (req->kind != LORA_REQ_SNAPSHOT) return -1;
+    if (pump->served && (uint32_t)(now_ms - pump->last_ms) < (uint32_t)lora_snapshot_interval_ms(preset))
+        return 0;
+    built = lora_world_snapshot(w, frames, max_frames);
+    if (built < 0) return -1;
+    pump->served = 1;
+    pump->last_ms = now_ms;
+    return built;
+}
+
 #endif /* SHANKPIT_PROTOCOL_LORA_WIRE_H */

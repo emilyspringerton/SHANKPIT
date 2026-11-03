@@ -14,6 +14,7 @@ int lora_xp_hit(int);
 int lora_xp_move(int);
 int lora_resend_ms(int);
 int lora_max_sends(int);
+int lora_snapshot_interval_ms(int);
 
 int lora_tick_ms(int preset __attribute__((unused))) {
     if ((preset == 1)) {
@@ -88,6 +89,18 @@ int lora_max_sends(int preset __attribute__((unused))) {
     return 4;
     } else {
     return 3;
+    }
+}
+
+int lora_snapshot_interval_ms(int preset __attribute__((unused))) {
+    if ((preset == 1)) {
+    return 60000;
+    } else {
+    if ((preset == 2)) {
+    return 15000;
+    } else {
+    return 30000;
+    }
     }
 }
 

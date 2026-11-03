@@ -58,6 +58,12 @@ frame is ONE record per actor: 64 actors is 2 frames, reassembled by the same ch
 does not advance the tick because it resolves nothing. That is the answer for a client that lost
 everything, not just one chunk.
 
+**Requests** are their own 6-byte frame, and its first byte is 3 while a delta's is 2 — a receiver can
+tell them apart before parsing anything. `lora_host_request` serves a snapshot under a **host-wide**
+budget from PARENA (`lora-snapshot-interval-ms`: 30 s at LONG_FAST, 60 s at LONG_SLOW, 15 s at
+SHORT_TURBO) and answers `0` — "wait" — rather than silence, so a client that lost everything asks and
+waits at most one interval.
+
 ## The tick
 
 `lora_world_tick()` resolves one tick from an intent list, in list order (that order is part of the
@@ -101,11 +107,10 @@ Python daemon and `ForwardToWotanMatchmaker` do not exist in this repo and were 
 
 ## Open questions for the next slice
 
-1. **Loss**: the policy exists now -- `lora_client_send/ack/due` queue intents, clear them on an ACK
-   matched by `(entity, seq)`, resend after `lora-resend-ms` and **drop** after `lora-max-sends` so a dead
-   link is reported rather than retried forever, and `lora_world_snapshot` builds the full state. What is
-   still missing is the REQUEST side: nothing lets a client ask for a snapshot at a chosen tick yet, so
-   resync is "wait for the host to send one".
+1. **Loss**: policy and requests both exist -- `lora_client_send/ack/due` with a retry budget, and a
+   client-issued request served under a snapshot budget. What is NOT built: the budget is **per host**,
+   not per client, so one loud client can spend everyone's snapshot; and a client still has no way to ask
+   "what did I miss since tick N", only "give me the world".
 2. **Multiple frames per tick** — done (v2 header, chunk reassembly); the remaining question is what a
    receiver does when chunk 2 of 3 never arrives: re-request by tick, or wait for the next full state.
 3. **Persistence** of the slow world (the camp host can sleep between ticks) — IDUNA already holds

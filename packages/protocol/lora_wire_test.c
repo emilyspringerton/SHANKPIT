@@ -316,6 +316,47 @@ int main(void) {
         CHECK(lora_client_due(&c, 10, out, 0) == 0, "a zero-capacity due call emitted something");
     }
 
+    /* ---- 10. a client can ask for the world, and the host will not be flooded ---- */
+    {   LoraRequest rq, got, bad;
+        uint8_t buf[LORA_REQUEST_BYTES];
+        LoraWorld w;
+        LoraDelta frames[LORA_MAX_FRAMES];
+        LoraSnapshotPump pump;
+        uint32_t gap = (uint32_t)lora_snapshot_interval_ms(0);
+        int i;
+        memset(&w, 0, sizeof w);
+        for (i = 0; i < 40; i++)
+            CHECK(lora_world_add(&w, (uint16_t)(i + 1), (uint16_t)(i % LORA_GRID_MAX),
+                                 (uint16_t)(i % LORA_GRID_MAX), 20) == 1, "actor %d", i);
+        rq.kind = LORA_REQ_SNAPSHOT; rq.entity = 9; rq.seq = 5;
+        CHECK(lora_request_encode(&rq, buf) == LORA_REQUEST_BYTES, "a request did not encode");
+        CHECK(buf[0] == LORA_REQUEST_VERSION, "first byte %d is not the request marker", buf[0]);
+        CHECK(lora_request_decode(buf, LORA_REQUEST_BYTES, &got) == 1, "a request did not decode");
+        CHECK(got.kind == LORA_REQ_SNAPSHOT && got.entity == 9 && got.seq == 5, "request round trip wrong");
+        CHECK(lora_request_decode(buf, LORA_REQUEST_BYTES - 1, &got) == 0, "a 5-byte request decoded");
+        buf[0] = (uint8_t)LORA_DELTA_VERSION;    /* a delta frame is not a request */
+        CHECK(lora_request_decode(buf, LORA_REQUEST_BYTES, &got) == 0, "a delta frame decoded as a request");
+        buf[0] = (uint8_t)LORA_REQUEST_VERSION; buf[1] = 7;
+        CHECK(lora_request_decode(buf, LORA_REQUEST_BYTES, &got) == 0, "an unknown request kind decoded");
+
+        lora_snapshot_pump_begin(&pump);
+        CHECK(lora_host_request(&rq, &w, 0, 5000, &pump, frames, LORA_MAX_FRAMES) == 2,
+              "the first request did not produce 2 frames for 40 actors");
+        CHECK(lora_host_request(&rq, &w, 0, 5000 + gap - 1, &pump, frames, LORA_MAX_FRAMES) == 0,
+              "a second request was served inside the budget");
+        CHECK(lora_host_request(&rq, &w, 0, 5000 + gap, &pump, frames, LORA_MAX_FRAMES) == 2,
+              "the budget never expired");
+        bad = rq;
+        bad.kind = LORA_REQ_COUNT;
+        CHECK(lora_host_request(&bad, &w, 0, 900000, &pump, frames, LORA_MAX_FRAMES) == -1,
+              "an unknown request kind was served");
+        CHECK(lora_host_request(NULL, &w, 0, 0, &pump, frames, LORA_MAX_FRAMES) == -1, "a null request was served");
+        CHECK(lora_host_request(&rq, NULL, 0, 0, &pump, frames, LORA_MAX_FRAMES) == -1, "a null world was served");
+        CHECK(lora_host_request(&rq, &w, 0, 900000, &pump, frames, 0) == -1, "a zero-slot request was served");
+        CHECK(lora_snapshot_interval_ms(0) == 30000 && lora_snapshot_interval_ms(1) == 60000 &&
+              lora_snapshot_interval_ms(2) == 15000, "the snapshot budget is not the PARENA table's");
+    }
+
     if (fails) { printf("lora: %d FAILED\n", fails); return 1; }
     printf("lora: all checks passed\n");
     return 0;
