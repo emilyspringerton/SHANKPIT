@@ -31,7 +31,12 @@ static uint32_t hash_u32(uint32_t x) {
 }
 
 static float hash_2d(int x, int y, int seed) {
-    uint32_t h = hash_u32((uint32_t)(x * 374761393 + y * 668265263 + seed * 362437));
+    /* Wrapping is the point of a hash, so the mixing happens in uint32_t. The previous int
+       arithmetic overflowed on ordinary coordinates -- UBSan: "signed integer overflow: 6 * 374761393
+       cannot be represented in type 'int'" -- which is undefined behaviour in C even though every
+       compiler wrapped it the way this relies on. Unsigned multiplication and addition are defined
+       to wrap, and produce the same bits, so every texture is byte-for-byte unchanged. */
+    uint32_t h = hash_u32((uint32_t)x * 374761393u + (uint32_t)y * 668265263u + (uint32_t)seed * 362437u);
     return (h & 0x00ffffffU) / 16777215.0f;
 }
 
