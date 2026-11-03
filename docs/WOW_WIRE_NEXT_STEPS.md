@@ -149,3 +149,5 @@ time (the ports are ephemeral, so a collision would have flaked rather than fail
 What this does and does not cover: the E2E drives the real server over UDP, so retry, ACK reprieve and
 give-up are proven on the wire. The lobby's own call sites are compile-verified only -- no `DISPLAY` and
 no IDUNA ticket here, so nothing has yet watched a player take a shot.
+
+Re-run again after `d64fe41` regenerated `packages/world/png_decode_gen.c` from the fixed PARENA emitter (and `cdac1bb` corrected the pellegrino note): all fifteen targets exit 0, E2E 3/3 phases, PARENA 374/0. The decoder change is real code in the lobby, so the earlier green pass would not have covered it.
