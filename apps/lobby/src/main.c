@@ -17928,7 +17928,6 @@ int main(int argc, char* argv[]) {
                         UserCmd cmd = client_create_cmd(input_fwd, input_str, net_aim_yaw, net_aim_pitch, input_shoot, input_jump, input_crouch, input_reload, input_use, input_ability, input_secondary, input_bike, input_pheromone, wpn_req);
                         client_apply_cmd_movement(&local_state.players[net_local_pid], &cmd, now_ms);
                         wow_net_sync_targets();
-                        wow_net_poll_retries();
                         net_send_cmd(cmd);
                         net_last_cmd_send_ms = now_ms;
                         if (net_spawn_protect_cmds > 0) net_spawn_protect_cmds--;
@@ -17940,6 +17939,10 @@ int main(int argc, char* argv[]) {
                         NET_WARN_LOG("INPUT_BLOCKED reason=awaiting_local_snapshot_sync client_id=%d", my_client_id);
                     }
                 }
+                /* Polled every frame, not only inside the in-game input gate above: the AUTH ticket is
+                   sent from the menu, so with this call gated on gameplay an unacknowledged ticket could
+                   never reach its give-up and "login ticket" would be a message that cannot happen. */
+                wow_net_poll_retries();
                 client_decay_pending_correction(now_ms);
                 net_apply_remote_interpolation(now_ms);
                 buggy_advance_remote_positions(now_ms);
