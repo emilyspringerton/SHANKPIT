@@ -15768,11 +15768,17 @@ static void client_reconcile_local_player(unsigned int ack_seq, float auth_x, fl
     float prev_z = p->z;
     float prev_yaw = p->yaw;
     float prev_pitch = p->pitch;
+#if NET_PARITY_DEBUG
+    /* Only the parity sample further down reads these five -- they capture the state that the
+       server's authoritative values are about to replace, so the sample can report a ground/jump
+       mismatch. Guarded, not deleted: deleting them would break the NET_PARITY_DEBUG build, the
+       same trap the server's mode_before documents. */
     float prev_vx = p->vx;
     float prev_vy = p->vy;
     float prev_vz = p->vz;
     int prev_ground = p->on_ground;
     int prev_jump = p->in_jump;
+#endif
 
     p->x = auth_x; p->y = auth_y; p->z = auth_z;
     // S459-69, the real fix for jump "rubberbanding" (see NetPlayer.vx/vy/vz's own doc comment,
@@ -16214,6 +16220,7 @@ void net_process_snapshot(char *buffer, int len) {
                 net_diag.got_local_snapshot = 1;
                 unsigned int now_ms = SDL_GetTicks();
                 unsigned int dt_ms = net_diag.connect_started ? (now_ms - net_diag.connect_start_ms) : 0;
+                (void)dt_ms;   /* read only by the log call below, whose arguments the macro strips when verbose is off */
                 NET_CLIENT_LOG("LOCAL_SNAPSHOT_SYNC client_id=%d scene_id=%d ack=%u last_seq=%u dt_ms=%u",
                                my_client_id, (int)np->scene_id, local_ack_seq, net_latest_seq_sent, dt_ms);
             }
@@ -16434,6 +16441,7 @@ void net_tick() {
             if (!net_diag.got_any_snapshot) {
                 net_diag.got_any_snapshot = 1;
                 unsigned int dt_ms = net_diag.connect_started ? (now_ms - net_diag.connect_start_ms) : 0;
+                (void)dt_ms;   /* read only by the log call below, whose arguments the macro strips when verbose is off */
                 NET_CLIENT_LOG("SNAPSHOT_RX_FIRST len=%d dt_ms=%u", len, dt_ms);
             }
             net_diag.snapshots_rx++;
@@ -16467,6 +16475,7 @@ void net_tick() {
                 net_diag.got_welcome = 1;
                 net_diag.welcome_ms = now_ms;
                 unsigned int dt_ms = net_diag.connect_started ? (now_ms - net_diag.connect_start_ms) : 0;
+                (void)dt_ms;   /* read only by the log call below, whose arguments the macro strips when verbose is off */
                 NET_CLIENT_LOG("WELCOME_RX_FIRST client_id=%d scene_id=%d from=%s dt_ms=%u",
                                my_client_id, head->scene_id, sender_buf, dt_ms);
             } else if (net_should_log_every(&net_diag.last_dup_welcome_log_ms, 1000, now_ms)) {
