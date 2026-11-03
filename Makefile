@@ -602,7 +602,8 @@ test-roblox:
 	  "$$lua_bin" roblox/tests/queue460_test.lua && \
 	  "$$lua_bin" roblox/tests/ticket460_test.lua && \
 	  "$$lua_bin" roblox/tests/login460_test.lua && \
-	  "$$lua_bin" roblox/tests/stats460_test.lua; fi
+	  "$$lua_bin" roblox/tests/stats460_test.lua && \
+	  "$$lua_bin" roblox/tests/arena460_test.lua; fi
 
 roblox-model: test-roblox
 	python3 roblox/tools/build_rbxmx.py

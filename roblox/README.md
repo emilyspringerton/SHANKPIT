@@ -9,7 +9,7 @@ it: a real sign-in, a queue, real connect tickets, and a read-only board. Nothin
 |---|---|---|
 | What it is | the whole DEADWEIGHT game on Roblox — cards, decks, ladder, stage, tournament, noob life | the **esports front door** for SHANKPIT |
 | Rules | Luau ports of `card_rules.prn`, `rating.prn`, `stage.prn` | the queue/ticket thresholds only (from PARENA); it owns no rating |
-| Gameplay | played in Roblox | played on the C server; Roblox matches you and hands you a ticket |
+| Gameplay | played in Roblox | played in Roblox too -- on the place's own Laser Tag content (Blaster/AutoBlaster Tools, Teams, SpawnLocations); the C server still owns the rating and the ticket |
 | Persistence | per-server ladder | identity only (DataStore: player_id + guest secret). No ladder of its own |
 
 | File | Class | Owns |
@@ -18,6 +18,7 @@ it: a real sign-in, a queue, real connect tickets, and a read-only board. Nothin
 | `src/ticket460.lua` | ModuleScript | reading a real IDUNA connect ticket: shape, expiry, claimed player. **Never** verifies one |
 | `src/queue460.lua` | ModuleScript | casual vs ranked, the closest-pair search, seat bookkeeping |
 | `src/stats460.lua` | ModuleScript | the authorities' stats as a **cache**: optimistic write, reconcile, rollback, fan-out. Never invents a stat |
+| `src/arena460.lua` | ModuleScript | the arena the place already ships: which pad per team, which blaster, who won. Reads, never invents |
 | `src/net460.lua` | ModuleScript | the published ladder: schema support, the ladder's own order, staleness, rows |
 | `src/lobby.server.lua` | Script | sign-in, minting, seating, the tick, the board push |
 | `src/lobby.client.lua` | LocalScript | the screen: SIGN IN, queue buttons, ladder, the match prompt with its ticket |

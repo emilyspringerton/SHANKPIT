@@ -33,6 +33,7 @@ local ticket460 = require(script.Parent.ticket460)
 local net460 = require(script.Parent.net460)
 local login460 = require(script.Parent.login460)
 local stats460 = require(script.Parent.stats460)
+local arena460 = require(script.Parent.arena460)
 
 -- The three hosts used to be three hardcoded strings. They are now one switch: set the attributes
 -- `IdunaBase` / `WotanBase` on this Script (e.g. `https://<space>.hf.space/api/v1` for a dev backend) and the
@@ -57,6 +58,46 @@ local CONFIG = {
     BoardEvery = 5,
     QueueEvery = 1,
 }
+
+-- THE ARENA IS THE PLACE'S OWN LASER TAG CONTENT: Tools named Blaster/AutoBlaster, the Teams service and the
+-- SpawnLocations the checked-in base place already ships. Nothing here creates, renames or clones any of it --
+-- it reads what is there and says plainly when it is not, so a round either has an arena or has a reason. This
+-- closes the gap with SHANKPIT-460: a round you can actually play, not only a ticket to one.
+local function collectArena()
+    local tree = { teams = {}, spawns = {}, tools = {} }
+    for _, serviceName in ipairs({ "Workspace", "ServerStorage", "StarterPack" }) do
+        local okService, service = pcall(function() return game:GetService(serviceName) end)
+        if okService then
+            local okDesc, descendants = pcall(function() return service:GetDescendants() end)
+            if okDesc then
+                for _, inst in ipairs(descendants) do
+                    if inst.ClassName == "SpawnLocation" then
+                        tree.spawns[#tree.spawns + 1] = {
+                            name = inst.Name,
+                            team = (inst.Team ~= nil) and inst.Team.Name or nil,
+                        }
+                    elseif inst.ClassName == "Tool" then
+                        tree.tools[#tree.tools + 1] = { name = inst.Name }
+                    end
+                end
+            end
+        end
+    end
+    local okTeams, teamsService = pcall(function() return game:GetService("Teams") end)
+    if okTeams then
+        local okList, list = pcall(function() return teamsService:GetTeams() end)
+        if okList then
+            for _, team in ipairs(list) do tree.teams[#tree.teams + 1] = { name = team.Name } end
+        end
+    end
+    return tree
+end
+
+local ARENA = arena460.describe(collectArena())
+if not ARENA.ok then
+    warn("arena460: this place has no usable arena -- " .. table.concat(ARENA.missing, ",") ..
+         " (players can still queue; a round will say why it cannot start)")
+end
 
 local queue = queue460.new()
 local snapshot = nil
@@ -363,6 +404,13 @@ task.spawn(function()
                                 expires_at = seat.expires_at,
                                 ticket_ok = remaining.ok,
                                 ticket_reason = remaining.ok and nil or remaining.reason,
+                                -- What the round needs from the place itself, read once from its own Laser Tag
+                                -- content. nil + a reason when the place cannot host one; never a default.
+                                arena_ok = ARENA.ok,
+                                arena_spawn = ARENA.ok and ARENA.spawns[1].name or nil,
+                                arena_weapon = ARENA.ok and ARENA.weapons[1] or nil,
+                                arena_teams = ARENA.ok and ARENA.teams or nil,
+                                arena_reason = ARENA.ok and nil or table.concat(ARENA.missing, ","),
                             })
                             player:SetAttribute("SHANKPIT460_State", "matched:" .. mode)
                             seats[player] = nil

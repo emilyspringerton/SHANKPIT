@@ -25,6 +25,7 @@ PARTS = [
     ("ticket460_rules.lua", "ModuleScript", "ticket460_rules"),
     ("lobby.server.lua", "Script", "lobby"),
     ("lobby.client.lua", "LocalScript", "lobby_client"),
+    ("arena460.lua", "ModuleScript", "arena460"),
     ("stats460.lua", "ModuleScript", "stats460"),
 ]
 
