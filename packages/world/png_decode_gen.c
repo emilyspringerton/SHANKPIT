@@ -446,7 +446,7 @@ LenReadStep read_code_lengths(Bytes data __attribute__((unused)), int bitpos __a
             break;
         }
     }
-        void *filled __attribute__((unused)) = __let_val_0;
+        __typeof__(__let_val_0) filled __attribute__((unused)) = __let_val_0;
         double __recur_tmp_0 = (ex).next;
         double __recur_tmp_1 = prev;
         pos = __recur_tmp_0;
@@ -468,7 +468,7 @@ LenReadStep read_code_lengths(Bytes data __attribute__((unused)), int bitpos __a
             break;
         }
     }
-        void *filled __attribute__((unused)) = __let_val_1;
+        __typeof__(__let_val_1) filled __attribute__((unused)) = __let_val_1;
         double __recur_tmp_0 = (ex).next;
         double __recur_tmp_1 = 0;
         pos = __recur_tmp_0;
@@ -489,7 +489,7 @@ LenReadStep read_code_lengths(Bytes data __attribute__((unused)), int bitpos __a
             break;
         }
     }
-        void *filled __attribute__((unused)) = __let_val_2;
+        __typeof__(__let_val_2) filled __attribute__((unused)) = __let_val_2;
         double __recur_tmp_0 = (ex).next;
         double __recur_tmp_1 = 0;
         pos = __recur_tmp_0;
@@ -638,7 +638,7 @@ InflateStep inflate_huffman_block(Bytes data __attribute__((unused)), int bitpos
             break;
         }
     }
-        void *copied __attribute__((unused)) = __let_val_3;
+        __typeof__(__let_val_3) copied __attribute__((unused)) = __let_val_3;
         double __recur_tmp_0 = (dex).next;
         double __recur_tmp_1 = (opos + match_len);
         pos = __recur_tmp_0;
@@ -929,7 +929,7 @@ Bytes png_copy_idat(Bytes data __attribute__((unused)), int total __attribute__(
             break;
         }
     }
-        void *copied __attribute__((unused)) = __let_val_4;
+        __typeof__(__let_val_4) copied __attribute__((unused)) = __let_val_4;
         double __recur_tmp_0 = (pos + (12 + clen));
         double __recur_tmp_1 = (opos + clen);
         pos = __recur_tmp_0;
@@ -963,7 +963,7 @@ Bytes png_strip_zlib_wrapper(Bytes idat __attribute__((unused)), int deflate_len
             break;
         }
     }
-    void *copied __attribute__((unused)) = __let_val_2;
+    __typeof__(__let_val_2) copied __attribute__((unused)) = __let_val_2;
     return dp;
 }
 
@@ -1020,7 +1020,7 @@ Bytes png_defilter(Bytes raw __attribute__((unused)), int width __attribute__((u
             break;
         }
     }
-        void *filled_row __attribute__((unused)) = __let_val_5;
+        __typeof__(__let_val_5) filled_row __attribute__((unused)) = __let_val_5;
         double __recur_tmp_0 = (r + 1);
         r = __recur_tmp_0;
         continue;
@@ -1028,7 +1028,7 @@ Bytes png_defilter(Bytes raw __attribute__((unused)), int width __attribute__((u
             break;
         }
     }
-    void *filled __attribute__((unused)) = __let_val_3;
+    __typeof__(__let_val_3) filled __attribute__((unused)) = __let_val_3;
     return recon;
 }
 
@@ -1086,7 +1086,7 @@ PngImage png_decode(Bytes data __attribute__((unused)), Arena *dest __attribute_
             break;
         }
     }
-    void *filled __attribute__((unused)) = __let_val_4;
+    __typeof__(__let_val_4) filled __attribute__((unused)) = __let_val_4;
     return PngImage_new(width, height, rgba, 1);
     }
     }
