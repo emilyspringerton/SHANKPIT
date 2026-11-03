@@ -1,5 +1,8 @@
 # Widget affordances: how to make a thing in the world do something
 
+> This is the engine contract for interactive widgets. For the TYLER/script-derived prop register,
+> canon and what each script prop would require, see `docs/MASTER_AFFORDANCE_LIBRARY.md`.
+
 This is the contract to build against. If you are an agent asked to "bring the lab equipment to life",
 "add a security terminal", "make an elevator", or "add a light switch", you do not write a new system.
 You place widgets, wire them, and (optionally) drive them from an EduVM script.
