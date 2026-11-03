@@ -122,6 +122,8 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/render/held_model.h"
 #include "../../../packages/render/camera_rig.h"
 #include "../../../packages/render/stream_out.h"
+#include "../../../packages/render/stream_filters.h"      /* the program feed's post chain */
+#include "../../../packages/render/filter_rules_host.h"    /* PARENA presets */
 #include "../../../packages/render/proc_tex.h"
 #include "../../../packages/render/retro_sky.h"
 #include "../../../packages/render/sky_weather.h"
@@ -1095,7 +1097,12 @@ static const char *CAMRIG_FILE = "shankpit_camrig.json";
 typedef struct { int active; float eye[3], aim[3]; } CamOverride;
 static CamOverride g_cam_override;
 static int g_world_only_pass = 0;
-static StreamOut g_stream;               /* native stream out (stream_out.h): the program feed -> encoder */
+static StreamOut g_stream;
+/* The stream's grade: built ONCE from a PARENA preset, applied per captured frame in the pipe below.
+   Preset 0 is neutral, which filter_apply() short-circuits without touching a byte -- so an unconfigured
+   build streams exactly what it streamed before this existed. */
+static FilterChain g_stream_filters;
+static int g_stream_filters_ready = 0;               /* native stream out (stream_out.h): the program feed -> encoder */
 static int g_stream_on = 0;
 static char g_stream_msg[96] = "";
 static int g_opt_ambient_level = 3;
@@ -13719,6 +13726,9 @@ static void broadcast_frame(PlayerState *render_p) {
             if (px) {
                 glPixelStorei(GL_PACK_ALIGNMENT, 1);
                 glReadPixels(g_vp_x, g_vp_y, g_stream.w, g_stream.h, GL_RGB, GL_UNSIGNED_BYTE, px);
+                /* the grade happens HERE: after capture, before the encoder -- so the stream is
+                   graded and the player's own viewport (and HUD) is not. */
+                if (g_stream_filters_ready) filter_apply(&g_stream_filters, px, g_stream.w, g_stream.h);
                 if (!stream_out_push(&g_stream, px, now)) {
                     snprintf(g_stream_msg, sizeof(g_stream_msg), "STREAM ENCODER STOPPED");
                     SDL_Log("stream: encoder went away after %lu frame(s)", g_stream.frames);
@@ -15999,6 +16009,17 @@ int main(int argc, char* argv[]) {
     vehicle_burn_rules_install(); /* PARENA car fire ladder (smoke -> fire -> blast), drawn with BR's fire curve */
     vehicle_salvage_rules_install(); /* PARENA car components: what breaks, what it yields */
     garage_rules_install(); /* PARENA garage: what this car's origin is worth, what a bay takes */
+    filter_rules_install(); /* PARENA program-feed look: levels, gamma, 3x3 kernel, vignette, grain */
+    {   /* which look: SHANKPIT_STREAM_FILTER=<preset>, 0 (neutral) when unset or out of range */
+        const char *fp = getenv("SHANKPIT_STREAM_FILTER");
+        int preset = fp ? atoi(fp) : 0;
+        FilterConfig fc;
+        if (preset < 0 || preset >= filter_preset_count()) preset = 0;
+        filter_config_from_rules(&fc, preset, 0xF17E1234u);
+        filter_chain_build(&g_stream_filters, &fc);
+        g_stream_filters_ready = 1;
+        SDL_Log("stream filters: preset %d, vignette %d, grain %d", preset, fc.vignette_permille, fc.grain_permille);
+    }
     vehicle_salvage_shards_bind(&g_brick_bodies); /* a part that comes off falls as a real body */
     buggy_set_shard_spawn(vehicle_salvage_shards_hook); /* ...thrown by local_game's tick */
     vehicle_salvage_loot_reset(); /* ground half: a tier maps onto an EXISTING consumable */
