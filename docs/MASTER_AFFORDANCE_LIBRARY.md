@@ -193,16 +193,20 @@ call are ambient beds the audio chain can play. UI: only the pilot's tags are su
 
 ## 6. Open questions (superseding Build 0185 §8–9)
 
-1. **Schema:** the repo's `edu_widgets` is implemented; the drafts' `LevelPropInstance` is not. Confirm the
-   repo schema as canonical and stop the `level_props.h` track (recommended).
-2. **Does a prop need HP/density at all?** If yes, extend `LevelBox` materials rather than adding a struct the
-   loader ignores. This is a scope decision, not a detail.
+1. **Schema:** the repo's `edu_widgets` is implemented -- it loads, saves, drives a circuit, mirrors into
+   EduVM, and is exercised by `test-widget-runtime` and `check-levels`; the drafts' `LevelPropInstance` and
+   `level_props.h` exist in no file. **Recommendation:** keep `edu_widgets` and stop the `level_props.h`
+   track -- its `type` / `bound_register` / `density` keys would be a parallel struct the loader ignores.
+2. **HP/density on props:** nothing reads them today -- prop damage would ride `brick_bodies` /
+   `PACKET_BRICK_STATE`, and density is already per-`LevelBox` material. **Recommendation:** add material
+   fields only when a consumer exists; extending them is a save/load and network change, not a detail.
 3. **Networked props:** the widget circuit is single-player authority and there is no widget packet; a prop a
    remote player can use is new wire work.
 4. **Episode 4 provenance:** labelled [ai-authored] at Build 0134, and the operator separately said to ignore
    that script. Canon, provisional, or dropped?
-5. **Rotation:** `LevelBox` has no rotation field, so "on its side", "swivel stool" and any angled prop are
-   blocked until one exists. Is rotation worth adding before the prop library grows?
+5. **Rotation:** `LevelBox` has no rotation field, so "on its side" and the swivel stool ship upright.
+   **Recommendation:** treat rotation as its own separable piece (parsing, saving, collision, the level
+   wire); both blocked props are dressing, not mechanics.
 6. **Meshes:** a widget is a box; there are no prop models. Is box-representation acceptable for the trailer,
    or does the library wait on art?
 7. The Build 0185 canon flags (Tuesday vs unmeasured, Law 2 cap, Order of Service, "AH SHOCK", 1901 lighting,

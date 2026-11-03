@@ -362,6 +362,11 @@ typedef struct {
     unsigned char pad[3];
 } NetKitCall;
 
+/* NetWowWire -- see PACKET_WOW_WIRE's own doc comment above. The 64-byte array is a RECEIVE BOUND, not
+ * what goes on the wire: a sender writes exactly `sizeof(NetHeader) + 1 + len` bytes -- 19 for a cast, 51
+ * for a 38-byte AUTH frame -- and the receiver refuses any datagram where `header + 1 + len` exceeds the
+ * size it actually got. Sending the whole struct was the old 80-byte habit; the trim is pinned by
+ * packages/protocol/wow_wire_test.c's air-budget test and exercised over UDP by the E2E. */
 typedef struct {
     NetHeader hdr;
     unsigned char len;
