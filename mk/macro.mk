@@ -6,3 +6,13 @@
 test-macros: | $(BIN_DIR)
 	$(CC) -O1 -Wall -Wextra -Werror -Ipackages/ui packages/ui/macro_test.c -o $(BIN_DIR)/macro_test
 	./$(BIN_DIR)/macro_test
+
+# WOW-STYLE MACROS: the conditional compiler, the host contract and the .toc loader. Headless and
+# dependency-free -- no Lua VM is vendored, so what is tested here is the layer a binding would wrap:
+#   make test-wow-macros   text -> bitfield clauses, first-match-wins, tokens, every rejection code,
+#                          macro -> host vtable dispatch, the API contract table, .toc parse + order
+.PHONY: test-wow-macros
+
+test-wow-macros: | $(BIN_DIR)
+	$(CC) -O1 -Wall -Wextra -Werror -Ipackages/ui packages/ui/wow_macro_test.c -o $(BIN_DIR)/wow_macro_test
+	./$(BIN_DIR)/wow_macro_test
