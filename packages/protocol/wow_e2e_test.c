@@ -57,7 +57,7 @@ static void sleep_ms(int ms) {
     nanosleep(&ts, NULL);
 }
 
-static pid_t spawn_server(int port) {
+static pid_t spawn_server(int port, int drop_cast_acks) {
     pid_t pid = fork();
     if (pid != 0) return pid;
     /* Child: a private, headless instance. Never the shared service. */
@@ -70,8 +70,15 @@ static pid_t spawn_server(int port) {
     {
         char portbuf[16];
         snprintf(portbuf, sizeof portbuf, "%d", port);
-        execl("bin/shank_server", "shank_server", "--port", portbuf, "--beacon-port", "0",
-              "--fast-forward", (char *)NULL);
+        if (drop_cast_acks > 0) {
+            char dropbuf[16];
+            snprintf(dropbuf, sizeof dropbuf, "%d", drop_cast_acks);
+            execl("bin/shank_server", "shank_server", "--port", portbuf, "--beacon-port", "0",
+                  "--fast-forward", "--drop-cast-acks", dropbuf, (char *)NULL);
+        } else {
+            execl("bin/shank_server", "shank_server", "--port", portbuf, "--beacon-port", "0",
+                  "--fast-forward", (char *)NULL);
+        }
     }
     _exit(127);
 }
@@ -139,6 +146,9 @@ static void send_connect(int s, const struct sockaddr_in *to) {
 
 int main(int argc, char **argv) {
     int port = (argc > 1) ? atoi(argv[1]) : 6979;
+    /* 0 = happy path, N <= wow_retry_max = the server swallows N CAST ACKs and the resend must recover,
+       N > wow_retry_max = every ACK is lost and the client must abandon exactly once with the kind set. */
+    int drop = (argc > 2) ? atoi(argv[2]) : 0;
     setvbuf(stdout, NULL, _IONBF, 0);   /* progress must be visible even if the test is killed */
     int s, n, got;
     pid_t pid;
@@ -154,8 +164,8 @@ int main(int argc, char **argv) {
 
     for (i = 0; i < 16; i++) player_id[i] = (uint8_t)(0x40 + i);
 
-    pid = spawn_server(port);
-    printf("e2e: server pid=%d port=%d\n", (int)pid, port);
+    pid = spawn_server(port, drop);
+    printf("e2e: server pid=%d port=%d drop_cast_acks=%d\n", (int)pid, port, drop);
     if (pid < 0) {
         printf("e2e: could not fork the server\n");
         return 1;
@@ -230,13 +240,56 @@ int main(int argc, char **argv) {
     CHECK(wow_client_retry(&c, now_ms() + 10000, frame, sizeof frame) == 0,
           "a retired frame was still due for a resend");
 
-    /* ---- cast: the weapon id the engine actually has, at the target slot ---- */
+    /* ---- cast: the weapon id the engine actually has, at the target slot ---- *
+     * With --drop-cast-acks the happy path is not available: the only way this passes is the real
+     * retry (re-send the SAME bytes; the server re-ACKs the duplicate). Above wow_retry_max the other
+     * end is asserted instead: one abandonment, `last_abandoned_kind` naming the cast, nothing pending. */
     n = wow_client_cast(&c, wow_weapon_from_name("magnum"), WOW_TOKEN_TARGET, frame, sizeof frame);
     CHECK(n == WOW_WIRE_CAST_BYTES, "a cast encoded to %d bytes", n);
+    CHECK(wow_client_track(&c, frame, n, now_ms()) == 1, "the cast was not tracked for a retry");
     CHECK(send_frame(s, &to, frame, n) > 0, "the cast was not sent");
-    CHECK(recv_ack(s, ack, 1500) == 1 &&
-          wow_ack_decode(ack, WOW_WIRE_ACK_BYTES, &a) == WOW_WIRE_ACK_BYTES &&
-          a.kind == WOW_OP_CAST, "a cast was not ACKed over the socket");
+    got = 0;
+    {
+        int resends = 0;
+        long long cast_deadline = now_ms() + 8000;
+        while (now_ms() < cast_deadline && resends <= wow_retry_max(c.preset)) {
+            if (recv_ack(s, ack, 400)) {
+                if (wow_ack_decode(ack, WOW_WIRE_ACK_BYTES, &a) == WOW_WIRE_ACK_BYTES &&
+                    a.kind == WOW_OP_CAST) { got = 1; break; }
+                continue;                       /* some other frame's ACK: keep waiting */
+            }
+            {
+                uint8_t resend[WOW_WIRE_CAST_BYTES];
+                int m = wow_client_retry(&c, now_ms(), resend, sizeof resend);
+                if (m == -2) break;             /* retries exhausted: the give-up path */
+                if (m > 0) {
+                    CHECK(send_frame(s, &to, resend, m) > 0, "the cast resend was not sent");
+                    resends++;
+                } else {
+                    sleep_ms(50);               /* not due yet: the ack period has not elapsed */
+                }
+            }
+        }
+        if (drop > 0 && drop <= wow_retry_max(c.preset)) {
+            CHECK(resends > 0, "no cast was re-sent although %d ACK(s) were dropped", drop);
+        }
+        if (drop > wow_retry_max(c.preset)) {
+            CHECK(!got, "an abandoned cast was still ACKed");
+            CHECK(c.abandoned == 1 && c.last_abandoned_kind == WOW_OP_CAST,
+                  "the give-up did not record the cast as what was lost (abandoned=%d kind=%d)",
+                  (int)c.abandoned, (int)c.last_abandoned_kind);
+            CHECK(wow_client_pending(&c) == 0, "an abandoned frame was still pending");
+        }
+    }
+    /* Only the recovery phases must end in an ACK; the give-up phase must not, and asserts that above. */
+    if (drop <= wow_retry_max(c.preset)) {
+        CHECK(got, "a cast was not ACKed over the socket (dropped ACKs: %d)", drop);
+    }
+    if (got) {
+        CHECK(wow_client_ack(&c, ack, WOW_WIRE_ACK_BYTES) == 1 && wow_client_pending(&c) == 0,
+              "the cast ACK did not retire the pending frame");
+        CHECK(c.last_abandoned_kind == 0, "a retired cast was reported as abandoned");
+    }
 
     /* ---- an unacknowledged frame really does become due, on the real clock ---- */
     {

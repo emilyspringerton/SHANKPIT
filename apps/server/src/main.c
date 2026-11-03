@@ -196,6 +196,7 @@ static int g_server_match_scene = SCENE_GARAGE_OSAKA;
 static unsigned int g_round_start_ms = 0;
 static unsigned int g_queue_intermission_start_ms = 0; // S459-99, 0 = not currently in intermission
 static int g_fast_forward = 0; // S459-48 -- see --fast-forward's own doc comment in main() for the real rationale
+static int g_drop_cast_acks = 0; /* TEST ONLY -- see --drop-cast-acks; never set by a production unit */
 static int g_tdmo_tie_breaker = 0;
 
 #define RECORDER_SHAKE_POS 0.08f
@@ -1510,6 +1511,18 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
         }
         if (r > 0 && g_server_sock >= 0) {
             NetWowWire out;
+            WowAck parsed;
+            /* Loss injection for the E2E only. A real server drops an ACK only when the network does;
+               `--drop-cast-acks N` makes the CLIENT's retry path observable by swallowing the next N
+               CAST ACKs, so `make test-wow-e2e` proves the resend against a real socket instead of
+               calling wow_client_retry() in a unit test and calling that "the wire". Default 0. */
+            if (g_drop_cast_acks > 0 &&
+                wow_ack_decode(ack, (int)sizeof ack, &parsed) == WOW_WIRE_ACK_BYTES &&
+                parsed.kind == WOW_OP_CAST) {
+                g_drop_cast_acks--;
+                NET_WARN_LOG("WOW_ACK dropped on purpose (--drop-cast-acks), %d left", g_drop_cast_acks);
+                return;
+            }
             memset(&out, 0, sizeof out);
             out.hdr.type = PACKET_WOW_WIRE;
             out.len = (unsigned char)sizeof ack;
@@ -2035,6 +2048,12 @@ int main(int argc, char *argv[]) {
             // match needs. Never affects a normal (non-flagged) server -- the live production
             // shankpit-server.service unit does not pass this flag.
             g_fast_forward = 1;
+        } else if (strcmp(argv[i], "--drop-cast-acks") == 0 && i + 1 < argc) {
+            /* TEST ONLY: swallow the next N CAST ACKs so the E2E can exercise the client's real retry
+               path (loss -> recovery with N <= wow_retry_max, loss -> give-up above it). A normal
+               server never passes this, and with it absent the ACK path below is unchanged. */
+            g_drop_cast_acks = atoi(argv[i + 1]);
+            i++;
         }
     }
 

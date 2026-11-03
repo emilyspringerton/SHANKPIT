@@ -155,7 +155,10 @@ the server's crosshair across the map by naming a distant entity.
 socket and a ticket agree". It forks the real `bin/shank_server` on a private port (`--beacon-port 0`,
 `SHANKPIT_BAKED_LEVELS=1`, so it is headless and never advertises), retries CONNECT until WELCOME (a single
 CONNECT races the server's own startup), shows a ticket signed with another secret is never ACKed, then
-drives a real IDUNA-shaped ticket, a target intent and its re-send, and a cast through loopback UDP.
+drives a real IDUNA-shaped ticket, a target intent and its re-send, and a cast through loopback UDP. The link can be made hostile: `--drop-cast-acks N` on the server
+(test-only, default 0) swallows the next N CAST ACKs, so the same test runs three phases -- 0, 2 and
+99 -- and the resend is *demonstrated* recovering, and abandoning once with the cast named, instead
+of merely asserted in a unit test.
 
 ## GoblinFoxDragon / MUD: what is real today
 

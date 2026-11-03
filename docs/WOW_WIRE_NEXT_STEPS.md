@@ -11,7 +11,7 @@ Read `docs/WOW_WIRE.md` first for the frames themselves and `docs/UNITS.md` for 
 | Unit | Real state | Verified by |
 |---|---|---|
 | Frames + decoders (`packages/protocol/wow_wire.h`) | SET/CLEAR target, CAST, DEFINE/INVOKE macro, AUTH, ACK; every byte layout asserted | `make test-wow-wire` |
-| Retry + ACK (`wow_client.h`, `wow_server.h`) | bounded pending table, byte-identical re-sends (a fresh sequence would be rejected as stale), idempotent server re-ACK, `WOW_CLIENT_PENDING` 4, `wow_retry_max` 2/4/5 by preset | `make test-wow-client` |
+| Retry + ACK (`wow_client.h`, `wow_server.h`) | bounded pending table, byte-identical re-sends (a fresh sequence would be rejected as stale), idempotent server re-ACK, `WOW_CLIENT_PENDING` 4, `wow_retry_max` 2/4/5 by preset | `make test-wow-client`, `make test-wow-e2e` (loss phases) |
 | Identity (`wow_ticket.h`) | 36-byte IDUNA ticket, MAC-first constant-time verify, expiry after MAC | `make test-wow-ticket`, `make test-hmac` |
 | Cast range as a rule | `wow_cast_range_yd` (40) in PARENA, converted in C once via `units_author_length_m(..., 5)` (36.576 m), squared-distance compare | `make check-wow-wire-rules`, `make test-units` |
 | Give-up is visible | an abandoned frame pushes `WOW: the server never acknowledged a <kind> …` into the chat pane from `WowClient.last_abandoned_kind` | `make lobby` |
@@ -33,14 +33,15 @@ player.** There is no display on this box, and no IDUNA-issued ticket, so:
 
 ## Next steps, in the order worth doing them
 
-### 1. Prove retry under loss, not just under duplication
-Today the re-ACK is proven against a real server, but **no ACK is ever dropped**, so the resend path is
-only exercised by calling `wow_client_retry` directly. Add loss to the E2E: either a `--drop-acks N`
-flag on the test server (cheapest: count ACK sends, drop the first N) or a 30-line UDP relay in front of
-it that swallows every other ACK. Then assert the frame retires within `wow_retry_max` and the chat line
-appears when it does not.
-*Done when:* the test drops 2 of 3 ACKs and still retires the frame; and with all ACKs dropped it reports
-the give-up exactly once, after `wow_retry_max` sends.
+### 1. ~~Prove retry under loss~~ -- done 2026-11-03
+The E2E now runs three phases against three differently-behaved private servers: `0` (every ACK arrives),
+`2` (the server swallows the first two CAST ACKs via `--drop-cast-acks 2`, so only the client's real
+re-send can recover), and `99` (every CAST ACK is lost, so the client must abandon exactly once).
+Asserted: phase 2 re-sends at least once and still retires the frame; phase 3 sets
+`WowClient.last_abandoned_kind` to `WOW_OP_CAST`, empties the pending table, and never reports an ACK.
+The flag is test-only and defaults to 0, so a production server's ACK path is untouched.
+
+*Done when (met):* `make test-wow-e2e` passes all three phases with the ACK drops actually happening.
 
 ### 2. Make the range per weapon, and give it a vertical tolerance
 `wow_cast_range_yd` is one global number: a knife and a rifle currently share 40 yd. Move the table into
