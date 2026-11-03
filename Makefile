@@ -281,6 +281,19 @@ test-bullet-hole:
 		packages/world/png_decode_gen.c packages/world/parena_runtime.c -lm
 	/tmp/bullet_hole_test
 
+# test-iduna-login -- the vendored IDUNA SSO header's own loopback round trip, driven by a scripted
+# browser over real sockets. No IDUNA, no SDL/GL.
+test-iduna-login:
+	$(CC) -std=gnu99 -O2 -Wall -Wextra -pedantic -Werror -o /tmp/iduna_login_test packages/iduna_login/iduna_login_test.c -pthread
+	/tmp/iduna_login_test
+
+# test-iduna-live -- the same header against a real IDUNA (IDUNA_LIVE_BASE=http://127.0.0.1:18080):
+# registers a throwaway account, signs in the way the SSO page's own JS does, fetches the page at the
+# URL the header built, then hands that real JWT to the loopback listener. Skips when unset.
+test-iduna-live:
+	$(CC) -std=gnu99 -O2 -Wall -Wextra -pedantic -Werror -o /tmp/iduna_login_live_test packages/iduna_login/iduna_login_live_test.c
+	/tmp/iduna_login_live_test
+
 # test-queue-level -- PACKET_QUEUE_LEVEL wire contract (card #481): size, id round-trip incl. -1, unique type.
 test-spraypaint:
 	$(CC) -std=c99 -O2 -Wall -Wextra -o /tmp/spraypaint_test packages/world/spraypaint_test.c -lm
