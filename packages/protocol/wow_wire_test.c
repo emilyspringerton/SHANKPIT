@@ -162,9 +162,11 @@ static void test_mods(void) {
 
 /* ---- the server end: fail closed, then IDUNA-authenticated intents ---------------------------- */
 
-static int fake_auth(void *ctx, const char *ticket, int len, char *pid, int cap) {
+static const unsigned char fake_ticket[WOW_WIRE_TICKET_BYTES] = "TICKET-OK";
+
+static int fake_auth(void *ctx, const unsigned char *ticket, int len, char *pid, int cap) {
     (void)ctx;
-    if (len == 9 && memcmp(ticket, "TICKET-OK", 9) == 0) {
+    if (len == WOW_WIRE_TICKET_BYTES && memcmp(ticket, fake_ticket, WOW_WIRE_TICKET_BYTES) == 0) {
         if (cap > 9) memcpy(pid, "player-7", 9);
         return 1;
     }
@@ -189,7 +191,7 @@ static void test_server(void) {
 
     /* no verifier installed: even a well-formed AUTH is refused */
     memset(&af, 0, sizeof af);
-    memcpy(af.ticket, "TICKET-OK", 9);
+    memcpy(af.ticket, fake_ticket, WOW_WIRE_TICKET_BYTES);
     n = wow_auth_encode(&af, frame, sizeof frame);
     CHECK(n == WOW_WIRE_AUTH_BYTES, "auth frame is %d bytes", n);
     CHECK(wow_server_rx(&s, 1, frame, n, ack, sizeof ack) == -2, "auth was accepted with no verifier");
@@ -200,7 +202,7 @@ static void test_server(void) {
     CHECK(wow_server_rx(&s, 1, frame, n, ack, sizeof ack) == -2, "a bad ticket was accepted");
 
     memset(&af, 0, sizeof af);
-    memcpy(af.ticket, "TICKET-OK", 9);
+    memcpy(af.ticket, fake_ticket, WOW_WIRE_TICKET_BYTES);
     n = wow_auth_encode(&af, frame, sizeof frame);
     CHECK(wow_server_rx(&s, 1, frame, n, ack, sizeof ack) == 1 && s.c[1].authed == 1 &&
           strcmp(s.c[1].player_id, "player-7") == 0 && ack[1] == WOW_OP_ACK,

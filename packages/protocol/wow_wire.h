@@ -27,7 +27,7 @@
 #include "../ui/wow_macro.h"
 #include "wow_wire_rules.h"
 
-#define WOW_WIRE_VERSION      4u
+#define WOW_WIRE_VERSION      5u
 #define WOW_TARGET_SLOTS      4
 #define WOW_WIRE_MAX_CLAUSES  4
 
@@ -37,10 +37,13 @@
 #define WOW_WIRE_ACK_BYTES     5
 #define WOW_WIRE_DEF_HEADER    5
 #define WOW_WIRE_CLAUSE_HEADER 6
-/* AUTH is deliberately 48 bytes: an IDUNA PLAYER TICKET, never the 4 KB SSO JWT. The ticket is the
-   thing a game server is allowed to see; the token stays in the client. */
-#define WOW_WIRE_AUTH_BYTES    48
-#define WOW_WIRE_TICKET_BYTES  46
+/* AUTH carries an IDUNA PLAYER TICKET, never the 4 KB SSO JWT: the ticket is the thing a game server
+   is allowed to see, and the token stays in the client. IDUNA mints the ticket as 36 RAW bytes
+   (player_id 16 || expires_at 4 LE || HMAC-SHA256[:16]) and hex-encodes it only for its JSON reply, so
+   the wire carries those 36 raw bytes -- 38-byte frame, no hex on the receive path. Layout and
+   verification live in wow_ticket.h. */
+#define WOW_WIRE_TICKET_BYTES  36
+#define WOW_WIRE_AUTH_BYTES    (2 + WOW_WIRE_TICKET_BYTES)
 
 enum {
     WOW_OP_SET_TARGET   = 1,
@@ -275,29 +278,23 @@ static inline int wow_ack_decode(const uint8_t *in, int len, WowAck *a) {
 
 /* ---- auth: an IDUNA ticket, not a token ------------------------------------------------------- */
 
-typedef struct { char ticket[WOW_WIRE_TICKET_BYTES + 1]; } WowAuthFrame;
+typedef struct { uint8_t ticket[WOW_WIRE_TICKET_BYTES]; } WowAuthFrame;
 
 static inline int wow_auth_encode(const WowAuthFrame *a, uint8_t *out, int cap) {
     int i;
     if (!a || !out || cap < WOW_WIRE_AUTH_BYTES) return -1;
     out[0] = (uint8_t)WOW_WIRE_VERSION;
     out[1] = (uint8_t)WOW_OP_AUTH;
-    for (i = 0; i < WOW_WIRE_TICKET_BYTES; i++) out[2 + i] = (uint8_t)a->ticket[i];
+    for (i = 0; i < WOW_WIRE_TICKET_BYTES; i++) out[2 + i] = a->ticket[i];
     return WOW_WIRE_AUTH_BYTES;
 }
 
-/* The ticket is copied out NUL-terminated so the verifier gets a C string and a length. */
+/* The ticket is binary, so the decoder hands back the bytes and a fixed length -- the verifier is what
+   decides whether they mean anything. An all-zero ticket is left for it to refuse. */
 static inline int wow_auth_decode(const uint8_t *in, int len, WowAuthFrame *a) {
-    int i, n = 0;
     if (!in || !a || len != WOW_WIRE_AUTH_BYTES) return -1;
     if (in[0] != WOW_WIRE_VERSION || in[1] != WOW_OP_AUTH) return -1;
-    memset(a, 0, sizeof *a);
-    for (i = 0; i < WOW_WIRE_TICKET_BYTES; i++) {
-        a->ticket[i] = (char)in[2 + i];
-        if (a->ticket[i]) n = i + 1;
-    }
-    a->ticket[n] = '\0';
-    if (n == 0) return -1;
+    memcpy(a->ticket, in + 2, WOW_WIRE_TICKET_BYTES);
     return WOW_WIRE_AUTH_BYTES;
 }
 

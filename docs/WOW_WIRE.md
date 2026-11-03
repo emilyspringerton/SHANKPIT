@@ -15,6 +15,7 @@ Every number here is PARENA: `PARENA/stdlib/shankpit/wow_wire.prn` → `packages
 | `SET_TARGET` / `CLEAR_TARGET` | 7 | `ver, op, seq_lo, seq_hi, slot, entity_lo, entity_hi` | only when the value **changes** |
 | `CAST` | 6 | `ver, op, weapon, token, seq_lo, seq_hi` | one pull of the trigger |
 | `DEFINE_MACRO` | 5 + Σ(6 + len(arg)) | `ver, op, id, cmd, clause_count`, then per clause `require_lo, require_hi, forbid_lo, forbid_hi, token, arg_len, arg…` | once per macro, at registration |
+| `AUTH` | 38 | `ver, op, player_id[16], expires_at(LE u32), mac[16]` | once, at connect |
 | `INVOKE_MACRO` | 5 | `ver, op, id, seq_lo, seq_hi` | every activation |
 | `ACK` | 5 | `ver, op, seq_lo, seq_hi, kind` | answering any intent |
 
@@ -74,20 +75,14 @@ one). `wow_server_take_cast()` is the FIFO the simulation drains; `[harm]` is ev
 `WowServer.unit_truth`, which the simulation installs, and with no hook a target is "exists, unknown
 otherwise" so `[harm]` does not hold.
 
-**Identity is IDUNA's.** The `AUTH` frame carries a 48-byte **player ticket**, never the 4 KB SSO JWT —
-the token stays in the client. Verification is a `WowAuthFn`; the server starts with `require_auth = 1`
-and **no verifier installed**, so every wire op is refused (fail closed) until the IDUNA call is wired.
-That is deliberate: a server that silently accepts unauthenticated casts is worse than one that does
-nothing until SSO is connected. The test suite covers both the refusal and a verified flow (fake
-verifier), including that an unauthenticated *other* client cannot set a target.
+**Identity is IDUNA's.** The `AUTH` frame carries a **36-byte player ticket** -- never the 4 KB SSO JWT, which stays in the client. IDUNA mints it (`IDUNA/internal/http/handlers/shankpit_ticket.go`) as `player_id` (16 raw UUID bytes) `|| expires_at` (4 bytes LE unix seconds) `|| HMAC-SHA256(SHANKPIT_TICKET_SECRET, those 20 bytes)[:16]`, with a 5-minute TTL, and returns it hex-encoded; the wire carries the **raw** bytes, so the frame is 38 bytes and the server never parses hex. Verification is local (`packages/protocol/wow_ticket.h` over `packages/common/hmac_sha256.h`, RFC 4231 vectors in `make test-hmac`): constant-time MAC compare first, then the expiry check, then the canonical UUID text becomes the client's bound identity. The server installs the verifier from `SHANKPIT_TICKET_SECRET` at startup and otherwise keeps its **fail-closed** default -- no secret, no verifier, every op refused.
 
 A queued cast **fires**: `process_user_cmd` drains `wow_server_take_cast()` right after
 `shankpit_apply_usercmd_inputs`, equips the weapon and sets `in_shoot` for that one command. Folding it
 into the usercmd is the point — the shot is ordered against that client's own movement exactly like a
 mouse click, and it cannot fire from the receive path, outside the simulation.
 
-Honest gaps: a cast whose token is `target` or `focus` **does** aim at that entity -- the server resolves the slot in the per-client target table to a simulation slot and points the caster's yaw/pitch at its eye with `tp_yaw_pitch_to_point` (the inverse of the math the third-person camera already used) -- but only when that slot is a live player in the caster's own scene and not the caster; otherwise the shot leaves along the player's own aim rather than a crosshair that teleports. Other tokens and server-side aim assist are not built. The IDUNA verifier is not
-installed (the server has no HTTP client), so authentication still fails closed. `WOW_SERVER_CLIENTS` is
+Honest gaps: a cast whose token is `target` or `focus` **does** aim at that entity -- the server resolves the slot in the per-client target table to a simulation slot and points the caster's yaw/pitch at its eye with `tp_yaw_pitch_to_point` (the inverse of the math the third-person camera already used) -- but only when that slot is a live player in the caster's own scene and not the caster; otherwise the shot leaves along the player's own aim rather than a crosshair that teleports. Other tokens and server-side aim assist are not built. The IDUNA verifier **is** installed: the server verifies the 36-byte ticket locally with the shared `SHANKPIT_TICKET_SECRET` (no HTTP client, no crypto library) and refuses every wire op when that secret is unset. What is not proven is a ticket from a real IDUNA deployment -- none exists in this environment, so the evidence is IDUNA's own format plus RFC 4231 vectors, not a live SSO handshake. `WOW_SERVER_CLIENTS` is
 8 while `MAX_CLIENTS` is larger, so slots beyond 8 are ignored with a one-time log. And the cast → fire
 path is compiled, not driven: there is still no client in this environment to send a cast to a running
 server.

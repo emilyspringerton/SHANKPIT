@@ -44,6 +44,7 @@
 #include "../../../packages/simulation/kit_call.h"   /* PACKET_KIT_CALL: the kit's vehicle gadgets */
 #include "../../../packages/protocol/wow_server.h"   /* PACKET_WOW_WIRE: targets, casts, macro bytecode */
 #include "../../../packages/common/third_person.h"   /* tp_yaw_pitch_to_point: aim a cast at its target */
+#include "../../../packages/protocol/wow_ticket.h"   /* the IDUNA player ticket, verified locally */
 
 /* cutscene handshake globals — defined in lobby/main.c for the client;
    server sim uses local_game.h but never renders cutscenes, so stub to 0. */
@@ -103,6 +104,19 @@ static ClientSlot slots[MAX_CLIENTS];
    frame, which also sets require_auth=1: until an IDUNA verifier is installed every op is refused. */
 static WowServer g_wow_server;
 static int g_wow_server_inited;
+
+/* THE IDUNA VERIFIER, installed. IDUNA mints a 36-byte player ticket with HMAC-SHA256 over
+ * player_id||expires_at and a 5-minute TTL; the server verifies it locally with the shared
+ * SHANKPIT_TICKET_SECRET -- no HTTP client, no crypto library, no clock but the one passed in here. */
+static unsigned char g_ticket_secret[128];
+static int g_ticket_secret_len;
+
+static int wow_ticket_auth(void *ctx, const unsigned char *ticket, int len, char *player_id, int cap) {
+    (void)ctx;
+    if (len != WOW_TICKET_BYTES) return 0;
+    return wow_ticket_verify(g_ticket_secret, g_ticket_secret_len, ticket,
+                             (uint32_t)time(NULL), player_id, cap);
+}
 static int g_server_sock = -1;   /* captured where the listening socket is created, for wire ACKs */
 
 typedef struct {
@@ -1444,7 +1458,25 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
         NetWowWire *w = (NetWowWire *)buffer;
         uint8_t ack[WOW_WIRE_ACK_BYTES];
         int r;
-        if (!g_wow_server_inited) { wow_server_begin(&g_wow_server); g_wow_server_inited = 1; }
+        if (!g_wow_server_inited) {
+            wow_server_begin(&g_wow_server);
+            /* Fail closed unless IDUNA's shared secret is actually present: with no secret there is no
+               verifier and wow_server_rx refuses every op. Never invent one, never accept unauthenticated. */
+            const char *secret = getenv("SHANKPIT_TICKET_SECRET");
+            int sl = secret ? (int)strlen(secret) : 0;
+            if (sl > (int)sizeof g_ticket_secret) {
+                NET_SERVER_LOG("WOW_AUTH SHANKPIT_TICKET_SECRET is longer than %d bytes: refusing to install",
+                               (int)sizeof g_ticket_secret);
+            } else if (sl > 0) {
+                memcpy(g_ticket_secret, secret, (size_t)sl);
+                g_ticket_secret_len = sl;
+                g_wow_server.auth = wow_ticket_auth;
+                NET_SERVER_LOG("WOW_AUTH IDUNA ticket verifier installed (HMAC-SHA256, %d-byte secret)", sl);
+            } else {
+                NET_SERVER_LOG("WOW_AUTH no SHANKPIT_TICKET_SECRET: every wire op is refused (fail closed)");
+            }
+            g_wow_server_inited = 1;
+        }
         if (client_id >= WOW_SERVER_CLIENTS) {
             static int warned = 0;
             if (!warned) { NET_WARN_LOG("WOW_WIRE ignored: slot %d is beyond the %d wire clients", client_id, WOW_SERVER_CLIENTS); warned = 1; }

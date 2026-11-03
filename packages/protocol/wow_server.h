@@ -40,7 +40,7 @@ typedef struct {
 } WowServerClient;
 
 /* 1 accepted (fill player_id), 0 refused, -1 error. THE IDUNA HOOK. */
-typedef int (*WowAuthFn)(void *ctx, const char *ticket, int len, char *player_id, int cap);
+typedef int (*WowAuthFn)(void *ctx, const unsigned char *ticket, int len, char *player_id, int cap);
 
 /* 1 handled and an ACK was written, 0 handled without an ACK (stale target / refused action),
    -2 unauthenticated (or no verifier), -1 malformed. */
@@ -147,7 +147,7 @@ static inline int wow_server_rx(WowServer *s, int client, const uint8_t *frame, 
         int ok;
         if (wow_auth_decode(frame, len, &a) < 0) return -1;
         if (!s->auth) return -2;                       /* no IDUNA verifier: refuse, do not guess */
-        ok = s->auth(s->auth_ctx, a.ticket, (int)strlen(a.ticket), c->player_id, WOW_SERVER_ID_MAX);
+        ok = s->auth(s->auth_ctx, a.ticket, WOW_WIRE_TICKET_BYTES, c->player_id, WOW_SERVER_ID_MAX);
         if (ok != 1) { c->authed = 0; c->player_id[0] = '\0'; return -2; }
         c->authed = 1;
         wow_server_ack(ack, 0, (uint8_t)WOW_OP_AUTH);
