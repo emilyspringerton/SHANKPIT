@@ -24,8 +24,12 @@
  * and pays for nothing -- no stat, no allocation, no file. The shim is switched on by the host that
  * wants to serve a world, not imposed on a client.
  *
- * THE SHAPE IS THE CONTRACT (schema 2). Changing a key or a bracket is a schema bump, because the
+ * THE SHAPE IS THE CONTRACT (schema 3). Changing a key or a bracket is a schema bump, because the
  * WOTAN page (WOTAN/js/shankpit-net.js) reads it and its node test pins it.
+ *
+ * Schema 3 added `stage` -- the world's own tournament bracket (dw_stage.h), or `null` when nobody is
+ * running one. That is what makes the stage publishable at all: WOTAN reads THIS file and nothing else,
+ * so a bracket that lived only in the game could never appear on the site.
  *
  * Schema 2 added `rating` to every record -- the number the ladder climbs
  * (PARENA/stdlib/deadweight/rating.prn, compiled into dw_rating.c). It is NOT accompanied by a
@@ -35,8 +39,9 @@
 
 #include <stddef.h>
 #include "dw_ladder.h"
+#include "dw_stage.h"
 
-#define DW_NET_SCHEMA 2
+#define DW_NET_SCHEMA 3
 
 /* How many finished matches the feed remembers. Newest first; a match older than this is gone, which
  * is fine because WOTAN's real match history is IDUNA's (this is the live ticker, not the archive). */
@@ -47,6 +52,12 @@
  * legal: the export then carries an empty name and the page falls back to the pid. */
 void dw_net_set_name_lookup(const char *(*fn)(int pid));
 const char *(*dw_net_name_lookup(void))(int pid);
+
+/* THE STAGE. The world owns the bracket (dw_stage.h) and this module only reads it, so there is one
+ * bracket and not a copy per reader. NULL -- or a stage that was never opened -- exports as
+ * `"stage":null`, which is a different fact from "a stage with nobody in it". */
+void dw_net_set_stage(const DwStage *s);
+const DwStage *dw_net_stage(void);
 
 /* Where dw_net_publish writes. NULL or "" turns publishing off (the default). Non-NULL is read
  * immediately, so a caller does not have to keep the string alive. */

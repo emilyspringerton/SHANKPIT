@@ -366,7 +366,7 @@ int main(void) {
         CHECK(slot >= 0, "the shim's challenge was refused");
         int n = dw_net_export(&l, buf, sizeof buf, 2000u);
         CHECK(n > 0, "the export refused a ladder it can describe");
-        CHECK(strstr(buf, "\"schema\":2") != NULL, "no schema in the export");
+        CHECK(strstr(buf, "\"schema\":3") != NULL, "no schema in the export");
         /* schema 2 carries the rating, and it must be the LADDER's field rather than the exporter's idea of
            it -- otherwise the page and the game could rank the same population differently */
         {
@@ -414,6 +414,81 @@ int main(void) {
         CHECK(dw_net_publish(&l, 4000u) == 1, "publish did not write a fresh snapshot");
         CHECK(dw_net_publish(&l, 4001u) == 0, "publish wrote twice in the same instant");
         dw_net_set_path("");
+    }
+
+
+    /* ---- THE STAGE: a bracket over this ladder, played through it -------------------------------- */
+    {
+        static char buf[20000];
+        DwLadder l;
+        DwStage s;
+
+        /* four citizens, ratings set by hand, so the seeding is a FACT rather than whatever the RNG said */
+        dw_ladder_reset(&l, 7u);
+        {
+            const int pids[4] = { 11, 12, 13, 14 };
+            const int ratings[4] = { 1200, 1100, 1050, 1000 };
+            for (int i = 0; i < 4; i++) {
+                int mi = dw_ladder_add_citizen(&l, pids[i], i, 500, 0u);
+                CHECK(mi >= 0, "a stage entrant could not join the ladder");
+                if (mi >= 0) l.members[mi].rating = ratings[i];
+            }
+        }
+        dw_net_set_path("");
+        dw_stage_reset(&s);
+        dw_net_set_stage(&s);
+        CHECK(dw_net_export(&l, buf, sizeof buf, 1500u) > 0, "the export failed with no stage");
+        CHECK(strstr(buf, "\"stage\":null") != NULL, "an unopened stage is not published as an honest null");
+
+        CHECK(dw_stage_open(&s, &l, 2000u) == 1, "a four-member ladder could not open a stage");
+        CHECK(s.slots == 4 && s.rounds == 2 && s.byes == 0, "the four-slot bracket shape is wrong");
+        CHECK(s.matches[0][0].a == 11 && s.matches[0][0].b == 14, "seed 1 did not draw seed 4");
+        CHECK(s.matches[0][1].a == 12 && s.matches[0][1].b == 13, "seed 2 did not draw seed 3");
+
+        long before = 0;
+        for (int i = 0; i < DW_LADDER_MAX_CITIZENS; i++) if (l.members[i].active) before += l.members[i].rating;
+
+        int advanced = dw_stage_play(&s, &l, 3000u);
+        CHECK(advanced == 11 || advanced == 14, "the first stage match returned a stranger");
+        {
+            long after = 0;
+            for (int i = 0; i < DW_LADDER_MAX_CITIZENS; i++) if (l.members[i].active) after += l.members[i].rating;
+            CHECK(after == before, "a stage match was not zero-sum on the ratings");
+        }
+
+        (void)dw_stage_play(&s, &l, 4000u);
+        CHECK(s.round == 2, "the bracket did not advance to the final");
+        (void)dw_stage_play(&s, &l, 5000u);
+        CHECK(s.over == 1 && s.champion > 0, "the stage did not crown a champion");
+        CHECK(dw_stage_play(&s, &l, 6000u) == 0, "a finished stage played another match");
+
+        CHECK(dw_net_export(&l, buf, sizeof buf, 7000u) > 0, "the export refused a ladder with a stage");
+        CHECK(strstr(buf, "\"stage\":{\"name\":\"THE PIT\"") != NULL, "the stage is not in the export");
+        CHECK(strstr(buf, "\"champion\":") != NULL, "the export carries no champion");
+        CHECK(strstr(buf, "\"results\":[{\"round\":1") != NULL, "the bracket's results are not published");
+        CHECK(strstr(buf, "\"played\":0") == NULL, "a four-entrant bracket published an unplayed match");
+
+        dw_net_set_stage(NULL);
+        CHECK(dw_net_export(&l, buf, sizeof buf, 8000u) > 0, "the export failed after the stage was detached");
+        CHECK(strstr(buf, "\"stage\":null") != NULL, "a detached stage is still published");
+    }
+
+    /* a person's match is not played behind their back, and a short field gets byes */
+    {
+        DwLadder l;
+        DwStage s;
+        dw_ladder_reset(&l, 9u);
+        (void)dw_ladder_add_player(&l, 0, 0u);
+        for (int i = 0; i < 3; i++) (void)dw_ladder_add_citizen(&l, 20 + i, i, 500, 0u);
+        CHECK(dw_stage_open(&s, &l, 1000u) == 1, "the stage could not open with a person seated");
+        CHECK(s.matches[0][0].a == 0, "the person is not the top seed of the stage");
+        CHECK(dw_stage_play(&s, &l, 2000u) == -2, "the world played a stage match a person was in");
+
+        dw_ladder_reset(&l, 11u);
+        for (int i = 0; i < 3; i++) (void)dw_ladder_add_citizen(&l, 30 + i, i, 500, 0u);
+        CHECK(dw_stage_open(&s, &l, 1000u) == 1, "a three-member ladder could not open a stage");
+        CHECK(s.slots == 4 && s.byes == 1, "a three-entrant stage did not record exactly one bye");
+        CHECK(dw_stage_next(&s, NULL, NULL) == 1, "the only live match was not offered");
     }
 
     /* ---- the player's end (dw_play.h): the human half of the ladder ----

@@ -131,6 +131,7 @@ static WitnessAiCitizen g_citizens[WITNESS_AI_MAX_CITIZENS];
  * here rather than in a second module because a citizen is the only thing that plays in it, and
  * this file already owns every citizen's lifetime. */
 static DwLadder g_dw_ladder;
+static DwStage g_dw_stage;
 static int g_dw_ladder_ready = 0;
 static WitnessAiZombie g_zombies[WITNESS_AI_MAX_ZOMBIES];
 static WitnessAiGiantBug g_giant_bugs[WITNESS_AI_MAX_GIANT_BUGS];
@@ -320,6 +321,10 @@ void witness_ai_reset(unsigned int seed, unsigned int now_ms) {
        name is resolved from its body when the ladder is published */
     dw_net_reset();
     dw_net_set_name_lookup(wai_citizen_name);
+    /* THE STAGE: the world's own bracket, published through the same snapshot WOTAN reads.
+       Reset with the world so a new session does not inherit last night's champion. */
+    dw_stage_reset(&g_dw_stage);
+    dw_net_set_stage(&g_dw_stage);
     dw_ladder_set_hero(&g_dw_ladder, 0);   /* slot 0 is the local player in the sandbox */
     /* ...and the records come back off disk if a previous session left them there. Off unless
        SHANKPIT_LADDER_FILE names a file, so a normal run writes nothing (the same discipline the
@@ -1366,6 +1371,20 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
     if (!s) return;
     g_wai_now = now_ms;
     if (g_dw_ladder_ready) dw_ladder_tick(&g_dw_ladder, now_ms);
+    /* THE STAGE, on the world's own clock: opened when the population can field a bracket, played one match
+       per interval, and replaced only after its champion has stood for a minute. dw_stage_play refuses a
+       match a person is in (-2), so a stage can never play a game on somebody's behalf. */
+    if (g_dw_ladder_ready) {
+        if (!g_dw_stage.active) {
+            if (g_dw_ladder.count >= DW_STAGE_SIZE) dw_stage_open(&g_dw_stage, &g_dw_ladder, now_ms);
+        } else if (!g_dw_stage.over) {
+            if (!g_dw_stage.last_ms || now_ms - g_dw_stage.last_ms >= DW_STAGE_INTERVAL_MS) {
+                dw_stage_play(&g_dw_stage, &g_dw_ladder, now_ms);
+            }
+        } else if (now_ms - g_dw_stage.ended_ms >= DW_STAGE_COOLDOWN_MS) {
+            dw_stage_reset(&g_dw_stage);
+        }
+    }
     /* a duel somebody is WATCHING is read one round per its own clock (dw_ladder.h) -- driven from
        the world's tick, so a watched match advances with the world and not with a phone's frames */
     if (g_dw_ladder_ready) dw_ladder_watch_step(&g_dw_ladder, now_ms);

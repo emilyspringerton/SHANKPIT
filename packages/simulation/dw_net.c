@@ -19,6 +19,7 @@
 #endif
 
 static const char *(*g_name_lookup)(int pid);
+static const DwStage *g_stage;
 static char g_path[1024];
 static int g_path_ready;
 static unsigned g_last_write_ms;
@@ -31,6 +32,8 @@ static int g_recent_count;
 
 void dw_net_set_name_lookup(const char *(*fn)(int pid)) { g_name_lookup = fn; }
 const char *(*dw_net_name_lookup(void))(int pid) { return g_name_lookup; }
+void dw_net_set_stage(const DwStage *s) { g_stage = s; }
+const DwStage *dw_net_stage(void) { return g_stage; }
 
 void dw_net_set_path(const char *path) {
     snprintf(g_path, sizeof g_path, "%s", path ? path : "");
@@ -205,7 +208,46 @@ int dw_net_export(const DwLadder *l, char *buf, size_t cap, unsigned now_ms) {
                rec[i].pid0, rec[i].pid1, rec[i].winner, rec[i].rounds,
                rec[i].hull0, rec[i].hull1, rec[i].ms);
     }
-    jw_put(&w, "]}");
+    jw_put(&w, "],");
+
+    /* THE STAGE: the world's own bracket, or an honest null. `results` carries every decided match in
+       bracket order (a bye included, with played=0), so a page can draw the whole bracket instead of only
+       the game on the table right now. */
+    jw_put(&w, "\"stage\":");
+    const DwStage *st = g_stage;
+    if (!st || !st->active) {
+        jw_put(&w, "null");
+    } else {
+        int round = 0, slot = 0;
+        int live = dw_stage_next(st, &round, &slot);
+        jw_put(&w,
+               "{\"name\":\"THE PIT\",\"round\":%d,\"rounds\":%d,\"entrants\":%d,\"byes\":%d,"
+               "\"over\":%d,\"champion\":%d,\"round_name\":",
+               st->round, st->rounds, st->nentrants, st->byes, st->over ? 1 : 0,
+               st->over ? st->champion : -1);
+        jw_str(&w, dw_stage_round_name(st));
+        jw_put(&w, ",\"match\":");
+        if (live) {
+            jw_put(&w, "{\"a_pid\":%d,\"b_pid\":%d}", st->matches[round - 1][slot].a,
+                   st->matches[round - 1][slot].b);
+        } else {
+            jw_put(&w, "null");
+        }
+        jw_put(&w, ",\"results\":[");
+        int first_res = 1;
+        for (int r = 1; r <= st->rounds && r <= DW_STAGE_MAX_ROUNDS; r++) {
+            int n = (st->slots >> (r - 1)) / 2;
+            for (int i = 0; i < n && i < DW_STAGE_MAX_MATCHES; i++) {
+                const DwStageMatch *m = &st->matches[r - 1][i];
+                if (m->winner < 0 || m->a < 0 || m->b < 0) continue;
+                jw_put(&w, "%s{\"round\":%d,\"a_pid\":%d,\"b_pid\":%d,\"winner_pid\":%d,\"played\":%d}",
+                       first_res ? "" : ",", r, m->a, m->b, m->winner, m->played);
+                first_res = 0;
+            }
+        }
+        jw_put(&w, "]}");
+    }
+    jw_put(&w, "}");
 
     return w.ok ? (int)w.len : -1;
 }

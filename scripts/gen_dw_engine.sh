@@ -20,7 +20,10 @@ else
 fi
 "$parena_bin" build "$parena_dir/stdlib/deadweight/card_rules.prn" -o "$root/packages/simulation/dw_rules.c"
 "$parena_bin" build "$parena_dir/stdlib/deadweight/citizen_policy.prn" -o "$root/packages/simulation/dw_citizen_rules.c"
+# The BRACKET's arithmetic (seeding fold, bracket size, draw tie-break). Emitted from the same .prn
+# NOOBTOPIA emits to Luau, so two stages in two worlds pair the same field the same way.
+"$parena_bin" build "$parena_dir/stdlib/deadweight/stage.prn" -o "$root/packages/simulation/dw_stage_rules.c"
 # The ladder's rating. Emitted from the SAME .prn NOOBTOPIA emits to Luau for the Roblox leaderboard, so
 # a server and the C ladder print the same numbers -- the whole reason the number lives in PARENA.
 "$parena_bin" build "$parena_dir/stdlib/deadweight/rating.prn" -o "$root/packages/simulation/dw_rating.c"
-echo "regenerated packages/simulation/{dw_rules,dw_citizen_rules,dw_rating}.c"
+echo "regenerated packages/simulation/{dw_rules,dw_citizen_rules,dw_rating,dw_stage_rules}.c"
