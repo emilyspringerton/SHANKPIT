@@ -375,11 +375,13 @@ static inline void scene_load(int scene_id) {
                 float vy = g_custom_level_vehicle_y[vi];
                 float vz = g_custom_level_vehicle_z[vi];
                 float vyaw = g_custom_level_vehicle_yaw[vi];
+                int vorigin = g_custom_level_vehicle_origin[vi];
                 if (vk == 0 || vk == 1) {
                     if (bi >= MAX_BUGGIES) continue;
                     buggy_spawn_defaults(&local_state.buggies[bi], bi, scene_id, vx, vz, vyaw);
                     local_state.buggies[bi].y = vy + BUGGY_WHEEL_RADIUS + BUGGY_CHASSIS_CLEARANCE;
                     local_state.buggies[bi].rocket = (vk == 1) ? 1 : 0;
+                    local_state.buggies[bi].origin = vorigin;   /* provenance: what a garage reads */
                     printf("[VEHICLE] %s id=%d scene=%d (level) x=%.1f z=%.1f yaw=%.0f\n",
                            vk == 1 ? "rocket car" : "buggy", bi, scene_id, vx, vz, vyaw);
                     bi++;

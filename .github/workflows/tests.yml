@@ -114,6 +114,8 @@ jobs:
           # random hits, and the salvage table is hand-derived (plain gcc + libm, ASan+UBSan)
           make check-vehicle-salvage-rules
           make test-vehicle-salvage
+          make check-garage-rules
+          make test-garage-rules
 
       # MODE_TYLER (TYLER VALHANNA cold open) voice + the P0 fixes it needed. Headless, plain gcc,
       # ASan+UBSan, no SDL, no audio device: the scripted actors really walk (story_ai gate +

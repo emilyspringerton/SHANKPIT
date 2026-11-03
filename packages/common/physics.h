@@ -513,6 +513,16 @@ static float g_custom_level_vehicle_y[CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS];
 static float g_custom_level_vehicle_z[CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS];
 static float g_custom_level_vehicle_yaw[CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS];
 static int g_custom_level_vehicle_count = 0;
+/* PROVENANCE for author-placed vehicles: the level's own origin (level_boxes.h LEVEL_VEHICLE_ORIGIN_*),
+   carried beside the spawn arrays. Its own setter on purpose, so the existing spawn signature -- and
+   every caller of it -- stays exactly as it was. */
+static int g_custom_level_vehicle_origin[CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS];
+static inline void phys_set_custom_level_vehicle_origins(const int *origin, int count) {
+    if (count < 0) count = 0;
+    if (count > CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS) count = CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS;
+    for (int i = 0; i < CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS; i++)
+        g_custom_level_vehicle_origin[i] = (i < count && origin) ? origin[i] : 0;
+}
 static inline void phys_set_custom_level_vehicle_spawns(const int *kind, const float *x, const float *y,
                                                        const float *z, const float *yaw, int count) {
     if (count < 0) count = 0;

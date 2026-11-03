@@ -9,7 +9,8 @@
 PARENA_DIR ?= ../PARENA
 SALVAGE_REGEN := /tmp/vehicle_salvage_rules.regen.c
 
-.PHONY: regen-vehicle-salvage-rules check-vehicle-salvage-rules test-vehicle-salvage
+.PHONY: regen-vehicle-salvage-rules check-vehicle-salvage-rules test-vehicle-salvage \
+        regen-garage-rules check-garage-rules test-garage-rules
 
 regen-vehicle-salvage-rules:
 	PARENA_DIR=$(PARENA_DIR) scripts/gen_vehicle_salvage_rules.sh
@@ -31,3 +32,21 @@ test-vehicle-salvage: | $(BIN_DIR)
 		$(SALVAGE_TEST_FLAGS) $(SALVAGE_TEST_SRC) \
 		-o $(BIN_DIR)/vehicle_salvage_test_asan $(LIBS_M)
 	./$(BIN_DIR)/vehicle_salvage_test_asan
+
+# SALVAGE S4 (garage): what an origin is worth and what a bay accepts, as rules.
+.PHONY: regen-garage-rules check-garage-rules test-garage-rules
+regen-garage-rules:
+	PARENA_DIR=$(PARENA_DIR) scripts/gen_garage_rules.sh
+
+check-garage-rules:
+	PARENA_DIR=$(PARENA_DIR) scripts/gen_garage_rules.sh /tmp/garage_rules.regen.c
+	cmp /tmp/garage_rules.regen.c packages/simulation/garage_rules.c
+
+test-garage-rules: | $(BIN_DIR)
+	$(CC) -O1 -Wall -Wextra -Werror -Ipackages/simulation packages/simulation/garage_rules_test.c \
+		packages/simulation/garage_rules.c -o $(BIN_DIR)/garage_rules_test $(LIBS_M)
+	./$(BIN_DIR)/garage_rules_test
+	$(CC) -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra -Werror \
+		-Ipackages/simulation packages/simulation/garage_rules_test.c packages/simulation/garage_rules.c \
+		-o $(BIN_DIR)/garage_rules_test_asan $(LIBS_M)
+	./$(BIN_DIR)/garage_rules_test_asan

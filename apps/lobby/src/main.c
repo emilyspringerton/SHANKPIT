@@ -107,6 +107,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/world/brick_debris.h"
 #include "../../../packages/simulation/brick_world.h"
 #include "../../../packages/simulation/vehicle_salvage_rules_host.h" /* PARENA car components */
+#include "../../../packages/simulation/garage_rules_host.h" /* PARENA garage rules */
 #include "../../../packages/simulation/vehicle_salvage_shards.h"     /* a sheared part is a brick body */
 #include "../../../packages/simulation/vehicle_salvage_loot.h"      /* ... and what it is worth on the ground */
 #include "../../../packages/simulation/buggy_rules_host.h"
@@ -3605,6 +3606,11 @@ static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
             vz[vi] = lvl->vehicle_spawns[vi].z; vya[vi] = lvl->vehicle_spawns[vi].yaw;
         }
         phys_set_custom_level_vehicle_spawns(vk, vx, vy, vz, vya, lvl->vehicle_spawn_count);
+        {   /* provenance travels with the spawns, in its own setter */
+            int vag[CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS];
+            for (int vi = 0; vi < lvl->vehicle_spawn_count; vi++) vag[vi] = lvl->vehicle_spawns[vi].origin;
+            phys_set_custom_level_vehicle_origins(vag, lvl->vehicle_spawn_count);
+        }
     }
     brick_world_init_from_level(lvl); // destructible brick: pick the carvable boxes, install the weapon/blast hooks
     brick_debris_clear(&g_brick_debris);
@@ -15982,6 +15988,7 @@ int main(int argc, char* argv[]) {
     airplane_rules_install(); /* PARENA fixed-wing transport (C-110) */
     vehicle_burn_rules_install(); /* PARENA car fire ladder (smoke -> fire -> blast), drawn with BR's fire curve */
     vehicle_salvage_rules_install(); /* PARENA car components: what breaks, what it yields */
+    garage_rules_install(); /* PARENA garage: what this car's origin is worth, what a bay takes */
     vehicle_salvage_shards_bind(&g_brick_bodies); /* a part that comes off falls as a real body */
     buggy_set_shard_spawn(vehicle_salvage_shards_hook); /* ...thrown by local_game's tick */
     vehicle_salvage_loot_reset(); /* ground half: a tier maps onto an EXISTING consumable */

@@ -817,6 +817,11 @@ typedef struct {
        fields, which are already client-local only, so the replicated fields above are untouched. */
     int rocket;
     int tank;
+    /* ORIGIN (LEVEL_VEHICLE_ORIGIN_*): a civilian car unless the level said otherwise. Local sim
+       only for now -- PACKET_VEHICLE_STATE carries parts, not provenance, and a garage reads it on
+       the authority. Appended here for the same reason rocket/tank are: the replicated fields above
+       stay untouched. */
+    int origin;
 } BuggyState;
 
 /* A QUADCOPTER (packages/simulation/drone_flight.h). Two airframes share this state: DRONE_KIND_RECON

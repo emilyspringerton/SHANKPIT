@@ -217,12 +217,28 @@ not a new inventory, with the tier still carried on the drop so a real economy c
 touching the protocol. Walk-over pickup, a three-minute rot, and a full pool that discards the oldest drop
 rather than the newest. Client-local, the contract `bioslurry.h` already states.
 
-**Not done, named:** `apps/lobby` cannot be compiled on this box, so the client's apply handler, its loot
-install and its pickup loop are reviewed, not compiled, and no one has watched the packet arrive; loot is
-not authoritative; there is no end-to-end net test for this packet (the `PACKET_BRICK_STATE` e2e pattern
-would have to be rebuilt for vehicles); and **S4 — `origin_tag`, the garage `PLATE`, `garage_quest.prn` —
-is untouched**, because it is a feature decision (what provenance means, what a garage accepts) rather
-than wiring.
+### S4 — provenance and the garage (2026-11-03, rules + plumbing built)
+
+`LevelVehicleSpawn.origin` (civilian / stolen / military) is authored per spawn in the level JSON — a
+word or a number, clamped so a typo becomes a clean car rather than a rare-parts payout — written back
+only when it is not civilian (so older levels round-trip byte-identically), carried through
+`physics.h`'s own setter and into `BuggyState.origin` at `scene_load`.
+
+`PARENA/stdlib/shankpit/garage_rules.prn` -> `garage_rules.c` decides the two things a bay does:
+`garage-accepts(origin, objective)` over ANY / REBUILD / DISAPPEAR / FENCE, and `garage-pays(origin)` in
+permille (civilian 1000, stolen 700, military 1300, undefined 0). `garage.h` holds the defaults and
+`garage_value`. Both hosts install it. `make test-garage-rules` compares the generated table with the
+header's defaults for **every** pair including invalid ones.
+
+**The lobby compiles on this box now** (SDL2/GL/mbedtls dev packages, `EDITOR.GAME`, PELLEGRINO's
+vendored mbedtls), which also surfaced two real repo bugs fixed here: `dw_play.c` missing from
+`LOBBY_SRC`, and no link route to mbedtls when PELLEGRINO's tree is absent.
+
+**Not done, named:** the bay-side TRIGGER. A `PLATE` already knows who is standing on it
+(`widget_runtime.h`), but no vehicle-aware objective exists in `mission.h`, so the garage is a rulebook
+with no one calling it yet — that is the next decision, not a missing wire. Still true: nobody has
+launched the lobby binary (needs a display), loot is client-local, and there is no e2e net test for
+`PACKET_VEHICLE_STATE`.
 
 ---
 

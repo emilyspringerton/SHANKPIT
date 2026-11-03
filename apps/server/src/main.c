@@ -38,6 +38,7 @@
 #include "../../../packages/simulation/shield_packs.h"
 #include "../../../packages/simulation/buggy_rules_host.h"
 #include "../../../packages/simulation/vehicle_salvage_rules_host.h" /* PARENA car components */
+#include "../../../packages/simulation/garage_rules_host.h" /* PARENA garage rules */
 #include "../../../packages/simulation/heli_rules_host.h"
 #include "../../../packages/simulation/rocket_car_rules_host.h"   /* the rocket car's PARENA model */
 #include "../../../packages/simulation/kit_call.h"   /* PACKET_KIT_CALL: the kit's vehicle gadgets */
@@ -491,6 +492,11 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
             vz[vi] = lvl->vehicle_spawns[vi].z; vya[vi] = lvl->vehicle_spawns[vi].yaw;
         }
         phys_set_custom_level_vehicle_spawns(vk, vx, vy, vz, vya, lvl->vehicle_spawn_count);
+        {   /* provenance travels with the spawns, in its own setter */
+            int vag[CUSTOM_LEVEL_MAX_VEHICLE_SPAWNS];
+            for (int vi = 0; vi < lvl->vehicle_spawn_count; vi++) vag[vi] = lvl->vehicle_spawns[vi].origin;
+            phys_set_custom_level_vehicle_origins(vag, lvl->vehicle_spawn_count);
+        }
     }
     brick_world_init_from_level(lvl); // destructible brick: pick the carvable boxes, install the weapon/blast hooks
 
@@ -1871,6 +1877,7 @@ void server_broadcast_vehicle_state(void) {
 int main(int argc, char *argv[]) {
     buggy_rules_install(); /* PARENA buggy handling (#468) */
     vehicle_salvage_rules_install(); /* PARENA car components: the parts own the split, hull mirrors them */
+    garage_rules_install(); /* PARENA garage: what this car's origin is worth, what a bay takes */
     eu_rules_install(); /* PARENA EMPIRE unit archetypes, the human baseline, order priorities */
     heli_rules_install(); /* PARENA helicopter flight model (#542) */
     rocket_car_rules_install(); /* PARENA rocket car (Bedrock Racers port) */

@@ -186,7 +186,28 @@ enum {
     LEVEL_VEHICLE_PLANE,
     LEVEL_VEHICLE_KIND_COUNT
 };
-typedef struct { int kind; float x, y, z, yaw; } LevelVehicleSpawn;
+/* PROVENANCE -- where a car came from (the founder's "vehicles of questionable origin"). The garage
+   rules need it before a quest can ask for it, so it is authored per spawn and carried into the car.
+   Small integers so the level JSON, the C struct and garage_rules.prn speak one alphabet; 0 is the old
+   default, so every level authored before this loads unchanged. */
+enum {
+    LEVEL_VEHICLE_ORIGIN_CIVILIAN = 0,
+    LEVEL_VEHICLE_ORIGIN_STOLEN,
+    LEVEL_VEHICLE_ORIGIN_MILITARY,
+    LEVEL_VEHICLE_ORIGIN_COUNT
+};
+typedef struct { int kind; float x, y, z, yaw; int origin; } LevelVehicleSpawn;
+static const char *const LEVEL_VEHICLE_ORIGIN_NAMES[LEVEL_VEHICLE_ORIGIN_COUNT] = {
+    "civilian", "stolen", "military"
+};
+/* Unknown words are CIVILIAN, never the flattering one: an author who typed "military" wrong gets a
+   clean car, not a rare-parts payout. */
+static inline int level_boxes_vehicle_origin_from_name(const char *s) {
+    if (!s || !s[0]) return LEVEL_VEHICLE_ORIGIN_CIVILIAN;
+    for (int i = 0; i < LEVEL_VEHICLE_ORIGIN_COUNT; i++)
+        if (strcmp(s, LEVEL_VEHICLE_ORIGIN_NAMES[i]) == 0) return i;
+    return LEVEL_VEHICLE_ORIGIN_CIVILIAN;
+}
 static const char *const LEVEL_VEHICLE_KIND_NAMES[LEVEL_VEHICLE_KIND_COUNT] = {
     "buggy", "rocket", "heli", "recon", "fly", "plane"
 };
@@ -1165,6 +1186,24 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
                     if ((kv = level_boxes_find_key(vo, ve, "y"))) level_boxes_parse_number(kv, &vs->y);
                     if ((kv = level_boxes_find_key(vo, ve, "z"))) level_boxes_parse_number(kv, &vs->z);
                     if ((kv = level_boxes_find_key(vo, ve, "yaw"))) level_boxes_parse_number(kv, &vs->yaw);
+                    /* origin: a word ("stolen") or a number, clamped to a real origin */
+                    vs->origin = LEVEL_VEHICLE_ORIGIN_CIVILIAN;
+                    if ((kv = level_boxes_find_key(vo, ve, "origin"))) {
+                        const char *op = level_boxes_skip_ws(kv);
+                        if (*op == '"') {
+                            char obuf[24];
+                            int on = 0;
+                            op++;
+                            while (*op && *op != '"' && on < 23) obuf[on++] = *op++;
+                            obuf[on] = '\0';
+                            vs->origin = level_boxes_vehicle_origin_from_name(obuf);
+                        } else {
+                            float of = 0.0f;
+                            if (level_boxes_parse_number(kv, &of)) vs->origin = (int)of;
+                        }
+                        if (vs->origin < 0 || vs->origin >= LEVEL_VEHICLE_ORIGIN_COUNT)
+                            vs->origin = LEVEL_VEHICLE_ORIGIN_CIVILIAN;
+                    }
                     out->vehicle_spawn_count++;
                     vc = ve + 1;
                 }
@@ -1717,8 +1756,12 @@ static inline void level_boxes_write_json(FILE *f, const CustomLevelData *lvl) {
         const LevelVehicleSpawn *vs = &lvl->vehicle_spawns[i];
         fprintf(f, "%s\n  { \"kind\": ", i ? "," : "");
         level_boxes_put_json_string(f, level_boxes_vehicle_kind_name(vs->kind));
-        fprintf(f, ", \"x\": %.4g, \"y\": %.4g, \"z\": %.4g, \"yaw\": %.4g }",
+        fprintf(f, ", \"x\": %.4g, \"y\": %.4g, \"z\": %.4g, \"yaw\": %.4g",
                 (double)vs->x, (double)vs->y, (double)vs->z, (double)vs->yaw);
+        /* a civilian car writes nothing, so every level authored before this saves byte-identically */
+        if (vs->origin > LEVEL_VEHICLE_ORIGIN_CIVILIAN && vs->origin < LEVEL_VEHICLE_ORIGIN_COUNT)
+            fprintf(f, ", \"origin\": \"%s\"", LEVEL_VEHICLE_ORIGIN_NAMES[vs->origin]);
+        fprintf(f, " }");
     }
     fprintf(f, "\n ]");
 
