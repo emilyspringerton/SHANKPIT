@@ -124,6 +124,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/render/stream_out.h"
 #include "../../../packages/render/stream_filters.h"      /* the program feed's post chain */
 #include "../../../packages/render/filter_rules_host.h"    /* PARENA presets */
+#include "../../../packages/ui/macro.h"                    /* shankpit_macros.cfg: bind a key to commands */
 #include "../../../packages/render/proc_tex.h"
 #include "../../../packages/render/retro_sky.h"
 #include "../../../packages/render/sky_weather.h"
@@ -13579,6 +13580,276 @@ static void draw_brick_bodies(void) {
     glPopAttrib();
 }
 
+/* ---- MACROS: the player's own commands ---------------------------------------------------------
+   Founder (2026-11-03): "the settings need to be macroable ... everything needs to be macroable via WOW
+   like lua macros", after "streamers and speedrunners jump into settings to adjust brightness". WoW's
+   macros are a line of text bound to a key that fires a list of slash commands; that is what this is,
+   minus the Lua: the FORMAT is packages/ui/macro.h, the COMMANDS are here, and every one of them is
+   something a player can already do in a menu. The same text runs from chat with a leading '/', so a
+   player can test a macro there and then bind it to a key. A bind beats the built-in key of the same
+   name -- rebinding means rebinding -- and nothing is bound until the player says so, except the two
+   first-run binds on ALT+1/ALT+2, which nothing else uses.
+   NOT done, named: no variables, no conditionals, no waits -- a macro is a list, not a script, and a
+   "wait" in a capture path would need a timer queue nothing else asks for. */
+#define MACRO_FILE_PATH "shankpit_macros.cfg"
+static MacroBook g_macros;
+static int g_macro_depth = 0;
+
+static void broadcast_set(int on);
+static void stream_set(int on);
+
+static int macro_word(const char **p, char *out, int cap) {
+    int n = 0;
+    const char *s;
+    if (!p || !out || cap <= 0) return 0;
+    s = *p;
+    while (*s == ' ' || *s == '\t') s++;
+    if (!*s) { out[0] = '\0'; *p = s; return 0; }
+    while (*s && *s != ' ' && *s != '\t') { if (n + 1 < cap) out[n++] = *s; s++; }
+    out[n] = '\0';
+    while (*s == ' ' || *s == '\t') s++;
+    *p = s;
+    return 1;
+}
+
+static int macro_onoff(const char *arg, int current) {
+    if (!arg[0] || macro_ci_eq(arg, "toggle")) return !current;
+    if (macro_ci_eq(arg, "on") || macro_ci_eq(arg, "1")) return 1;
+    return 0;
+}
+
+/* Preset NAMES are presentation (the numbers are PARENA's); index 0 is OFF, the free setting. */
+static int macro_grade_from_name(const char *name) {
+    static const char *NAMES[] = { "off", "crisp", "cinematic", "gritty", "retro" };
+    int i;
+    for (i = 0; i < (int)(sizeof NAMES / sizeof NAMES[0]); i++)
+        if (macro_ci_eq(name, NAMES[i])) return i;
+    if (macro_ci_eq(name, "on")) return 1;
+    return -1;
+}
+
+static void macro_save_file(void) {
+    static char out[8192];
+    int n = macro_save_text(&g_macros, out, (int)sizeof out);
+    FILE *f;
+    if (n < 0) { chat_pane_push("MACROS: too many binds to save"); return; }
+    f = fopen(MACRO_FILE_PATH, "wb");
+    if (!f) { chat_pane_push("MACROS: could not write " MACRO_FILE_PATH); return; }
+    fwrite(out, 1, (size_t)n, f);
+    fclose(f);
+}
+
+static int macro_run(const char *body);   /* a macro may name another macro, one level down */
+
+static int macro_cmd(const char *text) {
+    const char *p = text;
+    char word[MACRO_WORD_MAX];
+    char arg[MACRO_BODY_MAX];
+    if (!macro_word(&p, word, sizeof word)) return 0;
+    snprintf(arg, sizeof arg, "%s", p);
+    macro_trim(arg);
+
+    if (macro_ci_eq(word, "help")) {
+        chat_pane_push("MACROS: stream.grade off|crisp|cinematic|gritty|retro|+|-   stream.detail full|light|toggle");
+        chat_pane_push("MACROS: ambient 0..10|+|-   stream on|off   broadcast off|auto|manual   fullscreen on|off");
+        chat_pane_push("MACROS: bullet.holes   brick.debris   say <text>   bind <KEY> <cmds>   macro <KEY>");
+        return 1;
+    }
+    if (macro_ci_eq(word, "stream.grade")) {
+        int want, n = filter_preset_count();
+        if (!arg[0] || macro_ci_eq(arg, "+") || macro_ci_eq(arg, "next") || macro_ci_eq(arg, "cycle")) {
+            stream_grade_cycle(1);
+        } else if (macro_ci_eq(arg, "-") || macro_ci_eq(arg, "prev")) {
+            stream_grade_cycle(-1);
+        } else if ((want = macro_grade_from_name(arg)) >= 0) {
+            g_stream_grade = want;
+            stream_grade_apply();
+        } else if (arg[0] >= '0' && arg[0] <= '9') {
+            want = atoi(arg);
+            g_stream_grade = (want >= 0 && want < n) ? want : 0;
+            stream_grade_apply();
+        } else {
+            chat_pane_push("MACROS: no such grade -- off, crisp, cinematic, gritty, retro");
+            return 1;
+        }
+        save_display_config();
+        { char m[64]; snprintf(m, sizeof m, "STREAM GRADE: %s", stream_grade_label()); chat_pane_push(m); }
+        return 1;
+    }
+    if (macro_ci_eq(word, "stream.detail")) {
+        if (!arg[0] || macro_ci_eq(arg, "toggle")) g_stream_skip_kernel = !g_stream_skip_kernel;
+        else if (macro_ci_eq(arg, "light") || macro_ci_eq(arg, "on") || macro_ci_eq(arg, "1")) g_stream_skip_kernel = 1;
+        else if (macro_ci_eq(arg, "full") || macro_ci_eq(arg, "off") || macro_ci_eq(arg, "0")) g_stream_skip_kernel = 0;
+        else { chat_pane_push("MACROS: stream.detail full|light|toggle"); return 1; }
+        stream_grade_apply();
+        save_display_config();
+        chat_pane_push(g_stream_skip_kernel ? "STREAM DETAIL: LIGHT" : "STREAM DETAIL: FULL");
+        return 1;
+    }
+    if (macro_ci_eq(word, "stream")) {
+        if (!arg[0] || macro_ci_eq(arg, "toggle")) stream_set(!g_stream_on);
+        else if (macro_ci_eq(arg, "on") || macro_ci_eq(arg, "1")) stream_set(1);
+        else { stream_set(0); }
+        chat_pane_push(g_stream_on ? "STREAM OUT: LIVE" : "STREAM OUT: OFF");
+        return 1;
+    }
+    if (macro_ci_eq(word, "ambient")) {
+        if (!arg[0] || macro_ci_eq(arg, "+") || macro_ci_eq(arg, "up")) g_opt_ambient_level = ambient_step(g_opt_ambient_level, 1);
+        else if (macro_ci_eq(arg, "-") || macro_ci_eq(arg, "down")) g_opt_ambient_level = ambient_step(g_opt_ambient_level, -1);
+        else if (macro_ci_eq(arg, "cycle")) g_opt_ambient_level = (g_opt_ambient_level >= 10) ? 0 : ambient_step(g_opt_ambient_level, 1);
+        else if (arg[0] >= '0' && arg[0] <= '9') {
+            int v = atoi(arg);
+            g_opt_ambient_level = v < 0 ? 0 : (v > 10 ? 10 : v);
+        } else { chat_pane_push("MACROS: ambient 0..10|+|-"); return 1; }
+        apply_ambient_level();
+        save_display_config();
+        { char m[48]; snprintf(m, sizeof m, "AMBIENT LIGHT: %d", g_opt_ambient_level); chat_pane_push(m); }
+        return 1;
+    }
+    if (macro_ci_eq(word, "bullet.holes")) {
+        g_opt_bullet_holes = macro_onoff(arg, g_opt_bullet_holes);
+        save_display_config();
+        chat_pane_push(g_opt_bullet_holes ? "BULLET HOLES: ON" : "BULLET HOLES: OFF");
+        return 1;
+    }
+    if (macro_ci_eq(word, "brick.debris")) {
+        g_opt_brick_debris = macro_onoff(arg, g_opt_brick_debris);
+        if (!g_opt_brick_debris) brick_debris_clear(&g_brick_debris);
+        save_display_config();
+        chat_pane_push(g_opt_brick_debris ? "BRICK DEBRIS: ON" : "BRICK DEBRIS: OFF");
+        return 1;
+    }
+    if (macro_ci_eq(word, "fullscreen")) {
+        int want = (!arg[0] || macro_ci_eq(arg, "toggle")) ? !g_fullscreen : macro_onoff(arg, g_fullscreen);
+        if (want != g_fullscreen) toggle_fullscreen();
+        return 1;
+    }
+    if (macro_ci_eq(word, "broadcast")) {
+        if (macro_ci_eq(arg, "off") || macro_ci_eq(arg, "0")) broadcast_set(0);
+        else if (macro_ci_eq(arg, "auto")) { broadcast_set(1); g_camrig.auto_cut = 1; }
+        else if (macro_ci_eq(arg, "manual")) { broadcast_set(1); g_camrig.auto_cut = 0; }
+        else if (!arg[0] || macro_ci_eq(arg, "toggle")) {
+            if (!g_broadcast_on) { broadcast_set(1); g_camrig.auto_cut = 1; }
+            else if (g_camrig.auto_cut) g_camrig.auto_cut = 0;
+            else broadcast_set(0);
+        } else { chat_pane_push("MACROS: broadcast off|auto|manual|toggle"); return 1; }
+        chat_pane_push(g_broadcast_on ? (g_camrig.auto_cut ? "BROADCAST: AUTO" : "BROADCAST: MANUAL") : "BROADCAST: OFF");
+        return 1;
+    }
+    if (macro_ci_eq(word, "say")) { if (arg[0]) chat_pane_push(arg); return 1; }
+    if (macro_ci_eq(word, "bind")) {
+        const char *q = arg;
+        char spec[MACRO_SPEC_MAX];
+        char body[MACRO_BODY_MAX];
+        if (!macro_word(&q, spec, sizeof spec) || !*q) { chat_pane_push("MACROS: bind <KEY> <commands>"); return 1; }
+        snprintf(body, sizeof body, "%s", q);
+        if (macro_set(&g_macros, spec, macro_trim(body)) != 1) { chat_pane_push("MACROS: no free bind slots"); return 1; }
+        macro_save_file();
+        { char m[96]; snprintf(m, sizeof m, "MACRO: %s = %s", spec, body); chat_pane_push(m); }
+        return 1;
+    }
+    if (macro_ci_eq(word, "macro")) {
+        Macro *mb = macro_find_spec(&g_macros, arg);
+        if (!mb) { chat_pane_push("MACROS: nothing bound to that key"); return 1; }
+        macro_run(mb->body);
+        return 1;
+    }
+    { char m[96]; snprintf(m, sizeof m, "MACROS: unknown command '%s' (try /help)", word); chat_pane_push(m); }
+    return 1;
+}
+
+/* One level of nesting (a macro may run another macro), never a loop. */
+static int macro_run(const char *body) {
+    int cursor = 0, ran = 0;
+    char cmd[MACRO_BODY_MAX];
+    if (!body || g_macro_depth >= 2) return 0;
+    g_macro_depth++;
+    while (macro_next(body, &cursor, cmd, sizeof cmd)) ran += macro_cmd(cmd);
+    g_macro_depth--;
+    return ran;
+}
+
+/* A key spec -> keycode + modifiers. Unknown names are a non-match, never a guess. */
+static int macro_parse_spec(const char *spec, int *alt, int *shift, int *ctrl, SDL_Keycode *sym) {
+    char buf[MACRO_SPEC_MAX];
+    const char *p;
+    *alt = *shift = *ctrl = 0;
+    *sym = SDLK_UNKNOWN;
+    if (!spec) return 0;
+    snprintf(buf, sizeof buf, "%s", spec);
+    p = buf;
+    for (;;) {
+        const char *plus = strchr(p, '+');
+        char tok[MACRO_SPEC_MAX];
+        size_t len;
+        if (!plus) break;
+        len = (size_t)(plus - p);
+        if (len >= sizeof tok) return 0;
+        memcpy(tok, p, len);
+        tok[len] = '\0';
+        if (macro_ci_eq(tok, "alt")) *alt = 1;
+        else if (macro_ci_eq(tok, "shift")) *shift = 1;
+        else if (macro_ci_eq(tok, "ctrl")) *ctrl = 1;
+        else return 0;
+        p = plus + 1;
+    }
+    if (p[0] == 'F' || p[0] == 'f') {
+        int n = atoi(p + 1);
+        if (n >= 1 && n <= 12) { *sym = (SDL_Keycode)(SDLK_F1 + (n - 1)); return 1; }
+        return 0;
+    }
+    if (p[0] && p[1] == '\0') {
+        char c = macro_lower(p[0]);
+        if (c >= 'a' && c <= 'z') { *sym = (SDL_Keycode)(SDLK_a + (c - 'a')); return 1; }
+        if (c >= '0' && c <= '9') { *sym = (SDL_Keycode)(SDLK_0 + (c - '0')); return 1; }
+    }
+    if (macro_ci_eq(p, "space")) { *sym = SDLK_SPACE; return 1; }
+    if (macro_ci_eq(p, "tab")) { *sym = SDLK_TAB; return 1; }
+    if (macro_ci_eq(p, "enter")) { *sym = SDLK_RETURN; return 1; }
+    return 0;
+}
+
+/* Does a player bind claim this key? Checked BEFORE the built-in keys, so a rebind really rebinds. */
+static int macro_key_run(SDL_Keycode sym, Uint16 mod) {
+    int i;
+    for (i = 0; i < g_macros.count; i++) {
+        int alt, shift, ctrl;
+        SDL_Keycode want;
+        if (!macro_parse_spec(g_macros.m[i].spec, &alt, &shift, &ctrl, &want)) continue;
+        if (want != sym) continue;
+        if ((alt ? 1 : 0) != ((mod & KMOD_ALT) ? 1 : 0)) continue;
+        if ((shift ? 1 : 0) != ((mod & KMOD_SHIFT) ? 1 : 0)) continue;
+        if ((ctrl ? 1 : 0) != ((mod & KMOD_CTRL) ? 1 : 0)) continue;
+        macro_run(g_macros.m[i].body);
+        return 1;
+    }
+    return 0;
+}
+
+static void macro_load_startup(void) {
+    static char text[8192];
+    FILE *f;
+    int bad = 0, stored;
+    macro_book_clear(&g_macros);
+    f = fopen(MACRO_FILE_PATH, "rb");
+    if (!f) {   /* first run: a file the player can edit, plus two live binds on keys nothing else uses */
+        macro_set(&g_macros, "ALT+1", "stream.grade +");
+        macro_set(&g_macros, "ALT+2", "stream.detail toggle");
+        macro_save_file();
+        SDL_Log("macros: wrote %s with %d bind(s)", MACRO_FILE_PATH, g_macros.count);
+        return;
+    }
+    { size_t n = fread(text, 1, sizeof text - 1, f); text[n] = '\0'; }
+    fclose(f);
+    stored = macro_load_text(&g_macros, text, &bad);
+    SDL_Log("macros: %d bind(s) from %s%s", stored, MACRO_FILE_PATH, bad ? " (some lines rejected)" : "");
+    if (bad) {
+        char m[96];
+        snprintf(m, sizeof m, "MACROS: %d line(s) in %s could not be read", bad, MACRO_FILE_PATH);
+        chat_pane_push(m);
+    }
+}
+
 static void draw_pause_overlay(void) {
     glDisable(GL_DEPTH_TEST);
     glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
@@ -16315,6 +16586,7 @@ int main(int argc, char* argv[]) {
     local_init_match(1, 0);
     load_skin_selection();
     load_display_config();
+    macro_load_startup();
     recalc_viewport();
     lobby_init_labels();
     ui_bridge_init("127.0.0.1", 17777);
@@ -16975,7 +17247,12 @@ int main(int argc, char* argv[]) {
                         if (e.key.keysym.sym == SDLK_BACKSPACE && g_chat.input_len > 0) {
                             g_chat.input[--g_chat.input_len] = '\0';
                         } else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) {
-                            if (g_chat.input_len > 0) {
+                            if (g_chat.input_len > 0 && g_chat.input[0] == '/') {
+                                /* the same command language the macro file uses: test a macro by typing it first */
+                                char line[CHAT_LINE_MAX];
+                                snprintf(line, sizeof(line), "%s", g_chat.input + 1);
+                                macro_run(line);
+                            } else if (g_chat.input_len > 0) {
                                 char out[CHAT_LINE_MAX];
                                 snprintf(out, sizeof(out), "[me] %s", g_chat.input);
                                 chat_pane_push(out);
@@ -17043,6 +17320,8 @@ int main(int argc, char* argv[]) {
                         broadcast_cycle_subject(1);
                     } else if (g_broadcast_on && e.key.keysym.sym == SDLK_TAB) {
                         broadcast_cycle_subject((e.key.keysym.mod & KMOD_SHIFT) ? -1 : 1);
+                    } else if (macro_key_run(e.key.keysym.sym, e.key.keysym.mod)) {
+                        /* a player bind claimed this key -- checked before the built-in shortcuts */
                     } else if (e.key.keysym.sym == SDLK_F1) {
                         lobby_level_snapshot(1);
                     } else if (e.key.keysym.sym == SDLK_F6) {

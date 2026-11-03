@@ -52,3 +52,6 @@ assets/tyler_vo/
 packages/simulation/gen/
 # DEADWEIGHT ladder fixtures the tests write (make test-deadweight / *-parity)
 var/deadweight/
+
+# written by the client at first run (a player file, not a build artifact)
+shankpit_macros.cfg

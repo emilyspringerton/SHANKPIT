@@ -119,6 +119,7 @@ jobs:
           make test-vehicle-state-e2e
           make check-filter-rules
           make test-stream-filters
+          make test-macros
 
       # MODE_TYLER (TYLER VALHANNA cold open) voice + the P0 fixes it needed. Headless, plain gcc,
       # ASan+UBSan, no SDL, no audio device: the scripted actors really walk (story_ai gate +
