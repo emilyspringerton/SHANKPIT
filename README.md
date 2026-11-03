@@ -1558,6 +1558,15 @@ the policy chose its card BEFORE the round dealt, so it read the previous hand, 
 four zero-filled slots — round 1 played card 0, which neither seat held. A round is now BEGIN (clock,
 economy, deal, DISABLE) and FINISH, with the policy choosing in between.
 
+The **ladder** is pinned the same way, and its fixture carries the SCRIPT as well as the answers:
+`PARENA/stdlib/deadweight/ladder_parity.txt` holds a sequence of ladder operations (challenge in all
+four directions, accept, decline, tick, remove) plus what they left behind, and both
+`make test-dw-ladder-parity` here and NOOBTOPIA's `lua tests/deadweight_ladder_test.lua` execute that
+script out of the file. `accept`/`decline` address "the challenge opened most recently", so neither
+side has to name an internal slot. On the Roblox side the ladder feeds a **per-server leaderboard**
+ranked by `PARENA/stdlib/deadweight/rating.prn` — one number, defined once, that players and citizens
+climb; it resets with the server, so SHANKPIT's own ladder stays the durable one.
+
 Status, honestly: **the game plays headlessly, the citizens play it, and a match you accept is read
 round by round on the phone's own scoreboard — but nobody has yet seen it happen on a screen.** There
 is no card art (the board shows numbers, not cards), no wasm module is actually
@@ -1566,9 +1575,10 @@ a file only when `SHANKPIT_LADDER_FILE` names one (otherwise they are RAM-only),
 the game's core nine cards — a player picks a playstyle, not individual cards, which needs the
 catalogue walk still blocked on the emitter's cross-module call typing. Every
 next step, in order, is in `docs/DEADWEIGHT_IN_SHANKPIT_NEXT_STEPS.md` — including the previous
-step's (the citizens' generated bodies) outstanding work. Run `make test-deadweight` and
-`make test-dw-parity` for the whole thing headless, `make regen-dw-engine` after editing the PARENA
-rules, or `make regen-dw-parity` after changing the sequencer.
+step's (the citizens' generated bodies) outstanding work. Run `make test-deadweight`,
+`make test-dw-parity` and `make test-dw-ladder-parity` for the whole thing headless,
+`make regen-dw-engine` after editing the PARENA rules, or `make regen-dw-parity` /
+`make regen-dw-ladder-parity` after changing the sequencer / the ladder.
 
 ### The internet of SHANKPIT (the shim, 2026-11-03)
 

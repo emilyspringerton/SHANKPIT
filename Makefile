@@ -514,6 +514,24 @@ regen-dw-parity: | $(BIN_DIR)
 	./$(BIN_DIR)/dw_parity_test --dump > $(DW_PARITY_TXT)
 	@echo "wrote $(DW_PARITY_TXT) -- now: lua ../NOOBTOPIA/tests/deadweight_match_test.lua"
 
+# The LADDER's parity vectors, same discipline as the sequencer's above -- and the fixture carries the
+# SCRIPT as well as the outcomes, so both worlds execute the same sequence of ladder operations rather
+# than each re-typing it.
+DW_LADDER_PARITY_SRC := packages/simulation/dw_ladder_parity_test.c packages/simulation/dw_engine.c \
+                        packages/simulation/dw_match.c packages/simulation/dw_ladder.c \
+                        packages/simulation/dw_net.c packages/simulation/citizen_life.c \
+                        packages/simulation/dw_rules.c packages/simulation/dw_citizen_rules.c
+DW_LADDER_PARITY_TXT ?= ../PARENA/stdlib/deadweight/ladder_parity.txt
+
+test-dw-ladder-parity: | $(BIN_DIR)
+	$(CC) -O1 -Wall -Wextra -Werror -Ipackages/simulation $(DW_LADDER_PARITY_SRC) -o $(BIN_DIR)/dw_ladder_parity_test $(LIBS_M)
+	./$(BIN_DIR)/dw_ladder_parity_test
+
+regen-dw-ladder-parity: | $(BIN_DIR)
+	$(CC) -O1 -Wall -Wextra -Werror -Ipackages/simulation $(DW_LADDER_PARITY_SRC) -o $(BIN_DIR)/dw_ladder_parity_test $(LIBS_M)
+	./$(BIN_DIR)/dw_ladder_parity_test --dump > $(DW_LADDER_PARITY_TXT)
+	@echo "wrote $(DW_LADDER_PARITY_TXT) -- now: lua ../NOOBTOPIA/tests/deadweight_ladder_test.lua"
+
 # shankpit_netd -- the internet-of-SHANKPIT shim's HTTP half (tools/shankpit_netd.c). It serves the
 # snapshot dw_net.c writes; nothing here links the game. POSIX only, by design: a deployment daemon
 # behind WOTAN's nginx, never something a player runs.
