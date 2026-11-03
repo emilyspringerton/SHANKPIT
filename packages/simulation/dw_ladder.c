@@ -6,7 +6,20 @@
 #include "dw_engine.h"
 #include "dw_net.h"   /* the publish side: every finished match goes on the wire's ticker */
 
+#include <stdio.h>
 #include <string.h>
+
+#define DW_LADDER_FORMAT "shankpit-deadweight-ladder 1"
+
+/* The autosave target, set once by the host (witness_ai.c reads SHANKPIT_LADDER_FILE). Empty means
+ * no autosave, which is the default: a normal run writes nothing at all, the same discipline
+ * dw_net.c's own snapshot already follows. */
+static char g_ladder_path[240];
+
+void dw_ladder_set_save_path(const char *path) {
+    if (!path) { g_ladder_path[0] = '\0'; return; }
+    snprintf(g_ladder_path, sizeof g_ladder_path, "%s", path);
+}
 
 static uint32_t dw_ladder_rng(DwLadder *l) {
     l->rng = l->rng * 1664525u + 1013904223u;
@@ -222,7 +235,101 @@ int dw_ladder_accept(DwLadder *l, int slot, unsigned int now) {
     dw_ladder_craft_deck(l, i0, now);
     dw_ladder_craft_deck(l, i1, now);
     l->now_ms = now;
+    /* a finished match is the only thing worth a write: records moved, and the file is the record */
+    if (g_ladder_path[0]) dw_ladder_save(l, g_ladder_path);
     return pid;
+}
+
+int dw_ladder_save(const DwLadder *l, const char *path) {
+    if (!l || !path || !path[0]) return -1;
+    char tmp[260];
+    snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    FILE *f = fopen(tmp, "w");
+    if (!f) return -1;
+    fprintf(f, "%s\n", DW_LADDER_FORMAT);
+    fprintf(f, "meta %d %d %d %ld\n", l->meta_kind[0], l->meta_kind[1], l->meta_kind[2], l->meta_plays);
+    fprintf(f, "results %d %d %d %d\n", l->results[1], l->results[2], l->results[3], l->results[4]);
+    fprintf(f, "hero %d\n", l->hero_pid);
+    for (int i = 0; i < DW_LADDER_MAX_CITIZENS; i++) {
+        const DwLadderMember *m = &l->members[i];
+        if (!m->active) continue;
+        fprintf(f, "member %d %d %d %d %d %d\n", m->pid, m->is_player, m->path, m->aggression,
+                m->wins, m->games);
+    }
+    int ok = fflush(f) == 0;
+    if (fclose(f) != 0) ok = 0;
+    if (!ok) { remove(tmp); return -1; }
+    if (rename(tmp, path) != 0) { remove(tmp); return -1; }
+    return 1;
+}
+
+int dw_ladder_load(DwLadder *l, const char *path, unsigned int now) {
+    if (!l || !path || !path[0]) return 0;
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;   /* nothing saved yet: a first boot, not a failure */
+
+    char line[256];
+    if (!fgets(line, sizeof line, f) || strncmp(line, DW_LADDER_FORMAT, strlen(DW_LADDER_FORMAT)) != 0) {
+        fclose(f);
+        return -2;
+    }
+
+    int mk[3] = { 0, 0, 0 };
+    long plays = -1;
+    int res[5] = { 0, 0, 0, 0, 0 };
+    int hero = -1;
+    struct { int pid, is_player, path, aggression, wins, games; } pend[DW_LADDER_MAX_CITIZENS];
+    int np = 0;
+
+    while (fgets(line, sizeof line, f)) {
+        if (line[0] == '#' || line[0] == '\n') continue;
+        if (sscanf(line, "meta %d %d %d %ld", &mk[0], &mk[1], &mk[2], &plays) == 4) continue;
+        if (sscanf(line, "results %d %d %d %d", &res[1], &res[2], &res[3], &res[4]) == 4) continue;
+        if (sscanf(line, "hero %d", &hero) == 1) continue;
+        if (np < DW_LADDER_MAX_CITIZENS &&
+            sscanf(line, "member %d %d %d %d %d %d", &pend[np].pid, &pend[np].is_player,
+                   &pend[np].path, &pend[np].aggression, &pend[np].wins, &pend[np].games) == 6) {
+            np++;
+            continue;
+        }
+        fclose(f);
+        return -2;   /* one unreadable line refuses the file, rather than half-loading a record */
+    }
+    fclose(f);
+    if (plays < 0) return -2;   /* no meta line: the header's contract was not met */
+
+    /* the meta goes in FIRST, because every deck re-crafted below is a function of it */
+    l->meta_kind[0] = mk[0];
+    l->meta_kind[1] = mk[1];
+    l->meta_kind[2] = mk[2];
+    l->meta_plays = plays;
+    for (int k = 1; k < 5; k++) l->results[k] = res[k];
+    l->hero_pid = hero;
+
+    for (int i = 0; i < np; i++) {
+        int idx = dw_ladder_member_for_pid(l, pend[i].pid);
+        if (idx < 0) {
+            idx = dw_ladder_free_member(l);
+            if (idx < 0) continue;   /* full: a smaller ladder than the file, not a crash */
+            l->count++;
+        }
+        DwLadderMember *m = &l->members[idx];
+        m->active = 1;
+        m->pid = pend[i].pid;
+        m->is_player = pend[i].is_player;
+        m->path = pend[i].path;
+        m->aggression = pend[i].aggression;
+        m->wins = pend[i].wins;
+        m->games = pend[i].games;
+        /* the deck was never saved: it is rebuilt from the record and the meta, which is exactly the
+           rule the living ladder follows after every match */
+        dw_ladder_craft_deck(l, idx, now);
+    }
+
+    /* the player's seat must be on the ladder even if the file predates it (hero_pid set, no member) */
+    if (l->hero_pid >= 0 && dw_ladder_member_for_pid(l, l->hero_pid) < 0)
+        dw_ladder_add_player(l, l->hero_pid, now);
+    return 1;
 }
 
 void dw_ladder_tick(DwLadder *l, unsigned int now) {

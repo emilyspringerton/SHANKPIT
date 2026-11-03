@@ -481,6 +481,88 @@ int main(void) {
         CHECK(dw_ladder_meta_kind(&l) >= 0, "two finished matches left the meta empty");
     }
 
+    /* ---- records that survive a restart (dw_ladder_save / dw_ladder_load) ---- */
+    {
+        DwLadder a, b;
+        int pre[DW_LADDER_MAX_CITIZENS][DW_DECK];
+        int pre_count;
+        const char *path = "var/deadweight/ladder_test.txt";
+
+        dw_ladder_reset(&a, 0x77u);
+        dw_ladder_set_hero(&a, 0);
+        dw_ladder_add_citizen(&a, 5, CILIFE_CRAFT, 400, 1000u);
+        dw_ladder_add_citizen(&a, 6, CILIFE_DUEL, 900, 1000u);
+        /* two real matches, so the file holds records rather than zeroes */
+        int s0 = dw_ladder_challenge(&a, 5, 6, 1100u);
+        CHECK(s0 >= 0, "the two citizens could not be paired for the save fixture");
+        dw_ladder_accept(&a, s0, 1200u);
+        int s1 = dw_ladder_challenge(&a, 6, 0, 1300u);
+        CHECK(s1 >= 0, "the scripted challenge to the player failed");
+        dw_ladder_accept(&a, s1, 1400u);
+
+        pre_count = a.count;
+        for (int i = 0; i < DW_LADDER_MAX_CITIZENS; i++)
+            memcpy(pre[i], a.members[i].deck, sizeof a.members[i].deck);
+
+        CHECK(dw_ladder_save(&a, path) == 1, "saving a full ladder failed");
+        CHECK(dw_ladder_save(NULL, path) == -1, "saving NULL succeeded");
+
+        /* a brand-new world knows nothing... */
+        dw_ladder_reset(&b, 0xdeadbeefu);
+        CHECK(b.count == 0, "a reset ladder is not empty (%d members)", b.count);
+        /* ...and a file that is not there yet is a first boot, not a failure */
+        CHECK(dw_ladder_load(&b, "var/deadweight/no_such_ladder.txt", 1500u) == 0,
+              "a missing save file was reported as something other than 0");
+        CHECK(b.count == 0, "a missing save file changed the ladder");
+
+        CHECK(dw_ladder_load(&b, path, 2000u) == 1, "loading the saved ladder failed");
+        CHECK(b.count == a.count, "loaded %d members, saved %d", b.count, a.count);
+        CHECK(b.hero_pid == a.hero_pid, "the hero did not come back");
+        CHECK(b.meta_plays == a.meta_plays, "the meta tally came back as %ld, expected %ld",
+              b.meta_plays, a.meta_plays);
+        for (int k = 0; k < 3; k++)
+            CHECK(b.meta_kind[k] == a.meta_kind[k], "meta kind %d did not come back", k);
+        for (int k = 1; k < 5; k++)
+            CHECK(b.results[k] == a.results[k], "result count %d did not come back", k);
+
+        for (int i = 0; i < DW_LADDER_MAX_CITIZENS; i++) {
+            const DwLadderMember *am = &a.members[i];
+            if (!am->active) continue;
+            int bi = dw_ladder_member_for_pid(&b, am->pid);
+            CHECK(bi >= 0, "pid %d did not come back", am->pid);
+            if (bi < 0) continue;
+            CHECK(b.members[bi].is_player == am->is_player, "pid %d changed species", am->pid);
+            CHECK(b.members[bi].path == am->path, "pid %d changed path", am->pid);
+            CHECK(b.members[bi].wins == am->wins && b.members[bi].games == am->games,
+                  "pid %d came back %d-%d, saved %d-%d", am->pid, b.members[bi].wins,
+                  b.members[bi].games, am->wins, am->games);
+            /* THE POINT OF THE WHOLE FILE: the deck was never written to disk. It is rebuilt from
+               the record and the meta, so an identical deck is proof the crafting function is
+               deterministic -- and a different one is proof it is not. */
+            CHECK(memcmp(b.members[bi].deck, am->deck, sizeof am->deck) == 0,
+                  "pid %d came back with a different deck", am->pid);
+        }
+        CHECK(b.count == pre_count, "the loaded ladder holds %d, the fixture held %d", b.count, pre_count);
+
+        /* a corrupt file is refused WHOLE, and the ladder it was read into is left alone */
+        {
+            FILE *bad = fopen("var/deadweight/ladder_bad.txt", "w");
+            CHECK(bad != NULL, "could not write the corrupt fixture");
+            if (bad) {
+                fputs("shankpit-deadweight-ladder 1\nmeta 1 2 3 4\nmember 5 0 2 400 1 1\nnot a line\n", bad);
+                fclose(bad);
+            }
+            CHECK(dw_ladder_load(&b, "var/deadweight/ladder_bad.txt", 3000u) == -2,
+                  "a corrupt file was accepted");
+            CHECK(b.count == a.count, "a refused load changed the live ladder (%d members)", b.count);
+            FILE *hdr = fopen("var/deadweight/ladder_hdr.txt", "w");
+            CHECK(hdr != NULL, "could not write the header fixture");
+            if (hdr) { fputs("not even the right file\n", hdr); fclose(hdr); }
+            CHECK(dw_ladder_load(&b, "var/deadweight/ladder_hdr.txt", 3100u) == -2,
+                  "a file with no header was accepted");
+        }
+    }
+
     if (fails) { printf("deadweight: %d FAILED\n", fails); return 1; }
     printf("deadweight: ALL PASS\n");
     return 0;

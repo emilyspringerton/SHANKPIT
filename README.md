@@ -1528,11 +1528,19 @@ challenge also marks the tile on the home grid. `packages/simulation/dw_play.*` 
 between the ladder and that screen, and SELECT never resolves a match: it names a choice, and the
 host plays it through the real sequencer.
 
+Records survive a restart when a world names a file: `SHANKPIT_LADDER_FILE=var/deadweight/ladder.db`
+makes every finished match autosave the members (pid, person-or-citizen, path, aggression, wins,
+games), the meta tally, the results and the hero, and a boot loads them back. The **decks are not
+saved** — a deck is a function of the record and the meta, so loading re-crafts every one, which both
+restores it exactly and proves the function is deterministic. Off by default, like the published
+snapshot.
+
 Status, honestly: **the game plays headlessly and the citizens play it — nobody has watched a match
 on screen yet.** The challenge prompt exists but there is still **no board** to watch a match on (a
 match resolves instantly and the phone reports the result), no card art, no wasm module is actually
-attached (SHANKPIT has no interpreter in-tree; the seam is real, the module is not), records are
-RAM-only, decks come from the game's core nine cards, and players cannot choose a deck yet. Every
+attached (SHANKPIT has no interpreter in-tree; the seam is real, the module is not), records live in
+a file only when `SHANKPIT_LADDER_FILE` names one (otherwise they are RAM-only), decks come from the
+game's core nine cards, and players cannot choose a deck yet. Every
 next step, in order, is in `docs/DEADWEIGHT_IN_SHANKPIT_NEXT_STEPS.md` — including the previous
 step's (the citizens' generated bodies) outstanding work. Run `make test-deadweight` for the whole
 thing headless, or `make regen-dw-engine` after editing the PARENA rules.

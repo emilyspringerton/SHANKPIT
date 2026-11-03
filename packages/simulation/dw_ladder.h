@@ -132,6 +132,33 @@ void dw_ladder_decline(DwLadder *l, int slot);
  * citizen, or the hero with a lower rate. Citizens do not need a player present to play. */
 void dw_ladder_tick(DwLadder *l, unsigned int now);
 
+/* ---- records that survive a restart ------------------------------------------------------------
+ * A ladder whose records vanish with the process is a ladder nobody can be told they are losing on:
+ * the whole "citizens craft decks from their win rate" loop resets to an empty table every boot, and
+ * the player's own record is a lie by morning. This is that gap, closed with the smallest file that
+ * can hold the facts.
+ *
+ * WHAT IS SAVED: every member (pid, whether it is a person, its path, aggression, wins, games), the
+ * population's meta tally, the per-direction results, and the hero. WHAT IS NOT: the DECKS (a deck is
+ * a FUNCTION of the record and the meta -- see dw_ladder_craft_deck -- so re-crafting on load both
+ * restores them exactly and PROVES the function is deterministic), and the CHALLENGE BOOK (a
+ * challenge has a 45-second life; a restart killing them is honest, and a saved one would be a
+ * promise about a clock that did not run).
+ *
+ * The file is line-oriented text, not JSON: it is written and read by the same C module, and a format
+ * nobody else parses does not earn a parser. Unknown or malformed lines refuse the WHOLE file rather
+ * than half-loading a corrupt record -- a wrong win count is worse than an empty one. Write is
+ * write-then-rename, so a crash mid-save cannot leave a truncated ladder behind. */
+int dw_ladder_save(const DwLadder *l, const char *path);
+
+/* Loads over a ladder (typically a freshly reset one). Returns 1 loaded, 0 when there is no file yet
+ * (not an error -- first boot), -1 on an IO failure, -2 when the file exists but is not this format
+ * (the ladder is left exactly as it was). */
+int dw_ladder_load(DwLadder *l, const char *path, unsigned int now);
+
+/* Names the file every finished match is written to. "" or NULL stops autosaving. */
+void dw_ladder_set_save_path(const char *path);
+
 /* The population's current meta: the most-played kind (0/1/2, -1 with no data) and its share in
  * permille of all cards played. */
 int dw_ladder_meta_kind(const DwLadder *l);

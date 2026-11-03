@@ -116,9 +116,15 @@ screen, and the player cannot yet click "accept".**
 6. **Pacing and watchers.** A match resolves instantly (`dw_match_play_out`). A watched game needs a
    round clock: keep the sequencer, drive it one `dw_match_round` per tick, and add a "thinking"
    delay per citizen. The state machine is already round-shaped, so this is scheduling, not rules.
-7. **Records that survive a restart.** Wins/games/meta live in RAM (`static DwLadder g_dw_ladder`).
-   Persist to `var/` JSON (SHANKPIT's own convention for zombie levels) keyed by pid+slot, and decide
-   whether a citizen keeps its record when its body respawns.
+7. ~~Records that survive a restart~~ — **DONE (same day, `dw_ladder_save/load`).** The ladder is
+   written as line-oriented text (members, meta tally, results, hero) behind `SHANKPIT_LADDER_FILE`,
+   autosaved at `dw_ladder_accept` — the one place a record moves — with write-then-rename.
+   **Decks are deliberately not saved:** loading restores the meta FIRST and then re-crafts every
+   deck, so the same sixteen cards come back and the crafting function is proven deterministic by the
+   test rather than assumed. Challenges are not persisted (their TTL did not run), and a malformed
+   line refuses the whole file. Records are keyed by PID, so **a citizen now keeps its record when
+   its body respawns** in the same slot — that was the open design question in this item, answered by
+   the key rather than by a decision; revisit if that is not the wanted behaviour.
 8. **Network.** Player-vs-player is local today: challenges and results are in-process only. Needs a
    packet type (a new `PACKET_CHALLENGE`/`PACKET_DW_STATE`), authoritative resolution on the server,
    and a client board. The determinism (one seed, one deck pair) is what makes this cheap — send the

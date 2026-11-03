@@ -1,3 +1,4 @@
+#include <stdlib.h>   /* getenv -- the ladder's own save file (dw_ladder.h) */
 #include "witness_ai.h"
 
 #include <string.h>
@@ -320,7 +321,14 @@ void witness_ai_reset(unsigned int seed, unsigned int now_ms) {
     dw_net_reset();
     dw_net_set_name_lookup(wai_citizen_name);
     dw_ladder_set_hero(&g_dw_ladder, 0);   /* slot 0 is the local player in the sandbox */
-    (void)now_ms;
+    /* ...and the records come back off disk if a previous session left them there. Off unless
+       SHANKPIT_LADDER_FILE names a file, so a normal run writes nothing (the same discipline the
+       published snapshot follows); a world that wants a ladder with a memory sets it. */
+    {
+        const char *ladder_file = getenv("SHANKPIT_LADDER_FILE");
+        dw_ladder_set_save_path(ladder_file);
+        if (ladder_file && ladder_file[0]) dw_ladder_load(&g_dw_ladder, ladder_file, now_ms);
+    }
     if (!g_sim_log) {
         g_sim_log = fopen("/dev/null", "w");
         if (!g_sim_log) g_sim_log = stdout;
