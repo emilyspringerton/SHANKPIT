@@ -141,6 +141,7 @@
 #include "citizen_life.h"    /* CitizenLife -- citizens' own personas, paths and secrets */
 #include "citizen_avatar.h"
 #include "dw_ladder.h"   /* DwLadder -- the citizens' DEADWEIGHT ladder */   /* CitizenAvatar -- the body citizen_avatar_build derives from that persona */
+#include "dw_net.h"      /* the internet-of-SHANKPIT shim: publishing that ladder as JSON */
 
 #define WITNESS_AI_MAX_CITIZENS WITNESS_SIM_MAX_NPCS /* bounded by WitnessSim's own npc array */
 #define WITNESS_AI_MAX_ZOMBIES 16

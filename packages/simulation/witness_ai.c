@@ -297,12 +297,26 @@ static void witness_ai_hero_melee_hit(ServerState *s, PlayerState *hero_p, int d
     }
 }
 
+/* A citizen's display name, for the published ladder (dw_net.h). The ladder stores a pid, not a
+ * name: the body is the only thing that knows what this persona calls itself, and reading it here
+ * keeps the export a pure function of state that already exists. */
+static const char *wai_citizen_name(int player_id) {
+    for (int i = 0; i < WITNESS_AI_MAX_CITIZENS; i++)
+        if (g_citizens[i].active && g_citizens[i].player_id == player_id)
+            return citizen_life_handle(&g_citizens[i].life);
+    return "";
+}
+
 void witness_ai_reset(unsigned int seed, unsigned int now_ms) {
 
     /* the DEADWEIGHT ladder starts empty with the world: citizens join it as they spawn, and it
        keeps its own records for as long as this world does */
     dw_ladder_reset(&g_dw_ladder, seed ^ 0x5bd1e995u);
     g_dw_ladder_ready = 1;
+    /* the shim's own state: a new world does not inherit the last session's ticker, and a citizen's
+       name is resolved from its body when the ladder is published */
+    dw_net_reset();
+    dw_net_set_name_lookup(wai_citizen_name);
     dw_ladder_set_hero(&g_dw_ladder, 0);   /* slot 0 is the local player in the sandbox */
     (void)now_ms;
     if (!g_sim_log) {
@@ -1342,6 +1356,9 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
     if (!s) return;
     g_wai_now = now_ms;
     if (g_dw_ladder_ready) dw_ladder_tick(&g_dw_ladder, now_ms);
+    /* publish at most every 2 s (or promptly after a match) -- a no-op unless SHANKPIT_NET_SNAPSHOT
+       names a file, so a normal run still writes nothing at all */
+    if (g_dw_ladder_ready) dw_net_publish(&g_dw_ladder, now_ms);
     witness_ai_pheromone_step(s, now_ms);
 
     if (!g_have_last_sim_tick || now_ms - g_last_sim_tick_ms >= WITNESS_AI_SIM_TICK_INTERVAL_MS) {

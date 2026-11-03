@@ -14,6 +14,7 @@
 #include "dw_engine.h"
 #include "dw_match.h"
 #include "dw_ladder.h"
+#include "dw_net.h"
 
 static int fails = 0;
 #define CHECK(cond, ...) do { \
@@ -23,6 +24,10 @@ static int fails = 0;
 static void deck_of_kind(int deck[DW_DECK], int card) {
     for (int i = 0; i < DW_DECK; i++) deck[i] = card;
 }
+
+/* A name with a quote and a backslash in it, on purpose: the export's escaping is then exercised by
+ * a real value rather than trusted. */
+static const char *net_test_name(int pid) { return pid == 4 ? "a\"b\\c" : "you"; }
 
 int main(void) {
     const DwEngine *e = dw_engine();
@@ -343,6 +348,51 @@ int main(void) {
         dw_ladder_craft_deck(&l, idx, 6000u);
         CHECK(e->card_kind(l.members[idx].deck[0]) == 1, "a winning crafter abandoned its identity (kind %d)",
               e->card_kind(l.members[idx].deck[0]));
+    }
+
+    /* ---- the internet-of-SHANKPIT shim: the export is a PURE FUNCTION of the ladder ---- */
+    {
+        static char buf[20000];
+        DwLadder l;
+        dw_ladder_reset(&l, 3u);
+        dw_ladder_set_hero(&l, 0);
+        dw_ladder_add_citizen(&l, 4, 0, 300, 1000u);      /* CRAFT, pid 4 */
+        dw_net_set_path("var/deadweight/net.json");
+        dw_net_reset();
+        dw_net_set_name_lookup(net_test_name);
+        int slot = dw_ladder_challenge(&l, 4, 0, 1000u);  /* citizen -> player */
+        CHECK(slot >= 0, "the shim's challenge was refused");
+        int n = dw_net_export(&l, buf, sizeof buf, 2000u);
+        CHECK(n > 0, "the export refused a ladder it can describe");
+        CHECK(strstr(buf, "\"schema\":1") != NULL, "no schema in the export");
+        CHECK(strstr(buf, "\"population\":{\"citizens\":1,\"players\":1}") != NULL,
+              "population not counted");
+        CHECK(strstr(buf, "\"name\":\"a\\\"b\\\\c\"") != NULL, "the name was not JSON-escaped");
+        CHECK(strstr(buf, "\"path\":\"CRAFT\"") != NULL, "the path name is missing");
+        CHECK(strstr(buf, "\"kind\":\"citizen-vs-player\",\"kind_id\":2") != NULL,
+              "the challenge direction is missing");
+        /* a challenge is not a match: the ticker is empty and says so */
+        CHECK(strstr(buf, "\"recent\":[]") != NULL, "an unplayed challenge entered the ticker");
+        CHECK(dw_net_export(&l, buf, 32, 2000u) < 0, "a 32-byte buffer was truncated instead of refused");
+
+        dw_ladder_accept(&l, slot, 2500u);
+        n = dw_net_export(&l, buf, sizeof buf, 3000u);
+        CHECK(n > 0, "the export failed after the match");
+        CHECK(strstr(buf, "\"rounds\":") != NULL, "the finished match is not in the ticker");
+        CHECK(strstr(buf, "\"name\":\"a\\\"b\\\\c\"") != NULL, "the record lost its name");
+        {
+            DwNetMatch rec[4];
+            CHECK(dw_net_recent(NULL, 4) == 0, "a NULL ticker read was accepted");
+            CHECK(dw_net_recent(rec, 4) == 1, "the ticker does not hold exactly one match");
+            CHECK(rec[0].kind == DW_CHAL_CITIZEN_PLAYER && rec[0].pid0 == 4 && rec[0].pid1 == 0,
+                  "the ticker's seats are not the challenge's order");
+        }
+
+        /* ...and it writes a file the HTTP daemon can serve (WOTAN's own test serves this one) */
+        CHECK(dw_net_write(&l, "var/deadweight/net.json", 3000u) == 1, "the snapshot was not written");
+        CHECK(dw_net_publish(&l, 4000u) == 1, "publish did not write a fresh snapshot");
+        CHECK(dw_net_publish(&l, 4001u) == 0, "publish wrote twice in the same instant");
+        dw_net_set_path("");
     }
 
     if (fails) { printf("deadweight: %d FAILED\n", fails); return 1; }

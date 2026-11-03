@@ -4,6 +4,7 @@
 #include "dw_ladder.h"
 #include "dw_match.h"
 #include "dw_engine.h"
+#include "dw_net.h"   /* the publish side: every finished match goes on the wire's ticker */
 
 #include <string.h>
 
@@ -195,6 +196,12 @@ int dw_ladder_accept(DwLadder *l, int slot, unsigned int now) {
         a->games++;
         b->games++;
     }
+
+    /* every finished match goes into the published ticker (dw_net.h). Done here rather than in a
+     * caller because this is the ONE place a match stops being live, so nothing can finish a match
+     * and forget to tell the internet about it. */
+    dw_net_note_match(kind, a->pid, b->pid, winner == 0 ? 0 : (winner == 1 ? 1 : 2),
+                      match.rounds_played, match.seat[0].hull, match.seat[1].hull, now);
 
     /* both records changed, so both decks are re-crafted from the new record and the new meta --
      * this is the "citizens craft their own decks based on their win rate and the current meta"

@@ -1528,3 +1528,26 @@ RAM-only, decks come from the game's core nine cards, and players cannot choose 
 next step, in order, is in `docs/DEADWEIGHT_IN_SHANKPIT_NEXT_STEPS.md` — including the previous
 step's (the citizens' generated bodies) outstanding work. Run `make test-deadweight` for the whole
 thing headless, or `make regen-dw-engine` after editing the PARENA rules.
+
+### The internet of SHANKPIT (the shim, 2026-11-03)
+
+The ladder also has an outside world. `packages/simulation/dw_net.*` serialises it to one JSON file
+(schema 1: population, the meta and its tallied share, every seat's record and the sixteen cards it
+built for itself, open challenges, results by direction, a ticker of finished matches) with
+write-then-rename, and `tools/shankpit_netd.c` is a dependency-free HTTP daemon that serves that file
+for WOTAN's `/shankpit-citizens.html`. Neither knows anything about the other beyond the file, which
+is why either can be restarted or tested alone, and why the game never opens a port.
+
+```bash
+make test-deadweight    # plays matches AND writes var/deadweight/net.json
+make netd               # builds bin/shankpit_netd
+make net-demo           # serves that snapshot on :8791 so the page has something real to read
+SHANKPIT_NET_SNAPSHOT=var/deadweight/net.json ./bin/server   # a live world publishing itself
+```
+
+Publishing is **off unless `SHANKPIT_NET_SNAPSHOT` names a file**. Routes: `GET
+/api/v1/shankpit-net/deadweight` and `/health`, with a real ETag/304 and CORS. Status, honestly: the
+snapshot, the daemon and the WOTAN page are all real and tested end to end, but **the daemon is not
+deployed** (WOTAN's nginx proxies `/api/v1/shankpit-net/` to `127.0.0.1:8791`, which is the box that
+runs the world, not a cluster pod), nothing in the game draws the feed yet, and a finished match is
+not yet reported to IDUNA as a rated match.

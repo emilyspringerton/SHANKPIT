@@ -15,6 +15,7 @@ is missing and where the seam is.
 | Citizens drawn in that body (`apps/lobby/src/main.c`) | each citizen draws in its generated coat colour and at its generated height; every non-citizen path untouched | `gcc -c apps/lobby/src/main.c` → 0 errors (GLU prototypes stubbed: this box has no `libglu` headers) |
 | DEADWEIGHT engine in SHANKPIT (`dw_engine.*`, `dw_rules.c`, `dw_citizen_rules.c`) | PARENA's 105-card rule set and the citizen policy, emitted to C behind one flat integer ABI, with a switching/validating backend seam | `make test-deadweight` ALL PASS (backend swap, selftest, base line, triangle, fx decode) |
 | The sequencer (`dw_match.*`) | 20 hull / 2 energy / 3 credits, 4-card hands, the triangle, armour, burn/regen, both fx phases for EVERY channel the catalogue carries (including the six hand-lifecycle ones), bankruptcy, 100-round draw | scripted rounds with hand-derived hull/energy/credit numbers; a deterministic replay compared byte-for-byte |
+| The internet-of-SHANKPIT shim (`dw_net.*`, `tools/shankpit_netd.c`, WOTAN's `/shankpit-citizens.html`) | the ladder published as schema-1 JSON by the game, served by a dependency-free HTTP daemon with ETag/304, and read by a real WOTAN page | `make test-deadweight` (export + file) and WOTAN's `scripts/shankpit-net-test.js` (53 checks against the real daemon) |
 | The citizens' ladder (`dw_ladder.*`, wired into `witness_ai.c`) | all four challenge directions through one entry point, records, meta tally, decks that re-craft on the record + meta | all four kinds classified; records and meta move; a losing citizen rebuilds to the answer, a winning one keeps its identity |
 
 Honest headline: **the game plays headlessly and the citizens play it. Nobody has watched a match on
@@ -128,6 +129,28 @@ screen, and the player cannot yet click "accept".**
     added to the ladder with `dw_ladder_add_citizen`; the only reason they are not is taste (does a
     SHAMBLER play cards?). Worth a design decision, not a code change.
 13. **Emily Way bookkeeping** — same blocked state as A10.
+
+14. ~~The ladder has no outside world~~ — **DONE (same day, the internet-of-SHANKPIT shim).**
+    `dw_net.*` exports schema 1 and publishes it to one file (off unless `SHANKPIT_NET_SNAPSHOT` is
+    set), `tools/shankpit_netd.c` serves it with a real ETag/304 and CORS, and WOTAN's
+    `/shankpit-citizens.html` reads it through `js/shankpit-net.js`. Remaining in that area is
+    deployment and the direction of travel, below.
+15. **Deploy the daemon.** `WOTAN/ops/nginx-wotan.conf` proxies `/api/v1/shankpit-net/` to
+    `127.0.0.1:8791`, which is right for a box and wrong for the cluster: WOTAN runs as a static
+    nginx pod, so the upstream has to be the address of whatever host runs a world (a Service, or
+    the game host by IP). Needs a real deployment decision and a systemd unit beside
+    `dw-ws-bridge.service`.
+16. **Results to IDUNA.** A finished match is a record only inside this process. Reporting it as a
+    rated result needs a `shankpit.match.write`-gated POST from the daemon (it is the only long-lived
+    process that sees them all), and IDUNA needs a DEADWEIGHT-ladder table to hold it — the same
+    shape as `game_player_stats`, not a new subsystem. Until then "records that survive a restart"
+    (item 7) and "rated" are both still open.
+17. **Draw the feed.** Nothing in the game reads `dw_net_export`: a phone tab or a HUD line ("2
+    citizens are playing, Adele challenges you") is the in-world half, and it is the same gap as
+    item 2 seen from the other side.
+18. **One file is the contract, so watch it.** The export is a pure function and its shape is pinned
+    by WOTAN's test; any key change is a schema bump in both repos at once. Worth remembering before
+    adding a field casually.
 
 ---
 
