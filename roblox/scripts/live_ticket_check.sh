@@ -35,9 +35,12 @@ echo "building IDUNA..."
 ( cd "$iduna" && go build -o "$work/iduna" . )
 
 echo "booting IDUNA on $base (throwaway db, throwaway ticket secret)..."
-SQLITE_PATH="$work/iduna.db" IDUNA_ROOT="$iduna" KEY_FILE="$work/keys.json" \
-  JWT_ISSUER="$base" BASE_URL="$base" IDUNA_ADDR="127.0.0.1:$port" \
-  SHANKPIT_TICKET_SECRET="$secret" "$work/iduna" >"$work/iduna.log" 2>&1 &
+# Run it FROM IDUNA's own tree: its relative var/*.db paths (blog, vault, kanban, ...) are created at
+# startup, and launching from anywhere else drops ten SQLite files into whatever repo you happened to be
+# standing in. Learned by doing exactly that to SHANKPIT on this script's first run.
+( cd "$iduna" && SQLITE_PATH="$work/iduna.db" IDUNA_ROOT="$iduna" KEY_FILE="$work/keys.json" \
+    JWT_ISSUER="$base" BASE_URL="$base" IDUNA_ADDR="127.0.0.1:$port" \
+    SHANKPIT_TICKET_SECRET="$secret" exec "$work/iduna" >"$work/iduna.log" 2>&1 ) &
 pid=$!
 
 ready=0
