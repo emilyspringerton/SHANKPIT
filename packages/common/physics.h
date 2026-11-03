@@ -617,10 +617,14 @@ typedef void (*PhysMapSurfaceHook)(int scene_id, float hx, float hy, float hz, f
 static PhysMapHitscanHook g_phys_map_hitscan_hook = NULL;
 static PhysMapBlastHook g_phys_map_blast_hook = NULL;
 static PhysMapSurfaceHook g_phys_map_surface_hook = NULL;
+/* g_phys_blast_normal, g_local_match_reset_hook and g_fx_explosion_hook are meant to exist in every
+   translation unit that includes this header (NULL = nothing installed = the old behaviour), but each
+   is only touched by an inline helper that some TUs never call, so those TUs would warn "defined but
+   not used". The attribute says that is the contract, not a bug being hidden. */
 /* g_phys_blast_normal -- outward normal of the surface a splash projectile just struck, valid only for
    the duration of that explode_splash call (zero for a proximity detonation); lets the map-damage
    hook centre the blast inside the wall instead of on its face. */
-static float g_phys_blast_normal[3] = { 0.0f, 0.0f, 0.0f };
+static float g_phys_blast_normal[3] __attribute__((unused)) = { 0.0f, 0.0f, 0.0f };
 static inline void phys_set_map_damage_hooks(PhysMapHitscanHook hs, PhysMapBlastHook bl, PhysMapSurfaceHook sf) {
     g_phys_map_hitscan_hook = hs; g_phys_map_blast_hook = bl; g_phys_map_surface_hook = sf;
 }
@@ -639,12 +643,12 @@ static inline void phys_set_player_stats_hooks(PhysPlayerStatsHook health, PhysP
    packages/simulation/brick_world.h) is reset with the match instead of leaking a previous round's
    craters into the next. Declared here (not in local_game.h) so brick_world.h can install it from
    any translation unit that has physics.h. NULL = nothing to reset. */
-static void (*g_local_match_reset_hook)(void) = NULL;
+static void (*g_local_match_reset_hook)(void) __attribute__((unused)) = NULL;
 /* g_fx_explosion_hook -- presentation only, never simulation: local_game.h's explode_splash calls
  * it once per detonation so a client can draw the fireball. NULL (server, headless tests, any build
  * with nothing to draw) = exactly the old behaviour. */
 typedef void (*PhysExplosionFxHook)(float x, float y, float z, float radius, int weapon);
-static PhysExplosionFxHook g_fx_explosion_hook = NULL;
+static PhysExplosionFxHook g_fx_explosion_hook __attribute__((unused)) = NULL;
 
 // phys_set_custom_level_materials loads the level's own small material-shading table (S459-16) --
 // call this BEFORE phys_set_custom_level so material_idx values passed to that call can already be

@@ -179,7 +179,7 @@ int main(void) {
         memset(wall, 0, sizeof wall);
         wall[1].x = 6.0f; wall[1].y = 0.0f; wall[1].z = 0.0f;
         wall[1].w = 4.0f; wall[1].h = 6.0f; wall[1].d = 4.0f;
-        Box *saved_geo = map_geo;
+        const Box *saved_geo = map_geo;
         int saved_count = map_count;
         map_geo = wall;
         map_count = 2;

@@ -277,7 +277,7 @@ print:
 # ring buffer, and that the 4 NOCK-exported PNGs (PARENA-authored, ImageMagick-paletted) decode through
 # PARENA's own png_decode. No SDL/GL needed.
 test-bullet-hole:
-	$(CC) -std=c99 -O2 -Wall -Wextra -Ipackages/world -o /tmp/bullet_hole_test packages/world/bullet_hole_test.c \
+	$(CC) -std=gnu99 -O2 -Wall -Wextra -Ipackages/world -o /tmp/bullet_hole_test packages/world/bullet_hole_test.c \
 		packages/world/png_decode_gen.c packages/world/parena_runtime.c -lm
 	/tmp/bullet_hole_test
 
