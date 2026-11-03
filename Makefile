@@ -570,3 +570,22 @@ regen-zombie-brain:
 test-zombie-brain: | $(BIN_DIR)
 	$(CC) -O1 -Wall -Wextra -Werror -Ipackages/simulation packages/simulation/zombie_brain_test.c packages/simulation/zombie_brain.c packages/simulation/zombie_brain_rules.c -o $(BIN_DIR)/zombie_brain_test $(LIBS_M)
 	./$(BIN_DIR)/zombie_brain_test
+
+# ---- SHANKPIT on Roblox (roblox/): the 460 layer that sits beside the base place -------------------
+# The base place (shankpit_roblox.rbxl) is binary and stays untouched; these targets test the pure Lua modules
+# under plain Lua and pack them into one insertable .rbxmx model.
+.PHONY: test-roblox roblox-model
+test-roblox:
+	lua roblox/tests/net460_test.lua
+	lua roblox/tests/queue460_test.lua
+	lua roblox/tests/ticket460_test.lua
+	luac -p roblox/src/lobby.server.lua
+
+roblox-model: test-roblox
+	python3 roblox/tools/build_rbxmx.py
+
+# The 460 queue's thresholds are PARENA's (stdlib/shankpit/queue_rules.prn), emitted to Luau. Never hand-edit
+# roblox/src/queue460_rules.lua; change the .prn and regenerate.
+.PHONY: regen-roblox-rules
+regen-roblox-rules:
+	roblox/scripts/gen_queue460.sh

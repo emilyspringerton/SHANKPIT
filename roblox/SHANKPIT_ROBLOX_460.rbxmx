@@ -1,0 +1,566 @@
+<?xml version='1.0' encoding='utf-8'?>
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
+  <External>null</External>
+  <External>nil</External>
+  <Item class="Folder" referent="RBX0">
+    <Properties>
+      <string name="Name">SHANKPIT460</string>
+    </Properties>
+    <Item class="ModuleScript" referent="RBX1">
+      <Properties>
+        <string name="Name">net460</string>
+        <ProtectedString name="Source">-- src/net460.lua -- the world's own numbers, read on the Roblox side.
+--
+-- SHANKPIT-460 DNA, narrow: this is the READ half of "web stats" -- the same fact WOTAN's Citizens page
+-- renders, handed to a Roblox server. It owns no rating, no record and no order of its own; everything here
+-- either mirrors the published snapshot exactly or reports that it cannot.
+--
+-- WHERE THE DATA COMES FROM (checked, not assumed): `packages/simulation/dw_net.c` publishes
+-- `{schema, generated_ms, population, meta, records[], challenges[], results[], recent[], stage}` through
+-- `tools/shankpit_netd.c` at `/api/v1/shankpit-net/deadweight`, and it is written only when the world names a
+-- file (`SHANKPIT_NET_SNAPSHOT`), because a world that publishes nothing should cost nothing. So this module
+-- takes an ALREADY-DECODED table (`HttpService:JSONDecode` in the place, a literal in the tests) and never
+-- does HTTP itself: the network belongs to whoever calls it, which is what lets the whole thing be tested
+-- without a game running.
+--
+-- THE SORT IS THE LADDER'S RULE, NOT A SECOND OPINION: rating desc, wins desc, pid asc -- the same total order
+-- WOTAN's page sorts by and the same one `dw_stage` seeds its bracket from. The snapshot deliberately ships
+-- no pre-sorted array (schema 2's own note: shipping the same fact twice is how two pages start disagreeing
+-- about who is first), so sorting here is not duplication; inventing a tie-break would be.
+
+local M = {}
+
+-- How old a snapshot may be before a screen should say so. 15 s is ~7 publication intervals (`dw_net_publish`
+-- writes at most every 2 s), so a healthy world never trips it and a dead one trips it immediately.
+M.MAX_AGE_MS = 15000
+
+-- Schema 1 had no `rating`; 2 added it; 3 added the stage bracket. Read what is there and say what is not,
+-- rather than refusing an older snapshot the world may legitimately still be writing.
+function M.schema(snapshot)
+    if type(snapshot) ~= "table" then return 0 end
+    local n = tonumber(snapshot.schema)
+    if not n then return 0 end
+    return math.floor(n)
+end
+
+function M.supports(snapshot)
+    local s = M.schema(snapshot)
+    return {
+        rating = s &gt;= 2,
+        stage  = s &gt;= 3,
+    }
+end
+
+-- Stale means "do not draw this as live". A missing timestamp is stale (an undated number is not evidence of
+-- freshness), and a timestamp in the future is treated as fresh but measured symmetrically -- a box whose clock
+-- is off by an hour should not blank the board.
+function M.stale(snapshot, now_ms, max_age_ms)
+    if type(snapshot) ~= "table" then return true end
+    local gen = tonumber(snapshot.generated_ms)
+    if not gen then return true end
+    local age = tonumber(now_ms) - gen
+    if not age then return true end
+    if age &lt; 0 then age = -age end
+    return age &gt; (tonumber(max_age_ms) or M.MAX_AGE_MS)
+end
+
+-- rating desc, wins desc, pid asc. A record with no rating (schema 1, or a malformed line) sorts last rather
+-- than being dropped: a body that exists with an unknown number is still a body.
+function M.rank(records)
+    local out = {}
+    if type(records) ~= "table" then return out end
+    for i = 1, #records do
+        if type(records[i]) == "table" then out[#out + 1] = records[i] end
+    end
+    table.sort(out, function(a, b)
+        local ra, rb = tonumber(a.rating), tonumber(b.rating)
+        if ra ~= nil and rb ~= nil and ra ~= rb then return ra &gt; rb end
+        if (ra ~= nil) ~= (rb ~= nil) then return ra ~= nil end
+        local wa, wb = tonumber(a.wins) or 0, tonumber(b.wins) or 0
+        if wa ~= wb then return wa &gt; wb end
+        return (tonumber(a.pid) or 1e9) &lt; (tonumber(b.pid) or 1e9)
+    end)
+    return out
+end
+
+function M.record_for(snapshot, pid)
+    if type(snapshot) ~= "table" or type(snapshot.records) ~= "table" then return nil end
+    local want = tonumber(pid)
+    if not want then return nil end
+    for i = 1, #snapshot.records do
+        local r = snapshot.records[i]
+        if type(r) == "table" and tonumber(r.pid) == want then return r end
+    end
+    return nil
+end
+
+-- What a board header says: how many bodies, and which way the meta leans. The meta's own field names are the
+-- exporter's; anything missing reads as "none" instead of a guess.
+function M.population(snapshot)
+    if type(snapshot) ~= "table" then return { count = 0, meta_kind = "none" } end
+    local count = tonumber(snapshot.population)
+    if not count then
+        count = (type(snapshot.records) == "table") and #snapshot.records or 0
+    end
+    local kind = "none"
+    if type(snapshot.meta) == "table" and snapshot.meta.kind ~= nil then
+        kind = tostring(snapshot.meta.kind)
+    end
+    return { count = count, meta_kind = kind }
+end
+
+-- The rows a board draws, capped, with their standing. Standing is 1-based and equals the rank in `rank`, so a
+-- reader never re-derives "am I third" from a rating.
+function M.rows(snapshot, limit)
+    local ranked = M.rank(type(snapshot) == "table" and snapshot.records or nil)
+    local out = {}
+    local n = #ranked
+    if limit and limit &lt; n then n = limit end
+    for i = 1, n do
+        local r = ranked[i]
+        out[#out + 1] = {
+            standing = i,
+            pid = tonumber(r.pid) or 0,
+            name = tostring(r.name or ""),
+            rating = tonumber(r.rating),
+            wins = tonumber(r.wins) or 0,
+            games = tonumber(r.games) or 0,
+        }
+    end
+    return out
+end
+
+return M
+</ProtectedString>
+      </Properties>
+    </Item>
+    <Item class="ModuleScript" referent="RBX2">
+      <Properties>
+        <string name="Name">queue460</string>
+        <ProtectedString name="Source">-- src/queue460.lua -- the 460 queue: the LISTS live here, the RULES do not.
+--
+-- SHANKPIT-460 DNA (shankpit-460/docs2/NORTHSTAR.md, S156-03): "basic matchmaking as a simplified
+-- VS2-lifecycle-shaped queue". This is that queue and nothing else -- no board, no card game, no deck, no
+-- citizen life. NOOBTOPIA already owns the wide version of this world; the Roblox SHANKPIT surface is
+-- deliberately the narrow one.
+--
+-- EVERY THRESHOLD IN HERE IS SOMEWHERE ELSE, ON PURPOSE. `queue460_rules.lua` is emitted from
+-- `PARENA/stdlib/shankpit/queue_rules.prn` by `roblox/scripts/gen_queue460.sh`, so the window's base, its
+-- growth, its cap, the expiry and the fill delay are typed once and compared once. What is left in this file is
+-- what PARENA is not for: a list of seats, a closest-pair search, and bookkeeping. If a number ever appears in
+-- this file that also appears in the .prn, the copy is the bug -- same rule `deadweight_rating.lua` and
+-- `deadweight_stage.lua` already live by in NOOBTOPIA.
+--
+-- PURE: no network, no clock of its own (every call takes `now_ms`), no `game`, no `workspace`. That is what
+-- lets `roblox/tests/queue460_test.lua` pin the numbers by hand under plain Lua.
+
+local rules = require("queue460_rules")
+
+local M = {}
+
+-- Exposed so a test (or a host) can prove the module is running the generated rules rather than a stale copy.
+M.RULES = rules
+
+M.MODES = { casual = true, ranked = true }
+
+-- Rating points of tolerance after waiting wait_ms. Delegates; kept as a function so callers never see floats
+-- reach the integer rules.
+function M.window(wait_ms)
+    return rules.queueWindow(math.floor(tonumber(wait_ms) or 0))
+end
+
+function M.new()
+    return { next_id = 1, casual = {}, ranked = {} }
+end
+
+-- One seat per body per mode: a body in casual may also queue ranked, but never twice in the same line.
+function M.enqueue(q, mode, entry)
+    if not M.MODES[mode] then return nil, "mode" end
+    if type(entry) ~= "table" then return nil, "entry" end
+    local pid = tonumber(entry.pid)
+    if not pid then return nil, "pid" end
+    local list = q[mode]
+    for i = 1, #list do
+        if list[i].pid == pid then return nil, "duplicate" end
+    end
+    local e = {
+        id = q.next_id,
+        pid = pid,
+        -- 1000 is the ladder's own starting rating (`rating_start()` in
+        -- PARENA/stdlib/deadweight/rating.prn); a caller that has a real one passes it.
+        rating = tonumber(entry.rating) or 1000,
+        name = tostring(entry.name or ""),
+        joined_ms = tonumber(entry.joined_ms) or 0,
+    }
+    q.next_id = q.next_id + 1
+    list[#list + 1] = e
+    return e
+end
+
+function M.remove(q, mode, pid)
+    local list = q[mode]
+    if not list then return nil end
+    local want = tonumber(pid)
+    for i = 1, #list do
+        if list[i].pid == want then
+            return table.remove(list, i)
+        end
+    end
+    return nil
+end
+
+function M.position(q, mode, pid)
+    local list = q[mode]
+    if not list then return nil end
+    local want = tonumber(pid)
+    for i = 1, #list do
+        if list[i].pid == want then return i end
+    end
+    return nil
+end
+
+-- The closest legal pair in this line, or nil. Whether a gap is legal is `queue-gap-fits`'s call (the strict,
+-- shorter-waiting window), so this only searches. Ties on the gap go to the earlier-seated body, then to the
+-- lower pid -- a fixed order, so the same queue always hands back the same pair.
+function M.pair(q, mode, now_ms)
+    local list = q[mode]
+    if not list or #list &lt; 2 then return nil end
+    local bi, bj, bgap = nil, nil, nil
+    for i = 1, #list - 1 do
+        for j = i + 1, #list do
+            local a, b = list[i], list[j]
+            local gap = math.abs(a.rating - b.rating)
+            if rules.queueGapFits(gap, now_ms - a.joined_ms, now_ms - b.joined_ms) == 1 then
+                local better = false
+                if bgap == nil then
+                    better = true
+                elseif gap &lt; bgap then
+                    better = true
+                elseif gap == bgap then
+                    local cur = list[bi]
+                    if a.id &lt; cur.id then better = true
+                    elseif a.id == cur.id and b.id &lt; list[bj].id then better = true end
+                end
+                if better then bi, bj, bgap = i, j, gap end
+            end
+        end
+    end
+    if not bi then return nil end
+    local second = table.remove(list, bj)
+    local first = table.remove(list, bi)
+    return { first = first, second = second, gap = bgap }
+end
+
+-- One tick of a line: release the expired, hand back every legal pair, and name who is fillable. Expiry and
+-- fillability are the rules module's answers -- including "ranked is never fillable", which is a policy this
+-- file must not be able to get wrong.
+function M.tick(q, mode, now_ms)
+    local out = { pairs = {}, expired = {}, fills = {} }
+    local list = q[mode]
+    if not list then return out end
+    local i = 1
+    while i &lt;= #list do
+        if rules.queueExpired(now_ms - list[i].joined_ms) == 1 then
+            out.expired[#out.expired + 1] = table.remove(list, i)
+        else
+            i = i + 1
+        end
+    end
+    while true do
+        local p = M.pair(q, mode, now_ms)
+        if not p then break end
+        out.pairs[#out.pairs + 1] = p
+    end
+    local ranked = (mode == "ranked") and 1 or 0
+    for k = 1, #list do
+        if rules.queueFillable(ranked, now_ms - list[k].joined_ms) == 1 then
+            out.fills[#out.fills + 1] = list[k]
+        end
+    end
+    return out
+end
+
+return M
+</ProtectedString>
+      </Properties>
+    </Item>
+    <Item class="ModuleScript" referent="RBX3">
+      <Properties>
+        <string name="Name">ticket460</string>
+        <ProtectedString name="Source">-- src/ticket460.lua -- a connect ticket is a claim, and this module does not believe claims.
+--
+-- SHANKPIT-460 DNA is: IDUNA mints a connect ticket, the game server verifies it, nobody invents an identity in
+-- between. A Roblox server cannot be the verifier, and the reason is not squeamishness -- it is that verifying
+-- requires the signing secret, and every secret that reaches a place is a secret some client can read. So this
+-- module does the ONE thing it is entitled to do:
+--
+--   * check the ticket's SHAPE locally, so a garbage string costs no round trip (fast, honest failure), and
+--   * hand the real decision to an injected verifier -- in the place, a server-to-server call to IDUNA.
+--
+-- There is deliberately no `verify_hmac` here and no secret constant. If someone adds one, this file has failed
+-- at its only job. The shape check is also not authentication: a well-formed ticket proves nothing on its own,
+-- which is why `accept` reports whether the verifier was even consulted.
+
+local M = {}
+
+M.PREFIX = "s460"   -- the game this ticket is for; the C server's own tickets carry the game in the same slot
+M.MIN_SIG = 32      -- a hex signature shorter than this is a truncated string, not a signature
+
+-- `s460:&lt;pid&gt;:&lt;hex signature&gt;` -- shape only. Returns {ok=true, pid=...} or {ok=false, reason=...}.
+function M.parse(ticket)
+    if type(ticket) ~= "string" then return { ok = false, reason = "not-a-ticket" } end
+    local prefix, id, sig = string.match(ticket, "^(%w+):(%d+):([0-9a-fA-F]+)$")
+    if not prefix then return { ok = false, reason = "malformed" } end
+    if prefix ~= M.PREFIX then return { ok = false, reason = "wrong-game" } end
+    if #sig &lt; M.MIN_SIG then return { ok = false, reason = "short-signature" } end
+    local pid = tonumber(id)
+    if not pid or pid &lt; 1 then return { ok = false, reason = "bad-pid" } end
+    return { ok = true, pid = pid }
+end
+
+-- Returns the verdict and a second value saying whether the verifier was consulted. A caller that wants to
+-- count round trips (or a test that wants to prove a malformed ticket costs none) reads that flag.
+function M.accept(ticket, verifier)
+    local shape = M.parse(ticket)
+    if not shape.ok then return shape, false end
+    if type(verifier) ~= "function" then
+        return { ok = false, reason = "no-verifier" }, false
+    end
+    local v = verifier(ticket)
+    if type(v) ~= "table" or not v.ok then
+        local reason = "refused"
+        if type(v) == "table" and v.reason ~= nil then reason = tostring(v.reason) end
+        return { ok = false, reason = reason }, true
+    end
+    return {
+        ok = true,
+        pid = tonumber(v.pid) or shape.pid,
+        name = tostring(v.name or ""),
+    }, true
+end
+
+return M
+</ProtectedString>
+      </Properties>
+    </Item>
+    <Item class="Script" referent="RBX4">
+      <Properties>
+        <string name="Name">lobby</string>
+        <ProtectedString name="Source">-- src/lobby.server.lua -- the glue. Everything a test can reach lives in the three modules beside this file;
+-- what is here is only what needs a running Roblox server: Players, HttpService, RemoteEvents, a loop.
+--
+-- What this server does, in 460 terms:
+--   1. a body joins  -&gt; it brings a connect ticket (an opaque string from IDUNA)
+--   2. the ticket's SHAPE is checked locally (ticket460), the real verdict comes from IDUNA over HTTP
+--   3. the body takes a seat in casual or ranked (queue460)
+--   4. a tick pairs bodies by the widening window; a pair asks the world for a real match
+--   5. the published ladder is re-read and pushed to the screens (net460)
+--
+-- HONEST LIMITS, named here because they are the ones that bite in deployment:
+--   * Roblox cannot reach 127.0.0.1. SHANKPIT_NET_URL must be the world's PUBLIC netd endpoint (nginx in front
+--     of tools/shankpit_netd.c), not the local daemon a dev box runs.
+--   * A pairing hands out a MATCH to join; this file does not implement the FPS. Roblox hosts the lobby, the
+--     queue and the board -- the arena stays the C server, which is the whole point of 460's tickets.
+--   * IDUNA's ticket endpoint is called as an opaque POST: the response is read for `ok`/`pid`/`name`/`ticket`
+--     and nothing else is assumed about its shape.
+
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local queue460 = require(script.Parent.queue460)
+local ticket460 = require(script.Parent.ticket460)
+local net460 = require(script.Parent.net460)
+
+local CONFIG = {
+    -- The world's published snapshot (dw_net -&gt; tools/shankpit_netd.c). Public host only; see the limit above.
+    NetUrl = "https://okemily.com/api/v1/shankpit-net/deadweight",
+    -- IDUNA's connect-ticket mint. Empty means "no auth configured": the lobby then refuses everyone rather
+    -- than inventing identities, which is the only safe default for a place anyone can join.
+    TicketUrl = "",
+    BoardEvery = 5,
+    QueueEvery = 1,
+}
+
+local queue = queue460.new()
+local snapshot = nil
+local seats = {}      -- [player] = { pid = n, name = s, mode = "casual"|"ranked", queued_at = ms }
+
+local matchFound = Instance.new("RemoteEvent")
+matchFound.Name = "SHANKPIT460_MatchFound"
+matchFound.Parent = ReplicatedStorage
+
+local boardEvent = Instance.new("RemoteEvent")
+boardEvent.Name = "SHANKPIT460_Board"
+boardEvent.Parent = ReplicatedStorage
+
+local queueEvent = Instance.new("RemoteEvent")
+queueEvent.Name = "SHANKPIT460_Queue"
+queueEvent.Parent = ReplicatedStorage
+
+local function nowMs()
+    return math.floor(os.clock() * 1000)
+end
+
+local function httpJson(url, method, body)
+    if url == "" then return nil, "not-configured" end
+    local ok, res = pcall(function()
+        return HttpService:RequestAsync({
+            Url = url,
+            Method = method or "GET",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = body,
+        })
+    end)
+    if not ok then return nil, "http-failed" end
+    if not res.Success then return nil, "http-" .. tostring(res.StatusCode) end
+    local decoded
+    local decodedOk, err = pcall(function()
+        decoded = HttpService:JSONDecode(res.Body)
+    end)
+    if not decodedOk then return nil, "bad-json" end
+    return decoded, nil
+end
+
+-- The real verdict. The place never validates a signature itself (see ticket460's own header).
+local function verifyTicketWithIduna(ticket, player)
+    if CONFIG.TicketUrl == "" then return { ok = false, reason = "not-configured" } end
+    local body = HttpService:JSONEncode({ ticket = ticket, place = "shankpit-roblox", user_id = player.UserId })
+    local decoded, err = httpJson(CONFIG.TicketUrl, "POST", body)
+    if not decoded then return { ok = false, reason = err or "no-answer" } end
+    return {
+        ok = decoded.ok == true,
+        pid = tonumber(decoded.pid),
+        name = tostring(decoded.name or player.Name),
+        ticket = decoded.ticket,
+    }
+end
+
+local function pushBoard()
+    if not snapshot then return end
+    boardEvent:FireAllClients({
+        rows = net460.rows(snapshot, 10),
+        population = net460.population(snapshot),
+        supports = net460.supports(snapshot),
+        stale = net460.stale(snapshot, nowMs()),
+    })
+end
+
+local function refreshSnapshot()
+    local decoded = httpJson(CONFIG.NetUrl, "GET", nil)
+    if type(decoded) == "table" then
+        snapshot = decoded
+    end
+    pushBoard()
+end
+
+Players.PlayerAdded:Connect(function(player)
+    player:SetAttribute("SHANKPIT460_State", "needs-ticket")
+    player:SetAttribute("SHANKPIT460_Pid", 0)
+end)
+
+-- The client hands its ticket over once it has one; the server decides, and a refusal is a refusal.
+queueEvent.OnServerEvent:Connect(function(player, action, arg)
+    if action == "join" then
+        local mode = tostring(arg and arg.mode or "casual")
+        local ticket = arg and arg.ticket
+        local verdict, consulted = ticket460.accept(ticket, function(t)
+            return verifyTicketWithIduna(t, player)
+        end)
+        if not verdict.ok then
+            player:SetAttribute("SHANKPIT460_State", "refused:" .. tostring(verdict.reason))
+            return
+        end
+        local seat = {
+            pid = verdict.pid,
+            name = verdict.name ~= "" and verdict.name or player.Name,
+            mode = mode,
+            queued_at = nowMs(),
+        }
+        local rating = nil
+        local rec = snapshot and net460.record_for(snapshot, seat.pid) or nil
+        if rec then rating = tonumber(rec.rating) end
+        local entry, why = queue460.enqueue(queue, mode, {
+            pid = seat.pid, rating = rating, name = seat.name, joined_ms = seat.queued_at,
+        })
+        if not entry then
+            player:SetAttribute("SHANKPIT460_State", "queue:" .. tostring(why))
+            return
+        end
+        seats[player] = seat
+        player:SetAttribute("SHANKPIT460_State", "queued:" .. mode)
+        player:SetAttribute("SHANKPIT460_Pid", seat.pid)
+        queueEvent:FireClient(player, {
+            position = queue460.position(queue, mode, seat.pid),
+            mode = mode,
+            rating = entry.rating,
+            verifierConsulted = consulted,
+        })
+    elseif action == "leave" then
+        local seat = seats[player]
+        if seat then
+            queue460.remove(queue, seat.mode, seat.pid)
+            seats[player] = nil
+        end
+        player:SetAttribute("SHANKPIT460_State", "needs-ticket")
+    end
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+    local seat = seats[player]
+    if seat then
+        queue460.remove(queue, seat.mode, seat.pid)
+        seats[player] = nil
+    end
+end)
+
+-- One loop for the queue, one for the board. Both run on the server; a client can neither seat itself nor
+-- declare who won.
+task.spawn(function()
+    local lastQueue, lastBoard = 0, 0
+    while RunService:IsRunning() or true do
+        local now = nowMs()
+        if now - lastQueue &gt;= CONFIG.QueueEvery * 1000 then
+            lastQueue = now
+            for _, mode in ipairs({ "casual", "ranked" }) do
+                local tick = queue460.tick(queue, mode, now)
+                for _, p in ipairs(tick.pairs) do
+                    for player, seat in pairs(seats) do
+                        if seat.pid == p.first.pid or seat.pid == p.second.pid then
+                            seats[player] = nil
+                            matchFound:FireClient(player, {
+                                mode = mode,
+                                pid = seat.pid,
+                                opponent = (seat.pid == p.first.pid) and p.second.name or p.first.name,
+                                opponent_rating = (seat.pid == p.first.pid) and p.second.rating or p.first.rating,
+                                gap = p.gap,
+                            })
+                            player:SetAttribute("SHANKPIT460_State", "matched:" .. mode)
+                        end
+                    end
+                end
+                for _, e in ipairs(tick.expired) do
+                    player:SetAttribute("SHANKPIT460_State", "expired")
+                end
+                for _, e in ipairs(tick.fills) do
+                    -- casual only, and the body STAYS queued: a human who arrives first still wins.
+                    queueEvent:FireAllClients({ fillable = { pid = e.pid, name = e.name, mode = mode } })
+                end
+            end
+        end
+        if now - lastBoard &gt;= CONFIG.BoardEvery * 1000 then
+            lastBoard = now
+            refreshSnapshot()
+        end
+        task.wait(0.25)
+    end
+end)
+
+refreshSnapshot()
+</ProtectedString>
+        <bool name="Disabled">true</bool>
+      </Properties>
+    </Item>
+  </Item>
+</roblox>
