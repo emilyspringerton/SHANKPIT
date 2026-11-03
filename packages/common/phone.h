@@ -56,6 +56,10 @@ typedef enum {
        districts, and the place-a-troop / clone rows. The phone owns the SELECT, the host owns the
        spend and the body (packages/simulation/empire_rules.c is the numbers). */
     BP_APP_EMPIRE,
+    /* DEADWEIGHT (founder real-time, 2026-11-03): the citizens' card ladder, from the player's own
+       end -- the challenge waiting on you, your record, and who you could ask. Host-fed like EMPIRE:
+       the header never invents a name, a record or a cost. */
+    BP_APP_DEADWEIGHT,
     BP_APP_COUNT
 } BpApp;
 
@@ -63,6 +67,14 @@ typedef enum {
    both need the count above the app's own page builder at the bottom of this header. */
 #define BP_EMPIRE_TROOP_ROWS 4
 #define BP_EMPIRE_ROWS (BP_EMPIRE_TROOP_ROWS + 1)
+
+/* DEADWEIGHT rows: an incoming challenge takes two of them (PLAY / DECLINE) and the rest is the
+   roster of who you could ask. Bounded by the panel, not by the ladder -- the world can hold 48
+   members and the phone shows the first eight, which is what fits. */
+#define BP_DW_ROSTER 8
+#define BP_DW_NAME_LEN 20
+#define BP_DW_LINE_LEN 64
+static const char *const BP_DW_KIND_NAMES[3] = { "OFFENSE", "OPS", "DEFENSE" };
 
 typedef enum { BP_UP, BP_DOWN, BP_LEFT, BP_RIGHT, BP_SELECT, BP_BACK } BpAction;
 
@@ -87,7 +99,11 @@ typedef enum {
     BP_FX_KIT_CLEAR,        /* arg = slot -> the live kit's binding at that slot was emptied */
     BP_FX_KIT_SAVE,         /* arg = kit index -> the builder's draft replaced the live kit */
     BP_FX_EMPIRE_SPAWN,     /* arg = troop kind 0..3 -> host validates against PARENA, spends, places */
-    BP_FX_EMPIRE_CLONE      /* arg = troop kind -> same, at the clone premium, needs a veteran */
+    BP_FX_EMPIRE_CLONE,     /* arg = troop kind -> same, at the clone premium, needs a veteran */
+    BP_FX_DW_ACCEPT,        /* DEADWEIGHT: play the challenge that is waiting on you */
+    BP_FX_DW_DECLINE,       /* ...or close it without playing. No record and no result move. */
+    BP_FX_DW_CHALLENGE      /* arg = ROSTER index (not a pid, not a member index) -> host re-derives
+                               the roster and asks that person */
 } BpEffectKind;
 
 typedef struct { BpEffectKind kind; int arg; } BpEffect;
@@ -249,6 +265,20 @@ typedef struct {
     int emp_clone_cost;           /* from empire_clone_cost */
     int emp_district[9];
     int emp_self_cell;
+
+    /* DEADWEIGHT (BP_APP_DEADWEIGHT): host-fed from the ladder itself (dw_play.h). dw_live is 0 in a
+       world with no ladder -- the app then says so instead of showing an empty record that would
+       read as "you have lost everything". */
+    int dw_live;
+    int dw_pending;                                   /* a challenge is waiting on you */
+    char dw_pending_from[BP_DW_NAME_LEN];
+    int dw_wins, dw_games;
+    int dw_meta_kind;                                 /* -1 no data, else 0..2 */
+    int dw_meta_share;                                /* permille of all cards played */
+    int dw_roster_count;
+    char dw_roster_names[BP_DW_ROSTER][BP_DW_NAME_LEN];
+    int dw_roster_wins[BP_DW_ROSTER], dw_roster_games[BP_DW_ROSTER];
+    char dw_last[BP_DW_LINE_LEN];                     /* the last match, from your side */
 } Phone;
 
 static inline void phone_init(Phone *p) {
@@ -293,6 +323,8 @@ static inline int bp_rows(const Phone *p) {
     case BP_APP_KITMAP: return KIT_SLOTS;
     case BP_APP_KITBUILD: return KIT_SLOTS;
     case BP_APP_EMPIRE: return BP_EMPIRE_ROWS;
+    case BP_APP_DEADWEIGHT:
+        return (p->dw_pending ? 2 : 0) + (p->dw_roster_count > 0 ? p->dw_roster_count : 1);
     default: return 1;
     }
 }
@@ -591,6 +623,20 @@ static inline BpEffect phone_input(Phone *p, BpAction a, int unspent_points) {
         if (a == BP_SELECT && p->cursor >= 0 && p->cursor < BP_EMPIRE_ROWS) {
             if (p->cursor < BP_EMPIRE_TROOP_ROWS) { fx.kind = BP_FX_EMPIRE_SPAWN; fx.arg = p->cursor; }
             else { fx.kind = BP_FX_EMPIRE_CLONE; fx.arg = 0; }
+        }
+        break;
+    case BP_APP_DEADWEIGHT:
+        /* SELECT only ever NAMES what was chosen; the host plays the match (dw_play.h owns the
+         * records, and a match is not something a UI may resolve on its own). Row layout is the same
+         * one bp_rows and the draw pass use: the waiting challenge first, then the roster. */
+        if (a == BP_SELECT && p->dw_live) {
+            int base = p->dw_pending ? 2 : 0;
+            if (p->dw_pending && p->cursor == 0) fx.kind = BP_FX_DW_ACCEPT;
+            else if (p->dw_pending && p->cursor == 1) fx.kind = BP_FX_DW_DECLINE;
+            else if (p->cursor - base >= 0 && p->cursor - base < p->dw_roster_count) {
+                fx.kind = BP_FX_DW_CHALLENGE;
+                fx.arg = p->cursor - base;
+            }
         }
         break;
     case BP_APP_ORB:

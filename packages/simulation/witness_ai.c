@@ -307,6 +307,8 @@ static const char *wai_citizen_name(int player_id) {
     return "";
 }
 
+const char *witness_ai_citizen_name(int player_id) { return wai_citizen_name(player_id); }
+
 void witness_ai_reset(unsigned int seed, unsigned int now_ms) {
 
     /* the DEADWEIGHT ladder starts empty with the world: citizens join it as they spawn, and it

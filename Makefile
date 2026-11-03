@@ -487,7 +487,7 @@ regen-dw-engine:
 # a deck that re-crafts itself when the record and the meta move.
 .PHONY: test-deadweight
 test-deadweight: | $(BIN_DIR)
-	$(CC) -O1 -Wall -Wextra -Werror -Ipackages/simulation packages/simulation/dw_test.c packages/simulation/dw_engine.c packages/simulation/dw_match.c packages/simulation/dw_ladder.c packages/simulation/dw_net.c packages/simulation/dw_rules.c packages/simulation/dw_citizen_rules.c packages/simulation/citizen_life.c -o $(BIN_DIR)/dw_test $(LIBS_M)
+	$(CC) -O1 -Wall -Wextra -Werror -Ipackages/simulation packages/simulation/dw_test.c packages/simulation/dw_engine.c packages/simulation/dw_match.c packages/simulation/dw_ladder.c packages/simulation/dw_play.c packages/simulation/dw_net.c packages/simulation/dw_rules.c packages/simulation/dw_citizen_rules.c packages/simulation/citizen_life.c -o $(BIN_DIR)/dw_test $(LIBS_M)
 	./$(BIN_DIR)/dw_test
 
 # shankpit_netd -- the internet-of-SHANKPIT shim's HTTP half (tools/shankpit_netd.c). It serves the

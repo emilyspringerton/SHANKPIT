@@ -1521,8 +1521,16 @@ the current meta**: a citizen losing to the top deck rebuilds toward the answer 
 keeps winning keeps its identity, and both re-craft after every match, because the deck is a function
 of the record and the meta rather than a stored preference.
 
+The player's end is the phone: **P > DEADWEIGHT** shows your record, the population's meta, a
+challenge waiting on you as its own PLAY / DECLINE row, and the roster — every citizen you could ask,
+with their record — plus what happened in your last match, read from your own seat. A waiting
+challenge also marks the tile on the home grid. `packages/simulation/dw_play.*` is the only layer
+between the ladder and that screen, and SELECT never resolves a match: it names a choice, and the
+host plays it through the real sequencer.
+
 Status, honestly: **the game plays headlessly and the citizens play it — nobody has watched a match
-on screen yet.** There is no challenge prompt, no board and no card art, no wasm module is actually
+on screen yet.** The challenge prompt exists but there is still **no board** to watch a match on (a
+match resolves instantly and the phone reports the result), no card art, no wasm module is actually
 attached (SHANKPIT has no interpreter in-tree; the seam is real, the module is not), records are
 RAM-only, decks come from the game's core nine cards, and players cannot choose a deck yet. Every
 next step, in order, is in `docs/DEADWEIGHT_IN_SHANKPIT_NEXT_STEPS.md` — including the previous

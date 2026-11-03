@@ -582,4 +582,9 @@ const CitizenAvatar *witness_ai_citizen_avatar(int player_id);
  * answered, and dw_ladder_accept(ladder, slot, now) plays it and records the result. */
 DwLadder *witness_ai_deadweight(void);
 
+/* A citizen's display name for a player id ("" when that pid is not a citizen). The ladder speaks in
+ * pids and member indices; a screen speaks in people, and this is the only place the two meet --
+ * dw_play.h deliberately has no names of its own. */
+const char *witness_ai_citizen_name(int player_id);
+
 #endif

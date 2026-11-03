@@ -38,6 +38,7 @@
    rather than beside its first big user further down, because the skin-selection state (below) and
    the SKINS menu both live above that point. */
 #include "../../../packages/simulation/skin_registry.h"
+#include "../../../packages/simulation/dw_play.h" /* the player's end of the citizens' DEADWEIGHT ladder */
 /* EMPIRE, both halves, from PARENA: the influence economy + district sphere (empire_rules.c, declared by
    its own host header -- the phone app calls empire_* and the Windows build was compiling those calls as
    implicit declarations because nothing included it) and the unit layer (empire_units_rules.c: archetypes,
@@ -1483,6 +1484,12 @@ static void draw_phone_home_grid(const Phone *p) {
             char buf[8]; snprintf(buf, sizeof(buf), "(%d)", p->unread);
             draw_string(buf, x + cell_w - 50.0f, y, 2.2f);
         }
+        /* A citizen asking you to play is a notification, not something you should have to find by
+           opening an app -- the same marker MESSAGES already uses for unread mail. */
+        if (i == BP_APP_DEADWEIGHT && p->dw_pending) {
+            glColor3f(1.0f, 0.55f, 0.3f);
+            draw_string("(1)", x + cell_w - 50.0f, y, 2.2f);
+        }
     }
     glColor3f(0.4f, 0.5f, 0.6f);
     draw_string("[ARROWS] MOVE  [ENTER] OPEN  [P] CLOSE", PHONE_PANEL_X0 + 20.0f, PHONE_PANEL_Y0 + 16.0f, 2.0f);
@@ -1512,6 +1519,66 @@ static void techtree_sync(void) {
     phone_set_tech_points(&g_story_phone, g_xp / TECHTREE_XP_PER_POINT - spent);
     /* The one real effect a level has. Push it now, not on the next reload. */
     witness_ai_set_pheromone_grace_bonus_ms((unsigned int)phone_tech_bonus_ms(&g_story_phone));
+}
+
+/* --- DEADWEIGHT, the player's end (founder real-time, 2026-11-03: "I WANT CITIZENS TO BE ABLE TO
+ * CHALLENGE EACHOTHER TO GAMES OF DEADWEIGHT AND CITIZENS CAN CHALLENGE PLAYERS AND PLAYERS CAN
+ * CHALLENGE CITIZENS AND PLAYERS CAN CHALLENGE PLAYERS") ------------------------------------------
+ * The citizens were already playing each other by themselves (packages/simulation/dw_ladder.c). This
+ * is the HUMAN half: the phone shows what is waiting on you and who you could ask, SELECT only NAMES
+ * a choice, and the effects below answer through dw_play.c. Nothing here resolves a match -- a draw
+ * function must never be the thing that decides who won. */
+static DwPlay g_dw_play;
+static int g_dw_play_ready;
+
+static void dw_phone_sync(void) {
+    Phone *ph = &g_story_phone;
+    DwLadder *l = witness_ai_deadweight();
+    ph->dw_live = l != NULL;
+    ph->dw_pending = 0;
+    ph->dw_roster_count = 0;
+    ph->dw_wins = ph->dw_games = 0;
+    ph->dw_meta_kind = -1;
+    ph->dw_meta_share = 0;
+    if (!l) return;
+    if (!g_dw_play_ready) { dw_play_init(&g_dw_play, l->hero_pid); g_dw_play_ready = 1; }
+
+    int mi = dw_ladder_member_for_pid(l, g_dw_play.my_pid);
+    if (mi >= 0) { ph->dw_wins = l->members[mi].wins; ph->dw_games = l->members[mi].games; }
+    ph->dw_meta_kind = dw_ladder_meta_kind(l);
+    ph->dw_meta_share = dw_ladder_meta_share(l);
+
+    int slot = dw_play_pending(l, &g_dw_play);
+    if (slot >= 0) {
+        int from = dw_play_opponent_for(l, &g_dw_play, slot);
+        ph->dw_pending = 1;
+        snprintf(ph->dw_pending_from, sizeof ph->dw_pending_from, "%s", witness_ai_citizen_name(from));
+    }
+
+    int roster[DW_PLAY_ROSTER];
+    int n = dw_play_roster(l, g_dw_play.my_pid, roster, BP_DW_ROSTER);
+    for (int i = 0; i < n; i++) {
+        const DwLadderMember *m = &l->members[roster[i]];
+        snprintf(ph->dw_roster_names[i], sizeof ph->dw_roster_names[i], "%s", witness_ai_citizen_name(m->pid));
+        ph->dw_roster_wins[i] = m->wins;
+        ph->dw_roster_games[i] = m->games;
+    }
+    ph->dw_roster_count = n;
+
+    /* the last match, already read from this player's seat by dw_play_answer -- so "3-1" always
+       means your hull first, whichever end opened the challenge */
+    if (g_dw_play.last_winner_pid != -3) {
+        const char *them = witness_ai_citizen_name(g_dw_play.last_opponent_pid);
+        if (g_dw_play.last_winner_pid == -2)
+            snprintf(ph->dw_last, sizeof ph->dw_last, "DRAW WITH %s  %d-%d  %dR", them,
+                     g_dw_play.last_hull_mine, g_dw_play.last_hull_theirs, g_dw_play.last_rounds);
+        else if (g_dw_play.last_winner_pid == g_dw_play.my_pid)
+            snprintf(ph->dw_last, sizeof ph->dw_last, "BEAT %s  %d-%d  %dR", them,
+                     g_dw_play.last_hull_mine, g_dw_play.last_hull_theirs, g_dw_play.last_rounds);
+        else
+            snprintf(ph->dw_last, sizeof ph->dw_last, "%s BEAT YOU  %d-%d  %dR", them,
+                     g_dw_play.last_hull_mine, g_dw_play.last_hull_theirs, g_dw_play.last_rounds);
+    }
 }
 
 static void phone_iduna_pump(void);
@@ -1726,6 +1793,56 @@ static void draw_phone_app(Phone *p) {
                 glColor3f(i == p->cursor ? 1.0f : 0.6f, i == p->cursor ? 1.0f : 0.72f,
                           i == p->cursor ? 1.0f : 0.82f);
                 draw_string(buf, col_x, row_y - (i + 1) * 22.0f, 2.0f);
+            }
+        }
+    } else if (p->app == BP_APP_DEADWEIGHT) {
+        /* The citizens' ladder from your side. Every number is the world's and every name is the
+           citizen that owns it -- this pass only paints, which is why a save file cannot drift. */
+        if (!p->dw_live) {
+            glColor3f(0.5f, 0.55f, 0.6f);
+            draw_string("NO LADDER IN THIS WORLD", col_x, row_y, 2.4f);
+            draw_string("CITIZENS PLAY IN THE NIGHT SHIFT", col_x, row_y - row_h, 2.0f);
+        } else {
+            char buf[96];
+            glColor3f(0.85f, 0.92f, 0.97f);
+            snprintf(buf, sizeof buf, "YOU %d-%d", p->dw_wins, p->dw_games - p->dw_wins);
+            draw_string(buf, col_x, row_y, 2.4f);
+            if (p->dw_meta_kind >= 0) {
+                snprintf(buf, sizeof buf, "META %s %d%%", BP_DW_KIND_NAMES[p->dw_meta_kind],
+                         p->dw_meta_share / 10);
+                glColor3f(0.6f, 0.78f, 0.88f);
+                draw_string(buf, col_x + 300.0f, row_y, 2.2f);
+            }
+            float y = row_y - row_h;
+            int row = 0;
+            if (p->dw_pending) {
+                snprintf(buf, sizeof buf, "%s CHALLENGES YOU -- PLAY", p->dw_pending_from);
+                glColor3f(p->cursor == 0 ? 1.0f : 0.95f, p->cursor == 0 ? 1.0f : 0.85f,
+                          p->cursor == 0 ? 1.0f : 0.55f);
+                draw_string(buf, col_x, y, 2.4f);
+                y -= row_h;
+                row++;
+                glColor3f(p->cursor == 1 ? 1.0f : 0.6f, p->cursor == 1 ? 1.0f : 0.72f,
+                          p->cursor == 1 ? 1.0f : 0.82f);
+                draw_string("DECLINE", col_x, y, 2.2f);
+                y -= row_h;
+                row++;
+            }
+            if (p->dw_roster_count == 0) {
+                glColor3f(0.5f, 0.6f, 0.7f);
+                draw_string("NOBODY ELSE IS ON THE LADDER", col_x, y, 2.2f);
+            }
+            for (int i = 0; i < p->dw_roster_count; i++, row++) {
+                snprintf(buf, sizeof buf, "%s  %d-%d", p->dw_roster_names[i],
+                         p->dw_roster_wins[i], p->dw_roster_games[i] - p->dw_roster_wins[i]);
+                glColor3f(row == p->cursor ? 1.0f : 0.6f, row == p->cursor ? 1.0f : 0.72f,
+                          row == p->cursor ? 1.0f : 0.82f);
+                draw_string(buf, col_x, y, 2.4f);
+                y -= row_h;
+            }
+            if (p->dw_last[0]) {
+                glColor3f(0.55f, 0.75f, 0.65f);
+                draw_string(p->dw_last, col_x, PHONE_PANEL_Y0 + 46.0f, 2.0f);
             }
         }
     } else if (p->app == BP_APP_MISSION) {
@@ -16380,6 +16497,7 @@ int main(int argc, char* argv[]) {
                             continue;
                         }
                         techtree_sync();   /* re-seed points from XP before any phone input */
+                        dw_phone_sync();   /* ...and the ladder, so a row's index matches what is drawn */
                         if (e.key.keysym.sym == SDLK_UP) phone_input(&g_story_phone, BP_UP, 0);
                         else if (e.key.keysym.sym == SDLK_DOWN) phone_input(&g_story_phone, BP_DOWN, 0);
                         else if (e.key.keysym.sym == SDLK_LEFT) phone_input(&g_story_phone, BP_LEFT, 0);
@@ -16441,6 +16559,48 @@ int main(int argc, char* argv[]) {
                                            phone_tech_bonus_ms(&g_story_phone));
                             } else if (fx.kind == BP_FX_MISSION_ACT) {
                                 bigo_mission_act(fx.arg);
+                            } else if (fx.kind == BP_FX_DW_ACCEPT || fx.kind == BP_FX_DW_DECLINE) {
+                                /* The one place a challenge is answered. dw_play plays the match out
+                                   through the real sequencer and reports from this player's seat. */
+                                DwLadder *dl = witness_ai_deadweight();
+                                if (dl) {
+                                    if (!g_dw_play_ready) { dw_play_init(&g_dw_play, dl->hero_pid); g_dw_play_ready = 1; }
+                                    unsigned int now = SDL_GetTicks();
+                                    int won = dw_play_answer(dl, &g_dw_play, fx.kind == BP_FX_DW_ACCEPT, now);
+                                    const char *them = witness_ai_citizen_name(g_dw_play.last_opponent_pid);
+                                    if (won == -4) printf("[DEADWEIGHT] declined %s\n", them);
+                                    else if (won == -3) printf("[DEADWEIGHT] nothing was waiting\n");
+                                    else if (won == -2)
+                                        printf("[DEADWEIGHT] draw with %s, %d-%d in %d rounds\n", them,
+                                               g_dw_play.last_hull_mine, g_dw_play.last_hull_theirs,
+                                               g_dw_play.last_rounds);
+                                    else
+                                        printf("[DEADWEIGHT] %s %s, %d-%d in %d rounds\n",
+                                               won == g_dw_play.my_pid ? "beat" : "lost to", them,
+                                               g_dw_play.last_hull_mine, g_dw_play.last_hull_theirs,
+                                               g_dw_play.last_rounds);
+                                    /* a finished match is exactly what the published feed wants
+                                       promptly, so it does not wait for the next periodic tick */
+                                    dw_net_publish(dl, now);
+                                    dw_phone_sync();
+                                }
+                            } else if (fx.kind == BP_FX_DW_CHALLENGE) {
+                                /* The phone reports a ROSTER index. Re-derive the roster here rather
+                                   than trusting the number alone: a challenge must never land on a
+                                   different person than the row that carried the cursor. */
+                                DwLadder *dl = witness_ai_deadweight();
+                                if (dl) {
+                                    if (!g_dw_play_ready) { dw_play_init(&g_dw_play, dl->hero_pid); g_dw_play_ready = 1; }
+                                    int roster[DW_PLAY_ROSTER];
+                                    int n = dw_play_roster(dl, g_dw_play.my_pid, roster, BP_DW_ROSTER);
+                                    if (fx.arg >= 0 && fx.arg < n) {
+                                        int slot = dw_play_challenge(dl, &g_dw_play, roster[fx.arg], SDL_GetTicks());
+                                        printf("[DEADWEIGHT] %s %s\n",
+                                               slot >= 0 ? "challenged" : "could not challenge",
+                                               witness_ai_citizen_name(dl->members[roster[fx.arg]].pid));
+                                    }
+                                    dw_phone_sync();
+                                }
                             } else if (fx.kind == BP_FX_IDUNA_START || fx.kind == BP_FX_IDUNA_POLL) {
                                 /* Same real flow as the legacy menu's LOGIN IDUNA button. */
                                 if (fx.kind == BP_FX_IDUNA_START) phone_iduna_start();

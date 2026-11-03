@@ -85,11 +85,21 @@ screen, and the player cannot yet click "accept".**
    That ordering is deliberate (cancels resolve before copies) and is now asserted rather than
    assumed. Remaining work in this area: no catalogue card carries DISCARD, so that path is
    implemented but untested by a real card — worth a card of its own.
-2. **The player's end of the ladder — a UI.** The data path exists and is one call away:
-   `witness_ai_deadweight()` → `dw_ladder_pending_for(ladder, your_pid)` → `dw_ladder_accept(...)`.
-   Missing: a prompt (a key to accept/decline), a notice when a citizen challenges you, and a board
-   to watch the match on. `main.c` compiles here now, but the lobby cannot link (A7), so this lands
-   unrun — plan on the harness in A6 or the founder's machine.
+2. ~~The player's end of the ladder — a UI~~ — **DONE (same day, `dw_play.*` + `BP_APP_DEADWEIGHT`).**
+   `dw_play.{h,c}` is the one layer between the ladder's pids/member indices and a screen's rows:
+   `dw_play_pending` / `dw_play_opponent_for` / `dw_play_answer` (accept or decline) /
+   `dw_play_roster` / `dw_play_challenge`. The phone app shows your record, the meta, the waiting
+   challenge as its own PLAY / DECLINE row, and the roster with each citizen's record; a pending
+   challenge also marks the tile on the home grid. `DwLadder` gained `DwLadderLast`, so a result is
+   the MATCH's own record (kind, both pids in the challenge's order, winner, rounds, both hulls) and
+   `dw_play_answer` translates it to the reader's seat once. SELECT only names a choice; the host
+   re-derives the roster before acting, so a challenge cannot land on the wrong person. Tested in
+   `make test-deadweight` (see the note on seat translation below — a hull-ORDER assertion would have
+   been wrong, because bankruptcy can lose a match with more hull left). **Still missing here:** a
+   BOARD to watch a match on — a match still resolves instantly, so the phone reports the result
+   rather than the play-by-play (that is B6, a round clock), and the page has never been LOOKED at
+   (no GL driver, and `make -B lobby` still cannot link — A7).
+   *Done when:* a citizen's challenge can be answered from inside the game on the founder's machine.
 3. **Decks from the full catalog.** `cp_deck_card` uses the base line (ids 0-8) because kind k's cards
    are contiguous there; the other 96 cards are interleaved by id, so picking them needs the catalog
    walk that hit the emitter's `void *` gap (see B10). Until then a citizen's deck is the game's core

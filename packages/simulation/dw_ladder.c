@@ -197,6 +197,19 @@ int dw_ladder_accept(DwLadder *l, int slot, unsigned int now) {
         b->games++;
     }
 
+    /* ...and the match itself is kept, in the seats' own order, so a screen can report what happened
+     * rather than only who won (dw_play.h reads this). Written before the decks are re-crafted, so
+     * nothing about this record can depend on the post-match state it caused. */
+    l->last.valid = 1;
+    l->last.kind = kind;
+    l->last.pid[0] = a->pid;
+    l->last.pid[1] = b->pid;
+    l->last.winner = winner == 0 ? 0 : (winner == 1 ? 1 : 2);
+    l->last.rounds = match.rounds_played;
+    l->last.hull[0] = match.seat[0].hull;
+    l->last.hull[1] = match.seat[1].hull;
+    l->last.at_ms = now;
+
     /* every finished match goes into the published ticker (dw_net.h). Done here rather than in a
      * caller because this is the ONE place a match stops being live, so nothing can finish a match
      * and forget to tell the internet about it. */

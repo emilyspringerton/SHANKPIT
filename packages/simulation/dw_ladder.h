@@ -62,6 +62,20 @@ typedef struct {
     unsigned int expires_ms;
 } DwChallenge;
 
+/* The match that finished most recently, in enough detail for a player's own screen to say what
+ * happened ("Ada beat you 3-0 in 9 rounds") without replaying it. Challenges only carry the two
+ * pids and an expiry; a RESULT is a fact about a match that has already happened, so it gets its own
+ * record rather than being folded back into the challenge slot that was just closed. */
+typedef struct {
+    int valid;
+    int kind;           /* DW_CHAL_* -- the direction the match was opened from */
+    int pid[2];         /* the challenge's order: seat 0 opened it */
+    int winner;         /* 0/1 seat, 2 draw */
+    int rounds;
+    int hull[2];
+    unsigned int at_ms;
+} DwLadderLast;
+
 typedef struct {
     DwLadderMember members[DW_LADDER_MAX_CITIZENS];
     int count;
@@ -70,6 +84,7 @@ typedef struct {
     int meta_kind[3];   /* every card played in this ladder, by kind */
     long meta_plays;
     int results[5];     /* matches completed, by DW_CHAL_* */
+    DwLadderLast last;  /* the most recent finished match, for the player's own screen */
     int hero_pid;       /* -1 when nobody is playing */
     uint32_t rng;
     unsigned int now_ms;

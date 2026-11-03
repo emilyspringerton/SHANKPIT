@@ -14,7 +14,9 @@
 #include "dw_engine.h"
 #include "dw_match.h"
 #include "dw_ladder.h"
+#include "dw_play.h"
 #include "dw_net.h"
+#include "citizen_life.h"   /* CILIFE_* -- the paths a citizen's deck is built from */
 
 static int fails = 0;
 #define CHECK(cond, ...) do { \
@@ -393,6 +395,90 @@ int main(void) {
         CHECK(dw_net_publish(&l, 4000u) == 1, "publish did not write a fresh snapshot");
         CHECK(dw_net_publish(&l, 4001u) == 0, "publish wrote twice in the same instant");
         dw_net_set_path("");
+    }
+
+    /* ---- the player's end (dw_play.h): the human half of the ladder ----
+     * Everything below is a SCREEN question, not a rules question: does the player see the challenge
+     * that is actually waiting, is the roster the people who are actually askable, and does a decline
+     * leave every record alone. */
+    {
+        DwLadder l;
+        DwPlay p;
+        int roster[DW_PLAY_ROSTER];
+
+        dw_ladder_reset(&l, 0x1234u);
+        dw_ladder_set_hero(&l, 0);                    /* the player is pid 0, as witness_ai sets it */
+        dw_ladder_add_citizen(&l, 5, CILIFE_DUEL, 700, 1000u);
+        dw_ladder_add_citizen(&l, 6, CILIFE_IDLE, 200, 1000u);
+        CHECK(l.count == 3, "the ladder holds %d members, expected the player + two citizens", l.count);
+
+        dw_play_init(&p, 0);
+        CHECK(p.last_winner_pid == -3, "a fresh player already has a result");
+        CHECK(dw_play_pending(&l, &p) < 0, "a fresh ladder has a challenge waiting on the player");
+        CHECK(dw_play_answer(&l, &p, 1, 1500u) == -3,
+              "answering nothing did not report that nothing was waiting");
+
+        /* the roster is everyone but you... */
+        int n = dw_play_roster(&l, 0, roster, DW_PLAY_ROSTER);
+        CHECK(n == 2, "the roster is %d, expected the two citizens", n);
+        CHECK(dw_play_challenge(&l, &p, dw_ladder_member_for_pid(&l, 0), 1600u) == -1,
+              "the player could challenge themselves");
+
+        /* ...and asking someone takes them off it while the ask is open */
+        int asked = dw_play_challenge(&l, &p, roster[0], 2000u);
+        CHECK(asked >= 0, "challenging a citizen failed");
+        CHECK(p.issued == 1, "the issued count is %d", p.issued);
+        CHECK(dw_play_roster(&l, 0, roster, DW_PLAY_ROSTER) == 1,
+              "a citizen who has already been asked is still offered");
+
+        /* the citizen accepts: the match is played out, and the ladder keeps the match itself */
+        int w = dw_ladder_accept(&l, asked, 3000u);
+        CHECK(w == 0 || w == 5 || w == -2, "the match returned %d as a winner", w);
+        CHECK(l.last.valid == 1, "the played match was not recorded");
+        CHECK(l.last.pid[0] == 0 && l.last.pid[1] == 5,
+              "the recorded seats are %d/%d, expected the challenge order 0/5", l.last.pid[0], l.last.pid[1]);
+        CHECK(l.last.rounds >= 1, "the recorded match has %d rounds", l.last.rounds);
+        CHECK(l.members[dw_ladder_member_for_pid(&l, 0)].games == 1, "the player's record did not move");
+
+        /* a citizen asks the player, and the player says no: no record, no result, no lie */
+        int cs = dw_ladder_challenge(&l, 5, 0, 4000u);
+        CHECK(cs >= 0, "a citizen could not challenge the player");
+        CHECK(dw_play_pending(&l, &p) == cs, "the player does not see the waiting challenge");
+        CHECK(dw_play_opponent_for(&l, &p, cs) == 5, "the asker is not the citizen");
+        CHECK(dw_play_answer(&l, &p, 0, 4200u) == -4, "declining did not report a decline");
+        CHECK(dw_play_pending(&l, &p) < 0, "the declined challenge is still live");
+        CHECK(p.declined == 1 && p.answered == 1, "decline counters are %d/%d", p.declined, p.answered);
+        CHECK(l.members[dw_ladder_member_for_pid(&l, 0)].games == 1,
+              "a declined challenge changed the player's record");
+
+        /* and now yes: a real match, recorded against the player's own seat */
+        cs = dw_ladder_challenge(&l, 6, 0, 5000u);
+        CHECK(cs >= 0, "the second citizen could not challenge the player");
+        int r = dw_play_answer(&l, &p, 1, 5200u);
+        CHECK(r == 0 || r == 6 || r == -2, "the player's match returned %d", r);
+        CHECK(l.members[dw_ladder_member_for_pid(&l, 0)].games == 2,
+              "the player's second match was not counted");
+        CHECK(p.last_result_ms == 5200u, "the result is stamped %u, expected 5200", p.last_result_ms);
+        CHECK(p.last_opponent_pid == 6, "the last opponent is %d, expected 6", p.last_opponent_pid);
+        CHECK(p.last_rounds == l.last.rounds, "the reported rounds disagree with the ladder's");
+        CHECK(p.last_hull_mine >= 0 && p.last_hull_theirs >= 0,
+              "a hull is negative (%d/%d)", p.last_hull_mine, p.last_hull_theirs);
+        /* The seats are the challenge's order, not the reader's: the citizen opened this one, so the
+           player is seat 1. Asserting the VALUES against the ladder's own record is what proves the
+           translation happened -- a hull-ORDER assertion would be wrong here, because a match can be
+           lost on bankruptcy with more hull left than the winner. */
+        {
+            int my_seat = (l.last.pid[0] == 0) ? 0 : 1;
+            CHECK(my_seat == 1, "the citizen's challenge put the player in seat %d", my_seat);
+            CHECK(p.last_hull_mine == l.last.hull[my_seat],
+                  "the player's hull (%d) is not their seat's (%d)", p.last_hull_mine, l.last.hull[my_seat]);
+            CHECK(p.last_hull_theirs == l.last.hull[1 - my_seat],
+                  "the opponent's hull (%d) is not the other seat's (%d)",
+                  p.last_hull_theirs, l.last.hull[1 - my_seat]);
+        }
+        CHECK(p.last_kind == DW_CHAL_CITIZEN_PLAYER,
+              "the last match's direction is %d, expected citizen-vs-player", p.last_kind);
+        CHECK(dw_ladder_meta_kind(&l) >= 0, "two finished matches left the meta empty");
     }
 
     if (fails) { printf("deadweight: %d FAILED\n", fails); return 1; }
