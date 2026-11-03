@@ -126,3 +126,13 @@ trim.
 
 *Done when (met):* measured before and after, with the after pinned by the test.
 
+## Verified together (2026-11-03)
+
+One pass, after lanes 1-3 and 6-9 landed, run rather than remembered: `check-wow-wire-rules`,
+`test-wow-wire` (plain and ASan/UBSan), `test-wow-client`, `test-wow-macros`, `test-wow-ticket`,
+`test-units`, `check-units`, `test-proc-dungeon`, `test-zone-sync`, `check-levels`, `test-leveltool`,
+`make lobby`, `make server`, `test-wow-e2e` (all three phases on ephemeral ports), and PARENA's
+`make test` (374/374). Every one exited 0 on this tree.
+
+Lanes 4 and 5 are blocked, and the same pass re-checked instead of assuming: no `go` binary, no `DISPLAY`,
+zero `/dev/dri` entries, no IDUNA-issued ticket. Nothing above claims anything about them.
