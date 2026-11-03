@@ -326,29 +326,35 @@ int dw_match_round(DwMatch *m, int card0, int card1) {
     return 0;
 }
 
+int dw_match_step_policy(DwMatch *m, int aggression0, int aggression1) {
+    if (!m) return 1;
+    if (m->over) return 1;
+    const DwEngine *e = dw_engine();
+    int pick[2];
+    int aggr[2] = { aggression0, aggression1 };
+    for (int s = 0; s < 2; s++) {
+        int opp_kind = m->last_card[1 - s] >= 0 ? e->card_kind(m->last_card[1 - s]) : -1;
+        int sc[DW_HAND];
+        for (int i = 0; i < DW_HAND; i++) {
+            int c = m->seat[s].hand[i];
+            sc[i] = c < 0 ? 0
+                    : e->cp_card_score(e->card_kind(c), e->card_power(c), e->card_cost(c),
+                                       e->is_legal_play(c, m->seat[s].energy, m->seat[s].vault),
+                                       opp_kind, aggr[s]);
+        }
+        pick[s] = e->cp_pick(sc[0], sc[1], sc[2], sc[3],
+                             m->seat[s].hand[0], m->seat[s].hand[1], m->seat[s].hand[2],
+                             m->seat[s].hand[3]);
+    }
+    return dw_match_round(m, pick[0], pick[1]);
+}
+
 int dw_match_play_out(DwMatch *m, int aggression0, int aggression1) {
     if (!m) return -1;
     const DwEngine *e = dw_engine();
     int guard = e->max_rounds() + 1;
-    while (!m->over && guard-- > 0) {
-        int pick[2];
-        int aggr[2] = { aggression0, aggression1 };
-        for (int s = 0; s < 2; s++) {
-            int opp_kind = m->last_card[1 - s] >= 0 ? e->card_kind(m->last_card[1 - s]) : -1;
-            int sc[DW_HAND];
-            for (int i = 0; i < DW_HAND; i++) {
-                int c = m->seat[s].hand[i];
-                sc[i] = c < 0 ? 0
-                        : e->cp_card_score(e->card_kind(c), e->card_power(c), e->card_cost(c),
-                                           e->is_legal_play(c, m->seat[s].energy, m->seat[s].vault),
-                                           opp_kind, aggr[s]);
-            }
-            pick[s] = e->cp_pick(sc[0], sc[1], sc[2], sc[3],
-                                 m->seat[s].hand[0], m->seat[s].hand[1], m->seat[s].hand[2],
-                                 m->seat[s].hand[3]);
-        }
-        if (dw_match_round(m, pick[0], pick[1])) break;
-    }
+    while (!m->over && guard-- > 0)
+        if (dw_match_step_policy(m, aggression0, aggression1)) break;
     return m->over ? m->winner : -1;
 }
 

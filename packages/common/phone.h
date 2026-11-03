@@ -279,6 +279,12 @@ typedef struct {
     char dw_roster_names[BP_DW_ROSTER][BP_DW_NAME_LEN];
     int dw_roster_wins[BP_DW_ROSTER], dw_roster_games[BP_DW_ROSTER];
     char dw_last[BP_DW_LINE_LEN];                     /* the last match, from your side */
+    /* ...and the duel being READ right now, if any (dw_play_watch_board): the scoreboard a person
+       watches instead of being told the outcome. dw_watch 0 means the page shows the roster. */
+    int dw_watch;
+    int dw_watch_round;
+    int dw_watch_hull_mine, dw_watch_hull_theirs;
+    int dw_watch_energy_mine, dw_watch_energy_theirs;
 } Phone;
 
 static inline void phone_init(Phone *p) {

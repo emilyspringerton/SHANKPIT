@@ -113,9 +113,16 @@ screen, and the player cannot yet click "accept".**
 5. **Real card choice for the player.** Players currently get `DW_PLAYER_PATH` (DUEL) and a crafted
    deck: a placeholder, named as such in `dw_ladder.h`. Players should pick a deck (and see the
    meta-ranked best) — the ladder already computes what a citizen would build.
-6. **Pacing and watchers.** A match resolves instantly (`dw_match_play_out`). A watched game needs a
-   round clock: keep the sequencer, drive it one `dw_match_round` per tick, and add a "thinking"
-   delay per citizen. The state machine is already round-shaped, so this is scheduling, not rules.
+6. ~~Pacing and watchers~~ — **DONE (same day, `DwWatch` + `dw_match_step_policy`).**
+   `dw_ladder_accept_watched` sets a duel up, `dw_ladder_watch_step` plays one round when it is due
+   (called from `witness_ai`'s tick), and the finish goes through `dw_ladder_record` — the same
+   recorder an instant match uses, extracted for exactly this reason. Accepting a challenge on the
+   phone starts a watched duel (1.2 s a round) and the page shows ROUND / HULL / ENERGY while it
+   plays. The test plays one challenge both ways and asserts identical winner, rounds, hulls, meta,
+   records and decks, so watching cannot drift from playing.
+   **Still open here:** citizens' own matches resolve instantly (deliberate — nobody watches those),
+   there is no per-round log line or replay, and no "thinking" pause per citizen beyond the fixed
+   round interval.
 7. ~~Records that survive a restart~~ — **DONE (same day, `dw_ladder_save/load`).** The ladder is
    written as line-oriented text (members, meta tally, results, hero) behind `SHANKPIT_LADDER_FILE`,
    autosaved at `dw_ladder_accept` — the one place a record moves — with write-then-rename.

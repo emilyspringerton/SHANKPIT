@@ -70,6 +70,53 @@ int dw_play_answer(DwLadder *l, DwPlay *p, int accept, unsigned int now) {
     return winner;
 }
 
+int dw_play_accept_watched(DwLadder *l, DwPlay *p, unsigned int now, unsigned int round_ms) {
+    if (!l || !p) return -3;
+    int slot = dw_ladder_pending_for(l, p->my_pid);
+    if (slot < 0) return -3;
+    int opponent = dw_play_opponent_for(l, p, slot);
+    int began = dw_ladder_accept_watched(l, slot, now, round_ms);
+    if (began != 0) return began;
+    p->pending_slot = -1;
+    p->answered++;
+    p->watching = 1;
+    p->watch_opponent_pid = opponent;
+    p->watch_started_ms = now;
+    return 0;
+}
+
+int dw_play_watch_poll(DwLadder *l, DwPlay *p) {
+    if (!l || !p || !p->watching) return 0;
+    if (l->watch.active) return 0;      /* still being played */
+    p->watching = 0;
+    if (!l->last.valid) return -1;
+    p->last_winner_pid = l->last.winner == 2 ? -2 : l->last.pid[l->last.winner];
+    p->last_opponent_pid = p->watch_opponent_pid;
+    p->last_kind = l->last.kind;
+    p->last_rounds = l->last.rounds;
+    p->last_result_ms = l->last.at_ms;
+    {
+        int my_seat = (l->last.pid[0] == p->my_pid) ? 0 : 1;
+        p->last_hull_mine = l->last.hull[my_seat];
+        p->last_hull_theirs = l->last.hull[1 - my_seat];
+    }
+    return 1;
+}
+
+int dw_play_watch_board(const DwLadder *l, const DwPlay *p, DwPlayBoard *out) {
+    if (!l || !p || !out) return 0;
+    if (!l->watch.active) return 0;
+    int my_seat = (l->watch.pid0 == p->my_pid) ? 0 : 1;
+    out->round = l->watch.match.round;
+    out->hull_mine = l->watch.match.seat[my_seat].hull;
+    out->hull_theirs = l->watch.match.seat[1 - my_seat].hull;
+    out->energy_mine = l->watch.match.seat[my_seat].energy;
+    out->energy_theirs = l->watch.match.seat[1 - my_seat].energy;
+    out->vault_mine = l->watch.match.seat[my_seat].vault;
+    out->vault_theirs = l->watch.match.seat[1 - my_seat].vault;
+    return 1;
+}
+
 int dw_play_challenge(DwLadder *l, DwPlay *p, int member_index, unsigned int now) {
     if (!l || !p) return -1;
     if (member_index < 0 || member_index >= DW_LADDER_MAX_CITIZENS) return -1;

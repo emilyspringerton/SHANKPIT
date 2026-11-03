@@ -1366,6 +1366,9 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
     if (!s) return;
     g_wai_now = now_ms;
     if (g_dw_ladder_ready) dw_ladder_tick(&g_dw_ladder, now_ms);
+    /* a duel somebody is WATCHING is read one round per its own clock (dw_ladder.h) -- driven from
+       the world's tick, so a watched match advances with the world and not with a phone's frames */
+    if (g_dw_ladder_ready) dw_ladder_watch_step(&g_dw_ladder, now_ms);
     /* publish at most every 2 s (or promptly after a match) -- a no-op unless SHANKPIT_NET_SNAPSHOT
        names a file, so a normal run still writes nothing at all */
     if (g_dw_ladder_ready) dw_net_publish(&g_dw_ladder, now_ms);

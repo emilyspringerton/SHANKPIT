@@ -82,6 +82,15 @@ void dw_match_init(DwMatch *m, uint32_t seed, const int deck0[DW_DECK], const in
  * Returns 1 when the match ended on this round, 0 while it is still live. */
 int dw_match_round(DwMatch *m, int card0, int card1);
 
+/* ONE round, with both seats choosing through the PARENA citizen policy (cp_pick) using each seat's
+ * `aggression` (0..1000). Returns 1 when the match ended on this round, 0 while it is still live.
+ *
+ * This is the seam a WATCHED match needs: `dw_match_play_out` is this in a loop, so a duel can be
+ * dribbled out one round per clock tick and still be the exact same game -- same policy, same order,
+ * same numbers -- as the one that resolves instantly. Nothing else about a match depends on how fast
+ * it is being read. */
+int dw_match_step_policy(DwMatch *m, int aggression0, int aggression1);
+
 /* Plays a whole match with both seats choosing through the PARENA citizen policy (cp_pick), using
  * each seat's `aggression` (0..1000). Returns the winner (-1 if it could not finish). */
 int dw_match_play_out(DwMatch *m, int aggression0, int aggression1);

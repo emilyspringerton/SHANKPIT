@@ -47,7 +47,18 @@ typedef struct {
     int answered;            /* challenges this player has answered, accepted or declined */
     int declined;
     int issued;              /* challenges this player has opened */
+    int watching;            /* a duel this player accepted is being read right now */
+    int watch_opponent_pid;
+    unsigned int watch_started_ms;
 } DwPlay;
+
+/* The live board of a watched duel, read from the PLAYER's side (their hull first, like the result). */
+typedef struct {
+    int round;
+    int hull_mine, hull_theirs;
+    int energy_mine, energy_theirs;
+    int vault_mine, vault_theirs;
+} DwPlayBoard;
 
 /* `my_pid` is the player's own ladder pid -- the ladder's hero_pid, not the render slot. */
 void dw_play_init(DwPlay *p, int my_pid);
@@ -63,6 +74,21 @@ int dw_play_opponent_for(DwLadder *l, DwPlay *p, int slot);
  * challenge was declined. A decline touches no record and no result: nothing happened is the truth,
  * and a screen that prints "you lost" after a no is a bug this return value exists to prevent. */
 int dw_play_answer(DwLadder *l, DwPlay *p, int accept, unsigned int now);
+
+/* Accepts the waiting challenge AS A WATCHED MATCH: the duel is set up now and read one round per
+ * `round_ms` (0 = the ladder's default), so a screen can show it being played instead of only the
+ * result. Returns 0 when the duel is live, -3 when nothing was waiting, -5 when one is already being
+ * watched. The records are written by the ladder when the last round lands, exactly as an instant
+ * match writes them -- this only changes WHEN the person learns the outcome. */
+int dw_play_accept_watched(DwLadder *l, DwPlay *p, unsigned int now, unsigned int round_ms);
+
+/* Call once per frame (or per phone sync): when a duel this player started has finished, copies its
+ * result into this DwPlay (seat-aware, same fields dw_play_answer fills) and returns 1. Returns 0
+ * while it is still live or nothing was being watched, -1 if it finished without a record. */
+int dw_play_watch_poll(DwLadder *l, DwPlay *p);
+
+/* The live board, if a duel is being watched. Returns 1 and fills `out`, else 0. */
+int dw_play_watch_board(const DwLadder *l, const DwPlay *p, DwPlayBoard *out);
 
 /* Opens a challenge against members[member_index]. Returns the challenge slot, or -1 (not on the
  * ladder, yourself, or no free slot). */

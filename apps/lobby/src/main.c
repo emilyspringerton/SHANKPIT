@@ -1540,8 +1540,24 @@ static void dw_phone_sync(void) {
     ph->dw_wins = ph->dw_games = 0;
     ph->dw_meta_kind = -1;
     ph->dw_meta_share = 0;
+    ph->dw_watch = 0;
     if (!l) return;
     if (!g_dw_play_ready) { dw_play_init(&g_dw_play, l->hero_pid); g_dw_play_ready = 1; }
+
+    /* a watched duel that has finished reports itself here: the ladder wrote the records when the
+       last round landed, so this only has to pick the result up and read it from your seat */
+    dw_play_watch_poll(l, &g_dw_play);
+    {
+        DwPlayBoard board;
+        if (dw_play_watch_board(l, &g_dw_play, &board)) {
+            ph->dw_watch = 1;
+            ph->dw_watch_round = board.round;
+            ph->dw_watch_hull_mine = board.hull_mine;
+            ph->dw_watch_hull_theirs = board.hull_theirs;
+            ph->dw_watch_energy_mine = board.energy_mine;
+            ph->dw_watch_energy_theirs = board.energy_theirs;
+        }
+    }
 
     int mi = dw_ladder_member_for_pid(l, g_dw_play.my_pid);
     if (mi >= 0) { ph->dw_wins = l->members[mi].wins; ph->dw_games = l->members[mi].games; }
@@ -1798,7 +1814,22 @@ static void draw_phone_app(Phone *p) {
     } else if (p->app == BP_APP_DEADWEIGHT) {
         /* The citizens' ladder from your side. Every number is the world's and every name is the
            citizen that owns it -- this pass only paints, which is why a save file cannot drift. */
-        if (!p->dw_live) {
+        if (p->dw_watch) {
+            /* the board, while the duel is being played: this is the thing the whole feature was
+               missing -- a match you can watch instead of a result you are told */
+            char b[96];
+            glColor3f(1.0f, 0.9f, 0.55f);
+            snprintf(b, sizeof b, "ROUND %d", p->dw_watch_round);
+            draw_string(b, col_x, row_y, 2.6f);
+            glColor3f(0.85f, 0.92f, 0.97f);
+            snprintf(b, sizeof b, "HULL   YOU %d   THEM %d", p->dw_watch_hull_mine, p->dw_watch_hull_theirs);
+            draw_string(b, col_x, row_y - row_h, 2.4f);
+            snprintf(b, sizeof b, "ENERGY YOU %d   THEM %d", p->dw_watch_energy_mine, p->dw_watch_energy_theirs);
+            glColor3f(0.6f, 0.78f, 0.88f);
+            draw_string(b, col_x, row_y - 2 * row_h, 2.2f);
+            glColor3f(0.55f, 0.75f, 0.65f);
+            draw_string("BEING PLAYED -- THE RESULT LANDS HERE", col_x, PHONE_PANEL_Y0 + 46.0f, 2.0f);
+        } else if (!p->dw_live) {
             glColor3f(0.5f, 0.55f, 0.6f);
             draw_string("NO LADDER IN THIS WORLD", col_x, row_y, 2.4f);
             draw_string("CITIZENS PLAY IN THE NIGHT SHIFT", col_x, row_y - row_h, 2.0f);
@@ -16566,22 +16597,21 @@ int main(int argc, char* argv[]) {
                                 if (dl) {
                                     if (!g_dw_play_ready) { dw_play_init(&g_dw_play, dl->hero_pid); g_dw_play_ready = 1; }
                                     unsigned int now = SDL_GetTicks();
-                                    int won = dw_play_answer(dl, &g_dw_play, fx.kind == BP_FX_DW_ACCEPT, now);
-                                    const char *them = witness_ai_citizen_name(g_dw_play.last_opponent_pid);
-                                    if (won == -4) printf("[DEADWEIGHT] declined %s\n", them);
-                                    else if (won == -3) printf("[DEADWEIGHT] nothing was waiting\n");
-                                    else if (won == -2)
-                                        printf("[DEADWEIGHT] draw with %s, %d-%d in %d rounds\n", them,
-                                               g_dw_play.last_hull_mine, g_dw_play.last_hull_theirs,
-                                               g_dw_play.last_rounds);
-                                    else
-                                        printf("[DEADWEIGHT] %s %s, %d-%d in %d rounds\n",
-                                               won == g_dw_play.my_pid ? "beat" : "lost to", them,
-                                               g_dw_play.last_hull_mine, g_dw_play.last_hull_theirs,
-                                               g_dw_play.last_rounds);
-                                    /* a finished match is exactly what the published feed wants
-                                       promptly, so it does not wait for the next periodic tick */
-                                    dw_net_publish(dl, now);
+                                    if (fx.kind == BP_FX_DW_ACCEPT) {
+                                        /* Accepting starts a WATCHED duel: it is set up now and read
+                                           one round per tick, so the board plays on the phone instead
+                                           of the outcome arriving in the same frame as the question. */
+                                        int began = dw_play_accept_watched(dl, &g_dw_play, now, 0);
+                                        if (began == 0)
+                                            printf("[DEADWEIGHT] duel started vs %s\n",
+                                                   witness_ai_citizen_name(g_dw_play.watch_opponent_pid));
+                                        else if (began == -5)
+                                            printf("[DEADWEIGHT] a duel is already being played\n");
+                                        else
+                                            printf("[DEADWEIGHT] nothing was waiting\n");
+                                    } else if (dw_play_answer(dl, &g_dw_play, 0, now) == -4) {
+                                        printf("[DEADWEIGHT] declined\n");
+                                    }
                                     dw_phone_sync();
                                 }
                             } else if (fx.kind == BP_FX_DW_CHALLENGE) {

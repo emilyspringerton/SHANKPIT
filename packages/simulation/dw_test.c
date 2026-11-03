@@ -563,6 +563,81 @@ int main(void) {
         }
     }
 
+    /* ---- a WATCHED match is the SAME match (dw_ladder_accept_watched / dw_ladder_watch_step) ----
+     * The point of the round clock is that it changes when a person learns the outcome, never what
+     * the outcome is. Two identical ladders, one challenge each, one resolved in a single call and
+     * one read a round at a time: every number has to agree. */
+    {
+        DwLadder instant, watched;
+        dw_ladder_reset(&instant, 0x4242u);
+        dw_ladder_set_hero(&instant, 0);
+        dw_ladder_add_citizen(&instant, 5, CILIFE_CRAFT, 400, 1000u);
+        dw_ladder_add_citizen(&instant, 6, CILIFE_DUEL, 900, 1000u);
+        watched = instant;   /* same members, decks, rng and next challenge id */
+
+        int s_instant = dw_ladder_challenge(&instant, 5, 6, 2000u);
+        int s_watched = dw_ladder_challenge(&watched, 5, 6, 2000u);
+        CHECK(s_instant == 0 && s_watched == 0, "the fixture challenges landed in %d/%d", s_instant, s_watched);
+
+        int wi = dw_ladder_accept(&instant, s_instant, 3000u);
+        CHECK(wi == 0 || wi == 5 || wi == 6 || wi == -2, "the instant match returned %d", wi);
+
+        CHECK(dw_ladder_watch_match(&watched) == NULL, "a watch is live before anything started");
+        CHECK(dw_ladder_watch_step(&watched, 3000u) == -1, "stepping with no watch was not -1");
+        CHECK(dw_ladder_accept_watched(&watched, s_watched, 3000u, 1000u) == 0,
+              "the watched match did not start");
+        CHECK(dw_ladder_accept_watched(&watched, s_watched, 3000u, 1000u) == -3,
+              "an already-answered challenge started a second watched match");
+        CHECK(dw_ladder_watch_match(&watched) != NULL, "the board is not live after starting");
+        /* a DIFFERENT invitation can be open while a duel runs, but cannot be started on top of it */
+        {
+            int other = dw_ladder_challenge(&watched, 6, 0, 3000u);
+            CHECK(other >= 0, "a second invitation could not be opened mid-duel");
+            CHECK(dw_ladder_accept_watched(&watched, other, 3000u, 1000u) == -5,
+                  "a second watched duel started on top of the first");
+            dw_ladder_decline(&watched, other);
+        }
+        CHECK(dw_ladder_watch_step(&watched, 3500u) == 0, "a round played before it was due");
+        int first = dw_ladder_watch_step(&watched, 4000u);
+        CHECK(first == 0, "one round finished the whole match (%d)", first);
+        {
+            const DwMatch *board = dw_ladder_watch_match(&watched);
+            CHECK(board != NULL && board->round >= 1, "the live board shows no played round");
+            if (board)
+                CHECK(board->seat[0].hull <= 20 && board->seat[1].hull <= 20,
+                      "a hull went above the start value (%d/%d)", board->seat[0].hull, board->seat[1].hull);
+        }
+
+        int finished = 0;
+        for (unsigned int t = 5000u; t < 5000u + 200u * 1000u && finished != 1; t += 1000u)
+            finished = dw_ladder_watch_step(&watched, t);
+        CHECK(finished == 1, "the watched match never finished");
+        CHECK(dw_ladder_watch_match(&watched) == NULL, "the board is still live after the match ended");
+        CHECK(dw_ladder_watch_step(&watched, 400000u) == -1, "stepping a finished watch was not -1");
+
+        CHECK(watched.last.valid && instant.last.valid, "one of the two matches left no record");
+        CHECK(watched.last.winner == instant.last.winner, "watched winner %d, instant %d",
+              watched.last.winner, instant.last.winner);
+        CHECK(watched.last.rounds == instant.last.rounds, "watched %d rounds, instant %d",
+              watched.last.rounds, instant.last.rounds);
+        CHECK(watched.last.hull[0] == instant.last.hull[0] && watched.last.hull[1] == instant.last.hull[1],
+              "watched hulls %d-%d, instant %d-%d", watched.last.hull[0], watched.last.hull[1],
+              instant.last.hull[0], instant.last.hull[1]);
+        CHECK(watched.meta_plays == instant.meta_plays, "the meta tallies disagree");
+        for (int i = 0; i < DW_LADDER_MAX_CITIZENS; i++) {
+            const DwLadderMember *x = &instant.members[i];
+            if (!x->active) continue;
+            int yi = dw_ladder_member_for_pid(&watched, x->pid);
+            CHECK(yi >= 0, "pid %d is missing from the watched ladder", x->pid);
+            if (yi < 0) continue;
+            CHECK(watched.members[yi].wins == x->wins && watched.members[yi].games == x->games,
+                  "pid %d recorded %d-%d watched, %d-%d instant", x->pid, watched.members[yi].wins,
+                  watched.members[yi].games, x->wins, x->games);
+            CHECK(memcmp(watched.members[yi].deck, x->deck, sizeof x->deck) == 0,
+                  "pid %d rebuilt a different deck after a watched match", x->pid);
+        }
+    }
+
     if (fails) { printf("deadweight: %d FAILED\n", fails); return 1; }
     printf("deadweight: ALL PASS\n");
     return 0;

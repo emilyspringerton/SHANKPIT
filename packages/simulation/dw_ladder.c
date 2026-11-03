@@ -173,28 +173,22 @@ void dw_ladder_decline(DwLadder *l, int slot) {
     l->challenges[slot].active = 0;
 }
 
-int dw_ladder_accept(DwLadder *l, int slot, unsigned int now) {
-    if (!l || slot < 0 || slot >= DW_LADDER_MAX_CHALLENGES) return -3;
-    DwChallenge *c = &l->challenges[slot];
-    if (!c->active) return -3;
-    int i0 = dw_ladder_member_for_pid(l, c->from_pid);
-    int i1 = dw_ladder_member_for_pid(l, c->to_pid);
-    if (i0 < 0 || i1 < 0) { c->active = 0; return -3; }
+static uint32_t dw_ladder_seed(const DwChallenge *c, int pid0, int pid1) {
+    return (uint32_t)c->id * 2654435761u ^ (uint32_t)((pid0 + 1) * 7919) ^ (uint32_t)(pid1 + 3);
+}
 
+/* THE recorder -- the one place a finished match becomes ladder state: the meta tally, both records,
+ * the last-match record, the published ticker, both re-crafted decks and the save file. An instant
+ * match and a watched one both land here, which is what makes "watched" scheduling rather than a
+ * second set of rules that could drift from the first. */
+static int dw_ladder_record(DwLadder *l, int i0, int i1, int kind, int winner,
+                            const DwMatch *match, unsigned int now) {
     DwLadderMember *a = &l->members[i0];
     DwLadderMember *b = &l->members[i1];
-    /* the seats are the CHALLENGE's order: seat 0 is whoever opened it, which is what makes a result
-     * readable as "Kaito beat you" without a second lookup */
-    DwMatch match;
-    uint32_t seed = (uint32_t)c->id * 2654435761u ^ (uint32_t)((a->pid + 1) * 7919) ^ (uint32_t)(b->pid + 3);
-    dw_match_init(&match, seed, a->deck, b->deck);
-    int winner = dw_match_play_out(&match, a->aggression, b->aggression);
-    int kind = c->kind;
-    c->active = 0;
 
     /* the population's meta is the cards that were actually played, not the decks that were built */
-    for (int k = 0; k < 3; k++) l->meta_kind[k] += match.kind_plays[k];
-    l->meta_plays += (long)match.kind_plays[0] + match.kind_plays[1] + match.kind_plays[2];
+    for (int k = 0; k < 3; k++) l->meta_kind[k] += match->kind_plays[k];
+    l->meta_plays += (long)match->kind_plays[0] + match->kind_plays[1] + match->kind_plays[2];
     l->results[kind]++;
 
     int pid = -2;
@@ -218,16 +212,16 @@ int dw_ladder_accept(DwLadder *l, int slot, unsigned int now) {
     l->last.pid[0] = a->pid;
     l->last.pid[1] = b->pid;
     l->last.winner = winner == 0 ? 0 : (winner == 1 ? 1 : 2);
-    l->last.rounds = match.rounds_played;
-    l->last.hull[0] = match.seat[0].hull;
-    l->last.hull[1] = match.seat[1].hull;
+    l->last.rounds = match->rounds_played;
+    l->last.hull[0] = match->seat[0].hull;
+    l->last.hull[1] = match->seat[1].hull;
     l->last.at_ms = now;
 
     /* every finished match goes into the published ticker (dw_net.h). Done here rather than in a
      * caller because this is the ONE place a match stops being live, so nothing can finish a match
      * and forget to tell the internet about it. */
     dw_net_note_match(kind, a->pid, b->pid, winner == 0 ? 0 : (winner == 1 ? 1 : 2),
-                      match.rounds_played, match.seat[0].hull, match.seat[1].hull, now);
+                      match->rounds_played, match->seat[0].hull, match->seat[1].hull, now);
 
     /* both records changed, so both decks are re-crafted from the new record and the new meta --
      * this is the "citizens craft their own decks based on their win rate and the current meta"
@@ -238,6 +232,75 @@ int dw_ladder_accept(DwLadder *l, int slot, unsigned int now) {
     /* a finished match is the only thing worth a write: records moved, and the file is the record */
     if (g_ladder_path[0]) dw_ladder_save(l, g_ladder_path);
     return pid;
+}
+
+int dw_ladder_accept(DwLadder *l, int slot, unsigned int now) {
+    if (!l || slot < 0 || slot >= DW_LADDER_MAX_CHALLENGES) return -3;
+    DwChallenge *c = &l->challenges[slot];
+    if (!c->active) return -3;
+    int i0 = dw_ladder_member_for_pid(l, c->from_pid);
+    int i1 = dw_ladder_member_for_pid(l, c->to_pid);
+    if (i0 < 0 || i1 < 0) { c->active = 0; return -3; }
+
+    DwMatch match;
+    dw_match_init(&match, dw_ladder_seed(c, l->members[i0].pid, l->members[i1].pid),
+                  l->members[i0].deck, l->members[i1].deck);
+    int winner = dw_match_play_out(&match, l->members[i0].aggression, l->members[i1].aggression);
+    int kind = c->kind;
+    c->active = 0;
+    return dw_ladder_record(l, i0, i1, kind, winner, &match, now);
+}
+
+int dw_ladder_accept_watched(DwLadder *l, int slot, unsigned int now, unsigned int round_ms) {
+    if (!l || slot < 0 || slot >= DW_LADDER_MAX_CHALLENGES) return -3;
+    DwChallenge *c = &l->challenges[slot];
+    /* the challenge is checked FIRST: "that invitation is already answered" is a more useful answer
+       than "a duel is running" when both are true, and a caller retrying a closed slot needs to know
+       the slot, not the board */
+    if (!c->active) return -3;
+    if (l->watch.active) return -5;   /* one board at a time */
+    int i0 = dw_ladder_member_for_pid(l, c->from_pid);
+    int i1 = dw_ladder_member_for_pid(l, c->to_pid);
+    if (i0 < 0 || i1 < 0) { c->active = 0; return -3; }
+
+    l->watch.active = 1;
+    l->watch.slot = slot;
+    l->watch.kind = c->kind;
+    l->watch.i0 = i0;
+    l->watch.i1 = i1;
+    l->watch.pid0 = l->members[i0].pid;
+    l->watch.pid1 = l->members[i1].pid;
+    l->watch.round_ms = round_ms ? round_ms : DW_LADDER_DEFAULT_ROUND_MS;
+    l->watch.next_round_ms = now + l->watch.round_ms;
+    dw_match_init(&l->watch.match, dw_ladder_seed(c, l->watch.pid0, l->watch.pid1),
+                  l->members[i0].deck, l->members[i1].deck);
+    /* the invitation is answered the moment the duel starts; the duel is the live thing now */
+    c->active = 0;
+    return 0;
+}
+
+int dw_ladder_watch_step(DwLadder *l, unsigned int now) {
+    if (!l || !l->watch.active) return -1;
+    if ((int)(now - l->watch.next_round_ms) < 0) return 0;
+
+    int i0 = l->watch.i0, i1 = l->watch.i1;
+    int ended = dw_match_step_policy(&l->watch.match, l->members[i0].aggression,
+                                     l->members[i1].aggression);
+    l->watch.next_round_ms = now + l->watch.round_ms;
+    if (!ended) return 0;
+
+    /* the board is copied out before the watch is cleared, because the recorder reads the match and
+       may re-craft decks that the watch's own members point at */
+    DwMatch done = l->watch.match;
+    int kind = l->watch.kind;
+    l->watch.active = 0;
+    dw_ladder_record(l, i0, i1, kind, done.winner, &done, now);
+    return 1;
+}
+
+const DwMatch *dw_ladder_watch_match(const DwLadder *l) {
+    if (!l || !l->watch.active) return NULL;
+    return &l->watch.match;
 }
 
 int dw_ladder_save(const DwLadder *l, const char *path) {

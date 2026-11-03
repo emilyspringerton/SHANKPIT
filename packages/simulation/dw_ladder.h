@@ -76,6 +76,27 @@ typedef struct {
     unsigned int at_ms;
 } DwLadderLast;
 
+/* A WATCHED match: one duel being read round by round instead of resolving in a single call.
+ *
+ * This exists because "nobody has watched a match" was the honest headline of the whole feature. The
+ * sequencer was already round-shaped (`dw_match_round`), so a watched game is SCHEDULING, not rules:
+ * `dw_match_step_policy` is called once per `round_ms` from the world's own tick, and when the last
+ * round lands the SAME recorder that an instant match uses writes the records, the meta, the
+ * published ticker and the save file. A watched match therefore cannot disagree with an instant one
+ * -- the test proves it by playing the same challenge both ways and comparing every number. */
+#define DW_LADDER_DEFAULT_ROUND_MS 1200u
+
+typedef struct {
+    int active;
+    int slot;           /* the challenge that was answered (informational; it is already closed) */
+    int kind;           /* DW_CHAL_* */
+    int i0, i1;         /* member indices, in the challenge's seat order */
+    int pid0, pid1;
+    unsigned int round_ms;
+    unsigned int next_round_ms;
+    DwMatch match;      /* the live board: hulls, energy, credits, hands, round */
+} DwWatch;
+
 typedef struct {
     DwLadderMember members[DW_LADDER_MAX_CITIZENS];
     int count;
@@ -85,6 +106,7 @@ typedef struct {
     long meta_plays;
     int results[5];     /* matches completed, by DW_CHAL_* */
     DwLadderLast last;  /* the most recent finished match, for the player's own screen */
+    DwWatch watch;      /* the one duel currently being read round by round, if any */
     int hero_pid;       /* -1 when nobody is playing */
     uint32_t rng;
     unsigned int now_ms;
@@ -127,6 +149,20 @@ int dw_ladder_pending_for(const DwLadder *l, int pid);
  * the match changed both records and the population's meta. */
 int dw_ladder_accept(DwLadder *l, int slot, unsigned int now);
 void dw_ladder_decline(DwLadder *l, int slot);
+
+/* The same accept, but the match is READ rather than resolved: it is set up now and advanced one
+ * round per call to dw_ladder_watch_step every `round_ms` (0 = DW_LADDER_DEFAULT_ROUND_MS). Returns
+ * 0 when the duel is live, -3 when the slot was not a live challenge, -5 when a duel is already
+ * being watched (one at a time -- a second one would need two boards). */
+int dw_ladder_accept_watched(DwLadder *l, int slot, unsigned int now, unsigned int round_ms);
+
+/* Advances the watched duel if its next round is due. Returns 1 when it FINISHED on this call (the
+ * records, meta and ticker are already written), 0 while it is still live or not yet due, -1 when
+ * nothing is being watched. */
+int dw_ladder_watch_step(DwLadder *l, unsigned int now);
+
+/* The live board, or NULL when no duel is being watched. Read-only: the caller is a screen. */
+const DwMatch *dw_ladder_watch_match(const DwLadder *l);
 
 /* Expiry, plus citizens starting games of their own: every interval, one citizen challenges another
  * citizen, or the hero with a lower rate. Citizens do not need a player present to play. */
