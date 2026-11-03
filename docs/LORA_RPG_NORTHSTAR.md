@@ -60,9 +60,10 @@ everything, not just one chunk.
 
 **Requests** are their own 8-byte frame (first byte **3**, a delta's is **2**, so a receiver tells them
 apart before parsing), carrying kind, the asking entity, the asker's sequence number and a tick. Two
-kinds: `SNAPSHOT` — "give me the world", expensive, and answered `0` for "wait"; and `TICK` — "resend
-tick N", answered straight out of an 8-tick history ring as one frame, deliberately **not** charged
-against the snapshot budget.
+kinds: `SNAPSHOT` — "give me the world", expensive, and answered `0` for "wait"; `TICK` — "resend tick
+N", answered straight out of an 8-tick history ring as one frame, deliberately **not** charged against
+the snapshot budget; and `RANGE` — "everything since tick N", the catch-up after a long fade, also
+served from the ring and also free of the snapshot budget.
 
 `SNAPSHOT` is gated **twice**, and both numbers are PARENA's:
 
@@ -72,6 +73,14 @@ against the snapshot budget.
 - **globally** (`lora-snapshot-global-ms`: 4 s / 8 s / 2 s) — no snapshot at all inside that gap,
   whoever is asking. Without it, eight clients could pull eight full-state frames back to back; with it,
   the worst case is one snapshot per global gap and the air keeps carrying the game.
+
+A `RANGE` answer is capped two ways and says so: by `lora-range-max-ticks` from PARENA (4 at LONG_FAST,
+2 at LONG_SLOW, 6 at SHORT_TURBO) and by the frames the caller gave it. Ticks come back **oldest first,
+ordered by tick number** — the ring wraps, so ring position is not air order — and a tick whose frames do
+not fit is not sent at all, because a client must never see half a tick. The answer reports `ticks`,
+`frames`, `first_tick`, `more` ("ask again from `first_tick + ticks`") and `gap` ("the tick you asked for
+has fallen out of the ring; this is the oldest I still have — a snapshot is the only cure"). A range that
+matches nothing is `-1`, never a silent empty success.
 
 ## The tick
 
@@ -118,8 +127,8 @@ Python daemon and `ForwardToWotanMatchmaker` do not exist in this repo and were 
 
 1. **Loss**: policy, requests and catch-up exist -- `lora_client_send/ack/due` with a retry budget,
    `SNAPSHOT` gated per client (8 slots, no eviction) **and** by a global airtime gap, `TICK` resends from
-   an 8-tick ring. What is NOT built: a ranged "everything since tick N" request (the client walks the
-   ring a tick at a time), and nothing persists between host restarts.
+   an 8-tick ring, and `RANGE` catch-up capped by `lora-range-max-ticks` with `gap`/`more` reported. What
+   is NOT built: persistence across host restarts -- every ring, budget and client table starts empty.
 2. **Multiple frames per tick** — done (v2 header, chunk reassembly); the remaining question is what a
    receiver does when chunk 2 of 3 never arrives: re-request by tick, or wait for the next full state.
 3. **Persistence** of the slow world (the camp host can sleep between ticks) — IDUNA already holds

@@ -532,7 +532,7 @@ static int lora_client_due(LoraClient *c, uint32_t now_ms, LoraIntent *out, int 
 /* ---- a client asking for the world -------------------------------------------------------------- */
 
 /* A request is NOT a delta and must never be parsed as one: its first byte is 3 while a delta's is 2, so
-   a receiver can tell them apart before anything else. Six bytes total -- a request is the cheapest thing
+   a receiver can tell them apart before anything else. Eight bytes total -- a request is the cheapest thing
    on the air and should stay that way. */
 #define LORA_REQUEST_VERSION 3u
 #define LORA_REQUEST_BYTES   8
@@ -540,14 +540,16 @@ static int lora_client_due(LoraClient *c, uint32_t now_ms, LoraIntent *out, int 
 enum {
     LORA_REQ_SNAPSHOT = 0,   /* "give me the world" -- expensive, budgeted */
     LORA_REQ_TICK     = 1,   /* "resend tick N" -- cheap, needs the history ring below */
-    LORA_REQ_COUNT    = 2
+    LORA_REQ_RANGE    = 2,   /* "everything since tick N" -- cheap per tick, capped per answer */
+    LORA_REQ_COUNT    = 3
 };
 
 typedef struct {
     uint8_t  kind;     /* LORA_REQ_* */
     uint16_t entity;   /* who is asking, so the answer can be addressed (and logged) */
     uint16_t seq;      /* the asker's own counter: two requests are not the same request */
-    uint16_t tick;     /* LORA_REQ_TICK: which tick to resend. Ignored by SNAPSHOT. */
+    uint16_t tick;     /* LORA_REQ_TICK: which tick to resend. LORA_REQ_RANGE: the FIRST tick wanted.
+                          Ignored by SNAPSHOT. */
 } LoraRequest;
 
 static int lora_request_encode(const LoraRequest *r, uint8_t *out) {
@@ -677,6 +679,58 @@ static int lora_snapshot_gate(LoraSnapshotPump *p, uint16_t entity, int preset, 
     return 0;
 }
 
+/* What a range answer actually covered, so the client knows what it now has and what to ask next. */
+typedef struct {
+    int      frames;      /* frames written */
+    int      ticks;       /* ticks served, oldest first */
+    uint16_t first_tick;  /* first tick actually served (may be newer than asked, see gap) */
+    uint8_t  gap;         /* the asked-for tick is older than the ring: only a snapshot can cover it */
+    uint8_t  more;        /* the cap or the frame budget cut the range: ask again from first_tick + ticks */
+} LoraRangeResult;
+
+/* Answer "everything since tick N" out of the ring, oldest first, capped two ways: by
+   lora-range-max-ticks and by the caller's frame slots. A tick whose frames do not fit is not served at
+   all (a client never sees a half tick), and `more` says so. Ticks are ordered by their NUMBER, not by
+   their position in the ring, because the ring wraps. */
+static int lora_host_request_range(const LoraRequest *req, const LoraHistory *hist, int preset,
+                                   LoraDelta *frames, int max_frames, LoraRangeResult *out) {
+    int idx[LORA_HISTORY_TICKS], n = 0, i, j, used = 0, served = 0, cap;
+    uint16_t oldest = 0;
+    int have_any = 0;
+    if (out) memset(out, 0, sizeof *out);
+    if (!req || !hist || !frames || max_frames <= 0) return -1;
+    if (req->kind != LORA_REQ_RANGE) return -1;
+    cap = lora_range_max_ticks(preset);
+    if (cap <= 0) return -1;
+    for (i = 0; i < LORA_HISTORY_TICKS; i++) {
+        const LoraHistorySlot *slot = &hist->s[i];
+        if (!slot->used) continue;                   /* an unused slot is tick 0 and must not widen the window */
+        if (!have_any || slot->tick < oldest) oldest = slot->tick;
+        have_any = 1;
+        if (slot->tick >= req->tick) idx[n++] = i;
+    }
+    if (out) out->first_tick = req->tick;
+    if (out && (!have_any || req->tick < oldest)) out->gap = 1;
+    if (cap > LORA_HISTORY_TICKS) cap = LORA_HISTORY_TICKS;
+    /* ascending by tick: the ring wraps, so its order is not the air's order */
+    for (i = 1; i < n; i++) {
+        int v = idx[i];
+        for (j = i - 1; j >= 0 && hist->s[idx[j]].tick > hist->s[v].tick; j--) idx[j + 1] = idx[j];
+        idx[j + 1] = v;
+    }
+    for (i = 0; i < n && served < cap; i++) {
+        const LoraHistorySlot *slot = &hist->s[idx[i]];
+        int built = lora_frames_build(slot->rec, slot->count, slot->tick, frames + used, max_frames - used);
+        if (built <= 0) break;                       /* does not fit whole: stop, do not split a tick */
+        if (served == 0 && out) out->first_tick = slot->tick;
+        used += built;
+        served++;
+    }
+    if (out) { out->frames = used; out->ticks = served; out->more = (i < n) ? 1 : 0; }
+    if (served == 0) return -1;                      /* nothing in the window: only a snapshot helps */
+    return used;
+}
+
 /* Serve a client's request.
      >0  frames written (the snapshot, chunked like any tick)
       0  a snapshot was just sent: rate-limited, the asker must wait
@@ -694,6 +748,7 @@ static int lora_host_request(const LoraRequest *req, const LoraWorld *w, const L
         if (count < 0) return -1;                 /* older than the ring: ask for a snapshot instead */
         return lora_frames_build(rec, count, req->tick, frames, max_frames);
     }
+    if (req->kind == LORA_REQ_RANGE) return lora_host_request_range(req, hist, preset, frames, max_frames, NULL);
     if (req->kind != LORA_REQ_SNAPSHOT) return -1;
     {   int gate = lora_snapshot_gate(pump, req->entity, preset, now_ms);
         if (gate < 0) return -1;      /* the client table is full: this asker cannot be served */

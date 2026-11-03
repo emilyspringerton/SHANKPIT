@@ -16,6 +16,7 @@ int lora_resend_ms(int);
 int lora_max_sends(int);
 int lora_snapshot_interval_ms(int);
 int lora_snapshot_global_ms(int);
+int lora_range_max_ticks(int);
 
 int lora_tick_ms(int preset __attribute__((unused))) {
     if ((preset == 1)) {
@@ -113,6 +114,18 @@ int lora_snapshot_global_ms(int preset __attribute__((unused))) {
     return 2000;
     } else {
     return 4000;
+    }
+    }
+}
+
+int lora_range_max_ticks(int preset __attribute__((unused))) {
+    if ((preset == 1)) {
+    return 2;
+    } else {
+    if ((preset == 2)) {
+    return 6;
+    } else {
+    return 4;
     }
     }
 }

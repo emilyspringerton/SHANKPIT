@@ -397,6 +397,44 @@ int main(void) {
         CHECK(lora_host_request(&rq, &w, &hist, 0, 0, &pump, frames, LORA_MAX_FRAMES) == -1,
               "a tick outside the history was served");
         CHECK(lora_history_get(&hist, 101, rec, 4) == 1, "the newer tick is not in the ring");
+        /* RANGE: "everything since tick N", oldest first, capped, honest about what it covered */
+        rq.kind = LORA_REQ_RANGE; rq.tick = 100; rq.seq = 7;
+        {
+            LoraRangeResult rr;
+            LoraSnapshotPump pump2;
+            n = lora_host_request_range(&rq, &hist, 0, frames, LORA_MAX_FRAMES, &rr);
+            CHECK(n > 0 && n == rr.frames && rr.ticks == 2 && rr.first_tick == 100 && !rr.gap && !rr.more,
+                  "a range since 100 served %d ticks in %d frames (gap %d more %d)",
+                  rr.ticks, rr.frames, rr.gap, rr.more);
+            CHECK(lora_delta_read(frames[0].buf, frames[0].len, &v) == 1 && v.tick == 100 && v.count == 3,
+                  "the range did not start at tick 100");
+            CHECK(lora_delta_read(frames[n - 1].buf, frames[n - 1].len, &v) == 1 && v.tick == 101,
+                  "the range did not reach tick 101");
+            rec[0].value = 77;
+            lora_history_record(&hist, rec, 1, 102);
+            n = lora_host_request_range(&rq, &hist, 1, frames, LORA_MAX_FRAMES, &rr);
+            CHECK(n == 2 && rr.ticks == 2 && rr.more && rr.first_tick == 100,
+                  "the LONG_SLOW cap did not stop at 2 ticks (served %d, more %d)", rr.ticks, rr.more);
+            rq.tick = 102;
+            n = lora_host_request_range(&rq, &hist, 0, frames, LORA_MAX_FRAMES, &rr);
+            CHECK(n == 1 && rr.ticks == 1 && rr.first_tick == 102 && !rr.more,
+                  "the resumed range did not serve tick 102 alone");
+            rq.tick = 99;
+            CHECK(lora_host_request_range(&rq, &hist, 0, frames, LORA_MAX_FRAMES, &rr) > 0 && rr.ticks == 3 &&
+                  rr.gap && rr.first_tick == 100, "a range older than the ring did not report the gap");
+            rq.tick = 500;
+            CHECK(lora_host_request_range(&rq, &hist, 0, frames, LORA_MAX_FRAMES, &rr) == -1 && rr.ticks == 0,
+                  "a range past the newest tick was served");
+            rq.tick = 102;
+            CHECK(lora_host_request_range(&rq, &hist, 0, frames, 1, &rr) == 1,
+                  "a one-slot range did not serve exactly one tick");
+            lora_snapshot_pump_begin(&pump2);
+            CHECK(lora_host_request(&rq, &w, &hist, 0, 0, &pump2, frames, LORA_MAX_FRAMES) == 1,
+                  "the shared entry point did not serve a range");
+            rq.kind = LORA_REQ_SNAPSHOT;
+            CHECK(lora_host_request(&rq, &w, &hist, 0, 0, &pump2, frames, LORA_MAX_FRAMES) > 0,
+                  "a range spent the snapshot budget");
+        }
 
         for (i = 0; i < LORA_HISTORY_TICKS + 2; i++) lora_history_record(&hist, rec, 1, (uint16_t)(200 + i));
         CHECK(lora_history_get(&hist, 100, rec, 4) == -1, "a tick survived the ring");
@@ -413,6 +451,8 @@ int main(void) {
         CHECK(lora_host_request(&rq, &w, &hist, 0, 900000, &pump, frames, 0) == -1, "a zero-slot request was served");
         CHECK(lora_snapshot_interval_ms(0) == 30000 && lora_snapshot_interval_ms(1) == 60000 &&
               lora_snapshot_interval_ms(2) == 15000, "the snapshot budget is not the PARENA table's");
+        CHECK(lora_range_max_ticks(0) == 4 && lora_range_max_ticks(1) == 2 && lora_range_max_ticks(2) == 6,
+              "the range cap is not the PARENA table's");
     }
 
     if (fails) { printf("lora: %d FAILED\n", fails); return 1; }
