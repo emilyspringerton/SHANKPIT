@@ -81,10 +81,17 @@ That is deliberate: a server that silently accepts unauthenticated casts is wors
 nothing until SSO is connected. The test suite covers both the refusal and a verified flow (fake
 verifier), including that an unauthenticated *other* client cannot set a target.
 
-Honest gaps: the server stores targets and queues casts but **does not yet fire them** — nothing drains
-`wow_server_take_cast()` in the tick loop, so a queued cast is currently a validated intent, not a shot.
-The IDUNA verifier is not installed (no HTTP client on the server), and `WOW_SERVER_CLIENTS` is 8 while
-`MAX_CLIENTS` is larger, so slots beyond 8 are ignored with a one-time log.
+A queued cast **fires**: `process_user_cmd` drains `wow_server_take_cast()` right after
+`shankpit_apply_usercmd_inputs`, equips the weapon and sets `in_shoot` for that one command. Folding it
+into the usercmd is the point — the shot is ordered against that client's own movement exactly like a
+mouse click, and it cannot fire from the receive path, outside the simulation.
+
+Honest gaps: the unit token is carried and evaluated but **does not aim** the shot yet (the engine shoots
+along the player's yaw/pitch; aiming at the target entity is the next step). The IDUNA verifier is not
+installed (the server has no HTTP client), so authentication still fails closed. `WOW_SERVER_CLIENTS` is
+8 while `MAX_CLIENTS` is larger, so slots beyond 8 are ignored with a one-time log. And the cast → fire
+path is compiled, not driven: there is still no client in this environment to send a cast to a running
+server.
 
 ## GoblinFoxDragon / MUD: what is real today
 

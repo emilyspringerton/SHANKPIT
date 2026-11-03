@@ -1254,6 +1254,22 @@ int process_user_cmd(int client_id, UserCmd *cmd) {
     }
     PlayerState *p = &local_state.players[client_id];
     shankpit_apply_usercmd_inputs(p, cmd);
+    /* WOW WIRE: a cast accepted since the last command becomes THIS command's trigger pull, once.
+       Folding it into the usercmd is deliberate -- the shot happens on a client tick, so it is
+       ordered against that client's own movement exactly like a mouse click, and it cannot fire
+       from the receive path (outside the simulation). The weapon gate is the engine's own: a
+       weapon this player does not own is not equipped by a macro either. */
+    if (g_wow_server_inited && client_id >= 0 && client_id < WOW_SERVER_CLIENTS) {
+        WowCastIntent cast;
+        if (wow_server_take_cast(&g_wow_server, client_id, &cast)) {
+            int w = (int)cast.weapon;
+            if (w >= 0 && w < MAX_WEAPONS) {
+                p->current_weapon = w;
+                p->in_shoot = 1;
+                NET_SERVER_LOG("WOW_CAST client_id=%d weapon=%d token=%d", client_id, w, (int)cast.token);
+            }
+        }
+    }
     if (p->state == STATE_DEAD) {
         p->in_fwd = 0.0f;
         p->in_strafe = 0.0f;
