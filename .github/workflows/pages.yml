@@ -19,6 +19,11 @@ on:
       - 'site/**'
       - 'docs/**'
       - 'docs2/**'
+      # The published Roblox 460 install kit is a copy of roblox/SHANKPIT_* (never a rebuild), so a change to the
+      # layer or to the base place has to republish it -- otherwise the page keeps serving a kit src/ no longer
+      # matches. site/check.mjs then asserts the copied bytes are the committed ones.
+      - 'roblox/**'
+      - 'shankpit_roblox.rbxl'
       - '.github/workflows/pages.yml'
   workflow_dispatch: {}
 

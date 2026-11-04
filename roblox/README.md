@@ -85,12 +85,35 @@ secret, mints a connect ticket, verifies the MAC the way the C server does, and 
 `live_mint_test.lua` — so the module the place runs is proven against a live ticket, not a fixture.
 
 ```bash
-make test-roblox                        # all six modules + the installer, under plain Lua, plus luac -p
+make test-roblox                        # every suite + the installer, under plain Lua, plus luac -p
 make regen-roblox-rules                 # queue_rules.prn + ticket_rules.prn -> src/*_rules.lua (needs ../PARENA)
 make roblox-model                       # -> SHANKPIT_ROBLOX_460.rbxmx AND SHANKPIT_460_INSTALL.luau
 make roblox-install                     # -> just the Command Bar paste script
 roblox/scripts/live_ticket_check.sh     # real IDUNA, real ticket, verified MAC
 ```
+
+## CI: the same checks, on every push
+
+`.github/workflows/roblox460.yml` runs on every push and PR that touches `roblox/` or the `Makefile` (and on
+demand), with no stored secrets:
+
+- **`suite`** installs Lua 5.4 *as `lua` and `luac`* — Ubuntu's `lua5.4` package installs neither name, so a CI
+  step without this would silently take the target's `SKIP` path and report green for a suite it never ran — then
+  runs `make test-roblox` and fails on the `SKIP` line or on a skipped `luac -p` pass. It then asserts the two
+  things the suite itself cannot see: every `roblox/tests/*_test.lua` on disk appears in the log as a command
+  `make` actually ran (`live_mint_test.lua` excepted — it needs a live mint), and the number of reporting suites
+  equals the number of test files. Both of this layer's silent failures were inventory failures, not code
+  failures: `login460_test.lua` was committed and never in the target, `stats460.lua` was committed and never in
+  the builders' `PARTS`.
+- **`the committed artifacts are what src/ builds`** rebuilds the model and the install script from `src/` and
+  fails unless the committed bytes come back unchanged, so a hand-edited or stale artifact cannot ship.
+- **`live`** (after `suite`) checks IDUNA out of its own public repo, builds the real binary on a throwaway SQLite
+  file with a throwaway ticket secret, and runs `live_ticket_check.sh` — guest register, guest login, ticket mint,
+  the MAC verified twice, email link onto the same player, email login. No token is needed for any of it.
+
+The published kit in `site/` is a copy, never a rebuild, so `pages.yml` also watches `roblox/**` and
+`shankpit_roblox.rbxl`: a change to the layer republishes it, and `site/check.mjs` asserts the copied bytes are the
+committed ones.
 
 ## Getting it into the base place
 

@@ -1,0 +1,211 @@
+name: Roblox 460
+
+# The SHANKPIT-460 layer under roblox/: the pure-Lua suites, the two artifacts generated from src/, and the
+# sign-in -> ticket chain against a real IDUNA.
+#
+# Why its own workflow instead of a step in ShankPit Factory: this layer needs no SDL, no mingw and no dev kit --
+# just lua5.4, python3 and the repo -- so it runs in well under a minute and can afford to run on every PR that
+# touches it. It also has a trap the C jobs do not: `make test-roblox` deliberately SKIPS with exit 0 when there
+# is no interpreter. That is right on a dev box and wrong here, where it would be a green check for a suite that
+# never ran -- so the suite job installs Lua itself and fails on the SKIP line.
+#
+# Nothing here needs a secret. The live job checks IDUNA out of its own public repo and hands the binary a
+# throwaway ticket secret from `openssl rand`, so there is no token to store or rotate.
+#
+# The class of bug this exists to catch -- found twice by hand, both times while the suite was green:
+#   * roblox/tests/login460_test.lua was committed and never added to the Makefile's list: 58 checks ran nowhere.
+#   * roblox/src/stats460.lua was committed and never added to the builders' PARTS: a module missing from the
+#     model Studio inserts, with 92 passing checks.
+# Neither is a code bug, so no test could have failed on either one. The inventory steps below are the test.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'roblox/**'
+      - 'Makefile'
+      - '.github/workflows/roblox460.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'roblox/**'
+      - 'Makefile'
+      - '.github/workflows/roblox460.yml'
+  workflow_dispatch: {}
+
+# Scoped per workflow file, matching the rule its siblings learned the hard way: the same group key in two
+# workflows makes them cancel each other.
+concurrency:
+  group: shankpit-roblox460-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  suite:
+    name: The layer, under plain Lua
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Ubuntu's lua5.4 package installs NEITHER name the Makefile resolves (`lua`, then `luajit`), so without
+      # this the target would take its SKIP path. Symlinked into a directory prepended to PATH rather than
+      # update-alternatives: no alternatives state to race, and the same two names on every runner.
+      - name: Install Lua 5.4 as `lua` and `luac`
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y lua5.4
+          mkdir -p "$HOME/.local/bin"
+          ln -sf "$(command -v lua5.4)" "$HOME/.local/bin/lua"
+          ln -sf "$(command -v luac5.4)" "$HOME/.local/bin/luac"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # If this fails, every judgement below is meaningless -- and a broken interpreter step is exactly how a
+      # suite becomes green without running.
+      - name: The interpreter is really there
+        run: |
+          set -euo pipefail
+          lua -v
+          luac -v
+          lua -e 'assert(_VERSION == "Lua 5.4", _VERSION)'
+
+      - name: make test-roblox -- and it may not skip
+        shell: bash
+        run: |
+          set -o pipefail
+          status=0
+          make test-roblox 2>&1 | tee /tmp/roblox.log || status=$?
+
+          fail=0
+          if [ "$status" -ne 0 ]; then
+            echo "::error title=make test-roblox failed::the target exited $status; its own failures are in the log above."
+            fail=1
+          fi
+          if grep -q 'SKIP test-roblox' /tmp/roblox.log; then
+            echo "::error title=the suite skipped::make test-roblox printed SKIP, so nothing was tested. CI must never take that path -- fix the interpreter step."
+            fail=1
+          fi
+          if grep -q 'no luac on this host' /tmp/roblox.log; then
+            echo "::error title=the syntax pass was skipped::the luac -p pass is part of the suite, not an optional extra."
+            fail=1
+          fi
+
+          # A test file that is committed but absent from the Makefile's target is invisible: the suite is green
+          # because it never ran. This is the login460 bug, as an assertion -- and it has to read the TARGET
+          # rather than the log, because the recipe starts with `@`: make echoes nothing, and the log holds only
+          # results (the first version of this step looked for the commands in the log and flagged all seven).
+          named=$(awk '/^test-roblox:/{f=1;next} f&&/^\t/{print;next} f{exit}' Makefile \
+                  | grep -oE 'roblox/tests/[A-Za-z0-9_]+_test\.lua' | sed 's|.*/||' | sort -u || true)
+          expected=0
+          for f in roblox/tests/*_test.lua; do
+            base=$(basename "$f")
+            # live_mint_test.lua is not a standalone suite -- it reads a real IDUNA mint, and the `live` job
+            # below is the only place that answer exists.
+            [ "$base" = "live_mint_test.lua" ] && continue
+            expected=$((expected + 1))
+            if ! printf '%s\n' "$named" | grep -qx "$base"; then
+              echo "::error title=$base never runs::roblox/tests/$base is committed but the 'test-roblox' target never names it. Add it there, the same way login460_test had to be."
+              fail=1
+            fi
+          done
+
+          # One "<module>: N checks, 0 failures" line per suite. A run that dies partway still prints the suites
+          # it finished, so counting lines catches a truncated run that a grep for "failures" alone would not.
+          mapfile -t lines < <(grep -oE '^[a-z0-9_]+: [0-9]+ checks, [0-9]+ failures$' /tmp/roblox.log || true)
+          modules=${#lines[@]}
+          total=$(printf '%s\n' "${lines[@]}" | awk '{s += $2} END {print s + 0}')
+          for line in "${lines[@]}"; do echo "  $line"; done
+          echo "  $total checks across $modules suite(s); $expected test file(s) on disk"
+
+          if [ "$modules" -ne "$expected" ]; then
+            echo "::error title=not every suite reported::$modules suite line(s) in the log, $expected test file(s) on disk."
+            fail=1
+          fi
+          if printf '%s\n' "${lines[@]}" | grep -qE ': [0-9]+ checks, [1-9][0-9]* failures$'; then
+            echo "::error title=a suite has failures::see the log above."
+            fail=1
+          fi
+          if [ "$total" -le 0 ]; then
+            echo "::error title=no checks ran::the suites reported zero checks, which is not a pass."
+            fail=1
+          fi
+
+          {
+            echo "### Roblox 460"
+            echo ""
+            echo "\`$total\` checks across \`$modules\` suite(s), all under plain Lua 5.4."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          exit $fail
+
+      # Two rules this repo has already paid for: never hand-edit a generated file, and never ship an artifact
+      # that src/ no longer produces. Both files come from ONE PARTS list, and the builders re-read what they
+      # wrote and refuse to finish unless every embedded source is in it verbatim -- so byte equality after a
+      # rebuild is the whole contract, and a stale model cannot reach Studio.
+      - name: The committed artifacts are what src/ builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Called directly rather than via `make roblox-model`, which would run the suite a second time.
+          # `git status` is compared before and after rather than against empty: this asserts what the BUILDERS
+          # did, not that the checkout is pristine (a run in a tree with someone's unrelated edit must not fail
+          # here -- and the first version of this step did exactly that).
+          before=$(git status --porcelain)
+          python3 roblox/tools/build_rbxmx.py
+          python3 roblox/tools/build_installer.py
+          after=$(git status --porcelain)
+
+          if ! git diff --quiet -- roblox/SHANKPIT_ROBLOX_460.rbxmx roblox/SHANKPIT_460_INSTALL.luau; then
+            git diff --stat -- roblox/SHANKPIT_ROBLOX_460.rbxmx roblox/SHANKPIT_460_INSTALL.luau
+            echo "::error title=the artifacts are stale::Rebuilding from roblox/src changed the committed model and/or install script. Do not hand-edit them: run 'make roblox-model' and commit what it writes."
+            exit 1
+          fi
+
+          if [ "$before" != "$after" ]; then
+            echo "$after"
+            echo "::error title=the builders wrote outside their two files:: they are supposed to be a pure function of roblox/."
+            exit 1
+          fi
+
+          echo "model:     $(wc -c < roblox/SHANKPIT_ROBLOX_460.rbxmx) bytes, $(grep -c '<Item ' roblox/SHANKPIT_ROBLOX_460.rbxmx) instances"
+          echo "installer: $(wc -c < roblox/SHANKPIT_460_INSTALL.luau) bytes"
+
+  live:
+    name: A real IDUNA, a real ticket
+    runs-on: ubuntu-latest
+    needs: suite
+    steps:
+      - uses: actions/checkout@v4
+
+      # The authority, from its own public repo: a fixture would prove nothing about whether IDUNA's answer still
+      # parses. Default token, no PAT -- the same rule pages.yml follows for WOTAN's public checkout.
+      - name: Checkout IDUNA
+        uses: actions/checkout@v4
+        with:
+          repository: emilyspringerton/IDUNA
+          path: iduna
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: iduna/go.mod
+          cache: false
+
+      # The script's last step is live_mint_test.lua: the place's own module reading IDUNA's real answer.
+      - name: Install Lua 5.4 as `lua`
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y lua5.4
+          mkdir -p "$HOME/.local/bin"
+          ln -sf "$(command -v lua5.4)" "$HOME/.local/bin/lua"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # Boots the real IDUNA binary on a throwaway SQLite file and a private port, guest-registers exactly the
+      # way the place does, signs back in with the guest secret, mints a connect ticket, verifies its MAC the way
+      # the C server does, links an email onto the SAME player, signs in by email, and mints a second ticket.
+      - name: Build IDUNA, sign in, mint, verify the MAC
+        env:
+          IDUNA_DIR: ${{ github.workspace }}/iduna
+        run: roblox/scripts/live_ticket_check.sh
