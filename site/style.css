@@ -1,0 +1,89 @@
+/* site/style.css -- the SHANKPIT project page. Hard edges, one accent, mono labels.
+ *
+ * The page is served from a PROJECT path (emilyspringerton.github.io/SHANKPIT/), so every local reference is
+ * relative and nothing here may assume the site owns the domain root. */
+
+:root {
+  --ink: #07090a;
+  --panel: #0d1113;
+  --line: #232a2d;
+  --paper: #cfd6cf;
+  --dim: #7a837c;
+  --acid: #9ae66e;
+  --rust: #d2603b;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.02) 0 1px, transparent 1px 3px),
+    var(--ink);
+  color: var(--paper);
+  font-family: var(--serif);
+  font-size: 17px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 960px; margin: 0 auto; padding: 56px 22px 80px; }
+
+a { color: var(--acid); text-decoration: none; border-bottom: 1px solid transparent; }
+a:hover, a:focus-visible { border-bottom-color: var(--acid); outline: none; }
+
+code, .eyebrow, .dim { font-family: var(--mono); }
+code { font-size: 0.86em; color: var(--paper); background: var(--panel); border: 1px solid var(--line); padding: 0 4px; }
+
+.hero { border-bottom: 1px solid var(--line); padding-bottom: 28px; margin-bottom: 40px; }
+.eyebrow {
+  margin: 0 0 10px; font-size: 0.68rem; letter-spacing: 0.24em; text-transform: uppercase; color: var(--dim);
+}
+h1 {
+  margin: 0 0 14px; font-family: var(--serif); font-weight: 400;
+  font-size: clamp(3rem, 11vw, 6.2rem); letter-spacing: 0.16em; line-height: 0.95;
+}
+.lede { max-width: 62ch; margin: 0; font-size: 1.08rem; color: var(--paper); }
+
+.links { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+.go {
+  display: inline-block; font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.14em;
+  text-transform: uppercase; padding: 10px 14px; border: 1px solid var(--acid); color: var(--acid);
+}
+.go:hover, .go:focus-visible { background: var(--acid); color: var(--ink); border-bottom-color: var(--acid); }
+.go--alt { border-color: var(--rust); color: var(--rust); }
+.go--alt:hover, .go--alt:focus-visible { background: var(--rust); color: var(--ink); }
+
+section { margin: 0 0 44px; }
+h2 {
+  margin: 0 0 14px; font-family: var(--mono); font-size: 0.72rem; font-weight: 400;
+  letter-spacing: 0.22em; text-transform: uppercase; color: var(--dim);
+}
+
+.cols { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.cols li { border: 1px solid var(--line); background: var(--panel); padding: 12px 14px; font-size: 0.95rem; }
+.cols b { display: block; font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--paper); margin-bottom: 4px; }
+
+.rules { width: 100%; border-collapse: collapse; margin-top: 18px; font-size: 0.9rem; }
+.rules caption { text-align: left; font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--dim); padding-bottom: 8px; }
+.rules th, .rules td { text-align: left; padding: 9px 10px; border-top: 1px solid var(--line); vertical-align: top; }
+.rules th { font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim); font-weight: 400; }
+
+.foot { border-top: 1px solid var(--line); padding-top: 18px; font-size: 0.85rem; color: var(--dim); }
+.foot p { margin: 0 0 6px; }
+.foot .dim { font-size: 0.72rem; }
+
+/* docs.html */
+.docgroup { margin-bottom: 36px; }
+.docs { list-style: none; margin: 0; padding: 0; }
+.docs li { border-top: 1px solid var(--line); padding: 9px 0; font-size: 0.95rem; }
+.docs .path { display: block; font-family: var(--mono); font-size: 0.66rem; color: var(--dim); letter-spacing: 0.04em; }
+.docs .note { color: var(--dim); }
+
+@media (max-width: 520px) {
+  .wrap { padding: 36px 16px 60px; }
+  .rules { font-size: 0.82rem; }
+  .rules th, .rules td { padding: 7px 6px; }
+}

@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#07090a">
+<meta name="description" content="SHANKPIT: the agile implementation. A UDP-authoritative engine, a retro renderer, PARENA-generated rules shared with the Roblox and browser worlds, and the TRAPX city sandbox on top of it.">
+<title>SHANKPIT &mdash; the agile implementation</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="wrap">
+
+  <header class="hero">
+    <p class="eyebrow">EINHORN_INDUSTRIAL &middot; the agile implementation</p>
+    <h1>SHANKPIT</h1>
+    <p class="lede">An engine that runs the same rules as the other two worlds. UDP-authoritative, retro-rendered,
+      and built out of PARENA decisions emitted to C &mdash; so a threshold is edited once and every host follows.</p>
+    <nav class="links" aria-label="Play">
+      <a class="go" href="https://wotan.okemily.com/shankpit-460/">shankpit-460 &middot; play in the browser</a>
+      <a class="go go--alt" href="https://wotan.okemily.com/trapx/">TRAPX VS0 &middot; the city sandbox</a>
+    </nav>
+  </header>
+
+  <section aria-labelledby="what">
+    <h2 id="what">What it is right now</h2>
+    <ul class="cols">
+      <li><b>Server</b> A UDP, server-authoritative game server; client prediction against the same integer rules.</li>
+      <li><b>Client</b> Lobby and client app with local and networked flows, linked scenes and portals.</li>
+      <li><b>Renderer</b> Retro stack: procedural textures, sky, fog, stylized lighting, GOLDENBAND skinned meshes.</li>
+      <li><b>Modes</b> Team deathmatch, capture the flag, story mode, bots for cold starts.</li>
+      <li><b>Simulation</b> NPC drifting, slippery surfaces, DEADWEIGHT's card ladder, the cosy verbs.</li>
+      <li><b>City</b> TRAPX VS0: Watchers, Field Offices, K9 doctrine, receipts &mdash; in C and in the browser.</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="merge">
+    <h2 id="merge">One decision, three worlds</h2>
+    <p>Every number two repos must agree on lives in <code>PARENA</code> as a <code>.prn</code> file and is emitted
+      twice: to C here, and to Luau or TypeScript for the Roblox and browser halves. The generated files are
+      committed, never hand-edited, and both sides assert the <em>same</em> fixture rows, so a drifting port is a red
+      test instead of two worlds quietly disagreeing.</p>
+    <table class="rules">
+      <caption>Recent slices, and what pins them</caption>
+      <thead><tr><th>Slice</th><th>Rule file</th><th>Pinned by</th></tr></thead>
+      <tbody>
+        <tr><td>Lighting &amp; materials</td><td><code>shankpit/lighting_rules.prn</code>, <code>material_rules.prn</code></td><td>13 + 23 rows, both sides</td></tr>
+        <tr><td>Sky, night, fog</td><td><code>shankpit/sky_rules.prn</code></td><td>87 rows, both sides</td></tr>
+        <tr><td>Cosy verbs</td><td><code>shankpit/cozy_rules.prn</code></td><td>103 rows, both sides</td></tr>
+        <tr><td>TRAPX VS0 city</td><td><code>trapx/trapx_rules.prn</code></td><td>88 rows, C and JS</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section aria-labelledby="docs">
+    <h2 id="docs">Documents</h2>
+    <p>The northstars, specs and post-mortems live in the repo. This site indexes them; it does not copy them, so
+      there is only ever one copy of a design.</p>
+    <p><a class="go" href="docs.html">Open the document index</a></p>
+  </section>
+
+  <section aria-labelledby="honest">
+    <h2 id="honest">Honest status</h2>
+    <p>A generated rules module being tested is not the same as a feature being played. The C hosts that the lobby
+      does not call yet, the service writes never observed landing, and the rules that are decided but not wired are
+      all named in the documents &mdash; the index says which is which, and none of them are hidden behind a green
+      badge.</p>
+  </section>
+
+  <footer class="foot">
+    <p>SHANKPIT &middot; <a href="https://github.com/emilyspringerton/SHANKPIT">source</a> &middot;
+      <a href="https://github.com/emilyspringerton/PARENA">PARENA</a> &middot;
+      <a href="https://wotan.okemily.com/">WOTAN</a></p>
+    <p class="dim">Published from this repository by GitHub Actions on every push to <code>master</code>.</p>
+  </footer>
+
+</main>
+</body>
+</html>

@@ -37,6 +37,9 @@ tools/ragdoll_spike/output/
 tools/rigid_ragdoll/output/
 a.out
 
+# GitHub Pages artifact: site/build.mjs writes it, GitHub Actions publishes it, nobody commits it.
+_site/
+
 # Go module cache (appears when GOPATH is set to repo root).
 pkg/
 

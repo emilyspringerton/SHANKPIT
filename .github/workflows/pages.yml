@@ -1,0 +1,68 @@
+name: Pages
+
+# The SHANKPIT project page (site/ -> _site/ -> GitHub Pages).
+#
+# Static, dependency-free and atomic: the build job runs the generator and its own artifact check, and only then
+# uploads. If the check fails, nothing is published and the last good deploy stays live.
+#
+# ONE-TIME SETUP, and it is a click rather than a step here: Settings -> Pages -> Build and deployment ->
+# Source: GitHub Actions. actions/configure-pages' `enablement` needs an admin token and GITHUB_TOKEN is not admin,
+# so the workflow cannot bootstrap Pages for itself. See site/README.md.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'site/**'
+      - 'docs/**'
+      - 'docs2/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch: {}
+
+# Scoped per workflow file, matching deploy.yml/tests.yml's own hard-won rule: a shared group key across sibling
+# workflows makes them cancel each other.
+concurrency:
+  group: shankpit-pages-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    name: Build the site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build _site/
+        run: node site/build.mjs
+
+      - name: Check the artifact
+        run: node site/check.mjs
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload the artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy to Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

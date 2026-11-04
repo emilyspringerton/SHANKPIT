@@ -1,5 +1,9 @@
 # SHANKPIT Game Architecture Document
 
+**Project page:** https://emilyspringerton.github.io/SHANKPIT/ — built from `site/` and published by
+`.github/workflows/pages.yml` on every push to `master` that touches the site or the docs. `site/README.md` has the
+pipeline and the one repository setting it needs.
+
 ## Current Status (2026-08-26)
 
 CI is green (`ShankPit Factory` #784+) after a real fix: the cutscene system and spatial
