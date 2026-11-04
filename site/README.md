@@ -33,6 +33,24 @@ Actions → Pages → **Run workflow** publishes the same artifact without needi
 first deploy was made. The site is at **https://emilyspringerton.github.io/SHANKPIT/** — a *project* page, which is
 why every local reference is relative and `check.mjs` fails a root-absolute one.
 
+## shankpit-460 is served from this deploy
+
+`site/build.mjs` vendors `WOTAN/shankpit-460` into `_site/shankpit-460/` at build time. The workflow checks the
+WOTAN repo out into `vendor/wotan`; a local build falls back to the sibling `../WOTAN`. Three files are copied
+(`index.html`, `shankpit460.wasm` at 202 KB, `sp-host.js`) plus every asset their root-absolute refs point at
+(`/css/wotan-*.css`, `/js/{wotan-nav,iduna-sso,cookie-consent}.js`), rebased to `../` because a project page is
+not the domain root. `check.mjs` asserts the page, the wasm and the nav landed and that no root-absolute ref
+survived, so a broken vendoring fails the build instead of publishing a 404 canvas.
+
+Vendored rather than committed a second time: WOTAN stays the one authoring home, and the two cannot drift.
+
+**Honest limit.** The page and its assets load, and the game module is a zero-import wasm file — but
+`sp-host.js` finds a match through `wss://<host>/api/v1/shankpit460/play`, and GitHub Pages serves no such
+endpoint. So the match socket has **no backend on Pages**, and pressing play cannot reach a matchmaker there.
+Fixing that means pointing the API base at a live IDUNA (the Hugging Face Space, once it exists) or a proxy,
+not another build step. Also unverified: nobody has watched this run in a browser from here (no browser in this
+environment), so "assets load" is measured and "you can play" is not.
+
 ## What the workflow does, and what it refuses to do
 
 `build` job: checkout → `node site/build.mjs` → `node site/check.mjs` → `configure-pages` → upload the artifact.
