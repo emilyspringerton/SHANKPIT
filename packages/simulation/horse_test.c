@@ -13,6 +13,12 @@
  *   8. The wire: PACKET_HORSE_STATE round-trips a horse (and removes one the packet stopped
  *      mentioning), PACKET_HORSE_EVENTS relays the horse REFLUX family, and anything outside that
  *      family is refused rather than re-dispatched.
+ *   9. A fence is a fence: a loose horse slides along it instead of walking through it.
+ *  10. The relay drains in batches, in order, and survives the log wrapping past its capacity.
+ *  11. The request channel: what a client (or a mod on one) may ask a horse to do -- mount,
+ *      dismount, set-goal, feed -- and every refusal, judged by the same function the server runs.
+ *  12. The ring's residual bound is MEASURABLE: a cursor overtaken by the log says how many events
+ *      it lost, instead of skipping them silently.
  *
  * Build/run: make test-horse. */
 #include <stdio.h>
@@ -26,6 +32,7 @@
 #include "horse_goals_host.h"
 #include "horse_sync.h"
 #include "horse_api.h"
+#include "horse_interact.h"
 #include "../reflux/reflux_runtime.h"
 #include "level_boxes.h"
 
@@ -361,10 +368,103 @@ int main(void) {
         CHECK(horse_api_poll(&fresh, poll, 4) == 0, "a fresh cursor must not replay the log");
     }
 
+    /* ---- 11. the request channel: mount, dismount, set-goal, feed ---- */
+    {
+        PlayerState *p = fresh_player();
+        HorseState *h = &local_state.horses[0];
+        horse_spawn_defaults(h, 0, p->scene_id, 0.0f, 0.0f, 0.0f);
+        p->x = 1.0f; p->y = 0.0f; p->z = 0.0f;   /* an arm's length away */
+
+        /* a goal that is not HORSE_GOAL_* is a refusal, never a horse told something undefined */
+        CHECK(horse_interact_apply(&local_state, p, 0, HORSE_INTERACT_SET_GOAL, 999, test_now_ms)
+                  == HORSE_INTERACT_REFUSED_BAD_GOAL, "goal 999 was not refused");
+        CHECK(horse_interact_apply(&local_state, p, 0, HORSE_INTERACT_SET_GOAL,
+                                   HORSE_GOAL_HOME, test_now_ms) == HORSE_INTERACT_OK,
+              "a valid goal within reach was refused");
+        CHECK(h->goal == HORSE_GOAL_HOME, "the accepted goal did not take (goal=%d)", h->goal);
+
+        /* 5 m is the arm, the same one the local E key gives */
+        p->x = 50.0f;
+        CHECK(horse_interact_apply(&local_state, p, 0, HORSE_INTERACT_SET_GOAL,
+                                   HORSE_GOAL_GRAZE, test_now_ms) == HORSE_INTERACT_REFUSED_OUT_OF_REACH,
+              "a horse 50 m away accepted a request");
+        CHECK(horse_interact_apply(&local_state, p, 0, HORSE_INTERACT_FEED, 0, test_now_ms)
+                  == HORSE_INTERACT_REFUSED_OUT_OF_REACH, "a carrot from 50 m away was accepted");
+        p->x = 1.0f;
+
+        /* someone else is riding it: no mount, and no leading it out from under them */
+        h->occupant_player_id = 5;
+        CHECK(horse_interact_apply(&local_state, p, 0, HORSE_INTERACT_MOUNT, 0, test_now_ms)
+                  == HORSE_INTERACT_REFUSED_BUSY, "a ridden horse accepted a mount");
+        CHECK(horse_interact_apply(&local_state, p, 0, HORSE_INTERACT_SET_GOAL,
+                                   HORSE_GOAL_FLEE, test_now_ms) == HORSE_INTERACT_REFUSED_BUSY,
+              "a bystander re-goaled a ridden horse");
+        h->stamina_milli = 100;   /* a full bar refuses a carrot on purpose -- give it something to eat for */
+        CHECK(horse_interact_apply(&local_state, p, 0, HORSE_INTERACT_FEED, 0, test_now_ms)
+                  == HORSE_INTERACT_OK, "a carrot to a ridden horse should be allowed");
+        h->occupant_player_id = -1;
+
+        /* mount, then a stranger cannot dismount it, then the rider can */
+        CHECK(horse_interact_apply(&local_state, p, 0, HORSE_INTERACT_MOUNT, 0, test_now_ms)
+                  == HORSE_INTERACT_OK, "the mount was refused");
+        CHECK(h->occupant_player_id == p->id, "the mount did not seat the caller");
+        h->occupant_player_id = 5;
+        CHECK(horse_interact_apply(&local_state, p, 0, HORSE_INTERACT_DISMOUNT, 0, test_now_ms)
+                  == HORSE_INTERACT_REFUSED_NOT_RIDER, "a non-rider dismounted the horse");
+        h->occupant_player_id = p->id;
+        CHECK(horse_interact_apply(&local_state, p, 0, HORSE_INTERACT_DISMOUNT, 0, test_now_ms)
+                  == HORSE_INTERACT_OK, "the rider could not dismount");
+        CHECK(h->occupant_player_id < 0, "the dismount left the rider on the horse");
+
+        /* feed: a carrot travels, an empty saddlebag refuses */
+        h->stamina_milli = 100;
+        h->carrots = 2;
+        int fed = horse_interact_apply(&local_state, p, 0, HORSE_INTERACT_FEED, 0, test_now_ms);
+        CHECK(fed == HORSE_INTERACT_OK && h->carrots == 1 && h->stamina_milli > 100,
+              "feed refused (%d) or lost the carrot (%d carrots, %d stamina)",
+              fed, h->carrots, h->stamina_milli);
+        h->carrots = 0;
+        h->stamina_milli = 100;
+        CHECK(horse_interact_apply(&local_state, p, 0, HORSE_INTERACT_FEED, 0, test_now_ms)
+                  == HORSE_INTERACT_REFUSED_NO_CARROT, "an empty saddlebag still fed the horse");
+
+        /* a horse in another scene is not described to you, so it cannot be requested either */
+        h->scene_id = SCENE_STADIUM;
+        CHECK(horse_interact_apply(&local_state, p, 0, HORSE_INTERACT_MOUNT, 0, test_now_ms)
+                  == HORSE_INTERACT_REFUSED_NOTHERE, "a horse in another scene was mountable");
+        h->scene_id = p->scene_id;
+
+        /* the request carries the goal, so the server never has to guess what was meant */
+        NetHorseInteract pkt;
+        horse_interact_build(&pkt, 7, 2, HORSE_INTERACT_SET_GOAL, HORSE_GOAL_FLEE);
+        CHECK(pkt.hdr.type == PACKET_HORSE_INTERACT && pkt.hdr.client_id == 7 && pkt.slot == 2 &&
+                  pkt.action == HORSE_INTERACT_SET_GOAL && pkt.goal == HORSE_GOAL_FLEE,
+              "the request packet lost a field");
+        /* out-of-range fields are clipped into the packet's own bytes rather than truncated into a
+           different valid-looking value: -3 is not client 3, and -9 is not goal 247 */
+        horse_interact_build(&pkt, -3, 999, HORSE_INTERACT_MOUNT, -9);
+        CHECK(pkt.hdr.client_id == 0 && pkt.slot == (999 & 0xff) && pkt.goal == 0,
+              "out-of-range fields were not clipped (id=%u slot=%u goal=%u)",
+              (unsigned)pkt.hdr.client_id, (unsigned)pkt.slot, (unsigned)pkt.goal);
+    }
+
+    /* ---- 12. the ring's residual bound is measurable, not silent ---- */
+    {
+        reflux_host_reset();
+        for (int i = 0; i < REFLUX_LOG_CAPACITY + 10; i++)
+            reflux_host_dispatch(REFLUX_ACTION_HORSE_JUMPED, i, 0, 0);
+        CHECK(horse_sync_missed(0) == 10, "a cursor overtaken by 10 rows reported %d lost",
+              horse_sync_missed(0));
+        CHECK(horse_sync_missed(reflux_host_total_dispatched()) == 0,
+              "an up-to-date cursor must not report a loss");
+        CHECK(horse_sync_missed(-1) == 0, "a fresh cursor has no history to lose");
+    }
+
     if (fails) { printf("horse_test: %d FAILURE(S)\n", fails); return 1; }
     printf("horse_test: ok -- parses pads, spawns unicorn actors, tölt burns stamina, jump hops (not flies), "
            "carrot restores, blown slows, a loose horse grazes/bolts on PARENA+MISHRI goals, "
            "slides along a fence instead of through it, and the state + REFLUX events round-trip the "
-           "wire in batches past the log's own wrap\n");
+           "wire in batches past the log's own wrap; the request channel judges mount/dismount/"
+           "set-goal/feed by reach, scene and occupancy, and a relay that lost rows says how many\n");
     return 0;
 }

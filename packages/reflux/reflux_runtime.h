@@ -198,6 +198,13 @@ int reflux_host_log_size(void);
  * cursor had, found while finishing the relay. */
 int reflux_host_total_dispatched(void);
 int reflux_host_index_for_abs(int abs_index);
+
+/* Absolute number of the OLDEST row still retained (== total_dispatched while the ring has not
+ * wrapped). A cursor below this has been overtaken: the rows between the two are gone, and a
+ * subscriber can now say so instead of silently skipping them. That is the honest answer to the
+ * ring's one remaining bound -- capacity is a real limit of a ring, but losing events must not be
+ * invisible. */
+int reflux_host_oldest_abs(void);
 int reflux_host_action_type_at(int index); /* -1 if index out of range */
 int reflux_host_action_a_at(int index);    /* 0 if index out of range */
 int reflux_host_action_b_at(int index);    /* 0 if index out of range */

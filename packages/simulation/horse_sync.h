@@ -40,6 +40,11 @@
  * number, not a retained-log index, because reflux_host_log_size() saturates at
  * REFLUX_LOG_CAPACITY -- the earlier version of this file used the size as its high-water mark and
  * would have gone permanently silent after 256 dispatches, which is a real bug this pass found.
+ *
+ * The one bound that remains is REFLUX's own ring (256 actions of ANY family between two drains),
+ * and horse_sync_missed() is what makes it visible rather than silent: a cursor overtaken by the
+ * ring can say how many rows it lost, and the server logs it instead of pretending the stream was
+ * whole. State is carried separately and cannot be missed, so a loss costs a mod activity, not truth.
  */
 #ifndef HORSE_SYNC_H
 #define HORSE_SYNC_H
@@ -152,6 +157,16 @@ static inline int horse_sync_collect_events(NetHorseEvent *out, int max, int *cu
     }
     *cursor = abs;
     return k;
+}
+
+/* How many rows a cursor has ALREADY lost to the ring (0 when it is still inside it). Call this
+ * before collecting: the answer is "rows between here and the oldest retained one", i.e. genuinely
+ * gone, not merely not-sent-yet. Kept as its own function so a lost event is a reported fact instead
+ * of an unexplained gap in a mod's timeline -- see reflux_runtime.h's own note. */
+static inline int horse_sync_missed(int cursor) {
+    if (cursor < 0) return 0;                       /* a fresh cursor has no history to lose */
+    int oldest = reflux_host_oldest_abs();
+    return (cursor < oldest) ? (oldest - cursor) : 0;
 }
 
 /* Re-dispatch relayed events into THIS peer's own REFLUX log -- the other half of "syncs to the

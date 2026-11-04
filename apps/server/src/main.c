@@ -40,6 +40,7 @@
 #include "../../../packages/simulation/horse_rules_host.h"
 #include "../../../packages/simulation/horse_goals_host.h"  /* what a loose horse decides (PARENA) */
 #include "../../../packages/simulation/horse_sync.h"        /* PACKET_HORSE_STATE / PACKET_HORSE_EVENTS */
+#include "../../../packages/simulation/horse_interact.h"    /* the request channel's own policy */
 #include "../../../packages/reflux/reflux_runtime.h"         /* the horse tick dispatches its family here */
 #include "../../../packages/simulation/vehicle_salvage_rules_host.h" /* PARENA car components */
 #include "../../../packages/simulation/garage_rules_host.h" /* PARENA garage rules */
@@ -1489,12 +1490,17 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
     }
 
     /* --- HORSE INTERACT (PACKET_HORSE_INTERACT) ---
-     * A mount or dismount REQUEST: the server owns the horse, so it decides. Welcomed, in the same
-     * scene, within the same 5 m reach the local client's own E-key uses, the horse free (to mount) or
-     * the caller already its rider (to dismount). A refusal is silent on the wire -- the horse does not
-     * move and the next PACKET_HORSE_STATE says so, which is why there is no ack to lose. Jump and
-     * carrot are not here: BTN_JUMP/BTN_ABILITY_2 already travel in UserCmd and the horse tick reads
-     * them off its occupant. */
+     * A REQUEST against one horse: the server owns the horse, so it decides. Four verbs share the
+     * channel -- mount and dismount (the player's own E key) and SET_GOAL / FEED (what a MOD asks for,
+     * so "lead this horse home" and "give it a carrot" are reachable from a client at all). The whole
+     * policy is packages/simulation/horse_interact.h's horse_interact_apply, which the headless test
+     * asserts against: reach, scene, occupancy and goal range are checked there, in one place, so a
+     * remote request and a local key press cannot diverge. Spawning is deliberately NOT here -- a
+     * client must not be able to mint animals; that stays authority-side (horse_api_spawn). A refusal
+     * is silent on the wire -- the horse does not move and the next PACKET_HORSE_STATE says so, which
+     * is why there is no ack to lose. Jump and carrot-in-the-saddle are not here either:
+     * BTN_JUMP/BTN_ABILITY_2 already travel in UserCmd and the horse tick reads them off its
+     * occupant. */
     if (client_id != -1 && head->type == PACKET_HORSE_INTERACT) {
         slots[client_id].last_heard = now_seconds();
         local_state.client_meta[client_id].last_heard_ms = get_server_time();
@@ -1506,23 +1512,19 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
         }
         NetHorseInteract *hi = (NetHorseInteract *)buffer;
         PlayerState *hp = &local_state.players[client_id];
-        if (hi->slot >= MAX_HORSES) {
-            g_net_diag.malformed++;
-            return;
-        }
-        HorseState *hh = &local_state.horses[hi->slot];
-        if (!hh->active || hh->scene_id != hp->scene_id) return;
-        if (hi->action == HORSE_INTERACT_MOUNT) {
-            float dx = hh->x - hp->x, dy = hh->y - hp->y, dz = hh->z - hp->z;
-            if (hh->occupant_player_id < 0 && (dx * dx + dy * dy + dz * dz) <= 25.0f) {
-                horse_try_enter(hp, hh);
-                NET_SERVER_LOG("HORSE_MOUNT client_id=%d horse=%u", client_id, (unsigned)hi->slot);
-            }
-        } else if (hi->action == HORSE_INTERACT_DISMOUNT) {
-            if (hh->occupant_player_id == client_id) {
-                horse_try_exit(hp, hh);
-                NET_SERVER_LOG("HORSE_DISMOUNT client_id=%d horse=%u", client_id, (unsigned)hi->slot);
-            }
+        int verdict = horse_interact_apply(&local_state, hp, (int)hi->slot, (int)hi->action,
+                                           (int)hi->goal, get_server_time());
+        if (verdict > 0) {
+            NET_SERVER_LOG("HORSE_INTERACT client_id=%d horse=%u action=%u goal=%u verdict=ok",
+                           client_id, (unsigned)hi->slot, (unsigned)hi->action, (unsigned)hi->goal);
+        } else {
+            /* A request naming a slot or a verb that does not exist is a malformed datagram, not a
+               policy refusal -- count it the way every other bad packet is counted. */
+            if (hi->slot >= MAX_HORSES || hi->action >= HORSE_INTERACT_ACTION_COUNT)
+                g_net_diag.malformed++;
+            NET_SERVER_LOG("HORSE_INTERACT client_id=%d horse=%u action=%u goal=%u verdict=%d",
+                           client_id, (unsigned)hi->slot, (unsigned)hi->action,
+                           (unsigned)hi->goal, verdict);
         }
         return;
     }
@@ -2129,10 +2131,19 @@ void server_broadcast_horse_state(void) {
  * the first call establishes a baseline rather than replaying server history at a fresh peer. */
 void server_broadcast_horse_events(void) {
     static int cursor = -1;  /* -1: baseline on the first call (see horse_sync_collect_events) */
+    /* A cursor overtaken by REFLUX's ring is the one loss this relay can suffer, and it is now
+       REPORTED rather than silently skipped: horse_sync_missed says how many rows between the cursor
+       and the oldest retained one are genuinely gone. Loud on purpose -- if this ever prints, the
+       relay's datagram budget is too small for the event rate and should be raised, and it should be
+       visible in a live log rather than inferred later from a gap. */
+    int lost = horse_sync_missed(cursor);
+    if (lost > 0)
+        printf("[HORSE] relay lost %d event(s) -- REFLUX's %d-entry ring wrapped before the drain\n",
+               lost, REFLUX_LOG_CAPACITY);
     /* Up to four datagrams a snapshot (32 rows): a stampede of horse events is drained in order over
        consecutive snapshots rather than silently dropping the overflow past one packet. The cursor
-       lives on the first undelivered row, so the only real bound left is REFLUX's own 256-entry ring
-       -- see horse_sync.h, and note it is absolute so wrapping no longer stops the relay. */
+       lives on the first undelivered row, so the only real bound left is REFLUX's own ring -- see
+       horse_sync.h, and note it is absolute so wrapping no longer stops the relay. */
     for (int batch = 0; batch < 4; batch++) {
         NetHorseEvents pkt;
         memset(&pkt, 0, sizeof(pkt));

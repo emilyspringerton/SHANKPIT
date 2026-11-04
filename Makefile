@@ -150,12 +150,43 @@ $(PGB_OBJ_DIR)/monocypher.o: $(PGB_DIR)/runtime/aead/monocypher.c | $(PGB_OBJ_DI
 $(PGB_OBJ_DIR)/mbed_%.o: | $(PGB_OBJ_DIR)
 	$(CC) -std=gnu99 -O2 -w $(PGB_DEFS) -I$(PGB_DIR)/runtime -I$(PGB_MBEDTLS)/include -I$(PGB_MBEDTLS)/library -c $(PGB_MBEDTLS)/library/$*.c -o $@
 
+# ---- A LOBBY THAT LINKS ON A BOX WITHOUT THE SIBLINGS ----
+# Both optional features whose real code lives in a sibling checkout are chosen HERE, at build time,
+# instead of being unconditional prerequisites. That rule used to make `make lobby` die on a missing
+# ../EDITOR.GAME/gen/editor_stdlib_gen.c (named-not-done since 2026-09-27) -- so the client could not
+# be PRODUCED, let alone run, on a clean box, and every change to it could only ever be compiled.
+# Now: real objects when the sibling (or a system mbedTLS) is present, a stub otherwise. The lobby
+# always links; what changes is whether NOTES and the in-phone browser actually work, and the stub
+# says so on stderr rather than pretending.
+EDITOR_GAME_HAVE := $(wildcard $(EDITOR_GAME_DIR)/gen/editor_stdlib_gen.c)
+ifeq ($(EDITOR_GAME_HAVE),)
+LOBBY_EDITOR_OBJS := $(BIN_DIR)/editor_widget_stub.o
+else
+LOBBY_EDITOR_OBJS := $(EDITOR_GAME_OBJS)
+endif
+
+.PHONY: print-editor-mode
+print-editor-mode:
+	@echo "editor widgets: $(if $(EDITOR_GAME_HAVE),EDITOR.GAME ($(EDITOR_GAME_DIR)),stub -- no sibling checkout)"
+
+$(BIN_DIR)/editor_widget_stub.o: apps/lobby/src/editor_widget_stub.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -Iapps/lobby/src -c $< -o $@
+
+# Same choice for the in-phone browser: its mbedTLS comes from either ../PELLEGRINO's own fetch or a
+# system package, and neither being present used to fail the compile of PGB_OBJS outright.
+PGB_HAVE_MBED := $(if $(wildcard $(PGB_MBEDTLS)/library/hmac.c),1,$(shell pkg-config --exists mbedtls && echo 1))
+ifeq ($(PGB_HAVE_MBED),)
+LOBBY_BROWSER_OBJS := packages/pellegrino_browser_embed/phone_browser_stub.c
+else
+LOBBY_BROWSER_OBJS := $(PGB_OBJS)
+endif
+
 # ---- CLIENT / LOBBY ----
 lobby: $(LOBBY_BIN)
 
-$(LOBBY_BIN): $(LOBBY_SRC) $(EDITOR_GAME_OBJS) $(PGB_OBJS) | $(BIN_DIR)
+$(LOBBY_BIN): $(LOBBY_SRC) $(LOBBY_EDITOR_OBJS) $(LOBBY_BROWSER_OBJS) | $(BIN_DIR)
 	@echo "🔨 Building Lobby Client..."
-	$(CC) $(CFLAGS) $(INCLUDES) $(LOBBY_SRC) $(EDITOR_GAME_OBJS) $(PGB_OBJS) -o $@ $(LIBS_GL) -lSDL2_ttf $(PGB_MBED_LIBS)
+	$(CC) $(CFLAGS) $(INCLUDES) $(LOBBY_SRC) $(LOBBY_EDITOR_OBJS) $(LOBBY_BROWSER_OBJS) -o $@ $(LIBS_GL) -lSDL2_ttf $(PGB_MBED_LIBS)
 
 # ---- OS menu through PELLEGRINO (kanban #627) ----
 # Headless (SDL_VIDEODRIVER=dummy): builds the HTML menu, paints it with PELLEGRINO, clicks every tile, checks the

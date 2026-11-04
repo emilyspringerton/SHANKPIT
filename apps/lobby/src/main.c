@@ -115,6 +115,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/simulation/horse_rules_host.h"
 #include "../../../packages/simulation/horse_goals_host.h"  /* what a loose horse decides (PARENA) */
 #include "../../../packages/simulation/horse_sync.h"        /* PACKET_HORSE_STATE / PACKET_HORSE_EVENTS */
+#include "../../../packages/simulation/horse_interact.h"    /* the request channel (mount/goal/feed) */
 #include "../../../packages/simulation/heli_rules_host.h"
 #include "../../../packages/simulation/rocket_car_rules_host.h"   /* the rocket car's PARENA model */
 #include "../../../packages/simulation/drone_flight.h"   /* the two quadcopters (RECON / micro FLY) */
@@ -2494,27 +2495,23 @@ static void net_emit_client_summaries(unsigned int now_ms) {
     }
 }
 
+/* net_send_horse_interact -- one PACKET_HORSE_INTERACT datagram (protocol.h / horse_interact.h). Fire
+ * and forget, exactly like a kit call: the server owns the horse, so this is a REQUEST (it checks
+ * scene, reach, whether the horse is free, whether the caller is the rider) and the answer is the
+ * horse moving in the next PACKET_HORSE_STATE. A lost datagram is a key press that did not happen.
+ * `goal` is HORSE_GOAL_* for HORSE_INTERACT_SET_GOAL and ignored otherwise; it is how a client-side
+ * mod leads or spooks a horse without the server having to guess what was meant.
+ * Jump and carrot need no packet -- they already travel in UserCmd and the server's own horse tick
+ * reads them for its occupant. */
+static void net_send_horse_interact(int slot, int action, int goal) {
+    if (sock < 0 || slot < 0 || slot >= MAX_HORSES) return;
+    if (!horse_interact_send(sock, &server_addr, my_client_id, slot, action, goal)) return;
+    NET_CLIENT_LOG("HORSE_INTERACT_TX slot=%d action=%d goal=%d", slot, action, goal);
+}
+
 /* net_send_kit_call -- one PACKET_KIT_CALL datagram (protocol.h / kit_call.h). Fire and forget: the
  * server's answer is the vehicle appearing in a snapshot, and a lost datagram is a key press that did
  * not happen, which the player can simply repeat. */
-/* net_send_horse_interact -- one PACKET_HORSE_INTERACT datagram (protocol.h / horse_sync.h). Fire and
- * forget, exactly like a kit call: the server owns the horse, so this is a REQUEST (it checks scene,
- * reach, whether the horse is free, whether the caller is the rider) and the answer is the horse
- * moving in the next PACKET_HORSE_STATE. A lost datagram is a key press that did not happen.
- * Jump and carrot need no packet -- they already travel in UserCmd and the server's own horse tick
- * reads them for its occupant. */
-static void net_send_horse_interact(int slot, int action) {
-    if (sock < 0 || slot < 0 || slot >= MAX_HORSES) return;
-    NetHorseInteract pkt;
-    memset(&pkt, 0, sizeof(pkt));
-    pkt.hdr.type = PACKET_HORSE_INTERACT;
-    pkt.hdr.client_id = (unsigned char)my_client_id;
-    pkt.slot = (unsigned char)slot;
-    pkt.action = (unsigned char)action;
-    sendto(sock, (const char *)&pkt, sizeof(pkt), 0, (struct sockaddr*)&server_addr, sizeof(server_addr));
-    NET_CLIENT_LOG("HORSE_INTERACT_TX slot=%d action=%d", slot, action);
-}
-
 static void net_send_kit_call(int item) {
     if (sock < 0) return;
     NetKitCall pkt;
@@ -18294,7 +18291,7 @@ int main(int argc, char* argv[]) {
                                 for (int hi = 0; hi < MAX_HORSES; hi++) {
                                     HorseState *h = &local_state.horses[hi];
                                     if (!h->active || h->occupant_player_id != hp_pid) continue;
-                                    if (app_state == STATE_GAME_NET) net_send_horse_interact(hi, HORSE_INTERACT_DISMOUNT);
+                                    if (app_state == STATE_GAME_NET) net_send_horse_interact(hi, HORSE_INTERACT_DISMOUNT, 0);
                                     else horse_try_exit(hp, h);
                                     hp->vehicle_cooldown = 30;
                                     break;
@@ -18302,7 +18299,7 @@ int main(int argc, char* argv[]) {
                             } else if (!hp->in_vehicle && !hp->vehicle_cooldown) {
                                 HorseState *near_h = horse_find_nearby(hp->scene_id, hp->x, hp->y, hp->z, 5.0f);
                                 if (near_h && near_h->occupant_player_id < 0) {
-                                    if (app_state == STATE_GAME_NET) net_send_horse_interact(near_h->id, HORSE_INTERACT_MOUNT);
+                                    if (app_state == STATE_GAME_NET) net_send_horse_interact(near_h->id, HORSE_INTERACT_MOUNT, 0);
                                     else horse_try_enter(hp, near_h);
                                     hp->vehicle_cooldown = 30;
                                 }

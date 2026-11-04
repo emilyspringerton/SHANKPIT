@@ -180,17 +180,28 @@
  * untrusted input, and a client must not be able to make a mod think a door was pressed. */
 #define PACKET_HORSE_EVENTS 23
 
-/* PACKET_HORSE_INTERACT -- client -> server, a mount or dismount request for one horse slot. Small
- * and self-contained, one datagram per key press, the same shape PACKET_KIT_CALL already uses for
- * vehicle gadgets. The server decides: it is the one that owns the horse, so it checks the caller is
- * welcomed, alive, in the horse's scene, within the same 5 m reach the local client's E-key uses, and
- * that the horse is free (or, for a dismount, that the caller is the one riding it). Jump and carrot
- * need no packet at all -- they are BTN_JUMP/BTN_ABILITY_2, which already travel in UserCmd, and the
- * server's own horse tick reads them for its occupant. */
+/* PACKET_HORSE_INTERACT -- client -> server, one REQUEST against one horse slot (mount, dismount,
+ * set-goal, feed). Small and self-contained, one datagram per key press or per mod call, the same
+ * shape PACKET_KIT_CALL already uses for vehicle gadgets. The server decides: it is the one that
+ * owns the horse, so it checks the caller is welcomed, alive, in the horse's scene, within the same
+ * 5 m reach the local client's E-key uses, and that the horse is free (or, for a dismount, that the
+ * caller is the one riding it). The whole policy is packages/simulation/horse_interact.h -- one
+ * function, shared by the server and its test, so a remote request and a local key press cannot
+ * diverge. Jump and carrot-in-the-saddle need no packet at all -- they are BTN_JUMP/BTN_ABILITY_2,
+ * which already travel in UserCmd, and the server's own horse tick reads them for its occupant.
+ *
+ * NOT a spawn channel: creating a horse is not an interaction with an existing actor, and a client
+ * that could mint animals could fill a map with them. Spawning stays authority-side (horse_api.h). */
 #define PACKET_HORSE_INTERACT 24
 
 #define HORSE_INTERACT_MOUNT    0
 #define HORSE_INTERACT_DISMOUNT 1
+/* The two verbs a MOD needs, over the same request channel: "lead this horse home / send it
+ * grazing / make it bolt" and "give it a carrot". `goal` (below) carries the HORSE_GOAL_* for
+ * SET_GOAL and is ignored by every other action. */
+#define HORSE_INTERACT_SET_GOAL 2
+#define HORSE_INTERACT_FEED     3
+#define HORSE_INTERACT_ACTION_COUNT 4
 
 #define NET_EMPIRE_MAX_NODES 16 /* must match EU_MAX_NODES (empire_units.h) */
 #define NET_EMPIRE_MAX_CELLS 32 /* must match EU_MAX_CLAIM_CELLS (empire_units.h) */
@@ -493,12 +504,15 @@ typedef struct {
     NetHorseEvent e[NET_HORSE_EVENT_MAX];
 } NetHorseEvents;
 
-/* NetHorseInteract -- see PACKET_HORSE_INTERACT's own doc comment above. */
+/* NetHorseInteract -- see PACKET_HORSE_INTERACT's own doc comment above. `goal` is read only for
+ * HORSE_INTERACT_SET_GOAL (HORSE_GOAL_*), and is clipped on arrival like every other untrusted
+ * field: an out-of-range goal is a refusal, never a horse told to do something undefined. */
 typedef struct {
     NetHeader hdr;
     unsigned char slot;    /* horse slot the player is asking about */
     unsigned char action;  /* HORSE_INTERACT_* */
-    unsigned char pad[2];
+    unsigned char goal;    /* HORSE_GOAL_* for SET_GOAL; 0 otherwise */
+    unsigned char pad;
 } NetHorseInteract;
 
 typedef struct {

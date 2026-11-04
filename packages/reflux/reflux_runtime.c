@@ -60,11 +60,14 @@ int reflux_host_total_dispatched(void) {
     return g_reflux_log.total_dispatched;
 }
 
+int reflux_host_oldest_abs(void) {
+    return g_reflux_log.total_dispatched - reflux_log_length(&g_reflux_log);
+}
+
 int reflux_host_index_for_abs(int abs_index) {
     int total = g_reflux_log.total_dispatched;
-    int size = reflux_log_length(&g_reflux_log);
+    int oldest_abs = reflux_host_oldest_abs();
     if (abs_index < 0 || abs_index >= total) return -1;
-    int oldest_abs = total - size;
     if (abs_index < oldest_abs) return -1;
     return abs_index - oldest_abs;
 }

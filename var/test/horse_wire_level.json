@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "HORSE_WIRE",
+  "width": 32,
+  "height": 16,
+  "depth": 32,
+  "ground_plane_enabled": true,
+  "ground_plane_squares": 64,
+  "walls": [
+    { "id": 1, "x": 0, "y": -2, "z": 0, "sx": 32, "sy": 2, "sz": 32, "r": 0.45, "g": 0.4, "b": 0.35, "friction": 0.9 }
+  ],
+  "spawners": [
+    { "id": 1, "x": 2, "y": 1, "z": 0, "yaw": 0, "team": -1 }
+  ],
+  "horse_spawns": [
+    { "x": 2, "y": 0.1, "z": 0, "yaw": 90 }
+  ]
+}
