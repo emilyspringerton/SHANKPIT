@@ -629,6 +629,23 @@ test-trapx: | $(BIN_DIR)
 		$(GEN_TRAPX_RULES) -o $(BIN_DIR)/trapx_test $(LIBS_M)
 	./$(BIN_DIR)/trapx_test
 
+# ---- TRAPX at CITY scale: the engine that runs whether or not anyone is playing -------------------
+# Population, money, corruption, casinos, scrutiny, federal oversight, neighborhoods, the Spire, automata.
+# The street's own rules are trapx_rules.prn above; this is the layer underneath them
+# (PARENA/stdlib/trapx/city_engine_rules.prn -> packages/simulation/trapx_city_rules.c, via
+# scripts/gen_trapx_city_rules.sh). Deliberately NOT in LOBBY_SRC/SERVER_SRC: no running host consumes it
+# yet (docs/EMPIRE_NORTHSTAR.md §6), and this test is the only consumer, so a hand-copied source list has
+# nothing to drift.
+.PHONY: regen-trapx-city test-trapx-city
+regen-trapx-city:
+	./scripts/gen_trapx_city_rules.sh
+
+test-trapx-city: | $(BIN_DIR)
+	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/simulation \
+		packages/simulation/trapx_city_rules_test.c packages/simulation/trapx_city_rules.c \
+		-o $(BIN_DIR)/trapx_city_rules_test $(LIBS_M)
+	./$(BIN_DIR)/trapx_city_rules_test
+
 # ---- SHANKPIT on Roblox (roblox/): the 460 layer that sits beside the base place -------------------
 # The base place (shankpit_roblox.rbxl) is binary and stays untouched; these targets test the pure Lua modules
 # under plain Lua and pack them into one insertable .rbxmx model.
