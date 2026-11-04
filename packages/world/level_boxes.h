@@ -171,6 +171,15 @@ typedef struct {
 #define LEVEL_BOXES_MAX_BUGGY_SPAWNS 16
 typedef struct { float x, y, z, yaw; } LevelBuggySpawn;
 
+/* Author-placed HORSE spawns -- the buggy tile's own name convention, its own prefix: a thin wall
+   named horse_spawn (facing yaw 0) or horse_spawn_<deg> (horse_spawn_90). IDUNA's level export emits
+   one entry per such wall, whether it sits in the level or inside a placed widget (widgets are
+   flattened server-side). Absent key = no authored horses, so every pre-existing level loads
+   exactly as it did. A farm is just walls plus a few of these pads; the horse itself is a real
+   HorseState actor (local_game.h), spawned here by scene_load. */
+#define LEVEL_BOXES_MAX_HORSE_SPAWNS 16
+typedef struct { float x, y, z, yaw; } LevelHorseSpawn;
+
 /* Author-placed VEHICLE spawns -- the buggy tile above, generalised to the whole roster (rocket car,
    helicopter, both drones, the C-110). Same name convention, one prefix: vehicle_spawn_<kind>
    (facing yaw 0) or vehicle_spawn_<kind>_<deg> (vehicle_spawn_heli_90), kind from the list below.
@@ -498,6 +507,8 @@ typedef struct {
     int spawner_count;
     LevelBuggySpawn buggy_spawns[LEVEL_BOXES_MAX_BUGGY_SPAWNS]; /* #464 */
     int buggy_spawn_count;
+    LevelHorseSpawn horse_spawns[LEVEL_BOXES_MAX_HORSE_SPAWNS]; /* farm / paddock pads */
+    int horse_spawn_count;
     LevelVehicleSpawn vehicle_spawns[LEVEL_BOXES_MAX_VEHICLE_SPAWNS]; /* whole roster, by kind */
     int vehicle_spawn_count;
     LevelLabStation lab_stations[LEVEL_BOXES_MAX_LAB_STATIONS]; /* SECTION 592 */
@@ -1146,6 +1157,38 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
         }
     }
 
+    // Horse spawns -- the buggy block above, verbatim, on its own key. A wall named horse_spawn* is
+    // a pad a horse spawns on; absent key = none, so old levels are untouched.
+    out->horse_spawn_count = 0;
+    const char *hs_arr_key = level_boxes_find_key(buf, end, "horse_spawns");
+    if (hs_arr_key) {
+        const char *hs_arr = level_boxes_skip_ws(hs_arr_key);
+        if (*hs_arr == '[') {
+            const char *hs_arr_end = level_boxes_find_array_end(hs_arr, end);
+            if (hs_arr_end) {
+                const char *hc = hs_arr + 1;
+                while (hc < hs_arr_end && out->horse_spawn_count < LEVEL_BOXES_MAX_HORSE_SPAWNS) {
+                    hc = level_boxes_skip_ws(hc);
+                    if (hc >= hs_arr_end) break;
+                    if (*hc == ',') { hc++; continue; }
+                    if (*hc != '{') { hc++; continue; }
+                    const char *ho = hc;
+                    const char *he = strchr(ho, '}');
+                    if (!he || he > hs_arr_end) break;
+                    LevelHorseSpawn *hsp = &out->horse_spawns[out->horse_spawn_count];
+                    memset(hsp, 0, sizeof(*hsp));
+                    const char *hv;
+                    if ((hv = level_boxes_find_key(ho, he, "x"))) level_boxes_parse_number(hv, &hsp->x);
+                    if ((hv = level_boxes_find_key(ho, he, "y"))) level_boxes_parse_number(hv, &hsp->y);
+                    if ((hv = level_boxes_find_key(ho, he, "z"))) level_boxes_parse_number(hv, &hsp->z);
+                    if ((hv = level_boxes_find_key(ho, he, "yaw"))) level_boxes_parse_number(hv, &hsp->yaw);
+                    out->horse_spawn_count++;
+                    hc = he + 1;
+                }
+            }
+        }
+    }
+
     // Vehicle spawns -- every author-placed vehicle, one list, kind by name ("buggy", "rocket",
     // "heli", "recon", "fly", "plane") or by number. Same small-scanner shape as above; absent
     // key = none, so every pre-existing level loads exactly as it did.
@@ -1770,6 +1813,14 @@ static inline void level_boxes_write_json(FILE *f, const CustomLevelData *lvl) {
         const LevelBuggySpawn *bs = &lvl->buggy_spawns[i];
         fprintf(f, "%s\n  { \"x\": %.4g, \"y\": %.4g, \"z\": %.4g, \"yaw\": %.4g }",
                 i ? "," : "", (double)bs->x, (double)bs->y, (double)bs->z, (double)bs->yaw);
+    }
+    fprintf(f, "\n ]");
+
+    fprintf(f, ",\n \"horse_spawns\": [");
+    for (int i = 0; i < lvl->horse_spawn_count; i++) {
+        const LevelHorseSpawn *hsp = &lvl->horse_spawns[i];
+        fprintf(f, "%s\n  { \"x\": %.4g, \"y\": %.4g, \"z\": %.4g, \"yaw\": %.4g }",
+                i ? "," : "", (double)hsp->x, (double)hsp->y, (double)hsp->z, (double)hsp->yaw);
     }
     fprintf(f, "\n ]");
 

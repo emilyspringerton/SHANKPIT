@@ -554,6 +554,26 @@ static inline void phys_set_custom_level_buggy_spawns(const float *x, const floa
     g_custom_level_buggy_count = count;
 }
 
+// ---- Author-placed horse spawns (level_boxes.h horse_spawns) -------------------------------------
+// The buggy arrays above, on their own key: a farm pad in a level becomes a real HorseState actor in
+// scene_load. Kept as plain floats so this header stays independent of the level JSON loader, exactly
+// as the buggy and vehicle arrays do.
+#define CUSTOM_LEVEL_MAX_HORSE_SPAWNS 16
+static float g_custom_level_horse_x[CUSTOM_LEVEL_MAX_HORSE_SPAWNS];
+static float g_custom_level_horse_y[CUSTOM_LEVEL_MAX_HORSE_SPAWNS];
+static float g_custom_level_horse_z[CUSTOM_LEVEL_MAX_HORSE_SPAWNS];
+static float g_custom_level_horse_yaw[CUSTOM_LEVEL_MAX_HORSE_SPAWNS];
+static int g_custom_level_horse_count = 0;
+static inline void phys_set_custom_level_horse_spawns(const float *x, const float *y, const float *z, const float *yaw, int count) {
+    if (count < 0) count = 0;
+    if (count > CUSTOM_LEVEL_MAX_HORSE_SPAWNS) count = CUSTOM_LEVEL_MAX_HORSE_SPAWNS;
+    for (int i = 0; i < count; i++) {
+        g_custom_level_horse_x[i] = x[i]; g_custom_level_horse_y[i] = y[i];
+        g_custom_level_horse_z[i] = z[i]; g_custom_level_horse_yaw[i] = yaw[i];
+    }
+    g_custom_level_horse_count = count;
+}
+
 // ---- Destructible brick: fracture-piece slot API (packages/world/brick_fracture.h) ----------------
 // phys_custom_level_fracture_begin -- every authored box back to its loaded geometry, the piece tail
 // dropped. Call before re-adding the current set of pieces (the decomposition is a pure function of

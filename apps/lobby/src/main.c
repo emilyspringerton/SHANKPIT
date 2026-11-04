@@ -112,6 +112,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/simulation/vehicle_salvage_shards.h"     /* a sheared part is a brick body */
 #include "../../../packages/simulation/vehicle_salvage_loot.h"      /* ... and what it is worth on the ground */
 #include "../../../packages/simulation/buggy_rules_host.h"
+#include "../../../packages/simulation/horse_rules_host.h"
 #include "../../../packages/simulation/heli_rules_host.h"
 #include "../../../packages/simulation/rocket_car_rules_host.h"   /* the rocket car's PARENA model */
 #include "../../../packages/simulation/drone_flight.h"   /* the two quadcopters (RECON / micro FLY) */
@@ -3675,6 +3676,17 @@ static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
     }
     g_floor_tinted = lvl->floor_tinted;
     g_floor_rgba[0] = lvl->floor_r; g_floor_rgba[1] = lvl->floor_g; g_floor_rgba[2] = lvl->floor_b; g_floor_rgba[3] = lvl->floor_a;
+    {   /* author-placed HORSES (level_boxes.h horse_spawns): a farm pad is ordinary geometry plus a
+           named wall, exactly like the buggy tiles below. The client loads the zombie level itself
+           (lobby_zombies_find_level_impl), so its own copy of the pads is what lets a rider mount a
+           horse here without a horse packet. */
+        float hx[LEVEL_BOXES_MAX_HORSE_SPAWNS], hy[LEVEL_BOXES_MAX_HORSE_SPAWNS], hz[LEVEL_BOXES_MAX_HORSE_SPAWNS], hyaw[LEVEL_BOXES_MAX_HORSE_SPAWNS];
+        for (int hi = 0; hi < lvl->horse_spawn_count; hi++) {
+            hx[hi] = lvl->horse_spawns[hi].x; hy[hi] = lvl->horse_spawns[hi].y;
+            hz[hi] = lvl->horse_spawns[hi].z; hyaw[hi] = lvl->horse_spawns[hi].yaw;
+        }
+        phys_set_custom_level_horse_spawns(hx, hy, hz, hyaw, lvl->horse_spawn_count);
+    }
     {   /* #464: author-placed buggies */
         float bx[LEVEL_BOXES_MAX_BUGGY_SPAWNS], by[LEVEL_BOXES_MAX_BUGGY_SPAWNS], bz[LEVEL_BOXES_MAX_BUGGY_SPAWNS], byaw[LEVEL_BOXES_MAX_BUGGY_SPAWNS];
         for (int bi = 0; bi < lvl->buggy_spawn_count; bi++) {
@@ -7726,6 +7738,93 @@ static void draw_buggy_entity(const BuggyState *b) {
         if (rocket_lit_was_on) glEnable(GL_LIGHTING); else glDisable(GL_LIGHTING);
     }
     glPopMatrix();
+}
+
+/* One solid cuboid, immediate mode, centred on (cx, cy, cz). The horse is built from these, the same
+ * way draw_buggy_model builds a buggy out of quads -- no display list, no model file. */
+static void draw_horse_box(float cx, float cy, float cz, float sx, float sy, float sz) {
+    const float hx = sx * 0.5f, hy = sy * 0.5f, hz = sz * 0.5f;
+    glBegin(GL_QUADS);
+    glVertex3f(cx - hx, cy + hy, cz - hz); glVertex3f(cx + hx, cy + hy, cz - hz);
+    glVertex3f(cx + hx, cy + hy, cz + hz); glVertex3f(cx - hx, cy + hy, cz + hz);
+    glVertex3f(cx - hx, cy - hy, cz - hz); glVertex3f(cx - hx, cy - hy, cz + hz);
+    glVertex3f(cx + hx, cy - hy, cz + hz); glVertex3f(cx + hx, cy - hy, cz - hz);
+    glVertex3f(cx - hx, cy - hy, cz - hz); glVertex3f(cx + hx, cy - hy, cz - hz);
+    glVertex3f(cx + hx, cy + hy, cz - hz); glVertex3f(cx - hx, cy + hy, cz - hz);
+    glVertex3f(cx - hx, cy - hy, cz + hz); glVertex3f(cx + hx, cy - hy, cz + hz);
+    glVertex3f(cx + hx, cy + hy, cz + hz); glVertex3f(cx - hx, cy + hy, cz + hz);
+    glVertex3f(cx - hx, cy - hy, cz - hz); glVertex3f(cx - hx, cy - hy, cz + hz);
+    glVertex3f(cx - hx, cy + hy, cz + hz); glVertex3f(cx - hx, cy + hy, cz - hz);
+    glVertex3f(cx + hx, cy - hy, cz + hz); glVertex3f(cx + hx, cy - hy, cz - hz);
+    glVertex3f(cx + hx, cy + hy, cz - hz); glVertex3f(cx + hx, cy + hy, cz + hz);
+    glEnd();
+}
+
+/* The tölt mount -- a REAL actor in the world, not scenery: four legs, a body, a neck, a head, a mane
+ * and a tail, drawn from HorseState's own position, yaw, airborne hop and tolt_phase, so what the sim
+ * says the horse is doing and what the screen shows cannot disagree. Every horse wears the unicorn
+ * skin (HORSE_SKIN_UNICORN): a white coat, a pale mane and tail, and one tapered horn. The rider is
+ * drawn by draw_player_3rd's own in-vehicle path, not here. */
+static void draw_horse_entity(const HorseState *h) {
+    if (!h || !h->active) return;
+    const float ground = h->y - 1.15f;   /* HorseState.y is the seat/back height */
+    const int unicorn = (h->skin == HORSE_SKIN_UNICORN);
+    const float coat_r = unicorn ? 0.97f : 0.66f;
+    const float coat_g = unicorn ? 0.95f : 0.52f;
+    const float coat_b = unicorn ? 0.92f : 0.38f;
+    const float mane_r = unicorn ? 0.99f : 0.30f;
+    const float mane_g = unicorn ? 0.86f : 0.22f;
+    const float mane_b = unicorn ? 0.62f : 0.14f;
+    /* Legs swing with the stride; a mounted horse's own phase already advances with speed. */
+    const float swing = sinf(h->tolt_phase * 6.2831853f) * 0.42f;
+    const GLboolean lit_was_on = glIsEnabled(GL_LIGHTING); /* see draw_buggy_entity's own note */
+    glDisable(GL_LIGHTING);
+    glDisable(GL_TEXTURE_2D);
+    glPushMatrix();
+    glTranslatef(h->x, ground, h->z);
+    glRotatef(h->yaw, 0, 1, 0); /* yaw 0 heads +Z, and so does the model */
+
+    glColor3f(coat_r, coat_g, coat_b);
+    draw_horse_box(0.0f, 1.18f, 0.0f, 0.82f, 0.78f, 2.10f);            /* barrel */
+    draw_horse_box(0.0f, 1.40f, 1.02f, 0.56f, 0.72f, 0.72f);           /* chest */
+    draw_horse_box(0.0f, 1.36f, -1.00f, 0.70f, 0.70f, 0.30f);          /* haunch */
+    /* Neck and head, leaning up and forward. */
+    draw_horse_box(0.0f, 1.66f, 1.30f, 0.36f, 0.80f, 0.42f);
+    draw_horse_box(0.0f, 2.02f, 1.58f, 0.34f, 0.34f, 0.74f);
+    draw_horse_box(0.0f, 1.96f, 1.96f, 0.28f, 0.26f, 0.30f);           /* muzzle */
+    /* Four legs: front pair leads, back pair trails, opposite on each side. */
+    draw_horse_box(-0.26f, 0.42f, 0.62f + swing, 0.18f, 0.86f, 0.18f);
+    draw_horse_box( 0.26f, 0.42f, 0.62f - swing, 0.18f, 0.86f, 0.18f);
+    draw_horse_box(-0.26f, 0.42f, -0.66f - swing, 0.18f, 0.86f, 0.18f);
+    draw_horse_box( 0.26f, 0.42f, -0.66f + swing, 0.18f, 0.86f, 0.18f);
+    /* Hooves. */
+    glColor3f(0.24f, 0.22f, 0.20f);
+    draw_horse_box(-0.26f, 0.03f, 0.62f + swing, 0.22f, 0.10f, 0.24f);
+    draw_horse_box( 0.26f, 0.03f, 0.62f - swing, 0.22f, 0.10f, 0.24f);
+    draw_horse_box(-0.26f, 0.03f, -0.66f - swing, 0.22f, 0.10f, 0.24f);
+    draw_horse_box( 0.26f, 0.03f, -0.66f + swing, 0.22f, 0.10f, 0.24f);
+
+    /* Mane along the neck, tail off the haunch -- the pale gold that reads as "unicorn" at range. */
+    glColor3f(mane_r, mane_g, mane_b);
+    draw_horse_box(0.0f, 1.92f, 1.06f, 0.16f, 0.72f, 0.34f);
+    draw_horse_box(0.0f, 1.34f, -1.20f, 0.26f, 0.80f, 0.22f);
+    /* Saddle: a plain dark blanket so a rider looks seated, not floating. */
+    glColor3f(0.35f, 0.20f, 0.12f);
+    draw_horse_box(0.0f, 1.62f, 0.10f, 0.88f, 0.14f, 0.86f);
+
+    if (unicorn) {
+        /* The horn: a tapered four-sided spike out of the forehead, pale gold, unmistakable. */
+        glColor3f(1.0f, 0.92f, 0.66f);
+        glBegin(GL_TRIANGLES);
+        const float base_y = 2.14f, base_z = 1.92f, tip_y = 2.58f, tip_z = 2.18f, w = 0.11f;
+        glVertex3f(-w, base_y, base_z); glVertex3f(w, base_y, base_z); glVertex3f(0.0f, tip_y, tip_z);
+        glVertex3f(w, base_y, base_z); glVertex3f(0.0f, base_y - 0.16f, base_z); glVertex3f(0.0f, tip_y, tip_z);
+        glVertex3f(0.0f, base_y - 0.16f, base_z); glVertex3f(-w, base_y, base_z); glVertex3f(0.0f, tip_y, tip_z);
+        glEnd();
+    }
+
+    glPopMatrix();
+    if (lit_was_on) glEnable(GL_LIGHTING); else glDisable(GL_LIGHTING);
 }
 
 /* A drone is a body plus four rotors, drawn at its own scale so the 45 g micro reads as small from
@@ -14834,6 +14933,11 @@ void draw_scene(PlayerState *render_p) {
         draw_buggy_entity(b);
         vehicle_burn_client(b);
     }
+    for (int hri = 0; hri < MAX_HORSES; hri++) {
+        const HorseState *hs = &local_state.horses[hri];
+        if (!hs->active || hs->scene_id != render_p->scene_id) continue;
+        draw_horse_entity(hs);
+    }
     for (int hi = 0; hi < MAX_HELICOPTERS; hi++) {
         HelicopterState *h = &local_state.helicopters[hi];
         if (!h->active || h->scene_id != render_p->scene_id) continue;
@@ -16781,6 +16885,7 @@ static int lobby_coop_find_and_join(int beacon_port) {
 
 int main(int argc, char* argv[]) {
     buggy_rules_install(); /* PARENA buggy handling (#468) */
+    horse_rules_install(); /* PARENA tölt mount handling (stamina, jump, carrot) */
     heli_rules_install(); /* PARENA helicopter flight model (#542) */
     rocket_car_rules_install(); /* PARENA rocket car (Bedrock Racers port) */
     drone_rules_install(); /* PARENA quadcopters (RECON / micro FLY) */

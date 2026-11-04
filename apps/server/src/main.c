@@ -37,6 +37,7 @@
 #include <stddef.h>
 #include "../../../packages/simulation/shield_packs.h"
 #include "../../../packages/simulation/buggy_rules_host.h"
+#include "../../../packages/simulation/horse_rules_host.h"
 #include "../../../packages/simulation/vehicle_salvage_rules_host.h" /* PARENA car components */
 #include "../../../packages/simulation/garage_rules_host.h" /* PARENA garage rules */
 #include "../../../packages/simulation/heli_rules_host.h"
@@ -504,6 +505,15 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
             bz[bi] = lvl->buggy_spawns[bi].z; byaw[bi] = lvl->buggy_spawns[bi].yaw;
         }
         phys_set_custom_level_buggy_spawns(bx, by, bz, byaw, lvl->buggy_spawn_count);
+    }
+    {   /* author-placed HORSES (level_boxes.h horse_spawns): the farm pads. scene_load places the
+           horses themselves; this only carries where each one stands and which way it faces. */
+        float hx[LEVEL_BOXES_MAX_HORSE_SPAWNS], hy[LEVEL_BOXES_MAX_HORSE_SPAWNS], hz[LEVEL_BOXES_MAX_HORSE_SPAWNS], hyaw[LEVEL_BOXES_MAX_HORSE_SPAWNS];
+        for (int hi = 0; hi < lvl->horse_spawn_count; hi++) {
+            hx[hi] = lvl->horse_spawns[hi].x; hy[hi] = lvl->horse_spawns[hi].y;
+            hz[hi] = lvl->horse_spawns[hi].z; hyaw[hi] = lvl->horse_spawns[hi].yaw;
+        }
+        phys_set_custom_level_horse_spawns(hx, hy, hz, hyaw, lvl->horse_spawn_count);
     }
     {   /* author-placed VEHICLES (level_boxes.h vehicle_spawns): the buggy tile generalised to the
            whole roster. scene_load (below) places them; the server owns their hull and fire. */
@@ -2050,6 +2060,7 @@ void server_broadcast_vehicle_state(void) {
 
 int main(int argc, char *argv[]) {
     buggy_rules_install(); /* PARENA buggy handling (#468) */
+    horse_rules_install(); /* PARENA tölt mount handling (stamina, jump, carrot) */
     vehicle_salvage_rules_install(); /* PARENA car components: the parts own the split, hull mirrors them */
     garage_rules_install(); /* PARENA garage: what this car's origin is worth, what a bay takes */
     eu_rules_install(); /* PARENA EMPIRE unit archetypes, the human baseline, order priorities */

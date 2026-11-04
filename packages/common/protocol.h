@@ -893,6 +893,9 @@ typedef struct {
  * No gallop bounce; good on rough terrain. Cannot fire weapons while mounted.
  * Named for the TYLER archive: Tyler rode this breed in Toledo, 1040–1051 CE.
  * Speed cap: 8 m/s (tölt); acceleration: smooth (no gear shift). */
+#define HORSE_STAMINA_MAX_MILLI 1000 /* the whole bar */
+#define HORSE_START_CARROTS     2    /* carrots a freshly spawned horse carries */
+#define HORSE_SKIN_UNICORN      0    /* white coat, pale mane/tail, one tapered horn */
 typedef struct {
     int  active;
     int  id;
@@ -905,6 +908,17 @@ typedef struct {
     int  occupant_player_id;
     int  grounded;
     int  health;
+    /* LOCAL SIM ONLY -- no packet carries a horse yet (the mount is spawned and simulated by
+       whichever host loaded the level), so these never cross the wire. Stamina is the carrot-fed
+       bar that replaced the old unlimited tölt; jump_vy is the hop's vertical velocity, which is
+       what makes this a horse and not the rocket car (no flight, just a jump). */
+    int   stamina_milli;   /* 0..HORSE_STAMINA_MAX_MILLI */
+    float stamina_acc;     /* fractional drain/regen carried between ticks */
+    int   carrots;         /* carrots in the saddlebag; one refills part of the bar */
+    float jump_vy;         /* m/s, >0 while rising */
+    int   jump_cooldown;   /* ticks until the next hop */
+    int   feed_cooldown;   /* ticks until the next carrot */
+    unsigned char skin;    /* HORSE_SKIN_* */
 } HorseState;
 
 typedef enum {

@@ -11,6 +11,7 @@
 #include "witness_ai.h" /* BIG_O engine merge phase 7d -- MODE_STORY content cutover */
 #include "hammer_tower.h" /* WPN_HAMMER's E power: the mini gatling tower the cast builds */
 #include "bioslurry.h"    /* what a killed zombie leaves, and the DNA the lab reads off it */
+#include "horse_rules.h"   /* the tölt mount's numbers -- PARENA mod, see horse_rules_host.h */
 #include "zombies_hud_bridge.h" /* BIG_O engine merge phase 8 -- the first real REFLUX subscriber
     for witness_ai.c's own MODE_ZOMBIES/MODE_SURVIVAL population events (zombie mood escalation,
     citizen witness escalation, Giant Zombie Bug feeding, The Men dispatch/resolve) */
@@ -349,6 +350,13 @@ static inline void scene_load(int scene_id) {
         local_state.airplanes[ai].id = ai;
         local_state.airplanes[ai].occupant_player_id = -1;
     }
+    /* A scene change used to leave every horse standing where the last level left it (nothing here
+       cleared them). Cleared like every other vehicle, then re-spawned from the level's own pads. */
+    for (int hri = 0; hri < MAX_HORSES; hri++) {
+        memset(&local_state.horses[hri], 0, sizeof(local_state.horses[hri]));
+        local_state.horses[hri].id = hri;
+        local_state.horses[hri].occupant_player_id = -1;
+    }
     int pad_count = 0;
     const VehiclePad *pads = scene_vehicle_pads(scene_id, &pad_count);
     for (int i = 0; i < pad_count && i < MAX_BUGGIES; i++) {
@@ -406,6 +414,18 @@ static inline void scene_load(int scene_id) {
                     ai++;
                 }
             }
+        }
+        /* Author-placed horses (level_boxes.h horse_spawns): a farm/paddock pad is an ordinary wall
+           named horse_spawn / horse_spawn_<deg>, the same convention the buggy tile already uses, so
+           the farms in nextown are authored in the level rather than hardcoded here. */
+        for (int hri = 0; hri < g_custom_level_horse_count && hri < MAX_HORSES; hri++) {
+            horse_spawn_defaults(&local_state.horses[hri], hri, scene_id,
+                                 g_custom_level_horse_x[hri], g_custom_level_horse_z[hri],
+                                 g_custom_level_horse_yaw[hri]);
+            local_state.horses[hri].y = g_custom_level_horse_y[hri] + 1.15f;
+            printf("[HORSE] spawned id=%d scene=%d (level) x=%.1f z=%.1f yaw=%.0f skin=unicorn\n",
+                   hri, scene_id, g_custom_level_horse_x[hri], g_custom_level_horse_z[hri],
+                   g_custom_level_horse_yaw[hri]);
         }
     }
 
@@ -678,12 +698,16 @@ static inline void buggy_tick_all(unsigned int now_ms) {
  * entry, Valentina Alcântara / Dawud al-Muthanna manuscript, c. 1045 CE).
  * ─────────────────────────────────────────────────────────────────────────── */
 
-#define HORSE_MAX_SPEED   8.0f      /* m/s — tölt top speed */
+#define HORSE_MAX_SPEED   8.0f      /* m/s — built-in tölt top speed (horse_rules.prn owns the real one) */
 #define HORSE_ACCEL       4.5f      /* m/s² */
 #define HORSE_DECEL       6.0f      /* m/s² (natural friction) */
 #define HORSE_TURN_DEG_S  90.0f     /* yaw rate deg/s at speed */
 #define HORSE_STRIDE_HZ   2.8f      /* strides per second at full tölt */
 #define HORSE_EYE_OFFSET  1.55f     /* rider eye height above ground */
+#define HORSE_BACK_HEIGHT 1.15f     /* seat height above the ground -- HorseState.y is this */
+#define HORSE_GRAVITY_MPS2 11.0f    /* the hop's gravity, m/s² */
+#define HORSE_JUMP_COOLDOWN_TICKS 24
+#define HORSE_FEED_COOLDOWN_TICKS 40
 
 static inline void horse_spawn_defaults(HorseState *h, int id, int scene_id,
                                         float x, float z, float yaw) {
@@ -696,9 +720,12 @@ static inline void horse_spawn_defaults(HorseState *h, int id, int scene_id,
     h->occupant_player_id = -1;
     float gy = terrain_sample_height(&g_scene_terrain, x, z);
     if (gy < 0.0f) gy = 0.0f;
-    h->y = gy + 1.15f; /* horse back height */
+    h->y = gy + HORSE_BACK_HEIGHT;
     h->grounded = 1;
     h->health = 200;
+    h->stamina_milli = HORSE_STAMINA_MAX_MILLI;   /* a fresh horse is not blown */
+    h->carrots = HORSE_START_CARROTS;
+    h->skin = HORSE_SKIN_UNICORN;                 /* every horse in the world is a unicorn */
 }
 
 static inline HorseState *horse_find_nearby(int scene_id, float x, float y,
@@ -743,26 +770,36 @@ static inline int horse_try_exit(PlayerState *p, HorseState *h) {
 
 static inline void horse_tick_all(void) {
     const float dt = SHANKPIT_NET_FIXED_DT;
+    const HorseRules *rules = horse_rules();
     for (int i = 0; i < MAX_HORSES; i++) {
         HorseState *h = &local_state.horses[i];
         if (!h->active) continue;
 
         float throttle = 0.0f;
         float yaw_target = h->yaw;
+        PlayerState *rider = NULL;
         if (h->occupant_player_id >= 0 && h->occupant_player_id < MAX_CLIENTS) {
-            PlayerState *occ = &local_state.players[h->occupant_player_id];
-            h->scene_id = occ->scene_id;
-            throttle = occ->in_fwd;
-            yaw_target = occ->yaw;
+            rider = &local_state.players[h->occupant_player_id];
+            h->scene_id = rider->scene_id;
+            throttle = rider->in_fwd;
+            yaw_target = rider->yaw;
         } else {
             h->occupant_player_id = -1;
         }
+
+        if (h->jump_cooldown > 0) h->jump_cooldown--;
+        if (h->feed_cooldown > 0) h->feed_cooldown--;
+
+        /* Fatigue: a blown horse moves at a fraction of its top speed, not zero -- the Zelda wheel
+           empties and the sprint drops to a jog. The fraction itself is a rule, not a constant. */
+        float max_speed = (float)rules->max_speed_milli() * (float)rules->fatigue_permille(h->stamina_milli) / 1000000.0f;
+        if (max_speed < 0.5f) max_speed = 0.5f;
 
         /* Smooth yaw toward rider look direction — horse turns by leaning */
         float yaw_err = yaw_target - h->yaw;
         while (yaw_err >  180.0f) yaw_err -= 360.0f;
         while (yaw_err < -180.0f) yaw_err += 360.0f;
-        float speed_frac = h->speed / HORSE_MAX_SPEED;
+        float speed_frac = h->speed / max_speed;
         float turn_rate = HORSE_TURN_DEG_S * speed_frac;
         float yaw_delta = yaw_err * turn_rate * dt * 0.05f;
         if (fabsf(yaw_delta) > fabsf(yaw_err)) yaw_delta = yaw_err;
@@ -771,7 +808,7 @@ static inline void horse_tick_all(void) {
         /* Tölt acceleration: smooth ramp, no discrete gait transition */
         if (throttle > 0.05f) {
             h->speed += HORSE_ACCEL * throttle * dt;
-            if (h->speed > HORSE_MAX_SPEED) h->speed = HORSE_MAX_SPEED;
+            if (h->speed > max_speed) h->speed = max_speed;
         } else if (throttle < -0.05f) {
             h->speed += throttle * HORSE_ACCEL * dt; /* rein back */
             if (h->speed < -2.0f) h->speed = -2.0f;
@@ -779,6 +816,37 @@ static inline void horse_tick_all(void) {
             float decel = HORSE_DECEL * dt;
             if (h->speed > 0.0f) { h->speed -= decel; if (h->speed < 0.0f) h->speed = 0.0f; }
             else if (h->speed < 0.0f) { h->speed += decel; if (h->speed > 0.0f) h->speed = 0.0f; }
+        }
+        if (h->speed > max_speed) h->speed = max_speed;
+
+        /* Stamina: tölt burns it, standing still refills it, a carrot tops it back up. */
+        float spd = fabsf(h->speed);
+        if (h->grounded && spd < 0.5f) {
+            h->stamina_acc += (float)rules->stamina_regen_milli() * dt;
+        } else if (spd >= 0.5f) {
+            h->stamina_acc -= (float)rules->tolt_drain_milli((int)(spd * 1000.0f)) * dt;
+        }
+        if (h->stamina_acc >= 1.0f) {
+            int whole = (int)h->stamina_acc;
+            h->stamina_acc -= (float)whole;
+            h->stamina_milli += whole;
+            if (h->stamina_milli > HORSE_STAMINA_MAX_MILLI) h->stamina_milli = HORSE_STAMINA_MAX_MILLI;
+        } else if (h->stamina_acc <= -1.0f) {
+            int whole = (int)(-h->stamina_acc);
+            h->stamina_acc += (float)whole;
+            h->stamina_milli -= whole;
+            if (h->stamina_milli < 0) h->stamina_milli = 0;
+        }
+
+        /* A carrot: BTN_ABILITY_2 (right mouse / LT) while mounted. Weapons are already disabled
+           under a rider, so that button is free -- feed instead of fire. */
+        if (rider && rider->in_ability2 && h->feed_cooldown == 0 &&
+            h->carrots > 0 && h->stamina_milli < HORSE_STAMINA_MAX_MILLI) {
+            h->carrots--;
+            h->stamina_milli += rules->carrot_restore_milli();
+            if (h->stamina_milli > HORSE_STAMINA_MAX_MILLI) h->stamina_milli = HORSE_STAMINA_MAX_MILLI;
+            h->feed_cooldown = HORSE_FEED_COOLDOWN_TICKS;
+            printf("[HORSE] carrot horse=%d carrots=%d stamina=%d\n", h->id, h->carrots, h->stamina_milli);
         }
 
         /* Move along yaw */
@@ -788,27 +856,50 @@ static inline void horse_tick_all(void) {
         h->x += h->vx * dt;
         h->z += h->vz * dt;
 
-        /* Terrain follow — no bounce; tölt is smooth */
         float gy = terrain_sample_height(&g_scene_terrain, h->x, h->z);
         if (gy < 0.0f) gy = 0.0f;
-        float target_y = gy + 1.15f;
-        h->y += (target_y - h->y) * 8.0f * dt; /* smooth terrain track */
-        h->grounded = (h->y <= target_y + 0.05f);
+        float target_y = gy + HORSE_BACK_HEIGHT;
+
+        /* The jump: a hop with real gravity, NOT the rocket car's flight. Space is BTN_JUMP, which
+           the rider's own PlayerState already carries every tick. */
+        if (rider && rider->in_jump && h->jump_cooldown == 0 &&
+            rules->can_jump(h->stamina_milli, h->grounded)) {
+            h->jump_vy = (float)rules->jump_speed_milli() / 1000.0f;
+            h->stamina_milli -= rules->jump_cost_milli();
+            if (h->stamina_milli < 0) h->stamina_milli = 0;
+            h->jump_cooldown = HORSE_JUMP_COOLDOWN_TICKS;
+            h->grounded = 0;
+            printf("[HORSE] jump horse=%d stamina=%d\n", h->id, h->stamina_milli);
+        }
+
+        if (!h->grounded || h->jump_vy > 0.0f) {
+            h->jump_vy -= HORSE_GRAVITY_MPS2 * dt;
+            h->y += h->jump_vy * dt;
+            if (h->y <= target_y && h->jump_vy <= 0.0f) {
+                h->y = target_y;
+                h->jump_vy = 0.0f;
+                h->grounded = 1;
+            }
+        } else {
+            /* Terrain follow — no bounce; tölt is smooth */
+            h->y += (target_y - h->y) * 8.0f * dt;
+            h->grounded = (h->y <= target_y + 0.05f);
+        }
 
         /* Advance tölt phase — drives hoof audio via player model */
-        h->tolt_phase += HORSE_STRIDE_HZ * (h->speed / HORSE_MAX_SPEED) * dt;
+        h->tolt_phase += HORSE_STRIDE_HZ * (h->speed / max_speed) * dt;
         if (h->tolt_phase >= 1.0f) h->tolt_phase -= 1.0f;
+        if (h->tolt_phase < 0.0f) h->tolt_phase += 1.0f;
 
         /* Sync rider position */
-        if (h->occupant_player_id >= 0 && h->occupant_player_id < MAX_CLIENTS) {
-            PlayerState *occ = &local_state.players[h->occupant_player_id];
-            occ->x = h->x;
-            occ->y = h->y + HORSE_EYE_OFFSET;
-            occ->z = h->z;
-            occ->vx = occ->vy = occ->vz = 0.0f;
-            occ->on_ground = h->grounded;
+        if (rider) {
+            rider->x = h->x;
+            rider->y = h->y + HORSE_EYE_OFFSET;
+            rider->z = h->z;
+            rider->vx = rider->vy = rider->vz = 0.0f;
+            rider->on_ground = h->grounded;
             /* Weapons disabled while mounted — tölt mount is not a war horse */
-            occ->is_shooting = 0;
+            rider->is_shooting = 0;
         }
     }
 }
