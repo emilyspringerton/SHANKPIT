@@ -206,6 +206,25 @@ jobs:
       # way the place does, signs back in with the guest secret, mints a connect ticket, verifies its MAC the way
       # the C server does, links an email onto the SAME player, signs in by email, and mints a second ticket.
       - name: Build IDUNA, sign in, mint, verify the MAC
+        shell: bash
         env:
           IDUNA_DIR: ${{ github.workspace }}/iduna
-        run: roblox/scripts/live_ticket_check.sh
+        run: |
+          set -o pipefail
+          status=0
+          roblox/scripts/live_ticket_check.sh 2>&1 | tee /tmp/live.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            # A job's own log needs a token this project does not keep on the maintainer box, but ANNOTATIONS are
+            # readable unauthenticated -- so the reason goes where it can actually be read, instead of a bare
+            # "exit code 1". One annotation, newlines escaped the way workflow commands require.%
+            {
+              echo "go: $(go version 2>&1)"
+              echo "CGO_ENABLED=$(go env CGO_ENABLED 2>&1) CC=$(go env CC 2>&1) GOFLAGS=$(go env GOFLAGS 2>&1)"
+              echo "cc: $(command -v cc gcc 2>/dev/null | head -1)"
+              tail -25 /tmp/live.log
+            } > /tmp/diag.txt
+            msg=$(sed -e 's/%/%25/g' -e 's/\r//g' -e 's/^/| /' /tmp/diag.txt \
+                  | paste -sd '~' - | sed 's/~/%0A/g')
+            echo "::error title=live chain failed::$msg"
+            exit "$status"
+          fi
