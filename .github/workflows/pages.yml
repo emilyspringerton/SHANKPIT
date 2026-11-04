@@ -5,10 +5,12 @@ name: Pages
 # Static, dependency-free and atomic: the build job runs the generator and its own artifact check, and only then
 # uploads. If the check fails, nothing is published and the last good deploy stays live.
 #
-# ONE-TIME SETUP, and it is a click rather than a step here: Settings -> Pages -> Build and deployment ->
-# Source: GitHub Actions. actions/configure-pages' `enablement` needs an admin token and GITHUB_TOKEN is not admin,
-# so the workflow cannot bootstrap Pages for itself. The "Is Pages enabled?" step below exists to say that in the
-# log with a link, instead of leaving a bare "Get Pages site failed". See site/README.md.
+# ONE-TIME SETUP (DONE 2026-11-04): Pages is enabled with source "GitHub Actions", via
+# `POST /repos/emilyspringerton/SHANKPIT/pages -f build_type=workflow`. It cannot be done from this workflow:
+# actions/configure-pages' `enablement` needs an admin token and GITHUB_TOKEN is not admin. Run 41755803522 was the
+# first successful build + deploy. The "Is Pages enabled?" step stays so that a future repo in the same state fails
+# with one actionable line instead of a bare "Get Pages site failed" -- it is cheap and it has already earned it.
+# See site/README.md.
 
 on:
   push:

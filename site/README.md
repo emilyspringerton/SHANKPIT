@@ -17,21 +17,21 @@ document has exactly one home — the same rule the engine applies to its rules.
 
 ```bash
 node site/build.mjs && node site/check.mjs
-```
-
-## One-time repository setting
+```## One-time repository setting (done 2026-11-04)
 
 The workflow cannot enable Pages for itself: `actions/configure-pages`' `enablement` needs an admin token, and
-`GITHUB_TOKEN` is not admin. So this is a click, once:
+`GITHUB_TOKEN` is not admin. So it was done once, by API, with an admin PAT:
 
-**Settings → Pages → Build and deployment → Source: GitHub Actions**
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  https://api.github.com/repos/emilyspringerton/SHANKPIT/pages -f build_type=workflow
+```
 
-(or, with an authenticated `gh`: `gh api -X POST repos/emilyspringerton/SHANKPIT/pages -f build_type=workflow`)
-
-After that every push to `master` that touches `site/`, `docs/`, `docs2/` or the workflow builds, checks and
-deploys — and until then, Actions → Pages → **Run workflow** (or re-running the failed job) publishes the same
-artifact without needing a new commit. The site is at **https://emilyspringerton.github.io/SHANKPIT/** — a *project* page, which is why every
-local reference is relative and `check.mjs` fails a root-absolute one.
+`POST /pages` answered **201** with `build_type: workflow`; `GET /pages` then read it back. After that every push
+to `master` that touches `site/`, `docs/`, `docs2/` or the workflow builds, checks and deploys — and
+Actions → Pages → **Run workflow** publishes the same artifact without needing a new commit, which is how the
+first deploy was made. The site is at **https://emilyspringerton.github.io/SHANKPIT/** — a *project* page, which is
+why every local reference is relative and `check.mjs` fails a root-absolute one.
 
 ## What the workflow does, and what it refuses to do
 
@@ -44,12 +44,13 @@ worse than a page that is a commit behind.
 
 ## Limits, named
 
-- **Built in CI, not published.** Pages is not enabled on the repository, so only the `build` job runs. Runs
-  [41748373751](https://github.com/emilyspringerton/SHANKPIT/actions/runs/41748373751) and
-  [41748946384](https://github.com/emilyspringerton/SHANKPIT/actions/runs/41748946384) built `_site/` and passed
-  `check.mjs` on GitHub's runners, then failed at *Is Pages enabled?* by design — 2 pages, 5 files, 37 documents
-  linked, 36 KB. Nothing has been published and the URL 404s; `deploy-pages` has never run. The blocker is the
-  repository setting above, not this code.
+- **Published.** [Run 41755803522](https://github.com/emilyspringerton/SHANKPIT/actions/runs/41755803522) is the
+  first real deploy: build, check, configure, upload and `deploy-pages` all green, and the live URL answers
+  **200** — `index.html` 4654 B, `docs.html` 13638 B, `style.css` 4065 B, `build.json` 193 B. Before Pages was
+  enabled, runs [41748373751](https://github.com/emilyspringerton/SHANKPIT/actions/runs/41748373751) and
+  [41748946384](https://github.com/emilyspringerton/SHANKPIT/actions/runs/41748946384) built and checked the same
+  artifact green on GitHub's runners and then failed at *Is Pages enabled?* by design, which is what the guard is
+  for.
 - **The outbound play links are unverified from the environment this was written in.** `index.html` links
   `https://wotan.okemily.com/shankpit-460/` and `/trapx/`, which is where those builds are served from. On
   2026-11-04 every `okemily.com` host answered *no*: the name resolves (`136.68.242.3`, note that the project's own
