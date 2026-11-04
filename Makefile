@@ -596,6 +596,15 @@ test-env-parity: | $(BIN_DIR)
 		packages/simulation/lighting_rules.c packages/simulation/material_rules.c -o $(BIN_DIR)/env_parity_test $(LIBS_M)
 	./$(BIN_DIR)/env_parity_test
 
+# The sky rules (day/night, weather intensities, fog visibility, lightning) are PARENA's, emitted to C here and
+# to Luau in NOOBTOPIA. This asserts the generated C against the shared fixture; NOOBTOPIA's tests/sky_test.lua
+# asserts the same rows, so the two worlds cannot disagree about what a storm looks like.
+.PHONY: test-sky-parity
+test-sky-parity: | $(BIN_DIR)
+	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/simulation packages/render/sky_parity_test.c \
+		packages/simulation/sky_rules.c -o $(BIN_DIR)/sky_parity_test $(LIBS_M)
+	./$(BIN_DIR)/sky_parity_test
+
 # ---- SHANKPIT on Roblox (roblox/): the 460 layer that sits beside the base place -------------------
 # The base place (shankpit_roblox.rbxl) is binary and stays untouched; these targets test the pure Lua modules
 # under plain Lua and pack them into one insertable .rbxmx model.
