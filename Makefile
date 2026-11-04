@@ -614,6 +614,21 @@ test-cozy: | $(BIN_DIR)
 		packages/simulation/cozy_rules.c -o $(BIN_DIR)/cozy_test $(LIBS_M)
 	./$(BIN_DIR)/cozy_test
 
+# ---- TRAPX VS0 (Detroit): the city, the Field Offices, and the MODS FIRST event bus -----------------
+# The rules are PARENA's (stdlib/trapx/trapx_rules.prn -> packages/simulation/trapx_rules.c, via
+# scripts/gen_trapx_rules.sh); this target proves the host and the fixture, and the same fixture is asserted by
+# the WOTAN sandbox against the generated JavaScript (WOTAN/scripts/trapx-rules-test.mjs).
+.PHONY: gen-trapx-rules test-trapx
+GEN_TRAPX_RULES := packages/simulation/trapx_rules.c
+gen-trapx-rules:
+	./scripts/gen_trapx_rules.sh
+
+test-trapx: | $(BIN_DIR)
+	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/simulation \
+		packages/simulation/trapx_test.c packages/simulation/trapx.c packages/simulation/trapx_events.c \
+		$(GEN_TRAPX_RULES) -o $(BIN_DIR)/trapx_test $(LIBS_M)
+	./$(BIN_DIR)/trapx_test
+
 # ---- SHANKPIT on Roblox (roblox/): the 460 layer that sits beside the base place -------------------
 # The base place (shankpit_roblox.rbxl) is binary and stays untouched; these targets test the pure Lua modules
 # under plain Lua and pack them into one insertable .rbxmx model.
