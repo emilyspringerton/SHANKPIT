@@ -636,9 +636,26 @@ test-trapx: | $(BIN_DIR)
 # scripts/gen_trapx_city_rules.sh). Deliberately NOT in LOBBY_SRC/SERVER_SRC: no running host consumes it
 # yet (docs/EMPIRE_NORTHSTAR.md §6), and this test is the only consumer, so a hand-copied source list has
 # nothing to drift.
-.PHONY: regen-trapx-city test-trapx-city
+.PHONY: regen-trapx-city test-trapx-city regen-frontend-rules test-frontend-rules
 regen-trapx-city:
 	./scripts/gen_trapx_city_rules.sh
+
+# ---- the GFD-frontend VS0 rule surface: 1700s start, trains, mining, citizens, contacts -------------
+# Four PARENA modules -> four generated .c files (scripts/gen_frontend_rules.sh), the C host named in
+# docs2/GFD_FRONTEND_VS0_NORTHSTAR.md. The SAME sources build to one wasm module there
+# (../PARENA/scripts/build_frontend_vs0_wasm.sh) and both targets assert the same hand-derived values,
+# so the browser and the game cannot disagree about when a train exists. Deliberately not in
+# LOBBY_SRC/SERVER_SRC yet: the frontend wiring is the next slice, and this test is the only consumer.
+regen-frontend-rules:
+	./scripts/gen_frontend_rules.sh
+
+test-frontend-rules: | $(BIN_DIR)
+	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/simulation \
+		packages/simulation/frontend_rules_test.c \
+		packages/simulation/era_tech_rules.c packages/simulation/mining_rules.c \
+		packages/simulation/citizen_day_rules.c packages/simulation/citizen_contact_rules.c \
+		-o $(BIN_DIR)/frontend_rules_test $(LIBS_M)
+	./$(BIN_DIR)/frontend_rules_test
 
 test-trapx-city: | $(BIN_DIR)
 	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/simulation \
