@@ -29,7 +29,8 @@ The workflow cannot enable Pages for itself: `actions/configure-pages`' `enablem
 (or, with an authenticated `gh`: `gh api -X POST repos/emilyspringerton/SHANKPIT/pages -f build_type=workflow`)
 
 After that every push to `master` that touches `site/`, `docs/`, `docs2/` or the workflow builds, checks and
-deploys. The site is at **https://emilyspringerton.github.io/SHANKPIT/** — a *project* page, which is why every
+deploys — and until then, Actions → Pages → **Run workflow** (or re-running the failed job) publishes the same
+artifact without needing a new commit. The site is at **https://emilyspringerton.github.io/SHANKPIT/** — a *project* page, which is why every
 local reference is relative and `check.mjs` fails a root-absolute one.
 
 ## What the workflow does, and what it refuses to do
@@ -43,8 +44,12 @@ worse than a page that is a commit behind.
 
 ## Limits, named
 
-- **Not run.** Pages is not enabled on the repository yet, and there is no authenticated `gh` in the environment this
-  was written in, so the workflow has never executed. The build and the check have both been run locally.
+- **Built in CI, not published.** Pages is not enabled on the repository, so only the `build` job runs. Runs
+  [41748373751](https://github.com/emilyspringerton/SHANKPIT/actions/runs/41748373751) and
+  [41748946384](https://github.com/emilyspringerton/SHANKPIT/actions/runs/41748946384) built `_site/` and passed
+  `check.mjs` on GitHub's runners, then failed at *Is Pages enabled?* by design — 2 pages, 5 files, 37 documents
+  linked, 36 KB. Nothing has been published and the URL 404s; `deploy-pages` has never run. The blocker is the
+  repository setting above, not this code.
 - **No wasm is built here.** The playable builds (`shankpit-460`, TRAPX) are served from WOTAN; this site links to
   them. A Pages job that compiles the engine would need the LLVM toolchain and the sibling PARENA checkout, which is
   a different machine and a different budget.
