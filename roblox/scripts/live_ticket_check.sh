@@ -34,6 +34,14 @@ trap cleanup EXIT
 echo "building IDUNA..."
 ( cd "$iduna" && go build -o "$work/iduna" . )
 
+# The tree needs var/ before the binary starts: IDUNA's stores open their SQLite files under it, `var/` is
+# gitignored, so a FRESH CLONE HAS NO SUCH DIRECTORY and the binary dies at startup with
+#   mailinglist: failed to open store: migrate mailinglist db: unable to open database file (14)
+# and never answers /health. Found by running this script against a clean clone of the public repo -- which
+# is exactly what CI checks out -- after this box's own checkout had var/ from earlier runs: the local green
+# said nothing about the clone. `mkdir -p` is idempotent, so a tree that already has one is untouched.
+mkdir -p "$iduna/var"
+
 echo "booting IDUNA on $base (throwaway db, throwaway ticket secret)..."
 # Run it FROM IDUNA's own tree: its relative var/*.db paths (blog, vault, kanban, ...) are created at
 # startup, and launching from anywhere else drops ten SQLite files into whatever repo you happened to be
