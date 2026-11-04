@@ -33,6 +33,13 @@
  * No acknowledgement traffic exists, by construction: state is a repeat, and events are telemetry.
  * Losing an event costs a mod one line of activity; losing the state costs one tick of a position,
  * healed by the next packet.
+ *
+ * Batch size is a datagram budget, not a limit on what gets delivered: collect_events stops at
+ * `max` and leaves the cursor ON the first undelivered row, so the caller loops until it returns 0
+ * (the server loops four times a snapshot, i.e. up to 32 rows). The cursor is an ABSOLUTE dispatch
+ * number, not a retained-log index, because reflux_host_log_size() saturates at
+ * REFLUX_LOG_CAPACITY -- the earlier version of this file used the size as its high-water mark and
+ * would have gone permanently silent after 256 dispatches, which is a real bug this pass found.
  */
 #ifndef HORSE_SYNC_H
 #define HORSE_SYNC_H
@@ -117,25 +124,33 @@ static inline int horse_sync_apply(ServerState *st, const NetHorseState *pkt, in
     return applied;
 }
 
-/* Drain the horse family of REFLUX actions past *cursor. `cursor` starts at the current log size
- * (never replay history at a fresh peer). Returns how many rows were written; `max` caps one
- * datagram, and anything beyond it is dropped -- the honest trade this bridge makes, since state is
- * carried separately and events are telemetry. */
+/* Drain the horse family of REFLUX actions past *cursor, up to `max` rows. The cursor is an ABSOLUTE
+ * dispatch number (see reflux_runtime.h's own note on why the retained size cannot be one), and it
+ * is left on the first row that did not fit, so calling this again delivers the rest in order.
+ * A fresh cursor (-1) baselines at the current dispatch count instead of replaying history at a
+ * newly joined peer.
+ *
+ * Returns how many rows were written. Rows that the log overwrote before they could be sent are
+ * skipped, not faked: they are gone, and the state packet is what keeps the world correct. */
 static inline int horse_sync_collect_events(NetHorseEvent *out, int max, int *cursor) {
     if (!out || !cursor || max <= 0) return 0;
-    int n = reflux_host_log_size();
-    if (*cursor < 0 || *cursor > n) *cursor = n;
+    int total = reflux_host_total_dispatched();
+    if (*cursor < 0 || *cursor > total) *cursor = total;
     int k = 0;
-    for (int i = *cursor; i < n && k < max; i++) {
-        int type = reflux_host_action_type_at(i);
+    int abs = *cursor;
+    for (; abs < total; abs++) {
+        int idx = reflux_host_index_for_abs(abs);
+        if (idx < 0) continue;              /* overwritten before we got to it */
+        int type = reflux_host_action_type_at(idx);
         if (!reflux_action_is_horse(type)) continue;
+        if (k >= max) break;                /* leave it on the cursor for the next call */
         out[k].type = type;
-        out[k].a = reflux_host_action_a_at(i);
-        out[k].b = reflux_host_action_b_at(i);
-        out[k].c = reflux_host_action_c_at(i);
+        out[k].a = reflux_host_action_a_at(idx);
+        out[k].b = reflux_host_action_b_at(idx);
+        out[k].c = reflux_host_action_c_at(idx);
         k++;
     }
-    *cursor = n;
+    *cursor = abs;
     return k;
 }
 

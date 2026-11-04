@@ -190,6 +190,14 @@ const RefluxAction *reflux_log_at(const RefluxLog *log, int index);
 void reflux_host_reset(void);
 void reflux_host_dispatch(int action_type, int a, int b, int c);
 int reflux_host_log_size(void);
+
+/* Absolute dispatch count, and absolute number -> the retained index the accessors below take
+ * (-1 once that action has been overwritten, or if it is not dispatched yet). Needed by any
+ * cursor-based subscriber: reflux_host_log_size() SATURATES at REFLUX_LOG_CAPACITY, so a cursor
+ * taken from it goes permanently silent after 256 dispatches -- a real bug horse_sync.h's own
+ * cursor had, found while finishing the relay. */
+int reflux_host_total_dispatched(void);
+int reflux_host_index_for_abs(int abs_index);
 int reflux_host_action_type_at(int index); /* -1 if index out of range */
 int reflux_host_action_a_at(int index);    /* 0 if index out of range */
 int reflux_host_action_b_at(int index);    /* 0 if index out of range */

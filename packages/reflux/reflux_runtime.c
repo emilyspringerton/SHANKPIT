@@ -54,6 +54,21 @@ int reflux_host_log_size(void) {
     return reflux_log_length(&g_reflux_log);
 }
 
+/* Absolute dispatch count -- see reflux_runtime.h. RefluxLog already carries it (total_dispatched
+ * outlives the ring); this is the read side the PARENA-exposed ABI was missing. */
+int reflux_host_total_dispatched(void) {
+    return g_reflux_log.total_dispatched;
+}
+
+int reflux_host_index_for_abs(int abs_index) {
+    int total = g_reflux_log.total_dispatched;
+    int size = reflux_log_length(&g_reflux_log);
+    if (abs_index < 0 || abs_index >= total) return -1;
+    int oldest_abs = total - size;
+    if (abs_index < oldest_abs) return -1;
+    return abs_index - oldest_abs;
+}
+
 int reflux_host_action_type_at(int index) {
     const RefluxAction *e = reflux_log_at(&g_reflux_log, index);
     return e ? e->action_type : -1;

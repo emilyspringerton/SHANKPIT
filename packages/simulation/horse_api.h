@@ -102,25 +102,35 @@ static inline int horse_api_feed(ServerState *st, int slot, unsigned int now_ms)
  * were written (0 when nothing new). Non-horse actions are skipped, not returned -- the family
  * boundary lives in reflux_action_is_horse, in one place.
  *
- * Known and deliberate, the same contract world_alert_bridge.c already documents for its own
- * cursor: REFLUX keeps the last REFLUX_LOG_CAPACITY (256) actions for the WHOLE game, so if more
- * than that land between two polls this cursor skips some. Polling once per tick (what this is for)
- * makes that unreachable in practice; horse STATE is carried separately and cannot be missed. */
+ * `max` is a batch cap, not a limit on what is delivered: the cursor is an ABSOLUTE dispatch
+ * number and is left on the first row that did not fit, so a mod that wants everything calls this
+ * until it returns 0 (a mod polling once per tick just calls it once). Deliberately absolute: the
+ * retained log saturates at REFLUX_LOG_CAPACITY, so a high-water mark taken from the log's own size
+ * goes permanently silent once the log has wrapped -- see reflux_runtime.h.
+ *
+ * That ring is the one honest bound: if more than REFLUX_LOG_CAPACITY (256) actions -- of ANY
+ * family -- land before this is called, the oldest are overwritten and are not delivered. Polling
+ * each tick (what this is for) makes that unreachable in practice; horse STATE is carried
+ * separately and cannot be missed. */
 static inline int horse_api_poll(HorseRefluxCursor *c, HorseEvent *out, int max) {
     if (!c || !out || max <= 0) return 0;
-    int n = reflux_host_log_size();
-    if (c->cursor < 0 || c->cursor > n) c->cursor = n;  /* fresh or reset log: baseline, no replay */
+    int total = reflux_host_total_dispatched();
+    if (c->cursor < 0 || c->cursor > total) c->cursor = total;  /* fresh or reset log: baseline, no replay */
     int k = 0;
-    for (int i = c->cursor; i < n && k < max; i++) {
-        int type = reflux_host_action_type_at(i);
+    int abs = c->cursor;
+    for (; abs < total; abs++) {
+        int idx = reflux_host_index_for_abs(abs);
+        if (idx < 0) continue;              /* overwritten before this poll */
+        int type = reflux_host_action_type_at(idx);
         if (!reflux_action_is_horse(type)) continue;
+        if (k >= max) break;                /* leave it for the next poll */
         out[k].type = type;
-        out[k].a = reflux_host_action_a_at(i);
-        out[k].b = reflux_host_action_b_at(i);
-        out[k].c = reflux_host_action_c_at(i);
+        out[k].a = reflux_host_action_a_at(idx);
+        out[k].b = reflux_host_action_b_at(idx);
+        out[k].c = reflux_host_action_c_at(idx);
         k++;
     }
-    c->cursor = n;
+    c->cursor = abs;
     return k;
 }
 

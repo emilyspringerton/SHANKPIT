@@ -286,9 +286,85 @@ int main(void) {
               "a mod's own poll saw %d horse events", polled);
     }
 
+    /* ---- 9. a fence is a fence: a loose horse slides along it instead of walking through it ---- */
+    {
+        PlayerState *p = fresh_player();
+        /* one wall, 200 across, 20 tall, 4 deep, centred on the origin. Index 0 is the deliberate
+           dummy every shared map_geo consumer skips (see physics.h). */
+        static const Box wall[] = {
+            { 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f },
+            { 0.0f, 0.0f, 0.0f, 200.0f, 20.0f, 4.0f }
+        };
+        map_geo = wall;
+        map_count = 2;
+        p->x = 500.0f;               /* the player stands well clear: this test is about a fence, not a spook */
+        p->z = 500.0f;
+        HorseState *h = &local_state.horses[0];
+        horse_spawn_defaults(h, 0, p->scene_id, 0.0f, -8.0f, 0.0f);
+        h->home_x = 0.0f;
+        h->home_z = 8.0f;            /* its paddock is on the FAR side of the fence */
+        h->goal = HORSE_GOAL_HOME;
+        h->goal_x = h->home_x;
+        h->goal_z = h->home_z;
+        h->goal_until_ms = test_now_ms + 60000;
+        h->goal_act_at_ms = test_now_ms;
+        h->stamina_milli = 900;
+        tick(400);                   /* ~6.4 s of walking straight at it */
+        CHECK(h->z < -1.5f, "the horse walked through the fence (z=%.2f)", h->z);
+
+        /* the same horse with the fence gone still gets where it is going */
+        map_count = 1;               /* dummy index 0 only: nothing to hit */
+        tick(400);
+        CHECK(h->z > -1.5f, "with no fence in the way the horse should have crossed z=0, it is at %.2f", h->z);
+
+        map_geo = map_geo_stadium;
+        map_count = 1;
+    }
+
+    /* ---- 10. the relay drains in batches, in order, and survives the log wrapping ---- */
+    {
+        reflux_host_reset();
+        for (int i = 0; i < 20; i++)
+            reflux_host_dispatch(REFLUX_ACTION_HORSE_GOAL_CHANGED, i, HORSE_GOAL_WANDER, 0);
+        NetHorseEvent batch[NET_HORSE_EVENT_MAX];
+        int cursor = 0;              /* a cursor at 0 delivers from the oldest retained row */
+        int got = 0, order_ok = 1, next_expected = 0;
+        for (int guard = 0; guard < 32; guard++) {
+            int n = horse_sync_collect_events(batch, NET_HORSE_EVENT_MAX, &cursor);
+            if (n <= 0) break;
+            for (int i = 0; i < n; i++) {
+                if (batch[i].a != next_expected) order_ok = 0;
+                next_expected++;
+            }
+            got += n;
+        }
+        CHECK(got == 20, "the relay delivered %d of 20 events", got);
+        CHECK(order_ok, "the relay reordered events");
+
+        /* past the ring's own capacity: the drain terminates and delivers what is still retained */
+        reflux_host_reset();
+        for (int i = 0; i < REFLUX_LOG_CAPACITY + 44; i++)
+            reflux_host_dispatch(REFLUX_ACTION_HORSE_MOUNTED, i, 0, 0);
+        cursor = 0;
+        int drained = 0;
+        for (int guard = 0; guard < 128; guard++) {
+            int n = horse_sync_collect_events(batch, NET_HORSE_EVENT_MAX, &cursor);
+            if (n <= 0) break;
+            drained += n;
+        }
+        CHECK(drained == REFLUX_LOG_CAPACITY, "a wrapped log drained %d rows, wanted %d",
+              drained, REFLUX_LOG_CAPACITY);
+
+        /* and a fresh cursor is a baseline, never a replay of the whole log */
+        HorseRefluxCursor fresh = { -1 };
+        HorseEvent poll[4];
+        CHECK(horse_api_poll(&fresh, poll, 4) == 0, "a fresh cursor must not replay the log");
+    }
+
     if (fails) { printf("horse_test: %d FAILURE(S)\n", fails); return 1; }
     printf("horse_test: ok -- parses pads, spawns unicorn actors, tölt burns stamina, jump hops (not flies), "
            "carrot restores, blown slows, a loose horse grazes/bolts on PARENA+MISHRI goals, "
-           "and the state + REFLUX events round-trip the wire\n");
+           "slides along a fence instead of through it, and the state + REFLUX events round-trip the "
+           "wire in batches past the log's own wrap\n");
     return 0;
 }

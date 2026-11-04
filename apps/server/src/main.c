@@ -2129,19 +2129,26 @@ void server_broadcast_horse_state(void) {
  * the first call establishes a baseline rather than replaying server history at a fresh peer. */
 void server_broadcast_horse_events(void) {
     static int cursor = -1;  /* -1: baseline on the first call (see horse_sync_collect_events) */
-    NetHorseEvents pkt;
-    memset(&pkt, 0, sizeof(pkt));
-    int n = horse_sync_collect_events(pkt.e, NET_HORSE_EVENT_MAX, &cursor);
-    if (n <= 0) return;
-    pkt.hdr.type = PACKET_HORSE_EVENTS;
-    pkt.hdr.client_id = 0;
-    pkt.hdr.timestamp = get_server_time();
-    pkt.hdr.entity_count = (unsigned char)n;
-    pkt.count = (unsigned char)n;
-    int len = (int)(sizeof(NetHeader) + 4 + (size_t)n * sizeof(NetHorseEvent));
-    for (int i = 1; i < MAX_CLIENTS; i++) {
-        if (!slots[i].active || !slots[i].welcomed) continue;
-        sendto(sock, (const char *)&pkt, len, 0, (struct sockaddr*)&slots[i].addr, sizeof(struct sockaddr_in));
+    /* Up to four datagrams a snapshot (32 rows): a stampede of horse events is drained in order over
+       consecutive snapshots rather than silently dropping the overflow past one packet. The cursor
+       lives on the first undelivered row, so the only real bound left is REFLUX's own 256-entry ring
+       -- see horse_sync.h, and note it is absolute so wrapping no longer stops the relay. */
+    for (int batch = 0; batch < 4; batch++) {
+        NetHorseEvents pkt;
+        memset(&pkt, 0, sizeof(pkt));
+        int n = horse_sync_collect_events(pkt.e, NET_HORSE_EVENT_MAX, &cursor);
+        if (n <= 0) break;
+        pkt.hdr.type = PACKET_HORSE_EVENTS;
+        pkt.hdr.client_id = 0;
+        pkt.hdr.timestamp = get_server_time();
+        pkt.hdr.entity_count = (unsigned char)n;
+        pkt.count = (unsigned char)n;
+        int len = (int)(sizeof(NetHeader) + 4 + (size_t)n * sizeof(NetHorseEvent));
+        for (int i = 1; i < MAX_CLIENTS; i++) {
+            if (!slots[i].active || !slots[i].welcomed) continue;
+            sendto(sock, (const char *)&pkt, len, 0, (struct sockaddr*)&slots[i].addr, sizeof(struct sockaddr_in));
+        }
+        if (n < NET_HORSE_EVENT_MAX) break;   /* nothing left that fits */
     }
 }
 

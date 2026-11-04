@@ -969,6 +969,32 @@ static inline void horse_goal_tick(int slot, HorseState *h, unsigned int now_ms,
         if (h->speed > wanted) { h->speed -= decel; if (h->speed < wanted) h->speed = wanted; }
     }
     if (h->speed > max_speed) h->speed = max_speed;
+
+    /* Fences are real. A goal can only place a TARGET, never a wall, so the step we are about to take
+       is traced against the map and, if something is in the way, the horse turns along it instead of
+       walking through it -- a paddock horse slides down its own fence rather than ghosting into the
+       barn. Boxed in on both sides, it stops and waits: shoving through is what the old behaviour did. */
+    if (fabsf(h->speed) > 0.05f) {
+        float step = h->speed * dt;
+        float rad_h = h->yaw * 0.0174532925f;
+        float hx, hy, hz, nxn, nyn, nzn;
+        float nx = h->x + sinf(rad_h) * step;
+        float nz = h->z + cosf(rad_h) * step;
+        if (trace_map_boxes(h->x, h->y, h->z, nx, h->y, nz, &hx, &hy, &hz, &nxn, &nyn, &nzn)) {
+            int cleared = 0;
+            for (int side = 0; side < 2 && !cleared; side++) {
+                float try_yaw = h->yaw + (side == 0 ? 90.0f : -90.0f);
+                float try_rad = try_yaw * 0.0174532925f;
+                float tx = h->x + sinf(try_rad) * step * 2.0f;
+                float tz = h->z + cosf(try_rad) * step * 2.0f;
+                if (!trace_map_boxes(h->x, h->y, h->z, tx, h->y, tz, &hx, &hy, &hz, &nxn, &nyn, &nzn)) {
+                    h->yaw = try_yaw;
+                    cleared = 1;
+                }
+            }
+            if (!cleared) h->speed = 0.0f;
+        }
+    }
 }
 
 static inline void horse_tick_all(unsigned int now_ms) {
