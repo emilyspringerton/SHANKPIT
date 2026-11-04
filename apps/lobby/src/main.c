@@ -115,6 +115,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/simulation/horse_rules_host.h"
 #include "../../../packages/simulation/horse_goals_host.h"  /* what a loose horse decides (PARENA) */
 #include "../../../packages/simulation/horse_poop_host.h"   /* what comes out the other end (PARENA) */
+#include "../../../packages/simulation/citizen_actor_rules_host.h" /* citizen bodies: jump/slide/fight (PARENA) */
 #include "../../../packages/simulation/horse_sync.h"        /* PACKET_HORSE_STATE / PACKET_HORSE_EVENTS */
 #include "../../../packages/simulation/horse_interact.h"    /* the request channel (mount/goal/feed) */
 #include "../../../packages/simulation/heli_rules_host.h"
@@ -16970,6 +16971,7 @@ int main(int argc, char* argv[]) {
     horse_rules_install(); /* PARENA tölt mount handling (stamina, jump, carrot) */
     horse_goals_install(); /* PARENA horse goal decisions (graze/wander/idle/home/flee) */
     horse_poop_install();  /* PARENA digestive rules -- the paddock's own piles */
+    citizen_actor_rules_install(); /* PARENA citizen bodies: jump, crouch, slide, slide-jump, weapons */
     horse_reflux_install(reflux_host_dispatch); /* a horse's events land in THIS peer's own REFLUX log */
     heli_rules_install(); /* PARENA helicopter flight model (#542) */
     rocket_car_rules_install(); /* PARENA rocket car (Bedrock Racers port) */

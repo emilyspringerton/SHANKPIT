@@ -40,6 +40,7 @@
 #include "../../../packages/simulation/horse_rules_host.h"
 #include "../../../packages/simulation/horse_goals_host.h"  /* what a loose horse decides (PARENA) */
 #include "../../../packages/simulation/horse_poop_host.h"   /* what comes out the other end (PARENA) */
+#include "../../../packages/simulation/citizen_actor_rules_host.h" /* citizen bodies: jump/slide/fight (PARENA) */
 #include "../../../packages/simulation/horse_sync.h"        /* PACKET_HORSE_STATE / PACKET_HORSE_EVENTS */
 #include "../../../packages/simulation/horse_interact.h"    /* the request channel's own policy */
 #include "../../../packages/reflux/reflux_runtime.h"         /* the horse tick dispatches its family here */
@@ -2207,6 +2208,7 @@ int main(int argc, char *argv[]) {
     horse_rules_install(); /* PARENA tölt mount handling (stamina, jump, carrot) */
     horse_goals_install(); /* PARENA horse goal decisions (graze/wander/idle/home/flee) */
     horse_poop_install();  /* PARENA digestive rules (when a grazing horse drops, how long it lasts) */
+    citizen_actor_rules_install(); /* PARENA citizen bodies: jump, crouch, slide, slide-jump, weapons */
     horse_reflux_install(reflux_host_dispatch); /* the horse actor's events reach every mod, and the wire */
     vehicle_salvage_rules_install(); /* PARENA car components: the parts own the split, hull mirrors them */
     garage_rules_install(); /* PARENA garage: what this car's origin is worth, what a bay takes */

@@ -25,6 +25,8 @@
 /* Prototype for the PARENA-generated glue (reflux_mod.c, do-not-edit-by-hand) -- no shared .h
  * between generated units in this codebase, same convention world_alert_bridge.c's own identical
  * declaration already established. */
+#include "citizen_actor.h"   /* MODE_ZOMBIES bodies: jump/crouch/slide/wield (PARENA citizen_actor_rules.prn) */
+
 void reflux_dispatch(int action_type, int a, int b, int c);
 
 /* Prototype for zombies_pheromone_rules.c (PARENA-generated, do-not-edit-by-hand) -- same
@@ -314,6 +316,7 @@ static const char *wai_citizen_name(int player_id) {
 const char *witness_ai_citizen_name(int player_id) { return wai_citizen_name(player_id); }
 
 void witness_ai_reset(unsigned int seed, unsigned int now_ms) {
+    citizen_actor_reset();   /* a new population must not inherit a dead body's jump cooldown */
 
     /* the DEADWEIGHT ladder starts empty with the world: citizens join it as they spawn, and it
        keeps its own records for as long as this world does */
@@ -1727,11 +1730,20 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
         WitnessAiCitizen *c = &g_citizens[i];
         if (!c->active) continue;
         PlayerState *cp = &s->players[c->player_id];
-        if (cp->state == STATE_DEAD) { cp->in_fwd = 0.0f; continue; }
+        if (cp->state == STATE_DEAD) {
+            cp->in_fwd = 0.0f;
+            /* forget the body: skip doesn't tick it, and a slot reused by a zombie must never be
+               driven by a citizen's leftover slide/jump (citizen_actor.h's g_actors[slot]) */
+            citizen_actor_tick(c->player_id, cp, 0, 0, now_ms);
+            continue;
+        }
 
         float best_d2 = WITNESS_AI_CITIZEN_FLEE_RADIUS * WITNESS_AI_CITIZEN_FLEE_RADIUS;
         float away_dx = 0.0f, away_dz = 0.0f;
         int fleeing = 0;
+        /* Any hunting zombie, not just one inside flee range: citizen_actor.h's policy wants to know
+           how close the nearest problem is even when the body is not running from it yet. -1 = none. */
+        float nearest_d2 = -1.0f;
         for (int zi = 0; zi < WITNESS_AI_MAX_ZOMBIES; zi++) {
             WitnessAiZombie *z = &g_zombies[zi];
             if (!z->active) continue;
@@ -1740,6 +1752,7 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
             if (zp->state == STATE_DEAD || zp->scene_id != cp->scene_id) continue;
             float dx = cp->x - zp->x, dz = cp->z - zp->z;
             float d2 = dx * dx + dz * dz;
+            if (nearest_d2 < 0.0f || d2 < nearest_d2) nearest_d2 = d2;
             if (d2 <= best_d2) { best_d2 = d2; away_dx = dx; away_dz = dz; fleeing = 1; }
         }
 
@@ -1755,6 +1768,22 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
             citizen_life_tick(&c->life, cp, now_ms);
         } else {
             cp->in_fwd = 0.0f;
+        }
+
+        /* What the body does about it (citizen_actor.h + PARENA citizen_actor_rules.prn): jump,
+           crouch, slide, slide-jump, draw and fire. It writes the SAME input fields a human writes
+           (in_jump / crouching / in_shoot / current_weapon), so the shared update_entity physics in
+           local_game.h is what actually moves the citizen -- there is no second movement system.
+           MODE_ZOMBIES only: MODE_STORY's population is scripted and its bodies belong to story_ai.c,
+           and MODE_SURVIVAL's are the wave enemies, not bystanders. */
+        if (s->game_mode == MODE_ZOMBIES) {
+            int threat = 0;
+            int dist_milli = 0;
+            if (nearest_d2 >= 0.0f) {
+                threat = 1;
+                dist_milli = (int)(sqrtf(nearest_d2) * 1000.0f);
+            }
+            citizen_actor_tick(c->player_id, cp, threat, dist_milli, now_ms);
         }
     }
 

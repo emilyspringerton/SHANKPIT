@@ -160,6 +160,32 @@ static inline int reflux_action_is_horse(int action_type) {
     return action_type >= REFLUX_ACTION_HORSE_FIRST && action_type <= REFLUX_ACTION_HORSE_LAST;
 }
 
+/* MODE_ZOMBIES citizen bodies (packages/simulation/citizen_actor.h). Founder real-time: "lets make
+ * the citizens in zombie mode more dynamic have them be able to jump ... crouch slide and slide
+ * jump also wield weapons". Dispatched from citizen_actor_tick at the moment each thing happens --
+ * a jump leaves the ground, a slide is entered, a slide becomes a jump, a weapon is drawn, a shot
+ * is taken -- so a mod can watch a citizen fight without polling its PlayerState.
+ *
+ * Host-local on purpose, and named as a limit rather than papered over: citizens only exist on the
+ * peer that simulates them (the dedicated server, or the lobby's own local match) and their bodies
+ * already reach clients in the ordinary snapshot, so these rows are not relayed -- there is no
+ * citizen event packet in protocol.h, and adding one is a wire change larger than this feature. */
+#define REFLUX_ACTION_CITIZEN_JUMPED 121        /* a = citizen player_id, b = dist to threat milli, c = speed milli */
+#define REFLUX_ACTION_CITIZEN_SLID 122          /* a = citizen player_id, b = speed milli, c unused */
+#define REFLUX_ACTION_CITIZEN_SLIDE_JUMPED 123  /* a = citizen player_id, b = dist to threat milli, c = speed milli */
+#define REFLUX_ACTION_CITIZEN_WIELDED 124       /* a = citizen player_id, b = WPN_*, c = dist to threat milli */
+#define REFLUX_ACTION_CITIZEN_FIRED 125         /* a = citizen player_id, b = dist to threat milli, c = WPN_* */
+
+#define REFLUX_ACTION_CITIZEN_FIRST REFLUX_ACTION_CITIZEN_JUMPED
+#define REFLUX_ACTION_CITIZEN_LAST  REFLUX_ACTION_CITIZEN_FIRED
+
+/* Is this action type part of the citizen family? One predicate in one place, the same shape
+ * reflux_action_is_horse uses, so a future relay validates against the family rather than
+ * re-listing its members. */
+static inline int reflux_action_is_citizen(int action_type) {
+    return action_type >= REFLUX_ACTION_CITIZEN_FIRST && action_type <= REFLUX_ACTION_CITIZEN_LAST;
+}
+
 #define REFLUX_LOG_CAPACITY 256
 
 typedef struct {

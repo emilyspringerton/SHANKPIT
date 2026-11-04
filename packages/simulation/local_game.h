@@ -13,7 +13,8 @@
 #include "bioslurry.h"    /* what a killed zombie leaves, and the DNA the lab reads off it */
 #include "horse_rules.h"   /* the tölt mount's numbers -- PARENA mod, see horse_rules_host.h */
 #include "horse_goals.h"   /* what a loose horse decides -- PARENA mod, see horse_goals_host.h */
-#include "horse_poop.h"    /* what comes out the other end -- PARENA mod, see horse_poop_host.h */
+#include "horse_poop.h"
+#include "citizen_actor.h"   /* MODE_ZOMBIES bodies: the inputs that make a citizen jump, slide, fight */    /* what comes out the other end -- PARENA mod, see horse_poop_host.h */
 #include "humanness.h"     /* MISHRI's mood/reaction/aim layer -- the horse's mind, same primitives as story_ai */
 #include "../reflux/reflux_runtime.h" /* REFLUX_ACTION_HORSE_* -- the family a horse dispatches (the dispatch itself is a hook, see below) */
 #include "zombies_hud_bridge.h" /* BIG_O engine merge phase 8 -- the first real REFLUX subscriber
@@ -2719,6 +2720,10 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
         // both read p->in_use, only the first one this tick to match something actually acts.
         story_buttons_handle_use_interactions(p, cmd_time);
         phys_set_scene(p->scene_id);
+        /* MODE_ZOMBIES citizen bodies: turn this tick's PARENA-chosen action into inputs (jump
+           impulse, crouch/slide, trigger) just before the shared physics runs, so it wins over any
+           generic bot input written earlier in the same tick. A no-op for every other body. */
+        citizen_actor_apply(i, p, cmd_time);
         update_entity(p, 0.016f, server_context, cmd_time);
         if (local_state.game_mode == MODE_CTFB) ctf_try_capture(p, cmd_time);
         p->use_was_down = p->in_use;
@@ -2896,7 +2901,7 @@ void local_init_match(int num_players, int mode) {
     hammer_tower_reset();   /* every match starts with an empty world: towers belong to the fight
                                that built them, not to the process */
     bioslurry_reset();      /* ...and no leftover canisters from the last match */
-    if (mode == MODE_ZOMBIES) { witness_ai_reset((unsigned int)time(NULL), 0); zombies_hud_bridge_reset(); }
+    if (mode == MODE_ZOMBIES) { witness_ai_reset((unsigned int)time(NULL), 0); citizen_actor_reset(); zombies_hud_bridge_reset(); }
     if (mode == MODE_SURVIVAL) { witness_ai_reset((unsigned int)time(NULL), 0); witness_ai_survival_reset(); zombies_hud_bridge_reset(); }
     if (mode == MODE_STORY) {
         story_ai_reset(&local_state);
