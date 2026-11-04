@@ -278,3 +278,10 @@ net_rules is the brokerage layer (slots, phases, bandwidth budget, drops, ticket
 
 **Open questions this merge leaves:**
 - Arena/game numbers (`rg_ready_count_needed`, hero kits, bandwidth budget) are NYI until the C `arena_game.c` server accepts these decisions.
+
+### 3.13 PARENA redgarden commit push status (2026-11-04)
+
+- Commit `ebc25d8` (`redgarden: port session/lobby/protocol rules to PARENA mods`) is committed and stable on this box, all 4 mods built clean via `parena build` (clean C, correct `rg_*` exports). The local repo is on branch `main`, which is PARENA's default branch.
+- Push is **blocked**: GitHub returns `Permission denied (publickey)` from SSH (`ssh -T git@github.com` → 255) on this box, and earlier attempts also returned `Internal Server Error` on the remote. The push has not landed on the remote.
+- Correct command for the next agent: `git push origin HEAD:main` from the PARENA repo root (branch `main` is the default branch; `master` does not exist on the remote).
+- SHANKPIT/EMILY/GOLDEN_DOCS all face the same SSH remote failure and remain committed + synced locally.
