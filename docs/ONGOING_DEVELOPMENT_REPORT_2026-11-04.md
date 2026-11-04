@@ -258,3 +258,23 @@ net_rules is the brokerage layer (slots, phases, bandwidth budget, drops, ticket
 **PARENA compiler gaps found during port** (named, not hidden): `let` binding names must be bare symbols; `let` has no inline type annotations; `bit-and` folds to C's `&` (comma operator) so parity uses `(mod x 2)`/`%`.
 
 **Arc / next:** REDGARDEN's C `arena_game.c`/server stays the reference (untouched); these mods are the SHANKPIT decision layer. Next redgarden deliverable is `make server` with the lobby link wired (blocked on the missing `EDITOR.GAME` checkout).
+
+### 3.12 Next-steps report for the next agent (REDGARDEN net-rules merge, 2026-11-04)
+
+**What is done (committed and synced):**
+- SHANKPIT: `092ae0e` redgarden-rules (4 .c + host + test + generator), `7398c16` this report — pushed, local==origin/master.
+- EMILY: `abb6e0c9` BACKLOG + golden-index row, pushed.
+- PARENA: `ebc25d8` redgarden mods (net/arena/ability/ai .prn) committed locally; **needs `git push` from a box with working SSH** (this box returns ISE on push).
+- GOLDEN_DOCS: `abeb526` snapshot resync, REDGARDEN-NET-RULES registered.
+
+**What still needs doing (in order):**
+1. **Push PARENA `ebc25d8`** (`git push origin master` at repo root) — the redgarden mods are not visible on GitHub until this lands. One SSH command; the remote returns ISE on this box, so retry on another machine if it still fails.
+2. **Run `make server` in SHANKPIT** — confirm REDGARDEN's lobby link actually boots end to end with the new PARENA session-rules mods under it.
+3. **Confirm `make gen_redgarden_rules.sh` regenerates clean** (`GEN_EXIT=0`) and the generated `.c` files match the committed host (determinism check).
+
+**Named gate / homework for the next agent:**
+- The REDGARDEN session-rules merge depends on the missing `EDITOR.GAME` checkout (shipped `0f7bca5`, `editor_main.c` with the current-file/board-profile-aware AVR fix) — lobby wiring is blocked on that.
+- If pushing PARENA still errors, the `GITHUB_TOKEN` must be re-scoped for repo-admin (the existing token returns HTTP 403 on repo creation).
+
+**Open questions this merge leaves:**
+- Arena/game numbers (`rg_ready_count_needed`, hero kits, bandwidth budget) are NYI until the C `arena_game.c` server accepts these decisions.
