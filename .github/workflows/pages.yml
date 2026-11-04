@@ -7,7 +7,8 @@ name: Pages
 #
 # ONE-TIME SETUP, and it is a click rather than a step here: Settings -> Pages -> Build and deployment ->
 # Source: GitHub Actions. actions/configure-pages' `enablement` needs an admin token and GITHUB_TOKEN is not admin,
-# so the workflow cannot bootstrap Pages for itself. See site/README.md.
+# so the workflow cannot bootstrap Pages for itself. The "Is Pages enabled?" step below exists to say that in the
+# log with a link, instead of leaving a bare "Get Pages site failed". See site/README.md.
 
 on:
   push:
@@ -46,6 +47,26 @@ jobs:
 
       - name: Check the artifact
         run: node site/check.mjs
+
+      # Turning a cryptic action failure into one actionable line. actions/configure-pages fails with "Get Pages site
+      # failed" when the repository has never had Pages enabled, which reads like a bug in this workflow rather than
+      # a missing setting -- it is the setting. The site has already been built and checked by this point, so the
+      # message says exactly that: everything works, only publishing is blocked.
+      - name: Is Pages enabled?
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          code=$(curl -s -o /tmp/pages.json -w '%{http_code}' \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${{ github.repository }}/pages")
+          echo "GET /repos/${{ github.repository }}/pages -> $code"
+          if [ "$code" = "200" ]; then
+            echo "Pages is enabled on this repository."
+            exit 0
+          fi
+          echo "::error title=GitHub Pages is not enabled::The site built and checked cleanly; only publishing is blocked. Enable it once: Settings -> Pages -> Build and deployment -> Source: GitHub Actions. With an admin token: gh api -X POST repos/${{ github.repository }}/pages -f build_type=workflow"
+          exit 1
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
