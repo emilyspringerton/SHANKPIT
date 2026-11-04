@@ -82,6 +82,37 @@ if (fs.existsSync(gamePage)) {
   ok(fs.existsSync(path.join(out, 'js', 'wotan-nav.js')), 'the nav it references was copied with it');
 }
 
+// The Roblox install kit. Assert the artifact, and assert it is the SAME BYTES as the repo: a published model
+// that no longer matches what `make test-roblox` ran is worse than publishing nothing, because it looks fine.
+// A prefix list, not one string: Roblox's XML models are written either as a bare <roblox root or behind an
+// <?xml declaration, and both are the same document. Asserting one form would fail a correct kit.
+// Last field: must the file NAME SHANKPIT460? True for the two artifacts that ARE the layer, and false for the
+// base place -- it is a binary .rbxl and the layer is deliberately not baked into it (no rbx toolchain may
+// rewrite that file; the layer arrives as a model or a paste). Requiring the string there asserted something
+// untrue, and the check failed on a perfectly good place file.
+const KIT = [
+  ['shankpit_roblox.rbxl', 'roblox/shankpit_roblox.rbxl', ['<roblox!'], 'binary place header', false],
+  ['roblox/SHANKPIT_ROBLOX_460.rbxmx', 'roblox/SHANKPIT_ROBLOX_460.rbxmx', ['<roblox', '<?xml'], 'Roblox XML model header', true],
+  ['roblox/SHANKPIT_460_INSTALL.luau', 'roblox/SHANKPIT_460_INSTALL.luau', ['-- SHANKPIT460'], 'installer banner', true],
+];
+for (const [src, dst, magics, what, names] of KIT) {
+  const from = path.resolve(root, src);
+  const to = path.join(out, dst);
+  if (!fs.existsSync(from)) { ok(false, `${src} is missing from the repo`); continue; }
+  ok(fs.existsSync(to), `${dst} was copied into the artifact`);
+  if (!fs.existsSync(to)) continue;
+  const a = fs.readFileSync(from);
+  const b = fs.readFileSync(to);
+  ok(a.equals(b), `${dst} is byte-identical to ${src}`);
+  const head = b.subarray(0, 64).toString('latin1');
+  ok(magics.some((m) => b.subarray(0, m.length).toString('latin1') === m),
+     `${dst} starts with the ${what} (${JSON.stringify(magics)}, saw ${JSON.stringify(head.slice(0, 16))})`);
+  ok(b.length > 1024, `${dst} is ${Math.round(b.length / 1024)} KB, not a stub`);
+  if (names) ok(b.includes('SHANKPIT460'), `${dst} actually names SHANKPIT460 somewhere in it`);
+  else ok(b.length > 100000, `${dst} is the whole base place (${Math.round(b.length / 1024)} KB), not a stub`);
+}
+ok(fs.existsSync(path.join(out, 'roblox', 'index.html')), 'the kit has a page a visitor can land on');
+
 if (fail > 0) {
   console.error(`site/check: ${fail} FAILED`);
   process.exit(1);

@@ -44,6 +44,15 @@ survived, so a broken vendoring fails the build instead of publishing a 404 canv
 
 Vendored rather than committed a second time: WOTAN stays the one authoring home, and the two cannot drift.
 
+### The Roblox 460 install kit is published from here too
+
+`/SHANKPIT/roblox/` serves the three committed artifacts — `shankpit_roblox.rbxl` (the base place),
+`SHANKPIT_ROBLOX_460.rbxmx` (the insertable model) and `SHANKPIT_460_INSTALL.luau` (the one-paste Studio
+installer) — plus a page with the install steps. Nothing is rebuilt at publish time: `make roblox-model` is the
+only writer, and `site/check.mjs` compares every published file against the repo byte for byte and checks its
+Roblox header, so a stale kit fails the build instead of being served. The page also states what would otherwise
+surprise someone: the lobby's default hosts answer 525 today, and no Studio has ever opened this place.
+
 **Honest limit.** The page and its assets load, and the game module is a zero-import wasm file — but
 `sp-host.js` finds a match through `wss://<host>/api/v1/shankpit460/play`, and GitHub Pages serves no such
 endpoint. So the match socket has **no backend on Pages**, and pressing play cannot reach a matchmaker there.
