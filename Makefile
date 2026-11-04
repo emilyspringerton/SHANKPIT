@@ -605,6 +605,15 @@ test-sky-parity: | $(BIN_DIR)
 		packages/simulation/sky_rules.c -o $(BIN_DIR)/sky_parity_test $(LIBS_M)
 	./$(BIN_DIR)/sky_parity_test
 
+# The cosy verbs: kicking a dandelion and hugging a tree. PARENA decides when they are allowed and what they give;
+# this builds the host against the generated rules and asserts the shared fixture NOOBTOPIA's tests/cozy_test.lua
+# asserts too.
+.PHONY: test-cozy
+test-cozy: | $(BIN_DIR)
+	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/simulation packages/simulation/cozy_test.c \
+		packages/simulation/cozy_rules.c -o $(BIN_DIR)/cozy_test $(LIBS_M)
+	./$(BIN_DIR)/cozy_test
+
 # ---- SHANKPIT on Roblox (roblox/): the 460 layer that sits beside the base place -------------------
 # The base place (shankpit_roblox.rbxl) is binary and stays untouched; these targets test the pure Lua modules
 # under plain Lua and pack them into one insertable .rbxmx model.
