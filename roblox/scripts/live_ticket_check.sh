@@ -46,8 +46,15 @@ echo "booting IDUNA on $base (throwaway db, throwaway ticket secret)..."
 # Run it FROM IDUNA's own tree: its relative var/*.db paths (blog, vault, kanban, ...) are created at
 # startup, and launching from anywhere else drops ten SQLite files into whatever repo you happened to be
 # standing in. Learned by doing exactly that to SHANKPIT on this script's first run.
+# NOCK_DATA_DIR / NOCK_VIDEO_DIR: IDUNA's stores default to /home/fatbaby/IDUNA/var/... (main.go's own getenv
+# defaults), a path only the founder's own box has and only root can create. A CI runner died on it with
+#   nock: create data dir: mkdir /home/fatbaby: permission denied
+# and never answered /health -- while this box, which runs as root, silently created that directory and hid
+# the problem from every local green. Both names are documented overrides in main.go; pointing them into $work
+# keeps the run as throwaway as the db and the keyfile already are.
 ( cd "$iduna" && SQLITE_PATH="$work/iduna.db" IDUNA_ROOT="$iduna" KEY_FILE="$work/keys.json" \
     JWT_ISSUER="$base" BASE_URL="$base" IDUNA_ADDR="127.0.0.1:$port" \
+    NOCK_DATA_DIR="$work/nock-projects" NOCK_VIDEO_DIR="$work/nock-videos" \
     SHANKPIT_TICKET_SECRET="$secret" exec "$work/iduna" >"$work/iduna.log" 2>&1 ) &
 pid=$!
 
