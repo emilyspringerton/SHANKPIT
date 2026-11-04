@@ -72,7 +72,7 @@ rather than timers:
 ## 5. The wasm VS0 (built this slice, and what it is not)
 
 `PARENA/scripts/build_frontend_vs0_wasm.sh` builds those four `.prn` files — **the same sources the C
-host compiles** — into one wasm32 module: 5,568 bytes, **0 imports**, fixed 8 MB memory, no allocator, no
+host compiles** — into one wasm32 module: 5,582 bytes, **0 imports**, fixed 8 MB memory, no allocator, no
 `memory.grow`. `PARENA/scripts/frontend_vs0_wasm_test.mjs` asserts **143 hand-derived values** against the
 module in node, including one full run of the loop: buy track → buy steam → train exists in 1700 → the
 century turns over.
@@ -80,17 +80,31 @@ century turns over.
 It is a **rules** module, not the game. What it proves is the seam that matters: a train cannot unlock in
 the browser and stay locked in the game.
 
-### 5.1 A real compiler bug this found
+### 5.1 A real compiler bug this found — and the fix it got the same day
 
-`(if (<= b 0) 0 (/ a b))` **compiles and runs in C, and traps with "divide by zero" in wasm** — PARENA's
-LLVM/wasm emitter evaluates both arms of an `if` (reproduced on this box 2026-11-04 with a two-function
-scratch module). Consequences:
+`(if (<= b 0) 0 (/ a b))` **compiled and ran in C, and trapped with "divide by zero" in wasm** — PARENA's
+LLVM/wasm emitter evaluated both arms of an `if` (reproduced on this box 2026-11-04 with a two-function
+scratch module). The cause was a wrong test, not a missing case: the emitter decided `select` (evaluate both
+arms, pick one) versus real basic blocks with an `expr_is_pure` predicate, and a division has no effects —
+so it counted as pure. Purity answers "can this be reordered/duplicated", not "is this safe to run when its
+result is thrown away"; a division can trap. Effects and trapping are two questions.
 
-- every variable divisor in this slice is guarded **at the division**, not by a branch (`vein_ratio_milli`'s
-  `cap` binding is the pattern; `tech-known`/`cc-known` guard their shift amount the same way);
-- the real fix is emitter-side (branch instead of select when an arm can trap) and is **not** done;
-- until then, a rules file that divides by a parameter is a latent wasm crash even when its C test is green.
-  This is a parity hazard, not a style note, and belongs in the next PARENA compiler pass.
+**Fixed in PARENA the same day** (`emit_llvm.c`): the predicate is now `expr_is_speculable` — pure *and*
+`head_may_trap` clean, where `head_may_trap` is exactly `/` and `mod` (integer division also traps on
+INT_MIN / -1). A trapping arm now gets basic blocks, so only the taken arm runs. Verified three ways:
+
+- `tests/test_emit_llvm.c` asserts a dividing `if` emits `br i1` and **no** `select`, and that a
+  non-trapping `if` still selects (the fix costs nothing in the common case); `make test` 374/374;
+- the same source built end to end through `parena build` → `opt` → `llc wasm32` → `wasm-ld` now returns
+  `safe_div(7,0) = 0` instead of trapping (4/4 hand-derived cases, negatives included);
+- this module rebuilt with the guard clauses still in the rules: **143/143** node checks, and it grew from
+  5,568 to **5,582 bytes** — the branch structures, no other change.
+
+**Still open, named rather than assumed away:** `and`/`or` remain honestly non-short-circuiting (`and i1`/`or
+i1` over two already-evaluated operands), so `(and (> b 0) (> (/ a b) 2))` still traps at `b = 0` where a
+short-circuiting backend would never reach the division. That is a semantic change to a documented operator,
+not a bug fix, so it stayed out of this pass; the rule for authors until then is the one this slice already
+follows — guard the divisor at the division, don't rely on `and`/`or` ordering.
 
 ## 6. What is built, exactly
 

@@ -33,16 +33,20 @@ Built and green: `PARENA/stdlib/trapx/city_engine_rules.prn` (36 rules), generat
 
 Built and green: `era_tech_rules.prn`, `mining_rules.prn`, `citizen_day_rules.prn`,
 `trapx/citizen_contact_rules.prn`; C host + `make test-frontend-rules`; a real wasm32 module
-(5,568 bytes, 0 imports) with 143 checks in node. Full writeup:
+(5,582 bytes, 0 imports) with 143 checks in node. Full writeup:
 `docs2/GFD_FRONTEND_VS0_NORTHSTAR.md`.
 
 **Named, not built:**
 
 - 3D frontend in wasm (rules only, no renderer); GFD service integration; REDGARDEN merged-down code (its
   tick order and `livingmap/` are borrowed, nothing runs); no pickaxe/ore/train/rail object in any host.
-- **A real PARENA compiler bug**: the wasm emitter evaluates both arms of `if`, so
-  `(if (<= b 0) 0 (/ a b))` runs in C and traps in wasm. Worked around by guarding every variable divisor
-  at the division; the emitter fix is open.
+- ~~A real PARENA compiler bug~~ — **found and FIXED later the same day** (`PARENA` `emit_llvm.c`): the
+  wasm emitter used "pure" as a proxy for "safe to evaluate unconditionally", so
+  `(if (<= b 0) 0 (/ a b))` selected both arms and trapped. The predicate is now `expr_is_speculable`
+  (pure AND `head_may_trap` clean, i.e. no `/` or `mod`), dividing arms get real basic blocks, and the
+  repro returns 0 end to end in wasm. `make test` 374/374; this module rebuilt at 143/143, 5,582 bytes.
+  Still open: `and`/`or` are non-short-circuiting, so a division inside an `and`/`or` operand can still
+  trap where a short-circuiting backend would not — a semantic change, not a fix, deliberately not done.
 - No VRM/VRoid citizen bodies at runtime (`stdlib/forgedinface/rig.prn` is real, nothing renders it).
 
 ---
