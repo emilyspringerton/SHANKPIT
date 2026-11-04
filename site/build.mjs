@@ -113,6 +113,51 @@ for (const file of ['index.html', 'style.css']) {
   if (!fs.existsSync(from)) die(`no site/${file}`);
   fs.copyFileSync(from, path.join(out, file));
 }
+
+// shankpit-460, the playable build, served from THIS deploy at /SHANKPIT/shankpit-460/.
+//
+// It is not authored here: WOTAN/shankpit-460 is the one home for the three files, and this copies them at
+// build time (CI checks WOTAN out into vendor/wotan; locally the sibling ../WOTAN is used). Vendoring at build
+// time instead of committing a second copy keeps the two from drifting -- the same rule the rules files follow.
+//
+// The catching detail: WOTAN serves at the domain root, so its pages say href="/css/wotan-hs.css". A project
+// page lives at /SHANKPIT/, where a leading / is the domain root and 404s, so each root-absolute ref is rebased
+// to the page's own depth and its target copied too. A ref that resolves to nothing in the WOTAN checkout is a
+// hard error, not a broken link published to the web.
+const WOTAN_CHECKOUTS = [path.resolve(root, 'vendor/wotan'), path.resolve(root, '..', 'WOTAN')];
+const wotan = WOTAN_CHECKOUTS.find((p) => fs.existsSync(path.join(p, 'shankpit-460', 'index.html')));
+if (!wotan) die(`no WOTAN checkout found (looked in ${WOTAN_CHECKOUTS.map((p) => path.relative(root, p)).join(', ')})`);
+
+const gameDir = path.join(wotan, 'shankpit-460');
+const outGame = path.join(out, 'shankpit-460');
+fs.mkdirSync(outGame, { recursive: true });
+
+let copiedAssets = 0;
+for (const file of fs.readdirSync(gameDir).sort()) {
+  const from = path.join(gameDir, file);
+  if (!fs.statSync(from).isFile()) continue;
+  const to = path.join(outGame, file);
+  if (!file.endsWith('.html')) { fs.copyFileSync(from, to); continue; }
+
+  const targets = new Set();
+  const text = fs.readFileSync(from, 'utf8').replace(/(href|src)="\/([^"]*)"/g, (_m, attr, rest) => {
+    targets.add(rest);
+    return `${attr}="../${rest}"`;
+  });
+  fs.writeFileSync(to, text);
+
+  for (const ref of targets) {
+    const target = ref.split('#')[0].split('?')[0];
+    if (!target) continue;
+    const src = path.join(wotan, target);
+    if (!fs.existsSync(src)) die(`shankpit-460/index.html references ${ref}, absent from the WOTAN checkout`);
+    const dst = path.join(out, target);
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.copyFileSync(src, dst);
+    copiedAssets++;
+  }
+}
+console.log(`site/build: shankpit-460/ vendored from ${path.relative(root, wotan) || '.'} [${copiedAssets} referenced assets]`);
 fs.writeFileSync(path.join(out, 'docs.html'), docsPage);
 // Pages' Jekyll pipeline must not touch a site that is already HTML; this is the standard opt-out.
 fs.writeFileSync(path.join(out, '.nojekyll'), '');

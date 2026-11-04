@@ -70,6 +70,18 @@ for (const file of files) {
 const docLinks = (fs.readFileSync(path.join(out, 'docs.html'), 'utf8').match(/github\.com\/emilyspringerton\/SHANKPIT\/blob\/master\//g) || []).length;
 ok(docLinks >= 30, `the doc index links ${docLinks} documents`);
 
+// The playable build is vendored from another repo at build time, which is exactly the kind of step that can
+// silently produce nothing. Assert the artifact, not the intention.
+const gamePage = path.join(out, 'shankpit-460', 'index.html');
+ok(fs.existsSync(gamePage), 'the playable shankpit-460 page was vendored into the artifact');
+if (fs.existsSync(gamePage)) {
+  const game = fs.readFileSync(gamePage, 'utf8');
+  ok(!/(href|src)="\//.test(game), 'shankpit-460 has no root-absolute reference left to 404 at /SHANKPIT/');
+  ok(fs.existsSync(path.join(out, 'shankpit-460', 'shankpit460.wasm')), 'the wasm module is in the artifact');
+  ok(/type="module"/.test(game), 'shankpit-460 loads its generated host as a module');
+  ok(fs.existsSync(path.join(out, 'js', 'wotan-nav.js')), 'the nav it references was copied with it');
+}
+
 if (fail > 0) {
   console.error(`site/check: ${fail} FAILED`);
   process.exit(1);

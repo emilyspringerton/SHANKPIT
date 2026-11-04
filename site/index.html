@@ -17,8 +17,8 @@
     <p class="lede">An engine that runs the same rules as the other two worlds. UDP-authoritative, retro-rendered,
       and built out of PARENA decisions emitted to C &mdash; so a threshold is edited once and every host follows.</p>
     <nav class="links" aria-label="Play">
-      <a class="go" href="https://wotan.okemily.com/shankpit-460/">shankpit-460 &middot; play in the browser</a>
-      <a class="go go--alt" href="https://wotan.okemily.com/trapx/">TRAPX VS0 &middot; the city sandbox</a>
+      <a class="go" href="shankpit-460/">shankpit-460 &middot; play it here, from this deploy</a>
+      <a class="go go--alt" href="https://emilyspringerton.github.io/WOTAN/trapx/">TRAPX VS0 &middot; the city sandbox</a>
     </nav>
   </header>
 
@@ -31,7 +31,7 @@
       <li><b>Modes</b> Team deathmatch, capture the flag, story mode, bots for cold starts.</li>
       <li><b>Simulation</b> NPC drifting, slippery surfaces, DEADWEIGHT's card ladder, the cosy verbs.</li>
       <li><b>City</b> TRAPX VS0: Watchers, Field Offices, K9 doctrine, receipts &mdash; in C and in the browser.
-        <a href="https://wotan.okemily.com/trapx/">Play the city sandbox on WOTAN</a>.</li>
+        <a href="https://emilyspringerton.github.io/WOTAN/trapx/">Play the city sandbox on WOTAN</a>.</li>
     </ul>
   </section>
 
@@ -62,8 +62,11 @@
 
   <section aria-labelledby="honest">
     <h2 id="honest">Honest status</h2>
-    <p>The playable builds are served from WOTAN, not from this page: this repository publishes the page and the
-      rules, and links out for anything you can hold a controller in front of.</p>
+    <p><a href="shankpit-460/">shankpit-460</a> is served from <em>this</em> deploy: the game, its wasm module and
+      the stylesheet it needs are copied out of the WOTAN repository at build time, so the playable build cannot
+      drift from the one WOTAN ships. The rest of WOTAN &mdash; TRAPX, BRAWLPIT, DEADWEIGHT &mdash; lives on
+      <a href="https://emilyspringerton.github.io/WOTAN/">WOTAN's own GitHub Pages site</a>, because the
+      <code>wotan.okemily.com</code> origin is not answering.</p>
     <p>A generated rules module being tested is not the same as a feature being played. The C hosts that the lobby
       does not call yet, the service writes never observed landing, and the rules that are decided but not wired are
       all named in the documents &mdash; the index says which is which, and none of them are hidden behind a green
@@ -73,7 +76,7 @@
   <footer class="foot">
     <p>SHANKPIT &middot; <a href="https://github.com/emilyspringerton/SHANKPIT">source</a> &middot;
       <a href="https://github.com/emilyspringerton/PARENA">PARENA</a> &middot;
-      <a href="https://wotan.okemily.com/">WOTAN</a></p>
+      <a href="https://emilyspringerton.github.io/WOTAN/">WOTAN</a></p>
     <p class="dim">Published from this repository by GitHub Actions on every push to <code>master</code>.</p>
   </footer>
 

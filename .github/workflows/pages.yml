@@ -40,6 +40,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The playable shankpit-460 build is authored in the WOTAN repo (one home for the three files) and copied
+      # into this artifact at build time, so the game is served from /SHANKPIT/shankpit-460/ instead of being
+      # linked to a host that is not answering. Public repo, so the default token can read it; no PAT in here.
+      - uses: actions/checkout@v4
+        with:
+          repository: emilyspringerton/WOTAN
+          path: vendor/wotan
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
