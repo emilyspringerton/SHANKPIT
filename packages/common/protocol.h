@@ -156,6 +156,42 @@
  * than a two-clause macro definition needs, and a bigger definition is refused rather than fragmented. */
 #define PACKET_WOW_WIRE 21
 
+/* PACKET_HORSE_STATE -- the horse actors themselves (packages/simulation/horse_sync.h), server ->
+ * client, alongside PACKET_SNAPSHOT, one packet per welcomed client holding only the horses in THAT
+ * client's scene (the same per-scene filter PACKET_VEHICLE_STATE uses). Before this packet a horse
+ * was simulated by whichever host loaded the level and drawn only there, so a second player in the
+ * same town saw an empty paddock.
+ *
+ * Whole-scene set, absolute and idempotent: an entry says "slot N is this horse, here, doing this",
+ * and any horse in the scene the packet does not mention is gone -- so a dropped datagram heals on
+ * the next one and a late joiner sees the horses the moment it arrives. Quantities the bar and the
+ * saddlebag need (stamina 0..1000, carrots, goal, skin) ride as bytes/shorts; every float is a real
+ * world position, because a horse has no reason to move at fractional precision. */
+#define PACKET_HORSE_STATE 22
+
+/* PACKET_HORSE_EVENTS -- the horse family of REFLUX actions, relayed (see horse_sync.h). Server ->
+ * client, sent only when new events exist. This is the "via REFLUX" half of horse sync: the server's
+ * authoritative tick dispatches into REFLUX at the moment each thing happens (mounted, jumped, fed,
+ * blown, startled, goal changed), a bridge drains that family, and a client re-dispatches each row
+ * into its OWN REFLUX log on arrival -- so a mod listening on a client sees the same horse events a
+ * mod listening on the server does, and neither one has to know the other exists.
+ *
+ * Types outside the horse family are refused on arrival, not trusted: a relayed event is still
+ * untrusted input, and a client must not be able to make a mod think a door was pressed. */
+#define PACKET_HORSE_EVENTS 23
+
+/* PACKET_HORSE_INTERACT -- client -> server, a mount or dismount request for one horse slot. Small
+ * and self-contained, one datagram per key press, the same shape PACKET_KIT_CALL already uses for
+ * vehicle gadgets. The server decides: it is the one that owns the horse, so it checks the caller is
+ * welcomed, alive, in the horse's scene, within the same 5 m reach the local client's E-key uses, and
+ * that the horse is free (or, for a dismount, that the caller is the one riding it). Jump and carrot
+ * need no packet at all -- they are BTN_JUMP/BTN_ABILITY_2, which already travel in UserCmd, and the
+ * server's own horse tick reads them for its occupant. */
+#define PACKET_HORSE_INTERACT 24
+
+#define HORSE_INTERACT_MOUNT    0
+#define HORSE_INTERACT_DISMOUNT 1
+
 #define NET_EMPIRE_MAX_NODES 16 /* must match EU_MAX_NODES (empire_units.h) */
 #define NET_EMPIRE_MAX_CELLS 32 /* must match EU_MAX_CLAIM_CELLS (empire_units.h) */
 #define NET_ZONE_ID_MAX 32
@@ -414,6 +450,56 @@ typedef struct {
     unsigned char pad[3];
     NetVehicleEntry e[NET_VEHICLE_MAX_ENTRIES];
 } NetVehicleState;
+
+/* NetHorseState / NetHorseEntry -- see PACKET_HORSE_STATE's own doc comment above.
+ * NET_HORSE_MAX_ENTRIES must match MAX_HORSES; horse_test.c asserts it. `occupant` is a short so the
+ * "nobody is riding" case is expressible as -1 rather than a magic 255. `stamina` is milli 0..1000
+ * (HORSE_STAMINA_MAX_MILLI), clipped on arrival. `goal` is HORSE_GOAL_* and is clipped the same
+ * way. No float compresses the occupancy fields: a horse is a 40-byte entry, and a town has eight. */
+#define NET_HORSE_MAX_ENTRIES 8
+typedef struct {
+    unsigned char  slot;      /* horse slot, 0..MAX_HORSES-1 */
+    unsigned char  goal;      /* HORSE_GOAL_* */
+    unsigned char  skin;      /* HORSE_SKIN_* */
+    unsigned char  ground;    /* 1 = hooves down */
+    short          occupant;  /* rider player id, -1 = loose */
+    unsigned short stamina;   /* 0..HORSE_STAMINA_MAX_MILLI */
+    unsigned char  carrots;
+    unsigned char  pad;
+    float x, y, z;
+    float yaw;
+    float speed;              /* m/s along yaw, for the leg swing */
+} NetHorseEntry;
+
+typedef struct {
+    NetHeader hdr;
+    unsigned char count;
+    unsigned char pad[3];
+    NetHorseEntry e[NET_HORSE_MAX_ENTRIES];
+} NetHorseState;
+
+/* NetHorseEvents -- see PACKET_HORSE_EVENTS' own doc comment above. One row per relayed REFLUX
+ * action, type + the three I32 scalars REFLUX itself carries. */
+#define NET_HORSE_EVENT_MAX 8
+typedef struct {
+    int type;   /* REFLUX_ACTION_HORSE_* */
+    int a, b, c;
+} NetHorseEvent;
+
+typedef struct {
+    NetHeader hdr;
+    unsigned char count;
+    unsigned char pad[3];
+    NetHorseEvent e[NET_HORSE_EVENT_MAX];
+} NetHorseEvents;
+
+/* NetHorseInteract -- see PACKET_HORSE_INTERACT's own doc comment above. */
+typedef struct {
+    NetHeader hdr;
+    unsigned char slot;    /* horse slot the player is asking about */
+    unsigned char action;  /* HORSE_INTERACT_* */
+    unsigned char pad[2];
+} NetHorseInteract;
 
 typedef struct {
     unsigned int sequence;
@@ -896,6 +982,18 @@ typedef struct {
 #define HORSE_STAMINA_MAX_MILLI 1000 /* the whole bar */
 #define HORSE_START_CARROTS     2    /* carrots a freshly spawned horse carries */
 #define HORSE_SKIN_UNICORN      0    /* white coat, pale mane/tail, one tapered horn */
+
+/* What a loose horse is doing (packages/simulation/horse_goals.prn decides WHICH; this is the shared
+ * vocabulary, and horse_test.c checks PARENA's own return values against these five). A horse with a
+ * rider is doing the rider's thing instead -- the goal is what it does with its own afternoon. */
+enum {
+    HORSE_GOAL_GRAZE = 0,   /* nose down near the trough, slowly refilling the bar */
+    HORSE_GOAL_WANDER,      /* drifting somewhere within its paddock */
+    HORSE_GOAL_IDLE,        /* standing, looking at things */
+    HORSE_GOAL_HOME,        /* walking back to the pad it was placed on */
+    HORSE_GOAL_FLEE,        /* a player got too close */
+    HORSE_GOAL_COUNT
+};
 typedef struct {
     int  active;
     int  id;
@@ -919,6 +1017,20 @@ typedef struct {
     int   jump_cooldown;   /* ticks until the next hop */
     int   feed_cooldown;   /* ticks until the next carrot */
     unsigned char skin;    /* HORSE_SKIN_* */
+
+    /* The horse's own afternoon (packages/simulation/horse_goals.prn + horse_goal_tick). These ARE
+       replicated (PACKET_HORSE_STATE): goal is what the horse is visibly doing and it is what other
+       mods react to, and a client that invented its own goal for a horse would animate a different
+       animal than the server is simulating. rng and goal_until_ms are deliberately host-local --
+       they are this peer's own decision clock, not a fact about the horse. */
+    int   goal;                 /* HORSE_GOAL_* */
+    float goal_x, goal_z;       /* where it is trying to be */
+    unsigned int goal_until_ms; /* re-pick deadline */
+    unsigned int goal_act_at_ms;/* MISHRI reaction window before it acts on a new goal */
+    float home_x, home_z;       /* the pad it was placed on: the paddock it stays in */
+    unsigned int rng;           /* its own stream -- never the global one, never shared */
+    int   frightened;           /* STARTLED latch, cleared once the flee is over */
+    int   blown;                /* latched at empty so REFLUX_ACTION_HORSE_BLOWN fires once */
 } HorseState;
 
 typedef enum {

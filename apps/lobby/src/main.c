@@ -113,6 +113,8 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/simulation/vehicle_salvage_loot.h"      /* ... and what it is worth on the ground */
 #include "../../../packages/simulation/buggy_rules_host.h"
 #include "../../../packages/simulation/horse_rules_host.h"
+#include "../../../packages/simulation/horse_goals_host.h"  /* what a loose horse decides (PARENA) */
+#include "../../../packages/simulation/horse_sync.h"        /* PACKET_HORSE_STATE / PACKET_HORSE_EVENTS */
 #include "../../../packages/simulation/heli_rules_host.h"
 #include "../../../packages/simulation/rocket_car_rules_host.h"   /* the rocket car's PARENA model */
 #include "../../../packages/simulation/drone_flight.h"   /* the two quadcopters (RECON / micro FLY) */
@@ -2495,6 +2497,24 @@ static void net_emit_client_summaries(unsigned int now_ms) {
 /* net_send_kit_call -- one PACKET_KIT_CALL datagram (protocol.h / kit_call.h). Fire and forget: the
  * server's answer is the vehicle appearing in a snapshot, and a lost datagram is a key press that did
  * not happen, which the player can simply repeat. */
+/* net_send_horse_interact -- one PACKET_HORSE_INTERACT datagram (protocol.h / horse_sync.h). Fire and
+ * forget, exactly like a kit call: the server owns the horse, so this is a REQUEST (it checks scene,
+ * reach, whether the horse is free, whether the caller is the rider) and the answer is the horse
+ * moving in the next PACKET_HORSE_STATE. A lost datagram is a key press that did not happen.
+ * Jump and carrot need no packet -- they already travel in UserCmd and the server's own horse tick
+ * reads them for its occupant. */
+static void net_send_horse_interact(int slot, int action) {
+    if (sock < 0 || slot < 0 || slot >= MAX_HORSES) return;
+    NetHorseInteract pkt;
+    memset(&pkt, 0, sizeof(pkt));
+    pkt.hdr.type = PACKET_HORSE_INTERACT;
+    pkt.hdr.client_id = (unsigned char)my_client_id;
+    pkt.slot = (unsigned char)slot;
+    pkt.action = (unsigned char)action;
+    sendto(sock, (const char *)&pkt, sizeof(pkt), 0, (struct sockaddr*)&server_addr, sizeof(server_addr));
+    NET_CLIENT_LOG("HORSE_INTERACT_TX slot=%d action=%d", slot, action);
+}
+
 static void net_send_kit_call(int item) {
     if (sock < 0) return;
     NetKitCall pkt;
@@ -16745,6 +16765,33 @@ void net_tick() {
                     if (vb_car->active) vb_car->health = hull;
                 }
             }
+        } else if (head->type == PACKET_HORSE_STATE) {
+            /* PACKET_HORSE_STATE: the server's horses ARE the horses. Whole-scene and absolute, so the
+               applier clears every horse in that scene first and clips each field (slot bounds, stamina
+               0..1000, goal range, occupant range) -- an untrusted packet can move a horse somewhere
+               silly, never index out of bounds. */
+            if (len >= (int)(sizeof(NetHeader) + 4) && len <= (int)sizeof(NetHorseState)) {
+                NetHorseState hs;
+                memset(&hs, 0, sizeof(hs));
+                int cpy = len < (int)sizeof(hs) ? len : (int)sizeof(hs);
+                memcpy(&hs, buffer, (size_t)cpy);
+                horse_sync_apply(&local_state, &hs, cpy);
+            }
+        } else if (head->type == PACKET_HORSE_EVENTS) {
+            /* PACKET_HORSE_EVENTS: the horse REFLUX family, relayed -- re-dispatched into this peer's
+               own log so a mod listening here sees what happened there. Anything outside the family is
+               refused inside horse_sync_apply_events, so a relayed row can never fake a door press. */
+            if (len >= (int)(sizeof(NetHeader) + 4) && len <= (int)sizeof(NetHorseEvents)) {
+                NetHorseEvents he;
+                memset(&he, 0, sizeof(he));
+                int cpy = len < (int)sizeof(he) ? len : (int)sizeof(he);
+                memcpy(&he, buffer, (size_t)cpy);
+                int hn = he.count;
+                int held = (cpy - (int)(sizeof(NetHeader) + 4)) / (int)sizeof(NetHorseEvent);
+                if (hn > held) hn = held;
+                if (hn > NET_HORSE_EVENT_MAX) hn = NET_HORSE_EVENT_MAX;
+                if (hn > 0) horse_sync_apply_events(he.e, hn);
+            }
         } else if (head->type == PACKET_BRICK_STATE) {
             /* destructible brick: mirror the server's authoritative cell state (validated inside) */
             brick_world_net_apply(buffer, len);
@@ -16886,6 +16933,8 @@ static int lobby_coop_find_and_join(int beacon_port) {
 int main(int argc, char* argv[]) {
     buggy_rules_install(); /* PARENA buggy handling (#468) */
     horse_rules_install(); /* PARENA tölt mount handling (stamina, jump, carrot) */
+    horse_goals_install(); /* PARENA horse goal decisions (graze/wander/idle/home/flee) */
+    horse_reflux_install(reflux_host_dispatch); /* a horse's events land in THIS peer's own REFLUX log */
     heli_rules_install(); /* PARENA helicopter flight model (#542) */
     rocket_car_rules_install(); /* PARENA rocket car (Bedrock Racers port) */
     drone_rules_install(); /* PARENA quadcopters (RECON / micro FLY) */
@@ -18231,20 +18280,33 @@ int main(int argc, char* argv[]) {
                             p0->vehicle_cooldown = 30;
                         }
                     }
-                    /* Horse mount/dismount (USE key) */
-                    if (p0->in_vehicle && p0->vehicle_type == VEH_HORSE && !p0->vehicle_cooldown) {
-                        for (int hi = 0; hi < MAX_HORSES; hi++) {
-                            HorseState *h = &local_state.horses[hi];
-                            if (!h->active || h->occupant_player_id != 0) continue;
-                            horse_try_exit(p0, h);
-                            p0->vehicle_cooldown = 30;
-                            break;
-                        }
-                    } else if (!p0->in_vehicle && !p0->vehicle_cooldown) {
-                        HorseState *near_h = horse_find_nearby(p0->scene_id, p0->x, p0->y, p0->z, 5.0f);
-                        if (near_h && near_h->occupant_player_id < 0) {
-                            horse_try_enter(p0, near_h);
-                            p0->vehicle_cooldown = 30;
+                    /* Horse mount/dismount (USE key). In a networked match the SERVER owns the horse
+                       -- so the key sends a PACKET_HORSE_INTERACT request (the server re-checks scene,
+                       the same 5 m reach, and occupancy) and the answer is the horse moving in the next
+                       PACKET_HORSE_STATE. Locally the same key does the same two things directly. A
+                       client-side horse_try_enter in net mode would seat the player on a horse the
+                       server still thinks is loose. */
+                    {
+                        int hp_pid = (app_state == STATE_GAME_NET) ? net_local_pid : 0;
+                        if (hp_pid >= 0 && hp_pid < MAX_CLIENTS) {
+                            PlayerState *hp = &local_state.players[hp_pid];
+                            if (hp->in_vehicle && hp->vehicle_type == VEH_HORSE && !hp->vehicle_cooldown) {
+                                for (int hi = 0; hi < MAX_HORSES; hi++) {
+                                    HorseState *h = &local_state.horses[hi];
+                                    if (!h->active || h->occupant_player_id != hp_pid) continue;
+                                    if (app_state == STATE_GAME_NET) net_send_horse_interact(hi, HORSE_INTERACT_DISMOUNT);
+                                    else horse_try_exit(hp, h);
+                                    hp->vehicle_cooldown = 30;
+                                    break;
+                                }
+                            } else if (!hp->in_vehicle && !hp->vehicle_cooldown) {
+                                HorseState *near_h = horse_find_nearby(hp->scene_id, hp->x, hp->y, hp->z, 5.0f);
+                                if (near_h && near_h->occupant_player_id < 0) {
+                                    if (app_state == STATE_GAME_NET) net_send_horse_interact(near_h->id, HORSE_INTERACT_MOUNT);
+                                    else horse_try_enter(hp, near_h);
+                                    hp->vehicle_cooldown = 30;
+                                }
+                            }
                         }
                     }
                     /* "wheelbarrow" -- carry a whole zombie or citizen back to your lab (founder

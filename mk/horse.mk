@@ -9,9 +9,14 @@
 
 HORSE_TEST := $(BIN_DIR)/horse_test
 
-.PHONY: test-horse regen-horse-rules
+.PHONY: test-horse regen-horse-rules regen-horse-goals
 regen-horse-rules:
 	scripts/gen_horse_rules.sh
+
+# What a loose horse decides (graze / wander / idle / home / flee) is its own PARENA mod:
+# PARENA/stdlib/shankpit/horse_goals.prn -> packages/simulation/horse_goals.c.
+regen-horse-goals:
+	scripts/gen_horse_goals.sh
 
 test-horse: | $(BIN_DIR)
 	$(CC) -g -O1 -fsanitize=address,undefined -Wall $(INCLUDES) \

@@ -126,6 +126,36 @@
  * REFLUX_ACTION_ZOMBIE_SPAWNED carried before zombies_hud_bridge.c became its first real one. */
 #define REFLUX_ACTION_SHADOW_WAR_RESOLVED 111    /* a = player_id, b = SHADOW_WAR_RESULT_*, c = new elo */
 
+/* The horse actors (packages/simulation/local_game.h's horse section, horse_api.h, horse_sync.h).
+ * Founder real-time: "actors should be goal oriented... ensure it all syncs to the network via
+ * reflux so other mods can interact". A horse is an actor with its own afternoon (graze, wander,
+ * idle, go home, bolt), and every meaningful thing that happens to it is dispatched at the real
+ * moment it happens -- by the tick, not by a diff -- exactly like the zombie population's own
+ * family above. Payload conventions are per-action and fixed here so a mod on the other side of
+ * the network agrees on them without reading the dispatcher.
+ *
+ * These are the first family with a real WIRE bridge (PACKET_HORSE_EVENTS + horse_sync.h): a
+ * subscriber on a client sees a horse mounted on the server. horse_sync_apply_events validates the
+ * type against reflux_action_is_horse before re-dispatching, so relayed rows can never fake an
+ * unrelated event (a button press, a shadow war) on the receiving peer. */
+#define REFLUX_ACTION_HORSE_SPAWNED 112          /* a = horse slot, b = scene_id, c = skin */
+#define REFLUX_ACTION_HORSE_MOUNTED 113          /* a = horse slot, b = rider player_id, c unused */
+#define REFLUX_ACTION_HORSE_DISMOUNTED 114       /* a = horse slot, b = rider player_id, c = speed milli */
+#define REFLUX_ACTION_HORSE_JUMPED 115           /* a = horse slot, b = stamina after, c = jump vy milli */
+#define REFLUX_ACTION_HORSE_FED 116              /* a = horse slot, b = carrots left, c = stamina after */
+#define REFLUX_ACTION_HORSE_BLOWN 117            /* a = horse slot, b/c unused (0,0) */
+#define REFLUX_ACTION_HORSE_GOAL_CHANGED 118     /* a = horse slot, b = HORSE_GOAL_*, c = duration ms */
+#define REFLUX_ACTION_HORSE_STARTLED 119         /* a = horse slot, b = the player that spooked it */
+
+#define REFLUX_ACTION_HORSE_FIRST REFLUX_ACTION_HORSE_SPAWNED
+#define REFLUX_ACTION_HORSE_LAST  REFLUX_ACTION_HORSE_STARTLED
+
+/* Is this action type part of the horse family? The one predicate both the relay (horse_sync.h) and
+ * any mod's own poll use, so the family's boundaries exist in exactly one place. */
+static inline int reflux_action_is_horse(int action_type) {
+    return action_type >= REFLUX_ACTION_HORSE_FIRST && action_type <= REFLUX_ACTION_HORSE_LAST;
+}
+
 #define REFLUX_LOG_CAPACITY 256
 
 typedef struct {

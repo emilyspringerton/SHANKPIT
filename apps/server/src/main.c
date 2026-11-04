@@ -38,6 +38,9 @@
 #include "../../../packages/simulation/shield_packs.h"
 #include "../../../packages/simulation/buggy_rules_host.h"
 #include "../../../packages/simulation/horse_rules_host.h"
+#include "../../../packages/simulation/horse_goals_host.h"  /* what a loose horse decides (PARENA) */
+#include "../../../packages/simulation/horse_sync.h"        /* PACKET_HORSE_STATE / PACKET_HORSE_EVENTS */
+#include "../../../packages/reflux/reflux_runtime.h"         /* the horse tick dispatches its family here */
 #include "../../../packages/simulation/vehicle_salvage_rules_host.h" /* PARENA car components */
 #include "../../../packages/simulation/garage_rules_host.h" /* PARENA garage rules */
 #include "../../../packages/simulation/heli_rules_host.h"
@@ -1353,7 +1356,7 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
     NetHeader *head = (NetHeader*)buffer;
     int client_id = -1;
 
-    if (head->type == PACKET_CONNECT || head->type == PACKET_USERCMD || head->type == PACKET_DISCONNECT || head->type == PACKET_SPRAY_DECAL || head->type == PACKET_KIT_CALL || head->type == PACKET_WOW_WIRE) {
+    if (head->type == PACKET_CONNECT || head->type == PACKET_USERCMD || head->type == PACKET_DISCONNECT || head->type == PACKET_SPRAY_DECAL || head->type == PACKET_KIT_CALL || head->type == PACKET_WOW_WIRE || head->type == PACKET_HORSE_INTERACT) {
         client_id = ensure_slot_for_sender(sender, head->type == PACKET_CONNECT);
     }
     if (client_id == -1) return;
@@ -1482,6 +1485,45 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
         (void)spawned;   /* read only by the KIT_CALL log, which compiles out when verbose is off */
         NET_SERVER_LOG("KIT_CALL client_id=%d item=%s -> veh=%d scene=%d", client_id, kit_item_name(item),
                        spawned, local_state.players[client_id].scene_id);
+        return;
+    }
+
+    /* --- HORSE INTERACT (PACKET_HORSE_INTERACT) ---
+     * A mount or dismount REQUEST: the server owns the horse, so it decides. Welcomed, in the same
+     * scene, within the same 5 m reach the local client's own E-key uses, the horse free (to mount) or
+     * the caller already its rider (to dismount). A refusal is silent on the wire -- the horse does not
+     * move and the next PACKET_HORSE_STATE says so, which is why there is no ack to lose. Jump and
+     * carrot are not here: BTN_JUMP/BTN_ABILITY_2 already travel in UserCmd and the horse tick reads
+     * them off its occupant. */
+    if (client_id != -1 && head->type == PACKET_HORSE_INTERACT) {
+        slots[client_id].last_heard = now_seconds();
+        local_state.client_meta[client_id].last_heard_ms = get_server_time();
+        if (!slots[client_id].welcomed || size < (int)sizeof(NetHorseInteract)) {
+            g_net_diag.malformed++;
+            NET_WARN_LOG("HORSE_INTERACT_REJECTED client_id=%d reason=%s", client_id,
+                         slots[client_id].welcomed ? "short" : "not_welcomed");
+            return;
+        }
+        NetHorseInteract *hi = (NetHorseInteract *)buffer;
+        PlayerState *hp = &local_state.players[client_id];
+        if (hi->slot >= MAX_HORSES) {
+            g_net_diag.malformed++;
+            return;
+        }
+        HorseState *hh = &local_state.horses[hi->slot];
+        if (!hh->active || hh->scene_id != hp->scene_id) return;
+        if (hi->action == HORSE_INTERACT_MOUNT) {
+            float dx = hh->x - hp->x, dy = hh->y - hp->y, dz = hh->z - hp->z;
+            if (hh->occupant_player_id < 0 && (dx * dx + dy * dy + dz * dz) <= 25.0f) {
+                horse_try_enter(hp, hh);
+                NET_SERVER_LOG("HORSE_MOUNT client_id=%d horse=%u", client_id, (unsigned)hi->slot);
+            }
+        } else if (hi->action == HORSE_INTERACT_DISMOUNT) {
+            if (hh->occupant_player_id == client_id) {
+                horse_try_exit(hp, hh);
+                NET_SERVER_LOG("HORSE_DISMOUNT client_id=%d horse=%u", client_id, (unsigned)hi->slot);
+            }
+        }
         return;
     }
 
@@ -2054,6 +2096,55 @@ void server_broadcast_vehicle_state(void) {
     }
 }
 
+/* server_broadcast_horse_state -- the horse actors themselves (PACKET_HORSE_STATE, horse_sync.h).
+ * Server -> client, alongside the snapshot, one packet per welcomed client holding only the horses in
+ * THAT client's scene (the same filter server_broadcast_vehicle_state uses). Before this, a horse was
+ * simulated and drawn only on the host that loaded the level, so a second player in the same town saw
+ * an empty paddock. Whole-scene and absolute by construction: a horse the packet does not mention is
+ * gone, so a dropped datagram or a late joiner heals on the next one, with no ack traffic. */
+void server_broadcast_horse_state(void) {
+    for (int i = 1; i < MAX_CLIENTS; i++) {
+        if (!slots[i].active || !slots[i].welcomed) continue;
+        int scene = local_state.players[i].scene_id;
+        NetHorseState pkt;
+        memset(&pkt, 0, sizeof(pkt));
+        int n = horse_sync_fill(&local_state, scene, pkt.e, NET_HORSE_MAX_ENTRIES);
+        if (n <= 0) continue;
+        pkt.hdr.type = PACKET_HORSE_STATE;
+        pkt.hdr.client_id = 0;
+        pkt.hdr.timestamp = get_server_time();
+        pkt.hdr.scene_id = (unsigned char)(scene < 0 ? 0 : scene);
+        pkt.hdr.entity_count = (unsigned char)n;
+        pkt.count = (unsigned char)n;
+        int len = (int)(sizeof(NetHeader) + 4 + (size_t)n * sizeof(NetHorseEntry));
+        sendto(sock, (const char *)&pkt, len, 0, (struct sockaddr*)&slots[i].addr, sizeof(struct sockaddr_in));
+    }
+}
+
+/* server_broadcast_horse_events -- the horse family of REFLUX actions, relayed (PACKET_HORSE_EVENTS).
+ * This is the "via reflux" half of horse sync: the authoritative tick dispatched each event at the
+ * moment it happened, this drains the family past a cursor and ships the rows, and each client
+ * re-dispatches them into its OWN REFLUX log on arrival -- so a mod listening on a client sees a horse
+ * mounted on the server without knowing the server exists. Only sent when there is something new, and
+ * the first call establishes a baseline rather than replaying server history at a fresh peer. */
+void server_broadcast_horse_events(void) {
+    static int cursor = -1;  /* -1: baseline on the first call (see horse_sync_collect_events) */
+    NetHorseEvents pkt;
+    memset(&pkt, 0, sizeof(pkt));
+    int n = horse_sync_collect_events(pkt.e, NET_HORSE_EVENT_MAX, &cursor);
+    if (n <= 0) return;
+    pkt.hdr.type = PACKET_HORSE_EVENTS;
+    pkt.hdr.client_id = 0;
+    pkt.hdr.timestamp = get_server_time();
+    pkt.hdr.entity_count = (unsigned char)n;
+    pkt.count = (unsigned char)n;
+    int len = (int)(sizeof(NetHeader) + 4 + (size_t)n * sizeof(NetHorseEvent));
+    for (int i = 1; i < MAX_CLIENTS; i++) {
+        if (!slots[i].active || !slots[i].welcomed) continue;
+        sendto(sock, (const char *)&pkt, len, 0, (struct sockaddr*)&slots[i].addr, sizeof(struct sockaddr_in));
+    }
+}
+
 /* EMPIRE unit rules from PARENA -- included here because this file has no block of rules includes yet;
    the server spawns authored units, so it must read the same archetype/order table the lobby does. */
 #include "../../../packages/simulation/empire_units_rules_host.h"
@@ -2061,6 +2152,8 @@ void server_broadcast_vehicle_state(void) {
 int main(int argc, char *argv[]) {
     buggy_rules_install(); /* PARENA buggy handling (#468) */
     horse_rules_install(); /* PARENA tölt mount handling (stamina, jump, carrot) */
+    horse_goals_install(); /* PARENA horse goal decisions (graze/wander/idle/home/flee) */
+    horse_reflux_install(reflux_host_dispatch); /* the horse actor's events reach every mod, and the wire */
     vehicle_salvage_rules_install(); /* PARENA car components: the parts own the split, hull mirrors them */
     garage_rules_install(); /* PARENA garage: what this car's origin is worth, what a bay takes */
     eu_rules_install(); /* PARENA EMPIRE unit archetypes, the human baseline, order priorities */
@@ -2528,6 +2621,8 @@ int main(int argc, char *argv[]) {
             server_broadcast_world_clock();
             server_broadcast_brick_state();
             server_broadcast_vehicle_state(); /* PACKET_VEHICLE_STATE: which part of each car is still there */
+            server_broadcast_horse_state();  /* PACKET_HORSE_STATE: the horses in each client's scene */
+            server_broadcast_horse_events(); /* PACKET_HORSE_EVENTS: the horse REFLUX family, relayed */
             server_broadcast_queue_level();
             server_broadcast_zone_state();   /* PACKET_ZONE_STATE: the zone's id + seed, 1 Hz */
             server_broadcast_empire_state(); /* PACKET_EMPIRE_STATE: stockpiles, node amounts, ground, 1 Hz */

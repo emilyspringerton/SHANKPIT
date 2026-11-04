@@ -12,6 +12,9 @@
 #include "hammer_tower.h" /* WPN_HAMMER's E power: the mini gatling tower the cast builds */
 #include "bioslurry.h"    /* what a killed zombie leaves, and the DNA the lab reads off it */
 #include "horse_rules.h"   /* the tölt mount's numbers -- PARENA mod, see horse_rules_host.h */
+#include "horse_goals.h"   /* what a loose horse decides -- PARENA mod, see horse_goals_host.h */
+#include "humanness.h"     /* MISHRI's mood/reaction/aim layer -- the horse's mind, same primitives as story_ai */
+#include "../reflux/reflux_runtime.h" /* REFLUX_ACTION_HORSE_* -- the family a horse dispatches (the dispatch itself is a hook, see below) */
 #include "zombies_hud_bridge.h" /* BIG_O engine merge phase 8 -- the first real REFLUX subscriber
     for witness_ai.c's own MODE_ZOMBIES/MODE_SURVIVAL population events (zombie mood escalation,
     citizen witness escalation, Giant Zombie Bug feeding, The Men dispatch/resolve) */
@@ -260,11 +263,53 @@ static inline BuggyState *buggy_find_nearby(int scene_id, float x, float y, floa
 static inline int buggy_try_enter(PlayerState *p, BuggyState *b);
 static inline int buggy_try_exit(PlayerState *p, BuggyState *b);
 static inline void buggy_tick_all(unsigned int now_ms);
+/* A horse is an ACTOR: with a rider it does the rider's thing, without one it has its own
+ * afternoon. The decisions (which goal, how long, how fast, how far, when it is spooked) are
+ * PARENA's (horse_goals.h, generated from PARENA/stdlib/shankpit/horse_goals.prn); the mood that
+ * colours them is MISHRI's (humanness.h -- the same HumannessLayer primitives story_ai.c uses), and
+ * the moving is here. */
+
+/* g_horse_reflux_hook -- optional REFLUX dispatch, installed by a host that links reflux_runtime.c
+ * (apps/server, apps/lobby). Exactly the contract physics.h's own map-damage hooks already use: a
+ * translation unit that only includes local_game.h (a test, a training harness) links nothing and
+ * simply emits no events, instead of dragging the whole pub/sub runtime into every binary. The
+ * host installs `reflux_host_dispatch` itself; local_game.h never names it. */
+typedef void (*HorseRefluxHook)(int action_type, int a, int b, int c);
+static HorseRefluxHook g_horse_reflux_hook __attribute__((unused)) = NULL;
+static inline void horse_reflux_install(HorseRefluxHook hook) { g_horse_reflux_hook = hook; }
+static inline void horse_reflux(int action_type, int a, int b, int c) {
+    if (g_horse_reflux_hook) g_horse_reflux_hook(action_type, a, b, c);
+}
+
+/* One MISHRI mood layer per horse slot (indexed like local_state.horses). Kept out of HorseState
+ * because it is the horse's own mind, not a replicated fact: every peer ticks its own, and putting
+ * it on the wire would make two clients argue about a horse's mood. */
+static HumannessState g_horse_mind[MAX_HORSES];
+static unsigned char g_horse_mind_init[MAX_HORSES];
+static int g_horse_turn_overshoot[MAX_HORSES];
+
+/* horse_stamina_acc_add -- the fractional milli bar every stamina change goes through, so drain,
+ * regen, grazing and a carrot all round the same way and never leave a 0.4 milli drip behind. */
+static inline void horse_stamina_acc_add(HorseState *h, float amount) {
+    h->stamina_acc += amount;
+    if (h->stamina_acc >= 1.0f) {
+        int whole = (int)h->stamina_acc;
+        h->stamina_acc -= (float)whole;
+        h->stamina_milli += whole;
+        if (h->stamina_milli > HORSE_STAMINA_MAX_MILLI) h->stamina_milli = HORSE_STAMINA_MAX_MILLI;
+    } else if (h->stamina_acc <= -1.0f) {
+        int whole = (int)(-h->stamina_acc);
+        h->stamina_acc += (float)whole;
+        h->stamina_milli -= whole;
+        if (h->stamina_milli < 0) h->stamina_milli = 0;
+    }
+}
+
 static inline void horse_spawn_defaults(HorseState *h, int id, int scene_id, float x, float z, float yaw);
 static inline HorseState *horse_find_nearby(int scene_id, float x, float y, float z, float radius);
 static inline int horse_try_enter(PlayerState *p, HorseState *h);
 static inline int horse_try_exit(PlayerState *p, HorseState *h);
-static inline void horse_tick_all(void);
+static inline void horse_tick_all(unsigned int now_ms);
 static void ctf_init_match_state(int scene_id);
 void local_init_match(int num_players, int mode);
 
@@ -726,6 +771,23 @@ static inline void horse_spawn_defaults(HorseState *h, int id, int scene_id,
     h->stamina_milli = HORSE_STAMINA_MAX_MILLI;   /* a fresh horse is not blown */
     h->carrots = HORSE_START_CARROTS;
     h->skin = HORSE_SKIN_UNICORN;                 /* every horse in the world is a unicorn */
+    /* The paddock it belongs to is wherever it was placed; its own stream is seeded from the slot so
+       two horses in the same farm do not make the same decisions in lockstep. */
+    h->home_x = x;
+    h->home_z = z;
+    h->rng = 0x9e3779b9u ^ (unsigned int)(id + 1) * 2654435761u;
+    h->goal = HORSE_GOAL_IDLE;
+    h->goal_x = x;
+    h->goal_z = z;
+    h->goal_until_ms = 0;      /* first tick picks a real goal */
+    h->goal_act_at_ms = 0;
+    h->frightened = 0;
+    h->blown = 0;
+    if (id >= 0 && id < MAX_HORSES) {
+        g_horse_mind_init[id] = 0;
+        g_horse_turn_overshoot[id] = 0;
+    }
+    horse_reflux(REFLUX_ACTION_HORSE_SPAWNED, id, scene_id, (int)h->skin);
 }
 
 static inline HorseState *horse_find_nearby(int scene_id, float x, float y,
@@ -749,6 +811,7 @@ static inline int horse_try_enter(PlayerState *p, HorseState *h) {
     p->vx = p->vy = p->vz = 0.0f;
     p->on_ground = h->grounded;
     printf("[HORSE] mount player=%d horse=%d\n", p->id, h->id);
+    horse_reflux(REFLUX_ACTION_HORSE_MOUNTED, h->id, p->id, 0);
     return 1;
 }
 
@@ -765,10 +828,150 @@ static inline int horse_try_exit(PlayerState *p, HorseState *h) {
     p->on_ground = 1;
     h->occupant_player_id = -1;
     printf("[HORSE] dismount player=%d horse=%d speed=%.2f\n", p->id, h->id, h->speed);
+    /* Back to its own afternoon immediately: a dismounted horse that stood there for a second first
+       looked broken, and the goal tick would otherwise wait out the rider's leftover deadline. */
+    h->goal_until_ms = 0;
+    horse_reflux(REFLUX_ACTION_HORSE_DISMOUNTED, h->id, p->id, (int)(h->speed * 1000.0f));
     return 1;
 }
 
-static inline void horse_tick_all(void) {
+/* horse_nearest_player -- who, if anyone, has walked up to this loose horse (the spook input). A
+ * player riding another horse does not spook it: horses are herd animals, not jumpy about their own. */
+static inline int horse_nearest_player(const ServerState *st, int scene_id, float x, float z, float radius) {
+    float rr = radius * radius;
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        const PlayerState *p = &st->players[i];
+        if (!p->active || p->state != STATE_ALIVE || p->scene_id != scene_id) continue;
+        if (p->in_vehicle && p->vehicle_type == VEH_HORSE) continue;
+        float dx = p->x - x, dz = p->z - z;
+        if (dx * dx + dz * dz <= rr) return p->id;
+    }
+    return -1;
+}
+
+/* horse_rng -- the horse's own LCG. Small, deterministic, per-horse: the same seed and the same
+ * ticks produce the same afternoon, which is what lets horse_test.c assert a decision instead of
+ * watching one. Never the global rand(): two horses in one farm must not steer each other. */
+static inline unsigned int horse_rng(unsigned int *state) {
+    *state = (*state) * 1664525u + 1013904223u;
+    return (*state) >> 8;
+}
+
+/* horse_goal_change -- commit to a goal: hold it for a PARENA-owned duration, choose where it is
+ * trying to be (inside its own paddock, aimed a little wrong, MISHRI-style), and wait out a MISHRI
+ * reaction window before acting on it. Dispatched to REFLUX at the moment the decision lands. */
+static inline void horse_goal_change(int slot, HorseState *h, int goal, unsigned int now_ms) {
+    const HorseGoals *g = horse_goals();
+    HumannessState *mind = &g_horse_mind[slot];
+    int duration_ms = g->goal_duration_ms(goal);
+    if (duration_ms < 0) duration_ms = 0;
+    int radius_milli = g->goal_radius_milli(goal);
+
+    h->goal = goal;
+    h->goal_until_ms = now_ms + (unsigned int)duration_ms;
+    h->goal_act_at_ms = now_ms + humanness_reaction_delay_ms(mind, (uint32_t)g->goal_react_base_ms(goal));
+
+    if (goal == HORSE_GOAL_IDLE) {
+        h->goal_x = h->x;
+        h->goal_z = h->z;
+    } else if (goal == HORSE_GOAL_FLEE) {
+        /* Flee is not "go to a place", it is "go away from here": a point 12 m behind its own
+           nose, so it runs off along the heading it already had rather than through a fence corner. */
+        float away = (h->yaw + 180.0f) * 0.0174532925f;
+        h->goal_x = h->x + sinf(away) * 12.0f;
+        h->goal_z = h->z + cosf(away) * 12.0f;
+    } else if (goal == HORSE_GOAL_HOME || radius_milli <= 0) {
+        h->goal_x = h->home_x;
+        h->goal_z = h->home_z;
+    } else {
+        unsigned int r = horse_rng(&h->rng);
+        float angle = (float)(r % 360u) +
+                      humanness_aim_noise(mind, (float)g->goal_jitter_skill_permille() * 0.001f);
+        float rad = angle * 0.0174532925f;
+        float reach = (float)radius_milli * 0.001f;
+        float dist = reach * (0.35f + (float)((r >> 9) % 66u) * 0.01f);
+        h->goal_x = h->home_x + sinf(rad) * dist;
+        h->goal_z = h->home_z + cosf(rad) * dist;
+    }
+    horse_reflux(REFLUX_ACTION_HORSE_GOAL_CHANGED, slot, goal, duration_ms);
+}
+
+/* horse_goal_tick -- one tick of a LOOSE horse's own afternoon. Called only when nobody is riding:
+ * with a rider the horse is doing the rider's thing instead. */
+static inline void horse_goal_tick(int slot, HorseState *h, unsigned int now_ms, float max_speed) {
+    const HorseGoals *g = horse_goals();
+    const float dt = SHANKPIT_NET_FIXED_DT;
+    HumannessState *mind = &g_horse_mind[slot];
+
+    if (!g_horse_mind_init[slot]) {
+        humanness_state_init(mind, now_ms);
+        g_horse_mind_init[slot] = 1;
+        g_horse_turn_overshoot[slot] = 0;
+    }
+    humanness_tick_mood(mind, now_ms);
+
+    float spook_radius = (float)g->startle_radius_milli() * 0.001f;
+    int spooker = horse_nearest_player(&local_state, h->scene_id, h->x, h->z, spook_radius);
+    if (spooker >= 0 && !h->frightened) {
+        h->frightened = 1;
+        humanness_get_startled(mind, now_ms);
+        horse_goal_change(slot, h, HORSE_GOAL_FLEE, now_ms);
+        horse_reflux(REFLUX_ACTION_HORSE_STARTLED, slot, spooker, 0);
+    }
+
+    float dx = h->goal_x - h->x, dz = h->goal_z - h->z;
+    float dist = sqrtf(dx * dx + dz * dz);
+    float reached = (float)g->goal_reached_milli() * 0.001f;
+
+    if (h->goal_until_ms == 0 || now_ms >= h->goal_until_ms ||
+        (dist <= reached && h->goal != HORSE_GOAL_IDLE)) {
+        int next;
+        if (h->frightened && spooker >= 0) {
+            next = HORSE_GOAL_FLEE;          /* still spooked -- keep running */
+        } else {
+            if (h->frightened) h->frightened = 0;  /* it got away, and it knows it */
+            int roll = (int)(horse_rng(&h->rng) % 1000u);
+            next = g->goal_pick(roll, h->stamina_milli, (int)mind->mood);
+        }
+        horse_goal_change(slot, h, next, now_ms);
+        dx = h->goal_x - h->x;
+        dz = h->goal_z - h->z;
+        dist = sqrtf(dx * dx + dz * dz);
+    }
+
+    /* A goal is a heading and a pace, not a path -- and nothing happens during the reaction window. */
+    float wanted = 0.0f;
+    if (now_ms >= h->goal_act_at_ms && h->goal != HORSE_GOAL_IDLE && dist > reached) {
+        wanted = (float)g->goal_speed_milli(h->goal) * 0.001f;
+        if (wanted > max_speed) wanted = max_speed;
+        float target_yaw = atan2f(dx, dz) * 57.2957795f;
+        humanness_smooth_turn_step(&h->yaw, target_yaw, HORSE_TURN_DEG_S * 0.5f, dt, mind,
+                                   &g_horse_turn_overshoot[slot]);
+    }
+
+    /* A loose horse does not spend stamina working: standing it gets it back, and a grazing horse
+       gets it back faster -- that is what the grass is for. The Zelda wheel refills by walking away
+       and eating, not only by the carrots in your bag. */
+    if (h->goal == HORSE_GOAL_GRAZE && dist <= reached) {
+        horse_stamina_acc_add(h, (float)g->graze_restore_milli((int)mind->mood) * dt);
+    } else if (fabsf(h->speed) < 0.5f) {
+        horse_stamina_acc_add(h, (float)horse_rules()->stamina_regen_milli() * dt);
+    }
+
+    if (h->stamina_milli > 0) h->blown = 0;
+
+    /* Ease into and out of the walk; the shared movement tail below integrates it. */
+    if (wanted > h->speed) {
+        h->speed += HORSE_ACCEL * dt;
+        if (h->speed > wanted) h->speed = wanted;
+    } else {
+        float decel = HORSE_DECEL * dt;
+        if (h->speed > wanted) { h->speed -= decel; if (h->speed < wanted) h->speed = wanted; }
+    }
+    if (h->speed > max_speed) h->speed = max_speed;
+}
+
+static inline void horse_tick_all(unsigned int now_ms) {
     const float dt = SHANKPIT_NET_FIXED_DT;
     const HorseRules *rules = horse_rules();
     for (int i = 0; i < MAX_HORSES; i++) {
@@ -795,6 +998,10 @@ static inline void horse_tick_all(void) {
         float max_speed = (float)rules->max_speed_milli() * (float)rules->fatigue_permille(h->stamina_milli) / 1000000.0f;
         if (max_speed < 0.5f) max_speed = 0.5f;
 
+        if (!rider) {
+            /* Nobody on its back: the horse has its own afternoon (MISHRI mood + PARENA goals). */
+            horse_goal_tick(i, h, now_ms, max_speed);
+        } else {
         /* Smooth yaw toward rider look direction — horse turns by leaning */
         float yaw_err = yaw_target - h->yaw;
         while (yaw_err >  180.0f) yaw_err -= 360.0f;
@@ -836,6 +1043,11 @@ static inline void horse_tick_all(void) {
             h->stamina_acc += (float)whole;
             h->stamina_milli -= whole;
             if (h->stamina_milli < 0) h->stamina_milli = 0;
+            /* Edge-triggered: a spent horse says so ONCE, not once per tick while it stays empty. */
+            if (h->stamina_milli == 0 && !h->blown) {
+                h->blown = 1;
+                horse_reflux(REFLUX_ACTION_HORSE_BLOWN, i, 0, 0);
+            }
         }
 
         /* A carrot: BTN_ABILITY_2 (right mouse / LT) while mounted. Weapons are already disabled
@@ -847,7 +1059,9 @@ static inline void horse_tick_all(void) {
             if (h->stamina_milli > HORSE_STAMINA_MAX_MILLI) h->stamina_milli = HORSE_STAMINA_MAX_MILLI;
             h->feed_cooldown = HORSE_FEED_COOLDOWN_TICKS;
             printf("[HORSE] carrot horse=%d carrots=%d stamina=%d\n", h->id, h->carrots, h->stamina_milli);
+            horse_reflux(REFLUX_ACTION_HORSE_FED, i, h->carrots, h->stamina_milli);
         }
+        } /* end rider-driven */
 
         /* Move along yaw */
         float rad = h->yaw * 0.0174532925f;
@@ -870,6 +1084,11 @@ static inline void horse_tick_all(void) {
             h->jump_cooldown = HORSE_JUMP_COOLDOWN_TICKS;
             h->grounded = 0;
             printf("[HORSE] jump horse=%d stamina=%d\n", h->id, h->stamina_milli);
+            horse_reflux(REFLUX_ACTION_HORSE_JUMPED, i, h->stamina_milli, (int)(h->jump_vy * 1000.0f));
+            if (h->stamina_milli == 0 && !h->blown) {
+                h->blown = 1;
+                horse_reflux(REFLUX_ACTION_HORSE_BLOWN, i, 0, 0);
+            }
         }
 
         if (!h->grounded || h->jump_vy > 0.0f) {
@@ -2397,7 +2616,7 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
         bioslurry_deliver(bs, cmd_time);
     }
     buggy_tick_all(cmd_time);
-    horse_tick_all();
+    horse_tick_all(cmd_time);
     update_projectiles(cmd_time);
     if ((local_state.game_mode == MODE_STORY || local_state.game_mode == MODE_STORY_CAVE) &&
         (local_state.story_phase == STORY_PHASE_PLAYING || local_state.story_phase == STORY_PHASE_SWARM)) {
