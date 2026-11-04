@@ -156,7 +156,9 @@ Design, in the founder's own framing — "smart contract meets the FFXI bazaar":
 
 **Risks named:** escrow needs an authoritative wallet (influence today, an auction-currency later);
 verification is the whole security surface (a forged `verify` is theft); and a reputation market with real
-value will be farmed, so fees and stake must be set from measured data, not guesses.
+value will be farmed, so fees and stake must be set from measured data, not guesses. The shape to copy is
+GFD's auction house rather than a fresh design: server-authoritative records, a fee taken at settlement, a
+visible history, and a caller that moves the currency — the missing half today.
 
 ### 3.5 Actor goals, priorities and the economy — RuneScape/EVE "play how you want"
 
@@ -170,10 +172,20 @@ something random.
    (not traits — traits already exist in `citizen_life.c`). MISHRI's own `BehaviorOrchestrator`
    scored-utility shape is the precedent to copy.
 2. **Economy play** — goal EARN → pick a producer (farm §3.6, mine, trade route) → haul → list on the
-   **auction house**:
-   - auction house is a shared service (not a game-mode feature): item identity, escrow, 1% fee sink,
-     district-local or global scope as a setting;
-   - this is the single biggest missing prerequisite for both mining and farming being *interesting*.
+   **auction house**. **It already exists, in GFD, and this correction matters:**
+   - `GoblinFoxDragon/server/market/ah.go` (+ `ah_test.go`) is a real, server-authoritative, FFXI-parity
+     AH: one AH per server shared by all zones, sellers list at a fixed price, buyers take the cheapest
+     listing, the seller is blind until the sale closes, **the 12 most recent sale prices per item are
+     public** (the PS2 terminal's own screen), listing fee on sale, cancel/reclaim, categories, and the
+     full PS2 terminal screen model (`BrowseCategory`/`ItemPage`/`Buy`/`List`/`CancelListing`/
+     `SellerListings`/`BuyerHistory`). This *is* the "FFXI bazaar" the founder named.
+   - It is already hooked to doctrine: `server/attention/attention.go` carries `AHTaxMultiplier` — "cost
+     of doing business under scrutiny" — so TRAPX's Attention already makes commerce dearer.
+   - So the work is **integration, not construction**: a frontend surface for it (a phone app or the
+     terminal row), mapping SHANKPIT cargo counts onto GFD item identity, and a currency/escrow answer
+     (`ah.go`'s own comment says the caller handles the transfer — that caller is the missing piece).
+   - Price floors for farm/mine output should come from the rules (`ce-money-flow`, `cc-service-price-milli`)
+     rather than a second economy invented at the frontend.
 3. **Randomness, deliberately** — actors deviate: a small, bounded per-decision error draw (host-rolled,
    seeded per actor+minute so two clients agree and a replay is faithful). This is what stops a bot from
    reading as a bot, and it is the same humanness primitive `HUMANNESS_NORTHSTAR.md` already scopes.
@@ -220,7 +232,9 @@ and the wasm32 rule module with both test surfaces green. See `docs2/GFD_FRONTEN
 
 ### 3.10 The one shared dependency
 
-Every section above wants the same three things, and none exists cleanly yet: **item identity**, **an
-authoritative wallet with escrow**, and **an act/verification ledger** (IDUNA Apples is the natural home).
+Every section above wants the same three things, and none exists cleanly yet: **item identity** (GFD's item
+model exists on its side; SHANKPIT's cargo is counts), **an authoritative wallet with escrow** (GFD's AH
+records a sale but its own comment says the caller moves the currency), and **an act/verification ledger**
+(IDUNA Apples is the natural home).
 Building those once, as `stdlib/engine/`-shaped core deps (PARENA-first per the standing rule), is cheaper
 than three half-versions inside three game systems.
