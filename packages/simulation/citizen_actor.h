@@ -21,11 +21,13 @@
  *
  *   REFLUX_ACTION_CITIZEN_JUMPED / _SLID / _SLIDE_JUMPED / _WIELDED / _FIRED
  *
- * Deliberately host-local events: citizens only exist on the peer that simulates them (the dedicated
- * server, or the lobby's own local match), and their bodies already reach clients as PlayerState in
- * the ordinary snapshot. Relaying these rows to clients is a named follow-up, not something this
- * file pretends to do -- there is no citizen event packet yet, and inventing one is a wire change
- * bigger than this feature.
+ * RELAYED, not host-local: the dedicated server drains this family past an absolute REFLUX cursor
+ * and ships the rows as PACKET_CITIZEN_EVENTS (packages/simulation/citizen_sync.h), and each client
+ * re-dispatches them into its own log -- so a mod listening on a client sees a citizen slide that
+ * happened on the server without knowing the server exists. There is deliberately no citizen STATE
+ * packet: a citizen's body is a real PlayerState and already travels in the ordinary snapshot, so
+ * only the FACT needs to cross the wire. Arriving rows are untrusted, and reflux_action_is_citizen is
+ * what bounds what a peer can say.
  *
  * Cooldowns, timers and the current action are the only state (this struct); every number that
  * decides anything is the mod's. */

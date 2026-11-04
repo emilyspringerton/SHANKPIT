@@ -42,6 +42,7 @@
 #include "../../../packages/simulation/horse_poop_host.h"   /* what comes out the other end (PARENA) */
 #include "../../../packages/simulation/citizen_actor_rules_host.h" /* citizen bodies: jump/slide/fight (PARENA) */
 #include "../../../packages/simulation/horse_sync.h"        /* PACKET_HORSE_STATE / PACKET_HORSE_EVENTS */
+#include "../../../packages/simulation/citizen_sync.h"      /* PACKET_CITIZEN_EVENTS: the citizen REFLUX family */
 #include "../../../packages/simulation/horse_interact.h"    /* the request channel's own policy */
 #include "../../../packages/reflux/reflux_runtime.h"         /* the horse tick dispatches its family here */
 #include "../../../packages/simulation/vehicle_salvage_rules_host.h" /* PARENA car components */
@@ -2199,6 +2200,36 @@ void server_broadcast_horse_events(void) {
     }
 }
 
+/* server_broadcast_citizen_events -- the citizen family of REFLUX actions, relayed
+ * (PACKET_CITIZEN_EVENTS). Citizens are PlayerStates, so their BODIES already reach clients on
+ * PACKET_SNAPSHOT; what never crossed the wire was the fact that one slid, slide-jumped, drew a
+ * weapon or fired, which is what a client-side mod needs to react. Same shape as the horse relay:
+ * an absolute cursor, drained four datagrams a snapshot, loss reported rather than silent. */
+void server_broadcast_citizen_events(void) {
+    static int cursor = -1;  /* -1: baseline on the first call (see citizen_sync.h) */
+    int lost = citizen_sync_missed(cursor);
+    if (lost > 0)
+        printf("[CITIZEN] relay lost %d event(s) -- REFLUX's %d-entry ring wrapped before the drain\n",
+               lost, REFLUX_LOG_CAPACITY);
+    for (int batch = 0; batch < 4; batch++) {
+        NetCitizenEvents pkt;
+        memset(&pkt, 0, sizeof(pkt));
+        int n = citizen_sync_collect_events(pkt.e, NET_CITIZEN_EVENT_MAX, &cursor);
+        if (n <= 0) break;
+        pkt.hdr.type = PACKET_CITIZEN_EVENTS;
+        pkt.hdr.client_id = 0;
+        pkt.hdr.timestamp = get_server_time();
+        pkt.hdr.entity_count = (unsigned char)n;
+        pkt.count = (unsigned char)n;
+        int len = (int)(sizeof(NetHeader) + 4 + (size_t)n * sizeof(NetCitizenEvent));
+        for (int i = 1; i < MAX_CLIENTS; i++) {
+            if (!slots[i].active || !slots[i].welcomed) continue;
+            sendto(sock, (const char *)&pkt, len, 0, (struct sockaddr*)&slots[i].addr, sizeof(struct sockaddr_in));
+        }
+        if (n < NET_CITIZEN_EVENT_MAX) break;   /* nothing left that fits */
+    }
+}
+
 /* EMPIRE unit rules from PARENA -- included here because this file has no block of rules includes yet;
    the server spawns authored units, so it must read the same archetype/order table the lobby does. */
 #include "../../../packages/simulation/empire_units_rules_host.h"
@@ -2687,6 +2718,7 @@ int main(int argc, char *argv[]) {
             server_broadcast_horse_state();  /* PACKET_HORSE_STATE: the horses in each client's scene */
             server_broadcast_horse_piles();  /* PACKET_HORSE_PILES: what they left on the ground */
             server_broadcast_horse_events(); /* PACKET_HORSE_EVENTS: the horse REFLUX family, relayed */
+            server_broadcast_citizen_events(); /* PACKET_CITIZEN_EVENTS: the citizen REFLUX family, relayed */
             server_broadcast_queue_level();
             server_broadcast_zone_state();   /* PACKET_ZONE_STATE: the zone's id + seed, 1 Hz */
             server_broadcast_empire_state(); /* PACKET_EMPIRE_STATE: stockpiles, node amounts, ground, 1 Hz */

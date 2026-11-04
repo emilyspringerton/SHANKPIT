@@ -17,6 +17,7 @@
 #include "../reflux/reflux_runtime.h"
 #include "citizen_actor.h"
 #include "citizen_actor_rules_host.h"
+#include "citizen_sync.h"
 
 static int fails = 0;
 #define CHECK(c, ...) do { if (!(c)) { printf("FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); fails++; } } while (0)
@@ -225,11 +226,73 @@ int main(void) {
         CHECK(!reflux_action_is_citizen(REFLUX_ACTION_HORSE_POOPED), "family predicate swallowed the horses");
     }
 
+    printf("-- the relay carries the family, in order, and refuses anything else --\n");
+    {
+        reflux_host_reset();
+        PlayerState p;
+        fresh_body(&p, 8, 100);
+        p.vx = 0.9f;
+        citizen_actor_tick(8, &p, 1, 4000, 0);      /* one slide-jump and one wield */
+        int total = reflux_host_total_dispatched();
+        CHECK(total >= 2, "the relay had only %d row(s) to carry", total);
+
+        /* a fresh cursor baselines rather than replaying host history at a new peer */
+        NetCitizenEvent rows[NET_CITIZEN_EVENT_MAX];
+        int fresh = -1;
+        CHECK(citizen_sync_collect_events(rows, NET_CITIZEN_EVENT_MAX, &fresh) == 0,
+              "a fresh cursor replayed history");
+        CHECK(citizen_sync_collect_events(rows, NET_CITIZEN_EVENT_MAX, &fresh) == 0,
+              "the baseline cursor delivered a row on a second call");
+        CHECK(citizen_sync_missed(fresh) == 0, "a fresh cursor claimed to have lost rows");
+
+        /* everything already dispatched, from the very start, is citizen family and nothing else */
+        int cursor = 0, n = citizen_sync_collect_events(rows, NET_CITIZEN_EVENT_MAX, &cursor);
+        CHECK(n == total, "relay carried %d of %d row(s)", n, total);
+        for (int i = 0; i < n; i++)
+            CHECK(reflux_action_is_citizen(rows[i].type), "relay carried unrelated type %d", rows[i].type);
+
+        /* `max` is a datagram budget: the cursor stops ON the undelivered row, so a caller that
+           loops gets everything in order instead of losing the overflow */
+        int capped = 0, got = 0;
+        NetCitizenEvent one[1];
+        int last_type = -1, ordered = 1;
+        while (citizen_sync_collect_events(one, 1, &capped) > 0) {
+            if (got == 0 && one[0].type != rows[0].type) ordered = 0;
+            last_type = one[0].type;
+            got++;
+            if (got > NET_CITIZEN_EVENT_MAX) break;
+        }
+        CHECK(ordered, "the batched relay did not start with the first row");
+        CHECK(got == n, "batched relay delivered %d of %d row(s)", got, n);
+        CHECK(last_type == rows[n - 1].type, "batched relay ended on type %d, wanted %d",
+              last_type, rows[n - 1].type);
+
+        /* applying re-dispatches into THIS peer's log, so a local mod sees what the server saw */
+        int before = reflux_host_total_dispatched();
+        CHECK(citizen_sync_apply_events(rows, n) == n, "apply refused a citizen row");
+        int after = reflux_host_total_dispatched();
+        CHECK(after == before + n, "apply appended %d row(s), wanted %d", after - before, n);
+        for (int i = 0; i < n; i++) {
+            int idx = reflux_host_index_for_abs(before + i);
+            CHECK(idx >= 0 && reflux_action_is_citizen(reflux_host_action_type_at(idx)),
+                  "relayed row %d landed as something else", i);
+        }
+
+        /* untrusted input: a peer must not be able to fake another family through this packet */
+        NetCitizenEvent hostile;
+        hostile.type = REFLUX_ACTION_HORSE_POOPED;
+        hostile.a = 0; hostile.b = 0; hostile.c = 0;
+        int b4 = reflux_host_total_dispatched();
+        CHECK(citizen_sync_apply_events(&hostile, 1) == 0, "apply forwarded a horse event");
+        CHECK(reflux_host_total_dispatched() == b4, "a refused row still reached the log");
+    }
+
     citizen_actor_reset();
     CHECK(citizen_actor_action(2) == CITACT_IDLE, "reset did not forget the bodies");
 
     if (fails) { printf("citizen_actor: %d FAILURE(S)\n", fails); return 1; }
     printf("citizen_actor: ok -- PARENA's citizen body jumps, crouches, slides, slide-jumps and draws a\n"
-           "weapon, the built-in mirror matches the mod field for field, and each decision is a REFLUX action\n");
+           "weapon, the built-in mirror matches the mod field for field, each decision is a REFLUX action,\n"
+           "and the wire relay carries that family to a client while refusing every other one\n");
     return 0;
 }

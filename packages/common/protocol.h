@@ -217,6 +217,14 @@
  * react rather than draw. */
 #define PACKET_HORSE_PILES 25
 
+/* PACKET_CITIZEN_EVENTS -- the MODE_ZOMBIES citizen REFLUX family, relayed
+ * (packages/simulation/citizen_sync.h). Server -> client, mirroring PACKET_HORSE_EVENTS in shape but
+ * deliberately with NO state companion: a citizen is a real PlayerState and its body already rides
+ * PACKET_SNAPSHOT, so only the FACT that it jumped, slid, slide-jumped, drew a weapon or fired needs
+ * to cross the wire. A row is untrusted on arrival and is refused unless reflux_action_is_citizen
+ * accepts its type, so this packet can never fake another family. */
+#define PACKET_CITIZEN_EVENTS 26
+
 #define NET_EMPIRE_MAX_NODES 16 /* must match EU_MAX_NODES (empire_units.h) */
 #define NET_EMPIRE_MAX_CELLS 32 /* must match EU_MAX_CLAIM_CELLS (empire_units.h) */
 #define NET_ZONE_ID_MAX 32
@@ -517,6 +525,22 @@ typedef struct {
     unsigned char pad[3];
     NetHorseEvent e[NET_HORSE_EVENT_MAX];
 } NetHorseEvents;
+
+/* NetCitizenEvents -- see PACKET_CITIZEN_EVENTS' own doc comment above. Same shape as NetHorseEvents
+ * (a type plus the three I32 scalars REFLUX carries); the family predicate, not the packet, is what
+ * bounds what a peer is allowed to say. */
+#define NET_CITIZEN_EVENT_MAX 8
+typedef struct {
+    int type;   /* REFLUX_ACTION_CITIZEN_* */
+    int a, b, c;
+} NetCitizenEvent;
+
+typedef struct {
+    NetHeader hdr;
+    unsigned char count;
+    unsigned char pad[3];
+    NetCitizenEvent e[NET_CITIZEN_EVENT_MAX];
+} NetCitizenEvents;
 
 /* NetHorseInteract -- see PACKET_HORSE_INTERACT's own doc comment above. `goal` is read only for
  * HORSE_INTERACT_SET_GOAL (HORSE_GOAL_*), and is clipped on arrival like every other untrusted

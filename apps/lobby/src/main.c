@@ -117,6 +117,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/simulation/horse_poop_host.h"   /* what comes out the other end (PARENA) */
 #include "../../../packages/simulation/citizen_actor_rules_host.h" /* citizen bodies: jump/slide/fight (PARENA) */
 #include "../../../packages/simulation/horse_sync.h"        /* PACKET_HORSE_STATE / PACKET_HORSE_EVENTS */
+#include "../../../packages/simulation/citizen_sync.h"      /* PACKET_CITIZEN_EVENTS: the citizen REFLUX family */
 #include "../../../packages/simulation/horse_interact.h"    /* the request channel (mount/goal/feed) */
 #include "../../../packages/simulation/heli_rules_host.h"
 #include "../../../packages/simulation/rocket_car_rules_host.h"   /* the rocket car's PARENA model */
@@ -16827,6 +16828,23 @@ void net_tick() {
                 if (hn > held) hn = held;
                 if (hn > NET_HORSE_EVENT_MAX) hn = NET_HORSE_EVENT_MAX;
                 if (hn > 0) horse_sync_apply_events(he.e, hn);
+            }
+        } else if (head->type == PACKET_CITIZEN_EVENTS) {
+            /* PACKET_CITIZEN_EVENTS: the citizen REFLUX family, relayed -- re-dispatched into this
+               peer's own log so a mod listening here sees a citizen on the server slide, slide-jump,
+               draw or fire without knowing the server exists. Anything outside the family is refused
+               inside citizen_sync_apply_events, so a relayed row can never fake a horse mount or a
+               door press. */
+            if (len >= (int)(sizeof(NetHeader) + 4) && len <= (int)sizeof(NetCitizenEvents)) {
+                NetCitizenEvents ce;
+                memset(&ce, 0, sizeof(ce));
+                int cpy = len < (int)sizeof(ce) ? len : (int)sizeof(ce);
+                memcpy(&ce, buffer, (size_t)cpy);
+                int cn = ce.count;
+                int held = (cpy - (int)(sizeof(NetHeader) + 4)) / (int)sizeof(NetCitizenEvent);
+                if (cn > held) cn = held;
+                if (cn > NET_CITIZEN_EVENT_MAX) cn = NET_CITIZEN_EVENT_MAX;
+                if (cn > 0) citizen_sync_apply_events(ce.e, cn);
             }
         } else if (head->type == PACKET_BRICK_STATE) {
             /* destructible brick: mirror the server's authoritative cell state (validated inside) */
