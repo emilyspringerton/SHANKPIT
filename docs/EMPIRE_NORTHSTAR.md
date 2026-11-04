@@ -138,7 +138,7 @@ district conversion threshold, which is a **parameter** so the caller passes
 `empire_district_threshold_milli()` and the sim and the phone app cannot disagree about who owns a
 district.
 
-Deliberately **not** in `LOBBY_SRC`/`SERVER_SRC` yet: no running host consumes it (§6.7), and this
+Deliberately **not** in `LOBBY_SRC`/`SERVER_SRC` yet: no running host consumes it (§6.6), and this
 repository has paid for hand-copied source lists drifting. The test is the only consumer today.
 
 ### 6.2 The tick, in the order that matters
