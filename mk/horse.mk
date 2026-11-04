@@ -9,7 +9,7 @@
 
 HORSE_TEST := $(BIN_DIR)/horse_test
 
-.PHONY: test-horse regen-horse-rules regen-horse-goals
+.PHONY: test-horse regen-horse-rules regen-horse-goals regen-horse-poop-rules
 regen-horse-rules:
 	scripts/gen_horse_rules.sh
 
@@ -17,6 +17,12 @@ regen-horse-rules:
 # PARENA/stdlib/shankpit/horse_goals.prn -> packages/simulation/horse_goals.c.
 regen-horse-goals:
 	scripts/gen_horse_goals.sh
+
+# What comes out the other end (when a grazing horse drops, where behind the tail, how long it
+# lasts, how many the paddock holds): PARENA/stdlib/shankpit/horse_poop_rules.prn ->
+# packages/simulation/horse_poop_rules.c.
+regen-horse-poop-rules:
+	scripts/gen_horse_poop_rules.sh
 
 test-horse: | $(BIN_DIR)
 	$(CC) -g -O1 -fsanitize=address,undefined -Wall $(INCLUDES) \

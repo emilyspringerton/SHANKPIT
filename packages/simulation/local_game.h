@@ -13,6 +13,7 @@
 #include "bioslurry.h"    /* what a killed zombie leaves, and the DNA the lab reads off it */
 #include "horse_rules.h"   /* the tölt mount's numbers -- PARENA mod, see horse_rules_host.h */
 #include "horse_goals.h"   /* what a loose horse decides -- PARENA mod, see horse_goals_host.h */
+#include "horse_poop.h"    /* what comes out the other end -- PARENA mod, see horse_poop_host.h */
 #include "humanness.h"     /* MISHRI's mood/reaction/aim layer -- the horse's mind, same primitives as story_ai */
 #include "../reflux/reflux_runtime.h" /* REFLUX_ACTION_HORSE_* -- the family a horse dispatches (the dispatch itself is a hook, see below) */
 #include "zombies_hud_bridge.h" /* BIG_O engine merge phase 8 -- the first real REFLUX subscriber
@@ -288,6 +289,16 @@ static HumannessState g_horse_mind[MAX_HORSES];
 static unsigned char g_horse_mind_init[MAX_HORSES];
 static int g_horse_turn_overshoot[MAX_HORSES];
 
+/* One countdown per horse slot: when the next goal-driven pile is due, and when an eaten carrot is
+ * due out the other end. Host-local like the mind -- the pile itself is replicated
+ * (PACKET_HORSE_PILES), the wait for the next one is not this peer's business. */
+static unsigned int g_horse_poop_at_ms[MAX_HORSES];
+static unsigned int g_horse_poop_due_ms[MAX_HORSES];
+/* Bumped whenever the set of piles changes (a drop, or an expiry). The wire bridge uses it to know
+ * when the pile list is worth re-sending: piles never move, so an unchanged list is not news, but a
+ * recycled slot or a vanished pile is. */
+static unsigned int g_horse_pile_rev = 0;
+
 /* horse_stamina_acc_add -- the fractional milli bar every stamina change goes through, so drain,
  * regen, grazing and a carrot all round the same way and never leave a 0.4 milli drip behind. */
 static inline void horse_stamina_acc_add(HorseState *h, float amount) {
@@ -402,6 +413,10 @@ static inline void scene_load(int scene_id) {
         local_state.horses[hri].id = hri;
         local_state.horses[hri].occupant_player_id = -1;
     }
+    /* The horses are gone, so what they left is gone too -- a new scene does not inherit the last
+       one's paddock. (Horse piles are scene-scoped state, cleared exactly like the horses above.) */
+    memset(local_state.piles, 0, sizeof(local_state.piles));
+    for (int pi = 0; pi < MAX_HORSE_PILES; pi++) local_state.piles[pi].horse_id = -1;
     int pad_count = 0;
     const VehiclePad *pads = scene_vehicle_pads(scene_id, &pad_count);
     for (int i = 0; i < pad_count && i < MAX_BUGGIES; i++) {
@@ -786,6 +801,8 @@ static inline void horse_spawn_defaults(HorseState *h, int id, int scene_id,
     if (id >= 0 && id < MAX_HORSES) {
         g_horse_mind_init[id] = 0;
         g_horse_turn_overshoot[id] = 0;
+        g_horse_poop_at_ms[id] = 0;
+        g_horse_poop_due_ms[id] = 0;
     }
     horse_reflux(REFLUX_ACTION_HORSE_SPAWNED, id, scene_id, (int)h->skin);
 }
@@ -855,6 +872,93 @@ static inline int horse_nearest_player(const ServerState *st, int scene_id, floa
 static inline unsigned int horse_rng(unsigned int *state) {
     *state = (*state) * 1664525u + 1013904223u;
     return (*state) >> 8;
+}
+
+/* ── piles (packages/simulation/horse_poop.h): what a farm unavoidably produces ────────────── */
+
+/* horse_pile_drop -- put one pile behind this horse's tail and say so on REFLUX. The position is
+ * the horse's own origin pushed BACK along its heading (behind, not under its nose) with a little
+ * sideways slop from its own RNG stream, sat on the terrain. When the paddock is full the OLDEST
+ * pile is recycled: the one about to expire anyway is worth less than the one being looked at. */
+static inline int horse_pile_drop(int slot, HorseState *h, unsigned int now_ms) {
+    const HorsePoop *p = horse_poop();
+    int idx = -1;
+    for (int i = 0; i < MAX_HORSE_PILES; i++)
+        if (!local_state.piles[i].active) { idx = i; break; }
+    if (idx < 0) {
+        unsigned int oldest_age = 0;
+        idx = 0;
+        for (int i = 0; i < MAX_HORSE_PILES; i++) {
+            unsigned int age = now_ms - local_state.piles[i].born_ms;
+            if (age >= oldest_age) { oldest_age = age; idx = i; }
+        }
+    }
+    HorsePile *pile = &local_state.piles[idx];
+    float rad = h->yaw * 0.0174532925f;
+    float behind = (float)p->behind_milli() * 0.001f;
+    float spread = (float)p->spread_milli() * 0.001f;
+    float side = ((float)((int)(horse_rng(&h->rng) % 2001u) - 1000)) * 0.001f * spread;
+    pile->active = 1;
+    pile->scene_id = h->scene_id;
+    pile->horse_id = h->id;
+    pile->x = h->x - sinf(rad) * behind + cosf(rad) * side;
+    pile->z = h->z - cosf(rad) * behind - sinf(rad) * side;
+    float gy = terrain_sample_height(&g_scene_terrain, pile->x, pile->z);
+    if (gy < 0.0f) gy = 0.0f;
+    pile->y = gy;
+    pile->born_ms = now_ms;
+    g_horse_pile_rev++;
+    horse_reflux(REFLUX_ACTION_HORSE_POOPED, slot, idx, p->lifetime_ms());
+    return idx;
+}
+
+/* horse_piles_expire -- the paddock reclaims its own. Returns how many piles are still live. */
+static inline int horse_piles_expire(unsigned int now_ms) {
+    int lifetime = horse_poop()->lifetime_ms();
+    if (lifetime < 0) lifetime = 0;
+    int alive = 0;
+    for (int i = 0; i < MAX_HORSE_PILES; i++) {
+        HorsePile *p = &local_state.piles[i];
+        if (!p->active) continue;
+        if ((unsigned int)lifetime <= (unsigned int)(now_ms - p->born_ms)) {
+            p->active = 0;
+            g_horse_pile_rev++;
+            continue;
+        }
+        alive++;
+    }
+    return alive;
+}
+
+/* horse_poop_tick -- a LOOSE horse's digestive clock, driven by the goal it is doing: grazing
+ * produces, wandering produces slower, standing or bolting produces nothing. A horse with a rider is
+ * doing the rider's thing instead, so horse_tick_all does not call this for one. */
+static inline void horse_poop_tick(int slot, HorseState *h, unsigned int now_ms) {
+    int interval = horse_poop()->interval_ms(h->goal);
+    if (interval <= 0) { g_horse_poop_at_ms[slot] = 0; return; }
+    unsigned int at = g_horse_poop_at_ms[slot];
+    if (at == 0) { g_horse_poop_at_ms[slot] = now_ms + (unsigned int)interval; return; }
+    if (now_ms >= at) {
+        horse_pile_drop(slot, h, now_ms);
+        g_horse_poop_at_ms[slot] = now_ms + (unsigned int)interval;
+    }
+}
+
+/* horse_poop_after_carrot -- a carrot goes in the front and comes out the back. A carrot is
+ * DIGESTION, not a goal: even a ridden or standing horse drops this one, which is why it has its own
+ * deadline instead of riding the goal-driven interval above. */
+static inline void horse_poop_after_carrot(HorseState *h, unsigned int now_ms) {
+    if (!h || h->id < 0 || h->id >= MAX_HORSES) return;
+    int delay = horse_poop()->after_carrot_ms();
+    if (delay <= 0) return;
+    g_horse_poop_due_ms[h->id] = now_ms + (unsigned int)delay;
+}
+
+static inline void horse_poop_carrot_tick(int slot, HorseState *h, unsigned int now_ms) {
+    unsigned int at = g_horse_poop_due_ms[slot];
+    if (at == 0 || now_ms < at) return;
+    g_horse_poop_due_ms[slot] = 0;
+    horse_pile_drop(slot, h, now_ms);
 }
 
 /* horse_goal_change -- commit to a goal: hold it for a PARENA-owned duration, choose where it is
@@ -1000,6 +1104,7 @@ static inline void horse_goal_tick(int slot, HorseState *h, unsigned int now_ms,
 static inline void horse_tick_all(unsigned int now_ms) {
     const float dt = SHANKPIT_NET_FIXED_DT;
     const HorseRules *rules = horse_rules();
+    horse_piles_expire(now_ms);   /* the paddock reclaims piles older than PARENA's lifetime */
     for (int i = 0; i < MAX_HORSES; i++) {
         HorseState *h = &local_state.horses[i];
         if (!h->active) continue;
@@ -1086,6 +1191,7 @@ static inline void horse_tick_all(unsigned int now_ms) {
             h->feed_cooldown = HORSE_FEED_COOLDOWN_TICKS;
             printf("[HORSE] carrot horse=%d carrots=%d stamina=%d\n", h->id, h->carrots, h->stamina_milli);
             horse_reflux(REFLUX_ACTION_HORSE_FED, i, h->carrots, h->stamina_milli);
+            horse_poop_after_carrot(h, now_ms);   /* it comes out the other end in a moment */
         }
         } /* end rider-driven */
 
@@ -1146,6 +1252,11 @@ static inline void horse_tick_all(unsigned int now_ms) {
             /* Weapons disabled while mounted — tölt mount is not a war horse */
             rider->is_shooting = 0;
         }
+
+        /* What comes out the other end. A carrot is on its own deadline (a ridden horse drops it
+           too); the goal-driven interval only applies while nobody is on its back. */
+        horse_poop_carrot_tick(i, h, now_ms);
+        if (!rider) horse_poop_tick(i, h, now_ms);
     }
 }
 

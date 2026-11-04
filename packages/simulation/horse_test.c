@@ -19,6 +19,10 @@
  *      dismount, set-goal, feed -- and every refusal, judged by the same function the server runs.
  *  12. The ring's residual bound is MEASURABLE: a cursor overtaken by the log says how many events
  *      it lost, instead of skipping them silently.
+ *  13. What comes out the other end: PARENA decides when a loose horse produces (grazing fast,
+ *      wandering slower, standing or bolting never), the pile lands behind the tail, the paddock
+ *      is bounded and recycles its oldest, every pile expires, a carrot becomes one, and the pile
+ *      list round-trips as whole-scene state.
  *
  * Build/run: make test-horse. */
 #include <stdio.h>
@@ -460,11 +464,129 @@ int main(void) {
         CHECK(horse_sync_missed(-1) == 0, "a fresh cursor has no history to lose");
     }
 
+    /* ---- 13. what comes out the other end, decided in PARENA and owned by the paddock ---- */
+    {
+        /* the generated mod is installed, and its numbers are the ones the tick reads */
+        CHECK(horse_poop()->interval_ms(HORSE_GOAL_GRAZE) > 0, "a grazing horse must produce");
+        CHECK(horse_poop()->interval_ms(HORSE_GOAL_IDLE) == 0, "a standing horse must not produce");
+        CHECK(horse_poop()->interval_ms(HORSE_GOAL_FLEE) == 0, "a bolting horse must not produce");
+        CHECK(horse_poop()->interval_ms(HORSE_GOAL_WANDER) > horse_poop()->interval_ms(HORSE_GOAL_GRAZE),
+              "walking must produce slower than grazing");
+        CHECK(horse_poop()->max_piles() == MAX_HORSE_PILES,
+              "PARENA says %d piles, protocol.h holds %d", horse_poop()->max_piles(), MAX_HORSE_PILES);
+        CHECK(horse_poop()->lifetime_ms() > 0 && horse_poop()->behind_milli() > 0,
+              "a pile needs a lifetime and a place behind the horse");
+
+        PlayerState *p = fresh_player();
+        p->x = 500.0f; p->z = 500.0f;            /* well clear: this is about digestion, not spooking */
+        HorseState *h = &local_state.horses[0];
+        horse_spawn_defaults(h, 0, p->scene_id, 0.0f, 0.0f, 90.0f);   /* yaw 90 faces +x */
+        h->stamina_milli = 200;                  /* hungry, so its goal is to graze */
+        cap_n = 0;
+        int dropped = 0;
+        for (int i = 0; i < 1200 && !dropped; i++) {   /* up to ~19 s of ticks */
+            test_now_ms += 16;
+            horse_tick_all(test_now_ms);
+            dropped = horse_api_pile_count(&local_state, p->scene_id) > 0;
+        }
+        CHECK(dropped, "a grazing horse never produced a pile in 19 s");
+        CHECK(captured(REFLUX_ACTION_HORSE_POOPED), "a pile must say so on REFLUX");
+        HorsePile *pile = horse_api_pile_at(&local_state, 0);
+        CHECK(pile != NULL, "the pile is not where the mod API looks for it");
+        if (pile) {
+            /* Behind the tail, not in front of the nose -- measured against the heading the horse had
+               AT THE DROP (it has been grazing for five seconds and may well have turned around since
+               it was spawned, so the spawn yaw proves nothing). The drop happens at the end of the
+               same tick this check runs after, so position and yaw are the ones used. */
+            float fwd_x = sinf(h->yaw * 0.0174532925f), fwd_z = cosf(h->yaw * 0.0174532925f);
+            float dx = pile->x - h->x, dz = pile->z - h->z;
+            float along = dx * fwd_x + dz * fwd_z;
+            float behind = (float)horse_poop()->behind_milli() * 0.001f;
+            float spread = (float)horse_poop()->spread_milli() * 0.001f;
+            float offset = sqrtf(dx * dx + dz * dz);
+            CHECK(along < 0.0f, "the pile landed %.2f m in FRONT of the horse's heading", along);
+            CHECK(offset > behind - spread - 0.3f && offset < behind + spread + 0.3f,
+                  "the pile landed %.2f m from the horse, expected ~%.2f", offset, behind);
+            CHECK(pile->horse_id == h->id, "the pile forgot which horse dropped it");
+            CHECK(pile->scene_id == p->scene_id, "the pile landed in the wrong scene");
+        }
+
+        /* a standing horse does not produce, however long it stands */
+        int before_idle = horse_api_pile_count(&local_state, p->scene_id);
+        h->goal = HORSE_GOAL_IDLE;
+        h->goal_until_ms = test_now_ms + 120000;
+        h->goal_act_at_ms = test_now_ms + 120000;
+        h->goal_x = h->x; h->goal_z = h->z;
+        for (int i = 0; i < 400; i++) { test_now_ms += 16; horse_tick_all(test_now_ms); }
+        CHECK(horse_api_pile_count(&local_state, p->scene_id) == before_idle,
+              "a standing horse produced %d piles",
+              horse_api_pile_count(&local_state, p->scene_id) - before_idle);
+
+        /* a carrot goes in the front and comes out the back */
+        h->stamina_milli = 100;
+        h->carrots = 2;
+        cap_n = 0;
+        CHECK(horse_api_feed(&local_state, 0, test_now_ms) == 1, "the carrot was refused");
+        int before_carrot = horse_api_pile_count(&local_state, p->scene_id);
+        for (int i = 0; i < 300; i++) { test_now_ms += 16; horse_tick_all(test_now_ms); }  /* > 2.5 s */
+        CHECK(horse_api_pile_count(&local_state, p->scene_id) == before_carrot + 1,
+              "a carrot did not come out the other end (%d -> %d piles)",
+              before_carrot, horse_api_pile_count(&local_state, p->scene_id));
+        CHECK(captured(REFLUX_ACTION_HORSE_POOPED), "the carrot pile must say so on REFLUX");
+
+        /* the paddock is a bounded place: past MAX_HORSE_PILES the oldest is recycled */
+        for (int i = 0; i < MAX_HORSE_PILES + 5; i++) {
+            test_now_ms += 16;
+            horse_pile_drop(0, h, test_now_ms);
+        }
+        CHECK(horse_api_pile_count(&local_state, p->scene_id) == MAX_HORSE_PILES,
+              "the paddock holds %d piles, expected %d",
+              horse_api_pile_count(&local_state, p->scene_id), MAX_HORSE_PILES);
+
+        /* and every one of them expires after PARENA's lifetime, with no client asking */
+        unsigned int aged = test_now_ms + (unsigned int)horse_poop()->lifetime_ms() + 1000u;
+        horse_piles_expire(aged);
+        CHECK(horse_api_pile_count(&local_state, p->scene_id) == 0, "piles outlived their lifetime");
+
+        /* state, not event: a client that missed the drop still draws the paddock, and a pile the
+           packet stops mentioning is gone */
+        ServerState sender, receiver;
+        memset(&sender, 0, sizeof sender);
+        memset(&receiver, 0, sizeof receiver);
+        sender.piles[0].active = 1;
+        sender.piles[0].scene_id = SCENE_CUSTOM_LEVEL;
+        sender.piles[0].horse_id = 3;
+        sender.piles[0].x = 4.5f; sender.piles[0].y = 1.0f; sender.piles[0].z = -2.25f;
+        sender.piles[9].active = 1;
+        sender.piles[9].scene_id = SCENE_STADIUM;      /* another scene: never described */
+        NetHorsePileEntry prows[NET_HORSE_PILE_MAX];
+        int pn = horse_sync_fill_piles(&sender, SCENE_CUSTOM_LEVEL, prows, NET_HORSE_PILE_MAX);
+        CHECK(pn == 1 && prows[0].horse == 3, "fill wrote %d pile rows", pn);
+        NetHorsePiles ppkt;
+        memset(&ppkt, 0, sizeof ppkt);
+        ppkt.hdr.type = PACKET_HORSE_PILES;
+        ppkt.hdr.scene_id = SCENE_CUSTOM_LEVEL;
+        ppkt.count = (unsigned char)pn;
+        memcpy(ppkt.e, prows, sizeof(NetHorsePileEntry) * (size_t)pn);
+        int plen = (int)(sizeof(NetHeader) + 4 + sizeof(NetHorsePileEntry) * (size_t)pn);
+        CHECK(horse_sync_apply_piles(&receiver, &ppkt, plen) == 1, "apply did not land the pile");
+        CHECK(fabsf(receiver.piles[0].x - 4.5f) < 0.001f && receiver.piles[0].horse_id == 3,
+              "the pile lost its position or its horse in transit");
+        CHECK(receiver.piles[0].scene_id == SCENE_CUSTOM_LEVEL,
+              "the pile arrived in scene %d", receiver.piles[0].scene_id);
+        ppkt.count = 0;
+        horse_sync_apply_piles(&receiver, &ppkt, (int)(sizeof(NetHeader) + 4));
+        CHECK(horse_api_pile_count(&receiver, SCENE_CUSTOM_LEVEL) == 0,
+              "a pile dropped from the packet must be removed");
+    }
+
     if (fails) { printf("horse_test: %d FAILURE(S)\n", fails); return 1; }
     printf("horse_test: ok -- parses pads, spawns unicorn actors, tölt burns stamina, jump hops (not flies), "
            "carrot restores, blown slows, a loose horse grazes/bolts on PARENA+MISHRI goals, "
            "slides along a fence instead of through it, and the state + REFLUX events round-trip the "
            "wire in batches past the log's own wrap; the request channel judges mount/dismount/"
-           "set-goal/feed by reach, scene and occupancy, and a relay that lost rows says how many\n");
+           "set-goal/feed by reach, scene and occupancy; a relay that lost rows says how many; and "
+           "a grazing horse poops behind its tail on PARENA's clock, the paddock recycles its oldest "
+           "pile, every pile expires, a carrot becomes one, and the pile list round-trips as state\n");
     return 0;
 }

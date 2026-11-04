@@ -146,9 +146,13 @@
 #define REFLUX_ACTION_HORSE_BLOWN 117            /* a = horse slot, b/c unused (0,0) */
 #define REFLUX_ACTION_HORSE_GOAL_CHANGED 118     /* a = horse slot, b = HORSE_GOAL_*, c = duration ms */
 #define REFLUX_ACTION_HORSE_STARTLED 119         /* a = horse slot, b = the player that spooked it */
+/* A pile landed (packages/simulation/horse_poop.h). The event is for mods that want to REACT to a
+ * drop; the pile itself travels as state (PACKET_HORSE_PILES), because a client that missed this
+ * row still has to draw the paddock correctly. */
+#define REFLUX_ACTION_HORSE_POOPED 120           /* a = horse slot, b = pile slot, c = lifetime ms */
 
 #define REFLUX_ACTION_HORSE_FIRST REFLUX_ACTION_HORSE_SPAWNED
-#define REFLUX_ACTION_HORSE_LAST  REFLUX_ACTION_HORSE_STARTLED
+#define REFLUX_ACTION_HORSE_LAST  REFLUX_ACTION_HORSE_POOPED
 
 /* Is this action type part of the horse family? The one predicate both the relay (horse_sync.h) and
  * any mod's own poll use, so the family's boundaries exist in exactly one place. */

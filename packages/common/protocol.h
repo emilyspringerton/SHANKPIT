@@ -19,6 +19,10 @@
 #define MAX_DRONES 12
 #define MAX_AIRPLANES 4
 #define MAX_HORSES  8
+/* How many piles the world holds at once (PARENA's horse_poop_rules.prn owns the number;
+ * horse_test.c asserts the generated value matches this instead of assuming it). The host recycles
+ * the oldest when it is full, so this is a memory bound, not a cap on how often horses produce. */
+#define MAX_HORSE_PILES 24
 #define LAG_HISTORY 64
 
 #define SCENE_GARAGE_OSAKA 0
@@ -202,6 +206,16 @@
 #define HORSE_INTERACT_SET_GOAL 2
 #define HORSE_INTERACT_FEED     3
 #define HORSE_INTERACT_ACTION_COUNT 4
+
+/* PACKET_HORSE_PILES -- what the horses in a client's scene have left on the ground
+ * (packages/simulation/horse_sync.h). Server -> client, alongside PACKET_HORSE_STATE, with the same
+ * per-scene filter and the same whole-scene, idempotent shape: the packet lists every live pile in
+ * that scene, and a pile it does not mention is gone. Separate from the horse packet on purpose --
+ * the horses are eight fixed slots and the paddock holds MAX_HORSE_PILES, and a pile is scenery
+ * that a client must draw whether or not it was listening when it landed. It DOES also dispatch a
+ * REFLUX action (REFLUX_ACTION_HORSE_POOPED) at the moment of the drop, for mods that want to
+ * react rather than draw. */
+#define PACKET_HORSE_PILES 25
 
 #define NET_EMPIRE_MAX_NODES 16 /* must match EU_MAX_NODES (empire_units.h) */
 #define NET_EMPIRE_MAX_CELLS 32 /* must match EU_MAX_CLAIM_CELLS (empire_units.h) */
@@ -514,6 +528,24 @@ typedef struct {
     unsigned char goal;    /* HORSE_GOAL_* for SET_GOAL; 0 otherwise */
     unsigned char pad;
 } NetHorseInteract;
+
+/* NetHorsePiles -- see PACKET_HORSE_PILES' own doc comment above. `horse` is the slot that dropped
+ * it, or -1 when the sender does not know -- the same short-with--1 convention NetHorseEntry.occupant
+ * uses, so "no horse" is expressible rather than a magic 255. 16 bytes an entry, MAX_HORSE_PILES of
+ * them: a full paddock is one comfortable datagram. */
+#define NET_HORSE_PILE_MAX MAX_HORSE_PILES
+typedef struct {
+    float x, y, z;
+    short horse;          /* horse slot that dropped it, -1 = unknown */
+    unsigned char pad[2];
+} NetHorsePileEntry;
+
+typedef struct {
+    NetHeader hdr;
+    unsigned char count;
+    unsigned char pad[3];
+    NetHorsePileEntry e[NET_HORSE_PILE_MAX];
+} NetHorsePiles;
 
 typedef struct {
     unsigned int sequence;
@@ -1047,6 +1079,20 @@ typedef struct {
     int   blown;                /* latched at empty so REFLUX_ACTION_HORSE_BLOWN fires once */
 } HorseState;
 
+/* A pile a horse left behind (packages/simulation/horse_poop.h drives WHEN, local_game.h's horse
+ * tick places and expires it). Scenery, not an actor: it does not move or think, and it expires --
+ * but it is real, authoritative state that every client in the scene sees, and
+ * REFLUX_ACTION_HORSE_POOPED fires the moment one lands so a mod can fertilize a field, attract
+ * flies, or pay a farmhand for clearing the paddock. born_ms is host-local (it only drives the
+ * lifetime here); clients draw whatever pile the state packet describes. */
+typedef struct {
+    int active;
+    int scene_id;
+    int horse_id;           /* which slot dropped it, -1 when unknown */
+    float x, y, z;
+    unsigned int born_ms;
+} HorsePile;
+
 typedef enum {
     FLAG_AT_HOME = 0,
     FLAG_CARRIED = 1,
@@ -1219,6 +1265,7 @@ typedef struct {
     DroneState drones[MAX_DRONES];
     AirplaneState airplanes[MAX_AIRPLANES];
     HorseState horses[MAX_HORSES];
+    HorsePile piles[MAX_HORSE_PILES];
     LagRecord history[MAX_CLIENTS][LAG_HISTORY];
     int server_tick;
     int game_mode;

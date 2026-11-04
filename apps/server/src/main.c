@@ -39,6 +39,7 @@
 #include "../../../packages/simulation/buggy_rules_host.h"
 #include "../../../packages/simulation/horse_rules_host.h"
 #include "../../../packages/simulation/horse_goals_host.h"  /* what a loose horse decides (PARENA) */
+#include "../../../packages/simulation/horse_poop_host.h"   /* what comes out the other end (PARENA) */
 #include "../../../packages/simulation/horse_sync.h"        /* PACKET_HORSE_STATE / PACKET_HORSE_EVENTS */
 #include "../../../packages/simulation/horse_interact.h"    /* the request channel's own policy */
 #include "../../../packages/reflux/reflux_runtime.h"         /* the horse tick dispatches its family here */
@@ -2123,6 +2124,40 @@ void server_broadcast_horse_state(void) {
     }
 }
 
+/* server_broadcast_horse_piles -- what the horses in each client's scene left on the ground
+ * (PACKET_HORSE_PILES, horse_sync.h). Same per-scene filter and the same whole-scene, idempotent
+ * shape as server_broadcast_horse_state: the packet lists every live pile in that scene and a pile
+ * it does not mention is gone. Piles never move, so only a CHANGE is sent -- g_horse_pile_rev moves
+ * when one lands or expires, and a scene change re-sends too (including the empty list, which is how
+ * a client learns that the last pile in the paddock is gone). */
+void server_broadcast_horse_piles(void) {
+    static unsigned int sent_rev[MAX_CLIENTS];
+    static int sent_scene[MAX_CLIENTS];
+    static int initialised = 0;
+    if (!initialised) {
+        for (int i = 0; i < MAX_CLIENTS; i++) sent_scene[i] = -2;
+        initialised = 1;
+    }
+    for (int i = 1; i < MAX_CLIENTS; i++) {
+        if (!slots[i].active || !slots[i].welcomed) continue;
+        int scene = local_state.players[i].scene_id;
+        if (scene == sent_scene[i] && g_horse_pile_rev == sent_rev[i]) continue;
+        NetHorsePiles pkt;
+        memset(&pkt, 0, sizeof(pkt));
+        int n = horse_sync_fill_piles(&local_state, scene, pkt.e, NET_HORSE_PILE_MAX);
+        pkt.hdr.type = PACKET_HORSE_PILES;
+        pkt.hdr.client_id = 0;
+        pkt.hdr.timestamp = get_server_time();
+        pkt.hdr.scene_id = (unsigned char)(scene < 0 ? 0 : scene);
+        pkt.hdr.entity_count = (unsigned char)n;
+        pkt.count = (unsigned char)n;
+        int len = (int)(sizeof(NetHeader) + 4 + (size_t)n * sizeof(NetHorsePileEntry));
+        sendto(sock, (const char *)&pkt, len, 0, (struct sockaddr*)&slots[i].addr, sizeof(struct sockaddr_in));
+        sent_rev[i] = g_horse_pile_rev;
+        sent_scene[i] = scene;
+    }
+}
+
 /* server_broadcast_horse_events -- the horse family of REFLUX actions, relayed (PACKET_HORSE_EVENTS).
  * This is the "via reflux" half of horse sync: the authoritative tick dispatched each event at the
  * moment it happened, this drains the family past a cursor and ships the rows, and each client
@@ -2171,6 +2206,7 @@ int main(int argc, char *argv[]) {
     buggy_rules_install(); /* PARENA buggy handling (#468) */
     horse_rules_install(); /* PARENA tölt mount handling (stamina, jump, carrot) */
     horse_goals_install(); /* PARENA horse goal decisions (graze/wander/idle/home/flee) */
+    horse_poop_install();  /* PARENA digestive rules (when a grazing horse drops, how long it lasts) */
     horse_reflux_install(reflux_host_dispatch); /* the horse actor's events reach every mod, and the wire */
     vehicle_salvage_rules_install(); /* PARENA car components: the parts own the split, hull mirrors them */
     garage_rules_install(); /* PARENA garage: what this car's origin is worth, what a bay takes */
@@ -2549,6 +2585,13 @@ int main(int argc, char *argv[]) {
             }
         }
         buggy_tick_all(get_server_time()); /* the car fire ladder needs a clock for its blast */
+        /* ...and the horses. This call was MISSING, which made every horse on a dedicated server a
+           statue: local_game.h's horse_tick_all only ever ran inside local_update, and only the
+           lobby's local single-player path calls that. So the mounted ride, the jump, the loose
+           horse's own afternoon (PARENA goals, MISHRI mood, fence steering) and now its piles ran
+           on a local match and not in the town everybody actually plays in. The wire test found it
+           the first time a pile was expected over a socket. */
+        horse_tick_all(get_server_time());
 
         if ((local_state.game_mode == MODE_DEATHMATCH || local_state.game_mode == MODE_TDM) && server_scene_is_dm_map(g_server_match_scene)) {
             int top_frags = 0;
@@ -2640,6 +2683,7 @@ int main(int argc, char *argv[]) {
             server_broadcast_brick_state();
             server_broadcast_vehicle_state(); /* PACKET_VEHICLE_STATE: which part of each car is still there */
             server_broadcast_horse_state();  /* PACKET_HORSE_STATE: the horses in each client's scene */
+            server_broadcast_horse_piles();  /* PACKET_HORSE_PILES: what they left on the ground */
             server_broadcast_horse_events(); /* PACKET_HORSE_EVENTS: the horse REFLUX family, relayed */
             server_broadcast_queue_level();
             server_broadcast_zone_state();   /* PACKET_ZONE_STATE: the zone's id + seed, 1 Hz */

@@ -182,4 +182,57 @@ static inline int horse_sync_apply_events(const NetHorseEvent *in, int n) {
     return applied;
 }
 
+/* ── piles: the same whole-scene contract as horses, for the same reason ──────────────────────────
+ *
+ * What a horse leaves on the ground is STATE, not an event: a client that was not listening (or
+ * joined late) still has to draw the paddock correctly, and a pile that expires has to disappear
+ * on a client that never saw an event either way. So PACKET_HORSE_PILES is absolute and
+ * whole-scene, exactly like PACKET_HORSE_STATE: a pile the packet does not mention is gone.
+ * REFLUX_ACTION_HORSE_POOPED still fires at the drop for mods that want to REACT (that is the
+ * difference between the two channels, and it is the reason both exist). */
+
+/* Fill `out` with every live pile in `scene_id`, at most `max`. Returns the count written. */
+static inline int horse_sync_fill_piles(const ServerState *st, int scene_id, NetHorsePileEntry *out, int max) {
+    if (!st || !out) return 0;
+    if (max > NET_HORSE_PILE_MAX) max = NET_HORSE_PILE_MAX;
+    int n = 0;
+    for (int i = 0; i < MAX_HORSE_PILES && n < max; i++) {
+        const HorsePile *p = &st->piles[i];
+        if (!p->active || p->scene_id != scene_id) continue;
+        NetHorsePileEntry *e = &out[n++];
+        memset(e, 0, sizeof(*e));
+        e->x = p->x; e->y = p->y; e->z = p->z;
+        e->horse = (short)((p->horse_id >= 0 && p->horse_id < MAX_HORSES) ? p->horse_id : -1);
+    }
+    return n;
+}
+
+/* Apply a whole-scene pile state. `len` is the received datagram length, so a truncated packet
+ * describes fewer piles instead of reading past its own end. Returns how many entries landed. */
+static inline int horse_sync_apply_piles(ServerState *st, const NetHorsePiles *pkt, int len) {
+    if (!st || !pkt) return 0;
+    int held = (len - (int)(sizeof(NetHeader) + 4)) / (int)sizeof(NetHorsePileEntry);
+    if (held < 0) held = 0;
+    int want = pkt->count;
+    if (want > held) want = held;
+    if (want > NET_HORSE_PILE_MAX) want = NET_HORSE_PILE_MAX;
+
+    int scene = (int)pkt->hdr.scene_id;
+    memset(st->piles, 0, sizeof(st->piles));
+    for (int i = 0; i < MAX_HORSE_PILES; i++) st->piles[i].horse_id = -1;
+
+    int applied = 0;
+    for (int k = 0; k < want; k++) {
+        const NetHorsePileEntry *e = &pkt->e[k];
+        HorsePile *p = &st->piles[k];
+        p->active = 1;
+        p->scene_id = scene;
+        p->horse_id = (e->horse >= 0 && e->horse < MAX_HORSES) ? (int)e->horse : -1;
+        p->x = e->x; p->y = e->y; p->z = e->z;
+        p->born_ms = 0;   /* host-local age; the lifetime is the server's to run */
+        applied++;
+    }
+    return applied;
+}
+
 #endif /* HORSE_SYNC_H */

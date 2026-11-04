@@ -114,6 +114,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/simulation/buggy_rules_host.h"
 #include "../../../packages/simulation/horse_rules_host.h"
 #include "../../../packages/simulation/horse_goals_host.h"  /* what a loose horse decides (PARENA) */
+#include "../../../packages/simulation/horse_poop_host.h"   /* what comes out the other end (PARENA) */
 #include "../../../packages/simulation/horse_sync.h"        /* PACKET_HORSE_STATE / PACKET_HORSE_EVENTS */
 #include "../../../packages/simulation/horse_interact.h"    /* the request channel (mount/goal/feed) */
 #include "../../../packages/simulation/heli_rules_host.h"
@@ -7777,6 +7778,26 @@ static void draw_horse_box(float cx, float cy, float cz, float sx, float sy, flo
     glEnd();
 }
 
+/* A pile on the ground: three squat brown boxes, no rotation -- at this size a pile has no side
+ * that faces anywhere. The world position comes from the state packet (the server owns it), so a
+ * client that missed the REFLUX event still draws the paddock the moment PACKET_HORSE_PILES
+ * arrives. */
+static void draw_horse_pile(const HorsePile *p) {
+    if (!p || !p->active) return;
+    const GLboolean lit_was_on = glIsEnabled(GL_LIGHTING);
+    glDisable(GL_LIGHTING);
+    glDisable(GL_TEXTURE_2D);
+    glPushMatrix();
+    glTranslatef(p->x, p->y, p->z);
+    glColor3f(0.28f, 0.21f, 0.13f);
+    draw_horse_box(0.0f, 0.09f, 0.0f, 0.46f, 0.18f, 0.42f);
+    glColor3f(0.22f, 0.16f, 0.10f);
+    draw_horse_box(0.10f, 0.20f, -0.06f, 0.24f, 0.16f, 0.22f);
+    draw_horse_box(-0.14f, 0.05f, 0.11f, 0.20f, 0.10f, 0.16f);
+    glPopMatrix();
+    if (lit_was_on) glEnable(GL_LIGHTING); else glDisable(GL_LIGHTING);
+}
+
 /* The tölt mount -- a REAL actor in the world, not scenery: four legs, a body, a neck, a head, a mane
  * and a tail, drawn from HorseState's own position, yaw, airborne hop and tolt_phase, so what the sim
  * says the horse is doing and what the screen shows cannot disagree. Every horse wears the unicorn
@@ -14955,6 +14976,11 @@ void draw_scene(PlayerState *render_p) {
         if (!hs->active || hs->scene_id != render_p->scene_id) continue;
         draw_horse_entity(hs);
     }
+    for (int pi = 0; pi < MAX_HORSE_PILES; pi++) {
+        const HorsePile *pile = &local_state.piles[pi];
+        if (!pile->active || pile->scene_id != render_p->scene_id) continue;
+        draw_horse_pile(pile);
+    }
     for (int hi = 0; hi < MAX_HELICOPTERS; hi++) {
         HelicopterState *h = &local_state.helicopters[hi];
         if (!h->active || h->scene_id != render_p->scene_id) continue;
@@ -16774,6 +16800,18 @@ void net_tick() {
                 memcpy(&hs, buffer, (size_t)cpy);
                 horse_sync_apply(&local_state, &hs, cpy);
             }
+        } else if (head->type == PACKET_HORSE_PILES) {
+            /* PACKET_HORSE_PILES: what the horses in this scene left on the ground. State, not an
+               event, and whole-scene like the horses themselves: a pile the packet does not mention
+               is gone. Only sent when the list changed (a drop, an expiry, a scene change), so an
+               unchanged paddock costs no bandwidth. */
+            if (len >= (int)(sizeof(NetHeader) + 4) && len <= (int)sizeof(NetHorsePiles)) {
+                NetHorsePiles hp;
+                memset(&hp, 0, sizeof(hp));
+                int cpy = len < (int)sizeof(hp) ? len : (int)sizeof(hp);
+                memcpy(&hp, buffer, (size_t)cpy);
+                horse_sync_apply_piles(&local_state, &hp, cpy);
+            }
         } else if (head->type == PACKET_HORSE_EVENTS) {
             /* PACKET_HORSE_EVENTS: the horse REFLUX family, relayed -- re-dispatched into this peer's
                own log so a mod listening here sees what happened there. Anything outside the family is
@@ -16931,6 +16969,7 @@ int main(int argc, char* argv[]) {
     buggy_rules_install(); /* PARENA buggy handling (#468) */
     horse_rules_install(); /* PARENA tölt mount handling (stamina, jump, carrot) */
     horse_goals_install(); /* PARENA horse goal decisions (graze/wander/idle/home/flee) */
+    horse_poop_install();  /* PARENA digestive rules -- the paddock's own piles */
     horse_reflux_install(reflux_host_dispatch); /* a horse's events land in THIS peer's own REFLUX log */
     heli_rules_install(); /* PARENA helicopter flight model (#542) */
     rocket_car_rules_install(); /* PARENA rocket car (Bedrock Racers port) */

@@ -89,12 +89,12 @@ static inline int horse_api_set_goal(ServerState *st, int slot, int goal, unsign
  * Returns 1 when a carrot was actually eaten. Dispatches REFLUX_ACTION_HORSE_FED. */
 static inline int horse_api_feed(ServerState *st, int slot, unsigned int now_ms) {
     HorseState *h = horse_api_at(st, slot);
-    (void)now_ms;
     if (!h || h->carrots <= 0 || h->stamina_milli >= HORSE_STAMINA_MAX_MILLI) return 0;
     h->carrots--;
     h->stamina_milli += horse_rules()->carrot_restore_milli();
     if (h->stamina_milli > HORSE_STAMINA_MAX_MILLI) h->stamina_milli = HORSE_STAMINA_MAX_MILLI;
     horse_reflux(REFLUX_ACTION_HORSE_FED, slot, h->carrots, h->stamina_milli);
+    horse_poop_after_carrot(h, now_ms);   /* a mod-fed carrot comes out the other end too */
     return 1;
 }
 
@@ -132,6 +132,25 @@ static inline int horse_api_poll(HorseRefluxCursor *c, HorseEvent *out, int max)
     }
     c->cursor = abs;
     return k;
+}
+
+/* Piles -- what the horses left on the ground, read without reaching into local_state. A farmhand
+ * mod, a fertilizer mod, or a HUD that says the paddock is filthy polls these; a mod that wants to
+ * REACT to a drop instead of scanning polls the family for REFLUX_ACTION_HORSE_POOPED. Both are
+ * supported on purpose, and they have different shapes: state cannot be missed, an event cannot be
+ * replayed. */
+static inline int horse_api_pile_count(const ServerState *st, int scene_id) {
+    if (!st) return 0;
+    int n = 0;
+    for (int i = 0; i < MAX_HORSE_PILES; i++)
+        if (st->piles[i].active && (scene_id < 0 || st->piles[i].scene_id == scene_id)) n++;
+    return n;
+}
+
+/* Read-only access to one pile slot. NULL when that slot holds no pile. */
+static inline HorsePile *horse_api_pile_at(ServerState *st, int index) {
+    if (!st || index < 0 || index >= MAX_HORSE_PILES) return NULL;
+    return st->piles[index].active ? &st->piles[index] : NULL;
 }
 
 #endif /* HORSE_API_H */

@@ -20,10 +20,15 @@
  *   5. PACKET_HORSE_EVENTS relays the horse REFLUX family back to a client, carrying OUR mount (b =
  *      this client's id) and the goal change -- so a mod on a client really does see the server's
  *      events, which is the clause "ensure it all syncs to the network via reflux".
+ *   6. A ridden horse is doing the rider's thing, so it produces nothing on its own; jump it (PARENA
+ *      charges 180 milli) and feed it a carrot through the same request channel, and 2.5 s later
+ *      PACKET_HORSE_PILES describes the pile (state, so a client that missed the event still draws
+ *      the paddock) and REFLUX_ACTION_HORSE_POOPED arrives on PACKET_HORSE_EVENTS (the event, for
+ *      mods that want to react).
  *
- * Refusals are visible: every step prints what it saw, and a timeout says which of the five never
- * happened. Exit 0 only when all five did. Build/run: `make test-horse-wire` (which boots the server
- * itself); the port and host are argv[1]/argv[2].
+ * Refusals are visible: every step prints what it saw, and a timeout says which of them never
+ * happened. Exit 0 only when every step did. Build/run: `make test-horse-wire` (which boots the
+ * server itself); the port and host are argv[1]/argv[2].
  */
 #include <stdio.h>
 #include <string.h>
@@ -40,7 +45,7 @@
 static int fails = 0;
 #define CHECK(c, ...) do { if (!(c)) { printf("FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); fails++; } } while (0)
 
-#define WIRE_DEADLINE_MS 8000
+#define WIRE_DEADLINE_MS 12000   /* jump, a carrot, then PARENA's 2.5 s of digestion */
 
 static int send_to_server(int fd, const struct sockaddr_in *srv, const void *pkt, int len) {
     ssize_t n = sendto(fd, pkt, (size_t)len, 0, (const struct sockaddr *)srv, sizeof(*srv));
@@ -88,9 +93,13 @@ int main(int argc, char **argv) {
     int horse_slot = -1;
     int rode = 0, goal_landed = 0, event_mount_seen = 0, event_goal_seen = 0;
     int sent_mount = 0, sent_goal = 0;
+    int sent_jump = 0, jump_drained = 0, sent_feed = 0, last_feed_ms = -10000, feed_attempts = 0;
+    int pile_seen = 0, event_poop_seen = 0;
+    int elapsed_ms = 0;
     int refused_mount = 0;
 
     for (int spins = 0; spins < WIRE_DEADLINE_MS / 10; spins++) {
+        elapsed_ms = spins * 100;
         int n = recv_from_server(fd, &srv, buf, (int)sizeof buf, 100);
         if (n > 0) {
             NetHeader *h = (NetHeader *)buf;
@@ -114,6 +123,7 @@ int main(int argc, char **argv) {
                     }
                     if ((int)e->slot != horse_slot) continue;
                     if (my_id >= 0 && (int)e->occupant == my_id) rode = 1;
+                    if (sent_jump && e->stamina < HORSE_STAMINA_MAX_MILLI) jump_drained = 1;
                     if (sent_goal && e->goal == HORSE_GOAL_HOME) goal_landed = 1;
                 }
                 /* 3. ask to get on it, once we know which horse it is */
@@ -141,6 +151,52 @@ int main(int argc, char **argv) {
                     sent_goal = 1;
                     printf("wire: asked horse %d to go home\n", horse_slot);
                 }
+                /* 6. A ridden horse is doing the rider's thing and has no digestive clock of its
+                   own, so the deterministic pile a client can ask for is a CARROT: jump once (PARENA
+                   charges 180 milli, so the bar is no longer full and the carrot is not refused),
+                   then feed it through the same request channel a client mod would use. The jump is
+                   a real UserCmd over the real socket, exactly what the lobby sends. */
+                if (rode && !sent_jump) {
+                    UserCmd cmd;
+                    memset(&cmd, 0, sizeof cmd);
+                    cmd.sequence = 1;
+                    cmd.buttons = BTN_JUMP;
+                    cmd.weapon_idx = -1;
+                    unsigned char upkt[sizeof(NetHeader) + 1 + sizeof(UserCmd)];
+                    memset(upkt, 0, sizeof upkt);
+                    NetHeader *uh = (NetHeader *)upkt;
+                    uh->type = PACKET_USERCMD;
+                    uh->client_id = (unsigned char)my_id;
+                    upkt[sizeof(NetHeader)] = 1;   /* one command in this packet */
+                    memcpy(upkt + sizeof(NetHeader) + 1, &cmd, sizeof cmd);
+                    if (!send_to_server(fd, &srv, upkt, (int)sizeof upkt)) { printf("jump send failed\n"); return 2; }
+                    sent_jump = 1;
+                    printf("wire: asked the mount to jump (spends stamina so it will eat)\n");
+                }
+                if (rode && jump_drained && feed_attempts < 3 &&
+                    (!sent_feed || (!pile_seen && elapsed_ms - last_feed_ms > 3000))) {
+                    NetHorseInteract req;
+                    memset(&req, 0, sizeof req);
+                    req.hdr.type = PACKET_HORSE_INTERACT;
+                    req.hdr.client_id = (unsigned char)my_id;
+                    req.slot = (unsigned char)horse_slot;
+                    req.action = HORSE_INTERACT_FEED;
+                    if (!send_to_server(fd, &srv, &req, (int)sizeof req)) { printf("feed send failed\n"); return 2; }
+                    sent_feed = 1;
+                    feed_attempts++;
+                    last_feed_ms = elapsed_ms;
+                    printf("wire: fed the mount a carrot (a pile comes out in 2.5 s)\n");
+                }
+            } else if (h->type == PACKET_HORSE_PILES && n >= (int)(sizeof(NetHeader) + 4)) {
+                NetHorsePiles *pp = (NetHorsePiles *)buf;
+                int held = (n - (int)(sizeof(NetHeader) + 4)) / (int)sizeof(NetHorsePileEntry);
+                int count = pp->count < held ? pp->count : held;
+                if (count > 0) {
+                    if (!pile_seen)
+                        printf("wire: pile at (%.2f,%.2f,%.2f) from horse %d\n", pp->e[0].x, pp->e[0].y,
+                               pp->e[0].z, (int)pp->e[0].horse);
+                    pile_seen = 1;
+                }
             } else if (h->type == PACKET_HORSE_EVENTS && n >= (int)(sizeof(NetHeader) + 4)) {
                 NetHorseEvents *ev = (NetHorseEvents *)buf;
                 int held = (n - (int)(sizeof(NetHeader) + 4)) / (int)sizeof(NetHorseEvent);
@@ -152,13 +208,15 @@ int main(int argc, char **argv) {
                     if (ev->e[i].type == REFLUX_ACTION_HORSE_GOAL_CHANGED && ev->e[i].a == horse_slot &&
                         ev->e[i].b == HORSE_GOAL_HOME)
                         event_goal_seen = 1;
+                    if (ev->e[i].type == REFLUX_ACTION_HORSE_POOPED && ev->e[i].a == horse_slot)
+                        event_poop_seen = 1;
                 }
             } else if (h->type == PACKET_WELCOME) {
                 /* a short welcome is not fatal; the state packet is the real proof of being welcomed */
             }
         }
         if (sent_mount && !rode && spins > 40) refused_mount = 1;
-        if (rode && goal_landed && event_mount_seen && event_goal_seen) break;
+        if (rode && goal_landed && event_mount_seen && event_goal_seen && pile_seen && event_poop_seen) break;
     }
 
     CHECK(my_id > 0, "never got a PACKET_WELCOME -- the server did not seat this client");
@@ -168,10 +226,13 @@ int main(int argc, char **argv) {
     CHECK(goal_landed, "the horse never reported HORSE_GOAL_HOME after the SET_GOAL request");
     CHECK(event_mount_seen, "no REFLUX_ACTION_HORSE_MOUNTED for this client reached the wire");
     CHECK(event_goal_seen, "no REFLUX_ACTION_HORSE_GOAL_CHANGED for this horse reached the wire");
+    CHECK(pile_seen, "no PACKET_HORSE_PILES reached the wire for a grazing horse");
+    CHECK(event_poop_seen, "no REFLUX_ACTION_HORSE_POOPED for this horse reached the wire");
 
     close(fd);
     if (fails) { printf("horse_wire_client: %d FAILURE(S)\n", fails); return 1; }
     printf("horse_wire_client: ok -- real server, real UDP: connected, saw the unicorn horse, mounted it "
-           "(authority moved), told it to go home, and received both REFLUX events on the wire\n");
+           "(authority moved), told it to go home, jumped a real UserCmd, fed it a carrot, and received "
+           "the pile as state AND the REFLUX events (mount, goal, pooped) on the wire\n");
     return 0;
 }
