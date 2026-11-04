@@ -50,6 +50,13 @@ worse than a page that is a commit behind.
   `check.mjs` on GitHub's runners, then failed at *Is Pages enabled?* by design — 2 pages, 5 files, 37 documents
   linked, 36 KB. Nothing has been published and the URL 404s; `deploy-pages` has never run. The blocker is the
   repository setting above, not this code.
+- **The outbound play links are unverified from the environment this was written in.** `index.html` links
+  `https://wotan.okemily.com/shankpit-460/` and `/trapx/`, which is where those builds are served from. On
+  2026-11-04 every `okemily.com` host answered *no*: the name resolves (`136.68.242.3`, note that the project's own
+  records still say `198.58.107.85`) and TCP connects, but both :80 and :443 reset with zero bytes, while
+  `example.com` and `github.com` return 200 from the same shell — so the origin refuses this sandbox rather than the
+  network being down. The links point where the builds are meant to live; nobody has claimed here that they were
+  observed serving.
 - **No wasm is built here.** The playable builds (`shankpit-460`, TRAPX) are served from WOTAN; this site links to
   them. A Pages job that compiles the engine would need the LLVM toolchain and the sibling PARENA checkout, which is
   a different machine and a different budget.
