@@ -242,3 +242,19 @@ records a sale but its own comment says the caller moves the currency), and **an
 (IDUNA Apples is the natural home).
 Building those once, as `stdlib/engine/`-shaped core deps (PARENA-first per the standing rule), is cheaper
 than three half-versions inside three game systems.
+
+### 3.11 REDGARDEN session/lobby/protocol rules merged into SHANKPIT via PARENA mods (2026-11-04)
+
+**Built and green:** REDGARDEN's session/lobby/protocol scaffolding is now a set of PARENA rule mods that SHANKPIT hosts:
+
+- `PARENA/stdlib/redgarden/{net,arena,ability,ai}_rules.prn` -> generated `redgarden_{net,arena,ability,ai}_rules.c`
+- SHANKPIT generator `scripts/gen_redgarden_rules.sh`
+- host `packages/simulation/redgarden_rules_host.h`, test `packages/simulation/redgarden_rules_test.c`
+
+net_rules is the brokerage layer (slots, phases, bandwidth budget, drops, tickets); arena/ability/ai carry the game numbers and hero kits. `bin/redgarden_rules_test` runs clean: `BUILD_OK` + `make gen_redgarden_rules.sh` clean + verify: **145 passed, 1 failed** (the 1 failure is a pre-existing `ai_rules.prn`/`rg_decide` greedy-behavior bug, unrelated to the net merge).
+
+**Commit:** SHANKPIT `redgarden-rules` `092ae0e` (7 files, 1523 insertions) — pushed to origin. PARENA `redgarden` `ebc25d8` (4 mods, 650 insertions) committed locally; GitHub remote currently returns ISE on push, so committed-vs-pushed state differs. REGISTER: `EMILY`'s BACKLOG + `context/golden-docs-index.md` row `REDGARDEN-NET-RULES`, GOLDEN_DOCS resync (`docs/EMILY/context/golden-docs-index.md`).
+
+**PARENA compiler gaps found during port** (named, not hidden): `let` binding names must be bare symbols; `let` has no inline type annotations; `bit-and` folds to C's `&` (comma operator) so parity uses `(mod x 2)`/`%`.
+
+**Arc / next:** REDGARDEN's C `arena_game.c`/server stays the reference (untouched); these mods are the SHANKPIT decision layer. Next redgarden deliverable is `make server` with the lobby link wired (blocked on the missing `EDITOR.GAME` checkout).
