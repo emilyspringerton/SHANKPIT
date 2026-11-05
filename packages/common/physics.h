@@ -9,6 +9,7 @@
 #include "../world/terrain.h"
 #include "obb.h"
 #include "../simulation/slide_rules.h"
+#include "../simulation/shield_regen.h" /* four seconds of vulnerability after a hit, then a ramping one-second tick */
 
 #ifndef PHYS_COMBAT_LOG
 #define PHYS_COMBAT_LOG 0
@@ -3205,7 +3206,6 @@ static inline void phys_enter_death_state(PlayerState *attacker, PlayerState *ta
 
 static inline void katana_apply_damage(PlayerState *attacker, PlayerState *target, int damage, int hit_feedback, unsigned int now_ms, unsigned int respawn_delay_ms) {
     if (!target->active || target->state == STATE_DEAD) return;
-    target->shield_regen_timer = SHIELD_REGEN_DELAY;
     attacker->hit_feedback = hit_feedback;
     /* Defender knows it was hit — drives w_repel evasive strafe in bot_think. */
     if (target->hit_feedback < 15) target->hit_feedback = 15;
@@ -3213,6 +3213,9 @@ static inline void katana_apply_damage(PlayerState *attacker, PlayerState *targe
         if (target->shield >= damage) { target->shield -= damage; damage = 0; }
         else { damage -= target->shield; target->shield = 0; }
     }
+    /* AFTER the absorb: the regen baseline is the shield this hit left behind, and this instant is
+     * t=0 for the four seconds. Reporting it before the subtraction would hand the shield back. */
+    shield_regen_note_damage(target, now_ms);
     target->health -= damage;
     attacker->accumulated_reward += (float)damage * 0.5f;
     if (target->health <= 0) {
@@ -4499,6 +4502,8 @@ void phys_respawn(PlayerState *p, unsigned int now) {
     /* A job's health pool when one is installed (stats_apply.h); the engine's own 100 otherwise. */
     p->health = g_phys_stats_health_hook ? g_phys_stats_health_hook(p, 100) : 100;
     p->shield = 100; p->respawn_time = 0; p->in_vehicle = 0;
+    /* A fresh body must not inherit the clock of the hit that killed the last one. */
+    p->shield_regen_base = p->shield; p->shield_regen_at_ms = now; p->shield_regen_timer = 0;
     p->katana_slash_timer = 0;
     p->dash_timer = 0;
     p->dash_vx = p->dash_vy = p->dash_vz = 0.0f;

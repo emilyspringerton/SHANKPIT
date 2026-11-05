@@ -158,6 +158,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/simulation/gun_items.h"
 #include "../../../packages/simulation/chests.h"
 #include "../../../packages/simulation/shield_packs.h"
+#include "../../../packages/simulation/shield_regen.h" /* the 4 s shield countdown and the regen tick */
 #include "../../../packages/audio/audio.h"
 #include "../../../packages/render/gl_shader.h"
 #include "../../../packages/render/env_matrix.h"
@@ -12978,6 +12979,22 @@ void draw_hud(PlayerState *p) {
     glRectf(x0, y_health0, x0 + (p->health * (x1 - x0) / 100.0f), y_health1);
     glColor3f(0.10f, 0.12f, 0.20f); glRectf(x0, y_shield0, x1, y_shield1); glColor3f(0.34f, 0.52f, 0.86f);
     glRectf(x0, y_shield0, x0 + (p->shield * (x1 - x0) / 100.0f), y_shield1);
+    /* The regen clock, read from the same pair the simulation ticks (shield_regen.h), so the number
+     * here cannot drift from the bar above it: 4.0 -> 0.1 of pure vulnerability, then the value of
+     * the next tick once the ticks have started. Nothing is drawn at a full shield. */
+    if (p->shield < shield_max()) {
+        unsigned int regen_now = SDL_GetTicks();
+        int regen_tenths = shield_regen_counter_tenths(p, regen_now);
+        char regen_buf[48];
+        if (regen_tenths > 0) {
+            snprintf(regen_buf, sizeof(regen_buf), "SHIELD %d.%d", regen_tenths / 10, regen_tenths % 10);
+            glColor3f(1.0f, 0.42f, 0.38f);
+        } else {
+            snprintf(regen_buf, sizeof(regen_buf), "SHIELD +%d", shield_regen_next_amount(p, regen_now));
+            glColor3f(0.42f, 0.72f, 1.0f);
+        }
+        draw_string(regen_buf, (int)x0, (int)(y_shield1 + 6.0f), 4.0f);
+    }
     
     if (p->in_vehicle) {
         /* Real bug found live (2026-08-04, founder: "hellicopter... it dont quite work"): each

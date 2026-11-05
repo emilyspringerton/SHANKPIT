@@ -827,6 +827,11 @@ typedef struct {
     int reload_timer; int attack_cooldown;
     int is_shooting; int jump_timer;
     int health; int shield; int shield_regen_timer; int state;
+    // Shield regen (PARENA stdlib/shankpit/shield_regen_rules.prn, host half in
+    // packages/simulation/shield_regen.h): the shield held when damage last landed, and when it
+    // landed (ms). That pair IS the counter -- a hit rewrites both, which is what makes "the four
+    // seconds restart". Pure function of the pair, so the tick never double-counts.
+    int shield_regen_base; unsigned int shield_regen_at_ms;
     int kills; int deaths; int hit_feedback; float recoil_anim;
     // kill_streak / last_kill_time_ms -- S459-52, founder real-time: "add double kills to
     // SHANKPIT and then make the bot double kill aware in terms of rewards (spike)" / "same for

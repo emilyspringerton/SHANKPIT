@@ -1767,11 +1767,11 @@ static void story_boss_tick(PlayerState *hero, unsigned int now_ms) {
     float dist = sqrtf(dx * dx + dz * dz);
     if (dist <= STORY_BOSS_ATTACK_RADIUS) {
         int damage = 26;
-        hero->shield_regen_timer = SHIELD_REGEN_DELAY;
         if (hero->shield > 0) {
             if (hero->shield >= damage) { hero->shield -= damage; damage = 0; }
             else { damage -= hero->shield; hero->shield = 0; }
         }
+        shield_regen_note_damage(hero, now_ms);   /* after the absorb: this is the new baseline */
         hero->health -= damage;
         if (hero->health <= 0) {
             hero->health = 0;
@@ -2019,11 +2019,11 @@ static void story_swarm_tick(PlayerState *hero, unsigned int now_ms) {
             now_ms - enemy->last_attack_ms >= humanness_reaction_delay_ms(&g_story_swarm_humanness[i], 850U)) {
             enemy->last_attack_ms = now_ms;
             int damage = enemy->damage;
-            hero->shield_regen_timer = SHIELD_REGEN_DELAY;
             if (hero->shield > 0) {
                 if (hero->shield >= damage) { hero->shield -= damage; damage = 0; }
                 else { damage -= hero->shield; hero->shield = 0; }
             }
+            shield_regen_note_damage(hero, now_ms);   /* after the absorb: this is the new baseline */
             hero->health -= damage;
             if (hero->health <= 0) {
                 hero->health = 0;
@@ -2219,6 +2219,12 @@ void update_entity(PlayerState *p, float dt, void *server_context, unsigned int 
 
     phys_set_scene(p->scene_id);
 
+    /* Shield regen: the shield comes back four seconds after the last hit, then in one-second ticks
+     * that ramp from 1 point to 10 (PARENA stdlib/shankpit/shield_regen_rules.prn). A pure function
+     * of (shield at last hit, ms since), so ticking every frame cannot double-count and a dropped
+     * frame costs nothing. cmd_time is this tick's real clock, the same one the damage sites use. */
+    if (p->state == STATE_ALIVE) shield_regen_tick(p, cmd_time);
+
     if (p->state == STATE_DEAD) {
         p->in_shoot = 0;
         p->in_reload = 0;
@@ -2327,11 +2333,11 @@ static void apply_projectile_damage(PlayerState *owner, PlayerState *target, int
     if (!target->active || target->state == STATE_DEAD) return;
     int team_mode = (local_state.game_mode == MODE_TDM || local_state.game_mode == MODE_CTF || local_state.game_mode == MODE_TDMB || local_state.game_mode == MODE_TDMO || local_state.game_mode == MODE_CTFB);
     if (owner && team_mode && owner->team_id == target->team_id) return;
-    target->shield_regen_timer = SHIELD_REGEN_DELAY;
     if (target->shield > 0) {
         if (target->shield >= damage) { target->shield -= damage; damage = 0; }
         else { damage -= target->shield; target->shield = 0; }
     }
+    shield_regen_note_damage(target, now_ms);   /* after the absorb: this is the new baseline */
     target->health -= damage;
     /* Per-damage reward: accurate shooting is rewarded independent of kill. */
     if (owner && owner->is_bot && damage > 0)
