@@ -144,6 +144,17 @@ jobs:
             GAME_SDL_LIBS="-L$SDL_MINGW/lib -lSDL2" \
             GAME_EXTRA_LIBS="-lws2_32 -lm"
 
+      # Linking is not running. Wine is the cheapest way to prove the cross-built exe actually starts
+      # and executes the rules on a non-Windows runner; the headless path deliberately never touches
+      # SDL video, so this needs no display server.
+      - name: Run the Windows exe under Wine (headless)
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq wine
+          cp "$SDL_MINGW/bin/SDL2.dll" bin/
+          WINEDEBUG=-all wine bin/shank_game.exe --headless 5 | tee wine-smoke.log
+          grep -q "headless 5 ticks" wine-smoke.log
+
       - name: Package ShankPit_Client (PLAY.bat, SDL2.dll)
         run: |
           set -euo pipefail
