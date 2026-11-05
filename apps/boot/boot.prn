@@ -13,6 +13,9 @@
 ;; so the boot decision is made by the same rule code the horde will run on, not a copy of it.
 (export zb-turn-cap zb-distance-bias)
 
+;; frame_rules.prn rides in the same build: the loop the program would run is the 460's, as numbers.
+(export frame-total frame-check)
+
 (defn level-name [] : I32 0)                       ;; name is a string; boot prints it as a literal
 (defn level-width [] : I32 @LEVEL_WIDTH@)
 (defn level-depth [] : I32 @LEVEL_DEPTH@)
@@ -29,14 +32,38 @@
 (defn turn-cap [] : I32 (zb-turn-cap (spawn-class)))
 (defn distance-bias [] : I32 (zb-distance-bias (spawn-class)))
 
+
+;; ---- the frame loop -------------------------------------------------------------------------------
+;; Four frames of 16 ms: the accumulator carries nothing, so each frame is owed exactly one tick.
+(defn frame-total [] : I32
+  (let [a0 0
+        s0 (frame-steps a0 16)
+        a1 (frame-acc a0 16)
+        s1 (frame-steps a1 16)
+        a2 (frame-acc a1 16)
+        s2 (frame-steps a2 16)
+        a3 (frame-acc a2 16)
+        s3 (frame-steps a3 16)]
+    (+ (+ s0 s1) (+ s2 s3))))
+
+;; A stalled frame (250 ms) is clamped to 100 ms, which is six ticks -- the budget, not 15.
+(defn frame-check [] : I32
+  (if (and (= (frame-total) 4)
+           (= (frame-steps 0 250) (frame-budget))
+           (= (frame-acc 0 250) 4))
+    0
+    1))
+
 (defn shank-boot-main [] : I32
   (do
     (println "SHANKPIT clean-room boot")
     (println "level: @LEVEL_NAME@ (generated from levels/starter.json)")
     (println "mode: zombies (MODE_ZOMBIE)")
     (println "tick 1: shaped by zombie_brain_rules for the spawn class")
+    (println "loop: 16 ms fixed tick, at most 6 steps a frame")
     (if (and (> (level-width) 0) (> (level-depth) 0) (>= (spawn-y) 0)
-             (> (turn-cap) 0) (< (turn-cap) 2000) (> (distance-bias) 1000))
+             (> (turn-cap) 0) (< (turn-cap) 2000) (> (distance-bias) 1000)
+             (= (frame-check) 0))
       (do
         (println "boot plan: the level's own spawner, zombie mode")
         0)

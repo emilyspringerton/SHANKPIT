@@ -21,6 +21,7 @@ parena_binary(
     entry = "shank_boot_main",
     extra_srcs = [
         "@parena//stdlib:shankpit/zombie_brain_rules.prn",
+        "//packages/frame:frame_rules.prn",
     ],
     deps = ["@parena//runtime:parena_runtime"],
 )

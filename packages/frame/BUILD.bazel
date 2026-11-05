@@ -1,0 +1,12 @@
+load("//bazel:parena.bzl", "parena_module")
+
+# The level JSON's own build step and the boot programme both consume the .prn directly, so the file
+# label is exported rather than only reachable through the cc_library below.
+exports_files(["frame_rules.prn"])
+
+# packages/frame/frame_rules.prn -- the 460 fixed-timestep loop as pure arithmetic (see its header for
+# why this is a fork-local port and not a build of PARENA/stdlib/shankpit460/sp_main.prn).
+parena_module(
+    name = "frame_rules",
+    src = "frame_rules.prn",
+)

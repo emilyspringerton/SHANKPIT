@@ -1,0 +1,40 @@
+;; packages/frame/frame_rules.prn -- the fixed-timestep loop, as numbers.
+;;
+;; shankpit-460's frame driver (PARENA/stdlib/shankpit460/sp_main.prn, sp-frame) is the model: real time
+;; arrives as one elapsed-ms reading, is clamped, and is spent on whole 16 ms simulation ticks with an
+;; accumulator that survives across frames; at most 6 ticks run in one frame, and if the accumulator is
+;; still over budget afterwards it is clamped to one tick rather than left to spiral.
+;;
+;; This module exists as a fork-local copy of those FOUR CONSTANTS AND THAT ARITHMETIC, because the
+;; 460 sources cannot be compiled here: this repo's pinned PARENA rejects their `(cond test result ...)`
+;; clauses and typed `(let [(x : I32) ...])` bindings (a minimal reproduction of each fails the same
+;; way), so sp_main.prn/sp_view.prn never reach the C backend. The behaviour is ported; the source is
+;; not. When the compiler catches up, the honest fix is to build sp_main.prn directly and delete this.
+;;
+;; Pure I32 in, I32 out -- no state, so a caller owns the accumulator and a test can replay any frame.
+(module shankpit/frame)
+(export tick-ms frame-budget frame-dt-ms frame-steps frame-acc)
+
+;; 16 ms: 62.5 ticks a second, the rate 460's tick and the C server's main loop both use.
+(defn tick-ms [] : I32 16)
+
+;; at most six ticks in one frame -- after that a stall is a stall, not a catch-up spiral
+(defn frame-budget [] : I32 6)
+
+;; a frame never asks for more than 100 ms of simulation (460: (clamp-f dt 0.0 100.0))
+(defn frame-dt-ms [(dt : I32)] : I32
+  (if (< dt 0) 0 (if (> dt 100) 100 dt)))
+
+;; how many whole ticks this frame is owed, given the accumulator it enters with.
+;; Deliberately not `min`: this compiler emits a bare `min(...)` call that nothing in the runtime or libc
+;; defines (confirmed as a link error), so the cap is written as a comparison.
+(defn frame-steps [(acc : I32) (dt : I32)] : I32
+  (let [want (/ (+ acc (frame-dt-ms dt)) (tick-ms))]
+    (if (> want (frame-budget)) (frame-budget) want)))
+
+;; the accumulator the next frame starts with: the remainder, clamped to a single tick
+(defn frame-acc [(acc : I32) (dt : I32)] : I32
+  (let [a (+ acc (frame-dt-ms dt))
+        n (frame-steps acc dt)
+        r (- a (* n (tick-ms)))]
+    (if (> r (tick-ms)) (tick-ms) r)))
