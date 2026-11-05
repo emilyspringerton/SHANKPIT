@@ -13,6 +13,7 @@
 
 #include "protocol.h"
 #include "shield_regen.h"
+#include "mod_registry.h"
 
 static int fails;
 
@@ -153,6 +154,24 @@ int main(void) {
     shield_regen_set_amount_hook(NULL);
     shield_regen_tick(&p, 35000);
     ck("uninstalled hook is the rule", p.shield, sh_shield_at(0, 15000));
+
+    /* ---- the registry: a body gets a PARENA-generated mod's curve, others keep the rule ---- */
+    mod_registry_install_shield_regen();
+    ck("registry binds a body", mod_registry_bind(7, mod_registry_shambler()), 1);
+    ck("registry rejects an out-of-range body", mod_registry_bind(MOD_REGISTRY_MAX_BODIES, mod_registry_shambler()), 0);
+    hit(&p, 0, 1000);
+    p.id = 7;
+    shield_regen_tick(&p, 9000);              /* since 8000: 5 landed ticks */
+    ck("bound body gets the mod curve", p.shield, 5);
+    p.id = 8;
+    shield_regen_tick(&p, 9000);
+    ck("unbound body gets the rule", p.shield, 15);
+    mod_registry_unbind(7);
+    p.id = 7;
+    shield_regen_tick(&p, 9000);
+    ck("unbound body is back on the rule", p.shield, 15);
+    ck("registry has nothing for an unbound body", mod_registry_for_body(7) == NULL, 1);
+    shield_regen_set_amount_hook(NULL);       /* leave the shared hook as we found it */
 
     printf(fails ? "shield_regen host: %d FAILED\n" : "shield_regen host: all checks ok\n", fails);
     return fails ? 1 : 0;
