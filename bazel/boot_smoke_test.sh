@@ -31,8 +31,9 @@ for want in \
   "horde: three AR rounds drop a shambler" \
   "horde: a shield soaks first" \
   "horde: combat goes through combat_api" \
+  "horde: the killing hit fires the KO event once" \
   "boot plan:"; do
   printf '%s\n' "$out" | grep -Fq "$want" || { echo "missing line: $want" >&2; printf '%s\n' "$out" >&2; exit 1; }
 done
 
-echo "boot smoke ok (exit 0, 18 expected lines present)"
+echo "boot smoke ok (exit 0, 19 expected lines present)"
