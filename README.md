@@ -1691,14 +1691,17 @@ no SDL and no socket code. It is the "core without the networking mod" half of t
 ### One registry, per-build capabilities
 
 A module id and its default/mandatory policy live in `packages/game/level_mods.prn`; the target
-does not re-implement any of that. A build that has only ported some modules declares its mask
-before registering anything:
+does not re-implement any of that. Every client compiles `apps/game/build_profile.c` with one
+`SHANKPIT_BUILD_TARGET` from `game.mk` and applies that profile before registering anything:
 
-- `--capabilities MASK` on the native client (e.g. `3` = core sim + level),
-- `wasm_boot()` for the WASM core (always the ported set).
+- `build_profile_apply()` sets the target's capability mask from `packages/game/build_profiles.prn`,
+- `build_profile_name()` / `build_profile_net()` report the same row (native, llvm, wasm-core,
+  native-core; none / host-C / PARENA),
+- `--capabilities MASK` remains only a test/debug override on the native client and core runner,
+  e.g. `3` = core sim + level.
 
-Both read `packages/game/build_profiles.prn`, the one table that also records whether a target links a
-network transport at all (`bp-target-net`: none / host-C / PARENA).
+The table is the one place that also records whether a target links a network transport at all
+(`bp-target-net`: none / host-C / PARENA).
 
 Opening masks and incoming authoritative state are intersected with that mask, and enabling an
 unported module is refused before a REFLUX row is dispatched. Mandatory modules are always kept.
@@ -1751,7 +1754,7 @@ target; a server can evolve level mods over whatever transport that target has.
 |---|---|---|---|
 | 1 | Capability handshake | client advertises caps + level (packet 6); the server keeps four address-keyed peers, assigns slots 8-11 via welcome, and clamps/filters each independently; the client clamps locally too | per-peer token/auth (folded into step 4), so one address cannot impersonate another |
 | 2 | WASM render/input/audio | browser canvas/input landed: fixed-step movement, arena renderer and RGBA framebuffer; audio and the weather/sky level modules are still unported | audio output and per-level render/sky module parity, so the browser client matches native's admitted modules |
-| 3 | Per-target profiles from one source | `build_profiles.prn` now owns caps + net status; targets still pick a profile by hand | profiles are emitted into every build (no hand-passed `--capabilities`), so adding a port updates every target |
+| 3 | Per-target profiles from one source | every client applies/reports `build_profiles.prn` through one `build_profile` module; a target is still chosen by one `SHANKPIT_BUILD_TARGET` define | the profile is emitted by the build system itself, so adding a target needs no second hand edit |
 | 4 | Mod-request authority | packet 5 is unauthenticated on the play socket; only level/module/on are validated | identity (or a per-peer token), rate limiting, and an explicit server policy for who may shed modules |
 | 5 | Durable stream identity | JSONL `seq` restarts with each process; replay relies on file order | a persisted monotonically increasing stream id survives restarts, and replay rejects gaps/duplicates |
 | 6 | Level unregister/transition | the table only grows (8 slots); no way to remove a level | `level_mods_unregister` frees a slot, emits an event, and clients drop/transition without keeping a stale mask |
@@ -1767,10 +1770,10 @@ are the payoff (one core, several shells) and are only meaningful after the port
 
 ### Verification for this slice
 
-- `make game-test` - 256 checks (registry, capabilities, profiles, replay, relay, catalog, event log).
-- `make game-test-clang` - the same 256 under Clang.
+- `make game-test` - 259 checks (registry, capabilities, profiles, replay, relay, catalog, event log).
+- `make game-test-clang` - the same 259 under Clang.
 - `make game-clang` / `make game-llvm` then `--headless 5` - both boot, 31 modules on level 1.
-- `make wasm` / `make wasm-smoke` - zero-import module, caps 3, no transport, state 31 clamped to 3, trig checked, plus a rendered 1024x576 frame and fixed-step forward/turn movement.
+- `make wasm` / `make wasm-smoke` - zero-import module, wasm-core profile, caps 3, no transport, state 31 clamped to 3, trig checked, plus a rendered 1024x576 frame and fixed-step forward/turn movement.
 - `make core` / `make core-smoke` - native core with no networking: moon 3, capped 3, shed 27/rev 2,
   and no socket symbols in `nm -u`.
 - `make game-net-smoke` / relay / request / capped - the same wire behaviour through the seam.
@@ -1780,7 +1783,6 @@ are the payoff (one core, several shells) and are only meaningful after the port
 - `make game-level-request-smoke`, `make game-level-relay-smoke`, `make game-smoke` - unchanged.
 
 Known limits: the WASM client core has no allocator and no audio or networking; its weather/sky
-module bits remain off; the trig is accurate for the rules' range but is not a full libm; the profile table exists but each build still selects its profile by
-hand; the transport seam exists but only one implementation (host-C UDP) does, packet scheduling is
+module bits remain off; the trig is accurate for the rules' range but is not a full libm; the profile table is applied in every build but a target is still selected by one compile-time define; the transport seam exists but only one implementation (host-C UDP) does, packet scheduling is
 still host C, the capability handshake is unauthenticated (identity is the source address), and no target is FFI-free
 yet; LLVM-LTO's size drop (90 KB to 69 KB) is a build result, not a measured runtime speedup.
