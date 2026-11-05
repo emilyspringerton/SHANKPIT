@@ -23,6 +23,7 @@ parena_binary(
     extra_srcs = [
         "@parena//stdlib:shankpit/zombie_brain_rules.prn",
         "@parena//stdlib:shankpit/wave_rules.prn",
+        "@parena//stdlib:shankpit/stats_bridge.prn",
         "//packages/frame:frame_rules.prn",
         "//packages/render:palette_rules.prn",
         "//packages/render:sky_rules.prn",
