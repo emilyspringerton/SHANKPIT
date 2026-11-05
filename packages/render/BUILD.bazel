@@ -79,3 +79,16 @@ parena_module(
     name = "sky_rules",
     src = "sky_rules.prn",
 )
+
+sh_test(
+    name = "render_460_rules_emitted_test",
+    srcs = ["//bazel:parena_emitted_test.sh"],
+    data = [
+        ":palette_rules_from_prn",
+        ":sky_rules_from_prn",
+    ],
+    args = [
+        "$(rootpath :palette_rules_from_prn)",
+        "$(rootpath :sky_rules_from_prn)",
+    ],
+)

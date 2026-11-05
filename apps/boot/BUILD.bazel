@@ -1,3 +1,4 @@
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//bazel:parena.bzl", "parena_binary")
 
 # levels/starter.json -> shank_boot.prn: the boot program's constants are the level's own numbers.
@@ -26,4 +27,11 @@ parena_binary(
         "//packages/render:sky_rules.prn",
     ],
     deps = ["@parena//runtime:parena_runtime"],
+)
+
+sh_test(
+    name = "boot_smoke_test",
+    srcs = ["//bazel:boot_smoke_test.sh"],
+    data = [":shank_boot"],
+    args = ["$(rootpath :shank_boot)"],
 )
