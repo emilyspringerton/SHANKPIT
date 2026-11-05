@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Each argument is one module's emitted C. The assertion is deliberately about the build, not the
-# rules' own values: this fork's contract is that the compiler produced real C for every stdlib
-# module the package names, and that nothing was checked in to stand in for it.
+# Each argument is one module's emitted C. The assertion is about the build, not the rules' values:
+# this fork's contract is that the real compiler produced C for every module the package names, and
+# that no checked-in .c stands in for it.
 set -euo pipefail
 
 [ "$#" -gt 0 ] || { echo "no modules to check" >&2; exit 1; }

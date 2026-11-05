@@ -1,4 +1,6 @@
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//bazel:parena.bzl", "parena_stdlib_module")
 
 # Bundled into one cc_library -- same real "a bag of files one real build path always compiles as
 # one unit" reasoning packages/goldenband's own BUILD.bazel gives; the Makefile's own LOBBY_SRC
@@ -28,4 +30,31 @@ cc_library(
         "//packages/simulation:day_night_clock",  # sky_weather.c's own real dependency
     ],
     visibility = ["//visibility:public"],
+)
+
+
+# ---- render rule modules, compiled from PARENA stdlib ------------------------------------------
+# filter_rules.h -> stdlib/shankpit/filter_rules.prn, camera_rig.h -> camera_rules.prn,
+# env_matrix.h -> lighting_rules.prn, retro_lighting.h -> ambient_rules.prn: the decision layer of
+# the renderer, emitted as C in this package by the real compiler.
+parena_stdlib_module(name = "filter_rules", module = "filter_rules")
+parena_stdlib_module(name = "camera_rules", module = "camera_rules")
+parena_stdlib_module(name = "lighting_rules", module = "lighting_rules")
+parena_stdlib_module(name = "ambient_rules", module = "ambient_rules")
+
+sh_test(
+    name = "render_rules_emitted_test",
+    srcs = ["//bazel:parena_emitted_test.sh"],
+    data = [
+        ":filter_rules_from_prn",
+        ":camera_rules_from_prn",
+        ":lighting_rules_from_prn",
+        ":ambient_rules_from_prn",
+    ],
+    args = [
+        "$(rootpath :filter_rules_from_prn)",
+        "$(rootpath :camera_rules_from_prn)",
+        "$(rootpath :lighting_rules_from_prn)",
+        "$(rootpath :ambient_rules_from_prn)",
+    ],
 )

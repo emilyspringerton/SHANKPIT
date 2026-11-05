@@ -193,7 +193,7 @@ parena_stdlib_module(name = "wave_rules", module = "wave_rules")
 # One test over the whole batch: each module really emitted C with at least one definition.
 sh_test(
     name = "stdlib_modules_emitted_test",
-    srcs = ["stdlib_modules_emitted_test.sh"],
+    srcs = ["//bazel:parena_emitted_test.sh"],
     data = [
         ":world_rules_from_prn",
         ":zombie_brain_rules_from_prn",
@@ -209,5 +209,28 @@ sh_test(
         "$(rootpath :ai_brain_rules_from_prn)",
         "$(rootpath :zone_rules_from_prn)",
         "$(rootpath :wave_rules_from_prn)",
+    ],
+)
+
+# The rest of the rules the simulation headers name directly.
+parena_stdlib_module(name = "witness_rules", module = "witness_rules")
+parena_stdlib_module(name = "citizen_actor_rules", module = "citizen_actor_rules")
+parena_stdlib_module(name = "material_rules", module = "material_rules")
+parena_stdlib_module(name = "structure_rules", module = "structure_rules")
+
+sh_test(
+    name = "simulation_rules_emitted_test",
+    srcs = ["//bazel:parena_emitted_test.sh"],
+    data = [
+        ":witness_rules_from_prn",
+        ":citizen_actor_rules_from_prn",
+        ":material_rules_from_prn",
+        ":structure_rules_from_prn",
+    ],
+    args = [
+        "$(rootpath :witness_rules_from_prn)",
+        "$(rootpath :citizen_actor_rules_from_prn)",
+        "$(rootpath :material_rules_from_prn)",
+        "$(rootpath :structure_rules_from_prn)",
     ],
 )
