@@ -1170,7 +1170,11 @@ target.health -= damage
 - **Regen Delay**: 4 seconds after the last hit; any hit inside the window restarts it
 - **Regen Rate**: one tick per second after the delay, worth 1, 2, 3 ... 10 points (capped), so the longer a
   body is left alone the more each tick gives back. The curve is `packages/sim/shield_rules.prn`;
-  `packages/simulation/shield_regen.h` ticks it per entity and exposes the countdown a HUD draws.
+  `packages/simulation/shield_regen.h` ticks it per entity, exposes the countdown a HUD draws
+  (`shield_regen_counter_ms` / `_tenths`, `shield_regen_bar_permille`, `shield_regen_next_amount`),
+  and lets a host install a per-body curve (`shield_regen_set_amount_hook`) -- the same hook shape the
+  job stats use -- which is how a character mod's own tick value reaches the C host. `make
+  test-shield-regen` proves the host half headless against the real `PlayerState`.
 - **Damage Absorption**: Shields take all damage before health
 
 **Weapon-Specific Logic**:
