@@ -38,4 +38,30 @@ int icecream_pan_permille(int bearing_deg, int yaw_deg);
 /* is the song playing right now: 1 for a vendor truck that is actually moving */
 int icecream_trigger(int ice_cream, int speed_pm);
 
+/* -- which truck sings in which key, and what the window sells -------------------------------------
+ * Two trucks in the same key are one truck as far as an ear is concerned, so the key is derived from the
+ * truck's own slot id (a fact every host already agrees on) rather than hand-assigned. */
+int icecream_jingle_count(void);
+/* a truck slot's jingle, always inside 0..icecream_jingle_count()-1, negative ids included */
+int icecream_jingle_for_id(int id);
+/* how far that jingle is transposed, in semitones (unison, +2, -3, +5) */
+int icecream_jingle_semitones(int v);
+/* the same transposition as a permille multiplier of the tune (1000 = as written) */
+int icecream_jingle_key_permille(int v);
+/* one step of the tune in a given jingle's key, in millihertz */
+int icecream_note_hz_milli_keyed(int i, int v);
+
+/* how close to a truck counts as at its window, in world units */
+int icecream_window_units(void);
+/* how long a buyer has to stand at the window */
+int icecream_serve_ms(void);
+/* what a cone is worth, on the engine's 0..100 player health scale */
+int icecream_serve_heal(void);
+/* how long until the same buyer may be served again */
+int icecream_serve_cooldown_ms(void);
+/* the hand-over's progress, 0..1000 */
+int icecream_serve_progress(int held_ms);
+/* is the window open: close enough AND stopped (1/0) */
+int icecream_serve_open(int dist_units, int speed_pm);
+
 #endif /* ICECREAM_RULES_H */

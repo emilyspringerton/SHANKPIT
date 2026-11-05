@@ -135,6 +135,59 @@ int main(void) {
         CHECK(lpk < rpk * 0.05f, "hard right leaks into the left ear (left %.4f, right %.4f)", lpk, rpk);
     }
 
+    /* (7) two trucks, two keys. A listener has to be able to tell the truck on the next block from the one
+       about to turn into it, and the key is the only thing that tells them apart: it is PARENA that decides
+       which truck gets which key (icecream-jingle-for-id) and what that key is worth. Each key is rendered on
+       its own and the first note is measured, so this is the real tune in that real key, not a table check. */
+    {
+        int bad = 0, distinct = 0;
+        int prev_hz = 0;
+        for (int v = 0; v < icecream_jingle_count(); v++) {
+            int permille = icecream_jingle_key_permille(v);
+            int want = icecream_note_hz_milli_keyed(0, v);
+            IceCreamDsp c;
+            icecream_dsp_init(&c);
+            icecream_dsp_set(&c, 1, 1.0f, 0.0f);
+            icecream_dsp_set_key(&c, permille);
+            int dur = icecream_note_ms(0);
+            int to = (int)((double)((dur * 6) / 10) * RATE / 1000.0);
+            int crossings = 0;
+            float prev = 0.0f;
+            for (int i = 0; i < to; i++) {
+                float ll, rr;
+                icecream_dsp_step(&c, &ll, &rr);
+                if ((ll >= 0.0f) != (prev >= 0.0f)) crossings++;
+                prev = ll;
+            }
+            int measured = (int)((double)crossings / (2.0 * (double)to / RATE) + 0.5);
+            printf("      jingle %d: %d permille (%+d semitones) asked %.1f Hz, sounded %.1f Hz\n",
+                   v, permille, icecream_jingle_semitones(v), want / 1000.0, (double)measured);
+            if (want <= 0) { bad++; continue; }
+            if (fabs((double)measured - (double)want / 1000.0) > (double)want / 1000.0 * 0.08) {
+                bad++;
+                printf("FAIL: jingle %d asked %.1f Hz, sounded %.1f Hz\n", v, want / 1000.0, (double)measured);
+            }
+            if (prev_hz && abs(measured - prev_hz) > 2) distinct++;
+            prev_hz = measured;
+        }
+        CHECK(bad == 0, "%d of %d jingles did not sound in their own key", bad, icecream_jingle_count());
+        CHECK(distinct >= icecream_jingle_count() - 1,
+              "only %d of %d jingles are distinguishable by pitch", distinct, icecream_jingle_count());
+        CHECK(icecream_jingle_key_permille(icecream_jingle_for_id(0)) !=
+              icecream_jingle_key_permille(icecream_jingle_for_id(1)),
+              "two trucks parked side by side sing in the same key");
+        for (int id = 0; id < 8; id++) {
+            int j = icecream_jingle_for_id(id);
+            CHECK(j >= 0 && j < icecream_jingle_count(), "truck %d got jingle %d, outside the table", id, j);
+        }
+        CHECK(icecream_jingle_for_id(-3) >= 0 && icecream_jingle_for_id(-3) < icecream_jingle_count(),
+              "a negative truck id was handed jingle %d", icecream_jingle_for_id(-3));
+        for (int v = 0; v < icecream_jingle_count(); v++)
+            CHECK(abs(icecream_note_hz_milli_keyed(0, v) -
+                      icecream_note_hz_milli(0) * icecream_jingle_key_permille(v) / 1000) <= 1,
+                  "keyed note %d is not the tune times its own key", v);
+    }
+
     free(l);
     free(r);
     printf("\n%s%d check(s) failed\n", g_failed ? "FAIL: " : "PASS: ", g_failed);

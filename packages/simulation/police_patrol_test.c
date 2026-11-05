@@ -210,6 +210,86 @@ int main(void) {
         printf("PASS: a graph spreads the cruisers and alternates their direction; a bad lane falls back to the ring\n");
     }
 
+    /* ---- keep-right comes from the ROAD, not from a constant ---- */
+    {
+        /* A corridor: two walls, 1 unit thick, centred on x = +-half, running along Z. */
+        PolicePatrolBox street_walls[2];
+        float wx[2] = { 0.0f, 0.0f };
+        float wz[2] = { 0.0f, 140.0f };
+
+        street_walls[0].x = -10.0f; street_walls[0].z = 60.0f; street_walls[0].w = 1.0f; street_walls[0].d = 200.0f;
+        street_walls[1].x =  10.0f; street_walls[1].z = 60.0f; street_walls[1].w = 1.0f; street_walls[1].d = 200.0f;
+        float wide = police_patrol_measure_width(wx, wz, 2, street_walls, 2);
+        printf("      a 20-unit street measures %.2f; keep-right %.2f\n",
+               wide, police_patrol_keep_right_for_width(wide));
+        CHECK(fabsf(wide - 19.0f) < 0.1f, "a 20-unit street measured %.2f (walls are 1 thick)", wide);
+        CHECK(police_patrol_keep_right_for_width(wide) <= POLICE_PATROL_KEEP_RIGHT_MAX + 0.001f,
+              "a wide street asked for an offset past the cap");
+
+        /* Narrow it: the same walls 8 units apart. The offset has to shrink with the road, which is the whole
+           point -- 4 units in an 8-unit lane leaves nothing for the other direction. */
+        street_walls[0].x = -4.0f;
+        street_walls[1].x = 4.0f;
+        float narrow = police_patrol_measure_width(wx, wz, 2, street_walls, 2);
+        float narrow_off = police_patrol_keep_right_for_width(narrow);
+        printf("      the same beat in an 8-unit street measures %.2f; keep-right %.2f\n", narrow, narrow_off);
+        CHECK(fabsf(narrow - 7.0f) < 0.1f, "the 8-unit street measured %.2f", narrow);
+        CHECK(narrow_off < POLICE_PATROL_KEEP_RIGHT, "a narrower road kept the same %.2f offset", narrow_off);
+        CHECK(fabsf(narrow_off - 1.5f) < 0.01f, "an 8-unit road (half 3.5, car half 2) gave %.2f", narrow_off);
+
+        /* Narrower than two cars: no offset at all, rather than a car in the wall. */
+        street_walls[0].x = -1.0f;
+        street_walls[1].x = 1.0f;
+        float tight = police_patrol_measure_width(wx, wz, 2, street_walls, 2);
+        printf("      a 1-unit-wide gap measures %.2f; keep-right %.2f\n", tight,
+               police_patrol_keep_right_for_width(tight));
+        CHECK(police_patrol_keep_right_for_width(tight) == 0.0f,
+              "a gap narrower than two cars still asked for %.2f of offset",
+              police_patrol_keep_right_for_width(tight));
+
+        /* Open ground / no walls: nothing measured, so the default stands. */
+        CHECK(police_patrol_measure_width(wx, wz, 2, street_walls, 0) == 0.0f, "no boxes still measured a road");
+        CHECK(police_patrol_keep_right_for_width(0.0f) == POLICE_PATROL_KEEP_RIGHT,
+              "an unmeasured road did not fall back to the default");
+
+        /* And the offset really reaches the target: both directions, exactly this far off the centreline, on
+           OPPOSITE sides. Measured at the MIDDLE of a three-point beat, not at an end -- at the first waypoint
+           both directions approach from the same point (the chain wraps either way), so an end-of-chain check
+           would pass even if keep-right did nothing but shift the car one way. */
+        police_patrol_set_keep_right(narrow_off);
+        float xs[3] = { 0.0f, 0.0f, 0.0f }, zs[3] = { 0.0f, 70.0f, 140.0f };
+        police_patrol_set_lane(0, xs, zs, 3);
+        BuggyState rb;
+        memset(&rb, 0, sizeof(rb));
+        rb.active = 1; rb.id = 0; rb.x = xs[0]; rb.z = zs[0]; rb.yaw = 0.0f;
+        float th, st;
+        police_patrol_intent(&rb, 0, &th, &st);       /* arrive at waypoint 0: the beat is now mid-chain */
+        CHECK(police_patrol_waypoint(0) == 1, "the cruiser did not advance into the middle of the beat (%d)",
+              police_patrol_waypoint(0));
+        float fx, fz, rx, rz;
+        police_patrol_set_direction(0, 1);
+        police_patrol_target(0, 0, &fx, &fz);
+        police_patrol_set_direction(0, -1);
+        police_patrol_target(0, 0, &rx, &rz);
+        float fdx = fx - xs[1], fdz = fz - zs[1];
+        float rdx = rx - xs[1], rdz = rz - zs[1];
+        printf("      with keep-right %.2f mid-beat: forward (%.2f,%.2f), reverse (%.2f,%.2f)\n",
+               narrow_off, fdx, fdz, rdx, rdz);
+        CHECK(fabsf(sqrtf(fdx * fdx + fdz * fdz) - narrow_off) < 0.05f,
+              "the measured offset did not reach the target (%.2f)", sqrtf(fdx * fdx + fdz * fdz));
+        CHECK(fabsf(sqrtf(rdx * rdx + rdz * rdz) - narrow_off) < 0.05f,
+              "the reverse direction ignored the measured offset (%.2f)", sqrtf(rdx * rdx + rdz * rdz));
+        CHECK(fdx * rdx < 0.0f, "both directions took the measured offset to the SAME side of the road");
+        /* and it is still inside the walls: |offset| + half a car must fit the half road */
+        CHECK(narrow_off + POLICE_PATROL_CAR_HALF_WIDTH <= narrow * 0.5f + 0.001f,
+              "a cruiser at %.2f with a %.1f half-width does not fit a %.2f road", narrow_off,
+              POLICE_PATROL_CAR_HALF_WIDTH, narrow);
+
+        police_patrol_set_keep_right(POLICE_PATROL_KEEP_RIGHT);   /* leave the default for anything after */
+        CHECK(police_patrol_keep_right() == POLICE_PATROL_KEEP_RIGHT, "the default offset did not come back");
+        printf("PASS: keep-right is measured from the road, shrinks with it, and never puts a car in a wall\n");
+    }
+
     printf("\n%s%d check(s) failed\n", g_failed ? "FAIL: " : "PASS: ", g_failed);
     return g_failed ? 1 : 0;
 }

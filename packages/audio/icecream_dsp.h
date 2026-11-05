@@ -33,6 +33,7 @@ typedef struct {
     int    playing;
     double ms;               /* position in the loop, milliseconds (double so it cannot drift) */
     int    last_note_hz_milli;
+    int    key_permille;     /* the key THIS truck sings in (1000 = the tune as written) */
     double phase;            /* 0..1, reset on every note: a music box strikes from silence */
     float  gain, gain_target;
     float  pan, pan_target;
@@ -44,6 +45,7 @@ static inline void icecream_dsp_init(IceCreamDsp *c) {
     c->playing = 0;
     c->ms = 0.0;
     c->last_note_hz_milli = 0;
+    c->key_permille = 1000;
     c->phase = 0.0;
     c->gain = c->gain_target = 0.0f;
     c->pan = c->pan_target = 0.0f;
@@ -55,6 +57,16 @@ static inline void icecream_dsp_set(IceCreamDsp *c, int playing, float gain, flo
     c->playing = playing ? 1 : 0;
     c->gain_target = gain < 0.0f ? 0.0f : (gain > 1.0f ? 1.0f : gain);
     c->pan_target = pan < -1.0f ? -1.0f : (pan > 1.0f ? 1.0f : pan);
+}
+
+/* Which key this truck sings in, as a permille multiplier of the tune -- PARENA's icecream-jingle-key-permille
+ * decides the values (1000 as written, 1122 up a tone, 841 down a minor third, 1335 up a fourth). Clamped
+ * because a rule can be edited to something absurd and a jingle must not become a dog whistle. */
+static inline void icecream_dsp_set_key(IceCreamDsp *c, int key_permille) {
+    if (!c) return;
+    if (key_permille < 500) key_permille = 500;
+    if (key_permille > 2000) key_permille = 2000;
+    c->key_permille = key_permille;
 }
 
 /* Which step of the tune is sounding at song_ms, and where inside it. Walks the rule's own step lengths, so
@@ -88,6 +100,9 @@ static inline void icecream_dsp_step(IceCreamDsp *c, float *out_l, float *out_r)
         int idx = 0, pos = 0, dur = 1;
         icecream_dsp_note((int)c->ms, &idx, &pos, &dur);
         int hz_milli = icecream_note_hz_milli(idx);
+        /* the tune in THIS truck's key -- the same shift as PARENA's icecream-note-hz-milli-keyed, done on
+           the note already chosen rather than walking a second table */
+        if (hz_milli > 0) hz_milli = (hz_milli * c->key_permille) / 1000;
         if (c->playing && hz_milli > 0 && c->gain > 0.0005f) {
             if (hz_milli != c->last_note_hz_milli) {
                 c->phase = 0.0;                     /* strike the new note from silence */

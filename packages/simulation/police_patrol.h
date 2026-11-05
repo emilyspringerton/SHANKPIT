@@ -40,9 +40,106 @@
 #define POLICE_PATROL_WAYPOINT_HIT  12.0f    /* how close counts as "reached this waypoint" */
 /* How far RIGHT of the authored centreline a cruiser drives, in world units. A lane is authored down the
  * middle of a road (that is what a nav node is), so keeping right is what puts a northbound cruiser on the
- * east half and a southbound one on the west half of the SAME nodes. 4 units is roughly one car width of
- * clearance either side -- enough to pass, small enough that the cruiser still counts as on the lane. */
+ * east half and a southbound one on the west half of the SAME nodes. This is the DEFAULT, for a host that
+ * cannot measure the road; police_patrol_keep_right_for_width turns a measured road into the real offset,
+ * because a fixed 4 units parks a car in the kerb on a lane narrower than two cars. */
 #define POLICE_PATROL_KEEP_RIGHT    4.0f
+/* Half a car's width: what the offset must leave on the far side of the centreline for the other direction
+ * to get past. Not a style number -- the reason keep-right exists at all. */
+#define POLICE_PATROL_CAR_HALF_WIDTH 2.0f
+/* No road is so wide that "keep right" means hugging the kerb: past this the offset stops growing and the
+ * cruisers simply have room. */
+#define POLICE_PATROL_KEEP_RIGHT_MAX 6.0f
+/* How far a width probe looks for a wall, in world units. Past this the road counts as open. */
+#define POLICE_PATROL_WIDTH_PROBE    40.0f
+
+/* A box FOOTPRINT (centre + size) in the level's own units. This header stays free of physics.h and
+ * level_boxes.h: the host hands over the walls it already has, and the geometry below is the only thing that
+ * touches them. */
+typedef struct { float x, z, w, d; } PolicePatrolBox;
+
+static float g_police_keep_right = POLICE_PATROL_KEEP_RIGHT;
+
+static inline float police_patrol_keep_right(void) {
+    return g_police_keep_right;
+}
+
+/* The offset a road of this width deserves: half the road, minus half a car off each side. A road never
+ * measured (0 or less) keeps the default; a road narrower than two cars gets NO offset instead of an
+ * impossible one, which is exactly what the fixed 4 units used to get wrong. */
+static inline float police_patrol_keep_right_for_width(float width) {
+    if (!(width > 0.5f)) return POLICE_PATROL_KEEP_RIGHT;
+    float offset = width * 0.5f - POLICE_PATROL_CAR_HALF_WIDTH;
+    if (offset < 0.0f) offset = 0.0f;
+    if (offset > POLICE_PATROL_KEEP_RIGHT_MAX) offset = POLICE_PATROL_KEEP_RIGHT_MAX;
+    return offset;
+}
+
+/* Set the offset every cruiser on the lane keeps. Clamped total: a NaN or a negative is 0, and nothing can
+ * push a cruiser past KEEP_RIGHT_MAX by accident. */
+static inline void police_patrol_set_keep_right(float offset) {
+    if (!(offset >= 0.0f)) offset = 0.0f;
+    if (offset > POLICE_PATROL_KEEP_RIGHT_MAX) offset = POLICE_PATROL_KEEP_RIGHT_MAX;
+    g_police_keep_right = offset;
+}
+
+/* Distance from (ox,oz) along the unit ray (dx,dz) to the first box FOOTPRINT, or max_t when nothing is hit.
+ * The slab method, one axis short of the engine's own hitscan: the same test, for a top-down question. */
+static inline float police_patrol_ray_box(const PolicePatrolBox *b, float ox, float oz,
+                                          float dx, float dz, float max_t) {
+    float minx = b->x - b->w * 0.5f, maxx = b->x + b->w * 0.5f;
+    float minz = b->z - b->d * 0.5f, maxz = b->z + b->d * 0.5f;
+    float tmin = 0.0f, tmax = max_t;
+    if (dx > -1e-6f && dx < 1e-6f) {
+        if (ox < minx || ox > maxx) return max_t;
+    } else {
+        float t1 = (minx - ox) / dx, t2 = (maxx - ox) / dx;
+        if (t1 > t2) { float t = t1; t1 = t2; t2 = t; }
+        if (t1 > tmin) tmin = t1;
+        if (t2 < tmax) tmax = t2;
+        if (tmin > tmax) return max_t;
+    }
+    if (dz > -1e-6f && dz < 1e-6f) {
+        if (oz < minz || oz > maxz) return max_t;
+    } else {
+        float t1 = (minz - oz) / dz, t2 = (maxz - oz) / dz;
+        if (t1 > t2) { float t = t1; t1 = t2; t2 = t; }
+        if (t1 > tmin) tmin = t1;
+        if (t2 < tmax) tmax = t2;
+        if (tmin > tmax) return max_t;
+    }
+    return tmin;
+}
+
+/* How wide is the road this lane runs down? Measured against the level's own walls: at every waypoint, cast
+ * perpendicular to the direction of travel both ways and add the two nearest hit distances. The NARROWEST
+ * such gap on the whole beat is the answer, so an offset that fits at the widest point cannot shove a car
+ * into a wall at the narrowest. 0 means nothing was measured (open ground, no boxes, or no wall on one
+ * side), and the caller keeps the default. */
+static inline float police_patrol_measure_width(const float *xs, const float *zs, int count,
+                                                const PolicePatrolBox *boxes, int nbox) {
+    if (!xs || !zs || !boxes || count < 2 || nbox <= 0) return 0.0f;
+    float best = 0.0f;
+    for (int i = 0; i < count; i++) {
+        int j = (i + 1 < count) ? i + 1 : i - 1;      /* the segment leaving this point */
+        float fx = xs[j] - xs[i], fz = zs[j] - zs[i];
+        float len = sqrtf(fx * fx + fz * fz);
+        if (len < 0.001f) continue;
+        fx /= len; fz /= len;
+        float rx = fz, rz = -fx;                      /* right of travel, the engine's own yaw convention */
+        float right = POLICE_PATROL_WIDTH_PROBE, left = POLICE_PATROL_WIDTH_PROBE;
+        for (int k = 0; k < nbox; k++) {
+            float t = police_patrol_ray_box(&boxes[k], xs[i], zs[i], rx, rz, POLICE_PATROL_WIDTH_PROBE);
+            if (t < right) right = t;
+            t = police_patrol_ray_box(&boxes[k], xs[i], zs[i], -rx, -rz, POLICE_PATROL_WIDTH_PROBE);
+            if (t < left) left = t;
+        }
+        if (right >= POLICE_PATROL_WIDTH_PROBE || left >= POLICE_PATROL_WIDTH_PROBE) continue;
+        float w = right + left;
+        if (best <= 0.0f || w < best) best = w;
+    }
+    return best;
+}
 
 static float g_police_anchor_x[POLICE_PATROL_MAX];
 static float g_police_anchor_z[POLICE_PATROL_MAX];
@@ -169,8 +266,8 @@ static inline void police_patrol_target(int id, unsigned int now_ms, float *out_
         if (len > 0.001f) {
             fx /= len; fz /= len;
             /* right of travel: for forward (0,+Z) that is (+X,0), the engine's own yaw convention */
-            tx += fz * POLICE_PATROL_KEEP_RIGHT;
-            tz += -fx * POLICE_PATROL_KEEP_RIGHT;
+            tx += fz * g_police_keep_right;
+            tz += -fx * g_police_keep_right;
         }
     }
     if (out_x) *out_x = tx;

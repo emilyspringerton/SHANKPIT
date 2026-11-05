@@ -48,6 +48,7 @@
 #include "../../../packages/audio/wind_audio_rules.h" /* PARENA weather_audio_rules.prn */
 #include "../../../packages/simulation/siren_rules.h"   /* PARENA siren_rules.prn */
 #include "../../../packages/simulation/icecream_rules.h"  /* PARENA icecream_rules.prn */
+#include "../../../packages/simulation/vendor_serve.h"      /* the window at the back of the truck */
 #include "../../../packages/simulation/police_patrol.h"    /* the automated cruiser's lane */
 #include "../../../packages/simulation/empire_units_rules_host.h"
 /* Lab stations: labst_reach_tenths was also an implicit declaration in the Windows build. */
@@ -3737,7 +3738,25 @@ static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
         }
         if (ln >= 2) {
             police_patrol_set_lane_from_graph(lane_x, lane_z, ln);
-            SDL_Log("[LEVEL] patrol lanes: %d authored waypoint(s) for the cruisers", ln);
+            /* KEEP-RIGHT FROM THE ROAD ITSELF. A nav node is the MIDDLE of a road, and roads differ: a fixed
+               4 units is right on a two-lane street and a car parked in the kerb on a narrow one. The level's
+               own walls are already in hand here, so measure the gap the beat runs down and take the narrowest
+               one -- an offset that fits at the widest point must not push a cruiser into a wall at the
+               narrowest. No wall found either side means open ground, and the default stands. */
+            {
+                static PolicePatrolBox road_walls[LEVEL_BOXES_MAX];
+                int wn = lvl->count < LEVEL_BOXES_MAX ? lvl->count : LEVEL_BOXES_MAX;
+                for (int wi = 0; wi < wn; wi++) {
+                    road_walls[wi].x = lvl->boxes[wi].x;
+                    road_walls[wi].z = lvl->boxes[wi].z;
+                    road_walls[wi].w = lvl->boxes[wi].w;
+                    road_walls[wi].d = lvl->boxes[wi].d;
+                }
+                float road = police_patrol_measure_width(lane_x, lane_z, ln, road_walls, wn);
+                police_patrol_set_keep_right(police_patrol_keep_right_for_width(road));
+                SDL_Log("[LEVEL] patrol lanes: %d authored waypoint(s), road %.1f units, keep-right %.1f",
+                        ln, (double)road, (double)police_patrol_keep_right());
+            }
         } else {
             for (int pi = 0; pi < POLICE_PATROL_MAX; pi++) police_patrol_clear_lane(pi);
             SDL_Log("[LEVEL] patrol lanes: none authored, cruisers hold their ring");
@@ -15443,6 +15462,7 @@ void draw_scene(PlayerState *render_p) {
             {
                 int playing = 0;
                 float best_gain = 0.0f, best_pan = 0.0f;
+                int best_key = icecream_jingle_key_permille(icecream_jingle_for_id(0));
                 for (int vi = 0; vi < MAX_BUGGIES; vi++) {
                     const BuggyState *vb = &local_state.buggies[vi];
                     if (!vb->active || !vb->ice_cream) continue;
@@ -15457,8 +15477,53 @@ void draw_scene(PlayerState *render_p) {
                     playing = 1;
                     best_gain = g;
                     best_pan = (float)icecream_pan_permille(bdeg, yaw_deg) / 1000.0f;
+                    /* and in ITS key: which truck you are hearing is a thing you can hear */
+                    best_key = icecream_jingle_key_permille(icecream_jingle_for_id(vb->id));
                 }
-                audio_set_icecream(playing, best_gain, best_pan);
+                audio_set_icecream(playing, best_gain, best_pan, best_key);
+            }
+
+            /* THE WINDOW (PARENA icecream_rules.prn, vendor_serve.h). The song brings you to the truck; this is
+               what happens when you get there. Stand at the back of a STOPPED vendor for icecream-serve-ms and
+               a cone is handed over for icecream-serve-heal of health, once per icecream-serve-cooldown-ms.
+               The window is shut while the truck rolls -- the mirror of the jingle, which only plays while it
+               moves -- so a truck passing at arm's length sells you nothing.
+
+               Named limit: client-local, the same scope cut the food pickup makes. The cone is applied to the
+               local player and never travels the wire; a server-authoritative sale is a separate job. */
+            {
+                static VendorServe g_vendor_serve;
+                static int g_vendor_serve_ready;
+                static unsigned int vendor_last_ms;
+                if (!g_vendor_serve_ready) { vendor_serve_init(&g_vendor_serve); g_vendor_serve_ready = 1; }
+                int vdt_ms = vendor_last_ms ? (int)(now_ms - vendor_last_ms) : 16;
+                if (vdt_ms < 0 || vdt_ms > 200) vdt_ms = 16;   /* a stall must not buy a cone in one tick */
+                vendor_last_ms = now_ms;
+
+                int nearest_truck = VENDOR_SERVE_NONE;
+                float nearest_dist = 1.0e9f;
+                int nearest_speed_pm = 0;
+                for (int vi = 0; vi < MAX_BUGGIES; vi++) {
+                    const BuggyState *vb = &local_state.buggies[vi];
+                    if (!vb->active || !vb->ice_cream) continue;
+                    float dx = vb->x - listener->x, dz = vb->z - listener->z;
+                    float dist = sqrtf(dx * dx + dz * dz);
+                    if (dist < nearest_dist) {
+                        nearest_dist = dist;
+                        nearest_truck = vb->id;
+                        nearest_speed_pm = (int)((fabsf(vb->vx) + fabsf(vb->vz)) * 100.0f);
+                    }
+                }
+                int served = vendor_serve_tick(&g_vendor_serve, nearest_truck,
+                                               nearest_truck == VENDOR_SERVE_NONE ? 999999
+                                                                                  : (int)(nearest_dist + 0.5f),
+                                               nearest_speed_pm, vdt_ms);
+                if (served) {
+                    PlayerState *buyer = &local_state.players[0];
+                    int before = buyer->health;
+                    buyer->health = vendor_serve_heal(buyer->health, 100);  /* PlayerState's own 0..100 scale */
+                    SDL_Log("[VENDOR] cone from truck %d: health %d -> %d", nearest_truck, before, buyer->health);
+                }
             }
         }
         sky_weather_draw(&g_sky_weather);

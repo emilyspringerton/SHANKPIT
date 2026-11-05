@@ -19,6 +19,17 @@ int icecream_env_permille(int, int);
 int icecream_gain_permille(int);
 int icecream_pan_permille(int, int);
 int icecream_trigger(int, int);
+int icecream_jingle_count();
+int icecream_jingle_for_id(int);
+int icecream_jingle_semitones(int);
+int icecream_jingle_key_permille(int);
+int icecream_note_hz_milli_keyed(int, int);
+int icecream_window_units();
+int icecream_serve_ms();
+int icecream_serve_heal();
+int icecream_serve_cooldown_ms();
+int icecream_serve_progress(int);
+int icecream_serve_open(int, int);
 
 int icr_clamp(int lo __attribute__((unused)), int hi __attribute__((unused)), int v __attribute__((unused))) {
     if ((v < lo)) {
@@ -171,6 +182,85 @@ int icecream_trigger(int ice_cream __attribute__((unused)), int speed_pm __attri
     return 1;
     } else {
     return 0;
+    }
+    }
+}
+
+int icecream_jingle_count(void) {
+    return 4;
+}
+
+int icecream_jingle_for_id(int id __attribute__((unused))) {
+    int n __attribute__((unused)) = icecream_jingle_count();
+    int i __attribute__((unused)) = ((id < 0) ? 0 : id);
+    return (i - ((i / n) * n));
+}
+
+int icecream_jingle_semitones(int v __attribute__((unused))) {
+    if ((v == 1)) {
+    return 2;
+    } else {
+    if ((v == 2)) {
+    return -3;
+    } else {
+    if ((v == 3)) {
+    return 5;
+    } else {
+    return 0;
+    }
+    }
+    }
+}
+
+int icecream_jingle_key_permille(int v __attribute__((unused))) {
+    if ((v == 1)) {
+    return 1122;
+    } else {
+    if ((v == 2)) {
+    return 841;
+    } else {
+    if ((v == 3)) {
+    return 1335;
+    } else {
+    return 1000;
+    }
+    }
+    }
+}
+
+int icecream_note_hz_milli_keyed(int i __attribute__((unused)), int v __attribute__((unused))) {
+    return ((icecream_note_hz_milli(i) * icecream_jingle_key_permille(v)) / 1000);
+}
+
+int icecream_window_units(void) {
+    return 7;
+}
+
+int icecream_serve_ms(void) {
+    return 900;
+}
+
+int icecream_serve_heal(void) {
+    return 25;
+}
+
+int icecream_serve_cooldown_ms(void) {
+    return 45000;
+}
+
+int icecream_serve_progress(int held_ms __attribute__((unused))) {
+    int n __attribute__((unused)) = icecream_serve_ms();
+    return icr_clamp(0, 1000, ((icr_clamp(0, n, held_ms) * 1000) / n));
+}
+
+int icecream_serve_open(int dist_units __attribute__((unused)), int speed_pm __attribute__((unused))) {
+    if ((dist_units > icecream_window_units())) {
+    return 0;
+    } else {
+    if ((icr_clamp(0, 1000, speed_pm) > 20)) {
+    return 0;
+    } else {
+    return 1;
     }
     }
 }

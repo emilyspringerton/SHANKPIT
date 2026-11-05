@@ -13,7 +13,7 @@ SIREN_PRN := $(PARENA_DIR)/stdlib/shankpit/siren_rules.prn
 ICECREAM_PRN := $(PARENA_DIR)/stdlib/shankpit/icecream_rules.prn
 
 .PHONY: regen-siren-rules check-siren-rules test-siren-rules test-police-patrol test-siren-dsp \
-	regen-icecream-rules check-icecream-rules test-icecream-dsp
+	regen-icecream-rules check-icecream-rules test-icecream-dsp test-vendor-serve
 
 regen-siren-rules:
 	@test -x $(PARENA_DIR)/parena || $(MAKE) -C $(PARENA_DIR) build >/dev/null
@@ -51,6 +51,15 @@ test-icecream-dsp: | $(BIN_DIR)
 		packages/audio/icecream_dsp_test.c packages/simulation/icecream_rules.c \
 		-o $(BIN_DIR)/icecream_dsp_test $(LIBS_M)
 	./$(BIN_DIR)/icecream_dsp_test
+
+# test-vendor-serve -- the window at the back of the truck, headless: the hold, a walk-away that banks
+# nothing, one cone per hold, the cooldown, a second truck's queue, and the health ceiling. The numbers it
+# checks are PARENA's (icecream-serve-ms / -heal / -cooldown-ms), read through the generated C.
+test-vendor-serve: | $(BIN_DIR)
+	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/audio -Ipackages/simulation -Ipackages/world \
+		packages/simulation/vendor_serve_test.c packages/simulation/icecream_rules.c \
+		-o $(BIN_DIR)/vendor_serve_test $(LIBS_M)
+	./$(BIN_DIR)/vendor_serve_test
 
 test-siren-rules: | $(BIN_DIR)
 	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/simulation -Ipackages/world \
