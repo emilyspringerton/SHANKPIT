@@ -1,8 +1,10 @@
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 # Generated 2026-11-05: this package is #included by apps/* but had no Bazel package at
 # all, so the sandbox could not see its headers (`fatal error: ../../../packages/protocol/x.h:
 # No such file or directory`). Same package-level glob migration stage the other packages
 # are on -- see packages/audio/BUILD.bazel for the note.
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//bazel:parena.bzl", "parena_stdlib_module")
 
 cc_library(
     name = "protocol",
@@ -15,4 +17,22 @@ cc_library(
         "//packages/goldenband",
     ],
     visibility = ["//visibility:public"],
+)
+parena_stdlib_module(name = "lora_rules", module = "lora_rules")
+parena_stdlib_module(name = "wow_wire", module = "wow_wire")
+parena_stdlib_module(name = "ticket_rules", module = "ticket_rules")
+
+sh_test(
+    name = "protocol_emitted_test",
+    srcs = ["//bazel:parena_emitted_test.sh"],
+    data = [
+        ":lora_rules_from_prn",
+        ":wow_wire_from_prn",
+        ":ticket_rules_from_prn",
+    ],
+    args = [
+        "$(rootpath :lora_rules_from_prn)",
+        "$(rootpath :wow_wire_from_prn)",
+        "$(rootpath :ticket_rules_from_prn)",
+    ],
 )

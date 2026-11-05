@@ -1,4 +1,6 @@
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//bazel:parena.bzl", "parena_stdlib_module")
 
 cc_library(
     name = "audio",
@@ -13,4 +15,22 @@ cc_library(
     linkopts = ["-lm"],
     deps = ["//packages/common:common_headers"],
     visibility = ["//visibility:public"],
+)
+parena_stdlib_module(name = "weather_audio_rules", module = "weather_audio_rules")
+parena_stdlib_module(name = "siren_rules", module = "siren_rules")
+parena_stdlib_module(name = "icecream_rules", module = "icecream_rules")
+
+sh_test(
+    name = "audio_emitted_test",
+    srcs = ["//bazel:parena_emitted_test.sh"],
+    data = [
+        ":weather_audio_rules_from_prn",
+        ":siren_rules_from_prn",
+        ":icecream_rules_from_prn",
+    ],
+    args = [
+        "$(rootpath :weather_audio_rules_from_prn)",
+        "$(rootpath :siren_rules_from_prn)",
+        "$(rootpath :icecream_rules_from_prn)",
+    ],
 )

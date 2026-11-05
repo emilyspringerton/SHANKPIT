@@ -234,3 +234,63 @@ sh_test(
         "$(rootpath :structure_rules_from_prn)",
     ],
 )
+parena_stdlib_module(name = "garage_rules", module = "garage_rules")
+parena_stdlib_module(name = "vehicle_burn_rules", module = "vehicle_burn_rules")
+parena_stdlib_module(name = "vehicle_salvage_rules", module = "vehicle_salvage_rules")
+parena_stdlib_module(name = "empire_rules", module = "empire_rules")
+parena_stdlib_module(name = "empire_units", module = "empire_units")
+parena_stdlib_module(name = "horse_rules", module = "horse_rules")
+parena_stdlib_module(name = "anim_rules", module = "anim_rules")
+parena_stdlib_module(name = "drone_rules", module = "drone_rules")
+parena_stdlib_module(name = "airplane_rules", module = "airplane_rules")
+parena_stdlib_module(name = "buggy_rules", module = "buggy_rules")
+parena_stdlib_module(name = "rocket_car_rules", module = "rocket_car_rules")
+parena_stdlib_module(name = "heli_rules", module = "heli_rules")
+parena_stdlib_module(name = "giant_bug_brain", module = "giant_bug_brain")
+parena_stdlib_module(name = "chest_rules", module = "chest_rules")
+parena_stdlib_module(name = "party_rules", module = "party_rules")
+parena_stdlib_module(name = "cozy_rules", module = "cozy_rules")
+parena_stdlib_module(name = "stats_bridge", module = "stats_bridge")
+
+sh_test(
+    name = "simulation_emitted_test",
+    srcs = ["//bazel:parena_emitted_test.sh"],
+    data = [
+        ":garage_rules_from_prn",
+        ":vehicle_burn_rules_from_prn",
+        ":vehicle_salvage_rules_from_prn",
+        ":empire_rules_from_prn",
+        ":empire_units_from_prn",
+        ":horse_rules_from_prn",
+        ":anim_rules_from_prn",
+        ":drone_rules_from_prn",
+        ":airplane_rules_from_prn",
+        ":buggy_rules_from_prn",
+        ":rocket_car_rules_from_prn",
+        ":heli_rules_from_prn",
+        ":giant_bug_brain_from_prn",
+        ":chest_rules_from_prn",
+        ":party_rules_from_prn",
+        ":cozy_rules_from_prn",
+        ":stats_bridge_from_prn",
+    ],
+    args = [
+        "$(rootpath :garage_rules_from_prn)",
+        "$(rootpath :vehicle_burn_rules_from_prn)",
+        "$(rootpath :vehicle_salvage_rules_from_prn)",
+        "$(rootpath :empire_rules_from_prn)",
+        "$(rootpath :empire_units_from_prn)",
+        "$(rootpath :horse_rules_from_prn)",
+        "$(rootpath :anim_rules_from_prn)",
+        "$(rootpath :drone_rules_from_prn)",
+        "$(rootpath :airplane_rules_from_prn)",
+        "$(rootpath :buggy_rules_from_prn)",
+        "$(rootpath :rocket_car_rules_from_prn)",
+        "$(rootpath :heli_rules_from_prn)",
+        "$(rootpath :giant_bug_brain_from_prn)",
+        "$(rootpath :chest_rules_from_prn)",
+        "$(rootpath :party_rules_from_prn)",
+        "$(rootpath :cozy_rules_from_prn)",
+        "$(rootpath :stats_bridge_from_prn)",
+    ],
+)
