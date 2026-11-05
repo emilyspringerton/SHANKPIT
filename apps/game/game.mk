@@ -44,13 +44,14 @@ $(GAME_GEN): $(GAME_PRN) $(PARENA_BIN)
 	$(PARENA_BIN) build $(GAME_PRN) -o $@
 
 $(GAME_BIN): $(GAME_GEN) apps/game/host.c apps/game/game_api.h \
+             apps/game/net_transport.h apps/game/net_transport_udp.c \
              apps/game/level_catalog.c apps/game/level_catalog.h \
              apps/game/event_log.c apps/game/event_log.h \
              packages/game/level_mods_host.c packages/game/level_mods_host.h \
              packages/reflux/reflux_runtime.c packages/reflux/reflux_runtime.h
 	@mkdir -p $(BIN_DIR)
 	$(CC) $(GAME_CFLAGS) $(GAME_SDL_CFLAGS) \
-	  apps/game/host.c apps/game/level_catalog.c apps/game/event_log.c \
+	  apps/game/host.c apps/game/net_transport_udp.c apps/game/level_catalog.c apps/game/event_log.c \
 	  packages/game/level_mods_host.c packages/reflux/reflux_runtime.c $(GAME_GEN) \
 	  -o $@ $(GAME_SDL_LIBS) $(GAME_EXTRA_LIBS)
 
@@ -83,6 +84,7 @@ core-smoke: $(CORE_BIN)
 	@grep -q 'caps=3 .*mods=3' /tmp/shank_core_cap.log
 	@./$(CORE_BIN) --level 11 --env surface --set-mod 3 0 | tee /tmp/shank_core_shed.log
 	@grep -q 'mods=27 rev=2' /tmp/shank_core_shed.log
+	@! nm -u $(CORE_BIN) | grep -Eq '\b(socket|bind|sendto|recvfrom|connect|inet_addr|WSAStartup)@'
 
 # The same C through a different native toolchain. Separate output names so a gcc build is never
 # clobbered by a clang build in the same tree.
