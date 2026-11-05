@@ -1,0 +1,9 @@
+load("//bazel:parena.bzl", "parena_binary")
+
+# The boot entry point is PARENA, and the C that `main` lives in is a build output.
+parena_binary(
+    name = "shank_boot",
+    src = "boot.prn",
+    entry = "shank_boot_main",
+    deps = ["@parena//runtime:parena_runtime"],
+)

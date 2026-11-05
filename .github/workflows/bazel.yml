@@ -113,6 +113,11 @@ jobs:
       # The emission contract, as a test: every module's C is produced by the real compiler and
       # the checked-in .prn is the only copy. There is no generated C in this fork to diff against
       # -- that is the point of deleting it -- so the assertion lives in the test, not a diff.
+      # The fork's entry point: PARENA emits the whole translation unit and main returns 0.
+      - name: Boot smoke test (PARENA-generated main)
+        working-directory: SPGF
+        run: bazel run //apps/boot:shank_boot
+
       - name: Test the PARENA emission contract
         working-directory: SPGF
         run: bazel test //packages/... --test_output=errors

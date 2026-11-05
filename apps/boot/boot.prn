@@ -1,0 +1,21 @@
+;; apps/boot/boot.prn -- the clean-room fork's entry point, written in PARENA.
+;;
+;; What this is, precisely: the boot decision and its report. It prints the mode it selected and the
+;; level it would load, then exits 0. It is NOT a game loop yet -- no level parser, no tick, no
+;; renderer -- and it does not pretend otherwise. What it does prove is that a program's whole
+;; translation unit can come out of the PARENA compiler with the fork carrying no C at all.
+(module shankpit/boot)
+(import process)
+(export shank-boot-main)
+
+;; MODE_ZOMBIE from packages/common/protocol.h. Named here rather than inlined so the next step
+;; (reading it from the level instead of a constant) has one place to change.
+(defn boot-mode-zombie [] : I32 4)
+
+(defn shank-boot-main [] : I32
+  (do
+    (println "SHANKPIT clean-room boot")
+    (println "level: levels/starter.json")
+    (println "mode: zombies (MODE_ZOMBIE)")
+    (println "engine: PARENA-emitted, no C in tree")
+    0))

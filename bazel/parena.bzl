@@ -18,7 +18,7 @@ Scalar-only modules (I32/F64 in and out, no Arena/Vec/Bytes) pass
 have no business needing them.
 """
 
-load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 
 def parena_module(
         name,
@@ -90,6 +90,47 @@ def parena_stdlib_module(
         name = name,
         srcs = [":" + out],
         hdrs = native.glob(["*.h"], allow_empty = True),
+        copts = copts,
+        deps = deps,
+        visibility = visibility or ["//visibility:public"],
+    )
+
+def parena_binary(
+        name,
+        src,
+        entry,
+        deps = [],
+        copts = [],
+        visibility = None,
+        strip_runtime = False):
+    """A program whose body is PARENA: the compiler emits the C, and `entry` becomes main.
+
+    The emitter has no notion of an entry point, so the genrule appends a one-line `main` that calls
+    the exported function by its emitted (underscore) name. Nothing is checked in: the whole
+    translation unit, wrapper included, is a build output.
+    """
+    out = name + "_main.c"
+    steps = [
+        "$(location @parena//src:parena) build $(location %s) -o $(location :%s)" % (src, out),
+    ]
+    if strip_runtime:
+        steps.append(
+            "sed -i 's|^#include \"parena_runtime.h\"$$|/* %s: scalar-only, runtime not needed */|' $(location :%s)" % (src, out),
+        )
+    steps.append(
+        "printf '\\nint main(void) { return %s(); }\\n' >> $(location :%s)" % (entry, out),
+    )
+    native.genrule(
+        name = name + "_gen",
+        srcs = [src],
+        outs = [out],
+        tools = ["@parena//src:parena"],
+        cmd = " && ".join(steps),
+        visibility = ["//visibility:private"],
+    )
+    cc_binary(
+        name = name,
+        srcs = [":" + out],
         copts = copts,
         deps = deps,
         visibility = visibility or ["//visibility:public"],
