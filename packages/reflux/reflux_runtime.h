@@ -218,13 +218,15 @@ static inline int reflux_action_is_combat(int action_type) {
  *   REGISTERED (140): a = level id, b = environment, c = opening mask
  *   MOD_SET    (141): a = level id, b = module id, c = 1/0
  *   STATE      (142): a = level id, b = mask, c = revision
+ *   UNREGISTERED (143): a = level id, b = last mask, c = last revision
  * level_mods.prn names the same numbers; apps/game/game_test.c asserts the two sides agree. */
 #define REFLUX_ACTION_LEVEL_REGISTERED 140
 #define REFLUX_ACTION_LEVEL_MOD_SET    141
 #define REFLUX_ACTION_LEVEL_STATE      142
+#define REFLUX_ACTION_LEVEL_UNREGISTERED 143
 
 #define REFLUX_ACTION_LEVEL_FIRST REFLUX_ACTION_LEVEL_REGISTERED
-#define REFLUX_ACTION_LEVEL_LAST  REFLUX_ACTION_LEVEL_STATE
+#define REFLUX_ACTION_LEVEL_LAST  REFLUX_ACTION_LEVEL_UNREGISTERED
 
 /* Is this action type part of the level-module family? The predicate a sync/relay checks before it
  * treats a row as a level update, so an unrelated row can never be mistaken for one. */

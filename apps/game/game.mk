@@ -43,8 +43,8 @@ WASM_PROFILE      ?= bp_target_wasm_core
 
 .PHONY: game game-test game-smoke game-stream-smoke game-net-smoke game-level-relay-smoke \
         game-level-request-smoke game-mod-authority-smoke game-capped-client-smoke \
-        game-level-interest-smoke game-multi-peer-smoke game-clang game-llvm game-test-clang \
-        core core-smoke wasm wasm-smoke
+        game-level-interest-smoke game-level-unregister-smoke game-multi-peer-smoke \
+        game-clang game-llvm game-test-clang core core-smoke wasm wasm-smoke
 
 game: $(GAME_BIN)
 
@@ -243,6 +243,21 @@ game-multi-peer-smoke: $(GAME_BIN)
 	  grep -q 'slot=9' /tmp/shank_multi_b.log && \
 	  grep -q 'level=2 env=1 mods=3' /tmp/shank_multi_b.log && \
 	  test $$A_STATUS -eq 0 -a $$B_STATUS -eq 0 -a $$HOST_STATUS -eq 0
+
+# The server removes its only level before the client arrives. The empty level-mod row set is
+# authoritative: the client must free its local level instead of keeping the surface mask 31.
+game-level-unregister-smoke: $(GAME_BIN)
+	@rm -f /tmp/shank_gone_host.log /tmp/shank_gone_client.log
+	./$(GAME_BIN) --host 7799 --headless 500 --level 6 --env surface --unregister-level 6 \
+	  > /tmp/shank_gone_host.log 2>&1 & \
+	  HOST_PID=$$!; sleep 1; \
+	  ./$(GAME_BIN) --join 127.0.0.1 7799 --headless 120 --level 6 --env surface \
+	    > /tmp/shank_gone_client.log 2>&1; \
+	  CLIENT_STATUS=$$?; wait $$HOST_PID; HOST_STATUS=$$?; \
+	  cat /tmp/shank_gone_host.log; cat /tmp/shank_gone_client.log; \
+	  grep -q 'level_rows=0' /tmp/shank_gone_host.log && \
+	  grep -q 'level=6 env=0 mods=0 rev=0' /tmp/shank_gone_client.log && \
+	  test $$CLIENT_STATUS -eq 0 -a $$HOST_STATUS -eq 0
 
 # Four levels are registered on the server; the client advertises interest in level 2, so the
 # server must send one row (level_rows=1), not all four, and the client must adopt mask 11.

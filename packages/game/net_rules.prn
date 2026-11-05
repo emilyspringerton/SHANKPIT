@@ -41,7 +41,8 @@
 
 ;; The server's live level-mod state. Absolute rows, like a snapshot: a dropped packet heals on the
 ;; next one, and a late joiner needs no handshake -- the next 30 Hz tick carries every live level's
-;; mask. Fixed size so a datagram can never be partially trusted:
+;; mask, including an empty set when a level has been unregistered, so absence is authoritative.
+;; Fixed size so a datagram can never be partially trusted:
 ;;   header: u32 magic, u8 type, u8 count, u16 seq = 8
 ;;   row:    u16 level, u16 mask, u16 revision, u16 pad = 8
 (defn net-packet-level-mods [] : I32 4)
@@ -122,7 +123,7 @@
 (defn net-valid-mode [(mode : I32)] : I32 (if (and (>= mode 1) (<= mode 2)) 1 0))
 (defn net-valid-packet [(type : I32)] : I32 (if (and (>= type 0) (<= type 6)) 1 0))
 (defn net-valid-level-count [(count : I32)] : I32
-  (if (and (> count 0) (<= count (net-max-level-mods))) 1 0))
+  (if (and (>= count 0) (<= count (net-max-level-mods))) 1 0))
 (defn net-valid-body-count [(count : I32)] : I32
   (if (and (> count 0) (<= count (net-max-bodies))) 1 0))
 (defn net-slot-valid [(slot : I32)] : I32

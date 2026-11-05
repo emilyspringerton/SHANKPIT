@@ -96,6 +96,18 @@ int level_mods_register(int level_id, int env) {
     return e->mask;
 }
 
+int level_mods_unregister(int level_id) {
+    LevelModEntry *e = find_level(level_id);
+    int mask, revision;
+
+    if (!e) return 0;
+    mask = e->mask;
+    revision = e->revision;
+    memset(e, 0, sizeof(*e));
+    reflux_host_dispatch(lm_evt_unregistered(), level_id, mask, revision);
+    return 1;
+}
+
 int level_mods_request(int level_id, int mod, int on) {
     if (!find_level(level_id)) return 0;
     if (!lm_mod_valid(mod)) return 0;

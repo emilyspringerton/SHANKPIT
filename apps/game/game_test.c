@@ -259,9 +259,10 @@ static void test_net(void) {
           "level mods size is header + rows");
     check(net_valid_packet(5) == 1 && net_valid_packet(6) == 1 && net_valid_packet(7) == 0,
           "packets 0..6 on the wire, 7 refused");
-    check(net_valid_level_count(1) == 1 && net_valid_level_count(net_max_level_mods()) == 1,
-          "a level mods count is bounded");
-    check(net_valid_level_count(0) == 0 && net_valid_level_count(9) == 0, "bad counts refused");
+    check(net_valid_level_count(0) == 1 && net_valid_level_count(1) == 1 &&
+              net_valid_level_count(net_max_level_mods()) == 1,
+          "an empty row set and a bounded row set are valid state");
+    check(net_valid_level_count(-1) == 0 && net_valid_level_count(9) == 0, "bad counts refused");
 }
 
 static void test_reflux(void) {
@@ -406,9 +407,14 @@ static void test_level_mods(void) {
     check(lm_evt_registered() == REFLUX_ACTION_LEVEL_REGISTERED, "registered row number agrees");
     check(lm_evt_mod_set() == REFLUX_ACTION_LEVEL_MOD_SET, "mod-set row number agrees");
     check(lm_evt_state() == REFLUX_ACTION_LEVEL_STATE, "state row number agrees");
+    check(lm_evt_unregistered() == REFLUX_ACTION_LEVEL_UNREGISTERED,
+          "unregistered row number agrees");
     check(lm_evt_is_level_(REFLUX_ACTION_LEVEL_MOD_SET) == 1, "the family predicate sees its rows");
+    check(lm_evt_is_level_(REFLUX_ACTION_LEVEL_UNREGISTERED) == 1,
+          "the family predicate sees an unregister");
     check(lm_evt_is_level_(gp_evt_mode()) == 0, "a mode row is not a level update");
-    check(reflux_action_is_level_mod(REFLUX_ACTION_LEVEL_STATE) == 1,
+    check(reflux_action_is_level_mod(REFLUX_ACTION_LEVEL_STATE) == 1 &&
+              reflux_action_is_level_mod(REFLUX_ACTION_LEVEL_UNREGISTERED) == 1,
           "the C predicate agrees with the PARENA one");
 
     /* Live registry: two levels, updates through the log, no bleed between them. */
@@ -457,6 +463,18 @@ static void test_level_mods(void) {
     check(level_mods_apply_state(8, 0, 5) == 1 && level_mods_mask(8) == lm_mandatory_mask(),
           "a hostile network mask is sanitised to the mandatory set");
     check(level_mods_apply_state(99, surface, 9) == 0, "state for an unregistered level is ignored");
+
+    /* A level can leave the table, free its slot, and come back without carrying old state. */
+    check(level_mods_unregister(99) == 0, "unregistering an unknown level is refused");
+    check(level_mods_unregister(8) == 1, "a live level unregisters");
+    check(level_mods_count() == 1, "unregister frees its slot");
+    check(level_mods_env(8) < 0 && level_mods_mask(8) == 0 && level_mods_revision(8) == 0,
+          "the removed level has no stale state");
+    check(reflux_host_action_type_at(reflux_host_index_for_abs(reflux_host_total_dispatched() - 1)) ==
+              lm_evt_unregistered(),
+          "unregister emits its REFLUX row");
+    check(level_mods_register(8, lm_env_moon()) == moon, "a removed level can register again");
+    check(level_mods_revision(8) == 1, "re-registration starts a fresh revision");
 
     /* A log reset (a new round) must not leave a cursor reading another level's rows. */
     level_mods_publish(7);
@@ -539,8 +557,9 @@ static void test_event_log(void) {
     level_mods_request(31, lm_mod_sky(), 1);       /* mod_set */
     level_mods_apply(31, lm_mod_sky(), 1);         /* applies, does not dispatch */
     level_mods_publish(31);                        /* state */
+    level_mods_unregister(31);                     /* unregistered */
 
-    check(event_log_sync(77) == 3, "three level rows stream to the log");
+    check(event_log_sync(77) == 4, "four level rows stream to the log");
     check(event_log_sync(78) == 0, "a second sync writes nothing");
     event_log_close();
 
@@ -554,7 +573,8 @@ static void test_event_log(void) {
     check(strstr(buf, "\"event\":\"registered\"") != NULL, "registered row is in the stream");
     check(strstr(buf, "\"event\":\"mod_set\"") != NULL, "mod_set row is in the stream");
     check(strstr(buf, "\"event\":\"state\"") != NULL, "state row is in the stream");
-    check(strstr(buf, "\"stream\":1") != NULL && strstr(buf, "\"stream\":3") != NULL,
+    check(strstr(buf, "\"event\":\"unregistered\"") != NULL, "unregister row is in the stream");
+    check(strstr(buf, "\"stream\":1") != NULL && strstr(buf, "\"stream\":4") != NULL,
           "rows carry a contiguous durable stream id");
     check(strstr(buf, "\"tick\":77") != NULL, "the caller's tick is recorded");
     check(strstr(buf, "\"level\":31") != NULL, "the level id is recorded");
@@ -573,14 +593,16 @@ static void test_event_replay(void) {
         fputs("{\"stream\":2,\"seq\":1,\"tick\":1,\"event\":\"mod_set\",\"level\":41,\"mod\":3,\"on\":1}\n", f);
         fputs("{\"stream\":3,\"seq\":2,\"tick\":2,\"event\":\"state\",\"level\":41,\"mask\":11,\"revision\":3}\n", f);
         fputs("{\"stream\":4,\"seq\":3,\"tick\":3,\"event\":\"state\",\"level\":41,\"mask\":31,\"revision\":2}\n", f);
-        fputs("{\"stream\":5,\"seq\":4,\"tick\":4,\"event\":\"log_reset\"}\n", f);
-        fputs("{\"stream\":6,\"seq\":0,\"tick\":5,\"event\":\"registered\",\"level\":42,\"env\":2,\"mask\":3}\n", f);
+        fputs("{\"stream\":5,\"seq\":4,\"tick\":4,\"event\":\"unregistered\",\"level\":41,\"mask\":31,\"revision\":3}\n", f);
+        fputs("{\"stream\":6,\"seq\":5,\"tick\":5,\"event\":\"log_reset\"}\n", f);
+        fputs("{\"stream\":7,\"seq\":0,\"tick\":6,\"event\":\"registered\",\"level\":42,\"env\":2,\"mask\":3}\n", f);
         fclose(f);
     }
 
     reflux_host_reset();
     level_mods_reset();
-    check(event_log_replay(path) == 4, "replay applies registered, mod_set, state and reset rows");
+    check(event_log_replay(path) == 5,
+          "replay applies registered, mod_set, state, unregister and reset rows");
     check(level_mods_count() == 1, "the post-reset stream leaves one live level");
     check(level_mods_env(42) == lm_env_moon(), "replayed registration keeps the environment");
     check(level_mods_mask(42) == lm_default_mask(lm_env_moon()), "replayed level has its moon mask");

@@ -144,6 +144,8 @@ int event_log_replay(const char *path) {
             revision = line_int(line, "revision", 0);
             if (level_mods_env(level) < 0) level_mods_register(level, lm_env_surface());
             if (level_mods_apply_state(level, mask, revision)) applied++;
+        } else if (strcmp(event, "unregistered") == 0) {
+            if (level_mods_unregister(level)) applied++;
         }
     }
     fclose(f);
@@ -193,6 +195,11 @@ int event_log_sync(int tick) {
             } else if (type == REFLUX_ACTION_LEVEL_STATE) {
                 fprintf(g_file,
                         "{\"stream\":%d,\"seq\":%d,\"tick\":%d,\"event\":\"state\","
+                        "\"level\":%d,\"mask\":%d,\"revision\":%d}\n",
+                        g_next_stream++, g_cursor, tick, a, b, c);
+            } else if (type == REFLUX_ACTION_LEVEL_UNREGISTERED) {
+                fprintf(g_file,
+                        "{\"stream\":%d,\"seq\":%d,\"tick\":%d,\"event\":\"unregistered\","
                         "\"level\":%d,\"mask\":%d,\"revision\":%d}\n",
                         g_next_stream++, g_cursor, tick, a, b, c);
             }

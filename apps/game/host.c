@@ -746,7 +746,9 @@ static void net_send_level_mods(void) {
             m.count++;
         }
         p->rows = m.count;
-        if (m.count > 0) net_transport_send(&p->addr, &m, (int)sizeof(m));
+        /* An empty row set is meaningful state, not "nothing to send": it tells a peer that its
+         * watched level is no longer live, so the peer drops rather than keeping a stale mask. */
+        net_transport_send(&p->addr, &m, (int)sizeof(m));
     }
 }
 
@@ -951,14 +953,21 @@ static void net_client_tick(void) {
         }
 
         if (pkt.snap.type == net_packet_level_mods()) {
+            int saw_level = 0;
             if (n != (ssize_t)sizeof(NetLevelMods)) continue;
             if (!net_valid_level_count(pkt.mods.count)) continue;
             for (i = 0; i < pkt.mods.count && i < net_max_level_mods(); i++) {
                 NetLevelMod *row = &pkt.mods.mods[i];
                 if ((int)row->level_id != g_level_id) continue;
+                saw_level = 1;
                 if (level_mods_apply_state(g_level_id, row->mask, row->revision)) {
                     feed_push("LEVEL MODS UPDATED", 180);
                 }
+            }
+            /* The packet is the complete live set for this peer. No row for the level we are
+             * watching is the server saying it is gone, not a packet to ignore. */
+            if (!saw_level && level_mods_unregister(g_level_id)) {
+                feed_push("LEVEL REMOVED", 240);
             }
             continue;
         }
@@ -1352,6 +1361,7 @@ int main(int argc, char **argv) {
     int set_on = 0;
     int caps = 0;
     int caps_set = 0;
+    int unregister_level = 0;
 
     g_mod_policy = net_mod_policy_owner();
     for (i = 1; i < argc; i++) {
@@ -1411,13 +1421,15 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--set-mod") == 0 && i + 2 < argc) {
             set_mod = atoi(argv[++i]);
             set_on = atoi(argv[++i]) != 0;
+        } else if (strcmp(argv[i], "--unregister-level") == 0 && i + 1 < argc) {
+            unregister_level = atoi(argv[++i]);
         } else {
             fprintf(stderr, "usage: %s [--host [port]] [--join ip [port]] [--start] [--ffa]"
                             " [--levels manifest.json] [--level N] [--event-log events.jsonl]"
                             " [--replay-events events.jsonl] [--request-mod MOD 0|1]"
                             " [--request-token HEX] [--mod-policy off|owner|peer]"
                             " [--env surface|underground|moon] [--set-mod MOD 0|1]"
-                            " [--capabilities MASK]"
+                            " [--unregister-level N] [--capabilities MASK]"
                             " [--headless N] [--frames N --shot out.bmp]\n", argv[0]);
             return 2;
         }
@@ -1483,6 +1495,9 @@ int main(int argc, char **argv) {
     if (set_mod && !level_mods_set(g_level_id, set_mod, set_on)) {
         fprintf(stderr, "shank_game: --set-mod %d %d refused (mandatory, unknown, or no change)\n",
                 set_mod, set_on);
+    }
+    if (unregister_level && !level_mods_unregister(unregister_level)) {
+        fprintf(stderr, "shank_game: --unregister-level %d refused (not live)\n", unregister_level);
     }
     init_lobby();
 

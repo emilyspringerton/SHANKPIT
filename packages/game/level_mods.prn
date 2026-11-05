@@ -23,7 +23,7 @@
         lm-bit lm-all-mask lm-mandatory-mask lm-mandatory
         lm-enabled lm-default-mask lm-sanitize lm-set
         lm-next-revision
-        lm-evt-registered lm-evt-mod-set lm-evt-state
+        lm-evt-registered lm-evt-mod-set lm-evt-state lm-evt-unregistered
         lm-evt-first lm-evt-last lm-evt-is-level?)
 
 ;; ---- modules -------------------------------------------------------------------------------------
@@ -114,12 +114,14 @@
 ;; 141 MOD SET:    a server asks a level to change one module. a = level id, b = module, c = 1/0.
 ;; 142 STATE:      full state, safe to apply on a late joiner or after a log reset. a = level, b = mask,
 ;;                 c = revision.
-;; The C side names the same three numbers in reflux_runtime.h; apps/game/game_test.c asserts they agree,
+;; 143 UNREGISTERED: a level left the live table. a = level id, b = last mask, c = last revision.
+;; The C side names the same four numbers in reflux_runtime.h; apps/game/game_test.c asserts they agree,
 ;; so a change to one side is a red test rather than a silently different event.
 (defn lm-evt-registered [] : I32 140)
 (defn lm-evt-mod-set [] : I32 141)
 (defn lm-evt-state [] : I32 142)
+(defn lm-evt-unregistered [] : I32 143)
 (defn lm-evt-first [] : I32 (lm-evt-registered))
-(defn lm-evt-last [] : I32 (lm-evt-state))
+(defn lm-evt-last [] : I32 (lm-evt-unregistered))
 (defn lm-evt-is-level? [(action-type : I32)] : I32
   (if (and (>= action-type (lm-evt-first)) (<= action-type (lm-evt-last))) 1 0))

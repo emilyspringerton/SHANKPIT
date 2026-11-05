@@ -24,6 +24,11 @@
  * a bad id, unknown environment, or a full table. Dispatches REFLUX_ACTION_LEVEL_REGISTERED. */
 int level_mods_register(int level_id, int env);
 
+/* Remove a live level from the table and free its slot. Dispatches
+ * REFLUX_ACTION_LEVEL_UNREGISTERED with the last mask/revision, so the event stream can rebuild the
+ * removal and a mod can react to it. Returns 1 when the level was live, 0 for an unknown id. */
+int level_mods_unregister(int level_id);
+
 /* Ask for one module to change on one level: validates the request and dispatches
  * REFLUX_ACTION_LEVEL_MOD_SET. Does NOT mutate the table -- sync does that, so the log stays the one
  * source of truth for updates. Returns 1 when the row was dispatched, 0 when refused (unknown level or

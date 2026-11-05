@@ -12,7 +12,8 @@
  *   {"stream":1,"seq":12,"tick":240,"event":"registered","level":2,"env":1,"mask":11}
  *   {"stream":2,"seq":13,"tick":241,"event":"mod_set","level":2,"mod":3,"on":1}
  *   {"stream":3,"seq":14,"tick":242,"event":"state","level":2,"mask":15,"revision":2}
- *   {"stream":4,"seq":-1,"tick":320,"event":"log_reset"}
+ *   {"stream":4,"seq":15,"tick":260,"event":"unregistered","level":2,"mask":15,"revision":2}
+ *   {"stream":5,"seq":-1,"tick":320,"event":"log_reset"}
  *
  * `stream` is the durable identity of the line: it survives process restarts by continuing from the
  * last id already in the file, and replay refuses a missing, duplicate or gapped id. `seq` remains
@@ -40,8 +41,9 @@ int event_log_sync(int tick);
  *
  * This is the recovery path: a fresh server can rebuild which mods each level runs without the
  * original process. Registered rows register missing levels, mod_set rows go through the same
- * level_mods_set() path a live update uses, state rows are applied forward-only, and log_reset clears
- * the registry before the stream continues. Blank or unrecognised lines are skipped.
+ * level_mods_set() path a live update uses, state rows are applied forward-only, unregistered rows
+ * free the level's slot, and log_reset clears the registry before the stream continues. Blank or
+ * unrecognised lines are skipped.
  *
  * Returns the number of rows that changed state (>= 0), or -1 when the file cannot be opened or its
  * `stream` ids are missing, duplicated or gapped. Validation happens before any live state changes. */

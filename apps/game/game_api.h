@@ -160,6 +160,7 @@ int lm_next_revision(int revision);
 int lm_evt_registered(void);
 int lm_evt_mod_set(void);
 int lm_evt_state(void);
+int lm_evt_unregistered(void);
 int lm_evt_first(void);
 int lm_evt_last(void);
 int lm_evt_is_level_(int action_type);
