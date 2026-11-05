@@ -241,7 +241,7 @@ jobs:
         run: |
           set -euo pipefail
           make wasm PARENA_BIN="$PWD/PARENA/parena"
-          make wasm-smoke
+          make wasm-smoke PARENA_BIN="$PWD/PARENA/parena"
 
       - uses: actions/upload-artifact@v4
         with:
