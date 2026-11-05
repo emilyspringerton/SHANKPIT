@@ -93,7 +93,8 @@ double atan2(double y, double x) {
 __attribute__((visibility("default"))) int wasm_boot(void) {
     level_mods_reset();
     reflux_host_reset();
-    return level_mods_set_capabilities(lm_bit(lm_mod_core_sim()) | lm_bit(lm_mod_level()));
+    return level_mods_set_capabilities(
+        bp_target_capabilities(bp_target_wasm_core()));
 }
 
 __attribute__((visibility("default"))) int wasm_register_level(int level_id, int env) {
@@ -144,6 +145,11 @@ __attribute__((visibility("default"))) int wasm_capabilities(void) {
 
 __attribute__((visibility("default"))) int wasm_event_count(void) {
     return reflux_host_total_dispatched();
+}
+
+/* 0 = this build links no transport, matching bp-target-net(wasm-core). */
+__attribute__((visibility("default"))) int wasm_net_status(void) {
+    return bp_target_net(bp_target_wasm_core());
 }
 
 /* The rules' own trig, exported so a host can verify the freestanding implementation against its

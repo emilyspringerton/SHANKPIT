@@ -1,0 +1,49 @@
+;; packages/game/build_profiles.prn -- what each client build is, in one PARENA table.
+;;
+;; The module registry answers "which modules does this LEVEL run". This file answers a different
+;; question: "which modules and which networking implementation does this BUILD actually contain".
+;; Keeping them separate matters: weather/sky are per-level visual bits, while networking is a host
+;; capability that a core build may not link at all.
+;;
+;; Porting ladder this describes today:
+;;   native / llvm   all five level modules, networking in host C (UDP in apps/game/host.c)
+;;   wasm core       core sim + level only, no networking, no libc, no imports
+;;   native core     all five level modules, no networking, no SDL (apps/game/core_main.c)
+;;
+;; When networking is ported to PARENA/REFLUX, bp-target-net returns bp-net-parena for that target and
+;; the host-C transport stops being the definition. The enum is stable so a build can report it.
+(module shankpit/buildprofiles)
+(export bp-target-native bp-target-llvm bp-target-wasm-core bp-target-native-core
+        bp-target-count bp-target-valid
+        bp-net-none bp-net-host-c bp-net-parena
+        bp-target-capabilities bp-target-net)
+
+(defn bp-target-native [] : I32 0)
+(defn bp-target-llvm [] : I32 1)
+(defn bp-target-wasm-core [] : I32 2)
+(defn bp-target-native-core [] : I32 3)
+(defn bp-target-count [] : I32 4)
+
+(defn bp-target-valid [(target : I32)] : I32
+  (if (and (>= target 0) (< target (bp-target-count))) 1 0))
+
+;; 0 = no transport linked, 1 = the host-C UDP transport, 2 = a PARENA/REFLUX transport (future).
+(defn bp-net-none [] : I32 0)
+(defn bp-net-host-c [] : I32 1)
+(defn bp-net-parena [] : I32 2)
+
+;; The level-module mask this build admits. The WASM core has only ported core sim + level; the native
+;; and LLVM clients still link every module, and the native core links all five but no network.
+(defn bp-target-capabilities [(target : I32)] : I32
+  (if (= (bp-target-valid target) 0)
+    0
+    (if (= target (bp-target-wasm-core)) 3 31)))
+
+(defn bp-target-net [(target : I32)] : I32
+  (if (= (bp-target-valid target) 0)
+    (bp-net-none)
+    (if (= target (bp-target-wasm-core))
+      (bp-net-none)
+      (if (= target (bp-target-native-core))
+        (bp-net-none)
+        (bp-net-host-c)))))

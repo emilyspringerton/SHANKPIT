@@ -578,6 +578,28 @@ static void test_capabilities(void) {
     level_mods_reset();
 }
 
+/* The build profile table is the one place that says what a target contains, including whether it
+ * links a network transport at all. */
+static void test_build_profiles(void) {
+    check(bp_target_count() == 4, "four build profiles");
+    check(bp_target_capabilities(bp_target_native()) == lm_all_mask(),
+          "native admits every level module");
+    check(bp_target_capabilities(bp_target_llvm()) == lm_all_mask(),
+          "LLVM native admits every level module");
+    check(bp_target_capabilities(bp_target_wasm_core()) == 3,
+          "WASM core admits core sim + level");
+    check(bp_target_net(bp_target_native()) == bp_net_host_c(),
+          "native networking is host C today");
+    check(bp_target_net(bp_target_wasm_core()) == bp_net_none(),
+          "WASM core links no transport");
+    check(bp_target_net(bp_target_native_core()) == bp_net_none(),
+          "native core links no transport");
+    check(bp_target_valid(-1) == 0 && bp_target_valid(99) == 0,
+          "unknown targets are refused");
+    check(bp_target_capabilities(99) == 0 && bp_target_net(99) == bp_net_none(),
+          "unknown targets admit nothing");
+}
+
 int main(void) {
     test_modes();
     test_loop();
@@ -591,6 +613,7 @@ int main(void) {
     test_event_log();
     test_event_replay();
     test_capabilities();
+    test_build_profiles();
     test_round_sim();
 
     printf("%s: %d checks, %d failure(s)\n",

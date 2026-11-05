@@ -12,6 +12,7 @@ GAME_PRN := packages/game/core_loop.prn \
             packages/game/net_rules.prn \
             packages/game/gameplay_mod.prn \
             packages/game/level_mods.prn \
+            packages/game/build_profiles.prn \
             packages/sim/combat_api.prn \
             packages/sim/hit_rules.prn \
             packages/sim/shield_rules.prn \
@@ -29,11 +30,12 @@ GAME_SDL_LIBS   ?= $(shell pkg-config --libs sdl2)
 GAME_EXTRA_LIBS ?= -lm
 GAME_BIN      := $(BIN_DIR)/shank_game
 GAME_TEST_BIN := $(BIN_DIR)/shank_game_test
+CORE_BIN      := $(BIN_DIR)/shank_core
 WASM_BIN      := $(BIN_DIR)/shank_core.wasm
 WASM_CC       ?= clang
 
 .PHONY: game game-test game-smoke game-net-smoke game-level-relay-smoke game-level-request-smoke \
-        game-capped-client-smoke game-clang game-llvm game-test-clang wasm wasm-smoke
+        game-capped-client-smoke game-clang game-llvm game-test-clang core core-smoke wasm wasm-smoke
 
 game: $(GAME_BIN)
 
@@ -63,6 +65,24 @@ $(GAME_TEST_BIN): $(GAME_GEN) apps/game/game_test.c apps/game/game_api.h \
 
 game-test: $(GAME_TEST_BIN)
 	./$(GAME_TEST_BIN)
+
+# The core without the networking mod: same rules/registry, no host.c, no SDL, no sockets.
+$(CORE_BIN): $(GAME_GEN) apps/game/core_main.c packages/game/level_mods_host.c \
+             packages/game/level_mods_host.h packages/reflux/reflux_runtime.c \
+             packages/reflux/reflux_runtime.h
+	@mkdir -p $(BIN_DIR)
+	$(CC) $(GAME_CFLAGS) apps/game/core_main.c packages/game/level_mods_host.c \
+	  packages/reflux/reflux_runtime.c $(GAME_GEN) -o $@ -lm
+
+core: $(CORE_BIN)
+
+core-smoke: $(CORE_BIN)
+	@./$(CORE_BIN) --level 9 --env moon | tee /tmp/shank_core_moon.log
+	@grep -q 'target=native-core net=none .*mods=3 rev=1' /tmp/shank_core_moon.log
+	@./$(CORE_BIN) --level 10 --env surface --capabilities 3 | tee /tmp/shank_core_cap.log
+	@grep -q 'caps=3 .*mods=3' /tmp/shank_core_cap.log
+	@./$(CORE_BIN) --level 11 --env surface --set-mod 3 0 | tee /tmp/shank_core_shed.log
+	@grep -q 'mods=27 rev=2' /tmp/shank_core_shed.log
 
 # The same C through a different native toolchain. Separate output names so a gcc build is never
 # clobbered by a clang build in the same tree.

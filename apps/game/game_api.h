@@ -150,6 +150,19 @@ int lm_evt_first(void);
 int lm_evt_last(void);
 int lm_evt_is_level_(int action_type);
 
+/* ---- packages/game/build_profiles.prn (what each BUILD contains) --------------------------------- */
+int bp_target_native(void);
+int bp_target_llvm(void);
+int bp_target_wasm_core(void);
+int bp_target_native_core(void);
+int bp_target_count(void);
+int bp_target_valid(int target);
+int bp_net_none(void);
+int bp_net_host_c(void);
+int bp_net_parena(void);
+int bp_target_capabilities(int target);
+int bp_target_net(int target);
+
 /* ---- composed sim/render rules the client reads directly ------------------------------------------ */
 int tick_ms(void);
 int frame_budget(void);

@@ -237,11 +237,22 @@ jobs:
           ./bin/shank_game_llvm --headless 5 | tee llvm-smoke.log
           grep -q 'headless 5 ticks' llvm-smoke.log
 
+      - name: Native core without networking
+        run: |
+          set -euo pipefail
+          make core-smoke PARENA_BIN="$PWD/PARENA/parena"
+
       - name: Pure WASM core (PARENA rules, no libc, no imports)
         run: |
           set -euo pipefail
           make wasm PARENA_BIN="$PWD/PARENA/parena"
           make wasm-smoke PARENA_BIN="$PWD/PARENA/parena"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-core
+          path: bin/shank_core
+          if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:
@@ -303,12 +314,13 @@ jobs:
           done
           test "$pushed" = 1
           test -n "$(git ls-remote --tags origin "refs/tags/$next")"
-          gh release create "$next" dist/*.zip dist/*.wasm \
+          gh release create "$next" dist/*.zip dist/*.wasm dist/shank_core \
             --title "SHANKPIT clean room $next" \
             --notes "Clean-room PARENA build of SHANKPIT.
 
           * **Windows** -- \`ShankPit_Client_<run>.zip\`: unpack, then run **PLAY.bat** (next to \`ShankPit.exe\` and \`SDL2.dll\`).
           * **Linux** -- \`ShankPit_Client_Linux_<run>.zip\`: unpack, then run \`./PLAY.sh\`.
           * **WASM core** -- \`shank_core.wasm\`: the PARENA level-module core only (core sim + level); render/input/audio are not ported yet.
+          * **Native core** -- \`shank_core\`: the same registry with no SDL and no networking, the base a transport mod is added to.
 
           Boots into **ZOMBIES** as the lobby; press \`2\` for the shankpit-460 arena-shooter **FFA**."
