@@ -32,4 +32,14 @@ void event_log_reset_cursor(void);
 /* Write the level rows that appeared since the last call. Returns the number of rows written. */
 int event_log_sync(int tick);
 
+/* Replay a stream produced by event_log_sync() into the live registry.
+ *
+ * This is the recovery path: a fresh server can rebuild which mods each level runs without the
+ * original process. Registered rows register missing levels, mod_set rows go through the same
+ * level_mods_set() path a live update uses, state rows are applied forward-only, and log_reset clears
+ * the registry before the stream continues. Blank or unrecognised lines are skipped.
+ *
+ * Returns the number of rows that changed state (>= 0), or -1 when the file cannot be opened. */
+int event_log_replay(const char *path);
+
 #endif /* SHANKPIT_EVENT_LOG_H */

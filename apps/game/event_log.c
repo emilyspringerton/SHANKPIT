@@ -5,9 +5,13 @@
  */
 #include "event_log.h"
 
+#include "game_api.h"
+#include "level_mods_host.h"
 #include "reflux_runtime.h"
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 static FILE *g_file;
 static int g_cursor;
@@ -30,6 +34,77 @@ void event_log_close(void) {
 
 void event_log_reset_cursor(void) {
     g_cursor = 0;
+}
+
+/* ---- replay ------------------------------------------------------------------------------------ */
+
+static int line_int(const char *line, const char *key, int fallback) {
+    char pattern[32];
+    const char *p;
+    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+    p = strstr(line, pattern);
+    if (!p) return fallback;
+    p = strchr(p, ':');
+    if (!p) return fallback;
+    return (int)strtol(p + 1, NULL, 10);
+}
+
+static int line_string(const char *line, const char *key, char *out, size_t cap) {
+    char pattern[32];
+    const char *p;
+    size_t n = 0;
+
+    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+    p = strstr(line, pattern);
+    if (!p || cap == 0) return 0;
+    p = strchr(p, ':');
+    if (!p) return 0;
+    p++;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p != '"') return 0;
+    p++;
+    while (*p && *p != '"' && n + 1 < cap) out[n++] = *p++;
+    out[n] = '\0';
+    return n > 0 && *p == '"';
+}
+
+int event_log_replay(const char *path) {
+    FILE *f;
+    char line[1024];
+    int applied = 0;
+
+    if (!path || !(f = fopen(path, "rb"))) return -1;
+    while (fgets(line, sizeof(line), f)) {
+        char event[24];
+        int level, mod, on, mask, revision, env;
+
+        if (!line_string(line, "event", event, sizeof(event))) continue;
+        if (strcmp(event, "log_reset") == 0) {
+            level_mods_reset();
+            reflux_host_reset();
+            event_log_reset_cursor();
+            continue;
+        }
+
+        level = line_int(line, "level", 0);
+        if (level <= 0) continue;
+
+        if (strcmp(event, "registered") == 0) {
+            env = line_int(line, "env", lm_env_surface());
+            if (level_mods_env(level) < 0) applied += level_mods_register(level, env) ? 1 : 0;
+        } else if (strcmp(event, "mod_set") == 0) {
+            mod = line_int(line, "mod", 0);
+            on = line_int(line, "on", 0);
+            if (level_mods_set(level, mod, on)) applied++;
+        } else if (strcmp(event, "state") == 0) {
+            mask = line_int(line, "mask", 0);
+            revision = line_int(line, "revision", 0);
+            if (level_mods_env(level) < 0) level_mods_register(level, lm_env_surface());
+            if (level_mods_apply_state(level, mask, revision)) applied++;
+        }
+    }
+    fclose(f);
+    return applied;
 }
 
 int event_log_sync(int tick) {

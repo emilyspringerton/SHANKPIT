@@ -1104,6 +1104,7 @@ int main(int argc, char **argv) {
     int boot_mode = gp_mode_default();
     const char *levels_path = NULL;
     const char *event_log_path = NULL;
+    const char *replay_path = NULL;
     int level_id = 0; /* 0 = unspecified: the manifest's first level, or level 1 without one */
     int level_env = lm_env_surface();
     int set_mod = 0;
@@ -1133,6 +1134,8 @@ int main(int argc, char **argv) {
             levels_path = argv[++i];
         } else if (strcmp(argv[i], "--event-log") == 0 && i + 1 < argc) {
             event_log_path = argv[++i];
+        } else if (strcmp(argv[i], "--replay-events") == 0 && i + 1 < argc) {
+            replay_path = argv[++i];
         } else if (strcmp(argv[i], "--level") == 0 && i + 1 < argc) {
             level_id = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--env") == 0 && i + 1 < argc) {
@@ -1147,6 +1150,7 @@ int main(int argc, char **argv) {
         } else {
             fprintf(stderr, "usage: %s [--host [port]] [--join ip [port]] [--start] [--ffa]"
                             " [--levels manifest.json] [--level N] [--event-log events.jsonl]"
+                            " [--replay-events events.jsonl]"
                             " [--env surface|underground|moon] [--set-mod MOD 0|1]"
                             " [--headless N] [--frames N --shot out.bmp]\n", argv[0]);
             return 2;
@@ -1196,6 +1200,14 @@ int main(int argc, char **argv) {
         g_level_env = level_env;
     }
     g_level_id = level_id;
+    if (replay_path) {
+        int replayed = event_log_replay(replay_path);
+        if (replayed < 0) {
+            fprintf(stderr, "shank_game: cannot replay event log %s\n", replay_path);
+            return 2;
+        }
+        printf("replayed %d level mod row(s) from %s\n", replayed, replay_path);
+    }
     if (set_mod && !level_mods_set(g_level_id, set_mod, set_on)) {
         fprintf(stderr, "shank_game: --set-mod %d %d refused (mandatory, unknown, or no change)\n",
                 set_mod, set_on);

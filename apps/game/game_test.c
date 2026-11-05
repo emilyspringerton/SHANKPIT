@@ -525,6 +525,36 @@ static void test_event_log(void) {
     remove(path);
 }
 
+/* Replay rebuilds the registry from the stream: deltas go through the live set path, state is
+ * forward-only, and a log_reset starts a fresh registry. */
+static void test_event_replay(void) {
+    const char *path = "/tmp/shank_event_replay_test.jsonl";
+    FILE *f = fopen(path, "wb");
+
+    check(f != NULL, "replay test stream opens");
+    if (f) {
+        fputs("{\"seq\":0,\"tick\":0,\"event\":\"registered\",\"level\":41,\"env\":1,\"mask\":11}\n", f);
+        fputs("{\"seq\":1,\"tick\":1,\"event\":\"mod_set\",\"level\":41,\"mod\":3,\"on\":1}\n", f);
+        fputs("{\"seq\":2,\"tick\":2,\"event\":\"state\",\"level\":41,\"mask\":11,\"revision\":3}\n", f);
+        fputs("{\"seq\":3,\"tick\":3,\"event\":\"state\",\"level\":41,\"mask\":31,\"revision\":2}\n", f);
+        fputs("{\"seq\":4,\"tick\":4,\"event\":\"log_reset\"}\n", f);
+        fputs("{\"seq\":0,\"tick\":5,\"event\":\"registered\",\"level\":42,\"env\":2,\"mask\":3}\n", f);
+        fclose(f);
+    }
+
+    reflux_host_reset();
+    level_mods_reset();
+    check(event_log_replay(path) == 4, "replay applies registered, mod_set, state and reset rows");
+    check(level_mods_count() == 1, "the post-reset stream leaves one live level");
+    check(level_mods_env(42) == lm_env_moon(), "replayed registration keeps the environment");
+    check(level_mods_mask(42) == lm_default_mask(lm_env_moon()), "replayed level has its moon mask");
+    check(level_mods_env(41) < 0, "the reset level is gone, not half-restored");
+
+    check(event_log_replay("/tmp/shank_no_such_event_log.jsonl") == -1,
+          "a missing replay stream is refused");
+    remove(path);
+}
+
 int main(void) {
     test_modes();
     test_loop();
@@ -536,6 +566,7 @@ int main(void) {
     test_level_mods();
     test_level_catalog();
     test_event_log();
+    test_event_replay();
     test_round_sim();
 
     printf("%s: %d checks, %d failure(s)\n",
