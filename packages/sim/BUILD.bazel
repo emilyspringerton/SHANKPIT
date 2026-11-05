@@ -1,7 +1,14 @@
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//bazel:parena.bzl", "parena_module")
 
-exports_files(["fall_rules.prn", "horde_rules.prn", "hit_rules.prn", "combat_api.prn"])
+exports_files([
+    "fall_rules.prn",
+    "horde_rules.prn",
+    "hit_rules.prn",
+    "combat_api.prn",
+    "mod_abi.prn",
+    "shambler_mod.prn",
+])
 
 # packages/sim/fall_rules.prn -- integer gravity integration for the first body (see its header for why
 # it is integer: neither the Arena path nor (f32 x) links in this build).
@@ -54,4 +61,28 @@ sh_test(
     srcs = ["//bazel:parena_emitted_test.sh"],
     data = [":combat_api_from_prn"],
     args = ["$(rootpath :combat_api_from_prn)"],
+)
+
+parena_module(
+    name = "mod_abi",
+    src = "mod_abi.prn",
+)
+
+sh_test(
+    name = "mod_abi_emitted_test",
+    srcs = ["//bazel:parena_emitted_test.sh"],
+    data = [":mod_abi_from_prn"],
+    args = ["$(rootpath :mod_abi_from_prn)"],
+)
+
+parena_module(
+    name = "shambler_mod",
+    src = "shambler_mod.prn",
+)
+
+sh_test(
+    name = "shambler_mod_emitted_test",
+    srcs = ["//bazel:parena_emitted_test.sh"],
+    data = [":shambler_mod_from_prn"],
+    args = ["$(rootpath :shambler_mod_from_prn)"],
 )

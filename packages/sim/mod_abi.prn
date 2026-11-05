@@ -1,0 +1,46 @@
+;; packages/sim/mod_abi.prn -- the standardized way to add a body's rules to this build.
+;;
+;; Founder MO (EMILY/docs/BRAWLPIT_MOD_API_NORTHSTAR.md §3.2): a character is a fixed set of scalar
+;; hooks, every hook optional, return 1 = handled (the host skips its default) and 0 = fall through.
+;; That document assumes a C host with a table of function pointers; VS0 has neither function pointers
+;; nor closures, so what is real here is the ABI itself -- the hook ids, the order they run in, the
+;; validity test, and the fall-through rule -- plus a real mod (shambler_mod.prn) written against it and
+;; called in that order by boot. A host that grows a pointer table later reads the same ids and order.
+;;
+;; The ids are deliberately NOT sequential in tick order: they are stable names (like REFLUX action
+;; types) so a mod and a host can cross-reference a number without agreeing on a line of code. The
+;; order is the contract, and hook-at is the one place it is written down.
+(module shankpit/mod_abi)
+
+(export hook-on-spawn hook-on-tick hook-on-hit-dealt hook-on-hit-taken hook-on-shield hook-on-ko
+        hook-count hook-at hook-is-valid hook-resolve)
+
+(defn hook-on-spawn [] : I32 11)
+(defn hook-on-tick [] : I32 12)
+(defn hook-on-hit-dealt [] : I32 13)
+(defn hook-on-hit-taken [] : I32 14)
+(defn hook-on-shield [] : I32 15)
+(defn hook-on-ko [] : I32 16)
+(defn hook-count [] : I32 6)
+
+;; The fixed order every mod's hooks run in inside one tick: spawn, tick, the hit it dealt, the hit it
+;; took, its shield event, its KO. Determinism is the point -- a replay and a live tick must run a mod's
+;; hooks in the same sequence, so the order lives in one function rather than at each call site.
+(defn hook-at [(index : I32)] : I32
+  (if (= index 0) (hook-on-spawn)
+    (if (= index 1) (hook-on-tick)
+      (if (= index 2) (hook-on-hit-dealt)
+        (if (= index 3) (hook-on-hit-taken)
+          (if (= index 4) (hook-on-shield)
+            (if (= index 5) (hook-on-ko)
+              -1)))))))
+
+;; Is this a hook id this build knows? -1 from hook-at and 0 from this both mean "not a hook": a host
+;; that fell through a bad id would silently skip a mod's rules, so the check is explicit.
+(defn hook-is-valid [(hook : I32)] : I32
+  (if (and (>= hook (hook-on-spawn)) (<= hook (hook-on-ko))) 1 0))
+
+;; The fall-through rule, in one place: a mod returning 1 handled the hook, anything else (including a
+;; hook a mod chose not to implement, which the host passes as 0) leaves the host's own default.
+(defn hook-resolve [(mod-result : I32) (host-default : I32)] : I32
+  (if (= mod-result 1) 1 host-default))

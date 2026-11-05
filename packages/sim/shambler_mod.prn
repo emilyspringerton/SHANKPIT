@@ -1,0 +1,33 @@
+;; packages/sim/shambler_mod.prn -- the first real body mod, written only in PARENA.
+;;
+;; It is a mod in the standard's sense: it exports a handful of scalar hooks from mod_abi.prn, it never
+;; touches a body's state directly, and every decision it makes is a pure function of the numbers it is
+;; handed. The values below are this fork's own rules (there is no OG shankpit on this machine to copy),
+;; chosen to be visible in one tick: a shambler that has lost three quarters of its health lurches 25%
+;; faster, it bites harder into a body whose shield is already gone, and it stays down when it dies --
+;; whether a body comes back is the level's decision (combat_api's respawn rules), not the mod's.
+;;
+;; Spooky spaghetti is allowed INSIDE a mod. The boundary is the point: four hooks, I32 in, I32 out.
+;; The quarter-health test is `hp*4 <= max` rather than `hp <= max/4` so it never rounds a body into
+;; enraging early, and hp > 0 keeps a corpse from being "enraged".
+(module shankpit/shambler_mod)
+
+(export shambler-on-tick shambler-on-hit-dealt shambler-on-hit-taken shambler-on-ko)
+
+;; on-tick: per-mille speed. Full health walks at 1000; a body at or below a quarter health lurches at
+;; 1250. The host multiplies its own base speed by this, so the mod never sets a speed itself.
+(defn shambler-on-tick [(hp : I32) (hp-max : I32)] : I32
+  (if (<= (* hp 4) hp-max) 1250 1000))
+
+;; on-hit-dealt: bonus damage when the target's shield is already gone (0 or less counts as gone -- a
+;; shield that was broken this tick must not eat the bite). 5 points, so an AR round becomes 25.
+(defn shambler-on-hit-dealt [(target-shield : I32)] : I32
+  (if (<= target-shield 0) 5 0))
+
+;; on-hit-taken: 1 when the hit leaves the body at or below a quarter health and still alive -- the
+;; moment it enrages. A corpse (hp <= 0) is not enraged, and a body at full health is not.
+(defn shambler-on-hit-taken [(hp : I32) (hp-max : I32)] : I32
+  (if (and (> hp 0) (<= (* hp 4) hp-max)) 1 0))
+
+;; on-ko: ticks the mod wants the body to stay down. 0 = no opinion, the host's respawn rule applies.
+(defn shambler-on-ko [] : I32 0)

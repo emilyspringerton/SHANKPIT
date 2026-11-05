@@ -30,6 +30,7 @@
 (module shankpit/combat_api)
 
 (export combat-shield-after combat-health-after combat-killed? combat-ko? combat-damage-carried
+        combat-score-for combat-respawn-ticks combat-respawn-hp
         combat-dmg-dealt
         combat-evt-hit combat-evt-ko combat-evt-first combat-evt-last combat-evt-is-combat?)
 
@@ -69,6 +70,21 @@
 ;; alive test, so a body already at zero (or below, from an older build) is never "killed again".
 (defn combat-ko? [(hp : I32) (shield : I32) (dmg : I32) (head : I32)] : I32
   (if (and (> hp 0) (<= (combat-health-after hp shield dmg head) 0)) 1 0))
+
+;; ---- after the KO: score and respawn ----------------------------------------------------------------
+;; Two numbers a death has to produce, and both are class-shaped rather than body-shaped: the job table's
+;; own curve gives a level-1 shambler 55 and a brute 95, so 90 is the line between the two weight classes.
+;; A kill scores 1 for a light body and 3 for a heavy one, doubled in the head; a respawn restores the
+;; body's own full health and nothing else (no shield -- that is earned, not handed back). At this
+;; build's 16 ms tick, 90 ticks is 1.44 s and 180 is 2.88 s.
+(defn combat-score-for [(hp-max : I32) (head : I32)] : I32
+  (let [base (if (>= hp-max 90) 3 1)]
+    (if (= head 1) (* base 2) base)))
+
+(defn combat-respawn-ticks [(hp-max : I32)] : I32
+  (if (>= hp-max 90) 180 90))
+
+(defn combat-respawn-hp [(hp-max : I32)] : I32 hp-max)
 
 ;; ---- the event family ------------------------------------------------------------------------------
 ;; REFLUX action types 129 and 130 -- the next free pair after the citizen family (128) in

@@ -31,6 +31,8 @@ parena_binary(
         "//packages/sim:horde_rules.prn",
         "//packages/sim:hit_rules.prn",
         "//packages/sim:combat_api.prn",
+        "//packages/sim:mod_abi.prn",
+        "//packages/sim:shambler_mod.prn",
     ],
     deps = ["@parena//runtime:parena_runtime"],
 )

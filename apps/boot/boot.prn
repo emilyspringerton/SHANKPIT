@@ -289,6 +289,54 @@
     0
     1))
 
+;; ---- the mod ABI, and a real mod against it ---------------------------------------------------------
+;; The standard is only real if something is written to it and called in its order. mod-check pins the
+;; contract (ids, tick order, validity, fall-through); the shambler cases pin an actual character mod's
+;; numbers, including both sides of its quarter-health boundary.
+(defn mod-check [] : I32
+  (if (and (= (hook-count) 6)
+           (= (hook-at 0) (hook-on-spawn))
+           (= (hook-at 1) (hook-on-tick))
+           (= (hook-at 2) (hook-on-hit-dealt))
+           (= (hook-at 3) (hook-on-hit-taken))
+           (= (hook-at 4) (hook-on-shield))
+           (= (hook-at 5) (hook-on-ko))
+           (= (hook-at 6) -1)
+           (= (hook-is-valid 10) 0)
+           (= (hook-is-valid 11) 1)
+           (= (hook-is-valid 16) 1)
+           (= (hook-is-valid 17) 0)
+           (= (hook-resolve 1 0) 1)
+           (= (hook-resolve 0 1) 1)
+           (= (hook-resolve 0 0) 0)
+           (= (shambler-on-tick 55 55) 1000)
+           (= (shambler-on-tick 14 55) 1000)
+           (= (shambler-on-tick 13 55) 1250)
+           (= (shambler-on-hit-taken 55 55) 0)
+           (= (shambler-on-hit-taken 14 55) 0)
+           (= (shambler-on-hit-taken 13 55) 1)
+           (= (shambler-on-hit-taken 0 55) 0)
+           (= (shambler-on-hit-dealt 0) 5)
+           (= (shambler-on-hit-dealt 40) 0)
+           (= (shambler-on-hit-dealt -1) 5)
+           (= (shambler-on-ko) 0))
+    0
+    1))
+
+;; What a death produces: a score shaped by weight class and head, and a respawn that restores exactly
+;; the body's own health. A shambler (55) is light, a brute (95) is heavy -- 90 is the line.
+(defn rules-check [] : I32
+  (if (and (= (combat-score-for 55 0) 1)
+           (= (combat-score-for 55 1) 2)
+           (= (combat-score-for 95 0) 3)
+           (= (combat-score-for 95 1) 6)
+           (= (combat-respawn-ticks 55) 90)
+           (= (combat-respawn-ticks 95) 180)
+           (= (combat-respawn-hp 55) 55)
+           (= (combat-respawn-hp 95) 95))
+    0
+    1))
+
 (defn shank-boot-main [] : I32
   (do
     (println "SHANKPIT clean-room boot")
@@ -310,10 +358,13 @@
     (println "horde: a shield soaks first, and a head shot through one is an ordinary hit")
     (println "horde: combat goes through combat_api, and its events are the REFLUX family 129-130")
     (println "horde: the killing hit fires the KO event once, and a corpse is not killed again")
+    (println "mods: the hook ABI runs in one fixed order, and 1 means the mod handled it")
+    (println "mods: shambler_mod enrages below a quarter health and bites a broken shield")
+    (println "horde: a kill scores by weight class, doubles in the head, and respawn restores full health")
     (if (and (= (level-check) 0)
              (> (turn-cap) 0) (< (turn-cap) 2000) (> (distance-bias) 1000)
              (= (frame-check) 0) (= (palette-check) 0) (= (sky-check) 0) (>= (sky-scan) 1)
-             (= (sim-check) 0) (= (horde-check) 0) (= (horde-place-check) 0) (= (horde-facing-check) 0) (= (horde-rest-check) 0) (= (health-check) 0) (= (hit-check) 0) (= (shield-check) 0) (= (event-check) 0) (= (death-check) 0))
+             (= (sim-check) 0) (= (horde-check) 0) (= (horde-place-check) 0) (= (horde-facing-check) 0) (= (horde-rest-check) 0) (= (health-check) 0) (= (hit-check) 0) (= (shield-check) 0) (= (event-check) 0) (= (death-check) 0) (= (mod-check) 0) (= (rules-check) 0))
       (do
         (println "boot plan: the level's own spawner, zombie mode")
         0)
