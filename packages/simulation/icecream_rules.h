@@ -61,6 +61,12 @@ int icecream_stop_cycle_ms(void);
 int icecream_dwell_ms(void);
 /* 1 while a vendor is parked (the first icecream_dwell_ms of every cycle) */
 int icecream_parked(int now_ms);
+/* one truck's SHIFT: the cycle cut into one shift per jingle (60000/4 = 15000 ms) */
+int icecream_park_phase_ms(void);
+/* 1 while the vendor in SLOT is parked. Slot 0 is icecream_parked exactly and each further slot parks one
+ * shift later, so a district's trucks take turns pulling over instead of all parking together -- still pure
+ * clock arithmetic, so the server and every client agree with nothing to replicate. */
+int icecream_parked_for(int now_ms, int slot);
 
 /* how close to a truck counts as at its window, in world units */
 int icecream_window_units(void);

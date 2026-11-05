@@ -13,7 +13,7 @@ SIREN_PRN := $(PARENA_DIR)/stdlib/shankpit/siren_rules.prn
 ICECREAM_PRN := $(PARENA_DIR)/stdlib/shankpit/icecream_rules.prn
 
 .PHONY: regen-siren-rules check-siren-rules test-siren-rules test-police-patrol test-siren-dsp \
-	regen-icecream-rules check-icecream-rules test-icecream-dsp test-vendor-serve
+	regen-icecream-rules check-icecream-rules test-icecream-dsp test-vendor-serve test-vendor-sale
 
 regen-siren-rules:
 	@test -x $(PARENA_DIR)/parena || $(MAKE) -C $(PARENA_DIR) build >/dev/null
@@ -56,10 +56,20 @@ test-icecream-dsp: | $(BIN_DIR)
 # nothing, one cone per hold, the cooldown, a second truck's queue, and the health ceiling. The numbers it
 # checks are PARENA's (icecream-serve-ms / -heal / -cooldown-ms), read through the generated C.
 test-vendor-serve: | $(BIN_DIR)
-	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/audio -Ipackages/simulation -Ipackages/world \
+	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/common -Ipackages/audio -Ipackages/simulation -Ipackages/world \
 		packages/simulation/vendor_serve_test.c packages/simulation/icecream_rules.c \
 		-o $(BIN_DIR)/vendor_serve_test $(LIBS_M)
 	./$(BIN_DIR)/vendor_serve_test
+
+# test-vendor-sale -- the AUTHORITY's half: which truck is nearest, that a rolling or out-of-scene truck never
+# sells, that the nearest one does, and that the heal lands on the health it is handed (and on nothing when a
+# client hands over no health at all). protocol.h is included for the real BuggyState, so the fake world here
+# is the struct the wire describes rather than a stand-in that could drift from it.
+test-vendor-sale: | $(BIN_DIR)
+	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/common -Ipackages/simulation \
+		packages/simulation/vendor_sale_test.c packages/simulation/icecream_rules.c \
+		-o $(BIN_DIR)/vendor_sale_test $(LIBS_M)
+	./$(BIN_DIR)/vendor_sale_test
 
 test-siren-rules: | $(BIN_DIR)
 	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/simulation -Ipackages/world \

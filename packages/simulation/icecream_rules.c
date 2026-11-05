@@ -27,6 +27,8 @@ int icecream_note_hz_milli_for(int, int);
 int icecream_stop_cycle_ms();
 int icecream_dwell_ms();
 int icecream_parked(int);
+int icecream_park_phase_ms();
+int icecream_parked_for(int, int);
 int icecream_window_units();
 int icecream_serve_ms();
 int icecream_serve_heal();
@@ -278,6 +280,17 @@ int icecream_parked(int now_ms __attribute__((unused))) {
     } else {
     return 0;
     }
+}
+
+int icecream_park_phase_ms(void) {
+    return (icecream_stop_cycle_ms() / icecream_jingle_count());
+}
+
+int icecream_parked_for(int now_ms __attribute__((unused)), int slot __attribute__((unused))) {
+    int n __attribute__((unused)) = icecream_jingle_count();
+    int s __attribute__((unused)) = ((slot < 0) ? 0 : slot);
+    int k __attribute__((unused)) = (s - ((s / n) * n));
+    return icecream_parked((((now_ms < 0) ? 0 : now_ms) + (k * icecream_park_phase_ms())));
 }
 
 int icecream_window_units(void) {

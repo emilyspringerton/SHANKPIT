@@ -766,11 +766,13 @@ static inline void buggy_tick_all(unsigned int now_ms) {
             if (b->police || b->ice_cream) {
                 float pth = 0.0f, pst = 0.0f;
                 police_patrol_intent(b, now_ms, &pth, &pst);
-                /* An unmanned VENDOR pulls over on the town clock (PARENA icecream-parked): while its shift's
-                   stop window is open it holds the brakes, which is what opens the window that sells the
-                   cone. It stops where keep-right already put it -- its own side of the road, at the kerb.
-                   A cruiser never stops, so a police car is unaffected whatever the rule says. */
-                if (b->ice_cream && icecream_parked((int)(now_ms % 3600000u))) pth = 0.0f;
+                /* An unmanned VENDOR pulls over on the town clock (PARENA icecream-parked-for): while its
+                   slot's stop window is open it holds the brakes, which is what opens the window that sells
+                   the cone. The SLOT is the truck's own id, so two vendors in one district take turns
+                   rather than parking together and leaving the street with no open window between them. It
+                   stops where keep-right already put it -- its own side of the road, at the kerb. A cruiser
+                   never stops, so a police car is unaffected whatever the rule says. */
+                if (b->ice_cream && icecream_parked_for((int)(now_ms % 3600000u), b->id)) pth = 0.0f;
                 throttle = pth;
                 steer_intent = pst;
             }

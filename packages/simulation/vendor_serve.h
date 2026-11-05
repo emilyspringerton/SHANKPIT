@@ -26,8 +26,10 @@
  *   make test-vendor-serve
  */
 
+#include <math.h>
 #include <string.h>
 
+#include "protocol.h"
 #include "../simulation/icecream_rules.h"
 
 #define VENDOR_SERVE_NONE   (-1)
@@ -107,6 +109,48 @@ static inline int vendor_serve_heal(int health, int max_health) {
     int out = health + heal;
     if (out > cap) out = cap;
     return out;
+}
+
+/* THE AUTHORITY'S TICK: which truck is nearest, and what the cone does to a player's health.
+ *
+ * The state machine above answers "is this buyer being served"; this answers "by WHICH truck, and on whose
+ * health". The server used to answer both inline in apps/server, which meant the part most likely to be
+ * wrong -- the scene filter, picking the nearest vendor, applying the heal to the authoritative PlayerState
+ * rather than to a client's copy -- was compiled and never tested. Hoisting it here puts it under
+ * `make test-vendor-sale` with fake cars, and keeps ONE scan for the authority and for the client that only
+ * wants to draw a progress ring.
+ *
+ * Return 1 on the tick a cone is APPLIED (health is written only then, and only if a health pointer is
+ * given). A caller with no business touching health -- a client in a networked match -- passes NULL and gets
+ * the same answer about the hold without any way to spend it. That is the whole point of the split: the
+ * machine is shared, the authority is a parameter.
+ *
+ * scene is the buyer's scene: a truck two scenes away is not the nearest truck. speed_pm is derived from the
+ * truck's own velocity here (not trusted from anywhere), because a moving truck must not sell. */
+static inline int vendor_serve_authority_tick(VendorServe *v, int *health, int max_health,
+                                              float px, float pz, int scene,
+                                              const BuggyState *buggies, int nbuggy,
+                                              int dt_ms, int *out_truck) {
+    int truck = VENDOR_SERVE_NONE, speed_pm = 0, dist_units = 999999;
+    float best = 1.0e9f;
+    if (buggies) {
+        for (int i = 0; i < nbuggy; i++) {
+            const BuggyState *b = &buggies[i];
+            if (!b->active || !b->ice_cream || b->scene_id != scene) continue;
+            float dx = b->x - px, dz = b->z - pz;
+            float d = sqrtf(dx * dx + dz * dz);
+            if (d < best) {
+                best = d;
+                truck = b->id;
+                speed_pm = (int)((fabsf(b->vx) + fabsf(b->vz)) * 100.0f);
+            }
+        }
+    }
+    if (truck != VENDOR_SERVE_NONE) dist_units = (int)(best + 0.5f);
+    int served = vendor_serve_tick(v, truck, dist_units, speed_pm, dt_ms);
+    if (out_truck) *out_truck = truck;
+    if (served && health) *health = vendor_serve_heal(*health, max_health);
+    return served;
 }
 
 #endif /* VENDOR_SERVE_H */

@@ -12626,6 +12626,12 @@ static void draw_rocket_air_hud(const BuggyState *b, const PlayerState *p, int a
     draw_string("BOOST", x0 + 120.0f, 148.0f, small);
 }
 
+/* What the vending block above last measured, in 0..1000 (PARENA icecream-serve-progress). Read only by
+ * draw_hud, so the hold at a truck's window is something a player can SEE -- before this the cone was
+ * announced by nothing but a health bar that moved after the fact. Written only by the one block that runs
+ * vendor_serve_tick, so it cannot disagree with the state machine that decides the hand-over. */
+static int g_vendor_prompt_pct;
+
 void draw_hud(PlayerState *p) {
     /* Pre-existing broken build, found live (S170-110): the MODE_STORY branch below calls
        draw_tyler_cutscene()/cutscene_tick() with a `now_ms` that was never declared anywhere in
@@ -12667,6 +12673,18 @@ void draw_hud(PlayerState *p) {
         if (p->hit_feedback >= 25) {
             draw_circle(640, 360, 28.0f, 16); // Outer Kill Ring
         }
+    }
+
+    /* THE VENDOR'S WINDOW (PARENA icecream-serve-progress). The song walks you to the truck; this is the hold
+     * itself, so standing at a stopped vendor is something you can see rather than a 900 ms guess. The number
+     * is the SAME progress the state machine hands the authority, so a client cannot draw more than it has,
+     * and nothing is drawn while no window is open -- a percentage floating over a moving truck would be a
+     * lie about the one rule that makes the window mean anything. */
+    if (g_vendor_prompt_pct > 0) {
+        char vb[64];
+        snprintf(vb, sizeof(vb), "ICE CREAM  %d%%", g_vendor_prompt_pct / 10);
+        glColor3f(0.98f, 0.86f, 0.72f);
+        draw_string(vb, 520.0f, 300.0f, 3.2f);
     }
 
     /* EMPIRE: the shared world in one line -- units under orders, what each side has banked, how much
@@ -15489,8 +15507,11 @@ void draw_scene(PlayerState *render_p) {
                The window is shut while the truck rolls -- the mirror of the jingle, which only plays while it
                moves -- so a truck passing at arm's length sells you nothing.
 
-               Named limit: client-local, the same scope cut the food pickup makes. The cone is applied to the
-               local player and never travels the wire; a server-authoritative sale is a separate job. */
+               Who OWNS the cone: the authority over health -- apps/server's own server_vendor_tick runs this
+               same machine against the authoritative PlayerState, so the cone reaches the buyer through the
+               ordinary snapshot and survives a reconnect -- and this process only when there is no server
+               (sock < 0). So this block ticks the machine to DRAW the hold, and heals on exactly one of
+               those two paths. */
             {
                 static VendorServe g_vendor_serve;
                 static int g_vendor_serve_ready;
@@ -15500,24 +15521,19 @@ void draw_scene(PlayerState *render_p) {
                 if (vdt_ms < 0 || vdt_ms > 200) vdt_ms = 16;   /* a stall must not buy a cone in one tick */
                 vendor_last_ms = now_ms;
 
+                /* One scan, shared with the server (vendor_serve_authority_tick): the nearest vendor in THIS
+                   player's scene, and the hold. It is handed NULL health, because a client is not the
+                   authority over its own health -- this call is here for the prompt, and for the one case
+                   where this process IS the authority (sock < 0). The scene filter is a real fix: a truck
+                   two scenes away used to be allowed to be "the nearest truck". */
                 int nearest_truck = VENDOR_SERVE_NONE;
-                float nearest_dist = 1.0e9f;
-                int nearest_speed_pm = 0;
-                for (int vi = 0; vi < MAX_BUGGIES; vi++) {
-                    const BuggyState *vb = &local_state.buggies[vi];
-                    if (!vb->active || !vb->ice_cream) continue;
-                    float dx = vb->x - listener->x, dz = vb->z - listener->z;
-                    float dist = sqrtf(dx * dx + dz * dz);
-                    if (dist < nearest_dist) {
-                        nearest_dist = dist;
-                        nearest_truck = vb->id;
-                        nearest_speed_pm = (int)((fabsf(vb->vx) + fabsf(vb->vz)) * 100.0f);
-                    }
-                }
-                int served = vendor_serve_tick(&g_vendor_serve, nearest_truck,
-                                               nearest_truck == VENDOR_SERVE_NONE ? 999999
-                                                                                  : (int)(nearest_dist + 0.5f),
-                                               nearest_speed_pm, vdt_ms);
+                int served = vendor_serve_authority_tick(&g_vendor_serve, NULL, 0,
+                                                         listener->x, listener->z,
+                                                         (int)listener->scene_id,
+                                                         local_state.buggies, MAX_BUGGIES,
+                                                         vdt_ms, &nearest_truck);
+                /* what draw_hud draws: 0 unless this player is mid-hold at an open window */
+                g_vendor_prompt_pct = vendor_serve_progress(&g_vendor_serve);
                 /* Only when THIS process is the authority. In a networked match the server owns every
                    player's health and runs vendor_serve_tick itself (apps/server's server_vendor_tick), so
                    a client that healed itself here would fight the next snapshot every frame. The client

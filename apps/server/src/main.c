@@ -1445,23 +1445,16 @@ static void server_vendor_tick(unsigned int now_ms) {
             }
             continue;
         }
-        int truck = VENDOR_SERVE_NONE, speed_pm = 0, dist_units = 999999;
-        float best = 1.0e9f;
-        for (int bi = 0; bi < MAX_BUGGIES; bi++) {
-            const BuggyState *b = &local_state.buggies[bi];
-            if (!b->active || !b->ice_cream || b->scene_id != p->scene_id) continue;
-            float dx = b->x - p->x, dz = b->z - p->z;
-            float d = sqrtf(dx * dx + dz * dz);
-            if (d < best) {
-                best = d;
-                truck = b->id;
-                speed_pm = (int)((fabsf(b->vx) + fabsf(b->vz)) * 100.0f);
-            }
-        }
-        if (truck != VENDOR_SERVE_NONE) dist_units = (int)(best + 0.5f);
-        if (vendor_serve_tick(&g_vendor_serve[cid], truck, dist_units, speed_pm, dt_ms)) {
-            int before = p->health;
-            p->health = vendor_serve_heal(p->health, 100);   /* PlayerState's own 0..100 scale */
+        /* WHO the nearest truck is and WHAT the cone does are one function (vendor_serve_authority_tick),
+           next to the state machine, so the wiring -- the scene filter, the nearest vendor, the heal landing
+           on the AUTHORITATIVE health -- is covered headless by `make test-vendor-sale` rather than only
+           compiled. This file keeps the part that is genuinely the server's: who counts as a buyer. */
+        int truck = VENDOR_SERVE_NONE;
+        int before = p->health;
+        int served = vendor_serve_authority_tick(&g_vendor_serve[cid], &p->health, 100,
+                                                 p->x, p->z, p->scene_id,
+                                                 local_state.buggies, MAX_BUGGIES, dt_ms, &truck);
+        if (served) {
             NET_SERVER_LOG("VENDOR_SALE client_id=%d truck=%d health=%d->%d", cid, truck, before, p->health);
             (void)before;   /* read only by the log above, which the macro strips when verbose is off */
         }
