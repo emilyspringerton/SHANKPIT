@@ -69,6 +69,8 @@ void audio_set_siren(int kind, int hz_milli, float gain, float pan);
  * the truck's OWN melody (icecream-jingle-for-id) so two trucks on one street are two tunes to the ear
  * rather than one tune in two keys. Jingle 0 is the authored song. */
 void audio_set_icecream(int playing, float gain, float pan, int jingle);
+/* the chime a STOPPED vendor rings instead (the same rule inverted; never both at once) */
+void audio_set_icecream_chime(int playing, float gain, float pan);
 
 /* NOCK master chain (2026-09-27): run a filter chain authored in IDUNA's NOCK "Sounds" tab over
  * the whole engine mix. audio_init() loads SHANKPIT_SOUND_CHAIN=<name> automatically from

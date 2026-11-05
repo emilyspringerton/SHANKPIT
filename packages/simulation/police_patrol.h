@@ -52,6 +52,15 @@
 #define POLICE_PATROL_KEEP_RIGHT_MAX 6.0f
 /* How far a width probe looks for a wall, in world units. Past this the road counts as open. */
 #define POLICE_PATROL_WIDTH_PROBE    40.0f
+/* PARKING IN A BAY. The driving offset is capped (POLICE_PATROL_KEEP_RIGHT_MAX) because a cruiser at speed has
+ * no business hugging the kerb; a PARKED truck has every business doing it, so its offset is measured all the
+ * way out to the kerb -- which is the "stops a few units off the kerb" limit, closed. The margin is what keeps
+ * the car's own half-width off the wall. */
+#define POLICE_PATROL_BAY_MARGIN      0.6f
+#define POLICE_PATROL_PARK_OFFSET_MAX 12.0f
+/* How close to the bay counts as parked. Slower than the waypoint radius: a truck that stops half a car short
+ * of the kerb has still pulled over, one that stops in the traffic lane has not. */
+#define POLICE_PATROL_BAY_HIT         1.5f
 
 /* A box FOOTPRINT (centre + size) in the level's own units. This header stays free of physics.h and
  * level_boxes.h: the host hands over the walls it already has, and the geometry below is the only thing that
@@ -81,6 +90,29 @@ static inline void police_patrol_set_keep_right(float offset) {
     if (!(offset >= 0.0f)) offset = 0.0f;
     if (offset > POLICE_PATROL_KEEP_RIGHT_MAX) offset = POLICE_PATROL_KEEP_RIGHT_MAX;
     g_police_keep_right = offset;
+}
+
+/* The offset a PARKED truck takes: out to the kerb, with a car's half-width of margin. 0 means "no bay" (no
+ * road measured, or a road too narrow to hold a parked car), and a host with no bay stops the truck where it
+ * is instead of pretending to pull in. */
+static float g_police_park_offset = 0.0f;
+
+static inline float police_patrol_park_offset_for_width(float width) {
+    if (!(width > 0.5f)) return 0.0f;
+    float offset = width * 0.5f - POLICE_PATROL_CAR_HALF_WIDTH - POLICE_PATROL_BAY_MARGIN;
+    if (offset < 0.0f) offset = 0.0f;
+    if (offset > POLICE_PATROL_PARK_OFFSET_MAX) offset = POLICE_PATROL_PARK_OFFSET_MAX;
+    return offset;
+}
+
+static inline float police_patrol_park_offset(void) {
+    return g_police_park_offset;
+}
+
+static inline void police_patrol_set_park_offset(float offset) {
+    if (!(offset >= 0.0f)) offset = 0.0f;
+    if (offset > POLICE_PATROL_PARK_OFFSET_MAX) offset = POLICE_PATROL_PARK_OFFSET_MAX;
+    g_police_park_offset = offset;
 }
 
 /* Distance from (ox,oz) along the unit ray (dx,dz) to the first box FOOTPRINT, or max_t when nothing is hit.
@@ -251,7 +283,11 @@ static inline void police_patrol_waypoint_target(int id, unsigned int now_ms, fl
 /* Where this cruiser should actually put its wheels: the centreline target taken KEEP_RIGHT to the right of
  * the direction of travel. On the ring fallback there is no lane direction to keep right of, so the offset is
  * skipped and the ring's own tangent does that job. */
-static inline void police_patrol_target(int id, unsigned int now_ms, float *out_x, float *out_z) {
+/* The centreline target taken `offset` to the right of the direction of travel. One implementation for both
+ * offsets, because "keep right" and "pull into the bay" are the same geometry with a different number -- a
+ * second copy is how one of them ends up on the wrong side of the road. */
+static inline void police_patrol_offset_target(int id, unsigned int now_ms, float offset,
+                                               float *out_x, float *out_z) {
     float tx = 0.0f, tz = 0.0f;
     police_patrol_waypoint_target(id, now_ms, &tx, &tz);
     if (id >= 0 && id < POLICE_PATROL_MAX && g_police_lane_n[id] > 1) {
@@ -266,12 +302,21 @@ static inline void police_patrol_target(int id, unsigned int now_ms, float *out_
         if (len > 0.001f) {
             fx /= len; fz /= len;
             /* right of travel: for forward (0,+Z) that is (+X,0), the engine's own yaw convention */
-            tx += fz * g_police_keep_right;
-            tz += -fx * g_police_keep_right;
+            tx += fz * offset;
+            tz += -fx * offset;
         }
     }
     if (out_x) *out_x = tx;
     if (out_z) *out_z = tz;
+}
+
+static inline void police_patrol_target(int id, unsigned int now_ms, float *out_x, float *out_z) {
+    police_patrol_offset_target(id, now_ms, g_police_keep_right, out_x, out_z);
+}
+
+/* Where a vendor parks: the same lane point, taken all the way out to the kerb. */
+static inline void police_patrol_park_target(int id, unsigned int now_ms, float *out_x, float *out_z) {
+    police_patrol_offset_target(id, now_ms, g_police_park_offset, out_x, out_z);
 }
 
 /* The intent the host hands to simulate_buggy_state_ex. throttle 0..1 (never reverse: a patrol that backs
@@ -309,6 +354,36 @@ static inline void police_patrol_intent(const BuggyState *b, unsigned int now_ms
                 int dir = (g_police_lane_dir[b->id] < 0) ? -1 : 1;
                 g_police_lane_wp[b->id] = ((g_police_lane_wp[b->id] + dir) % n + n) % n;
             }
+        }
+    }
+    if (out_throttle) *out_throttle = throttle;
+    if (out_steer) *out_steer = steer;
+}
+
+/* Pulling INTO the bay. A parked truck drives to police_patrol_park_target at a walking pace and holds the
+ * brakes once it is there, instead of stopping dead in the traffic lane: that is the difference between
+ * "pulled over" and "broken down". No lane or no measured bay (offset 0) means there is nowhere to pull in, so
+ * the intent is nothing at all and the host stops the truck where it stands -- the behaviour every host had
+ * before the bay existed, which is also what a server with no level geometry gets. */
+static inline void police_patrol_park_intent(const BuggyState *b, unsigned int now_ms,
+                                             float *out_throttle, float *out_steer) {
+    float throttle = 0.0f, steer = 0.0f;
+    if (b && b->active && g_police_park_offset > 0.0f && police_patrol_has_lane(b->id)) {
+        float tx, tz;
+        police_patrol_park_target(b->id, now_ms, &tx, &tz);
+        float dx = tx - b->x, dz = tz - b->z;
+        float dist = sqrtf(dx * dx + dz * dz);
+        if (dist > POLICE_PATROL_BAY_HIT) {
+            float bearing = atan2f(dx, dz) * 57.29577951f;   /* 0 = +Z, the engine's own yaw convention */
+            if (bearing < 0.0f) bearing += 360.0f;
+            float rel = bearing - b->yaw;
+            while (rel > 180.0f) rel -= 360.0f;
+            while (rel < -180.0f) rel += 360.0f;
+            steer = rel / 60.0f;
+            if (steer > 1.0f) steer = 1.0f;
+            if (steer < -1.0f) steer = -1.0f;
+            /* slow in, so it stops AT the kerb rather than bouncing off the wall and calling that parked */
+            throttle = (dist > 12.0f) ? 0.7f : 0.45f;
         }
     }
     if (out_throttle) *out_throttle = throttle;

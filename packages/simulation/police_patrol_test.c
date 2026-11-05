@@ -290,6 +290,76 @@ int main(void) {
         printf("PASS: keep-right is measured from the road, shrinks with it, and never puts a car in a wall\n");
     }
 
+    /* ---- a parked vendor pulls INTO a bay: past the driving offset, out to the kerb ---- */
+    {
+        float bxs[3] = { 0.0f, 40.0f, 80.0f }, bzs[3] = { 0.0f, 0.0f, 0.0f };
+        police_patrol_set_lane(2, bxs, bzs, 3);
+        police_patrol_set_direction(2, 1);
+
+        BuggyState vb;
+        memset(&vb, 0, sizeof vb);
+        vb.active = 1;
+        vb.id = 2;
+        vb.yaw = 90.0f;                     /* facing +X, the way this lane runs */
+
+        /* with no bay measured (a server with no level geometry, a ring with no lane) a parked truck must not
+           drive to one -- it stops where it is, which is what every host did before the bay existed */
+        police_patrol_set_park_offset(0.0f);
+        float bth = 1.0f, bst = 1.0f;
+        police_patrol_park_intent(&vb, 0, &bth, &bst);
+        CHECK(bth == 0.0f && bst == 0.0f,
+              "with no bay measured the vendor still drove somewhere (%.2f/%.2f)", (double)bth, (double)bst);
+
+        float wide = 24.0f;
+        float drive = police_patrol_keep_right_for_width(wide);
+        float bay = police_patrol_park_offset_for_width(wide);
+        printf("      a %.0f-unit road: keep-right %.2f, kerb bay %.2f\n", (double)wide, (double)drive, (double)bay);
+        CHECK(bay > drive, "the bay (%.2f) is not further out than the driving offset (%.2f)",
+              (double)bay, (double)drive);
+        CHECK(bay + POLICE_PATROL_CAR_HALF_WIDTH <= wide * 0.5f + 0.001f,
+              "a car in a %.2f bay does not fit a %.0f road", (double)bay, (double)wide);
+        CHECK(police_patrol_park_offset_for_width(3.0f) == 0.0f,
+              "a road too narrow to hold a parked car still offered a bay");
+        police_patrol_set_park_offset(bay);
+
+        /* arrive at the first waypoint first, so the beat is on the 0 -> 1 segment: a fresh lane's "previous"
+           point is the last one (it wraps), and the offset geometry below must be about the road ahead, not
+           about the closing segment of the loop */
+        vb.x = bxs[0];
+        vb.z = bzs[0];
+        police_patrol_intent(&vb, 0, &bth, &bst);
+        CHECK(police_patrol_waypoint(2) == 1, "the cruiser did not advance to the second waypoint (%d)",
+              police_patrol_waypoint(2));
+
+        /* the bay is AT the waypoint it was already driving to, out on its own side of the road: no new point
+           is invented, so a bay can never be somewhere the road is not */
+        float px, pz, dx0, dz0;
+        police_patrol_park_target(2, 0, &px, &pz);
+        police_patrol_target(2, 0, &dx0, &dz0);
+        CHECK(fabsf(px - bxs[1]) < 0.05f && fabsf(dx0 - px) < 0.05f,
+              "the bay (%.2f) is not on the lane the truck drives (%.2f)", (double)px, (double)dx0);
+        CHECK(fabsf(pz + bay) < 0.05f, "the bay is %.2f off the centreline, not the %.2f kerb",
+              (double)-pz, (double)bay);
+
+        /* away from it: drive there, and slowly in */
+        police_patrol_park_intent(&vb, 0, &bth, &bst);
+        printf("      vendor at the lane start: throttle %.2f steer %.2f toward the bay\n",
+               (double)bth, (double)bst);
+        CHECK(bth > 0.0f, "a vendor away from its bay did not drive toward it");
+        CHECK(bth < 1.0f, "the vendor drove into its bay at full throttle (%.2f)", (double)bth);
+
+        /* at it: brakes, because a parked truck that keeps rolling is not parked */
+        vb.x = px;
+        vb.z = pz;
+        police_patrol_park_intent(&vb, 0, &bth, &bst);
+        CHECK(bth == 0.0f, "a vendor already at its bay kept driving (throttle %.2f)", (double)bth);
+        CHECK(fabsf(bst) < 0.001f, "a parked vendor kept steering (%.2f)", (double)bst);
+
+        police_patrol_set_park_offset(0.0f);
+        police_patrol_clear_lane(2);
+        printf("PASS: a parked vendor pulls into the kerb and stops there, and nothing of the sort with no bay\n");
+    }
+
     printf("\n%s%d check(s) failed\n", g_failed ? "FAIL: " : "PASS: ", g_failed);
     return g_failed ? 1 : 0;
 }

@@ -81,4 +81,22 @@ int icecream_serve_progress(int held_ms);
 /* is the window open: close enough AND stopped (1/0) */
 int icecream_serve_open(int dist_units, int speed_pm);
 
+/* -- the chime of a STOPPED truck ------------------------------------------------------------------
+ * The jingle only plays while the truck moves, so a vendor is silent exactly when its window is open. A
+ * stopped truck therefore chimes instead: two struck notes at its own short period, quieter than the song
+ * and carrying a third as far -- a different sound, so the ear can tell "coming" from "here". */
+int icecream_chime_carry_units(void);
+int icecream_chime_note_count(void);
+int icecream_chime_note_ms(void);
+int icecream_chime_gap_ms(void);
+int icecream_chime_period_ms(void);
+/* how long the chime sounds, gap included */
+int icecream_chime_ms(void);
+/* note i of the chime in millihertz (C6, G5); 0 for a note that does not exist */
+int icecream_chime_hz_milli(int i);
+/* does this vendor chime right now: 1 while it is STOPPED (the mirror of icecream_trigger) */
+int icecream_chime_trigger(int speed_pm);
+/* chime loudness at a distance, 0..1000 (0 past icecream_chime_carry_units) */
+int icecream_chime_gain_permille(int dist_units);
+
 #endif /* ICECREAM_RULES_H */

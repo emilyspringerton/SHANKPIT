@@ -13,7 +13,8 @@ SIREN_PRN := $(PARENA_DIR)/stdlib/shankpit/siren_rules.prn
 ICECREAM_PRN := $(PARENA_DIR)/stdlib/shankpit/icecream_rules.prn
 
 .PHONY: regen-siren-rules check-siren-rules test-siren-rules test-police-patrol test-siren-dsp \
-	regen-icecream-rules check-icecream-rules test-icecream-dsp test-vendor-serve test-vendor-sale
+	regen-icecream-rules check-icecream-rules test-icecream-dsp test-vendor-serve test-vendor-sale \
+	test-vendor-sale-e2e
 
 regen-siren-rules:
 	@test -x $(PARENA_DIR)/parena || $(MAKE) -C $(PARENA_DIR) build >/dev/null
@@ -70,6 +71,13 @@ test-vendor-sale: | $(BIN_DIR)
 		packages/simulation/vendor_sale_test.c packages/simulation/icecream_rules.c \
 		-o $(BIN_DIR)/vendor_sale_test $(LIBS_M)
 	./$(BIN_DIR)/vendor_sale_test
+
+# test-vendor-sale-e2e -- the same claim, on a real socket: the real server, a real UDP client, and the cone
+# observed in PACKET_SNAPSHOT. The buyer connects wounded and a vendor is parked next to them by two named
+# test knobs (off by default), because a 25-point heal on a 100/100 client is invisible and a scripted client
+# has no keyboard to walk to a truck with.
+test-vendor-sale-e2e: server
+	timeout 150 python3 scripts/vendor_sale_e2e.py
 
 test-siren-rules: | $(BIN_DIR)
 	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/simulation -Ipackages/world \

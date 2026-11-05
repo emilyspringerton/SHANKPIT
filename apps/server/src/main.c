@@ -1555,6 +1555,65 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
         p->in_reload = 0;
         p->in_use = 0;
         p->in_ability = 0;
+        /* TEST HOOKS -- named, off by default, the convention this project already uses for scripted runs
+           (SHANKPIT_TEST_ZOMBIE_PAIR). A scripted client has no keyboard, so it cannot walk to a truck, and a
+           fresh player spawns at 100/100, so a 25-point cone would be invisible in the snapshot. These two
+           knobs are what let a REAL client observe a REAL sale over a REAL wire:
+             SHANKPIT_TEST_START_HEALTH=N   sets this player's health at CONNECT
+             SHANKPIT_TEST_VENDOR_AT=dx,dz  moves the vendor dx,dz from this player and holds its brakes
+           Both are read once, at CONNECT, and change nothing at all when unset. */
+        {
+            const char *sh = getenv("SHANKPIT_TEST_START_HEALTH");
+            if (sh && sh[0]) {
+                int v = atoi(sh);
+                if (v < 1) v = 1;
+                if (v > 100) v = 100;
+                p->health = v;
+                /* and make the scripted buyer a LEGAL buyer: this path does not go through phys_respawn in
+                   every mode, so without this the cone would be refused for a reason the test is not about */
+                if (p->state != STATE_ALIVE) p->state = STATE_ALIVE;
+                NET_SERVER_LOG("TEST_START_HEALTH client_id=%d health=%d", client_id, p->health);
+            }
+            const char *vend = getenv("SHANKPIT_TEST_VENDOR_AT");
+            if (vend && vend[0]) {
+                float dx = 2.0f, dz = 0.0f;
+                if (sscanf(vend, "%f,%f", &dx, &dz) != 2) { dx = 2.0f; dz = 0.0f; }
+                BuggyState *b = NULL;
+                for (int bi = 0; bi < MAX_BUGGIES && !b; bi++)
+                    if (local_state.buggies[bi].active && local_state.buggies[bi].ice_cream)
+                        b = &local_state.buggies[bi];
+                /* A test world may have no vendor in it at all (the default arena spawns three plain buggies
+                   and no level vehicles, so the LEVEL's own [VENDOR] block never runs). The knob therefore
+                   puts the truck there itself rather than betting the proof on a level this test does not
+                   own -- the real spawn path is covered by local_game's block and by test-vendor-sale. */
+                if (!b) {
+                    for (int bi = 0; bi < MAX_BUGGIES && !b; bi++) {
+                        if (local_state.buggies[bi].active) continue;
+                        b = &local_state.buggies[bi];
+                        buggy_spawn_defaults(b, bi, p->scene_id, p->x + dx, p->z + dz, 0.0f);
+                        b->ice_cream = 1;
+                        b->song = 1;
+                        b->rocket = 1;
+                        b->tank = phys_rocket_tank_max();
+                        NET_SERVER_LOG("TEST_VENDOR_SPAWN client_id=%d truck=%d", client_id, b->id);
+                    }
+                }
+                if (b) {
+                    b->x = p->x + dx;
+                    b->z = p->z + dz;
+                    b->y = p->y;
+                    b->vx = b->vy = b->vz = 0.0f;
+                    /* the buyer stands in the TRUCK's scene, whatever the connect default happened to be */
+                    p->scene_id = b->scene_id;
+                    /* no lane, and the test hold: the truck stands still instead of lapsing into a ring */
+                    police_patrol_clear_lane(b->id);
+                    police_patrol_set_anchor(b->id, b->x, b->z, 2.0f);
+                    g_vendor_test_hold = 1;
+                    NET_SERVER_LOG("TEST_VENDOR_AT client_id=%d truck=%d at=%.2f,%.2f", client_id, b->id,
+                                   (double)b->x, (double)b->z);
+                }
+            }
+        }
         p->use_was_down = 0;
         p->portal_cooldown_until_ms = 0;
         p->vehicle_cooldown = 0;

@@ -722,6 +722,12 @@ static inline void buggy_shard_throw(const BuggyState *b, const SalvageVehicle *
 static void explode_splash(float ex, float ey, float ez, unsigned char scene_id, int owner_id, int damage,
                            float splash_radius, int weapon, unsigned int now_ms);
 
+/* TEST HOOK (named, off by default): hold every vendor stopped so a scripted client can observe a sale
+ * without waiting out the park clock. Set ONLY by apps/server's SHANKPIT_TEST_VENDOR_AT, never by a normal
+ * run -- the same convention as SHANKPIT_TEST_ZOMBIE_PAIR, which is how this project already lets a script
+ * stand where a player would. */
+static int g_vendor_test_hold;
+
 static inline void buggy_tick_all(unsigned int now_ms) {
     for (int i = 0; i < MAX_BUGGIES; i++) {
         BuggyState *b = &local_state.buggies[i];
@@ -767,12 +773,24 @@ static inline void buggy_tick_all(unsigned int now_ms) {
                 float pth = 0.0f, pst = 0.0f;
                 police_patrol_intent(b, now_ms, &pth, &pst);
                 /* An unmanned VENDOR pulls over on the town clock (PARENA icecream-parked-for): while its
-                   slot's stop window is open it holds the brakes, which is what opens the window that sells
-                   the cone. The SLOT is the truck's own id, so two vendors in one district take turns
-                   rather than parking together and leaving the street with no open window between them. It
-                   stops where keep-right already put it -- its own side of the road, at the kerb. A cruiser
-                   never stops, so a police car is unaffected whatever the rule says. */
-                if (b->ice_cream && icecream_parked_for((int)(now_ms % 3600000u), b->id)) pth = 0.0f;
+                   slot's stop window is open it PULLS INTO A BAY -- steering out past the driving offset to
+                   the kerb itself and stopping there (police_patrol_park_intent) -- which is what opens the
+                   window that sells the cone. The SLOT is the truck's own id, so two vendors in one district
+                   take turns rather than parking together and leaving the street with no open window between
+                   them. A host with no measured road, or a lane-less ring, has no bay to pull into and stops
+                   the truck where it stands, exactly as before. A cruiser never stops, so a police car is
+                   unaffected whatever the rule says. */
+                if (b->ice_cream && (g_vendor_test_hold ||
+                                     icecream_parked_for((int)(now_ms % 3600000u), b->id))) {
+                    if (police_patrol_has_lane(b->id) && police_patrol_park_offset() > 0.0f) {
+                        float bth = 0.0f, bst = 0.0f;
+                        police_patrol_park_intent(b, now_ms, &bth, &bst);
+                        pth = bth;
+                        pst = bst;
+                    } else {
+                        pth = 0.0f;   /* nowhere to pull into: hold the brakes where the beat left it */
+                    }
+                }
                 throttle = pth;
                 steer_intent = pst;
             }

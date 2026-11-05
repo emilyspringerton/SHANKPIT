@@ -95,6 +95,9 @@ static SirenDsp g_siren;
 /* The ice-cream truck's song: one voice, the loudest truck near the listener, exactly like the siren. The
  * tune and its timings are PARENA's; icecream_dsp.h only turns them into samples. */
 static IceCreamDsp g_icecream;
+/* and the CHIME a stopped truck rings instead -- a separate voice, because a bell is not the song at a lower
+ * volume (icecream_dsp.h's IceCreamChimeDsp explains why). */
+static IceCreamChimeDsp g_icecream_chime;
 
 /* ── PCM synthesis helpers ───────────────────────────────────────────────── */
 
@@ -267,6 +270,15 @@ static void icecream_add(float *dl, float *dr) {
     *dr += sr;
 }
 
+/* One frame of the stopped truck's chime, added to the same accumulator. Its clock runs through its own
+ * silence (see IceCreamChimeDsp), so the bell rings every period rather than once. */
+static void icecream_chime_add(float *dl, float *dr) {
+    float sl = 0.0f, sr = 0.0f;
+    icecream_chime_dsp_step(&g_icecream_chime, &sl, &sr);
+    *dl += sl;
+    *dr += sr;
+}
+
 /* ── SDL audio callback (runs on audio thread) ───────────────────────────── */
 
 static void thunder_service(int frames);   /* defined with the voice dispatch below */
@@ -320,6 +332,7 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
         wind_add(&wl, &wr);
         siren_add(&wl, &wr);
         icecream_add(&wl, &wr);
+        icecream_chime_add(&wl, &wr);
         out[i * 2]     = (int16_t)(fclampf(out[i * 2]     / 32767.0f + wl, -1.0f, 1.0f) * 32767.0f);
         out[i * 2 + 1] = (int16_t)(fclampf(out[i * 2 + 1] / 32767.0f + wr, -1.0f, 1.0f) * 32767.0f);
     }
@@ -572,6 +585,8 @@ void audio_init(void) {
     siren_dsp_init(&g_siren);
     /* and the vendor's song is silent until a host reports a truck out selling */
     icecream_dsp_init(&g_icecream);
+    /* the chime is silent too until a host reports a STOPPED truck -- a host with no vendors is unchanged */
+    icecream_chime_dsp_init(&g_icecream_chime);
     memset(g_thunder, 0, sizeof(g_thunder));
 
     SDL_PauseAudioDevice(g_dev, 0); /* start playback */
@@ -664,6 +679,15 @@ void audio_set_icecream(int playing, float gain, float pan, int jingle) {
     icecream_dsp_set(&g_icecream, playing, gain, pan);
     /* the truck's own melody: two vendors in one district are two tunes, not one tune twice */
     icecream_dsp_set_jingle(&g_icecream, jingle);
+    SDL_UnlockMutex(g_mutex);
+}
+
+/* The chime of a STOPPED vendor (the counterpart of audio_set_icecream, and never on at the same time: PARENA's
+ * icecream-chime-trigger is icecream-trigger inverted). Targets only, same reason as everything else here. */
+void audio_set_icecream_chime(int playing, float gain, float pan) {
+    if (!g_dev || !g_mutex) return;
+    SDL_LockMutex(g_mutex);
+    icecream_chime_dsp_set(&g_icecream_chime, playing, gain, pan);
     SDL_UnlockMutex(g_mutex);
 }
 

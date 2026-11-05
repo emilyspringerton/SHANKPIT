@@ -3754,8 +3754,14 @@ static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
                 }
                 float road = police_patrol_measure_width(lane_x, lane_z, ln, road_walls, wn);
                 police_patrol_set_keep_right(police_patrol_keep_right_for_width(road));
-                SDL_Log("[LEVEL] patrol lanes: %d authored waypoint(s), road %.1f units, keep-right %.1f",
-                        ln, (double)road, (double)police_patrol_keep_right());
+                /* and the BAY a vendor parks in: the same road, measured all the way out to the kerb instead
+                   of to the driving offset's cap (police_patrol.h). One measurement, two offsets -- the truck
+                   pulls over where the road actually ends, not a fixed number of units short of it. */
+                police_patrol_set_park_offset(police_patrol_park_offset_for_width(road));
+                SDL_Log("[LEVEL] patrol lanes: %d authored waypoint(s), road %.1f units, keep-right %.1f, "
+                        "park bay %.1f",
+                        ln, (double)road, (double)police_patrol_keep_right(),
+                        (double)police_patrol_park_offset());
             }
         } else {
             for (int pi = 0; pi < POLICE_PATROL_MAX; pi++) police_patrol_clear_lane(pi);
@@ -15499,6 +15505,35 @@ void draw_scene(PlayerState *render_p) {
                     best_jingle = icecream_jingle_for_id(vb->id);
                 }
                 audio_set_icecream(playing, best_gain, best_pan, best_jingle);
+            }
+
+            /* THE CHIME OF A STOPPED TRUCK (PARENA icecream-chime-*). The song only plays while the truck
+               moves, so a parked vendor used to be silent exactly when its window was open -- a silent truck
+               at the corner is one you cannot find once you have walked there. A STOPPED vendor therefore
+               chimes instead: two struck notes every icecream-chime-period-ms, quieter than the song and
+               carrying a third as far. One voice, the loudest stopped truck, for the same reason the song has
+               one: two open windows must not add up to a siren. The two rules cannot both fire -- the chime's
+               trigger is the song's trigger inverted -- so a truck either sings on its way or chimes at the
+               kerb, never both. */
+            {
+                int chiming = 0;
+                float best_gain = 0.0f, best_pan = 0.0f;
+                for (int vi = 0; vi < MAX_BUGGIES; vi++) {
+                    const BuggyState *vb = &local_state.buggies[vi];
+                    if (!vb->active || !vb->ice_cream) continue;
+                    float dx = vb->x - listener->x, dz = vb->z - listener->z;
+                    float dist = sqrtf(dx * dx + dz * dz);
+                    int spd_pm = (int)((fabsf(vb->vx) + fabsf(vb->vz)) * 100.0f);
+                    if (!icecream_chime_trigger(spd_pm)) continue;
+                    float g = (float)icecream_chime_gain_permille((int)(dist + 0.5f)) / 1000.0f;
+                    if (g <= best_gain) continue;
+                    int bdeg = (int)(atan2f(dx, dz) * 57.29578f);
+                    if (bdeg < 0) bdeg += 360;
+                    chiming = 1;
+                    best_gain = g;
+                    best_pan = (float)icecream_pan_permille(bdeg, yaw_deg) / 1000.0f;
+                }
+                audio_set_icecream_chime(chiming, best_gain, best_pan);
             }
 
             /* THE WINDOW (PARENA icecream_rules.prn, vendor_serve.h). The song brings you to the truck; this is

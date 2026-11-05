@@ -210,6 +210,114 @@ int main(void) {
             }
     }
 
+    /* ---- the CHIME of a stopped truck: two struck notes, a breath, then silence until the next one ---- */
+    {
+        IceCreamChimeDsp ch;
+        icecream_chime_dsp_init(&ch);
+        icecream_chime_dsp_set(&ch, 1, 0.8f, 0.0f);
+        int note_ms = icecream_chime_note_ms();
+        int gap_ms = icecream_chime_gap_ms();
+        int period = icecream_chime_period_ms();
+        int to = (int)((double)RATE * (double)note_ms / 1000.0);
+        printf("      chime: %d note(s) of %d ms, %d ms breath, every %d ms (%d ms sounding)\n",
+               icecream_chime_note_count(), note_ms, gap_ms, period, icecream_chime_ms());
+        CHECK(icecream_chime_ms() == icecream_chime_note_count() * (note_ms + gap_ms),
+              "the chime's own length (%d) is not its notes and breaths (%d)", icecream_chime_ms(),
+              icecream_chime_note_count() * (note_ms + gap_ms));
+        CHECK(icecream_chime_ms() < period, "the chime (%d ms) leaves no silence in its %d ms period",
+              icecream_chime_ms(), period);
+
+        int bad = 0;
+        for (int n = 0; n < icecream_chime_note_count(); n++) {
+            float prev = 0.0f;
+            int crossings = 0;
+            float peak = 0.0f;
+            for (int i = 0; i < to; i++) {
+                float ll, rr;
+                icecream_chime_dsp_step(&ch, &ll, &rr);
+                if ((ll >= 0.0f) != (prev >= 0.0f)) crossings++;
+                prev = ll;
+                if (fabsf(ll) > peak) peak = fabsf(ll);
+            }
+            int measured = (int)((double)crossings / (2.0 * (double)to / (double)RATE) + 0.5);
+            int want = icecream_chime_hz_milli(n);
+            printf("      chime note %d: asked %.1f Hz, sounded %.1f Hz\n", n, want / 1000.0, (double)measured);
+            if (want <= 0 || fabs((double)measured - (double)want / 1000.0) > (double)want / 1000.0 * 0.08) bad++;
+            /* and the breath after this note really is silent. The note's last frame lands a hair inside the
+               breath (the clock is a double, the boundary is compared as a whole millisecond), so let the
+               boundary pass and measure the MIDDLE of the gap -- tail frames would measure the note's own
+               decay, and the frames after the gap would measure the next strike. */
+            int tg = (int)((double)RATE * (double)gap_ms / 1000.0);
+            int skip = tg / 4, probe = tg / 2;
+            for (int i = 0; i < skip; i++) { float ll, rr; icecream_chime_dsp_step(&ch, &ll, &rr); }
+            float gp = 0.0f;
+            for (int i = 0; i < probe; i++) {
+                float ll, rr;
+                icecream_chime_dsp_step(&ch, &ll, &rr);
+                if (fabsf(ll) > gp) gp = fabsf(ll);
+            }
+            for (int i = 0; i < tg - skip - probe; i++) { float ll, rr; icecream_chime_dsp_step(&ch, &ll, &rr); }
+            if (gp > 0.01f) {
+                bad++;
+                printf("FAIL: the breath after chime note %d sounds (peak %.4f)\n", n, (double)gp);
+            }
+        }
+        CHECK(bad == 0, "%d of the chime's note(s) were wrong or not followed by silence", bad);
+
+        /* the clock runs THROUGH the silence: a bell that only counted while struck would ring once and
+           freeze inside its own gap, which is exactly the bug this voice was written not to have */
+        int rest = (int)((double)RATE * (double)(period - icecream_chime_ms()) / 1000.0);
+        for (int i = 0; i < rest; i++) { float ll, rr; icecream_chime_dsp_step(&ch, &ll, &rr); }
+        float again = 0.0f;
+        for (int i = 0; i < to; i++) {
+            float ll, rr;
+            icecream_chime_dsp_step(&ch, &ll, &rr);
+            if (fabsf(ll) > again) again = fabsf(ll);
+        }
+        printf("      after %d ms of silence the next chime peaked %.4f\n", period - icecream_chime_ms(),
+               (double)again);
+        CHECK(again > 0.01f, "the chime never rang a second time (%d ms period)", period);
+
+        /* one-sided pan, like every other voice in the engine */
+        IceCreamChimeDsp ch2;
+        icecream_chime_dsp_init(&ch2);
+        icecream_chime_dsp_set(&ch2, 1, 0.9f, 1.0f);
+        /* let the gain and pan smoothing arrive first: the ramp owns the first frames and would show up on
+           the left channel for the same reason it does in the song's own test */
+        for (int i = 0; i < 20000; i++) { float ll, rr; icecream_chime_dsp_step(&ch2, &ll, &rr); }
+        float lp = 0.0f, rp = 0.0f;
+        for (int i = 0; i < 4000; i++) {
+            float ll, rr;
+            icecream_chime_dsp_step(&ch2, &ll, &rr);
+            if (fabsf(ll) > lp) lp = fabsf(ll);
+            if (fabsf(rr) > rp) rp = fabsf(rr);
+        }
+        printf("      chime hard right: left peak %.4f, right peak %.4f\n", (double)lp, (double)rp);
+        CHECK(lp < 0.02f && rp > 0.01f, "hard right is not one-sided (left %.4f right %.4f)",
+              (double)lp, (double)rp);
+
+        /* the RULES behind it: quiet, short-carrying, and the exact complement of the song */
+        CHECK(icecream_chime_gain_permille(0) > 0 && icecream_chime_gain_permille(0) <= 600,
+              "a chime on top of the truck is not quiet (%d permille)", icecream_chime_gain_permille(0));
+        CHECK(icecream_chime_gain_permille(0) < icecream_gain_permille(0),
+              "the chime is as loud as the song (%d vs %d)", icecream_chime_gain_permille(0),
+              icecream_gain_permille(0));
+        CHECK(icecream_chime_gain_permille(icecream_chime_carry_units() + 1) == 0,
+              "the chime carries past its own reach");
+        CHECK(icecream_chime_carry_units() < icecream_carry_units(),
+              "the chime carries as far as the song (%d vs %d)", icecream_chime_carry_units(),
+              icecream_carry_units());
+        CHECK(icecream_chime_trigger(0) == 1 && icecream_chime_trigger(400) == 0,
+              "the chime is not tied to being stopped");
+        CHECK(icecream_chime_trigger(0) == icecream_serve_open(0, 0),
+              "a truck whose window is open is not chiming");
+        CHECK(icecream_trigger(1, 400) == 1 && icecream_chime_trigger(400) == 0,
+              "a rolling truck chimed instead of singing");
+        CHECK(icecream_trigger(1, 0) == 0 && icecream_chime_trigger(0) == 1,
+              "a parked truck sang instead of chiming");
+        printf("PASS: a stopped truck rings two notes, quietly, and never at the same time as the song\n");
+    }
+
     free(l);
     free(r);
     printf("\n%s%d check(s) failed\n", g_failed ? "FAIL: " : "PASS: ", g_failed);

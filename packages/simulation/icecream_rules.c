@@ -35,6 +35,15 @@ int icecream_serve_heal();
 int icecream_serve_cooldown_ms();
 int icecream_serve_progress(int);
 int icecream_serve_open(int, int);
+int icecream_chime_carry_units();
+int icecream_chime_note_count();
+int icecream_chime_note_ms();
+int icecream_chime_gap_ms();
+int icecream_chime_period_ms();
+int icecream_chime_ms();
+int icecream_chime_hz_milli(int);
+int icecream_chime_trigger(int);
+int icecream_chime_gain_permille(int);
 
 int icr_clamp(int lo __attribute__((unused)), int hi __attribute__((unused)), int v __attribute__((unused))) {
     if ((v < lo)) {
@@ -323,6 +332,58 @@ int icecream_serve_open(int dist_units __attribute__((unused)), int speed_pm __a
     } else {
     return 1;
     }
+    }
+}
+
+int icecream_chime_carry_units(void) {
+    return 1200;
+}
+
+int icecream_chime_note_count(void) {
+    return 2;
+}
+
+int icecream_chime_note_ms(void) {
+    return 220;
+}
+
+int icecream_chime_gap_ms(void) {
+    return 90;
+}
+
+int icecream_chime_period_ms(void) {
+    return 4000;
+}
+
+int icecream_chime_ms(void) {
+    return (icecream_chime_note_count() * (icecream_chime_note_ms() + icecream_chime_gap_ms()));
+}
+
+int icecream_chime_hz_milli(int i __attribute__((unused))) {
+    if ((i == 0)) {
+    return 1047000;
+    } else {
+    if ((i == 1)) {
+    return 784000;
+    } else {
+    return 0;
+    }
+    }
+}
+
+int icecream_chime_trigger(int speed_pm __attribute__((unused))) {
+    if ((icr_clamp(0, 1000, speed_pm) > 20)) {
+    return 0;
+    } else {
+    return 1;
+    }
+}
+
+int icecream_chime_gain_permille(int dist_units __attribute__((unused))) {
+    if ((dist_units > icecream_chime_carry_units())) {
+    return 0;
+    } else {
+    return icr_clamp(0, 1000, ((1000 * 300) / (600 + icr_clamp(0, icecream_chime_carry_units(), dist_units))));
     }
 }
 
