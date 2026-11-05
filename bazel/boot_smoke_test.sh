@@ -29,8 +29,9 @@ for want in \
   "horde: the wave lands" \
   "horde: every body has hit points" \
   "horde: three AR rounds drop a shambler" \
+  "horde: a shield soaks first" \
   "boot plan:"; do
   printf '%s\n' "$out" | grep -Fq "$want" || { echo "missing line: $want" >&2; printf '%s\n' "$out" >&2; exit 1; }
 done
 
-echo "boot smoke ok (exit 0, 16 expected lines present)"
+echo "boot smoke ok (exit 0, 17 expected lines present)"

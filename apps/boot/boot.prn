@@ -235,6 +235,25 @@
     0
     1))
 
+;; ---- shields soak first ---------------------------------------------------------------------------
+;; A shielded body is a different fight: the AR round that costs a shambler 20 health costs a shielded one
+;; nothing but shield, a magnum that cannot break the shield never touches health at all, and a head shot
+;; through a live shield is an ordinary hit -- 460's rule, and the reason a shield is worth carrying.
+(defn shield-check [] : I32
+  (if (and (= (shield-after 100 (dmg-ar)) 80)
+           (= (health-after 55 100 (dmg-ar)) 55)
+           (= (shield-after 30 (dmg-magnum)) 0)
+           (= (health-after 55 30 (dmg-magnum)) 40)
+           (= (health-after 55 100 (dmg-sniper)) 54)
+           (= (health-after 55 0 9999) 0)
+           (= (hit-damage 100 (dmg-ar) 1) 20)
+           (= (hit-damage 0 (dmg-ar) 1) 60)
+           (= (hit-damage 100 (dmg-sniper) 0) 101)
+           (= (shield-after 10 -5) 10)
+           (= (health-after 55 10 -5) 55))
+    0
+    1))
+
 (defn shank-boot-main [] : I32
   (do
     (println "SHANKPIT clean-room boot")
@@ -253,10 +272,11 @@
     (println "horde: the wave lands, and no body sinks through the floor")
     (println "horde: every body has hit points, ordered by class and level")
     (println "horde: three AR rounds drop a shambler, one does not, and a sniper round drops a brute")
+    (println "horde: a shield soaks first, and a head shot through one is an ordinary hit")
     (if (and (= (level-check) 0)
              (> (turn-cap) 0) (< (turn-cap) 2000) (> (distance-bias) 1000)
              (= (frame-check) 0) (= (palette-check) 0) (= (sky-check) 0) (>= (sky-scan) 1)
-             (= (sim-check) 0) (= (horde-check) 0) (= (horde-place-check) 0) (= (horde-facing-check) 0) (= (horde-rest-check) 0) (= (health-check) 0) (= (hit-check) 0))
+             (= (sim-check) 0) (= (horde-check) 0) (= (horde-place-check) 0) (= (horde-facing-check) 0) (= (horde-rest-check) 0) (= (health-check) 0) (= (hit-check) 0) (= (shield-check) 0))
       (do
         (println "boot plan: the level's own spawner, zombie mode")
         0)

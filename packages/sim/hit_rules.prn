@@ -9,7 +9,8 @@
 ;; Arena port does not link). This is the arithmetic after a hit: what is left, and whether it was enough.
 (module shankpit/hit)
 (export dmg-ar dmg-magnum dmg-sniper dmg-missile dmg-katana dmg-head-multiplier
-        damage-after headshot-damage kills?)
+        damage-after headshot-damage kills?
+        shield-after health-after hit-damage)
 
 (defn dmg-ar [] : I32 20)
 (defn dmg-magnum [] : I32 45)
@@ -30,3 +31,22 @@
 (defn headshot-damage [(dmg : I32)] : I32 (* dmg (dmg-head-multiplier)))
 
 (defn kills? [(hp : I32) (dmg : I32)] : Bool (<= (damage-after hp dmg) 0))
+
+;; ---- shields ---------------------------------------------------------------------------------------
+;; 460's apply-damage! (sp_phys.prn): a shield soaks first and only the remainder reaches health, and a
+;; head shot is triple ONLY when no shield is left -- so a shielded body takes an ordinary hit even in the
+;; head. Both are properties of the same call, so they live together here rather than in a caller.
+(defn shield-after [(shield : I32) (dmg : I32)] : I32
+  (if (< dmg 0) shield
+    (let [rest (- shield dmg)]
+      (if (< rest 0) 0 rest))))
+
+;; hp and shield are both the values BEFORE the hit; the remainder is what health loses
+(defn health-after [(hp : I32) (shield : I32) (dmg : I32)] : I32
+  (if (< dmg 0) hp
+    (let [through (- dmg (if (< shield 0) 0 shield))]
+      (if (> through 0) (damage-after hp through) hp))))
+
+;; the damage a hit actually carries: triple only in the head AND with no shield to soak it
+(defn hit-damage [(shield : I32) (dmg : I32) (head : I32)] : I32
+  (if (and (= head 1) (<= shield 0)) (headshot-damage dmg) dmg))
