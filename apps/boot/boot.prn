@@ -112,6 +112,24 @@
     0
     1))
 
+
+;; ---- the horde the lobby would emit ---------------------------------------------------------------
+;; wave_rules owns what a wave IS (size, cadence, cap, spawn ring); boot only checks that a first wave
+;; fits inside the arena it was given. The 460 ring is 30 units around the origin, and starter.json is
+;; 60x60, so on this level the ring sits exactly on the perimeter -- allowed, and worth knowing before
+;; anyone expects the horde to arrive in the open.
+(defn horde-size [] : I32 (wave-size-for 1))
+
+(defn horde-check [] : I32
+  (if (and (> (wave-count) 0)
+           (> (horde-size) 0)
+           (<= (horde-size) (wave-live-cap))
+           (> (wave-spawn-radius-milli) 0)
+           (<= (* 2 (wave-spawn-radius-milli)) (* (level-width) 1000))
+           (<= (* 2 (wave-spawn-radius-milli)) (* (level-depth) 1000)))
+    0
+    1))
+
 (defn shank-boot-main [] : I32
   (do
     (println "SHANKPIT clean-room boot")
@@ -124,10 +142,11 @@
     (println "sky: row 0 is the top band, row 180 is the horizon")
     (println "sky: all 360 rows scanned, bands cover the frame and never invert")
     (println "sim: a body leaves the spawner, falls, and the floor stops it")
+    (println "horde: wave 1 from wave_rules fits inside this arena")
     (if (and (= (level-check) 0)
              (> (turn-cap) 0) (< (turn-cap) 2000) (> (distance-bias) 1000)
              (= (frame-check) 0) (= (palette-check) 0) (= (sky-check) 0) (>= (sky-scan) 1)
-             (= (sim-check) 0))
+             (= (sim-check) 0) (= (horde-check) 0))
       (do
         (println "boot plan: the level's own spawner, zombie mode")
         0)
