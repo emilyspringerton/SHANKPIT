@@ -90,6 +90,11 @@ const (
 	// a survival-streak tick and far below a kill: this rewards the DISENGAGE, it does not make
 	// hiding a better policy than fighting.
 	rewardShieldRecoveredPerPoint = 0.004
+
+	// shieldRegenMaxTick -- mirror of PARENA's ramp cap (shield_regen_ramp_cap = 10). A gain bigger
+	// than one tick's ceiling is a PACK pickup, not regeneration: packs refill the shield outright,
+	// and paying them here would credit a lucky find as if the bot had earned a disengage.
+	shieldRegenMaxTick = 10.0
 )
 
 // TeamRewardContext -- Team reward, architected not built (S459-46). A real, currently-unused
@@ -124,6 +129,7 @@ type PlayerRewardSnapshot struct {
 	NearestEnemyDist float32 // 0 = no visible enemy
 	NearestEnemyHealthFrac float32 // health of the nearest visible enemy, 0 if none visible
 	Shield         float32 // 0..100, the shield that regenerates after the four-second window
+	ShieldRegenSinceMs uint32 // the server's regen clock; >= 4000 means the ticks have started
 }
 
 // fibonacci -- the real, standard sequence, 1-indexed (fib(1)=1, fib(2)=1, fib(3)=2, fib(4)=3,
@@ -194,7 +200,11 @@ func computeReward(prev, cur PlayerRewardSnapshot, team TeamRewardContext, survi
 	// (no visible enemy, or the distance is growing). Standing in someone's face while the
 	// shield rebuilds should not pay: the whole reason the refill takes 19 seconds is that
 	// breaking contact is the profitable play, so that is the behaviour this term buys.
-	if cur.Shield > prev.Shield && cur.NearestEnemyDist >= prev.NearestEnemyDist {
+	// Only a real regeneration tick pays: the wire's own clock must say the four-second window is
+	// over, and the gain must fit inside one tick's ceiling (1..10). A larger jump is a shield pack
+	// refilling the bar, which is its own reward and not evidence of a good disengage.
+	if cur.Shield > prev.Shield && cur.NearestEnemyDist >= prev.NearestEnemyDist &&
+		cur.ShieldRegenSinceMs >= uint32(shieldRegenDelayMs) && cur.Shield-prev.Shield <= shieldRegenMaxTick {
 		reward += (cur.Shield - prev.Shield) * rewardShieldRecoveredPerPoint
 	}
 

@@ -37,6 +37,16 @@ func TestBuildObservation_ShieldRegenSignal(t *testing.T) {
 		t.Fatalf("a body with shield and no gain should read neither, got broken=%v gain=%v",
 			obs.SelfShieldBroken, obs.SelfShieldGainFrac)
 	}
+	// The wire's clock drives the "how long am I exposed" feature: 1000 ms since the hit is 3/4 of
+	// the window left, and a clock past the delay reads as 0 (the ticks have started).
+	s.myShieldRegenSinceMs = 1000
+	if got := buildObservation(s).SelfShieldRegenLeftFrac; got != 0.75 {
+		t.Fatalf("1000 ms into the window should read 0.75 left, got %v", got)
+	}
+	s.myShieldRegenSinceMs = 5000
+	if got := buildObservation(s).SelfShieldRegenLeftFrac; got != 0 {
+		t.Fatalf("a started regeneration should read 0 left, got %v", got)
+	}
 }
 
 func TestBuildObservation_NoPeers(t *testing.T) {
@@ -84,8 +94,8 @@ func TestBuildObservation_NearestOpponentOrdering(t *testing.T) {
 // bot is NOT closing on an enemy: the refill takes nineteen seconds, so breaking contact is the
 // behaviour worth buying, and turtling in someone's face must not be.
 func TestComputeReward_ShieldRecoveryWhileDisengaged(t *testing.T) {
-	prev := PlayerRewardSnapshot{Health: 80, Shield: 20, NearestEnemyDist: 30}
-	cur := PlayerRewardSnapshot{Health: 80, Shield: 21, NearestEnemyDist: 40}
+	prev := PlayerRewardSnapshot{Health: 80, Shield: 20, NearestEnemyDist: 30, ShieldRegenSinceMs: 5000}
+	cur := PlayerRewardSnapshot{Health: 80, Shield: 21, NearestEnemyDist: 40, ShieldRegenSinceMs: 5000}
 	if got := computeReward(prev, cur, TeamRewardContext{}, 0); got <= 0.003 {
 		t.Fatalf("a point of shield recovered while opening distance should pay more than the alive tick, got %v", got)
 	}
@@ -100,6 +110,19 @@ func TestComputeReward_ShieldRecoveryWhileDisengaged(t *testing.T) {
 	prev.NearestEnemyDist, cur.NearestEnemyDist = 0, 0
 	if got := computeReward(prev, cur, TeamRewardContext{}, 0); got <= 0.003 {
 		t.Fatalf("a point of shield recovered out of contact should pay, got %v", got)
+	}
+
+	// Inside the four-second window the shield is NOT regenerating, whatever the delta says.
+	prev.ShieldRegenSinceMs, cur.ShieldRegenSinceMs = 900, 1100
+	if got := computeReward(prev, cur, TeamRewardContext{}, 0); got >= 0.002 {
+		t.Fatalf("a shield gain inside the vulnerable window must not pay regen, got %v", got)
+	}
+
+	// A pack refills the bar outright: a 25-point jump is not a tick.
+	prev.ShieldRegenSinceMs, cur.ShieldRegenSinceMs = 5000, 5000
+	prev.Shield, cur.Shield = 40, 65
+	if got := computeReward(prev, cur, TeamRewardContext{}, 0); got >= 0.002 {
+		t.Fatalf("a pack-sized jump must not be paid as regeneration, got %v", got)
 	}
 }
 

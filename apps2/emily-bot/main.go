@@ -104,6 +104,7 @@ type botState struct {
 	myHealth float32 // real decoded health when available (S459-44); heuristic fallback otherwise
 	myShield        uint8
 	myShieldGain    float32 // shield recovered since the previous snapshot / 100 -- real regen tick or a pack; read by buildObservation and computeReward
+	myShieldRegenSinceMs uint32 // the server's own regen clock: ms since the hit that started it (0 = just hit)
 	myCurrentWeapon uint8
 	myAmmo          uint8
 	myState         uint8
@@ -734,6 +735,7 @@ func receiveLoop(conn *net.UDPConn, state *botState, verbose bool) {
 					} else {
 						state.myShieldGain = 0
 					}
+					state.myShieldRegenSinceMs = e.shieldRegenSinceMs
 					state.myShield = e.shield
 					state.myCurrentWeapon = e.currentWeapon
 					state.myAmmo = e.ammo

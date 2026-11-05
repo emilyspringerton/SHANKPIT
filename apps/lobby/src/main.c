@@ -13007,7 +13007,9 @@ void draw_hud(PlayerState *p) {
             snprintf(regen_buf, sizeof(regen_buf), "SHIELD +%d", shield_regen_next_amount(p, regen_now));
             glColor3f(0.42f, 0.72f, 1.0f);
         }
-        draw_string(regen_buf, (int)x0, (int)(y_shield1 + 6.0f), 4.0f);
+        /* To the RIGHT of and ABOVE the bars: captures showed it on the health bar when it sat under
+           them, and clipping the orb prompt's own line when it sat level with the shield bar. */
+        draw_string(regen_buf, (int)(x1 + 10.0f), (int)(y_shield1 + 8.0f), 3.5f);
     }
     
     if (p->in_vehicle) {
@@ -17068,6 +17070,19 @@ void net_process_snapshot(char *buffer, int len) {
         p->team_id = np->team_id;
         p->health = np->health;
         p->shield = np->shield;
+        /* Adopt the server's regen clock (NetPlayer.shield_regen_since_ms). It is elapsed ms, not a
+           deadline, so re-anchoring it on THIS client's SDL clock keeps the prediction tick, the HUD
+           countdown and the bar on the authority's clock instead of a private one. The baseline is
+           derived from the shield the server has already regenerated -- taking the wire shield as the
+           baseline would pay every landed tick a second time. */
+        {
+            int regen_since = (int)np->shield_regen_since_ms;
+            unsigned int regen_now = SDL_GetTicks();
+            p->shield_regen_base = sh_clamp(0, shield_max(), (int)np->shield - sh_regen_total(regen_since));
+            p->shield_regen_at_ms = (regen_since > 0 && (unsigned int)regen_since <= regen_now)
+                                        ? regen_now - (unsigned int)regen_since : regen_now;
+            p->shield_regen_timer = regen_since;
+        }
         p->crouching = np->crouching;
 
         int safe_weapon = np->current_weapon;
@@ -18070,7 +18085,17 @@ int main(int argc, char* argv[]) {
     if (cli_start_editmap) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_EDITMAP); lobby_modes_bypass = 0; if (cli_edit_session[0]) es_start(strcmp(cli_edit_session, "new") ? cli_edit_session : NULL); }
     if (cli_start_lab) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_LAB); lobby_modes_bypass = 0; }
     if (cli_start_survival) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_SURVIVAL); lobby_modes_bypass = 0; }
-    if (cli_start_city) { lobby_start_city(); if (cli_third_person) local_state.players[0].third_person = 1; }
+    if (cli_start_city) {
+        lobby_start_city();
+        if (cli_third_person) local_state.players[0].third_person = 1;
+        /* Test-only UX knob, same off-by-default convention as SHANKPIT_TEST_START_HEALTH: drop the
+           local shield once at match start so a headless screenshot can see the 4-second countdown
+           and the ramping regen without waiting to be shot. Unset = nothing happens. */
+        if (getenv("SHANKPIT_UX_SHIELD_DROP")) {
+            local_state.players[0].shield = 0;
+            shield_regen_note_damage(&local_state.players[0], SDL_GetTicks());
+        }
+    }
     int prev_app_state = STATE_LOBBY;
     float input_fwd = 0.0f, input_str = 0.0f;
     int input_jump = 0, input_crouch = 0, input_shoot = 0, input_reload = 0, input_use = 0, input_ability = 0, input_secondary = 0, input_bike = 0, input_pheromone = 0;

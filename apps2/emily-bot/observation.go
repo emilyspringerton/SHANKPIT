@@ -44,7 +44,7 @@ import (
 // named features -- inside the requested 50-100 range with no padding.
 const (
 	nearestOpponentSlots = 4
-	selfFeatureCount     = 28
+	selfFeatureCount     = 29
 	perOpponentFeatures  = 11
 	aggregateFeatureCount = 9
 	geometryFeatureCount = 5
@@ -63,6 +63,11 @@ const (
 	// sniper storm=480).
 	reloadTimerCap     = 60.0
 	abilityCooldownCap = 480.0
+
+	// shieldRegenDelayMs mirrors PARENA's shield_regen_delay_ms (4000): the vulnerable window after
+	// the last hit, before the first regeneration tick. The wire carries ms SINCE the hit, so this is
+	// the one constant needed to turn it into "how long am I still exposed".
+	shieldRegenDelayMs = 4000.0
 
 	// wallRayCap / floorRayCap -- real, hand-picked caps for the raycast block (geometry.go),
 	// matched to SHANKPIT's own real room-scale level geometry (NEWPIT, S459-41's own default
@@ -153,6 +158,11 @@ type Observation struct {
 	// is the body's four-second window: any trade taken in it is paid for in health.
 	SelfShieldGainFrac float32 // this snapshot's shield gain / 100 (0 = nothing came back)
 	SelfShieldBroken   float32 // 1.0 iff alive and shield == 0 -- the vulnerable window
+	// SelfShieldRegenLeftFrac -- the server's regen clock (NetPlayer.shield_regen_since_ms) as the
+	// fraction of the four-second window still to run: 1.0 at the hit, down to 0.0 once ticks begin.
+	// The two features above say WHAT the shield is doing; this one says how long the body is still
+	// exposed, which is the number a retreat decision actually needs.
+	SelfShieldRegenLeftFrac float32
 
 	// --- Opponent block (nearestOpponentSlots * 11 = 44), nearest-first, zero-filled+Present=0
 	// past however many opponents are actually visible in this bot's own scene. ---
@@ -266,6 +276,7 @@ func buildObservation(s *botState) Observation {
 		SelfAbilityReady: boolToF32(s.myAbilityCooldown == 0),
 		SelfShieldGainFrac: clamp01(s.myShieldGain),
 		SelfShieldBroken:   boolToF32(s.myState == 0 && s.myShield == 0),
+		SelfShieldRegenLeftFrac: clamp01((shieldRegenDelayMs - float32(s.myShieldRegenSinceMs)) / shieldRegenDelayMs),
 	}
 	if int(s.myCurrentWeapon) < len(obs.SelfWeaponOnehot) {
 		obs.SelfWeaponOnehot[s.myCurrentWeapon] = 1.0
@@ -392,7 +403,7 @@ func (o Observation) Values() []float32 {
 		o.SelfAmmoFrac, o.SelfIsShooting, o.SelfCrouching, o.SelfInVehicle, o.SelfAlive,
 		o.SelfKillsNorm, o.SelfDeathsNorm, o.SelfHitFeedback, o.SelfStormChargesFrac,
 		o.SelfRewardFeedbackNorm, o.SelfReloadFrac, o.SelfAbilityCooldownFrac, o.SelfAbilityReady,
-		o.SelfShieldGainFrac, o.SelfShieldBroken,
+		o.SelfShieldGainFrac, o.SelfShieldBroken, o.SelfShieldRegenLeftFrac,
 	)
 	for _, opp := range o.Opponents {
 		out = append(out,

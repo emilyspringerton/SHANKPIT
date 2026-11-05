@@ -194,9 +194,17 @@ class NetPlayer(ctypes.LittleEndianStructure):
         # override)=84, offsetof(forced_kit)=85, sizeof(NetPlayer) stays 88 -- no wire-size growth
         # at all, unlike every prior field addition documented above.
         ("forced_kit", ctypes.c_uint8),
-        ("_pad4", ctypes.c_uint8 * 2),  # trailing padding to round 86 -> 88 (struct's own 4-byte float/uint alignment)
+        # third_person -- S536, real wire field that had been occupying _pad4's own first byte; the
+        # mirror was never updated for it (the total size happened to stay 88 because the padding
+        # absorbed it), so it is named here now, before the new field makes the padding load-bearing.
+        ("third_person", ctypes.c_uint8),
+        ("_pad5", ctypes.c_uint8),  # compiler padding: the next field is 4-byte aligned (offset 88)
+        # shield_regen_since_ms -- the shield regen clock (PARENA stdlib/shankpit/shield_regen_rules.prn):
+        # ms since the hit that started the four-second window, then a one-second tick worth 1..10.
+        # Appended at the END so every earlier offset is unchanged; only the stride grows 88 -> 92.
+        ("shield_regen_since_ms", ctypes.c_uint32),
     ]
-assert ctypes.sizeof(NetPlayer) == 88, ctypes.sizeof(NetPlayer)
+assert ctypes.sizeof(NetPlayer) == 92, ctypes.sizeof(NetPlayer)
 
 
 # --- Encode/decode helpers, matching apps2/emily-bot/main.go + snapshot.go byte-for-byte ---
@@ -465,18 +473,21 @@ def raycast(walls, ox, oy, oz, dx, dy, dz, cap):
 # --- Observation (mirrors apps2/emily-bot/observation.go's 84-feature vector exactly) ---
 
 NEAREST_OPPONENT_SLOTS = 4
-SELF_FEATURES = 26
+SELF_FEATURES = 29
 PER_OPPONENT_FEATURES = 11
 AGGREGATE_FEATURES = 9
 GEOMETRY_FEATURES = 5
 OBS_SIZE = SELF_FEATURES + NEAREST_OPPONENT_SLOTS * PER_OPPONENT_FEATURES + AGGREGATE_FEATURES + GEOMETRY_FEATURES
-assert OBS_SIZE == 84
+assert OBS_SIZE == 87
 
 QUEUE_FRAG_LIMIT = 20
 RELOAD_TIMER_CAP = 60.0
 ABILITY_COOLDOWN_CAP = 480.0
 WALL_RAY_CAP = 40.0
 FLOOR_RAY_CAP = 20.0
+# SHIELD_REGEN_DELAY_MS mirrors PARENA's shield_regen_delay_ms (4000): the vulnerable window after
+# the last hit, before the first regeneration tick.
+SHIELD_REGEN_DELAY_MS = 4000.0
 DIST_CAP = 100.0
 ELEV_CAP = 20.0
 
@@ -489,14 +500,15 @@ def _clamp_signed(v):
     return max(-1.0, min(1.0, v))
 
 
-def build_observation(me: NetPlayer, peers: list, walls: Optional[list]) -> np.ndarray:
-    """Builds the real, 84-feature observation vector for one player's current tick -- a direct
+def build_observation(me: NetPlayer, peers: list, walls: Optional[list], shield_gain: float = 0.0) -> np.ndarray:
+    """Builds the real, 87-feature observation vector for one player's current tick -- a direct
     Python port of apps2/emily-bot/observation.go's own buildObservation, field order matched
     exactly so a checkpoint trained here and a Go-side consumer would agree on feature meaning if
     one were ever built. `me` is this player's own current NetPlayer snapshot entity; `peers` is
     every other same-scene NetPlayer entity this tick; `walls` is the real (or None) level box
     list from fetch_queue_level_geometry()."""
     obs = np.zeros(OBS_SIZE, dtype=np.float32)
+    # --- Self (29) ---
     i = 0
 
     # --- Self (26) ---
@@ -524,6 +536,14 @@ def build_observation(me: NetPlayer, peers: list, walls: Optional[list]) -> np.n
     obs[i] = _clamp01(me.reload_timer / RELOAD_TIMER_CAP); i += 1
     obs[i] = _clamp01(me.ability_cooldown / ABILITY_COOLDOWN_CAP); i += 1
     obs[i] = 1.0 if me.ability_cooldown == 0 else 0.0; i += 1
+    # Shield regen (PARENA stdlib/shankpit/shield_regen_rules.prn, mirrored from observation.go):
+    # the recovery that landed on this snapshot, whether the body is inside its vulnerable window
+    # (alive at zero shield), and how much of the four-second window is left from the wire's own
+    # clock. `shield_gain` is passed in by the caller, which is the only place that can see two
+    # consecutive snapshots; everything else is real per-snapshot wire state.
+    obs[i] = _clamp01(shield_gain); i += 1
+    obs[i] = 1.0 if (me.state == STATE_ALIVE and me.shield == 0) else 0.0; i += 1
+    obs[i] = _clamp01((SHIELD_REGEN_DELAY_MS - me.shield_regen_since_ms) / SHIELD_REGEN_DELAY_MS); i += 1
     assert i == SELF_FEATURES, i
 
     # --- Nearest-opponent block (4 x 11 = 44) ---

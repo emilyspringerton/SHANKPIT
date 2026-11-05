@@ -750,6 +750,13 @@ typedef struct {
     // -- see draw_scene's own camera-selection block in apps/lobby/src/main.c for the real,
     // generalized consumer.
     unsigned char third_person;
+    // shield_regen_since_ms -- the shield regen clock (PARENA stdlib/shankpit/shield_regen_rules.prn:
+    // four seconds vulnerable after the last hit, then a one-second tick worth 1..10). Milliseconds
+    // since the hit that started the current clock, already capped at the host's ten-minute ceiling.
+    // Deliberately the ELAPSED number and not a deadline: it is clock-free, so a client re-anchors it
+    // on its own clock (SDL_GetTicks) and the prediction tick, the HUD countdown and a training client
+    // all read one number instead of each keeping a private, drifting copy. 4 bytes/player/snapshot.
+    unsigned int shield_regen_since_ms;
 } NetPlayer;
 
 typedef struct {

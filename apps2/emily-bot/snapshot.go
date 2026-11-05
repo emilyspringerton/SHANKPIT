@@ -43,7 +43,9 @@ const (
 	// self-play opponent). Now 88 bytes (84 + anim_override) -- re-verified via the same real,
 	// compiled offsetof()/sizeof() probe technique this file's own module doc comment already
 	// establishes, never hand-guessed.
-	netPlayerSize = 88
+	netPlayerSize = 92 // S470 class of bug, avoided by construction: shield_regen_since_ms (4 bytes)
+	// appended at the END of NetPlayer, so every earlier offset is unchanged and only the stride grows
+	// (88 -> 92). Verified with the same compiled probe technique this file's doc comment describes.
 
 	// NetPlayer field byte offsets, matching packages/common/protocol.h's real field order and
 	// this platform's real struct alignment (verified via a compiled offsetof() probe, not
@@ -82,6 +84,7 @@ const (
 	offVx              = 72 // S459-69, real velocity on the wire (fix for jump "rubberbanding")
 	offVy              = 76
 	offVz              = 80
+	offShieldRegenSince = 88 // shield_regen_since_ms: ms since the hit that started the regen clock (0 = just hit / never hit)
 )
 
 func f32(buf []byte, off int) float32 {
@@ -108,6 +111,9 @@ type decodedPlayer struct {
 	state         uint8
 	health        uint8
 	shield        uint8
+	// shieldRegenSinceMs -- the server's own regen clock (NetPlayer.shield_regen_since_ms): ms since
+	// the hit that started the four-second window, so a consumer never has to keep a private timer.
+	shieldRegenSinceMs uint32
 	isShooting    bool
 	crouching     bool
 	// rewardFeedback -- S459-45, real find: packages/common/physics.h already computes a real,
@@ -197,6 +203,7 @@ func decodePacketSnapshot(buf []byte, n int) ([]decodedPlayer, bool) {
 			vx:            f32(buf, off+offVx),
 			vy:            f32(buf, off+offVy),
 			vz:            f32(buf, off+offVz),
+			shieldRegenSinceMs: binary.LittleEndian.Uint32(buf[off+offShieldRegenSince:]),
 		}
 		out = append(out, e)
 		off += netPlayerSize

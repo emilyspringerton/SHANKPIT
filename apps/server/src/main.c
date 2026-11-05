@@ -1899,6 +1899,9 @@ void server_broadcast() {
             np.ability_cooldown = (unsigned short)(p->ability_cooldown < 0 ? 0 : (p->ability_cooldown > 65535 ? 65535 : p->ability_cooldown));
             np.kill_streak = (unsigned char)(p->kill_streak < 0 ? 0 : (p->kill_streak > 255 ? 255 : p->kill_streak));
             np.vx = p->vx; np.vy = p->vy; np.vz = p->vz; // S459-69: real velocity on the wire, see NetPlayer's own doc comment
+            // The regen clock the client's own tick and HUD re-anchor on (see NetPlayer's field doc);
+            // head.timestamp is this snapshot's own server clock, the same one update_entity ticks with.
+            np.shield_regen_since_ms = (unsigned int)shield_regen_since_ms(p, head.timestamp);
             p->accumulated_reward = 0;
             memcpy(buffer + cursor, &np, sizeof(NetPlayer)); cursor += (int)sizeof(NetPlayer);
             count++;
