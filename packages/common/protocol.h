@@ -473,7 +473,13 @@ typedef struct {
     unsigned char alive_mask;                           /* bit per component, set = still attached */
     unsigned char detached_mask;                        /* cumulative: what has EVER come off */
     unsigned char hp[NET_VEHICLE_MAX_COMPONENTS];       /* absolute hull points, not a fraction */
-    unsigned char pad[3];                               /* keeps the entry 16 bytes and aligned */
+    /* POLICE (2026-11-05). kind stays "what airframe" (0 buggy, 1 rocket car); a cruiser is a rocket car
+       with bit 0 set, and bit 1 is its SIREN sounding right now. Both are state the server already
+       simulates, so a remote cruiser is a cruiser on every client -- livery, lightbar and wail -- instead
+       of a plain red car whose driver is visibly boosting in silence. Bits, not a second kind number,
+       because "police" is not a different airframe and the salvage masks/hp layout must not move. */
+    unsigned char flags;                                /* bit 0 police, bit 1 siren sounding */
+    unsigned char pad[2];                               /* keeps the entry 16 bytes and aligned */
     unsigned int seed;                                  /* the car's identity, for the salvage roll */
 } NetVehicleEntry;
 

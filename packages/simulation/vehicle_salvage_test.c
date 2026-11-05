@@ -337,6 +337,18 @@ int main(void) {
     }
     {   /* the packet's own shape, pinned: a layout change must break a test, not a client */
         CHECK(PACKET_VEHICLE_STATE == 20, "packet id moved to %d", PACKET_VEHICLE_STATE);
+        /* the entry is a wire layout: 5 hp bytes + kind/id/flags + seed, 16 bytes, and the police bits
+           have to fit without the masks or hp moving */
+        CHECK(sizeof(NetVehicleEntry) == 16, "NetVehicleEntry is %d bytes, not the wire's 16",
+              (int)sizeof(NetVehicleEntry));
+        {
+            NetVehicleEntry fe;
+            memset(&fe, 0, sizeof(fe));
+            fe.flags = 0x03;
+            CHECK((fe.flags & 0x01) != 0 && (fe.flags & 0x02) != 0,
+                  "the police/siren flag bits do not survive in flags");
+            CHECK(sizeof(fe.pad) == 2, "the entry's pad is no longer 2 bytes -- the layout moved");
+        }
         CHECK(sizeof(NetVehicleEntry) == 16, "NetVehicleEntry is %d bytes, not 16", (int)sizeof(NetVehicleEntry));
         CHECK(NET_VEHICLE_MAX_COMPONENTS == SALVAGE_MAX_COMPONENTS,
               "wire carries %d components, the table has %d", NET_VEHICLE_MAX_COMPONENTS, SALVAGE_MAX_COMPONENTS);

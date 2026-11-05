@@ -17297,7 +17297,13 @@ void net_tick() {
                                                          (unsigned int)ve->alive_mask,
                                                          (unsigned int)ve->detached_mask, hp);
                     BuggyState *vb_car = &local_state.buggies[ve->id];
-                    if (vb_car->active) vb_car->health = hull;
+                    if (vb_car->active) {
+                        vb_car->health = hull;
+                        /* POLICE/livery and the siren's current state, from the server that simulates them:
+                           without this a remote cruiser was a plain car whose driver boosted in silence. */
+                        vb_car->police = (ve->flags & 0x01) ? 1 : 0;
+                        vb_car->siren  = (ve->flags & 0x02) ? 1 : 0;
+                    }
                 }
             }
         } else if (head->type == PACKET_HORSE_STATE) {
