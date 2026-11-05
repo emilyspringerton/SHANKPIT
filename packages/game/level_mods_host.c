@@ -100,6 +100,24 @@ int level_mods_apply(int level_id, int mod, int on) {
     return 1;
 }
 
+int level_mods_apply_state(int level_id, int mask, int revision) {
+    LevelModEntry *e = find_level(level_id);
+    int clean, rev;
+
+    if (!e) return 0;
+    clean = lm_sanitize(mask);
+    rev = revision > 0 ? revision : e->revision;
+    if (rev < e->revision) return 0; /* stale snapshot: the level has already moved on */
+
+    if (clean == e->mask) {
+        if (rev > e->revision) e->revision = rev;
+        return 0;
+    }
+    e->mask = clean;
+    e->revision = rev;
+    return 1;
+}
+
 int level_mods_sync(int level_id) {
     LevelModEntry *e = find_level(level_id);
     int total, oldest, applied = 0;
@@ -129,20 +147,8 @@ int level_mods_sync(int level_id) {
         if (a == level_id && type == lm_evt_mod_set()) {
             applied += level_mods_apply(level_id, b, c);
         } else if (a == level_id && type == lm_evt_state()) {
-            /* A full-state row is authoritative for this level, but only forward: an older snapshot
-             * replayed from the ring must not roll a live level back. Sanitising here is the trust
-             * boundary -- a state row can never remove core sim or set a bit this build does not know. */
-            int mask = lm_sanitize(b);
-            int revision = c > 0 ? c : e->revision;
-            if (revision < e->revision) {
-                /* stale snapshot: ignore, the level has already moved on */
-            } else if (mask != e->mask) {
-                e->mask = mask;
-                e->revision = revision;
-                applied++;
-            } else if (revision > e->revision) {
-                e->revision = revision;
-            }
+            /* Same authoritative-state rule the network relay uses: sanitise, apply forward only. */
+            if (level_mods_apply_state(level_id, b, c)) applied++;
         }
         e->cursor++;
     }

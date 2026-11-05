@@ -217,6 +217,15 @@ static void test_net(void) {
     check(net_slot_valid(0) == 1 && net_slot_valid(11) == 1 && net_slot_valid(12) == 0, "slots");
     check(net_body_flags_alive() == 1 && net_body_flags_bot() == 2, "flags are bits");
     check(net_port() == 7777 && net_tick_ms() == 33, "port and snapshot cadence");
+    check(net_packet_level_mods() == 4, "level mods are packet type 4");
+    check(net_level_mods_size() == 72, "level mods packet is one fixed datagram");
+    check(net_level_mods_size() ==
+              net_level_mods_header_bytes() + net_max_level_mods() * net_level_mod_bytes(),
+          "level mods size is header + rows");
+    check(net_valid_packet(4) == 1 && net_valid_packet(5) == 0, "packet 4 on the wire, 5 refused");
+    check(net_valid_level_count(1) == 1 && net_valid_level_count(net_max_level_mods()) == 1,
+          "a level mods count is bounded");
+    check(net_valid_level_count(0) == 0 && net_valid_level_count(9) == 0, "bad counts refused");
 }
 
 static void test_reflux(void) {
@@ -400,6 +409,18 @@ static void test_level_mods(void) {
     check(level_mods_set(8, lm_mod_weather_audio(), 1) == 1, "the moon bunker can add weather audio");
     check(level_mods_mask(8) == (moon | lm_bit(lm_mod_weather_audio())), "level 8 carries the new bit");
     check(level_mods_mask(7) == under, "level 7 is still untouched");
+
+    /* The network relay applies the same authoritative state: forward-only, sanitised, and never
+     * able to strip the mandatory modules out of a live level. */
+    check(level_mods_apply_state(8, surface, 4) == 1, "a network state applies forward");
+    check(level_mods_mask(8) == surface && level_mods_revision(8) == 4,
+          "network state moves the mask and revision");
+    check(level_mods_apply_state(8, moon, 2) == 0, "a stale network state is ignored");
+    check(level_mods_mask(8) == surface && level_mods_revision(8) == 4,
+          "a replayed packet cannot roll the level back");
+    check(level_mods_apply_state(8, 0, 5) == 1 && level_mods_mask(8) == lm_mandatory_mask(),
+          "a hostile network mask is sanitised to the mandatory set");
+    check(level_mods_apply_state(99, surface, 9) == 0, "state for an unregistered level is ignored");
 
     /* A log reset (a new round) must not leave a cursor reading another level's rows. */
     level_mods_publish(7);

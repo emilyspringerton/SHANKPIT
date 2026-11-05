@@ -81,6 +81,11 @@ jobs:
       - name: Loopback UDP smoke (host + client in real time)
         run: make game-net-smoke PARENA_BIN="$PWD/PARENA/parena"
 
+      # Different environments on each end, so the only way the client can print mods=3 is that the
+      # server's level-mod packet crossed the wire and was applied.
+      - name: Level-mod relay smoke (moon server, surface client)
+        run: make game-level-relay-smoke PARENA_BIN="$PWD/PARENA/parena"
+
       - name: Build the Linux client
         run: make game PARENA_BIN="$PWD/PARENA/parena"
 

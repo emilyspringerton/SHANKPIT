@@ -72,8 +72,13 @@ int net_packet_connect(void);
 int net_packet_cmd(void);
 int net_packet_snapshot(void);
 int net_packet_welcome(void);
+int net_packet_level_mods(void);
 int net_cmd_size(void);
 int net_snapshot_size(void);
+int net_level_mod_bytes(void);
+int net_level_mods_header_bytes(void);
+int net_max_level_mods(void);
+int net_level_mods_size(void);
 int net_body_bytes(void);
 int net_header_bytes(void);
 int net_quant(int v);
@@ -83,6 +88,7 @@ int net_valid_mode(int mode);
 int net_valid_packet(int type);
 int net_valid_body_count(int count);
 int net_slot_valid(int slot);
+int net_valid_level_count(int count);
 
 /* ---- packages/game/gameplay_mod.prn (the REFLUX gameplay core mod) -------------------------------- */
 int gp_mode_zombies(void);

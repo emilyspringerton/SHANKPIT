@@ -93,9 +93,26 @@ typedef struct __attribute__((packed)) {
     NetSnapBody body[MAXB];
 } NetSnapshot;
 
+typedef struct __attribute__((packed)) {
+    uint16_t level_id;
+    uint16_t mask;
+    uint16_t revision;
+    uint16_t pad;
+} NetLevelMod;
+
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint8_t type;
+    uint8_t count;
+    uint16_t seq;
+    NetLevelMod mods[LEVEL_MODS_MAX_LEVELS];
+} NetLevelMods;
+
 _Static_assert(sizeof(NetCmd) == 20, "NetCmd must match net_cmd_size()");
 _Static_assert(sizeof(NetSnapBody) == 12, "NetSnapBody must match net_body_bytes()");
 _Static_assert(sizeof(NetSnapshot) == 156, "NetSnapshot must match net_snapshot_size()");
+_Static_assert(sizeof(NetLevelMod) == 8, "NetLevelMod must match net_level_mod_bytes()");
+_Static_assert(sizeof(NetLevelMods) == 72, "NetLevelMods must match net_level_mods_size()");
 
 /* ---- bodies ------------------------------------------------------------------------------------ */
 typedef struct {
@@ -576,6 +593,30 @@ static void net_send_snapshot(void) {
     }
 }
 
+/* Broadcast every live level's mask. Absolute state, not a delta: the client may miss any packet and
+ * still be correct after the next one, and a client joining late needs no extra handshake. */
+static void net_send_level_mods(void) {
+    NetLevelMods m;
+    int i;
+
+    memset(&m, 0, sizeof(m));
+    m.magic = (uint32_t)net_magic();
+    m.type = (uint8_t)net_packet_level_mods();
+    m.seq = (uint16_t)(g_net_seq++);
+    for (i = 0; i < LEVEL_MODS_MAX_LEVELS && m.count < net_max_level_mods(); i++) {
+        int level_id = level_mods_level_at(i);
+        if (level_id <= 0 || level_id > 65535) continue;
+        m.mods[m.count].level_id = (uint16_t)level_id;
+        m.mods[m.count].mask = (uint16_t)level_mods_mask(level_id);
+        m.mods[m.count].revision = (uint16_t)level_mods_revision(level_id);
+        m.count++;
+    }
+    if (g_peer_known && m.count > 0) {
+        sendto(g_sock, (const char *)&m, (int)sizeof(m), 0, (struct sockaddr *)&g_peer,
+               (int)sizeof(g_peer));
+    }
+}
+
 static void net_host_recv(void) {
     for (;;) {
         NetCmd cmd;
@@ -636,6 +677,7 @@ static void net_recv_or_send(void) {
         if (g_net_acc >= net_tick_ms()) {
             g_net_acc -= net_tick_ms();
             net_send_snapshot();
+            net_send_level_mods();
         }
     } else if (g_is_client) {
         net_client_tick();
@@ -645,6 +687,13 @@ static void net_recv_or_send(void) {
 static void net_client_tick(void) {
     NetCmd cmd;
     Body *p = local_body();
+    /* One receive buffer, two real packet shapes. The header is identical up to `type`, so the tag is
+     * read once and the rest of the datagram is only trusted after its own exact size is checked. */
+    union {
+        NetSnapshot snap;
+        NetLevelMods mods;
+    } pkt;
+
     memset(&cmd, 0, sizeof(cmd));
     cmd.magic = (uint32_t)net_magic();
     cmd.type = (uint8_t)net_packet_cmd();
@@ -658,42 +707,59 @@ static void net_client_tick(void) {
            (int)sizeof(g_peer));
 
     for (;;) {
-        NetSnapshot s;
-        int n = (int)recv(g_sock, (char *)&s, (int)sizeof(s), 0);
+        int n = (int)recv(g_sock, (char *)&pkt, (int)sizeof(pkt), 0);
         int i;
         if (n < 0) break;
-        if (n != (ssize_t)sizeof(s)) continue;
-        if ((int)s.magic != net_magic() || s.type != net_packet_snapshot()) continue;
-        if (!net_valid_mode(s.mode)) continue;
-        g_snapshots_received++;
-        g_mode = s.mode;
-        g_phase = 1;
-        for (i = 0; i < MAXB; i++) {
-            NetSnapBody *nb = &s.body[i];
-            Body *b = &g_bodies[i];
-            if (i >= s.count) break;
-            if (nb->id != i) continue;
-            if (i == g_local_slot) {
-                if (nb->x != 0 || nb->z != 0) {
-                    int dx = b->x - nb->x, dz = b->z - nb->z;
-                    if (dx * dx + dz * dz > 250 * 250) { b->x = nb->x; b->z = nb->z; }
+        if (n < (int)sizeof(uint32_t) || (int)pkt.snap.magic != net_magic()) continue;
+
+        if (pkt.snap.type == net_packet_level_mods()) {
+            if (n != (ssize_t)sizeof(NetLevelMods)) continue;
+            if (!net_valid_level_count(pkt.mods.count)) continue;
+            for (i = 0; i < pkt.mods.count && i < net_max_level_mods(); i++) {
+                NetLevelMod *row = &pkt.mods.mods[i];
+                if ((int)row->level_id != g_level_id) continue;
+                if (level_mods_apply_state(g_level_id, row->mask, row->revision)) {
+                    feed_push("LEVEL MODS UPDATED", 180);
                 }
-                if (!(nb->flags & net_body_flags_alive())) p->alive = 0;
-                else p->alive = 1;
-                p->hp = nb->hp;
-                p->shield = nb->shield;
-                continue;
             }
-            b->used = 1;
-            b->bot = (nb->flags & net_body_flags_bot()) ? 1 : 0;
-            b->alive = (nb->flags & net_body_flags_alive()) ? 1 : 0;
-            b->hp = nb->hp;
-            b->shield = nb->shield;
-            b->shield_base = nb->shield;
-            b->x = nb->x;
-            b->z = nb->z;
-            b->yaw = nb->yaw * 10;
-            b->score = nb->score;
+            continue;
+        }
+
+        if (pkt.snap.type != net_packet_snapshot()) continue;
+        if (n != (ssize_t)sizeof(NetSnapshot)) continue;
+        if (!net_valid_mode(pkt.snap.mode)) continue;
+        {
+            NetSnapshot *s = &pkt.snap;
+            g_snapshots_received++;
+            g_mode = s->mode;
+            g_phase = 1;
+            for (i = 0; i < MAXB; i++) {
+                NetSnapBody *nb = &s->body[i];
+                Body *b = &g_bodies[i];
+                if (i >= s->count) break;
+                if (nb->id != i) continue;
+                if (i == g_local_slot) {
+                    if (nb->x != 0 || nb->z != 0) {
+                        int dx = b->x - nb->x, dz = b->z - nb->z;
+                        if (dx * dx + dz * dz > 250 * 250) { b->x = nb->x; b->z = nb->z; }
+                    }
+                    if (!(nb->flags & net_body_flags_alive())) p->alive = 0;
+                    else p->alive = 1;
+                    p->hp = nb->hp;
+                    p->shield = nb->shield;
+                    continue;
+                }
+                b->used = 1;
+                b->bot = (nb->flags & net_body_flags_bot()) ? 1 : 0;
+                b->alive = (nb->flags & net_body_flags_alive()) ? 1 : 0;
+                b->hp = nb->hp;
+                b->shield = nb->shield;
+                b->shield_base = nb->shield;
+                b->x = nb->x;
+                b->z = nb->z;
+                b->yaw = nb->yaw * 10;
+                b->score = nb->score;
+            }
         }
     }
 }
@@ -1076,7 +1142,9 @@ int main(int argc, char **argv) {
         return 2;
     }
     if (net_cmd_size() != (int)sizeof(NetCmd) || net_snapshot_size() != (int)sizeof(NetSnapshot) ||
-        net_body_bytes() != (int)sizeof(NetSnapBody)) {
+        net_body_bytes() != (int)sizeof(NetSnapBody) ||
+        net_level_mod_bytes() != (int)sizeof(NetLevelMod) ||
+        net_level_mods_size() != (int)sizeof(NetLevelMods)) {
         fprintf(stderr, "shank_game: wire struct size disagrees with net_rules.prn\n");
         return 2;
     }

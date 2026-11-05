@@ -34,6 +34,11 @@ int level_mods_request(int level_id, int mod, int on);
  * changes nothing does not bump the revision and returns 0. Returns 1 when the mask changed. */
 int level_mods_apply(int level_id, int mod, int on);
 
+/* Apply an authoritative full state from outside this process (the server's network relay). The mask
+ * is sanitised first, and a revision older than the level's current one is ignored -- a replayed
+ * packet cannot roll a live level back. Returns 1 when the mask changed. */
+int level_mods_apply_state(int level_id, int mask, int revision);
+
 /* Read this level's unseen REFLUX rows and apply its updates. Returns the number of changes applied.
  * Safe after reflux_host_reset(): a cursor past the new log's end is clamped instead of reading
  * another level's rows. */
