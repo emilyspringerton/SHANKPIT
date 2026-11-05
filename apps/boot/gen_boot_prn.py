@@ -18,7 +18,10 @@ spawner = (level.get("spawners") or [{}])[0]
 values = {
     "@LEVEL_NAME@": str(level.get("name", "unnamed")),
     "@LEVEL_WIDTH@": str(int(level.get("width", 0))),
+    "@LEVEL_HEIGHT@": str(int(level.get("height", 0))),
     "@LEVEL_DEPTH@": str(int(level.get("depth", 0))),
+    "@WALL_COUNT@": str(len(level.get("walls") or [])),
+    "@SPAWNER_COUNT@": str(len(level.get("spawners") or [])),
     "@SPAWN_X@": str(int(spawner.get("x", 0))),
     "@SPAWN_Y@": str(int(spawner.get("y", 0))),
     "@SPAWN_Z@": str(int(spawner.get("z", 0))),

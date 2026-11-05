@@ -19,7 +19,10 @@
 
 (defn level-name [] : I32 0)                       ;; name is a string; boot prints it as a literal
 (defn level-width [] : I32 @LEVEL_WIDTH@)
+(defn level-height [] : I32 @LEVEL_HEIGHT@)
 (defn level-depth [] : I32 @LEVEL_DEPTH@)
+(defn wall-count [] : I32 @WALL_COUNT@)
+(defn spawner-count [] : I32 @SPAWNER_COUNT@)
 (defn spawn-x [] : I32 @SPAWN_X@)
 (defn spawn-y [] : I32 @SPAWN_Y@)
 (defn spawn-z [] : I32 @SPAWN_Z@)
@@ -75,17 +78,35 @@
     0
     1))
 
+
+;; ---- is the level standable? ---------------------------------------------------------------------
+;; The generator hands over whatever the JSON says, including nonsense. These are the properties boot
+;; actually depends on before it can put a body in the arena, so they are asserted here rather than
+;; discovered by falling through the floor: a real height, real geometry, a spawner to use, and that
+;; spawner inside the arena's own extents.
+(defn abs-i [(x : I32)] : I32 (if (< x 0) (- 0 x) x))
+
+(defn level-check [] : I32
+  (if (and (> (level-width) 0) (> (level-height) 0) (> (level-depth) 0)
+           (> (wall-count) 0) (> (spawner-count) 0)
+           (<= (abs-i (spawn-x)) (/ (level-width) 2))
+           (<= (abs-i (spawn-z)) (/ (level-depth) 2))
+           (>= (spawn-y) 0) (< (spawn-y) (level-height)))
+    0
+    1))
+
 (defn shank-boot-main [] : I32
   (do
     (println "SHANKPIT clean-room boot")
     (println "level: @LEVEL_NAME@ (generated from levels/starter.json)")
+    (println "level: geometry and spawner inside the arena")
     (println "mode: zombies (MODE_ZOMBIE)")
     (println "tick 1: shaped by zombie_brain_rules for the spawn class")
     (println "loop: 16 ms fixed tick, at most 6 steps a frame")
     (println "render: 460 palette -- pale concrete, warm dusk sky, ten muted hues")
     (println "sky: row 0 is the top band, row 180 is the horizon")
     (println "sky: all 360 rows scanned, bands cover the frame and never invert")
-    (if (and (> (level-width) 0) (> (level-depth) 0) (>= (spawn-y) 0)
+    (if (and (= (level-check) 0)
              (> (turn-cap) 0) (< (turn-cap) 2000) (> (distance-bias) 1000)
              (= (frame-check) 0) (= (palette-check) 0) (= (sky-check) 0) (>= (sky-scan) 1))
       (do

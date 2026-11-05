@@ -15,6 +15,7 @@ fi
 
 for want in \
   "level: starter" \
+  "level: geometry and spawner inside the arena" \
   "mode: zombies (MODE_ZOMBIE)" \
   "tick 1: shaped by zombie_brain_rules" \
   "loop: 16 ms fixed tick" \
@@ -25,4 +26,4 @@ for want in \
   printf '%s\n' "$out" | grep -Fq "$want" || { echo "missing line: $want" >&2; printf '%s\n' "$out" >&2; exit 1; }
 done
 
-echo "boot smoke ok (exit 0, 8 expected lines present)"
+echo "boot smoke ok (exit 0, 9 expected lines present)"
