@@ -50,6 +50,7 @@ typedef int shank_socket;
 #endif
 
 #include "game_api.h"
+#include "level_mods_host.h"
 #include "reflux_runtime.h"
 
 #define MAXB 12
@@ -122,6 +123,11 @@ static int g_player_score;
 static int g_bot_score[MAXB];
 static int g_cursor; /* absolute REFLUX cursor, the host's subscriber position */
 static int g_over;   /* frag limit reached */
+
+/* The level this process is running, and the module mask it opened with. A level is itself a REFLUX
+ * module (lm_mod_level), so it is registered in the same table as weather/sky rather than beside it. */
+static int g_level_id = 1;
+static int g_level_env = 0;
 
 static char g_feed[FEED_LINES][48];
 static int g_feed_until[FEED_LINES];
@@ -345,7 +351,10 @@ static void apply_damage(int victim, int dmg, int attacker, int weapon) {
 }
 
 static void poll_events(void) {
-    int total = reflux_host_total_dispatched();
+    int total;
+    /* The level's own subscriber: updates addressed to this level land here, whatever dispatched them. */
+    level_mods_sync(g_level_id);
+    total = reflux_host_total_dispatched();
     int oldest = reflux_host_oldest_abs();
     if (g_cursor < oldest) g_cursor = oldest;
     while (g_cursor < total) {
@@ -887,6 +896,18 @@ static void draw_hud(void) {
     }
 }
 
+/* The weather-render mod's real work: 40 deterministic streaks. No RNG and no state, so a level with
+ * the module off draws exactly zero pixels and the same tick always produces the same drizzle. */
+static void draw_weather(void) {
+    int i;
+    for (i = 0; i < 40; i++) {
+        int x = (i * 97 + g_tick * 3) % FRAME_W;
+        int y = (i * 53 + g_tick * 7) % rp_horizon();
+        int j;
+        for (j = 0; j < 9; j++) px(x + j / 3, y + j, rgb(0x8fa6b8));
+    }
+}
+
 static void draw_frame(void) {
     Body *p = local_body();
     int camx = p->x, camz = p->z, yaw = p->yaw;
@@ -900,7 +921,8 @@ static void draw_frame(void) {
     for (y = 0; y < FRAME_H; y++) {
         uint32_t c;
         if (y < rp_horizon()) {
-            c = sky_c[rp_sky_stop(y)];
+            /* No sky module: an underground/moon ceiling, not a sky that happens to be dark. */
+            c = level_mods_sky_enabled(g_level_id) ? sky_c[rp_sky_stop(y)] : rgb(0x101216);
         } else {
             c = floor_c;
             if ((y - rp_horizon()) % 64 == 0) c = shade_color(c, 92);
@@ -910,6 +932,7 @@ static void draw_frame(void) {
 
     draw_floor_grid(camx, camz, yaw);
     draw_pillars(camx, camz, yaw);
+    if (level_mods_weather_enabled(g_level_id)) draw_weather();
     draw_bodies(camx, camz, yaw);
     draw_hud();
 }
@@ -957,6 +980,9 @@ static void start_round(void) {
     spawn_body(g_local_slot, 0, 0, -700, 0, gp_mode_hp(g_mode), gp_mode_shield(g_mode));
     reflux_host_reset();
     g_cursor = 0;
+    /* The log just emptied, so re-publish the level's full state before the round's own rows: a late
+     * reader must be able to reconstruct which mods this level runs without a reload. */
+    level_mods_publish(g_level_id);
     reflux_host_dispatch(gp_evt_mode(), 0, g_mode, 0);
 
     if (g_is_client) return;
@@ -1000,6 +1026,10 @@ int main(int argc, char **argv) {
     const char *join_ip = NULL;
     int port = net_port();
     int boot_mode = gp_mode_default();
+    int level_id = 1;
+    int level_env = lm_env_surface();
+    int set_mod = 0;
+    int set_on = 0;
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--headless") == 0 && i + 1 < argc) {
@@ -1021,8 +1051,20 @@ int main(int argc, char **argv) {
             if (i + 1 < argc && argv[i + 1][0] != '-') port = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
             port = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--level") == 0 && i + 1 < argc) {
+            level_id = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--env") == 0 && i + 1 < argc) {
+            const char *v = argv[++i];
+            if (strcmp(v, "surface") == 0) level_env = lm_env_surface();
+            else if (strcmp(v, "underground") == 0) level_env = lm_env_underground();
+            else if (strcmp(v, "moon") == 0) level_env = lm_env_moon();
+            else level_env = atoi(v);
+        } else if (strcmp(argv[i], "--set-mod") == 0 && i + 2 < argc) {
+            set_mod = atoi(argv[++i]);
+            set_on = atoi(argv[++i]) != 0;
         } else {
             fprintf(stderr, "usage: %s [--host [port]] [--join ip [port]] [--start] [--ffa]"
+                            " [--level N] [--env surface|underground|moon] [--set-mod MOD 0|1]"
                             " [--headless N] [--frames N --shot out.bmp]\n", argv[0]);
             return 2;
         }
@@ -1039,6 +1081,18 @@ int main(int argc, char **argv) {
         return 2;
     }
     g_mode = boot_mode;
+    g_level_id = level_id;
+    g_level_env = level_env;
+    level_mods_reset();
+    if (level_mods_register(g_level_id, g_level_env) == 0) {
+        fprintf(stderr, "shank_game: bad --level %d / --env %d (level > 0, env 0..2)\n",
+                g_level_id, g_level_env);
+        return 2;
+    }
+    if (set_mod && !level_mods_set(g_level_id, set_mod, set_on)) {
+        fprintf(stderr, "shank_game: --set-mod %d %d refused (mandatory, unknown, or no change)\n",
+                set_mod, set_on);
+    }
     init_lobby();
 
     if (g_is_client) {
@@ -1073,11 +1127,13 @@ int main(int argc, char **argv) {
             else if (g_is_client) shank_sleep_ms(16);
         }
         printf("headless %d ticks: mode=%d %s=%d score=%d hp=%d shield=%d bodies=%d events=%d"
-               " snapshots=%d peer=%d\n",
+               " level=%d env=%d mods=%d rev=%d snapshots=%d peer=%d\n",
                headless, g_mode, g_mode == gp_mode_zombies() ? "wave" : "frags",
                g_mode == gp_mode_zombies() ? g_wave + 1 : g_player_score,
                g_player_score, local_body()->hp, local_body()->shield, bot_count_alive(),
-               reflux_host_total_dispatched(), g_snapshots_received, g_peer_known);
+               reflux_host_total_dispatched(), g_level_id, g_level_env,
+               level_mods_mask(g_level_id), level_mods_revision(g_level_id),
+               g_snapshots_received, g_peer_known);
         return 0;
     }
 

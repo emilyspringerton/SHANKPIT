@@ -114,6 +114,34 @@ int gp_evt_ko(void);
 int gp_evt_mode(void);
 int gp_evt_is_gameplay_(int action_type);
 
+/* ---- packages/game/level_mods.prn (the core per-level REFLUX module registry) -------------------- */
+int lm_mod_core_sim(void);
+int lm_mod_level(void);
+int lm_mod_weather_render(void);
+int lm_mod_weather_audio(void);
+int lm_mod_sky(void);
+int lm_mod_count(void);
+int lm_mod_valid(int mod);
+int lm_env_surface(void);
+int lm_env_underground(void);
+int lm_env_moon(void);
+int lm_env_valid(int env);
+int lm_bit(int mod);
+int lm_all_mask(void);
+int lm_mandatory_mask(void);
+int lm_mandatory(int mod);
+int lm_enabled(int mask, int mod);
+int lm_default_mask(int env);
+int lm_sanitize(int mask);
+int lm_set(int mask, int mod, int on);
+int lm_next_revision(int revision);
+int lm_evt_registered(void);
+int lm_evt_mod_set(void);
+int lm_evt_state(void);
+int lm_evt_first(void);
+int lm_evt_last(void);
+int lm_evt_is_level_(int action_type);
+
 /* ---- composed sim/render rules the client reads directly ------------------------------------------ */
 int tick_ms(void);
 int frame_budget(void);

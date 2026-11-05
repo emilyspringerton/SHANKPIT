@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include "game_api.h"
+#include "level_mods_host.h"
 #include "reflux_runtime.h"
 
 static int g_checks;
@@ -322,6 +323,97 @@ static void test_round_sim(void) {
     check(reflux_host_log_size() > 0, "the host log is live");
 }
 
+/* The core per-level module registry: environment defaults, the mandatory core, and live updates that
+ * travel through the shared REFLUX log without touching a second level. */
+static void test_level_mods(void) {
+    int surface = lm_default_mask(lm_env_surface());
+    int under = lm_default_mask(lm_env_underground());
+    int moon = lm_default_mask(lm_env_moon());
+    int mask;
+
+    check(lm_mod_core_sim() == 1 && lm_mod_level() == 2 && lm_mod_sky() == 5,
+          "module ids are stable");
+    check(lm_mod_count() == 5, "five modules");
+    check(lm_env_valid(lm_env_surface()) == 1 && lm_env_valid(lm_env_moon()) == 1,
+          "surface and moon are environments");
+    check(lm_env_valid(3) == 0, "an unknown environment is refused");
+
+    /* The founder's own two cases, as masks rather than prose. */
+    check(lm_enabled(surface, lm_mod_weather_render()) == 1, "surface draws weather");
+    check(lm_enabled(under, lm_mod_weather_render()) == 0, "underground disables weather render");
+    check(lm_enabled(under, lm_mod_weather_audio()) == 1, "underground still hears the weather");
+    check(lm_enabled(under, lm_mod_core_sim()) == 1, "underground keeps the core sim");
+    check(lm_enabled(under, lm_mod_level()) == 1, "underground keeps its level module");
+    check(lm_enabled(moon, lm_mod_weather_render()) == 0, "moon disables weather render");
+    check(lm_enabled(moon, lm_mod_weather_audio()) == 0, "moon disables weather audio too");
+    check(lm_enabled(moon, lm_mod_core_sim()) == 1, "moon keeps the core sim");
+
+    /* Mandatory modules survive every path, including a hostile or empty mask. */
+    check(lm_set(under, lm_mod_core_sim(), 0) == under, "core sim cannot be turned off");
+    check(lm_set(under, lm_mod_level(), 0) == under, "the level module cannot be turned off");
+    check(lm_sanitize(0) == lm_mandatory_mask(), "an empty mask returns to the mandatory set");
+    check(lm_set(under, 99, 1) == under, "an unknown module is ignored");
+    mask = lm_set(under, lm_mod_weather_render(), 1);
+    check(lm_enabled(mask, lm_mod_weather_render()) == 1, "a module can be turned on");
+    check(lm_set(mask, lm_mod_weather_render(), 0) == under, "and off again");
+
+    /* The C header and the PARENA rules must name the same rows. */
+    check(lm_evt_registered() == REFLUX_ACTION_LEVEL_REGISTERED, "registered row number agrees");
+    check(lm_evt_mod_set() == REFLUX_ACTION_LEVEL_MOD_SET, "mod-set row number agrees");
+    check(lm_evt_state() == REFLUX_ACTION_LEVEL_STATE, "state row number agrees");
+    check(lm_evt_is_level_(REFLUX_ACTION_LEVEL_MOD_SET) == 1, "the family predicate sees its rows");
+    check(lm_evt_is_level_(gp_evt_mode()) == 0, "a mode row is not a level update");
+    check(reflux_action_is_level_mod(REFLUX_ACTION_LEVEL_STATE) == 1,
+          "the C predicate agrees with the PARENA one");
+
+    /* Live registry: two levels, updates through the log, no bleed between them. */
+    reflux_host_reset();
+    level_mods_reset();
+    check(level_mods_register(7, lm_env_underground()) == under, "level 7 opens underground");
+    check(level_mods_register(7, lm_env_surface()) == under, "re-registering does not reset a live level");
+    check(level_mods_register(8, lm_env_moon()) == moon, "level 8 opens on the moon");
+    check(level_mods_count() == 2, "two live levels");
+    check(level_mods_revision(7) == 1, "a fresh level starts at revision 1");
+    check(reflux_host_total_dispatched() == 2, "each registration dispatches one row");
+
+    /* request is the server's event; sync is the level's subscriber. The mask must not move between
+     * the two, or the log would not be the thing carrying the update. */
+    check(level_mods_request(7, lm_mod_weather_render(), 1) == 1, "an update row is dispatched");
+    check(level_mods_mask(7) == under, "request alone does not mutate the level");
+    check(level_mods_sync(7) >= 1, "sync applies the unseen update");
+    check(level_mods_enabled(7, lm_mod_weather_render()) == 1, "underground can opt back into weather");
+    check(level_mods_revision(7) == 2, "an accepted change bumps the revision");
+    check(level_mods_mask(8) == moon, "level 8 is untouched by level 7's update");
+    check(level_mods_sync(7) == 0, "a second sync applies nothing");
+    check(level_mods_revision(7) == 2, "a repeated sync does not bump the revision");
+
+    check(level_mods_set(7, lm_mod_weather_render(), 0) == 1, "sync-mode set turns weather off");
+    check(level_mods_mask(7) == under, "level 7 is back to its underground mask");
+    check(level_mods_revision(7) == 3, "the second accepted change bumps again");
+    check(level_mods_request(7, lm_mod_core_sim(), 0) == 0, "disabling the core sim is refused");
+
+    /* A stale full-state row (older revision) is ignored rather than undoing a newer update. */
+    reflux_host_dispatch(lm_evt_state(), 7, under, 1);
+    check(level_mods_sync(7) == 0, "a stale state row applies nothing");
+    check(level_mods_mask(7) == under && level_mods_revision(7) == 3,
+          "a stale state row cannot roll a live level back");
+    check(level_mods_set(8, lm_mod_weather_audio(), 1) == 1, "the moon bunker can add weather audio");
+    check(level_mods_mask(8) == (moon | lm_bit(lm_mod_weather_audio())), "level 8 carries the new bit");
+    check(level_mods_mask(7) == under, "level 7 is still untouched");
+
+    /* A log reset (a new round) must not leave a cursor reading another level's rows. */
+    level_mods_publish(7);
+    check(reflux_host_action_type_at(reflux_host_index_for_abs(reflux_host_total_dispatched() - 1)) ==
+              lm_evt_state(),
+          "publish emits a full-state row");
+    reflux_host_reset();
+    check(level_mods_sync(7) == 0, "sync after a reset is a harmless no-op");
+    check(level_mods_mask(7) == under, "and it does not corrupt the live mask");
+
+    level_mods_reset();
+    check(level_mods_count() == 0, "reset clears the registry");
+}
+
 int main(void) {
     test_modes();
     test_loop();
@@ -330,6 +422,7 @@ int main(void) {
     test_regen();
     test_net();
     test_reflux();
+    test_level_mods();
     test_round_sim();
 
     printf("%s: %d checks, %d failure(s)\n",

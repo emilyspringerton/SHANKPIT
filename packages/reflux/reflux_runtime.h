@@ -210,6 +210,28 @@ static inline int reflux_action_is_combat(int action_type) {
     return action_type >= REFLUX_ACTION_COMBAT_FIRST && action_type <= REFLUX_ACTION_COMBAT_LAST;
 }
 
+/* The core per-level module registry (packages/game/level_mods.prn). A level is itself a module, and
+ * every level runs a mask of modules that a server can update at any time. These three rows are the
+ * log-streaming half of that: register, change one module, or republish the whole state for a reader
+ * that joined late (or after reflux_host_reset). Payloads, in the same scalar convention as every
+ * other family here:
+ *   REGISTERED (140): a = level id, b = environment, c = opening mask
+ *   MOD_SET    (141): a = level id, b = module id, c = 1/0
+ *   STATE      (142): a = level id, b = mask, c = revision
+ * level_mods.prn names the same numbers; apps/game/game_test.c asserts the two sides agree. */
+#define REFLUX_ACTION_LEVEL_REGISTERED 140
+#define REFLUX_ACTION_LEVEL_MOD_SET    141
+#define REFLUX_ACTION_LEVEL_STATE      142
+
+#define REFLUX_ACTION_LEVEL_FIRST REFLUX_ACTION_LEVEL_REGISTERED
+#define REFLUX_ACTION_LEVEL_LAST  REFLUX_ACTION_LEVEL_STATE
+
+/* Is this action type part of the level-module family? The predicate a sync/relay checks before it
+ * treats a row as a level update, so an unrelated row can never be mistaken for one. */
+static inline int reflux_action_is_level_mod(int action_type) {
+    return action_type >= REFLUX_ACTION_LEVEL_FIRST && action_type <= REFLUX_ACTION_LEVEL_LAST;
+}
+
 #define REFLUX_LOG_CAPACITY 256
 
 typedef struct {

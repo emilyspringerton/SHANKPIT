@@ -1,0 +1,125 @@
+;; packages/game/level_mods.prn -- the core REFLUX module: which modules a LEVEL runs.
+;;
+;; Founder, real-time: "develop the core reflux module the module to rule them all it will allow us to
+;; register other modules dynamically per level ... when levels are updated on the server they send out
+;; log streaming events that allow for updating a levels mods ... an underground bunker level would want
+;; to disable weather rendering mod but not the core sim mod but a bunker on the moon we disable the
+;; weather mod totally". This file is the RULES half; packages/game/level_mods_host.c is the table of
+;; live levels, and REFLUX carries the updates (packages/reflux/reflux_runtime.h rows 140..142).
+;;
+;; The model is deliberately the same shape as every other mod boundary in this fork: PARENA decides,
+;; the host holds state, and nothing calls anything through a function pointer (VS0 has none). A LEVEL
+;; is itself a module -- it owns geometry, spawns and scripts (lm-mod-level) -- and it is REGISTERED
+;; with an environment, which is the only thing that decides its opening mod set. A server can then send
+;; a level a mod update at any time; the row is applied on the next sync, so a live level evolves
+;; without a reload.
+;;
+;; Mods are stable ids (like REFLUX action types), not array indices. Bit n of a level's mask is
+;; (shl 1 n): the mask is what the host persists and what a level update carries.
+(module shankpit/levelmods)
+(export lm-mod-core-sim lm-mod-level lm-mod-weather-render lm-mod-weather-audio lm-mod-sky
+        lm-mod-count lm-mod-valid
+        lm-env-surface lm-env-underground lm-env-moon lm-env-valid
+        lm-bit lm-all-mask lm-mandatory-mask lm-mandatory
+        lm-enabled lm-default-mask lm-sanitize lm-set
+        lm-next-revision
+        lm-evt-registered lm-evt-mod-set lm-evt-state
+        lm-evt-first lm-evt-last lm-evt-is-level?)
+
+;; ---- modules -------------------------------------------------------------------------------------
+;; CORE SIM is the simulation itself: movement, combat, waves, the net tick. Every level needs it, so
+;; it is mandatory -- a level that disabled it would not be a level.
+(defn lm-mod-core-sim [] : I32 1)
+
+;; LEVEL is the level's own module: geometry, spawn points, scripts, doors. Also mandatory for its own
+;; level, and the reason this registry can say "the level module is a REFLUX module" without a special
+;; case: it is registered, updated and read exactly like any other row in the table.
+(defn lm-mod-level [] : I32 2)
+
+;; WEATHER RENDER draws precipitation, fog and lightning. An underground bunker turns this off; it can
+;; still hear the rain above (lm-mod-weather-audio stays on).
+(defn lm-mod-weather-render [] : I32 3)
+
+;; WEATHER AUDIO is the ambience bed that belongs to the weather. A moon bunker turns BOTH weather mods
+;; off -- the naive case the founder named -- while a terrestrial bunker keeps only this one.
+(defn lm-mod-weather-audio [] : I32 4)
+
+;; SKY draws the sky dome / stars. Underground has no sky to draw; the moon keeps it (until the bunker
+;; wall is closed, which is lm defaulting it off for the moon environment below).
+(defn lm-mod-sky [] : I32 5)
+
+(defn lm-mod-count [] : I32 5)
+(defn lm-mod-valid [(mod : I32)] : I32
+  (if (and (>= mod (lm-mod-core-sim)) (<= mod (lm-mod-sky))) 1 0))
+
+;; ---- environments ---------------------------------------------------------------------------------
+;; 0 SURFACE: everything on.
+;; 1 UNDERGROUND: no weather render and no sky, but the weather AUDIO is still there (you can hear the
+;;   rain through the ceiling). Core sim and the level module stay on.
+;; 2 MOON: the naive case -- weather is off totally (render and audio), and there is no sky to draw from
+;;   inside a bunker. Core sim and the level module stay on.
+(defn lm-env-surface [] : I32 0)
+(defn lm-env-underground [] : I32 1)
+(defn lm-env-moon [] : I32 2)
+(defn lm-env-valid [(env : I32)] : I32
+  (if (and (>= env (lm-env-surface)) (<= env (lm-env-moon))) 1 0))
+
+;; ---- masks ----------------------------------------------------------------------------------------
+;; Bit for a module id: mod 1 -> 1, mod 2 -> 2, mod 3 -> 4, ...
+(defn lm-bit [(mod : I32)] : I32 (shl 1 (- mod 1)))
+(defn lm-all-mask [] : I32 31)
+(defn lm-mandatory-mask [] : I32
+  (bit-or (lm-bit (lm-mod-core-sim)) (lm-bit (lm-mod-level))))
+
+(defn lm-mandatory [(mod : I32)] : I32
+  (if (or (= mod (lm-mod-core-sim)) (= mod (lm-mod-level))) 1 0))
+
+;; 1 when the module is in the mask. An invalid module is never enabled, rather than reading a stray bit.
+(defn lm-enabled [(mask : I32) (mod : I32)] : I32
+  (if (= (lm-mod-valid mod) 0)
+    0
+    (if (= (bit-and mask (lm-bit mod)) 0) 0 1)))
+
+(defn lm-default-mask [(env : I32)] : I32
+  (if (= env (lm-env-underground))
+    (bit-or (bit-or (lm-bit (lm-mod-core-sim)) (lm-bit (lm-mod-level)))
+            (lm-bit (lm-mod-weather-audio)))
+    (if (= env (lm-env-moon))
+      (bit-or (lm-bit (lm-mod-core-sim)) (lm-bit (lm-mod-level)))
+      (lm-all-mask))))
+
+;; A mask is never allowed to lose the mandatory modules or carry bits this build does not know about.
+;; Every register, update and incoming state row goes through this, so a hostile or stale server row
+;; cannot disable the simulation.
+(defn lm-sanitize [(mask : I32)] : I32
+  (bit-and (bit-or mask (lm-mandatory-mask)) (lm-all-mask)))
+
+;; The one place a mod bit changes. An unknown module is ignored; turning a mandatory module OFF is
+;; ignored (turning it ON is fine and idempotent). `on` is 1/0, the same scalar flag every mod hook uses.
+(defn lm-set [(mask : I32) (mod : I32) (on : I32)] : I32
+  (if (= (lm-mod-valid mod) 0)
+    (lm-sanitize mask)
+    (if (and (= on 0) (= (lm-mandatory mod) 1))
+      (lm-sanitize mask)
+      (if (= on 0)
+        (bit-and mask (bit-xor (lm-all-mask) (lm-bit mod)))
+        (bit-or mask (lm-bit mod))))))
+
+;; Revisions are dense and start at 1: a level that has never changed reports 1, and each accepted
+;; change increments by exactly one. A repeated update is not a change, so it does not bump this.
+(defn lm-next-revision [(revision : I32)] : I32 (+ revision 1))
+
+;; ---- the REFLUX event family ----------------------------------------------------------------------
+;; 140 REGISTERED: a level joined the registry. a = level id, b = environment, c = opening mask.
+;; 141 MOD SET:    a server asks a level to change one module. a = level id, b = module, c = 1/0.
+;; 142 STATE:      full state, safe to apply on a late joiner or after a log reset. a = level, b = mask,
+;;                 c = revision.
+;; The C side names the same three numbers in reflux_runtime.h; apps/game/game_test.c asserts they agree,
+;; so a change to one side is a red test rather than a silently different event.
+(defn lm-evt-registered [] : I32 140)
+(defn lm-evt-mod-set [] : I32 141)
+(defn lm-evt-state [] : I32 142)
+(defn lm-evt-first [] : I32 (lm-evt-registered))
+(defn lm-evt-last [] : I32 (lm-evt-state))
+(defn lm-evt-is-level? [(action-type : I32)] : I32
+  (if (and (>= action-type (lm-evt-first)) (<= action-type (lm-evt-last))) 1 0))

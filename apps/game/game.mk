@@ -11,6 +11,7 @@ GAME_PRN := packages/game/core_loop.prn \
             packages/game/render_plan.prn \
             packages/game/net_rules.prn \
             packages/game/gameplay_mod.prn \
+            packages/game/level_mods.prn \
             packages/sim/combat_api.prn \
             packages/sim/hit_rules.prn \
             packages/sim/shield_rules.prn \
@@ -38,17 +39,19 @@ $(GAME_GEN): $(GAME_PRN) $(PARENA_BIN)
 	$(PARENA_BIN) build $(GAME_PRN) -o $@
 
 $(GAME_BIN): $(GAME_GEN) apps/game/host.c apps/game/game_api.h \
+             packages/game/level_mods_host.c packages/game/level_mods_host.h \
              packages/reflux/reflux_runtime.c packages/reflux/reflux_runtime.h
 	@mkdir -p $(BIN_DIR)
 	$(CC) $(GAME_CFLAGS) $(GAME_SDL_CFLAGS) \
-	  apps/game/host.c packages/reflux/reflux_runtime.c $(GAME_GEN) -o $@ \
-	  $(GAME_SDL_LIBS) $(GAME_EXTRA_LIBS)
+	  apps/game/host.c packages/game/level_mods_host.c packages/reflux/reflux_runtime.c $(GAME_GEN) \
+	  -o $@ $(GAME_SDL_LIBS) $(GAME_EXTRA_LIBS)
 
 $(GAME_TEST_BIN): $(GAME_GEN) apps/game/game_test.c apps/game/game_api.h \
+                  packages/game/level_mods_host.c packages/game/level_mods_host.h \
                   packages/reflux/reflux_runtime.c packages/reflux/reflux_runtime.h
 	@mkdir -p $(BIN_DIR)
-	$(CC) $(GAME_CFLAGS) apps/game/game_test.c packages/reflux/reflux_runtime.c $(GAME_GEN) \
-	  -o $@ -lm
+	$(CC) $(GAME_CFLAGS) apps/game/game_test.c packages/game/level_mods_host.c \
+	  packages/reflux/reflux_runtime.c $(GAME_GEN) -o $@ -lm
 
 game-test: $(GAME_TEST_BIN)
 	./$(GAME_TEST_BIN)

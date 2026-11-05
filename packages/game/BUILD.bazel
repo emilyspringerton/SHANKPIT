@@ -27,9 +27,17 @@ parena_module(
     src = "gameplay_mod.prn",
 )
 
+# The core per-level REFLUX module registry: which modules a level runs. Its C host
+# (level_mods_host.c) is compiled by apps/game/game.mk alongside these generated rules.
+parena_module(
+    name = "level_mods",
+    src = "level_mods.prn",
+)
+
 exports_files([
     "core_loop.prn",
     "render_plan.prn",
     "net_rules.prn",
     "gameplay_mod.prn",
+    "level_mods.prn",
 ])
