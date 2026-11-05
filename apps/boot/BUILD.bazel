@@ -22,6 +22,7 @@ parena_binary(
     extra_srcs = [
         "@parena//stdlib:shankpit/zombie_brain_rules.prn",
         "//packages/frame:frame_rules.prn",
+        "//packages/render:palette_rules.prn",
     ],
     deps = ["@parena//runtime:parena_runtime"],
 )

@@ -1,0 +1,49 @@
+;; packages/render/palette_rules.prn -- shankpit-460's art direction, as numbers.
+;;
+;; Taken from PARENA/stdlib/shankpit460/sp_view.prn (the 460 web build's own palette): "a pale concrete
+;; arena under a warm dusk sky, soft fog, thin lit rims on every edge, and ten muted player hues. Nothing
+;; flashes; the loudest thing on screen is a muzzle." Those are the values the fork inherits.
+;;
+;; A fork-local copy, for the same reason as packages/frame: this repo's pinned PARENA cannot parse the
+;; 460 sources ((cond test result ...) and typed (let [(x : I32) ...]) both fail), so sp_view.prn is not
+;; compilable here. The colours are the source's; the file is a transcription, and it says so.
+;;
+;; Packed 0xRRGGBB, matching the framebuffer words the 460 renderer writes (sp_gfx's store32! into FB).
+(module shankpit/palette)
+(export sky-top sky-mid sky-horizon floor-color wall-color player-hue palette-check)
+
+;; ---- sky: pale blue at the top, warm at the horizon ----
+(defn sky-top [] : I32 8296124)
+(defn sky-mid [] : I32 12369612)
+(defn sky-horizon [] : I32 15260360)
+
+;; ---- the arena ----
+(defn floor-color [] : I32 13024944)
+(defn wall-color [] : I32 7897234)
+
+;; ---- ten player hues, soft but distinct against pale concrete ----
+(defn player-hue [(c : I32)] : I32
+  (if (= c 0) 13658200
+    (if (= c 1) 14066758
+      (if (= c 2) 7776372
+        (if (= c 3) 4890272
+          (if (= c 4) 5931716
+            (if (= c 5) 9402306
+              (if (= c 6) 12873882
+                (if (= c 7) 8424608
+                  (if (= c 8) 11052122
+                    (if (= c 9) 12890250 12890250)))))))))))
+
+;; A palette that has collapsed -- a duplicated hue, sky and floor the same value -- draws something that
+;; is no longer 460's arena, and would do it silently. Callers gate on this before starting a frame.
+(defn distinct3 [(a : I32) (b : I32) (c : I32)] : Bool
+  (and (!= a b) (!= b c) (!= a c)))
+
+(defn palette-check [] : I32
+  (if (and (distinct3 (sky-top) (sky-mid) (sky-horizon))
+           (!= (floor-color) (wall-color))
+           (distinct3 (player-hue 0) (player-hue 1) (player-hue 2))
+           (!= (player-hue 0) (player-hue 9))
+           (!= (player-hue 3) (player-hue 4)))
+    0
+    1))

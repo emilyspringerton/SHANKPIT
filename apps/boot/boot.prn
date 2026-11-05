@@ -15,6 +15,7 @@
 
 ;; frame_rules.prn rides in the same build: the loop the program would run is the 460's, as numbers.
 (export frame-total frame-check)
+(export palette-check)
 
 (defn level-name [] : I32 0)                       ;; name is a string; boot prints it as a literal
 (defn level-width [] : I32 @LEVEL_WIDTH@)
@@ -61,9 +62,10 @@
     (println "mode: zombies (MODE_ZOMBIE)")
     (println "tick 1: shaped by zombie_brain_rules for the spawn class")
     (println "loop: 16 ms fixed tick, at most 6 steps a frame")
+    (println "render: 460 palette -- pale concrete, warm dusk sky, ten muted hues")
     (if (and (> (level-width) 0) (> (level-depth) 0) (>= (spawn-y) 0)
              (> (turn-cap) 0) (< (turn-cap) 2000) (> (distance-bias) 1000)
-             (= (frame-check) 0))
+             (= (frame-check) 0) (= (palette-check) 0))
       (do
         (println "boot plan: the level's own spawner, zombie mode")
         0)
