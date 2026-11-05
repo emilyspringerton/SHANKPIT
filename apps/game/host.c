@@ -50,6 +50,7 @@ typedef int shank_socket;
 #endif
 
 #include "game_api.h"
+#include "level_catalog.h"
 #include "level_mods_host.h"
 #include "reflux_runtime.h"
 
@@ -896,6 +897,10 @@ static void draw_hud(void) {
     int i;
 
     draw_text(16, 14, rp_hud_scale(), rgb(0xe8dcc0), mode_title(g_mode));
+    {
+        const char *level_name = level_catalog_name(g_level_id);
+        if (level_name[0]) draw_text(16, 64, 1, rgb(0x807666), level_name);
+    }
     if (g_phase == 0) {
         draw_text(16, 40, 1, rgb(0x9a8f7a), "LOBBY");
     } else if (g_mode == gp_mode_zombies()) {
@@ -1092,7 +1097,8 @@ int main(int argc, char **argv) {
     const char *join_ip = NULL;
     int port = net_port();
     int boot_mode = gp_mode_default();
-    int level_id = 1;
+    const char *levels_path = NULL;
+    int level_id = 0; /* 0 = unspecified: the manifest's first level, or level 1 without one */
     int level_env = lm_env_surface();
     int set_mod = 0;
     int set_on = 0;
@@ -1117,6 +1123,8 @@ int main(int argc, char **argv) {
             if (i + 1 < argc && argv[i + 1][0] != '-') port = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
             port = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--levels") == 0 && i + 1 < argc) {
+            levels_path = argv[++i];
         } else if (strcmp(argv[i], "--level") == 0 && i + 1 < argc) {
             level_id = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--env") == 0 && i + 1 < argc) {
@@ -1130,7 +1138,8 @@ int main(int argc, char **argv) {
             set_on = atoi(argv[++i]) != 0;
         } else {
             fprintf(stderr, "usage: %s [--host [port]] [--join ip [port]] [--start] [--ffa]"
-                            " [--level N] [--env surface|underground|moon] [--set-mod MOD 0|1]"
+                            " [--levels manifest.json] [--level N]"
+                            " [--env surface|underground|moon] [--set-mod MOD 0|1]"
                             " [--headless N] [--frames N --shot out.bmp]\n", argv[0]);
             return 2;
         }
@@ -1149,14 +1158,30 @@ int main(int argc, char **argv) {
         return 2;
     }
     g_mode = boot_mode;
-    g_level_id = level_id;
-    g_level_env = level_env;
     level_mods_reset();
-    if (level_mods_register(g_level_id, g_level_env) == 0) {
-        fprintf(stderr, "shank_game: bad --level %d / --env %d (level > 0, env 0..2)\n",
-                g_level_id, g_level_env);
-        return 2;
+    level_catalog_reset();
+    if (levels_path) {
+        int n = level_catalog_load(levels_path);
+        if (n <= 0) {
+            fprintf(stderr, "shank_game: %s: level manifest rejected (%d)\n", levels_path, n);
+            return 2;
+        }
+        if (level_id == 0) level_id = level_catalog_at(0)->id;
+        else if (!level_catalog_find(level_id)) {
+            fprintf(stderr, "shank_game: level %d is not in %s\n", level_id, levels_path);
+            return 2;
+        }
+        g_level_env = level_mods_env(level_id);
+    } else {
+        if (level_id == 0) level_id = 1;
+        if (level_mods_register(level_id, level_env) == 0) {
+            fprintf(stderr, "shank_game: bad --level %d / --env %d (level > 0, env 0..2)\n",
+                    level_id, level_env);
+            return 2;
+        }
+        g_level_env = level_env;
     }
+    g_level_id = level_id;
     if (set_mod && !level_mods_set(g_level_id, set_mod, set_on)) {
         fprintf(stderr, "shank_game: --set-mod %d %d refused (mandatory, unknown, or no change)\n",
                 set_mod, set_on);
@@ -1195,13 +1220,13 @@ int main(int argc, char **argv) {
             else if (g_is_client) shank_sleep_ms(16);
         }
         printf("headless %d ticks: mode=%d %s=%d score=%d hp=%d shield=%d bodies=%d events=%d"
-               " level=%d env=%d mods=%d rev=%d snapshots=%d peer=%d\n",
+               " level=%d env=%d mods=%d rev=%d snapshots=%d peer=%d level_name=%s\n",
                headless, g_mode, g_mode == gp_mode_zombies() ? "wave" : "frags",
                g_mode == gp_mode_zombies() ? g_wave + 1 : g_player_score,
                g_player_score, local_body()->hp, local_body()->shield, bot_count_alive(),
                reflux_host_total_dispatched(), g_level_id, g_level_env,
                level_mods_mask(g_level_id), level_mods_revision(g_level_id),
-               g_snapshots_received, g_peer_known);
+               g_snapshots_received, g_peer_known, level_catalog_name(g_level_id));
         return 0;
     }
 

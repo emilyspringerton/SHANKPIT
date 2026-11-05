@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include "game_api.h"
+#include "level_catalog.h"
 #include "level_mods_host.h"
 #include "reflux_runtime.h"
 
@@ -435,6 +436,57 @@ static void test_level_mods(void) {
     check(level_mods_count() == 0, "reset clears the registry");
 }
 
+/* A level manifest is the server's own config: it carries each level's environment and optional mod
+ * override, and registers the whole catalog or nothing. */
+static void test_level_catalog(void) {
+    const char *path = "/tmp/shank_level_manifest_test.json";
+    FILE *f = fopen(path, "wb");
+
+    check(f != NULL, "manifest test file opens");
+    if (f) {
+        fputs("{\"levels\":["
+              "{\"id\":21,\"name\":\"BUNKER\",\"env\":1},"
+              "{\"id\":22,\"name\":\"MOON\",\"env\":2,\"mods\":0}]}",
+              f);
+        fclose(f);
+    }
+
+    level_catalog_reset();
+    level_mods_reset();
+    reflux_host_reset();
+    check(level_catalog_load(path) == 2, "manifest loads two levels");
+    check(level_catalog_count() == 2, "catalog keeps both levels");
+    check(strcmp(level_catalog_name(21), "BUNKER") == 0, "catalog keeps the level name");
+    check(strcmp(level_catalog_name(999), "") == 0, "an unknown level has no name");
+    check(level_mods_env(21) == lm_env_underground(), "level 21 carries its environment");
+    check(level_mods_mask(21) == lm_default_mask(lm_env_underground()),
+          "level 21 opens with the bunker mask");
+    check(level_mods_enabled(21, lm_mod_weather_render()) == 0,
+          "the bunker level has no weather render");
+    check(level_mods_mask(22) == lm_mandatory_mask(),
+          "a manifest mods override is sanitised, not trusted");
+
+    /* Duplicate ids refuse the whole manifest and leave the registry empty. */
+    f = fopen(path, "wb");
+    if (f) {
+        fputs("{\"levels\":["
+              "{\"id\":21,\"name\":\"A\",\"env\":1},"
+              "{\"id\":21,\"name\":\"B\",\"env\":2}]}",
+              f);
+        fclose(f);
+    }
+    level_catalog_reset();
+    level_mods_reset();
+    check(level_catalog_load(path) < 0, "duplicate ids refuse the manifest");
+    check(level_mods_count() == 0, "a refused manifest registers nothing");
+
+    level_catalog_reset();
+    level_mods_reset();
+    check(level_catalog_load("/tmp/shank_no_such_manifest.json") == -1,
+          "a missing manifest is refused");
+    remove(path);
+}
+
 int main(void) {
     test_modes();
     test_loop();
@@ -444,6 +496,7 @@ int main(void) {
     test_net();
     test_reflux();
     test_level_mods();
+    test_level_catalog();
     test_round_sim();
 
     printf("%s: %d checks, %d failure(s)\n",

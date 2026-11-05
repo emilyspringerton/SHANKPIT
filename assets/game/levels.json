@@ -1,0 +1,8 @@
+{
+  "levels": [
+    { "id": 1, "name": "SURFACE YARD", "env": 0 },
+    { "id": 2, "name": "UNDERGROUND BUNKER", "env": 1 },
+    { "id": 3, "name": "MOON BUNKER", "env": 2 },
+    { "id": 4, "name": "SILENT BUNKER", "env": 1, "mods": 3 }
+  ]
+}
