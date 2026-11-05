@@ -19,7 +19,7 @@
 #define NUM_CHANNELS   2        /* stereo */
 #define BUFFER_FRAMES  512
 
-#define MAX_SOUNDS     21       /* 0-5 weapons, 6-10 footstep pentatonic notes, 11-13 shield hit/break/pickup (#539-541), 14-15 the civic boss's verdict read/served, 16-19 thunder (one per variant), 20 the shield regen tick */
+#define MAX_SOUNDS     30       /* 0-5 weapons, 6-10 footstep pentatonic notes, 11-13 shield hit/break/pickup (#539-541), 14-15 the civic boss's verdict read/served, 16-19 thunder (one per variant), 20-29 the shield regen tick, one buffer per ramp step */
 #define MAX_MIX        16       /* simultaneous effect voices */
 #define MAX_CLIP_VOICES 4       /* spoken clips (TYLER VO) have their own pool, never stolen by effects */
 #define NUM_VOICES     (MAX_MIX + MAX_CLIP_VOICES)
@@ -537,11 +537,16 @@ void audio_init(void) {
     }
     /* 13: shield pack pickup -- rising chime */
     g_snd[13] = synth_chime(0.42f);
-    /* 20: shield regen tick -- one per second while a broken shield comes back, so it has to be
-       the quietest cue in the bank and short (55 ms). A rising chime here would turn nineteen
-       seconds of recovery into a melody, and borrowing the pickup chime would make a regen tick
-       indistinguishable from finding a pack. */
-    g_snd[20] = synth_tone(1320.0f, 0.055f, 0.22f, 40.0f);
+    /* 20-29: shield regen tick -- one buffer per ramp step (1..10). One per second while a broken
+       shield comes back, so every step has to be the quietest cue in the bank and short (55 ms).
+       The pitch climbs 60 Hz per step (1320 -> 1860 Hz): a recovery should sound like it is getting
+       stronger, but a full musical interval per tick would turn nineteen seconds into a melody, and
+       borrowing the pickup chime would make a regen tick indistinguishable from finding a pack. The
+       amplitude is identical at every step -- the ramp is heard as pitch, never as volume, so ten
+       ticks in a row can never become the loudest thing in a fight. */
+    for (int step = 0; step < 10; step++) {
+        g_snd[20 + step] = synth_tone(1320.0f + 60.0f * (float)step, 0.055f, 0.22f, 40.0f);
+    }
 
     /* ── The civic boss's verdict (AI_ROLE_MAGISTRATE) ───────────
        14: the sentence being READ -- a gavel rap on wood: a short high-to-mid pitch sweep (the block,
@@ -647,13 +652,24 @@ void audio_play_footstep(float sx, float sy, float sz,
 void audio_play_shield(int kind, float sx, float sy, float sz,
                        float lx, float ly, float lz, float lyaw) {
     if (!g_dev || !g_mutex) return;
-    /* kind 3 (the regen tick) is slot 20, not 14: 14-19 already belong to the magistrate's verdict
-       and thunder, so the shield bank's three contiguous slots stop at the pickup chime. */
-    static const int shield_snd[4] = {11, 12, 13, 20};
-    if (kind < 0 || kind > 3) return;
+    static const int shield_snd[3] = {11, 12, 13};
+    if (kind < 0 || kind > 2) return;
     float lgain, rgain;
     spatial_gains(sx, sy, sz, lx, ly, lz, lyaw, &lgain, &rgain);
     play_sound(shield_snd[kind], lgain, rgain);
+}
+
+/* The regen tick, pitched by the ramp step it belongs to: step 0 is the first tick (1 point),
+ * step 9 the tenth and every later one (10 points apiece). Slots 20-29, not 14+: 14-19 already
+ * belong to the magistrate's verdict and thunder. */
+void audio_play_shield_regen(int step, float sx, float sy, float sz,
+                             float lx, float ly, float lz, float lyaw) {
+    if (!g_dev || !g_mutex) return;
+    if (step < 0) step = 0;
+    if (step > 9) step = 9;
+    float lgain, rgain;
+    spatial_gains(sx, sy, sz, lx, ly, lz, lyaw, &lgain, &rgain);
+    play_sound(20 + step, lgain, rgain);
 }
 
 /* The civic boss's verdict: kind 0 = read (the telegraph), 1 = served. Same spatial_gains call as a

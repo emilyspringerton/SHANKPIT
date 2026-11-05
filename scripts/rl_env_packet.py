@@ -238,8 +238,8 @@ def decode_snapshot(data: bytes):
     """Returns a list of NetPlayer copies, or None if data is too short to trust. Mirrors
     apps2/emily-bot/snapshot.go's own decodePacketSnapshot exactly: entity_count lives at
     NetHeader offset 8, entities start at offset 13 (12-byte header + 1 redundant count byte),
-    each entity is sizeof(NetPlayer)=88 bytes (S470 -- grew from 84 when anim_override was added,
-    itself grown from 72 by S459-69's own vx/vy/vz).
+    each entity is sizeof(NetPlayer)=92 bytes (shield_regen_since_ms appended at the END; S470 grew
+    it 84->88 for anim_override, itself grown from 72 by S459-69's own vx/vy/vz).
     A truncated/overclaiming buffer stops safely at however many whole entities actually fit,
     never misparses past the real buffer end."""
     if len(data) < 13 or data[0] != PACKET_SNAPSHOT:

@@ -83,3 +83,45 @@ func TestDecodePacketSnapshot_TruncatedBuffer(t *testing.T) {
 		t.Fatalf("expected exactly 1 entity (buffer only has room for 1), got %d", len(entities))
 	}
 }
+
+// TestDecodePacketSnapshot_ShieldRegenClock -- the regen clock rides at the very END of NetPlayer
+// (offset 88 of a 92-byte stride), so this is the field the old 88-byte stride would have read out of
+// the NEXT entity's id bytes. Two entities with different clocks prove both the offset and the stride,
+// which is the exact class of bug this package has hit three times before.
+func TestDecodePacketSnapshot_ShieldRegenClock(t *testing.T) {
+	if netPlayerSize != 92 {
+		t.Fatalf("netPlayerSize is %d, want 92 (protocol.h's NetPlayer grew when shield_regen_since_ms was appended)", netPlayerSize)
+	}
+	if offShieldRegenSince+4 != netPlayerSize {
+		t.Fatalf("shield_regen_since_ms is not the last field: offset %d of a %d-byte stride", offShieldRegenSince, netPlayerSize)
+	}
+
+	buf := make([]byte, netHeaderSize+1+netPlayerSize*2)
+	buf[0] = 2 // PACKET_SNAPSHOT
+	buf[8] = 2 // entity_count
+	buf[netHeaderSize] = 2
+	e0 := netHeaderSize + 1
+	e1 := e0 + netPlayerSize
+
+	// Entity 0: just hit (clock 0), shield 12. Entity 1: 41.230 s of healing, shield 7.
+	buf[e0+offID] = 1
+	buf[e0+offShield] = 12
+	buf[e1+offID] = 2
+	buf[e1+offShield] = 7
+	binary.LittleEndian.PutUint32(buf[e0+offShieldRegenSince:], 0)
+	binary.LittleEndian.PutUint32(buf[e1+offShieldRegenSince:], 41230)
+
+	entities, ok := decodePacketSnapshot(buf, len(buf))
+	if !ok || len(entities) != 2 {
+		t.Fatalf("decode failed: ok=%v count=%d", ok, len(entities))
+	}
+	if entities[0].shieldRegenSinceMs != 0 {
+		t.Fatalf("entity 0 clock: got %d, want 0", entities[0].shieldRegenSinceMs)
+	}
+	if entities[1].shieldRegenSinceMs != 41230 {
+		t.Fatalf("entity 1 clock: got %d, want 41230", entities[1].shieldRegenSinceMs)
+	}
+	if entities[0].shield != 12 || entities[1].shield != 7 || entities[1].id != 2 {
+		t.Fatalf("the clock must not have shifted the rest of the entity: %+v %+v", entities[0], entities[1])
+	}
+}

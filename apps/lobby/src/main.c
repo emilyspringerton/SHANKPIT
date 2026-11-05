@@ -12426,7 +12426,11 @@ static void shield_fx_observe(PlayerState *render_p, unsigned int now_ms) {
                    instead of sounding like somebody found a pack. `prev_alive` keeps a respawn's
                    0 -> 100 from reading as a tick. */
                 f->regen_ms = now_ms;
-                audio_play_shield(3, cx, cy, cz, lx, ly, lz, lyaw);
+                /* The tick's pitch climbs with the ramp (1..10), so a recovery is audible as getting
+                   stronger rather than as the same blip nineteen times. Step 0 is the same 1320 Hz
+                   tone the first tick always was. */
+                audio_play_shield_regen(sh_regen_ticks_landed(shield_regen_since_ms(p, now_ms)) - 1,
+                                        cx, cy, cz, lx, ly, lz, lyaw);
                 if (mine) g_shield_hud_regen_ms = now_ms;
             }
         }
@@ -17070,19 +17074,11 @@ void net_process_snapshot(char *buffer, int len) {
         p->team_id = np->team_id;
         p->health = np->health;
         p->shield = np->shield;
-        /* Adopt the server's regen clock (NetPlayer.shield_regen_since_ms). It is elapsed ms, not a
-           deadline, so re-anchoring it on THIS client's SDL clock keeps the prediction tick, the HUD
-           countdown and the bar on the authority's clock instead of a private one. The baseline is
-           derived from the shield the server has already regenerated -- taking the wire shield as the
-           baseline would pay every landed tick a second time. */
-        {
-            int regen_since = (int)np->shield_regen_since_ms;
-            unsigned int regen_now = SDL_GetTicks();
-            p->shield_regen_base = sh_clamp(0, shield_max(), (int)np->shield - sh_regen_total(regen_since));
-            p->shield_regen_at_ms = (regen_since > 0 && (unsigned int)regen_since <= regen_now)
-                                        ? regen_now - (unsigned int)regen_since : regen_now;
-            p->shield_regen_timer = regen_since;
-        }
+        /* Adopt the server's regen clock (NetPlayer.shield_regen_since_ms). shield_regen_adopt_clock
+           keeps this client's own anchor while the two clocks agree, so the countdown and the next
+           tick interpolate between snapshots instead of being re-phased (and visibly stepping
+           backwards) by packet jitter; it snaps only on a hit, a backwards clock, or real drift. */
+        shield_regen_adopt_clock(p, (int)np->shield_regen_since_ms, (int)np->shield, SDL_GetTicks());
         p->crouching = np->crouching;
 
         int safe_weapon = np->current_weapon;

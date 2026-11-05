@@ -107,6 +107,42 @@ static inline void shield_regen_tick(PlayerState *p, unsigned int now_ms) {
     p->shield = sh_clamp(0, shield_max(), p->shield_regen_base + shield_regen_total_for(p, since));
 }
 
+/* How far a client's clock may sit from the server's before it is snapped back. Under this the local
+ * anchor is KEPT, so the countdown (and the next tick) advance continuously between packets instead of
+ * being re-phased by network jitter -- the one thing that made a live countdown visibly stick and step
+ * backwards while the server's own clock kept running. */
+#define SHIELD_REGEN_RESYNC_MS 150
+
+/* Client half: adopt the server's regen clock (NetPlayer.shield_regen_since_ms) on ONE snapshot.
+ *
+ * wire_since_ms is elapsed ms, not a deadline, so it is re-anchored on THIS host's clock. A packet is
+ * the truth but it is not a metronome: adopting it by simply resetting the anchor every time makes the
+ * countdown jump by the packet's own arrival jitter (and by however coarsely the sender sampled the
+ * number). So the anchor only moves when there is really something to resync to -- a fresh hit (wire 0),
+ * a clock that has run backwards, or more than SHIELD_REGEN_RESYNC_MS of drift (lost packets, a long
+ * stall). Inside that, the local anchor stays and the local clock interpolates between snapshots.
+ *
+ * The baseline is derived from the shield the server has ALREADY regenerated at this instant, using the
+ * elapsed time the caller ends up believing in -- taking the wire shield AS the baseline would pay every
+ * landed tick a second time, and deriving it from the wire's elapsed time while keeping a local anchor
+ * would make the bar jump forward by the drift on every packet. */
+static inline void shield_regen_adopt_clock(PlayerState *p, int wire_since_ms, int wire_shield,
+                                            unsigned int now_ms) {
+    int local_since;
+    if (!p) return;
+    if (wire_since_ms < 0) wire_since_ms = 0;
+    if (wire_since_ms > SHIELD_REGEN_MAX_ELAPSED_MS) wire_since_ms = SHIELD_REGEN_MAX_ELAPSED_MS;
+    local_since = shield_regen_since_ms(p, now_ms);
+    if (wire_since_ms == 0 || p->shield_regen_at_ms > now_ms ||
+        local_since - wire_since_ms > SHIELD_REGEN_RESYNC_MS ||
+        wire_since_ms - local_since > SHIELD_REGEN_RESYNC_MS) {
+        p->shield_regen_at_ms = now_ms - (unsigned int)wire_since_ms;
+        local_since = wire_since_ms;
+    }
+    p->shield_regen_base = sh_clamp(0, shield_max(), wire_shield - shield_regen_total_for(p, local_since));
+    p->shield_regen_timer = local_since;
+}
+
 /* The 4-second countdown for the HUD: ms left before the first tick, 0 once regen has started. */
 static inline int shield_regen_counter_ms(const PlayerState *p, unsigned int now_ms) {
     return sh_regen_in_ms(shield_regen_since_ms(p, now_ms));

@@ -3,6 +3,7 @@
 scripts/test_rl_env_packet.py conventions (plain unittest, no pytest dependency)."""
 
 import ctypes
+import struct
 import unittest
 
 import numpy as np
@@ -23,11 +24,12 @@ class TestStructSizes(unittest.TestCase):
     def test_user_cmd_is_36_bytes(self):
         self.assertEqual(ctypes.sizeof(UserCmd), 36)
 
-    def test_net_player_is_88_bytes(self):
+    def test_net_player_is_92_bytes(self):
         # S470: grew from 84 to 88 when anim_override was added (S459-69 grew it 72->84 before
         # that, for vx/vy/vz) -- this exact assertion is what should have caught the mirror
         # drifting stale a second time; it didn't because this test itself wasn't updated either.
-        self.assertEqual(ctypes.sizeof(NetPlayer), 88)
+        # shield_regen_since_ms appended at the END takes it to 92 (offset 88).
+        self.assertEqual(ctypes.sizeof(NetPlayer), 92)
 
     def test_net_player_field_offsets_match_the_real_compiled_c_struct(self):
         # Real offsets verified via a compiled sizeof/offsetof C probe against protocol.h during
@@ -45,6 +47,9 @@ class TestStructSizes(unittest.TestCase):
             "reload_timer": 64, "ability_cooldown": 66, "kill_streak": 68,
             "vx": 72, "vy": 76, "vz": 80,  # S459-69
             "anim_override": 84,  # S470 -- verified via a real compiled offsetof(NetPlayer, anim_override) C probe
+            "forced_kit": 85,  # S492 -- landed in padding, sizeof stayed 88
+            "third_person": 86,  # S536 -- also formerly padding
+            "shield_regen_since_ms": 88,  # the regen clock, appended last: stride 88 -> 92
         }
         for field, off in expected.items():
             self.assertEqual(getattr(NetPlayer, field).offset, off, f"field {field}")
@@ -126,7 +131,7 @@ class TestBuildObservation(unittest.TestCase):
         me = NetPlayer(id=1, scene_id=9, health=100, shield=100, state=STATE_ALIVE)
         obs = build_observation(me, [], None)
         self.assertEqual(obs.shape, (OBS_SIZE,))
-        self.assertEqual(OBS_SIZE, 84)
+        self.assertEqual(OBS_SIZE, 87)  # 29 self + 4*11 opponents + 9 aggregate + 5 geometry
 
     def test_self_health_and_shield_fractions(self):
         me = NetPlayer(id=1, scene_id=9, health=50, shield=25, state=STATE_ALIVE)
@@ -137,7 +142,7 @@ class TestBuildObservation(unittest.TestCase):
     def test_no_peers_zero_fills_opponent_block(self):
         me = NetPlayer(id=1, scene_id=9, health=100, state=STATE_ALIVE)
         obs = build_observation(me, [], None)
-        opp_start = 26
+        opp_start = 29  # SELF_FEATURES -- the self block grew to 29 with the shield regen features
         # Present flag for every one of the 4 slots should be 0.
         for slot in range(4):
             self.assertEqual(obs[opp_start + slot * 11], 0.0)
@@ -148,7 +153,7 @@ class TestBuildObservation(unittest.TestCase):
         near = NetPlayer(id=3, scene_id=9, x=5, y=0, z=0, health=60, state=STATE_ALIVE)
         other_scene = NetPlayer(id=4, scene_id=1, x=1, y=0, z=0, health=10, state=STATE_ALIVE)
         obs = build_observation(me, [far, near, other_scene], None)
-        opp_start = 26
+        opp_start = 29  # SELF_FEATURES
         self.assertEqual(obs[opp_start + 0], 1.0)  # slot 0 present
         self.assertAlmostEqual(obs[opp_start + 5], 0.6)  # nearest (id=3, health=60) health frac
 
@@ -319,6 +324,44 @@ class TestDecodeAction(unittest.TestCase):
     def test_yaw_delta_applies_relative_to_current_yaw(self):
         _, _, yaw, _, _, _ = decode_action(np.array([0, 0, 1.0, 0, 0, 0, 0], dtype=np.float32), cur_yaw=45.0, cur_pitch=0.0)
         self.assertGreater(yaw, 45.0)
+
+
+class TestShieldRegenClockDecode(unittest.TestCase):
+    """NetPlayer.shield_regen_since_ms is the LAST field of the entity (offset 88 of a 92-byte
+    stride), which makes it the field a stale stride reads out of the NEXT entity's id bytes --
+    the exact class of bug this mirror has shipped before. Decoded end to end, not asserted from
+    the struct definition alone."""
+
+    def _snapshot(self):
+        size = ctypes.sizeof(NetPlayer)
+        buf = bytearray(13 + 2 * size)
+        buf[0] = 2  # PACKET_SNAPSHOT
+        buf[8] = 2  # entity_count
+        buf[12] = 2  # redundant count
+        # Entity 0: just hit (clock 0), shield 12. Entity 1: 41.230 s of healing, shield 7.
+        for i, (pid, shield, since) in enumerate([(1, 12, 0), (2, 7, 41230)]):
+            off = 13 + i * size
+            buf[off + 0] = pid
+            buf[off + 1] = 9  # scene_id
+            buf[off + 31] = shield
+            buf[off + 88:off + 92] = struct.pack("<I", since)
+        return bytes(buf)
+
+    def test_decode_reads_the_clock_of_every_entity(self):
+        players = decode_snapshot(self._snapshot())
+        self.assertIsNotNone(players)
+        self.assertEqual([p.shield_regen_since_ms for p in players], [0, 41230])
+        self.assertEqual([p.shield for p in players], [12, 7])
+        self.assertEqual(players[1].id, 2)
+
+    def test_observation_reads_the_decoded_clock(self):
+        me = decode_snapshot(self._snapshot())[0]
+        obs = build_observation(me, [], None)
+        self.assertEqual(obs.shape, (OBS_SIZE,))
+        # self feature 28 (0-based): fraction of the four-second window still to run
+        self.assertAlmostEqual(float(obs[28]), 1.0)
+        me.shield_regen_since_ms = 1000
+        self.assertAlmostEqual(float(build_observation(me, [], None)[28]), 0.75)
 
 
 if __name__ == "__main__":

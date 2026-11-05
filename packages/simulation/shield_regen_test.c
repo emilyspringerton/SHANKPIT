@@ -143,6 +143,42 @@ int main(void) {
     shield_regen_tick(&p, 54000);
     ok(p.shield == 40, "a new hit after a full bar gets a real four-second wait");
 
+    /* Adopting a snapshot mid-heal must not pay the ticks the server has already paid: the baseline is
+     * derived FROM the wire shield, not set to it. */
+    memset(&p, 0, sizeof(p));
+    p.active = 1; p.state = STATE_ALIVE;
+    shield_regen_adopt_clock(&p, 5000, 43, 5000);
+    /* At 5000 ms two ticks have landed (1 + 2 = 3 points), so 43 - 3 = 40. */
+    ok(p.shield_regen_base == 40, "the baseline backs the landed ticks out of the wire shield");
+    p.shield = 43;
+    shield_regen_tick(&p, 5000);
+    ok(p.shield == 43, "the local tick agrees with the wire instead of adding the point twice");
+
+    /* Snapshot interpolation: between packets the client's own clock keeps the countdown moving, and a
+     * packet only re-phases it when it has really drifted -- otherwise every snapshot would reset the
+     * countdown by its own arrival jitter and the number would stick and step backwards on screen. */
+    memset(&p, 0, sizeof(p));
+    p.active = 1; p.state = STATE_ALIVE;
+    shield_regen_adopt_clock(&p, 1000, 0, 1000);
+    ok(shield_regen_since_ms(&p, 1000) == 1000, "adopt anchors on the wire's own elapsed time");
+    ok(shield_regen_counter_tenths(&p, 1000) == 30, "3.0 seconds left when the clock is adopted");
+    ok(shield_regen_counter_tenths(&p, 1500) == 25, "0.5 s later, with NO packet, it reads 2.5");
+    {
+        unsigned int anchor = p.shield_regen_at_ms;
+        shield_regen_adopt_clock(&p, 1530, 0, 1600);          /* 70 ms of packet jitter */
+        ok(p.shield_regen_at_ms == anchor, "jitter inside the threshold leaves the anchor alone");
+        ok(shield_regen_counter_tenths(&p, 1600) == 24, "so the countdown never steps backwards");
+        shield_regen_adopt_clock(&p, 2000, 1, 3000);          /* 1000 ms of drift: lost packets */
+        ok(shield_regen_since_ms(&p, 3000) == 2000, "a drifted clock resyncs to the server");
+        ok(p.shield == 0, "adopting a clock never moves the shield by itself");
+        shield_regen_tick(&p, 3000);
+        ok(p.shield == 1, "the next local tick lands on exactly the wire's shield");
+    }
+    /* A fresh hit (the wire clock back to zero) restarts the counter at 4.0, whatever the old anchor
+     * was -- the client must not keep interpolating through a hit. */
+    shield_regen_adopt_clock(&p, 0, 0, 9000);
+    ok(shield_regen_counter_tenths(&p, 9000) == 40, "a hit resets the counter to 4.0 on arrival");
+
     /* The mod seam: a body may bring its own curve; a mod with no opinion falls back to the rule. */
     p = fresh(0, 0);
     shield_regen_set_amount_hook(flat_five);
