@@ -1,13 +1,16 @@
 /* police_patrol_test.c -- the automated cruiser's steering, headless.
  *
- * What this proves is exactly what the host relies on: the ring target is deterministic and on the ring,
- * the car steers TOWARD it (right for a target on the right, left for one on the left), it goes forward
- * rather than reversing, it keeps rolling when the target is badly placed, and the anchor is per-slot so
- * two cruisers cannot end up chasing one ring.
+ * What this proves is exactly what the host relies on: the ring target is deterministic and on the ring, the
+ * car steers TOWARD it (right for a target on the right, left for one on the left), it goes forward rather
+ * than reversing, it keeps rolling when the target is badly placed, the anchor is per-slot so two cruisers
+ * cannot end up chasing one ring, a lane follows the level's own waypoints, and a lane has a DIRECTION with
+ * the car held KEEP_RIGHT of the centreline -- which is what lets the same authored nodes carry both
+ * directions of a two-way street instead of a convoy down the middle.
  *
- * NOT proven here: the physics of driving there, and what a siren sounds like. The first is
- * simulate_rocket_car_state's job (already covered by its own tests); the second needs an audio device
- * this box does not have.
+ * NOT proven here: the physics of driving there, and what a siren or a jingle sounds like. The first is
+ * simulate_rocket_car_state's job (already covered by its own tests); the second needs an audio device this
+ * box does not have, which is why the siren and song voices are rendered offline by test-siren-dsp and
+ * test-icecream-dsp instead.
  */
 #include <stdio.h>
 #include <string.h>
@@ -28,6 +31,10 @@ static int g_checks;
     } \
 } while (0)
 
+static float dist_to(float x, float z, float px, float pz) {
+    return sqrtf((x - px) * (x - px) + (z - pz) * (z - pz));
+}
+
 int main(void) {
     printf("== police patrol ==\n");
 
@@ -37,8 +44,8 @@ int main(void) {
         float x0, z0, x1, z1;
         police_patrol_target(0, 0, &x0, &z0);
         police_patrol_target(0, POLICE_PATROL_PERIOD_MS / 4, &x1, &z1);
-        float r0 = sqrtf((x0 - 100.0f) * (x0 - 100.0f) + (z0 + 50.0f) * (z0 + 50.0f));
-        float r1 = sqrtf((x1 - 100.0f) * (x1 - 100.0f) + (z1 + 50.0f) * (z1 + 50.0f));
+        float r0 = dist_to(x0, z0, 100.0f, -50.0f);
+        float r1 = dist_to(x1, z1, 100.0f, -50.0f);
         CHECK(fabsf(r0 - 40.0f) < 0.01f, "the patrol target is %.2f from its anchor, not 40", r0);
         CHECK(fabsf(r1 - 40.0f) < 0.01f, "a quarter lap later the target left the ring (%.2f)", r1);
         CHECK(fabsf(x1 - x0) + fabsf(z1 - z0) > 20.0f, "the target never moved in a quarter lap");
@@ -107,8 +114,12 @@ int main(void) {
         CHECK(police_patrol_has_lane(0) == 4, "the lane did not take (has %d)", police_patrol_has_lane(0));
         float tx, tz;
         police_patrol_target(0, 0, &tx, &tz);
-        CHECK(tx == xs[0] && tz == zs[0], "a lane's first target is (%.1f,%.1f), not the authored (%.1f,%.1f)",
-              tx, tz, xs[0], zs[0]);
+        float off = dist_to(tx, tz, xs[0], zs[0]);
+        printf("      first target is %.2f from the authored waypoint (keep-right %.1f)\n", off,
+               POLICE_PATROL_KEEP_RIGHT);
+        CHECK(fabsf(off - POLICE_PATROL_KEEP_RIGHT) < 0.05f,
+              "a lane's first target sits %.2f from the waypoint, not keep-right %.1f", off,
+              POLICE_PATROL_KEEP_RIGHT);
         /* arriving at the waypoint advances the beat, and the last one wraps */
         BuggyState b;
         memset(&b, 0, sizeof(b));
@@ -122,23 +133,81 @@ int main(void) {
                   "reaching waypoint %d left the cruiser on %d", wp, police_patrol_waypoint(0));
         }
         printf("PASS: a cruiser follows the level's lane and wraps at the last waypoint\n");
+    }
+
+    /* ---- two-way lanes: direction, and the car keeps right of the centreline ---- */
+    {
+        float xs[4] = { 100.0f, 180.0f, 160.0f, 60.0f };
+        float zs[4] = { 0.0f, 40.0f, 140.0f, 120.0f };
+        police_patrol_set_lane(0, xs, zs, 4);
+        police_patrol_set_direction(0, 1);
+        CHECK(police_patrol_direction(0) == 1, "a fresh lane did not run forward (dir %d)",
+              police_patrol_direction(0));
+        float fx, fz, rx, rz;
+        police_patrol_target(0, 0, &fx, &fz);
+        police_patrol_set_direction(0, -1);
+        CHECK(police_patrol_direction(0) == -1, "the reverse direction did not take (dir %d)",
+              police_patrol_direction(0));
+        police_patrol_target(0, 0, &rx, &rz);
+
+        /* the offset is on OPPOSITE sides of the centreline for the two directions */
+        float fdx = fx - xs[0], fdz = fz - zs[0];
+        float rdx = rx - xs[0], rdz = rz - zs[0];
+        float cross = fdx * rdz - fdz * rdx;   /* sign flips when the two offsets face opposite ways */
+        printf("      keep-right: forward offset (%.2f,%.2f), reverse offset (%.2f,%.2f)\n", fdx, fdz, rdx, rdz);
+        CHECK(fabsf(dist_to(fx, fz, xs[0], zs[0]) - POLICE_PATROL_KEEP_RIGHT) < 0.05f,
+              "the forward keep-right offset is not one car width off the lane");
+        CHECK(fabsf(dist_to(rx, rz, xs[0], zs[0]) - POLICE_PATROL_KEEP_RIGHT) < 0.05f,
+              "the reverse keep-right offset is not one car width off the lane");
+        CHECK(cross < -1.0f || cross > 1.0f, "both directions offset to the SAME side of the road");
+
+        /* and reversing the beat walks the author's order backwards */
+        BuggyState b;
+        memset(&b, 0, sizeof(b));
+        b.active = 1; b.id = 0; b.x = xs[0]; b.z = zs[0]; b.yaw = 90.0f;
+        police_patrol_set_direction(0, -1);
+        int start_wp = police_patrol_waypoint(0);
+        for (int k = 0; k < 2; k++) {
+            police_patrol_target(0, 0, &fx, &fz);
+            b.x = fx; b.z = fz;
+            float th, st;
+            police_patrol_intent(&b, 0, &th, &st);
+        }
+        int expect = ((start_wp - 2) % 4 + 4) % 4;
+        printf("      reverse beat: from waypoint %d to %d (expected %d)\n",
+               start_wp, police_patrol_waypoint(0), expect);
+        CHECK(police_patrol_waypoint(0) == expect, "a reversed lane does not walk the beat backwards (%d, not %d)",
+              police_patrol_waypoint(0), expect);
+        printf("PASS: a lane has a direction, and both directions keep to their own side of the centreline\n");
+    }
+
+    /* ---- a graph gives each cruiser a direction and a different start ---- */
+    {
+        float xs[4] = { 100.0f, 180.0f, 160.0f, 60.0f };
+        float zs[4] = { 0.0f, 40.0f, 140.0f, 120.0f };
+        police_patrol_set_lane_from_graph(xs, zs, 4);
+        CHECK(police_patrol_has_lane(3) == 4, "the graph did not reach every slot");
+        CHECK(police_patrol_direction(0) == 1 && police_patrol_direction(1) == -1,
+              "two slots on one beat were not given opposite directions (%d, %d)",
+              police_patrol_direction(0), police_patrol_direction(1));
+        CHECK(police_patrol_waypoint(0) != police_patrol_waypoint(2),
+              "two cruisers going the SAME way still start at the same point (%d, %d)",
+              police_patrol_waypoint(0), police_patrol_waypoint(2));
+        CHECK(police_patrol_waypoint(0) == police_patrol_waypoint(1),
+              "the pair that shares a road does not start at the same node from opposite ends (%d, %d)",
+              police_patrol_waypoint(0), police_patrol_waypoint(1));
 
         /* a graph with no nodes clears the beat, and the ring comes back */
-        police_patrol_clear_lane(0);
+        police_patrol_set_lane_from_graph(NULL, NULL, 0);
         CHECK(police_patrol_has_lane(0) == 0, "clearing the lane left %d waypoints", police_patrol_has_lane(0));
+        float tx, tz;
+        police_patrol_set_anchor(0, 0.0f, 0.0f, 100.0f);
         police_patrol_target(0, POLICE_PATROL_PERIOD_MS / 4, &tx, &tz);
         CHECK(tx > 90.0f, "with no lane the ring did not return (target x %.1f)", tx);
 
-        /* every cruiser on one authored beat starts at a different waypoint */
-        police_patrol_set_lane_from_graph(xs, zs, 4);
-        CHECK(police_patrol_waypoint(0) != police_patrol_waypoint(1) &&
-              police_patrol_waypoint(1) != police_patrol_waypoint(2),
-              "cruisers share a starting waypoint (%d, %d, %d)", police_patrol_waypoint(0),
-              police_patrol_waypoint(1), police_patrol_waypoint(2));
-        CHECK(police_patrol_has_lane(3) == 4, "the graph did not reach every slot");
         police_patrol_set_lane(0, xs, zs, 1);
         CHECK(police_patrol_has_lane(0) == 0, "a one-point 'lane' was accepted as a beat");
-        printf("PASS: a graph spreads the cruisers along the beat; a bad lane falls back to the ring\n");
+        printf("PASS: a graph spreads the cruisers and alternates their direction; a bad lane falls back to the ring\n");
     }
 
     printf("\n%s%d check(s) failed\n", g_failed ? "FAIL: " : "PASS: ", g_failed);

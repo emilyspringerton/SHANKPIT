@@ -4063,6 +4063,11 @@ static inline void simulate_rocket_car_state(BuggyState *b, float throttle, floa
        triggered by those things"). This records the COMMAND only; siren_rules.prn decides whether a
        police car sounds, and which siren, so the rule is not copied into the integration. */
     b->siren = (b->police && (boost || lifting)) ? 1 : 0;
+    /* THE ICE CREAM TRUCK'S SONG (founder: "add ice cream trucks ... song affordances"). Same split as the
+       siren: this records whether the truck is MOVING (a parked vendor blaring its jingle all night is a
+       noise complaint, not an affordance), and PARENA's icecream-trigger decides whether that means the song
+       plays. A civilian car is silent because ice_cream is 0. */
+    b->song = (b->ice_cream && (fabsf(b->vx) + fabsf(b->vz) > 0.5f)) ? 1 : 0;
     if (lifting) b->tank = phys_rocket_tank_step(b->tank, phys_rocket_lift_drain(dts_milli));
     float err_milli = (rest - b->y) * 1000.0f;
     float fan = (b->tank > 0) ? 1.0f : 0.0f;
@@ -4103,6 +4108,7 @@ static inline void simulate_buggy_state_ex(BuggyState *b, float throttle, float 
     if (!b || !b->active) return;
     if (b->rocket) { simulate_rocket_car_state(b, throttle, steer, dt, apply_input, lift, boost); return; }
     b->siren = 0;   /* an ordinary buggy has no siren, whatever the last car in this slot was */
+    b->song = 0;    /* and no jingle either */
 
     if (throttle > 1.0f) throttle = 1.0f;
     if (throttle < -1.0f) throttle = -1.0f;

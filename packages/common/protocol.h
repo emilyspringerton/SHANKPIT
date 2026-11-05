@@ -478,7 +478,7 @@ typedef struct {
        simulates, so a remote cruiser is a cruiser on every client -- livery, lightbar and wail -- instead
        of a plain red car whose driver is visibly boosting in silence. Bits, not a second kind number,
        because "police" is not a different airframe and the salvage masks/hp layout must not move. */
-    unsigned char flags;                                /* bit 0 police, bit 1 siren sounding */
+    unsigned char flags;                                /* bit 0 police, bit 1 siren, bit 2 ice cream truck, bit 3 song */
     unsigned char pad[2];                               /* keeps the entry 16 bytes and aligned */
     unsigned int seed;                                  /* the car's identity, for the salvage roll */
 } NetVehicleEntry;
@@ -1008,6 +1008,13 @@ typedef struct {
        stay untouched. */
     int police;
     int siren;
+    /* ICE CREAM (LEVEL_VEHICLE_ICE_CREAM): a vendor truck. ice_cream is the KIND; song is whether its jingle
+       is sounding this tick -- a moving vendor, per PARENA's icecream-trigger -- and is written by
+       simulate_rocket_car_state so a remote host hears the song the server is simulating. Carried in
+       NetVehicleEntry.flags bit 2/3 for the same reason police/siren are: kind is the airframe, these are
+       state. Appended last, as rocket/tank/origin/police were, so the replicated fields stay untouched. */
+    int ice_cream;
+    int song;
 } BuggyState;
 
 /* A QUADCOPTER (packages/simulation/drone_flight.h). Two airframes share this state: DRONE_KIND_RECON

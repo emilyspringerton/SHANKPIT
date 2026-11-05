@@ -446,10 +446,10 @@ static inline void scene_load(int scene_id) {
                 float vz = g_custom_level_vehicle_z[vi];
                 float vyaw = g_custom_level_vehicle_yaw[vi];
                 int vorigin = g_custom_level_vehicle_origin[vi];
-                /* 0 buggy, 1 rocket, 6 police -- level_boxes.h's LEVEL_VEHICLE_* numbering. Spelled as
+                /* 0 buggy, 1 rocket, 6 police, 7 ice cream -- level_boxes.h's LEVEL_VEHICLE_* numbering. Spelled as
                    numbers here for the same reason the comment above spells the rest out: this frame
                    lives below level_boxes.h and must not grow a dependency on it. */
-                if (vk == 0 || vk == 1 || vk == 6) {
+                if (vk == 0 || vk == 1 || vk == 6 || vk == 7) {
                     if (bi >= MAX_BUGGIES) continue;
                     buggy_spawn_defaults(&local_state.buggies[bi], bi, scene_id, vx, vz, vyaw);
                     local_state.buggies[bi].y = vy + BUGGY_WHEEL_RADIUS + BUGGY_CHASSIS_CLEARANCE;
@@ -457,9 +457,12 @@ static inline void scene_load(int scene_id) {
                     /* a police car is the SAME airframe with a siren (PARENA siren_rules.prn), not a
                        second vehicle: physics, tank and handling are the rocket car's, unchanged. */
                     local_state.buggies[bi].police = (vk == 6) ? 1 : 0;
+                    /* an ice cream truck is the same airframe with a song (PARENA icecream_rules.prn) */
+                    local_state.buggies[bi].ice_cream = (vk == 7) ? 1 : 0;
                     local_state.buggies[bi].origin = vorigin;   /* provenance: what a garage reads */
                     printf("[VEHICLE] %s id=%d scene=%d (level) x=%.1f z=%.1f yaw=%.0f\n",
-                           vk == 6 ? "police car" : (vk == 1 ? "rocket car" : "buggy"),
+                           vk == 6 ? "police car" : (vk == 7 ? "ice cream truck" :
+                           (vk == 1 ? "rocket car" : "buggy")),
                            bi, scene_id, vx, vz, vyaw);
                     bi++;
                 } else if (vk == 2) {
@@ -510,6 +513,30 @@ static inline void scene_load(int scene_id) {
                         printf("[POLICE] automated cruiser id=%d scene=%d anchor=(%.1f,%.1f) r=55\n",
                                bi, scene_id, px, pz + 45.0f);
                     }
+                }
+            }
+            /* AUTOMATED VENDOR (founder: "add ice cream trucks similar affordances to police vehicles"). One
+               unmanned truck, so the jingle is heard COMING down the street before the truck is seen -- the
+               affordance only exists if something is out there driving. It cruises the same authored lane
+               the cruisers use (with its own direction, police_patrol.h) and PARENA's icecream-trigger
+               silences it when it stops. A level that authored its own truck gets no extra. */
+            {
+                int authored_vendor = 0;
+                for (int vi = 0; vi < g_custom_level_vehicle_count; vi++)
+                    if (g_custom_level_vehicle_kind[vi] == 7) authored_vendor = 1;
+                if (!authored_vendor && g_custom_level_vehicle_count > 0 && bi < MAX_BUGGIES) {
+                    float vx0 = g_custom_level_vehicle_x[0];
+                    float vz0 = g_custom_level_vehicle_z[0];
+                    float vy0 = g_custom_level_vehicle_y[0];
+                    buggy_spawn_defaults(&local_state.buggies[bi], bi, scene_id, vx0 - 6.0f, vz0 + 9.0f, 0.0f);
+                    local_state.buggies[bi].y = vy0 + BUGGY_WHEEL_RADIUS + BUGGY_CHASSIS_CLEARANCE;
+                    local_state.buggies[bi].rocket = 1;
+                    local_state.buggies[bi].ice_cream = 1;
+                    local_state.buggies[bi].tank = phys_rocket_tank_max();
+                    police_patrol_set_anchor(bi, vx0, vz0 + 45.0f, 45.0f);
+                    printf("[VENDOR] automated ice cream truck id=%d scene=%d anchor=(%.1f,%.1f)\n",
+                           bi, scene_id, vx0, vz0 + 45.0f);
+                    bi++;
                 }
             }
         }
@@ -735,7 +762,7 @@ static inline void buggy_tick_all(unsigned int now_ms) {
             /* An unmanned POLICE car drives itself around its ring (police_patrol.h). That is what makes
                the third arm of PARENA's siren-trigger -- a moving cruiser with nobody in it -- audible at
                all; every other empty car still sits where it was left. */
-            if (b->police) {
+            if (b->police || b->ice_cream) {
                 float pth = 0.0f, pst = 0.0f;
                 police_patrol_intent(b, now_ms, &pth, &pst);
                 throttle = pth;
@@ -744,7 +771,7 @@ static inline void buggy_tick_all(unsigned int now_ms) {
         }
         phys_set_scene(b->scene_id);
         simulate_buggy_state_ex(b, throttle, steer_intent, SHANKPIT_NET_FIXED_DT,
-                                b->occupant_player_id >= 0 || b->police, lift, boost);
+                                b->occupant_player_id >= 0 || b->police || b->ice_cream, lift, boost);
         {
             /* Seeded from the car's own id, so its flicker and fuse are that car's on every host.
                Reset on a respawned/replacement car rather than inheriting a dead one's burn. */

@@ -10,8 +10,10 @@
 #   make test-police-patrol  the automated cruiser's steering, headless
 PARENA_DIR ?= ../PARENA
 SIREN_PRN := $(PARENA_DIR)/stdlib/shankpit/siren_rules.prn
+ICECREAM_PRN := $(PARENA_DIR)/stdlib/shankpit/icecream_rules.prn
 
-.PHONY: regen-siren-rules check-siren-rules test-siren-rules test-police-patrol test-siren-dsp
+.PHONY: regen-siren-rules check-siren-rules test-siren-rules test-police-patrol test-siren-dsp \
+	regen-icecream-rules check-icecream-rules test-icecream-dsp
 
 regen-siren-rules:
 	@test -x $(PARENA_DIR)/parena || $(MAKE) -C $(PARENA_DIR) build >/dev/null
@@ -29,6 +31,26 @@ test-siren-dsp: | $(BIN_DIR)
 	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/audio -Ipackages/simulation \
 		packages/audio/siren_dsp_test.c -o $(BIN_DIR)/siren_dsp_test $(LIBS_M)
 	./$(BIN_DIR)/siren_dsp_test
+
+# The ice cream truck's song follows the siren's pattern exactly: rules in PARENA, generated C, DSP offline.
+regen-icecream-rules:
+	@test -x $(PARENA_DIR)/parena || $(MAKE) -C $(PARENA_DIR) build >/dev/null
+	$(PARENA_DIR)/parena build $(ICECREAM_PRN) -o packages/simulation/icecream_rules.c
+
+check-icecream-rules:
+	@test -x $(PARENA_DIR)/parena || $(MAKE) -C $(PARENA_DIR) build >/dev/null
+	$(PARENA_DIR)/parena build $(ICECREAM_PRN) -o /tmp/icecream_rules.regen.c >/dev/null
+	cmp /tmp/icecream_rules.regen.c packages/simulation/icecream_rules.c
+
+# test-icecream-dsp -- the SONG rendered offline against the rules it obeys: every note's pitch by zero
+# crossings, the loop returning to its first note, the music-box decay, one-sided pan and a ceiling.
+#
+#   make test-icecream-dsp
+test-icecream-dsp: | $(BIN_DIR)
+	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/audio -Ipackages/simulation -Ipackages/world \
+		packages/audio/icecream_dsp_test.c packages/simulation/icecream_rules.c \
+		-o $(BIN_DIR)/icecream_dsp_test $(LIBS_M)
+	./$(BIN_DIR)/icecream_dsp_test
 
 test-siren-rules: | $(BIN_DIR)
 	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/simulation -Ipackages/world \

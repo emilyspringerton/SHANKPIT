@@ -13,8 +13,9 @@
  * than a reverb this engine does not have. Nothing about the level is baked in -- loudness and delay arrive
  * from PARENA's weather_audio_rules.prn -- so a distant strike is this same sound, quieter and late.
  *
- * Named limits: it is a 5 s one-shot with no variation between strikes (deterministic seed, same shape every
- * time -- a storm's bolts all sound like the same bolt); and it is mono, panned by the caller.
+ * Named limits: the SHAPE is the same every time (the same three swells over the same 5 s) -- the seed varies
+ * the noise under it, not the envelope, so a storm's bolts differ in texture but share their silhouette; and
+ * it is mono, panned by the caller.
  */
 
 #include <math.h>
@@ -24,9 +25,14 @@
 
 /* Fills `frames` interleaved stereo float pairs at `rate` Hz with one strike. `frames` should be
  * rate * THUNDER_DSP_SECONDS; a shorter buffer gets the head of the strike, which still cracks and starts to
- * roll. Returns the peak absolute sample written, so a caller can check the rails without re-walking it. */
-static inline float thunder_dsp_fill(float *out, int frames, int rate) {
-    uint32_t rng = 0x7A11B00Bu;
+ * roll. Returns the peak absolute sample written, so a caller can check the rails without re-walking it.
+ *
+ * `seed` is the bolt's own identity: every call with the same seed is the same strike (deterministic, so a
+ * failure reproduces), and different seeds are different STRIKES -- different noise, so the crack and the
+ * roll under it are not the same waveform every time. 0 falls back to the original constant, which keeps an
+ * old caller bit-identical. */
+static inline float thunder_dsp_fill(float *out, int frames, int rate, uint32_t seed) {
+    uint32_t rng = seed ? seed : 0x7A11B00Bu;
     float lp = 0.0f, lp2 = 0.0f, peak = 0.0f;
     int i;
     if (!out || frames <= 0) return 0.0f;

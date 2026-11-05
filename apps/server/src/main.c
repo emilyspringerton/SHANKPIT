@@ -2140,7 +2140,8 @@ void server_broadcast_vehicle_state(void) {
             e->kind = (unsigned char)(b->rocket ? 1 : 0);
             /* police is a KIND, the siren is a STATE, and both are the server's to describe: a remote
                cruiser has to be a cruiser on the client, lightbar and wail included. */
-            e->flags = (unsigned char)((b->police ? 0x01 : 0) | (b->siren ? 0x02 : 0));
+            e->flags = (unsigned char)((b->police ? 0x01 : 0) | (b->siren ? 0x02 : 0) |
+                                       (b->ice_cream ? 0x04 : 0) | (b->song ? 0x08 : 0));
             e->alive_mask = (unsigned char)sv->alive_mask;
             e->detached_mask = (unsigned char)sv->detached_mask;
             for (int c = 0; c < NET_VEHICLE_MAX_COMPONENTS; c++) {

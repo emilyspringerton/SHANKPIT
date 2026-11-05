@@ -32,8 +32,8 @@ int main(void) {
     float *again = (float *)calloc((size_t)FRAMES * 2, sizeof(float));
     if (!buf || !again) { printf("FAIL: out of memory\n"); return 1; }
 
-    float peak = thunder_dsp_fill(buf, FRAMES, RATE);
-    float peak2 = thunder_dsp_fill(again, FRAMES, RATE);
+    float peak = thunder_dsp_fill(buf, FRAMES, RATE, 0x1234u);
+    float peak2 = thunder_dsp_fill(again, FRAMES, RATE, 0x1234u);
 
     printf("      peak %.3f over %.1f s\n", peak, (double)FRAMES / RATE);
     CHECK(peak > 0.05f, "a strike is effectively silent (peak %.3f)", peak);
@@ -63,6 +63,25 @@ int main(void) {
     CHECK(differs == 0, "the generator is not deterministic (%d differing samples)", differs);
     CHECK(bad == 0, "%d non-finite sample(s) in a strike", bad);
     CHECK(fabsf(peak - peak2) < 1e-6f, "two strikes report different peaks (%.6f vs %.6f)", peak, peak2);
+
+    /* PER-BOLT VARIATION: a different seed is a different strike, and it still has the same silhouette. A
+       storm where every bolt is the same waveform is the thing this check exists to prevent. */
+    {
+        float *other = (float *)calloc((size_t)FRAMES * 2, sizeof(float));
+        if (!other) { printf("FAIL: out of memory\n"); return 1; }
+        float other_peak = thunder_dsp_fill(other, FRAMES, RATE, 0x5678u);
+        int same = 0;
+        for (int i = 0; i < FRAMES * 2; i++) if (other[i] == buf[i]) same++;
+        double other_head = energy(other, 0, FRAMES / 10);
+        double other_tail = energy(other, FRAMES - FRAMES / 10, FRAMES);
+        printf("      a second bolt: peak %.3f, %d/%d samples identical to the first\n",
+               other_peak, same, FRAMES * 2);
+        CHECK(same < FRAMES, "a new seed produced the same strike (%d identical samples)", same);
+        CHECK(other_head > other_tail * 8.0, "a second bolt does not decay (head %.2f, tail %.2f)",
+              other_head, other_tail);
+        CHECK(other_peak <= 1.0f, "a second bolt clips the rails (peak %.3f)", other_peak);
+        free(other);
+    }
 
     free(buf);
     free(again);

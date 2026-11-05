@@ -5,6 +5,7 @@
 #include "siren_dsp.h"                   /* the oscillator, header-only so it can be measured offline */
 #include "wind_dsp.h"                    /* the bed's filter/smoothing/pan law, same reason */
 #include "thunder_dsp.h"                 /* the rumble's five seconds, same reason */
+#include "icecream_dsp.h"                /* the vendor's song, same reason (and it includes its rules) */
 #include <SDL2/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,7 +19,7 @@
 #define NUM_CHANNELS   2        /* stereo */
 #define BUFFER_FRAMES  512
 
-#define MAX_SOUNDS     17       /* 0-5 weapons, 6-10 footstep pentatonic notes, 11-13 shield hit/break/pickup (#539-541), 14-15 the civic boss's verdict read/served, 16 thunder */
+#define MAX_SOUNDS     20       /* 0-5 weapons, 6-10 footstep pentatonic notes, 11-13 shield hit/break/pickup (#539-541), 14-15 the civic boss's verdict read/served, 16-19 thunder (one per variant) */
 #define MAX_MIX        16       /* simultaneous effect voices */
 #define MAX_CLIP_VOICES 4       /* spoken clips (TYLER VO) have their own pool, never stolen by effects */
 #define NUM_VOICES     (MAX_MIX + MAX_CLIP_VOICES)
@@ -74,7 +75,14 @@ static WindDsp  g_wind_dsp;
 #define THUNDER_QUEUE 4
 /* frames_left, not a wall clock: the callback itself counts the wait down, so thunder is sample-accurate
  * and cannot drift with the frame rate or with a second clock the host happens to be using. */
-static struct { int waiting; int frames_left; float gain, pan; } g_thunder[THUNDER_QUEUE];
+/* Four PRE-RENDERED strikes, each with its own noise seed. A storm that plays the same waveform for every
+ * bolt is the one thing a listener with eyes closed still notices, and regenerating a 5 s buffer per strike
+ * would either hitch the host thread or free a buffer the mixer is still reading. So they are baked once at
+ * init (4 x 441 kB) and a strike picks one -- per-bolt variation with no allocation, no free and no lock
+ * ordering to get wrong. */
+#define THUNDER_VARIANTS 4
+static unsigned int g_thunder_seed = 0x7A11B00Bu;
+static struct { int waiting; int frames_left; float gain, pan; int variant; } g_thunder[THUNDER_QUEUE];
 
 /* The siren (founder: "add sound affordances for sirens ... classic ems and police sirens"). ONE voice,
  * because a listener hears the loudest siren near them: the host resolves which one that is with PARENA's
@@ -84,6 +92,9 @@ static struct { int waiting; int frames_left; float gain, pan; } g_thunder[THUND
  * an audio device (siren_dsp_test.c renders it offline and measures pitch, pan and clipping), and keeping
  * it here as four floats meant the only way to know it worked was to listen. */
 static SirenDsp g_siren;
+/* The ice-cream truck's song: one voice, the loudest truck near the listener, exactly like the siren. The
+ * tune and its timings are PARENA's; icecream_dsp.h only turns them into samples. */
+static IceCreamDsp g_icecream;
 
 /* ── PCM synthesis helpers ───────────────────────────────────────────────── */
 
@@ -208,12 +219,12 @@ static SoundBuf synth_wind_loop(void) {
  * (thunder_dsp_test.c) instead of only guessed at. Five seconds, so a close strike still has a tail when the
  * next one lands. Nothing about the level is baked in: loudness and delay arrive from
  * weather_audio_rules.prn, so a distant strike is the same sound, quieter and late. */
-static SoundBuf synth_thunder(void) {
+static SoundBuf synth_thunder(unsigned int seed) {
     int n = SAMPLE_RATE * THUNDER_DSP_SECONDS;
     SoundBuf b = buf_alloc(n);
     float *tmp = (float *)calloc((size_t)n * 2, sizeof(float));
     if (!tmp) return b;
-    thunder_dsp_fill(tmp, n, SAMPLE_RATE);
+    thunder_dsp_fill(tmp, n, SAMPLE_RATE, seed);
     for (int i = 0; i < n; i++) buf_write(&b, i, tmp[i * 2], tmp[i * 2 + 1]);
     free(tmp);
     return b;
@@ -242,6 +253,16 @@ static void wind_add(float *dl, float *dr) {
 static void siren_add(float *dl, float *dr) {
     float sl = 0.0f, sr = 0.0f;
     siren_dsp_step(&g_siren, &sl, &sr);
+    *dl += sl;
+    *dr += sr;
+}
+
+/* One frame of the vendor's song, added to the caller's accumulator. The song clock lives in the DSP and only
+ * advances while something is playing, so a truck that stops keeps its phase and one that resumes restarts
+ * its phrase from the top (a jingle that drops in mid-tune sounds broken). */
+static void icecream_add(float *dl, float *dr) {
+    float sl = 0.0f, sr = 0.0f;
+    icecream_dsp_step(&g_icecream, &sl, &sr);
     *dl += sl;
     *dr += sr;
 }
@@ -298,6 +319,7 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
         float wl = 0.0f, wr = 0.0f;
         wind_add(&wl, &wr);
         siren_add(&wl, &wr);
+        icecream_add(&wl, &wr);
         out[i * 2]     = (int16_t)(fclampf(out[i * 2]     / 32767.0f + wl, -1.0f, 1.0f) * 32767.0f);
         out[i * 2 + 1] = (int16_t)(fclampf(out[i * 2 + 1] / 32767.0f + wr, -1.0f, 1.0f) * 32767.0f);
     }
@@ -526,8 +548,11 @@ void audio_init(void) {
         free(body.buf); free(fizz.buf); free(stamp.buf); free(knock.buf);
     }
 
-    /* 16: thunder. Held until its travel time is up -- see audio_play_thunder/thunder_service. */
-    g_snd[16] = synth_thunder();
+    /* 16-19: thunder, one buffer per variant. Held until its travel time is up -- see
+       audio_play_thunder/thunder_service -- and the strike that lands picks a variant, so a storm's bolts
+       are not the same waveform over and over. */
+    for (int tv = 0; tv < THUNDER_VARIANTS; tv++)
+        g_snd[16 + tv] = synth_thunder(0x9E3779B9u * (unsigned int)(tv + 1) + 0x7A11B00Bu);
 
     {
         const char *chain = getenv("SHANKPIT_SOUND_CHAIN");
@@ -545,6 +570,8 @@ void audio_init(void) {
 
     /* the siren is silent until a host calls audio_set_siren -- a host with no sirens gets the mix it had */
     siren_dsp_init(&g_siren);
+    /* and the vendor's song is silent until a host reports a truck out selling */
+    icecream_dsp_init(&g_icecream);
     memset(g_thunder, 0, sizeof(g_thunder));
 
     SDL_PauseAudioDevice(g_dev, 0); /* start playback */
@@ -628,6 +655,16 @@ void audio_set_wind(float gain, float bright, float pan) {
     SDL_UnlockMutex(g_mutex);
 }
 
+/* The ice-cream truck's song. Called every frame with numbers PARENA's icecream rules already resolved
+ * (whether a vendor is out and its speed, then gain and pan at the listener); this only stores smoothed
+ * targets, so it is safe from the render loop while the audio thread mixes. */
+void audio_set_icecream(int playing, float gain, float pan) {
+    if (!g_dev || !g_mutex) return;
+    SDL_LockMutex(g_mutex);
+    icecream_dsp_set(&g_icecream, playing, gain, pan);
+    SDL_UnlockMutex(g_mutex);
+}
+
 /* Thunder: see g_thunder at the top of this file for the queue's own policy. */
 void audio_play_thunder(int delay_ms, float gain, float pan) {
     if (!g_dev || !g_mutex) return;
@@ -645,6 +682,9 @@ void audio_play_thunder(int delay_ms, float gain, float pan) {
     g_thunder[slot].frames_left = (delay_ms * SAMPLE_RATE) / 1000;
     g_thunder[slot].gain = fclampf(gain, 0.0f, 1.0f);
     g_thunder[slot].pan = fclampf(pan, -1.0f, 1.0f);
+    /* this bolt's own identity: a fresh seed, so the next one does not roll the same dice */
+    g_thunder_seed = g_thunder_seed * 1664525u + 1013904223u;
+    g_thunder[slot].variant = (int)((g_thunder_seed >> 16) % (unsigned int)THUNDER_VARIANTS);
 }
 
 /* Called from the audio callback with the lock held: count each waiting strike down by this buffer and start
@@ -656,7 +696,7 @@ static void thunder_service(int frames) {
         if (g_thunder[i].frames_left > 0) continue;
         g_thunder[i].waiting = 0;
         float p = g_thunder[i].pan;
-        start_voice(16, g_thunder[i].gain * (p > 0.0f ? 1.0f - p : 1.0f),
+        start_voice(16 + g_thunder[i].variant, g_thunder[i].gain * (p > 0.0f ? 1.0f - p : 1.0f),
                         g_thunder[i].gain * (p < 0.0f ? 1.0f + p : 1.0f));
     }
 }

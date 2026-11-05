@@ -65,6 +65,8 @@ void audio_play_thunder(int delay_ms, float gain, float pan);
  * frequency in millihertz those rules resolved for this frame, gain 0..1 and pan -1..1. A host with no
  * sirens never calls it and hears exactly what it heard before. */
 void audio_set_siren(int kind, int hz_milli, float gain, float pan);
+/* the vendor's jingle: playing = PARENA icecream-trigger, gain/pan resolved at the listener */
+void audio_set_icecream(int playing, float gain, float pan);
 
 /* NOCK master chain (2026-09-27): run a filter chain authored in IDUNA's NOCK "Sounds" tab over
  * the whole engine mix. audio_init() loads SHANKPIT_SOUND_CHAIN=<name> automatically from

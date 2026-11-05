@@ -47,6 +47,7 @@
 #include "../../../packages/simulation/empire_rules_host.h"
 #include "../../../packages/audio/wind_audio_rules.h" /* PARENA weather_audio_rules.prn */
 #include "../../../packages/simulation/siren_rules.h"   /* PARENA siren_rules.prn */
+#include "../../../packages/simulation/icecream_rules.h"  /* PARENA icecream_rules.prn */
 #include "../../../packages/simulation/police_patrol.h"    /* the automated cruiser's lane */
 #include "../../../packages/simulation/empire_units_rules_host.h"
 /* Lab stations: labst_reach_tenths was also an implicit declaration in the Windows build. */
@@ -2753,6 +2754,8 @@ static void net_parity_debug_sample(unsigned int now_ms) {
 void net_connect();
 void net_shutdown();
 
+static void lobby_install_builtin_sight(int scene_id);   /* defined with the scene-change code below */
+
 static void reset_client_render_state_for_net() {
     my_client_id = -1;
     memset(&local_state, 0, sizeof(local_state));
@@ -2786,6 +2789,10 @@ static void reset_client_render_state_for_net() {
     local_state.pending_scene = -1;
     local_state.scene_id = SCENE_GARAGE_OSAKA;
     phys_set_scene(local_state.scene_id);
+    /* Built-in walls at the RESET boundary too, not just on a scene change: otherwise the first frame after a
+       connect still carries whatever the previous session left, which is the same stale-geometry bug the
+       scene-change install exists to prevent. */
+    lobby_install_builtin_sight(local_state.scene_id);
     local_state.players[0].scene_id = local_state.scene_id;
     g_paused = 0;
     g_pause_sel = 0;
@@ -7682,6 +7689,9 @@ static void rc_face(const float *p0, const float *p1, const float *p2, const flo
  * POLICE livery (2026-11-05): white body, near-black roof, so a cruiser is identifiable from behind at
  * patrol distance without a second model -- the same airframe, which is the whole point of a variant. */
 static int g_rc_police;
+/* ICE CREAM livery (2026-11-05): cream body with a pastel sign on the roof. The SONG is audio (PARENA
+ * icecream_rules.prn); this is the affordance that says which truck is singing. */
+static int g_rc_icecream;
 static void rc_body_col(int s, int k, float *r, float *g, float *b) {
     if (k == 5) { *r = 0.09f; *g = 0.09f; *b = 0.10f; return; }            /* the underside */
     if (k == 0 || k == 4) {
@@ -7694,6 +7704,7 @@ static void rc_body_col(int s, int k, float *r, float *g, float *b) {
         *r = 0.66f; *g = 0.12f; *b = 0.10f; return;                       /* hood, roof, deck */
     }
     if (s >= 2 && s <= 4) { *r = 0.11f; *g = 0.13f; *b = 0.17f; return; }  /* the side windows */
+    if (g_rc_icecream) { *r = 0.97f; *g = 0.93f; *b = 0.82f; return; }    /* vendor paint: cream */
     if (g_rc_police) { *r = 0.92f; *g = 0.93f; *b = 0.95f; return; }      /* police paint: white */
     *r = 0.66f; *g = 0.12f; *b = 0.10f;
 }
@@ -7721,6 +7732,7 @@ static void rc_section_face(int s, int k0, int k1, int k2, int k3, float r, floa
 
 static void draw_rocket_car_model(const BuggyState *b) {
     g_rc_police = (b && b->police) ? 1 : 0;
+    g_rc_icecream = (b && b->ice_cream) ? 1 : 0;
     const GLboolean lit_was_on = glIsEnabled(GL_LIGHTING); /* same save/restore as the other vehicles */
     glDisable(GL_LIGHTING);
     glDisable(GL_TEXTURE_2D);
@@ -7788,6 +7800,21 @@ static void draw_rocket_car_model(const BuggyState *b) {
         glPushMatrix();
         glTranslatef(1.05f * RC_SCALE, 1.80f * RC_SCALE, 0.30f * RC_SCALE);
         draw_box_solid(0.85f * RC_SCALE, 0.22f * RC_SCALE, 0.42f * RC_SCALE);
+        glPopMatrix();
+    }
+
+    /* ICE CREAM sign: a cream board on the roof with a pink scoop box on top of it, so a vendor is readable
+       from the side at street level -- the visual half of the jingle, which is the noise you follow. */
+    if (g_rc_icecream) {
+        glColor3f(0.99f, 0.97f, 0.92f);
+        glPushMatrix();
+        glTranslatef(0.0f, 1.62f * RC_SCALE, 0.30f * RC_SCALE);
+        draw_box_solid(3.10f * RC_SCALE, 0.30f * RC_SCALE, 0.62f * RC_SCALE);
+        glPopMatrix();
+        glColor3f(0.96f, 0.55f, 0.68f);
+        glPushMatrix();
+        glTranslatef(0.0f, 1.92f * RC_SCALE, 0.30f * RC_SCALE);
+        draw_box_solid(1.10f * RC_SCALE, 0.34f * RC_SCALE, 0.50f * RC_SCALE);
         glPopMatrix();
     }
 
@@ -15408,6 +15435,31 @@ void draw_scene(PlayerState *render_p) {
                 }
                 audio_set_siren(best_kind, siren_hz_milli(best_kind, (int)now_ms), best_gain, best_pan);
             }
+
+            /* THE VENDOR'S SONG (PARENA icecream_rules.prn). Same shape as the siren block above, and for the
+               same reason: one voice, the loudest truck near the listener, because that is what a listener
+               hears. Only a truck flagged as a vendor sings, and only while it is moving (icecream-trigger),
+               so the affordance is "the jingle comes down the street", not "parked noise". */
+            {
+                int playing = 0;
+                float best_gain = 0.0f, best_pan = 0.0f;
+                for (int vi = 0; vi < MAX_BUGGIES; vi++) {
+                    const BuggyState *vb = &local_state.buggies[vi];
+                    if (!vb->active || !vb->ice_cream) continue;
+                    float dx = vb->x - listener->x, dz = vb->z - listener->z;
+                    float dist = sqrtf(dx * dx + dz * dz);
+                    int spd_pm = (int)((fabsf(vb->vx) + fabsf(vb->vz)) * 100.0f);
+                    if (!icecream_trigger(vb->ice_cream, spd_pm)) continue;
+                    float g = (float)icecream_gain_permille((int)(dist + 0.5f)) / 1000.0f;
+                    if (g <= best_gain) continue;
+                    int bdeg = (int)(atan2f(dx, dz) * 57.29578f);
+                    if (bdeg < 0) bdeg += 360;
+                    playing = 1;
+                    best_gain = g;
+                    best_pan = (float)icecream_pan_permille(bdeg, yaw_deg) / 1000.0f;
+                }
+                audio_set_icecream(playing, best_gain, best_pan);
+            }
         }
         sky_weather_draw(&g_sky_weather);
 
@@ -17350,6 +17402,8 @@ void net_tick() {
                            without this a remote cruiser was a plain car whose driver boosted in silence. */
                         vb_car->police = (ve->flags & 0x01) ? 1 : 0;
                         vb_car->siren  = (ve->flags & 0x02) ? 1 : 0;
+                        vb_car->ice_cream = (ve->flags & 0x04) ? 1 : 0;
+                        vb_car->song      = (ve->flags & 0x08) ? 1 : 0;
                     }
                 }
             }
