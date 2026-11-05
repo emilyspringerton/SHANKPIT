@@ -9,7 +9,7 @@
 ;; assumes it scales: a fifth body lands on the first one's position. When the arena and the allocator
 ;; both allow it, this becomes a real ring at 2*pi*i/n.
 (module shankpit/horde)
-(export body-x body-z)
+(export body-x body-z body-facing)
 
 ;; x for body i on a ring of `ring` milli-units around (cx, cz)
 (defn body-x [(i : I32) (ring : I32) (cx : I32)] : I32
@@ -20,3 +20,9 @@
 (defn body-z [(i : I32) (ring : I32) (cz : I32)] : I32
   (if (= (mod i 4) 1) (+ cz ring)
     (if (= (mod i 4) 3) (- cz ring) cz)))
+
+;; Which way a body at quadrant i has to walk to reach the arena's middle. 460 respawns a player facing
+;; the centre (and every body here stands on an axis, so the answer is exact, not approximated):
+;;   0 = +z, 1 = +x, 2 = -z, 3 = -x
+;; Body 0 stands east and faces -x, body 1 stands south and faces -z, and so on round the ring.
+(defn body-facing [(i : I32)] : I32 (- 3 (mod i 4)))
