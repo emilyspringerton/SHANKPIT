@@ -77,6 +77,8 @@ int net_packet_mod_request(void);
 int net_mod_request_size(void);
 int net_packet_caps(void);
 int net_caps_size(void);
+int net_interest_all(void);
+int net_interest_match(int peer_level, int level);
 int net_cmd_size(void);
 int net_snapshot_size(void);
 int net_level_mod_bytes(void);

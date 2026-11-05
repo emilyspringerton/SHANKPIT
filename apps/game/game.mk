@@ -35,7 +35,8 @@ WASM_BIN      := $(BIN_DIR)/shank_core.wasm
 WASM_CC       ?= clang
 
 .PHONY: game game-test game-smoke game-net-smoke game-level-relay-smoke game-level-request-smoke \
-        game-capped-client-smoke game-clang game-llvm game-test-clang core core-smoke wasm wasm-smoke
+        game-capped-client-smoke game-level-interest-smoke game-clang game-llvm game-test-clang \
+        core core-smoke wasm wasm-smoke
 
 game: $(GAME_BIN)
 
@@ -163,6 +164,23 @@ game-capped-client-smoke: $(GAME_BIN)
 	  cat /tmp/shank_cap_host.log; cat /tmp/shank_cap_client.log; \
 	  grep -q 'level=8 env=0 mods=3' /tmp/shank_cap_client.log && \
 	  grep -q 'peer_caps=3' /tmp/shank_cap_host.log && \
+	  grep -q 'peer_level=8' /tmp/shank_cap_host.log && \
+	  test $$CLIENT_STATUS -eq 0 -a $$HOST_STATUS -eq 0
+
+# Four levels are registered on the server; the client advertises interest in level 2, so the
+# server must send one row (level_rows=1), not all four, and the client must adopt mask 11.
+game-level-interest-smoke: $(GAME_BIN)
+	@rm -f /tmp/shank_interest_host.log /tmp/shank_interest_client.log
+	./$(GAME_BIN) --host 7796 --headless 600 --levels assets/game/levels.json --level 2 \
+	  > /tmp/shank_interest_host.log 2>&1 & \
+	  HOST_PID=$$!; sleep 1; \
+	  ./$(GAME_BIN) --join 127.0.0.1 7796 --headless 90 --level 2 --env underground \
+	    > /tmp/shank_interest_client.log 2>&1; \
+	  CLIENT_STATUS=$$?; wait $$HOST_PID; HOST_STATUS=$$?; \
+	  cat /tmp/shank_interest_host.log; cat /tmp/shank_interest_client.log; \
+	  grep -q 'peer_level=2' /tmp/shank_interest_host.log && \
+	  grep -q 'level_rows=1' /tmp/shank_interest_host.log && \
+	  grep -q 'level=2 env=1 mods=11' /tmp/shank_interest_client.log && \
 	  test $$CLIENT_STATUS -eq 0 -a $$HOST_STATUS -eq 0
 
 game-level-relay-smoke: $(GAME_BIN)

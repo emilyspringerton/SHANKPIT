@@ -95,6 +95,10 @@ jobs:
       - name: Capped-client module smoke
         run: make game-capped-client-smoke PARENA_BIN="$PWD/PARENA/parena"
 
+      # Four registered levels, one interested peer: the server sends exactly one level row.
+      - name: Level interest smoke
+        run: make game-level-interest-smoke PARENA_BIN="$PWD/PARENA/parena"
+
       - name: Build the Linux client
         run: make game PARENA_BIN="$PWD/PARENA/parena"
 

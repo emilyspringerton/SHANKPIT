@@ -102,12 +102,14 @@ typedef struct __attribute__((packed)) {
     uint8_t type;
     uint8_t pad;
     uint16_t caps;
+    uint16_t level;
+    uint16_t pad2;
 } NetCaps;
 
 _Static_assert(sizeof(NetLevelMod) == 8, "NetLevelMod must match net_level_mod_bytes()");
 _Static_assert(sizeof(NetLevelMods) == 72, "NetLevelMods must match net_level_mods_size()");
 _Static_assert(sizeof(NetModRequest) == 12, "NetModRequest must match net_mod_request_size()");
-_Static_assert(sizeof(NetCaps) == 8, "NetCaps must match net_caps_size()");
+_Static_assert(sizeof(NetCaps) == 12, "NetCaps must match net_caps_size()");
 
 /* ---- bodies ------------------------------------------------------------------------------------ */
 typedef struct {
@@ -151,7 +153,9 @@ static int g_in_fwd, g_in_strafe, g_in_fire;
 static int g_is_host, g_is_client;
 static NetAddr g_peer;
 static int g_peer_known;
-static int g_peer_caps; /* modules the server has learned this peer can run */
+static int g_peer_caps;  /* modules the server has learned this peer can run */
+static int g_peer_level; /* level the peer asked to watch; 0 = all */
+static int g_last_level_rows;
 static int g_net_acc;
 static int g_net_seq;
 
@@ -522,7 +526,8 @@ static void net_open(int bind_port) {
         fprintf(stderr, "shank_game: transport open (bind %d) failed\n", bind_port);
         exit(1);
     }
-    g_peer_caps = lm_all_mask(); /* until a peer advertises otherwise */
+    g_peer_caps = lm_all_mask();      /* until a peer advertises otherwise */
+    g_peer_level = net_interest_all();
 }
 
 static void net_send_snapshot(void) {
@@ -564,6 +569,7 @@ static void net_send_level_mods(void) {
     for (i = 0; i < LEVEL_MODS_MAX_LEVELS && m.count < net_max_level_mods(); i++) {
         int level_id = level_mods_level_at(i);
         if (level_id <= 0 || level_id > 65535) continue;
+        if (!net_interest_match(g_peer_level, level_id)) continue;
         m.mods[m.count].level_id = (uint16_t)level_id;
         /* Per-peer interest: send the authoritative mask clamped to what this peer has ported. The
          * server's own registry is untouched, and the client still clamps on arrival. */
@@ -571,6 +577,7 @@ static void net_send_level_mods(void) {
         m.mods[m.count].revision = (uint16_t)level_mods_revision(level_id);
         m.count++;
     }
+    g_last_level_rows = m.count;
     if (g_peer_known && m.count > 0) net_transport_send(&g_peer, &m, (int)sizeof(m));
 }
 
@@ -593,6 +600,7 @@ static void net_host_recv(void) {
             g_peer = from;
             g_peer_known = 1;
             g_peer_caps = lm_sanitize((int)pkt.caps.caps);
+            g_peer_level = (int)pkt.caps.level;
             continue;
         }
 
@@ -609,6 +617,7 @@ static void net_host_recv(void) {
         if (pkt.cmd.type != net_packet_cmd() || n != (ssize_t)sizeof(NetCmd)) continue;
         if (!g_peer_known || from.addr != g_peer.addr || from.port != g_peer.port) {
             g_peer_caps = lm_all_mask(); /* a new peer has advertised nothing yet */
+            g_peer_level = net_interest_all();
         }
         g_peer = from;
         g_peer_known = 1;
@@ -691,6 +700,7 @@ static void net_client_tick(void) {
         caps.magic = (uint32_t)net_magic();
         caps.type = (uint8_t)net_packet_caps();
         caps.caps = (uint16_t)level_mods_capabilities();
+        caps.level = (uint16_t)g_level_id;
         net_transport_send(&g_peer, &caps, (int)sizeof(caps));
         g_caps_sent = 1;
     }
@@ -1251,13 +1261,15 @@ int main(int argc, char **argv) {
             else if (g_is_client) SDL_Delay(16);
         }
         printf("headless %d ticks: mode=%d %s=%d score=%d hp=%d shield=%d bodies=%d events=%d"
-               " level=%d env=%d mods=%d rev=%d snapshots=%d peer=%d peer_caps=%d level_name=%s\n",
+               " level=%d env=%d mods=%d rev=%d snapshots=%d peer=%d peer_caps=%d peer_level=%d"
+               " level_rows=%d level_name=%s\n",
                headless, g_mode, g_mode == gp_mode_zombies() ? "wave" : "frags",
                g_mode == gp_mode_zombies() ? g_wave + 1 : g_player_score,
                g_player_score, local_body()->hp, local_body()->shield, bot_count_alive(),
                reflux_host_total_dispatched(), g_level_id, g_level_env,
                level_mods_mask(g_level_id), level_mods_revision(g_level_id),
-               g_snapshots_received, g_peer_known, g_peer_caps, level_catalog_name(g_level_id));
+               g_snapshots_received, g_peer_known, g_peer_caps, g_peer_level, g_last_level_rows,
+               level_catalog_name(g_level_id));
         net_transport_close();
         event_log_close();
         return 0;

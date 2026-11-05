@@ -223,7 +223,10 @@ static void test_net(void) {
     check(net_packet_mod_request() == 5, "mod requests are packet type 5");
     check(net_mod_request_size() == 12, "a mod request fits one small datagram");
     check(net_packet_caps() == 6, "capability advertisements are packet type 6");
-    check(net_caps_size() == 8, "a capability advertisement is one tiny datagram");
+    check(net_caps_size() == 12, "a capability advertisement carries caps and a level");
+    check(net_interest_match(net_interest_all(), 7) == 1, "interest 0 watches every level");
+    check(net_interest_match(7, 7) == 1 && net_interest_match(7, 8) == 0,
+          "a peer watching level 7 receives only level 7");
     check(net_level_mods_size() == 72, "level mods packet is one fixed datagram");
     check(net_level_mods_size() ==
               net_level_mods_header_bytes() + net_max_level_mods() * net_level_mod_bytes(),
