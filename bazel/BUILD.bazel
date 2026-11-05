@@ -4,3 +4,5 @@ exports_files([
     "parena.bzl",
     "parena_emitted_test.sh",
 ])
+
+exports_files(["boot_smoke_test.sh"])

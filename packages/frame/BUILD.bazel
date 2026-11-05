@@ -1,3 +1,4 @@
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//bazel:parena.bzl", "parena_module")
 
 # The level JSON's own build step and the boot programme both consume the .prn directly, so the file
@@ -9,4 +10,11 @@ exports_files(["frame_rules.prn"])
 parena_module(
     name = "frame_rules",
     src = "frame_rules.prn",
+)
+
+sh_test(
+    name = "frame_rules_emitted_test",
+    srcs = ["//bazel:parena_emitted_test.sh"],
+    data = [":frame_rules_from_prn"],
+    args = ["$(rootpath :frame_rules_from_prn)"],
 )
