@@ -173,6 +173,9 @@ int bp_target_net(int target);
 /* ---- composed sim/render rules the client reads directly ------------------------------------------ */
 int tick_ms(void);
 int frame_budget(void);
+int frame_dt_ms(int dt);
+int frame_steps(int acc, int dt);
+int frame_acc(int acc, int dt);
 int combat_score_for(int hp_max, int head);
 int combat_evt_first(void);
 int combat_evt_last(void);

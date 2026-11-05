@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SHANKPIT -- WASM client</title>
+<style>
+  :root { --ink: #ece6d8; --dim: #9b9484; --bg: #11161c; --accent: #d8a657; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow: hidden; }
+  body { display: grid; place-items: center; }
+  #wrap { width: min(100vw, 177.78vh); aspect-ratio: 16 / 9; position: relative; background: #000; }
+  canvas { width: 100%; height: 100%; display: block; image-rendering: pixelated; cursor: crosshair; }
+  #hud { position: absolute; left: .75rem; bottom: .6rem; font-size: clamp(.55rem, 1.1vw, .8rem);
+    color: var(--ink); background: rgba(17, 22, 28, .7); border: 1px solid rgba(236,230,216,.18);
+    border-radius: .25rem; padding: .3rem .5rem; pointer-events: none; white-space: pre; }
+  #help { position: absolute; right: .75rem; top: .6rem; font-size: clamp(.5rem, 1vw, .72rem);
+    color: var(--dim); text-align: right; line-height: 1.5; pointer-events: none; }
+  #load { position: absolute; inset: 0; display: grid; place-items: center; text-align: center;
+    background: var(--bg); color: var(--dim); padding: 1rem; }
+  #load b { display: block; color: var(--accent); letter-spacing: .08em; margin-bottom: .4rem; }
+  #load[hidden] { display: none; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="screen" width="1024" height="576"></canvas>
+  <div id="help">WASD move &middot; arrows turn &middot; click for mouse look</div>
+  <div id="hud">booting...</div>
+  <div id="load"><div><b>SHANKPIT</b>loading shank_core.wasm</div></div>
+</div>
+<script type="module">
+const canvas = document.getElementById("screen");
+const ctx = canvas.getContext("2d");
+const hud = document.getElementById("hud");
+const load = document.getElementById("load");
+
+async function loadWasm() {
+  const candidates = ["../../bin/shank_core.wasm", "./shank_core.wasm"];
+  for (const url of candidates) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return await res.arrayBuffer();
+    } catch (_) { /* try the next location */ }
+  }
+  throw new Error("shank_core.wasm not found next to this page or in bin/");
+}
+
+const bytes = await loadWasm();
+const { instance } = await WebAssembly.instantiate(bytes, {});
+const core = instance.exports;
+
+const caps = core.wasm_play_boot(1, 0);
+if (caps < 0) throw new Error("wasm_play_boot rejected the level");
+const w = core.wasm_fb_width();
+const h = core.wasm_fb_height();
+canvas.width = w;
+canvas.height = h;
+
+const image = ctx.createImageData(w, h);
+const dst = new Uint32Array(image.data.buffer);
+const src = new Uint32Array(core.memory.buffer, core.wasm_fb_ptr(), w * h);
+
+const keys = new Set();
+const pressed = (code) => keys.has(code) ? 1 : 0;
+
+addEventListener("keydown", (e) => {
+  keys.add(e.code);
+  if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Space"].includes(e.code)) e.preventDefault();
+});
+addEventListener("keyup", (e) => keys.delete(e.code));
+addEventListener("blur", () => keys.clear());
+
+canvas.addEventListener("click", () => {
+  if (document.pointerLockElement !== canvas) canvas.requestPointerLock();
+});
+addEventListener("mousemove", (e) => {
+  if (document.pointerLockElement === canvas) core.wasm_turn(e.movementX * 4);
+});
+
+function applyInput() {
+  const fwd = pressed("KeyW") - pressed("KeyS");
+  const strafe = pressed("KeyD") - pressed("KeyA");
+  core.wasm_set_input(fwd * 100, strafe * 100);
+  const turn = pressed("ArrowRight") - pressed("ArrowLeft");
+  if (turn) core.wasm_turn(turn * 55);
+}
+
+let last = 0;
+function frame(now) {
+  const dt = last ? now - last : 0;
+  last = now;
+  applyInput();
+  const steps = core.wasm_frame(dt);
+  dst.set(src);
+  ctx.putImageData(image, 0, 0);
+  hud.textContent =
+    `level ${core.wasm_level()}  caps ${caps}\n` +
+    `x ${core.wasm_player_x()}  z ${core.wasm_player_z()}  yaw ${core.wasm_player_yaw()}\n` +
+    `ticks ${core.wasm_ticks()}  +${steps}`;
+  requestAnimationFrame(frame);
+}
+
+load.hidden = true;
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

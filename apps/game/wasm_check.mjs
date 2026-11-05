@@ -35,7 +35,43 @@ assert.ok(Math.abs(core.wasm_sin_deg(30) - 0.5) < 1e-9, "freestanding sin(30 deg
 assert.ok(Math.abs(core.wasm_cos_deg(90)) < 1e-9, "freestanding cos(90 deg)");
 assert.ok(Math.abs(core.wasm_atan2(1, 1) - Math.PI / 4) < 1e-6, "freestanding atan2(1,1)");
 
+// ---- playable browser ABI ---------------------------------------------------------------------
+assert.equal(typeof core.wasm_play_boot, "function", "the module exports the browser boot");
+assert.equal(typeof core.wasm_frame, "function", "the module exports a frame step");
+assert.equal(typeof core.memory, "object", "linear memory is exported for the canvas");
+
+const playCaps = core.wasm_play_boot(31, 2);
+assert.equal(playCaps, 3, "the playable core still admits only core sim + level");
+assert.equal(core.wasm_level(), 31, "the browser boot registers its level");
+assert.equal(core.wasm_fb_width(), 1024);
+assert.equal(core.wasm_fb_height(), 576);
+
+const fb = new Uint32Array(core.memory.buffer, core.wasm_fb_ptr(), 1024 * 576);
+const colors = new Set();
+for (let i = 0; i < fb.length; i += 997) colors.add(fb[i]);
+assert.ok(colors.size >= 4, `the first frame drew ${colors.size} sampled colours`);
+
+const x0 = core.wasm_player_x();
+const z0 = core.wasm_player_z();
+assert.equal(x0, 0);
+assert.equal(z0, -700);
+assert.equal(core.wasm_set_input(100, 0), 0);
+assert.equal(core.wasm_frame(16), 1, "16 ms is one fixed tick");
+assert.ok(core.wasm_player_z() > z0, "forward input moves the body down +Z");
+assert.equal(core.wasm_player_x(), x0, "forward at yaw 0 does not drift sideways");
+
+const z1 = core.wasm_player_z();
+core.wasm_turn(1571);
+assert.ok(core.wasm_player_yaw() > 1500, "turn applies a yaw delta");
+core.wasm_frame(16);
+assert.ok(core.wasm_player_x() > 0, "after a right turn, forward input moves +X");
+assert.ok(core.wasm_player_z() >= z1, "forward does not reverse while turning");
+
+assert.equal(core.wasm_frame(250), 6, "a stalled frame is capped at the six-tick budget");
+core.wasm_set_input(0, 0);
 console.log(
   `wasm-smoke OK: caps=${capabilities} modules=${core.wasm_module_count()} ` +
-    `levels=${core.wasm_level_count()} events=${core.wasm_event_count()}`
+    `levels=${core.wasm_level_count()} events=${core.wasm_event_count()} ` +
+    `fb=${core.wasm_fb_width()}x${core.wasm_fb_height()} ticks=${core.wasm_ticks()} ` +
+    `colours=${colors.size}`
 );
