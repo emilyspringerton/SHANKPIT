@@ -143,6 +143,23 @@ static inline void shield_regen_adopt_clock(PlayerState *p, int wire_since_ms, i
     p->shield_regen_timer = local_since;
 }
 
+/* There are ten rungs on the regen voice's pitch ladder (audio_shield_regen_step_hz). */
+#define SHIELD_REGEN_VOICE_STEPS 10
+
+/* Which rung of that ladder a landed tick sits on, from what the tick was actually WORTH rather than
+ * its index. The stock ramp pays 1,2,3...10 and therefore walks 0..9; a mod that pays a flat 5 sits on
+ * rung 4 for every tick, and a mod paying more than the cap tops out at the highest rung. So a body
+ * with its own curve is HEARD as itself instead of as the stock ramp. */
+static inline int shield_regen_tick_step(const PlayerState *p, unsigned int now_ms) {
+    int landed = sh_regen_ticks_landed(shield_regen_since_ms(p, now_ms));
+    int amount;
+    if (landed <= 0) return 0;
+    amount = shield_regen_amount_for(p, landed - 1);
+    if (amount < 1) amount = 1;
+    if (amount > SHIELD_REGEN_VOICE_STEPS) amount = SHIELD_REGEN_VOICE_STEPS;
+    return amount - 1;
+}
+
 /* The 4-second countdown for the HUD: ms left before the first tick, 0 once regen has started. */
 static inline int shield_regen_counter_ms(const PlayerState *p, unsigned int now_ms) {
     return sh_regen_in_ms(shield_regen_since_ms(p, now_ms));

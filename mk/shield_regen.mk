@@ -9,7 +9,7 @@
 PARENA_DIR ?= ../PARENA
 SHIELD_REGEN_PRN := $(PARENA_DIR)/stdlib/shankpit/shield_regen_rules.prn
 
-.PHONY: regen-shield-regen-rules check-shield-regen-rules test-shield-regen
+.PHONY: regen-shield-regen-rules check-shield-regen-rules test-shield-regen test-shield-regen-wire
 
 regen-shield-regen-rules:
 	@test -x $(PARENA_DIR)/parena || $(MAKE) -C $(PARENA_DIR) build >/dev/null
@@ -23,6 +23,14 @@ check-shield-regen-rules:
 # test-shield-regen -- the 4 seconds, the first point at 4000 ms, the 1-2-3 ramp and its cap, a hit
 # restarting the window, the ten-minute clamp, and the mod curve seam. protocol.h is included directly
 # (the host header needs PlayerState), and the generated rule is linked, not mocked.
+# test-shield-regen-wire -- the same clock through a REAL server over REAL UDP, with a userspace proxy
+# holding every downstream packet for a fixed delay + jitter. Proves the field's meaning end to end
+# (elapsed, not a deadline), that the ramp lands on the wire, and that a delayed path does not change
+# either. The server's SHANKPIT_TEST_START_SHIELD knob breaks the connecting client's shield at CONNECT
+# because a fresh spawn is 100/100 and the window would otherwise never be observable.
+test-shield-regen-wire: server
+	python3 scripts/test_shield_regen_wire.py
+
 test-shield-regen: | $(BIN_DIR)
 	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/common -Ipackages/simulation \
 		packages/simulation/shield_regen_test.c packages/simulation/shield_regen_rules.c \

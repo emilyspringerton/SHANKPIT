@@ -1574,6 +1574,22 @@ void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
                 if (p->state != STATE_ALIVE) p->state = STATE_ALIVE;
                 NET_SERVER_LOG("TEST_START_HEALTH client_id=%d health=%d", client_id, p->health);
             }
+            /* SHANKPIT_TEST_START_SHIELD=N   breaks this player's shield to N at CONNECT, with the regen
+               clock starting now. A fresh player spawns at a full shield, so without this a scripted
+               client can never observe the four-second window or a regen tick on a real wire. The
+               note_damage call is load-bearing, not decoration: the tick recomputes the shield from
+               (base + ramp), so leaving the respawn's full-bar base in place would snap the shield
+               straight back to 100 on the very next tick. */
+            const char *ss = getenv("SHANKPIT_TEST_START_SHIELD");
+            if (ss && ss[0]) {
+                int v = atoi(ss);
+                if (v < 0) v = 0;
+                if (v > 100) v = 100;
+                p->shield = v;
+                shield_regen_note_damage(p, get_server_time());
+                if (p->state != STATE_ALIVE) p->state = STATE_ALIVE;
+                NET_SERVER_LOG("TEST_START_SHIELD client_id=%d shield=%d", client_id, p->shield);
+            }
             const char *vend = getenv("SHANKPIT_TEST_VENDOR_AT");
             if (vend && vend[0]) {
                 float dx = 2.0f, dz = 0.0f;

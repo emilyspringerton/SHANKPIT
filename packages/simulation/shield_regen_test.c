@@ -273,6 +273,20 @@ int main(void) {
     shield_regen_tick(&p, 13000);
     ok(p.shield == 55, "and no mod at all is the same answer");
 
+    /* The voice ladder follows what a tick is WORTH, not its index: the stock ramp walks 0..9, and a
+     * mod's curve is heard as itself instead of as the stock ramp. */
+    p = fresh(0, 0);
+    ok(shield_regen_tick_step(&p, 3999) == 0, "before the first tick the ladder rests on rung 0");
+    ok(shield_regen_tick_step(&p, 4000) == 0, "the first tick (1 point) sits on rung 0");
+    ok(shield_regen_tick_step(&p, 5000) == 1, "the second tick (2 points) climbs to rung 1");
+    shield_regen_set_amount_hook(flat_five);
+    p = fresh(0, 0);
+    ok(shield_regen_tick_step(&p, 4000) == 4, "a mod paying 5 a tick sounds on rung 4");
+    ok(shield_regen_tick_step(&p, 9000) == 4, "and it does not climb -- the pitch follows the amount");
+    shield_regen_set_amount_hook(NULL);
+    p = fresh(0, 0);
+    ok(shield_regen_tick_step(&p, 13000) == 9, "the stock ramp's cap (10 points) tops out at rung 9");
+
     /* Respawn: a body brought back at full shield must not inherit the last death's clock. */
     p = fresh(0, 0);
     shield_regen_note_damage(&p, 0);

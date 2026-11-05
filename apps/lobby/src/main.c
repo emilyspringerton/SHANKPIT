@@ -12426,10 +12426,10 @@ static void shield_fx_observe(PlayerState *render_p, unsigned int now_ms) {
                    instead of sounding like somebody found a pack. `prev_alive` keeps a respawn's
                    0 -> 100 from reading as a tick. */
                 f->regen_ms = now_ms;
-                /* The tick's pitch climbs with the ramp (1..10), so a recovery is audible as getting
-                   stronger rather than as the same blip nineteen times. Step 0 is the same 1320 Hz
-                   tone the first tick always was. */
-                audio_play_shield_regen(sh_regen_ticks_landed(shield_regen_since_ms(p, now_ms)) - 1,
+                /* The tick's pitch follows what the tick was WORTH, not its index, so the stock ramp
+                   climbs 1320 -> 1860 Hz while a mod's own curve is heard as itself (a flat 5-point
+                   tick sits on one rung). Step 0 is the same 1320 Hz tone the first tick always was. */
+                audio_play_shield_regen(shield_regen_tick_step(p, now_ms),
                                         cx, cy, cz, lx, ly, lz, lyaw);
                 if (mine) g_shield_hud_regen_ms = now_ms;
             }
@@ -12657,6 +12657,59 @@ static void draw_rocket_air_hud(const BuggyState *b, const PlayerState *p, int a
  * vendor_serve_tick, so it cannot disagree with the state machine that decides the hand-over. */
 static int g_vendor_prompt_pct;
 
+/* ── Opponent-visible regen countdown ────────────────────────────────────────────────────────
+ * The local player's own countdown lives in the HUD. A broken shield is information everyone can
+ * act on, so every OTHER visible body inside its four seconds (or already ticking) carries a compact
+ * label above its head -- which also means a spectator and a third-person camera read it without any
+ * special case, because the tag follows the body rather than the camera.
+ *
+ * The positions are projected with the WORLD matrices, captured before draw_hud switches to 2D.
+ * gluProject only needs the matrices themselves, so saving them here and using the HUD's own ortho
+ * space below puts the label exactly over the body without a second projection pass. */
+static GLdouble g_tag_model[16], g_tag_proj[16];
+static GLint g_tag_viewport[4];
+static int g_tag_matrices_valid = 0;
+
+static void shield_regen_tags_capture(void) {
+    glGetDoublev(GL_MODELVIEW_MATRIX, g_tag_model);
+    glGetDoublev(GL_PROJECTION_MATRIX, g_tag_proj);
+    glGetIntegerv(GL_VIEWPORT, g_tag_viewport);
+    g_tag_matrices_valid = 1;
+}
+
+static void draw_shield_regen_tags(const PlayerState *viewer, unsigned int now_ms) {
+    int drawn = 0;
+    if (!viewer || !g_tag_matrices_valid) return;
+    for (int i = 0; i < MAX_CLIENTS && drawn < 8; i++) {
+        const PlayerState *q = &local_state.players[i];
+        float dx, dy, dz, dist, fade;
+        GLdouble sx = 0.0, sy = 0.0, sz = 0.0;
+        char buf[24];
+        int tenths, landed;
+        if (!q->active || q->state != STATE_ALIVE || q->id == viewer->id) continue;
+        if (q->shield >= shield_max()) continue;
+        dx = q->x - viewer->x; dy = q->y - viewer->y; dz = q->z - viewer->z;
+        dist = sqrtf(dx * dx + dy * dy + dz * dz);
+        if (dist > 45.0f) continue;
+        if (gluProject(q->x, q->y + 2.3, q->z, g_tag_model, g_tag_proj, g_tag_viewport,
+                       &sx, &sy, &sz) == GL_FALSE) continue;
+        if (sz < 0.0 || sz > 1.0) continue;
+        landed = sh_regen_ticks_landed(shield_regen_since_ms(q, now_ms));
+        tenths = shield_regen_counter_tenths(q, now_ms);
+        if (landed == 0 && tenths == 0) continue;   /* never hit: nothing to count down */
+        fade = 0.45f + 0.55f * (1.0f - dist / 45.0f);   /* readable up close, unobtrusive far away */
+        if (tenths > 0) {
+            snprintf(buf, sizeof(buf), "%d.%d", tenths / 10, tenths % 10);
+            glColor3f(1.0f * fade, 0.42f * fade, 0.38f * fade);
+        } else {
+            snprintf(buf, sizeof(buf), "+%d", shield_regen_next_amount(q, now_ms));
+            glColor3f(0.42f * fade, 0.72f * fade, 1.0f * fade);
+        }
+        draw_string(buf, (float)sx - 9.0f, (float)sy + 8.0f, dist < 14.0f ? 3.0f : 2.0f);
+        drawn++;
+    }
+}
+
 void draw_hud(PlayerState *p) {
     /* Pre-existing broken build, found live (S170-110): the MODE_STORY branch below calls
        draw_tyler_cutscene()/cutscene_tick() with a `now_ms` that was never declared anywhere in
@@ -12664,6 +12717,7 @@ void draw_hud(PlayerState *p) {
        loop) and no header declaration, so a local SDL_GetTicks() here is the same pattern every
        other timing-aware function in this file already uses, not a new convention. */
     unsigned int now_ms = SDL_GetTicks();
+    shield_regen_tags_capture();   /* the world matrices, before the 2D switch below */
     glDisable(GL_DEPTH_TEST);
     glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
     glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
@@ -13015,6 +13069,7 @@ void draw_hud(PlayerState *p) {
            them, and clipping the orb prompt's own line when it sat level with the shield bar. */
         draw_string(regen_buf, (int)(x1 + 10.0f), (int)(y_shield1 + 8.0f), 3.5f);
     }
+    draw_shield_regen_tags(p, now_ms);   /* every other body's clock, above its head */
     
     if (p->in_vehicle) {
         /* Real bug found live (2026-08-04, founder: "hellicopter... it dont quite work"): each
