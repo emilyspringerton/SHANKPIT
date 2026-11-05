@@ -455,6 +455,15 @@ static const float PENTATONIC_HZ[5] = { 261.63f, 293.66f, 329.63f, 392.00f, 440.
 
 /* ── Public API ─────────────────────────────────────────────────────────── */
 
+/* The ramp ladder, single-sourced: 1320 Hz on the first tick, +60 Hz per step, 1860 Hz at the cap.
+ * 60 Hz is small enough to stay a timbre rather than a tune (eight steps would be a musical
+ * interval), and big enough that the tenth tick is unmistakably higher than the first. */
+int audio_shield_regen_step_hz(int step) {
+    if (step < 0) step = 0;
+    if (step > 9) step = 9;
+    return 1320 + 60 * step;
+}
+
 void audio_init(void) {
     if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) {
         SDL_Log("[audio] SDL_InitSubSystem(AUDIO) failed: %s", SDL_GetError());
@@ -545,7 +554,7 @@ void audio_init(void) {
        amplitude is identical at every step -- the ramp is heard as pitch, never as volume, so ten
        ticks in a row can never become the loudest thing in a fight. */
     for (int step = 0; step < 10; step++) {
-        g_snd[20 + step] = synth_tone(1320.0f + 60.0f * (float)step, 0.055f, 0.22f, 40.0f);
+        g_snd[20 + step] = synth_tone(audio_shield_regen_step_hz(step), 0.055f, 0.22f, 40.0f);
     }
 
     /* ── The civic boss's verdict (AI_ROLE_MAGISTRATE) ───────────

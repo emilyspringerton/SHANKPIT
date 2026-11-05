@@ -46,6 +46,11 @@ void audio_play_shield(int kind, float sx, float sy, float sz,
 void audio_play_shield_regen(int step, float sx, float sy, float sz,
                              float lx, float ly, float lz, float lyaw);
 
+/* The frequency of ramp step `step` (0..9, clamped): 1320 Hz rising 60 Hz per tick to 1860 Hz. The
+ * bank is synthesized from this one function, so a preview rendered offline is the same tone the
+ * engine plays. */
+int audio_shield_regen_step_hz(int step);
+
 /* The civic boss's verdict (SHANKPIT's AI_ROLE_MAGISTRATE), synthesized into the same bank as every
  * other cue: kind 0 = the sentence being READ (a short wooden gavel rap, the telegraph's own sound),
  * kind 1 = the sentence SERVED (a heavy stamp plus a sub drop). Positioned exactly like a gunshot --
