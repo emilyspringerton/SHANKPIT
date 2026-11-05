@@ -12178,6 +12178,7 @@ typedef struct {
     float hx, hy, hz;         /* unit direction the hit came from */
     unsigned int break_ms;    /* shield reached zero */
     unsigned int refill_ms;   /* pack pickup */
+    unsigned int regen_ms;    /* a regen tick: shield came back with no pack beside it */
 } ShieldFx;
 static ShieldFx g_sfx[MAX_CLIENTS];
 
@@ -12191,6 +12192,7 @@ static ShieldFx g_sfx[MAX_CLIENTS];
 #define SHIELD_LON 24
 
 static unsigned int g_shield_hud_hit_ms = 0, g_shield_hud_break_ms = 0, g_shield_hud_refill_ms = 0;
+static unsigned int g_shield_hud_regen_ms = 0;   /* the last regen tick on our own body */
 /* where the last shield pack vanished (a pickup, as far as the client can tell) */
 static float g_pack_gone_x, g_pack_gone_y, g_pack_gone_z;
 static unsigned int g_pack_gone_ms = 0;
@@ -12417,6 +12419,15 @@ static void shield_fx_observe(PlayerState *render_p, unsigned int now_ms) {
                                     5.0f + fx_rand() * 6.0f, 0.6f + fx_rand() * 0.4f, 0.14f + fx_rand() * 0.14f, 0.6f);
                     }
                 }
+            } else if (cur > f->prev_shield && f->prev_alive) {
+                /* The shield came back with no pack beside this body: a regeneration tick
+                   (packages/simulation/shield_regen.h -- one a second, worth 1,2,3...10). Its own
+                   quiet cue rather than the pickup chime, so a disengage is audible as a rhythm
+                   instead of sounding like somebody found a pack. `prev_alive` keeps a respawn's
+                   0 -> 100 from reading as a tick. */
+                f->regen_ms = now_ms;
+                audio_play_shield(3, cx, cy, cz, lx, ly, lz, lyaw);
+                if (mine) g_shield_hud_regen_ms = now_ms;
             }
         }
         f->prev_shield = cur;
@@ -12562,13 +12573,16 @@ static void draw_shield_packs(unsigned int now_ms) {
 /* Own-screen feedback (HUD ortho 1280x720): blue edge vignette on a hit, a stronger one plus a white flash on a break,
  * a soft cyan pulse on a pack pickup. */
 static void draw_shield_hud_flash(unsigned int now_ms) {
-    float hit = 0.0f, brk = 0.0f, ref = 0.0f;
+    float hit = 0.0f, brk = 0.0f, ref = 0.0f, reg = 0.0f;
     if (g_shield_hud_hit_ms && now_ms - g_shield_hud_hit_ms < 380u) hit = 1.0f - (float)(now_ms - g_shield_hud_hit_ms) / 380.0f;
     if (g_shield_hud_break_ms && now_ms - g_shield_hud_break_ms < 700u) brk = 1.0f - (float)(now_ms - g_shield_hud_break_ms) / 700.0f;
     if (g_shield_hud_refill_ms && now_ms - g_shield_hud_refill_ms < 600u) ref = 1.0f - (float)(now_ms - g_shield_hud_refill_ms) / 600.0f;
-    if (hit <= 0.0f && brk <= 0.0f && ref <= 0.0f) return;
+    /* A regen tick: a short, soft edge breath each second the shield comes back, deliberately
+       fainter than a pickup -- it happens nineteen times, and it must not compete with gunfire. */
+    if (g_shield_hud_regen_ms && now_ms - g_shield_hud_regen_ms < 240u) reg = 1.0f - (float)(now_ms - g_shield_hud_regen_ms) / 240.0f;
+    if (hit <= 0.0f && brk <= 0.0f && ref <= 0.0f && reg <= 0.0f) return;
     float edge = 150.0f + 130.0f * brk;
-    float a = fminf(0.65f, 0.40f * hit + 0.55f * brk + 0.30f * ref);
+    float a = fminf(0.65f, 0.40f * hit + 0.55f * brk + 0.30f * ref + 0.14f * reg);
     float r = ref > 0.0f && brk <= 0.0f ? 0.3f : 0.15f, g = ref > 0.0f && brk <= 0.0f ? 0.95f : 0.50f;
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);

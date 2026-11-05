@@ -16,6 +16,29 @@ func TestObservationSize(t *testing.T) {
 	}
 }
 
+// TestBuildObservation_ShieldRegenSignal -- the shield regen rule's two observable halves: the
+// recovery landing on this snapshot, and the vulnerable window (alive with no shield). Both come
+// from fields the wire already carries, so no clock is needed here.
+func TestBuildObservation_ShieldRegenSignal(t *testing.T) {
+	s := &botState{
+		myID: 1, myHealth: 100, myShield: 0, myState: 0, myShieldGain: 0.03,
+		sceneID: 9, peers: map[uint8]*peer{},
+	}
+	obs := buildObservation(s)
+	if obs.SelfShieldGainFrac != 0.03 {
+		t.Fatalf("expected the snapshot's shield gain (0.03), got %v", obs.SelfShieldGainFrac)
+	}
+	if obs.SelfShieldBroken != 1 {
+		t.Fatalf("an alive body at 0 shield is inside its vulnerable window, got %v", obs.SelfShieldBroken)
+	}
+	s.myShield, s.myShieldGain = 55, 0
+	obs = buildObservation(s)
+	if obs.SelfShieldBroken != 0 || obs.SelfShieldGainFrac != 0 {
+		t.Fatalf("a body with shield and no gain should read neither, got broken=%v gain=%v",
+			obs.SelfShieldBroken, obs.SelfShieldGainFrac)
+	}
+}
+
 func TestBuildObservation_NoPeers(t *testing.T) {
 	s := &botState{
 		myID: 1, myHealth: 100, sceneID: 9,
@@ -54,6 +77,29 @@ func TestBuildObservation_NearestOpponentOrdering(t *testing.T) {
 	}
 	if obs.VisibleEnemyCountNorm == 0 {
 		t.Fatalf("expected non-zero visible enemy count (2 same-scene peers)")
+	}
+}
+
+// TestComputeReward_ShieldRecoveryWhileDisengaged -- the reward for the regen only pays while the
+// bot is NOT closing on an enemy: the refill takes nineteen seconds, so breaking contact is the
+// behaviour worth buying, and turtling in someone's face must not be.
+func TestComputeReward_ShieldRecoveryWhileDisengaged(t *testing.T) {
+	prev := PlayerRewardSnapshot{Health: 80, Shield: 20, NearestEnemyDist: 30}
+	cur := PlayerRewardSnapshot{Health: 80, Shield: 21, NearestEnemyDist: 40}
+	if got := computeReward(prev, cur, TeamRewardContext{}, 0); got <= 0.003 {
+		t.Fatalf("a point of shield recovered while opening distance should pay more than the alive tick, got %v", got)
+	}
+
+	// Same recovery, but walking INTO the enemy: only the alive tick remains.
+	cur.NearestEnemyDist = 10
+	if got := computeReward(prev, cur, TeamRewardContext{}, 0); got >= 0.002 {
+		t.Fatalf("recovering while closing on an enemy must not pay, got %v", got)
+	}
+
+	// No visible enemy at all is a disengage too.
+	prev.NearestEnemyDist, cur.NearestEnemyDist = 0, 0
+	if got := computeReward(prev, cur, TeamRewardContext{}, 0); got <= 0.003 {
+		t.Fatalf("a point of shield recovered out of contact should pay, got %v", got)
 	}
 }
 

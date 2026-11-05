@@ -44,7 +44,7 @@ import (
 // named features -- inside the requested 50-100 range with no padding.
 const (
 	nearestOpponentSlots = 4
-	selfFeatureCount     = 26
+	selfFeatureCount     = 28
 	perOpponentFeatures  = 11
 	aggregateFeatureCount = 9
 	geometryFeatureCount = 5
@@ -145,6 +145,14 @@ type Observation struct {
 	// unambiguous binary action-gate signal, not just the continuous fraction above -- a policy
 	// shouldn't have to learn "close to 0" means ready from a noisy continuous value alone.
 	SelfAbilityReady float32
+	// SelfShieldGainFrac / SelfShieldBroken -- the shield regen the simulation now runs (PARENA's
+	// stdlib/shankpit/shield_regen_rules.prn): lose the shield and it stays gone for four
+	// seconds, then a one-second tick worth 1, 2, 3 ... 10 comes back. Shield is the part of the
+	// bar that returns on its own, so a policy needs both halves -- how much just came back (the
+	// tick is working, or a pack was picked up) and whether the shield is GONE right now, which
+	// is the body's four-second window: any trade taken in it is paid for in health.
+	SelfShieldGainFrac float32 // this snapshot's shield gain / 100 (0 = nothing came back)
+	SelfShieldBroken   float32 // 1.0 iff alive and shield == 0 -- the vulnerable window
 
 	// --- Opponent block (nearestOpponentSlots * 11 = 44), nearest-first, zero-filled+Present=0
 	// past however many opponents are actually visible in this bot's own scene. ---
@@ -256,6 +264,8 @@ func buildObservation(s *botState) Observation {
 		SelfReloadFrac: clamp01(float32(s.myReloadTimer) / reloadTimerCap),
 		SelfAbilityCooldownFrac: clamp01(float32(s.myAbilityCooldown) / abilityCooldownCap),
 		SelfAbilityReady: boolToF32(s.myAbilityCooldown == 0),
+		SelfShieldGainFrac: clamp01(s.myShieldGain),
+		SelfShieldBroken:   boolToF32(s.myState == 0 && s.myShield == 0),
 	}
 	if int(s.myCurrentWeapon) < len(obs.SelfWeaponOnehot) {
 		obs.SelfWeaponOnehot[s.myCurrentWeapon] = 1.0
@@ -382,6 +392,7 @@ func (o Observation) Values() []float32 {
 		o.SelfAmmoFrac, o.SelfIsShooting, o.SelfCrouching, o.SelfInVehicle, o.SelfAlive,
 		o.SelfKillsNorm, o.SelfDeathsNorm, o.SelfHitFeedback, o.SelfStormChargesFrac,
 		o.SelfRewardFeedbackNorm, o.SelfReloadFrac, o.SelfAbilityCooldownFrac, o.SelfAbilityReady,
+		o.SelfShieldGainFrac, o.SelfShieldBroken,
 	)
 	for _, opp := range o.Opponents {
 		out = append(out,

@@ -83,6 +83,13 @@ const (
 	rewardSurvivalStreakUnit = 0.001
 	survivalStreakFibCap = 14 // matches BRAWLPIT's own real, bug-fixed cap exactly
 	survivalStreakHealthExpBase = 2.0
+
+	// Tier 6: shield regen. The shield is the part of the bar that comes back on its own -- four
+	// seconds after the last hit, then a one-second tick worth 1, 2, 3 ... 10 (PARENA's
+	// stdlib/shankpit/shield_regen_rules.prn). A full refill is 0.40, deliberately comparable to
+	// a survival-streak tick and far below a kill: this rewards the DISENGAGE, it does not make
+	// hiding a better policy than fighting.
+	rewardShieldRecoveredPerPoint = 0.004
 )
 
 // TeamRewardContext -- Team reward, architected not built (S459-46). A real, currently-unused
@@ -116,6 +123,7 @@ type PlayerRewardSnapshot struct {
 	Deaths         uint16
 	NearestEnemyDist float32 // 0 = no visible enemy
 	NearestEnemyHealthFrac float32 // health of the nearest visible enemy, 0 if none visible
+	Shield         float32 // 0..100, the shield that regenerates after the four-second window
 }
 
 // fibonacci -- the real, standard sequence, 1-indexed (fib(1)=1, fib(2)=1, fib(3)=2, fib(4)=3,
@@ -180,6 +188,14 @@ func computeReward(prev, cur PlayerRewardSnapshot, team TeamRewardContext, survi
 	if survivalTicks > 0 && survivalTicks <= survivalStreakFibCap && cur.Deaths == prev.Deaths {
 		healthScale := math.Pow(survivalStreakHealthExpBase, float64(100.0-cur.Health)/100.0)
 		reward += float32(rewardSurvivalStreakUnit * float64(fibonacci(survivalTicks)) * healthScale)
+	}
+
+	// Tier 6: shield regen -- credit the recovery only while the bot is NOT closing on an enemy
+	// (no visible enemy, or the distance is growing). Standing in someone's face while the
+	// shield rebuilds should not pay: the whole reason the refill takes 19 seconds is that
+	// breaking contact is the profitable play, so that is the behaviour this term buys.
+	if cur.Shield > prev.Shield && cur.NearestEnemyDist >= prev.NearestEnemyDist {
+		reward += (cur.Shield - prev.Shield) * rewardShieldRecoveredPerPoint
 	}
 
 	// Team term -- deliberately a no-op today (see TeamRewardContext's own doc comment).

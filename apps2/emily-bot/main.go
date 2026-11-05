@@ -103,6 +103,7 @@ type botState struct {
 	myPitch float32
 	myHealth float32 // real decoded health when available (S459-44); heuristic fallback otherwise
 	myShield        uint8
+	myShieldGain    float32 // shield recovered since the previous snapshot / 100 -- real regen tick or a pack; read by buildObservation and computeReward
 	myCurrentWeapon uint8
 	myAmmo          uint8
 	myState         uint8
@@ -724,6 +725,14 @@ func receiveLoop(conn *net.UDPConn, state *botState, verbose bool) {
 					state.myX, state.myY, state.myZ = e.x, e.y, e.z
 					if e.sceneID == state.sceneID {
 						state.myYaw = e.yaw
+					}
+					// Shield regen is a real, observed event, not a heuristic: the server's shield
+					// only goes up from a regen tick (1,2,3...10 a second after a 4 s window) or a
+					// pack, and either is worth telling the policy about.
+					if e.shield > state.myShield {
+						state.myShieldGain = float32(e.shield-state.myShield) / 100.0
+					} else {
+						state.myShieldGain = 0
 					}
 					state.myShield = e.shield
 					state.myCurrentWeapon = e.currentWeapon
