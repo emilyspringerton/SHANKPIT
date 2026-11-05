@@ -1,0 +1,22 @@
+;; packages/sim/horde_rules.prn -- where wave N's bodies stand, without a list or an allocator.
+;;
+;; A wave is a COUNT (wave_rules' wave-size-for) and a RING (wave-spawn-radius-milli); the positions are a
+;; function of a body's index, so a caller keeps no list and no memory is touched. This build cannot
+;; allocate at all (docs/PARENA_GAPS.md 5), and there is no trig to place a true circle either, so the ring
+;; is walked by quadrant: index 0 east, 1 south, 2 west, 3 north, then the pattern repeats.
+;;
+;; That is enough for wave 1, which wave_rules sizes at three bodies, and it is stated here so nobody
+;; assumes it scales: a fifth body lands on the first one's position. When the arena and the allocator
+;; both allow it, this becomes a real ring at 2*pi*i/n.
+(module shankpit/horde)
+(export body-x body-z)
+
+;; x for body i on a ring of `ring` milli-units around (cx, cz)
+(defn body-x [(i : I32) (ring : I32) (cx : I32)] : I32
+  (if (= (mod i 4) 0) (+ cx ring)
+    (if (= (mod i 4) 2) (- cx ring) cx)))
+
+;; z for the same body
+(defn body-z [(i : I32) (ring : I32) (cz : I32)] : I32
+  (if (= (mod i 4) 1) (+ cz ring)
+    (if (= (mod i 4) 3) (- cz ring) cz)))

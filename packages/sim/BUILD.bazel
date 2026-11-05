@@ -1,7 +1,7 @@
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//bazel:parena.bzl", "parena_module")
 
-exports_files(["fall_rules.prn"])
+exports_files(["fall_rules.prn", "horde_rules.prn"])
 
 # packages/sim/fall_rules.prn -- integer gravity integration for the first body (see its header for why
 # it is integer: neither the Arena path nor (f32 x) links in this build).
@@ -15,4 +15,17 @@ sh_test(
     srcs = ["//bazel:parena_emitted_test.sh"],
     data = [":fall_rules_from_prn"],
     args = ["$(rootpath :fall_rules_from_prn)"],
+)
+
+# packages/sim/horde_rules.prn -- body positions by index (no list, no allocation, no trig).
+parena_module(
+    name = "horde_rules",
+    src = "horde_rules.prn",
+)
+
+sh_test(
+    name = "horde_rules_emitted_test",
+    srcs = ["//bazel:parena_emitted_test.sh"],
+    data = [":horde_rules_from_prn"],
+    args = ["$(rootpath :horde_rules_from_prn)"],
 )

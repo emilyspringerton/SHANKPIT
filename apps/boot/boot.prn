@@ -130,6 +130,34 @@
     0
     1))
 
+
+;; ---- where the wave stands -----------------------------------------------------------------------
+;; 460's ring is 30 units and this arena is 60 wide, so the ring would sit on the wall; placement is pulled
+;; one unit inside it rather than spawning bodies in masonry. That is a deliberate change from 460's
+;; numbers and belongs in the log, not in a comment nobody reads.
+(defn place-ring [] : I32
+  (let [r (wave-spawn-radius-milli)
+        h (- (/ (* (level-width) 1000) 2) 1000)]
+    (if (> r h) h r)))
+
+;; The ring is around the WORLD ORIGIN, not around the spawner: wave_rules says so in its own comment
+;; ("a 30-unit ring around the world origin"), and centring it on starter.json's spawner at z=14 pushed
+;; the south body to z=43 -- 13 units through the wall. The check below is what found that.
+(defn hx [(i : I32)] : I32 (body-x i (place-ring) 0))
+(defn hz [(i : I32)] : I32 (body-z i (place-ring) 0))
+(defn inside-arena? [(v : I32) (half : I32)] : Bool (<= (abs-i v) half))
+
+(defn horde-place-check [] : I32
+  (let [hw (/ (* (level-width) 1000) 2)
+        hd (/ (* (level-depth) 1000) 2)]
+    (if (and (= (horde-size) 3)
+             (inside-arena? (hx 0) hw) (inside-arena? (hz 0) hd)
+             (inside-arena? (hx 1) hw) (inside-arena? (hz 1) hd)
+             (inside-arena? (hx 2) hw) (inside-arena? (hz 2) hd)
+             (!= (hx 0) (hx 1)) (!= (hz 1) (hz 2)) (!= (hx 0) (hx 2)))
+      0
+      1)))
+
 (defn shank-boot-main [] : I32
   (do
     (println "SHANKPIT clean-room boot")
@@ -143,10 +171,11 @@
     (println "sky: all 360 rows scanned, bands cover the frame and never invert")
     (println "sim: a body leaves the spawner, falls, and the floor stops it")
     (println "horde: wave 1 from wave_rules fits inside this arena")
+    (println "horde: its 3 bodies stand inside the arena, apart from each other")
     (if (and (= (level-check) 0)
              (> (turn-cap) 0) (< (turn-cap) 2000) (> (distance-bias) 1000)
              (= (frame-check) 0) (= (palette-check) 0) (= (sky-check) 0) (>= (sky-scan) 1)
-             (= (sim-check) 0) (= (horde-check) 0))
+             (= (sim-check) 0) (= (horde-check) 0) (= (horde-place-check) 0))
       (do
         (println "boot plan: the level's own spawner, zombie mode")
         0)

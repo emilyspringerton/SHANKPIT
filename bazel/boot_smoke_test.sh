@@ -24,8 +24,9 @@ for want in \
   "sky: all 360 rows scanned" \
   "sim: a body leaves the spawner" \
   "horde: wave 1 from wave_rules" \
+  "horde: its 3 bodies stand" \
   "boot plan:"; do
   printf '%s\n' "$out" | grep -Fq "$want" || { echo "missing line: $want" >&2; printf '%s\n' "$out" >&2; exit 1; }
 done
 
-echo "boot smoke ok (exit 0, 11 expected lines present)"
+echo "boot smoke ok (exit 0, 12 expected lines present)"
