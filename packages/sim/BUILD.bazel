@@ -1,7 +1,7 @@
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//bazel:parena.bzl", "parena_module")
 
-exports_files(["fall_rules.prn", "horde_rules.prn", "hit_rules.prn"])
+exports_files(["fall_rules.prn", "horde_rules.prn", "hit_rules.prn", "combat_api.prn"])
 
 # packages/sim/fall_rules.prn -- integer gravity integration for the first body (see its header for why
 # it is integer: neither the Arena path nor (f32 x) links in this build).
@@ -41,4 +41,17 @@ sh_test(
     srcs = ["//bazel:parena_emitted_test.sh"],
     data = [":hit_rules_from_prn"],
     args = ["$(rootpath :hit_rules_from_prn)"],
+)
+
+# packages/sim/combat_api.prn -- the mod-facing surface over hit_rules (verbs + the REFLUX family).
+parena_module(
+    name = "combat_api",
+    src = "combat_api.prn",
+)
+
+sh_test(
+    name = "combat_api_emitted_test",
+    srcs = ["//bazel:parena_emitted_test.sh"],
+    data = [":combat_api_from_prn"],
+    args = ["$(rootpath :combat_api_from_prn)"],
 )

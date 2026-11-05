@@ -210,47 +210,62 @@
 (defn shambler-hp [] : I32 (sb-hp (job-shambler) 1))
 (defn brute-hp [] : I32 (sb-hp (job-brute) 1))
 
+;; ---- combat, through the mod API only --------------------------------------------------------------
+;; Boot calls combat_api.prn's verbs and nothing from hit_rules directly: the point of a mod API is that
+;; the rule implementation can move without every caller moving with it, and a boot that reached around
+;; the facade would not be testing the surface a mod actually has.
+;;
+;; The numbers are the job table's own curve (HP = base + per*(level-1)): a level-1 shambler (BLM) 55, a
+;; level-1 brute (PLD) 95. A head shot is triple only when no shield is left (460's sp_phys), which the
+;; API decides inside combat-damage-carried rather than trusting each caller to.
 (defn hit-check [] : I32
-  ;; Numbers from the job table's own curve (HP = base + per*(level-1)): a level-1 shambler (BLM) has 55,
-  ;; a level-1 brute (PLD) 95. The checks encode which answer each weapon is, using the real values so a
-  ;; change to either table fails here instead of quietly changing what a body survives:
-  ;;   AR 20 and magnum 45 are not kills; three AR rounds (60) are, two (40) are not;
-  ;;   an AR head shot (60) is a kill; a sniper round (101) drops either body;
-  ;;   overkill floors at zero, and zero or negative damage changes nothing.
-  (if (and (= (shambler-hp) 55)
-           (= (brute-hp) 95)
-           (> (brute-hp) (shambler-hp))
-           (!= (kills? (shambler-hp) (dmg-ar)) 1)
-           (!= (kills? (shambler-hp) (dmg-magnum)) 1)
-           (= (kills? (shambler-hp) (dmg-sniper)) 1)
-           (= (kills? (shambler-hp) (headshot-damage (dmg-ar))) 1)
-           (!= (kills? (brute-hp) (dmg-magnum)) 1)
-           (= (kills? (brute-hp) (dmg-sniper)) 1)
-           (= (kills? (brute-hp) (dmg-missile)) 1)
-           (= (damage-after (damage-after (shambler-hp) (dmg-ar)) (dmg-ar)) 15)
-           (= (damage-after (damage-after (damage-after (shambler-hp) (dmg-ar)) (dmg-ar)) (dmg-ar)) 0)
-           (= (damage-after (shambler-hp) 9999) 0)
-           (= (damage-after (shambler-hp) 0) (shambler-hp))
-           (= (damage-after (shambler-hp) -5) (shambler-hp)))
+  (if (and (= (combat-killed? 55 0 (dmg-ar) 0) 0)
+           (= (combat-killed? 55 0 (dmg-magnum) 0) 0)
+           (= (combat-killed? 55 0 (dmg-sniper) 0) 1)
+           (= (combat-killed? 95 0 (dmg-magnum) 0) 0)
+           (= (combat-killed? 95 0 (dmg-sniper) 0) 1)
+           (= (combat-killed? 95 0 (dmg-missile) 0) 1)
+           (= (combat-killed? 55 0 (dmg-ar) 1) 1)
+           (= (combat-health-after (combat-health-after 55 0 (dmg-ar) 0) 0 (dmg-ar) 0) 15)
+           (= (combat-health-after (combat-health-after (combat-health-after 55 0 (dmg-ar) 0) 0 (dmg-ar) 0)
+                                  0 (dmg-ar) 0) 0)
+           (= (combat-health-after 55 0 9999 0) 0)
+           (= (combat-health-after 55 0 0 0) 55)
+           (= (combat-health-after 55 0 -5 0) 55))
     0
     1))
 
-;; ---- shields soak first ---------------------------------------------------------------------------
-;; A shielded body is a different fight: the AR round that costs a shambler 20 health costs a shielded one
-;; nothing but shield, a magnum that cannot break the shield never touches health at all, and a head shot
-;; through a live shield is an ordinary hit -- 460's rule, and the reason a shield is worth carrying.
+;; A shielded body is a different fight, and the API is where that is decided: the shield soaks first,
+;; only the remainder reaches health, and a head shot through a live shield is an ordinary hit.
 (defn shield-check [] : I32
-  (if (and (= (shield-after 100 (dmg-ar)) 80)
-           (= (health-after 55 100 (dmg-ar)) 55)
-           (= (shield-after 30 (dmg-magnum)) 0)
-           (= (health-after 55 30 (dmg-magnum)) 40)
-           (= (health-after 55 100 (dmg-sniper)) 54)
-           (= (health-after 55 0 9999) 0)
-           (= (hit-damage 100 (dmg-ar) 1) 20)
-           (= (hit-damage 0 (dmg-ar) 1) 60)
-           (= (hit-damage 100 (dmg-sniper) 0) 101)
-           (= (shield-after 10 -5) 10)
-           (= (health-after 55 10 -5) 55))
+  (if (and (= (combat-shield-after 100 (dmg-ar) 0) 80)
+           (= (combat-health-after 55 100 (dmg-ar) 0) 55)
+           (= (combat-shield-after 30 (dmg-magnum) 0) 0)
+           (= (combat-health-after 55 30 (dmg-magnum) 0) 40)
+           (= (combat-health-after 55 100 (dmg-sniper) 0) 54)
+           (= (combat-damage-carried 100 (dmg-ar) 1) 20)
+           (= (combat-damage-carried 0 (dmg-ar) 1) 60)
+           (= (combat-damage-carried 100 (dmg-sniper) 0) 101)
+           (= (combat-shield-after 10 -5 0) 10)
+           (= (combat-health-after 55 10 -5 0) 55))
+    0
+    1))
+
+;; The REFLUX family: the two action types, the boundaries, the predicate that filters a shared log, and
+;; the damage-dealt field that stops a scoreboard counting overkill.
+(defn event-check [] : I32
+  (if (and (= (combat-evt-hit) 129)
+           (= (combat-evt-ko) 130)
+           (= (combat-evt-first) 129)
+           (= (combat-evt-last) 130)
+           (= (combat-evt-is-combat? 129) 1)
+           (= (combat-evt-is-combat? 130) 1)
+           (= (combat-evt-is-combat? 128) 0)
+           (= (combat-evt-is-combat? 131) 0)
+           (= (combat-evt-is-combat? 1) 0)
+           (= (combat-dmg-dealt 55 15) 40)
+           (= (combat-dmg-dealt 55 0) 55)
+           (= (combat-dmg-dealt 55 99) 0))
     0
     1))
 
@@ -273,10 +288,11 @@
     (println "horde: every body has hit points, ordered by class and level")
     (println "horde: three AR rounds drop a shambler, one does not, and a sniper round drops a brute")
     (println "horde: a shield soaks first, and a head shot through one is an ordinary hit")
+    (println "horde: combat goes through combat_api, and its events are the REFLUX family 129-130")
     (if (and (= (level-check) 0)
              (> (turn-cap) 0) (< (turn-cap) 2000) (> (distance-bias) 1000)
              (= (frame-check) 0) (= (palette-check) 0) (= (sky-check) 0) (>= (sky-scan) 1)
-             (= (sim-check) 0) (= (horde-check) 0) (= (horde-place-check) 0) (= (horde-facing-check) 0) (= (horde-rest-check) 0) (= (health-check) 0) (= (hit-check) 0) (= (shield-check) 0))
+             (= (sim-check) 0) (= (horde-check) 0) (= (horde-place-check) 0) (= (horde-facing-check) 0) (= (horde-rest-check) 0) (= (health-check) 0) (= (hit-check) 0) (= (shield-check) 0) (= (event-check) 0))
       (do
         (println "boot plan: the level's own spawner, zombie mode")
         0)

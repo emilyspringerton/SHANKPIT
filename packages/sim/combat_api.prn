@@ -1,0 +1,73 @@
+;; packages/sim/combat_api.prn -- the surface a game-rule MOD talks to combat through.
+;;
+;; The house rule this file exists for: "game expansions need a mod API first, then the feature"
+;; (EMILY/docs/BRAWLPIT_MOD_API_NORTHSTAR.md §3, and packages/simulation/horse_api.h's own header in
+;; this repo -- five verbs and one poll, nothing that reaches into the internals). hit_rules.prn owns
+;; the arithmetic; this module is the only thing a caller or another mod is meant to call, and it is
+;; the only file allowed to change when the arithmetic does. Boot calls these functions and nothing
+;; from hit_rules directly, so "which surface do mods use" is answerable by reading one export list.
+;;
+;; Shape, taken from the horse API precedent rather than invented here:
+;;   * every function is pure and total over I32 -- no allocation, no state, no clock, no RNG, so a
+;;     replay and a live tick get the same answer (the discipline tested in PARENA's own mods);
+;;   * a caller never passes a struct: hit points, shield, damage and the head flag are scalars, the
+;;     same "only I32 crosses a boundary" rule VS0 enforces for #target;
+;;   * a head shot is decided ONCE, in combat-damage-carried, so no caller can triple damage and then
+;;     hand it to a shield that should have sopped it first (460's sp_phys rule);
+;;   * events are a REFLUX family, not callbacks: this module names the action types and the payload
+;;     convention, and a mod polls the shared log for them (see the event section below).
+;;
+;; HONEST GAP: REFLUX itself is a host log (reflux_host_* in packages/reflux/reflux_runtime.h). This
+;; fork's boot is a PARENA translation unit with no host log linked in, so nothing dispatches yet --
+;; the family is defined and checked here, and wiring it to a log is the next increment, not this one.
+(module shankpit/combat_api)
+
+(export combat-shield-after combat-health-after combat-killed? combat-damage-carried
+        combat-dmg-dealt
+        combat-evt-hit combat-evt-ko combat-evt-first combat-evt-last combat-evt-is-combat?)
+
+;; ---- the verbs -------------------------------------------------------------------------------------
+;; There are only two things a hit changes, so there are two verbs, both taking the state BEFORE the
+;; hit and the head flag, and both returning the value AFTER it. A caller that needs both calls both
+;; with the same inputs; neither mutates anything, so the order does not matter.
+(defn combat-shield-after [(shield : I32) (dmg : I32) (head : I32)] : I32
+  (shield-after shield (hit-damage shield dmg head)))
+
+(defn combat-health-after [(hp : I32) (shield : I32) (dmg : I32) (head : I32)] : I32
+  (health-after hp shield (hit-damage shield dmg head)))
+
+;; 1 when the body is down after this hit, 0 when it still stands -- I32 rather than Bool because this
+;; is what a mod's own decision function returns to the host (horse_api's verbs are the same shape).
+(defn combat-killed? [(hp : I32) (shield : I32) (dmg : I32) (head : I32)] : I32
+  (if (kills? hp (hit-damage shield dmg head)) 1 0))
+
+;; What a hit actually carries once the head flag and the shield have agreed between themselves. This is
+;; the function a caller writes to the event log as the damage-dealt field, and the reason there is no
+;; way to pass "damage" and "is head shot" separately to the shield -- a shielded body never takes
+;; triple, and doing it here means a mod cannot get that wrong.
+(defn combat-damage-carried [(shield : I32) (dmg : I32) (head : I32)] : I32
+  (hit-damage shield dmg head))
+
+;; Health actually removed by a hit (before, after): never negative, and never counts overkill a body
+;; did not have. A scoreboard that sums this cannot award more damage than was dealt.
+(defn combat-dmg-dealt [(before : I32) (after : I32)] : I32
+  (if (>= after before) 0 (- before after)))
+
+;; ---- the event family ------------------------------------------------------------------------------
+;; REFLUX action types 129 and 130 -- the next free pair after the citizen family (128) in
+;; packages/reflux/reflux_runtime.h, which carries the same two literals and
+;; reflux_action_is_combat(). Both sides hardcode the number and cross-reference each other, the way
+;; REFLUX itself documents (no exported-constant mechanism in VS0 yet). Payload conventions, fixed here
+;; so a remote or later mod agrees without reading the dispatcher:
+;;   HIT (129): a = attacker slot, b = victim slot, c = damage actually dealt (combat-dmg-dealt)
+;;   KO  (130): a = victim slot, b = attacker slot, c = weapon id (0 when environmental)
+(defn combat-evt-hit [] : I32 129)
+(defn combat-evt-ko [] : I32 130)
+(defn combat-evt-first [] : I32 (combat-evt-hit))
+(defn combat-evt-last [] : I32 (combat-evt-ko))
+
+;; Is this action type ours? One predicate in one place -- the same shape reflux_action_is_horse /
+;; reflux_action_is_citizen use on the C side -- so a poller that filters a shared log has a single
+;; definition of the family to agree with.
+(defn combat-evt-is-combat? [(action-type : I32)] : I32
+  (if (and (>= action-type (combat-evt-first)) (<= action-type (combat-evt-last))) 1 0))

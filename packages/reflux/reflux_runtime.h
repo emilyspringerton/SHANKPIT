@@ -193,6 +193,23 @@ static inline int reflux_action_is_citizen(int action_type) {
     return action_type >= REFLUX_ACTION_CITIZEN_FIRST && action_type <= REFLUX_ACTION_CITIZEN_LAST;
 }
 
+/* Combat (packages/sim/combat_api.prn, hit_rules.prn). The PARENA side names the same two literals
+ * and documents the payloads; this is where a C mod reads them, so both sides agree by number:
+ *   HIT (129): a = attacker slot, b = victim slot, c = damage actually dealt
+ *   KO  (130): a = victim slot, b = attacker slot, c = weapon id (0 when environmental)
+ * Nothing dispatches these yet in this fork -- the boot is PARENA-only, with no host log linked -- so
+ * this is the family definition the first dispatcher will use, not a claim that rows exist. */
+#define REFLUX_ACTION_COMBAT_HIT 129
+#define REFLUX_ACTION_COMBAT_KO  130
+
+#define REFLUX_ACTION_COMBAT_FIRST REFLUX_ACTION_COMBAT_HIT
+#define REFLUX_ACTION_COMBAT_LAST  REFLUX_ACTION_COMBAT_KO
+
+/* One predicate in one place, the shape reflux_action_is_horse/citizen already use. */
+static inline int reflux_action_is_combat(int action_type) {
+    return action_type >= REFLUX_ACTION_COMBAT_FIRST && action_type <= REFLUX_ACTION_COMBAT_LAST;
+}
+
 #define REFLUX_LOG_CAPACITY 256
 
 typedef struct {
