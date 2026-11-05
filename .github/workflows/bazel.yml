@@ -57,7 +57,7 @@ jobs:
       # i.e. SIBLING checkouts, not subdirectories. So all three repositories are checked out
       # side by side under $GITHUB_WORKSPACE and Bazel runs from the SHANKPIT one -- the exact
       # layout this was verified in locally, rather than a CI-only arrangement invented here.
-      - name: Checkout SHANKPIT
+      - name: Checkout SPGF (this fork)
         uses: actions/checkout@v4
         with:
           path: SPGF
