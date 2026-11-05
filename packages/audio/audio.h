@@ -38,6 +38,30 @@ void audio_play_footstep(float sx, float sy, float sz,
 void audio_play_shield(int kind, float sx, float sy, float sz,
                        float lx, float ly, float lz, float lyaw);
 
+/* The civic boss's verdict (SHANKPIT's AI_ROLE_MAGISTRATE), synthesized into the same bank as every
+ * other cue: kind 0 = the sentence being READ (a short wooden gavel rap, the telegraph's own sound),
+ * kind 1 = the sentence SERVED (a heavy stamp plus a sub drop). Positioned exactly like a gunshot --
+ * source at the bench, listener position + yaw -> the same sin(rel_angle) pan and 1/(1+dist^2/1e4)
+ * attenuation every other sound in this engine uses, so walking down the gallery really does move the
+ * verdict to one side of your head and fade it. */
+void audio_play_magistrate(int kind, float sx, float sy, float sz,
+                           float lx, float ly, float lz, float lyaw);
+
+/* The wind bed (founder: "add basic wind sound effects for storms"). A looping, filtered noise buffer
+ * mixed under every effect. gain/bright/pan are already-resolved 0..1 (pan -1..1) values from
+ * PARENA's weather rules -- audio.c does the DSP, not the weather, so the storm that sounds like a gale
+ * is the same storm that thins the ground fog. gain 0 fades it out; audio_init starts it still and
+ * silent until a host calls this. Called every frame; targets are smoothed, so a jump in the sim cannot
+ * click in the mix. */
+void audio_set_wind(float gain, float bright, float pan);
+
+/* Thunder. A strike is SEEN first and HEARD later: delay_ms is the travel time PARENA's weather rules
+ * resolved from the strike's real distance, so the host needs no clock arithmetic of its own. The rumble
+ * is held in a fixed four-deep queue and released by audio_thunder_pump once it is due; both calls are
+ * host-thread only (no lock, no allocation). */
+void audio_play_thunder(int delay_ms, float gain, float pan);
+void audio_thunder_pump(void);
+
 /* NOCK master chain (2026-09-27): run a filter chain authored in IDUNA's NOCK "Sounds" tab over
  * the whole engine mix. audio_init() loads SHANKPIT_SOUND_CHAIN=<name> automatically from
  * SHANKPIT_SOUND_CHAIN_URL (default https://okemily.com/api/v1/nock-sound-filters). Returns 1

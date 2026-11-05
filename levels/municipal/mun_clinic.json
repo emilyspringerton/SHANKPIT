@@ -1,0 +1,27 @@
+{
+ "version": 1,
+ "id": 344,
+ "name": "mun_clinic",
+ "width": 80.0,
+ "height": 16.0,
+ "depth": 80.0,
+ "ground_plane_enabled": false,
+ "ground_plane_squares": 0,
+ "walls": [],
+ "objects": [
+  {
+   "ref_level_id": 323,
+   "x": 0.0,
+   "y": 0.0,
+   "z": 0.0,
+   "rot_y": 0
+  },
+  {
+   "ref_level_id": 321,
+   "x": 0.0,
+   "y": 0.0,
+   "z": -20.0,
+   "rot_y": 90
+  }
+ ]
+}

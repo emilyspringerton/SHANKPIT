@@ -557,6 +557,19 @@ def write_authored(force):
     return written
 
 
+def footprint_boxes(placements, levels, margin=12.0):
+    """The ground each placement covers, world-scaled and expanded a little -- what decides whether an
+    authored body is standing in THIS tool's buildings rather than in someone else's."""
+    boxes = []
+    for p in placements:
+        lid = VARIANT_IDS[p["level"]]
+        walls = flatten(levels, levels[lid].get("objects", []), p["x"], p["y"], p["z"],
+                        int(p["rot_y"]), {lid}, 1, [])
+        fp = footprint(walls)
+        boxes.append((fp[0] - margin, fp[1] - margin, fp[2] + margin, fp[3] + margin))
+    return boxes
+
+
 def build(city_path=CITY, placements_path=PLACEMENTS, write=True):
     levels = load_tree()
     city = json.load(open(city_path))
@@ -616,8 +629,22 @@ def build(city_path=CITY, placements_path=PLACEMENTS, write=True):
                 and e.get("archetype") in (None, 2)
                 and e.get("kit", 0) == 0 and e.get("faction", -1) == -1 and e.get("orders", -1) == -1)
 
+    # ...and only where this tool's buildings actually stand. The municipal district staffs its own
+    # buildings with bodies of exactly the same shape (a bare zombie: no name, role 7, archetype 2, the
+    # archetype's own kit/faction/orders), so a shape-only strip deleted the district's staff on every
+    # loft rebuild -- and it would equally delete a nameless zombie a designer placed in an empty lot.
+    # POSITION is the discriminator: this tool owns bare zombies standing in ITS OWN footprints.
+    boxes = footprint_boxes(placements, levels) if placements else None
+
+    def in_lofts(e):
+        if boxes is None:
+            return True     # no placements file to locate them by: the old city-wide strip, unchanged
+        x, z = float(e.get("x", 0.0)), float(e.get("z", 0.0))
+        return any(b[0] <= x <= b[2] and b[1] <= z <= b[3] for b in boxes)
+
     strip_authored("characters", prev_characters)
-    city["characters"] = [e for e in city.get("characters", []) if not is_generated_npc(e)]
+    city["characters"] = [e for e in city.get("characters", [])
+                          if not (is_generated_npc(e) and in_lofts(e))]
     strip_authored("chests", prev_chests)
     strip_authored("resource_nodes", prev_nodes)
     strip_authored("claim_cells", prev_cells)
@@ -745,12 +772,28 @@ def build(city_path=CITY, placements_path=PLACEMENTS, write=True):
 # exist in the world. LEVEL_BOXES_MAX_CHARACTERS (128) is the FILE's cap, not the live one.
 NPC_BUDGET = 69
 
+# ...AND THE LOFTS DO NOT GET ALL OF THEM. The municipal district (tools/build_municipal_district.py)
+# staffs its own six buildings out of the same city-wide 69, so the loft population below is planned
+# against LOFT_NPC_BUDGET and the two tools cannot both spend the whole budget. Raising one without the
+# other is exactly how a city ends up with characters that are authored, saved and never spawned (the
+# brains place MAX_CLIENTS-1 and silently ignore the rest), so both tools' --check passes assert their
+# own half AND the total, and this constant is the single place the split is decided.
+CIVIC_NPC_RESERVE = 12
+LOFT_NPC_BUDGET = NPC_BUDGET - CIVIC_NPC_RESERVE
+
 # A deck is NOT the same size on every floor: loft_c/f/g/h step back as they rise, so a storey's deck sits
 # over a narrower stack than the one below it. Population used to be asked per FLOOR with no area at all,
 # which gave a full 254x68 pair deck and a stepped-back 254x34 deck the same single body. This constant is
 # what one body is "worth" in deck; a smaller deck is still staffed once (climbing a building has to be a
 # fight, not a corridor), but only decks at or above it compete for a SECOND body.
 DECK_AREA_PER_ZOMBIE = 9000.0
+
+# The even-spread pass staffs every upper floor ONCE; the deck pass below then deals the SPARE slots out
+# as second bodies. Those two have to keep working after the civic district took its share of the city's
+# 69, so the spread pass holds this many slots back instead of filling the budget with one-per-floor:
+# without it a 57-slot loft budget staffs exactly every floor once and the second-body rule silently
+# stops happening (its own --check catches that, which is how this was found).
+DOUBLING_HEADROOM = 8
 
 
 def storey_deck_areas(levels, name):
@@ -776,13 +819,14 @@ def population_plan(placements, levels=None):
     """Which floors of which buildings get a zombie, as a flat [(level_name, floor)] list; a floor of 0
     is the ground floor and appears TWICE per building (a player walking in meets two).
 
-    Ground floors are staffed first, then every upper floor is staffed ONCE, spread EVENLY across the
+    Ground floors are staffed first, then upper floors are staffed ONCE each, spread EVENLY across the
     whole city -- the i-th of `keep` floors taken from the i*len/keep-th candidate -- rather than the
     first N of the list. Spread is the point: building one must not be packed while building eight is
-    empty, and a building with fewer storeys must not be starved by the ones before it.
+    empty, and a building with fewer storeys must not be starved by the ones before it. `keep` stops
+    DOUBLING_HEADROOM short of the budget, so the deck pass below still has slots to deal.
 
     THEN THE DECK DECIDES WHO GETS A SECOND BODY. The staffed floors are ordered by their own area,
-    largest first, and topped up until NPC_BUDGET is spent -- so a full pair deck earns its extra before a
+    largest first, and topped up until LOFT_NPC_BUDGET is spent -- so a full pair deck earns its extra before a
     stepped-back floor above it does, and the last slots of the squad budget land where there is room to
     fight. Without this, floor size never entered the decision at all."""
     if levels is None:
@@ -791,7 +835,7 @@ def population_plan(placements, levels=None):
     areas = {n: dict(storey_deck_areas(levels, n)) for n in VARIANTS}
     plan = [(p["level"], 0) for p in placements for _ in (0, 1)]
     upper = [(p["level"], f) for p in placements for f in range(1, storeys[p["level"]])]
-    keep = min(max(0, NPC_BUDGET - len(plan)), len(upper))
+    keep = min(max(0, LOFT_NPC_BUDGET - len(plan) - DOUBLING_HEADROOM), len(upper))
     if keep:
         plan += [upper[(i * len(upper)) // keep] for i in range(keep)]
     # DECK SIZE decides WHICH FLOOR of a building earns the extra (its own biggest first). It does not
@@ -806,7 +850,7 @@ def population_plan(placements, levels=None):
         if f > 0:
             staffed.setdefault(n, []).append(f)
     queues = {n: sorted(fs, key=lambda f: (-areas[n][f], f)) for n, fs in staffed.items()}
-    while len(plan) < NPC_BUDGET:
+    while len(plan) < LOFT_NPC_BUDGET:
         served = False
         for n in sorted(queues):
             if len(plan) >= NPC_BUDGET:
@@ -820,9 +864,9 @@ def population_plan(placements, levels=None):
                 break
         if not served:
             break
-    if len(plan) > NPC_BUDGET:
-        raise SystemExit("population plan authors %d characters, over the %d simultaneous slots"
-                         % (len(plan), NPC_BUDGET))
+    if len(plan) > LOFT_NPC_BUDGET:
+        raise SystemExit("population plan authors %d characters, over the lofts' %d of the city's %d "
+                         "simultaneous slots" % (len(plan), LOFT_NPC_BUDGET, NPC_BUDGET))
     return plan
 
 
@@ -927,14 +971,25 @@ def check():
                              % (n, f, biggest))
     if len(doubled) < min(len(by_building), 2):
         raise SystemExit("the spare slots are not being spread across buildings")
-    if len(plan) > NPC_BUDGET:
-        raise SystemExit("%d zombies do not fit the %d simultaneous slots" % (want_npcs, NPC_BUDGET))
+    if len(plan) > LOFT_NPC_BUDGET:
+        raise SystemExit("%d loft zombies do not fit the lofts' %d of the %d simultaneous slots"
+                         % (want_npcs, LOFT_NPC_BUDGET, NPC_BUDGET))
     # ...and the array the ENGINE actually loads, not just the tool's own record of it. Those two came
     # apart once already: the record said 61 while the file still carried 73, which would have loaded 12
     # zombies nobody authored and spent 12 of the 69 slots on them.
-    if len(city.get("characters", [])) != want_npcs:
-        raise SystemExit("the level carries %d characters but the plan authors %d (stale entries)"
-                         % (len(city.get("characters", [])), want_npcs))
+    civic = city.get("municipal_city", {}).get("characters", [])
+    if civic and len(civic) != CIVIC_NPC_RESERVE:
+        raise SystemExit("the municipal district authors %d characters but the lofts reserved %d slots "
+                         "for it -- the two tools disagree about the split"
+                         % (len(civic), CIVIC_NPC_RESERVE))
+    if len(city.get("characters", [])) != want_npcs + len(civic):
+        raise SystemExit("the level carries %d characters but the plan authors %d loft + %d civic "
+                         "(stale entries)"
+                         % (len(city.get("characters", [])), want_npcs, len(civic)))
+    # ...and the SHARED budget is what the engine actually enforces, so it is checked on the total.
+    if len(city.get("characters", [])) > NPC_BUDGET:
+        raise SystemExit("the city authors %d characters, over the %d simultaneous slots"
+                         % (len(city.get("characters", [])), NPC_BUDGET))
     want_chests = sum(len(v) for v in THEME_LOOT.values())
     if len(authored.get("chests", [])) != want_chests:
         raise SystemExit("expected %d chests (each theme's own), found %d"

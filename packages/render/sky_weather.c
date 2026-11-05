@@ -68,6 +68,7 @@ void sky_weather_init(SkyWeather *s) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, C, C, 0, GL_RGBA, GL_UNSIGNED_BYTE, ct);
     s->bolt_seed = 0x1234567u; s->cover = 0.24f; s->minute = 720; s->ready = 1;
+    s->bolt_dist = 0.0f; s->bolt_count = 0u;
 }
 
 void sky_weather_set_config(SkyWeather *s, const SkyWeatherConfig *c) { s->cfg = *c; sky_weather_cfg_sanitize(&s->cfg, SKYW_STARS, SKYW_CLOUDS); }
@@ -163,6 +164,10 @@ void sky_weather_update(SkyWeather *s, float minute, int weather, unsigned int n
         if (now_ms >= s->next_bolt_ms) {
             s->flash = 1.0f; s->bolt_age = 0;
             float ang = sw_rf(&s->bolt_seed) * 2 * SKYW_PI; s->flash_dx = cosf(ang); s->flash_dz = sinf(ang);
+            /* Reward the strike with a real distance and count it: the host edge-triggers one thunder
+               rumble per count, delayed by how far the flash actually was (weather_audio_rules.prn). */
+            s->bolt_count++;
+            s->bolt_dist = 150.0f + sw_rf(&s->bolt_seed) * 1150.0f;
             s->next_bolt_ms = now_ms + 3500 + (unsigned)(sw_rf(&s->bolt_seed) * 9000);
         }
     } else { s->next_bolt_ms = 0; }

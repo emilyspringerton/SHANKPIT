@@ -45,6 +45,7 @@
    implicit declarations because nothing included it) and the unit layer (empire_units_rules.c: archetypes,
    the human baseline, order priorities). */
 #include "../../../packages/simulation/empire_rules_host.h"
+#include "../../../packages/audio/wind_audio_rules.h" /* PARENA weather_audio_rules.prn */
 #include "../../../packages/simulation/empire_units_rules_host.h"
 /* Lab stations: labst_reach_tenths was also an implicit declaration in the Windows build. */
 #include "../../../packages/simulation/lab_station_host.h"
@@ -126,6 +127,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/simulation/airplane_flight.h"   /* the C-110 fixed-wing transport */
 #include "../../../packages/simulation/airplane_rules_host.h"
 #include "../../../packages/render/ground_fog.h"   /* weather fog that pools on the ground */
+#include "../../../packages/render/verdict_fx.h"   /* the civic boss's mote/scorch pools -- GL-free, tested headless */
 #include "../../../packages/simulation/slide_rules_host.h"
 #include "../../../packages/render/held_model.h"
 #include "../../../packages/render/camera_rig.h"
@@ -1258,6 +1260,17 @@ static ProcTexture g_wall_ips_panel_tex = {0};
 // "can you do it again for a high pressure sodium light"). Same "own dedicated generator, not
 // the brick fallback" reasoning g_wall_ips_panel_tex above already established.
 static ProcTexture g_wall_hps_bulb_tex = {0};
+// The municipal district's six materials (tools/build_municipal_district.py). Each one has its own
+// generator rather than the brick fallback, for the reason g_wall_ips_panel_tex above gives: a tiled
+// courthouse corridor drawn as brick is not a missing texture, it is a wrong building. The three woods
+// share one board generator and differ in board count, ring density and colour -- the same three
+// numbers PARENA's wood_{oak,pine,mahogany}.prn are authored with.
+static ProcTexture g_wall_tile_tex = {0};
+static ProcTexture g_wall_plaster_tex = {0};
+static ProcTexture g_wall_marble_tex = {0};
+static ProcTexture g_wall_wood_oak_tex = {0};
+static ProcTexture g_wall_wood_pine_tex = {0};
+static ProcTexture g_wall_wood_mahogany_tex = {0};
 
 /* Static terrain is the textured hot path: keep the full position/UV mesh in a
  * GPU VBO and let a compact shader sample the ground texture.  This replaces
@@ -2064,6 +2077,15 @@ static GLuint material_texture_for_name(const char *name) {
         if (strcmp(name, "granite") == 0) return g_wall_rock_tex.tex_id;
         if (strcmp(name, "cliff") == 0) return g_wall_rock_tex.tex_id;
         if (strcmp(name, "wood") == 0) return g_wall_wood_tex.tex_id;
+        /* the municipal district's materials -- one per civic surface, and one per WOOD SPECIES, so a
+           mahogany bench and a pine crate are not the same brown sheet with the same mass */
+        if (strcmp(name, "tile") == 0) return g_wall_tile_tex.tex_id;
+        if (strcmp(name, "plaster") == 0) return g_wall_plaster_tex.tex_id;
+        if (strcmp(name, "marble") == 0) return g_wall_marble_tex.tex_id;
+        if (strcmp(name, "wood_oak") == 0) return g_wall_wood_oak_tex.tex_id;
+        if (strcmp(name, "wood_pine") == 0) return g_wall_wood_pine_tex.tex_id;
+        if (strcmp(name, "wood_mahogany") == 0) return g_wall_wood_mahogany_tex.tex_id;
+        if (strncmp(name, "wood_", 5) == 0) return g_wall_wood_tex.tex_id;   /* an unauthored species */
         if (strcmp(name, "metal") == 0) return g_wall_metal_tex.tex_id;
         if (strcmp(name, "ips_light") == 0) return g_wall_ips_panel_tex.tex_id;
         if (strcmp(name, "hps_light") == 0) return g_wall_hps_bulb_tex.tex_id;
@@ -2267,6 +2289,11 @@ static void retro_eval_terrain_vertex_rgb(const RetroLightingState *lighting,
  * Keep per-world readability decisions data-driven while preserving the
  * centralized RetroLightingState -> retro_apply_fog_rgb pipeline.
  */
+/* The wind numbers resolved this frame (PARENA weather_audio_rules), kept so draw_ground_fog thins the
+ * scud with EXACTLY the gust the bed is playing. Zero at startup = still air = fog untouched. */
+static int g_wind_speed_pm;
+static int g_wind_storm_pm;
+
 /* GROUND FOG (packages/render/ground_fog.h). The distance fog above fades the world evenly from your
  * boots to the sky; real fog pools in the bottom few metres, which is the whole difference. The model
  * itself is GL-free and tested headlessly (make test-ground-fog) -- this is only the part that needs
@@ -2283,6 +2310,8 @@ static void draw_ground_fog(const PlayerState *view, const EnvMatrix *env, unsig
     in.visibility = g_sky_weather.visibility;
     in.cover = g_sky_weather.cover;
     in.storm = g_sky_weather.storm;
+    /* the same speed the wind bed is playing this frame: moving air eats the pooled fog */
+    in.wind_thin = (float)weather_wind_fog_thin_permille(g_wind_speed_pm, g_wind_storm_pm) / 1000.0f;
     in.fog_r = g_sky_weather.fog[0];
     in.fog_g = g_sky_weather.fog[1];
     in.fog_b = g_sky_weather.fog[2];
@@ -3670,6 +3699,22 @@ static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
         r[bi] = lvl->boxes[bi].r; g[bi] = lvl->boxes[bi].g; b[bi] = lvl->boxes[bi].b;
         material_idx[bi] = lvl->boxes[bi].material_idx;
     }
+    /* LINE OF SIGHT (packages/simulation/sight.h): the same boxes that stop a bullet now stop an eye.
+       Built once per level load, from the array this function already walks -- story_ai copies them, so
+       the authored level can be freed or reloaded without the sight world pointing at stale memory.
+       Rotated boxes are handed over as their axis-aligned extents, which blocks slightly more than it
+       draws: the safe direction for a sight test. */
+    {
+        static SightBox sight[LEVEL_BOXES_MAX];
+        int sn = lvl->count < LEVEL_BOXES_MAX ? lvl->count : LEVEL_BOXES_MAX;
+        for (int si = 0; si < sn; si++) {
+            sight[si].x = lvl->boxes[si].x; sight[si].y = lvl->boxes[si].y; sight[si].z = lvl->boxes[si].z;
+            sight[si].w = lvl->boxes[si].w; sight[si].h = lvl->boxes[si].h; sight[si].d = lvl->boxes[si].d;
+            sight[si].solid = 1;
+        }
+        story_ai_set_sight(sight, sn);
+        SDL_Log("[LEVEL] %d solid box(es) federated to AI sight", sn);
+    }
     char mat_names[LEVEL_BOXES_MAX_MATERIALS][CUSTOM_LEVEL_MATERIAL_NAME_LEN];
     char mat_shaders[LEVEL_BOXES_MAX_MATERIALS][CUSTOM_LEVEL_MATERIAL_NAME_LEN];
     float mat_specular[LEVEL_BOXES_MAX_MATERIALS], mat_shininess[LEVEL_BOXES_MAX_MATERIALS];
@@ -3802,13 +3847,16 @@ static void lobby_apply_story_level(const CustomLevelData *lvl) {
     story_ai_reset(&local_state);
     for (int ci = 0; ci < lvl->character_count; ci++) {
         const LevelCharacter *lc = &lvl->characters[ci];
-        if (lc->role < AI_ROLE_RIFT_HOUND || lc->role > AI_ROLE_WANDERING_BOT) continue; // S492, mirrors apps/server's own identical fix
+        int role_ok = story_ai_role_is_valid(lc->role); // story_ai.h -- one range, not four copies
+        /* An EMPIRE unit (archetype > 0) may author no role at all (-1) and keep its archetype's own
+           brain; every other character still needs a valid one. Mirrors apps/server's own rule. */
+        if (!role_ok && lc->archetype <= 0) continue; // S492, mirrors apps/server's own identical fix
         int kit = story_ai_kit_is_valid(lc->kit) ? lc->kit : AI_KIT_AUTO; // S492 + imported skins, mirrors apps/server's own fallback
         /* An authored EMPIRE unit (archetype > 0) spawns through the order layer, which picks its role,
            skin, faction and accepted orders; every other character spawns exactly as before. */
         if (lc->archetype > 0)
-            story_ai_spawn_unit(&local_state, lc->archetype, kit, lc->faction, lc->orders,
-                                lc->x, lc->y, lc->z);
+            story_ai_spawn_unit_role(&local_state, lc->archetype, role_ok ? lc->role : -1, kit,
+                                     lc->faction, lc->orders, lc->x, lc->y, lc->z);
         else
             story_ai_spawn_enemy(&local_state, (AIRole)lc->role, kit, lc->x, lc->y, lc->z);
     }
@@ -10944,6 +10992,372 @@ void draw_circle(float x, float y, float r, int segments) {
     glEnd();
 }
 
+/* ---- the magistrate's verdict: one spatial cue, one shader, and the embers off its ring ------------
+ * Founder: "add full spacial sound and visual affordances with particle effects and shaders". Three
+ * layers, all fed from the SAME simulation state so none of them can drift from the rule:
+ *   - audio: story_ai_magistrate_event_counts is EDGE-triggered here, so the gavel rap fires once when
+ *     a sentence is read and the heavy stamp once when it is served -- through audio_play_magistrate's
+ *     ordinary spatial_gains path (the same sin(rel_angle) pan and 1/(1+d^2/1e4) falloff gunfire uses,
+ *     so walking down the gallery really does move the verdict across your head);
+ *   - particles: embers lift off the ring while the sentence is read, and the serve throws a ring of
+ *     sparks outward. Deterministic golden-angle sprays, so there is no RNG state to desync and a
+ *     dropped frame at worst skips a mote, never the event;
+ *   - shader: the ground ring and the embers are ONE program (u_mode 0 = embers, 1 = ground ring),
+ *     drawn as world-space geometry through a DynamicVBO. If shader extensions or the VBO are
+ *     unavailable the fixed-function ring/points fallback below still runs -- the effect degrades,
+ *     the affordance does not disappear.
+ * The tell itself (fill) is story_ai_verdict_tell_fill, -1.0f when nothing is being read, so the ring
+ * cannot outlive a sentence the AI already dropped by breaking the line. */
+/* The pools themselves are packages/render/verdict_fx.h: pure, GL-free state, so the embers, the
+   sparks and the floor scorches are all exercised by make test-verdict-fx instead of only by looking
+   at a screen. What lives below is presentation and edge-triggering only. */
+static VerdictFx g_verdict_fx;
+static unsigned int g_verdict_seen_tells, g_verdict_seen_served;
+static GLuint g_verdict_program = 0;
+static DynamicVBO g_verdict_vbo;
+static int g_verdict_ready = 0;
+
+static const char *g_verdict_vs_src =
+    "#version 120\n"
+    "attribute vec3 a_pos;\n"
+    "attribute vec3 a_normal;\n" /* .xy = quad corner in [-1,1], .z = 0..1 life for embers */
+    "uniform mat4 u_mvp;\n"
+    "varying vec2 v_uv;\n"
+    "varying float v_age;\n"
+    "void main() {\n"
+    "    v_uv = a_normal.xy;\n"
+    "    v_age = a_normal.z;\n"
+    "    gl_Position = u_mvp * vec4(a_pos, 1.0);\n"
+    "}\n";
+
+/* mode 1 is the ground ring: an annulus whose radius contracts with u_fill, cut into arcs that walk
+   as it closes, with a faint disc inside it so the floor itself reads as charged. mode 0 is one ember
+   or spark: a hot core with a soft halo, flickering on its own noise, gone by v_age 1. */
+static const char *g_verdict_fs_src =
+    "#version 120\n"
+    "uniform float u_mode;\n"
+    "uniform float u_fill;\n"
+    "uniform float u_alpha;\n"
+    "varying vec2 v_uv;\n"
+    "varying float v_age;\n"
+    "float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }\n"
+    "float vnoise(vec2 p) {\n"
+    "    vec2 i = floor(p);\n"
+    "    vec2 f = fract(p);\n"
+    "    vec2 u = f * f * (3.0 - 2.0 * f);\n"
+    "    return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),\n"
+    "               mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);\n"
+    "}\n"
+    "void main() {\n"
+    "    float r = length(v_uv);\n"
+    "    if (u_mode > 1.5) {\n"                       /* 2 = the scorch a served sentence leaves */
+    "        float t = v_age;\n"
+    "        float disc = (1.0 - smoothstep(0.45, 1.0, r)) * 0.55;\n"
+    "        float cracks = vnoise(vec2(atan(v_uv.y, v_uv.x) * 7.0, r * 2.6));\n"
+    "        float crack = smoothstep(0.58, 1.0, cracks) * (1.0 - r) * 0.80;\n"
+    "        float a = (disc + crack) * (1.0 - t) * u_alpha;\n"
+    "        vec3 col = mix(vec3(0.04, 0.035, 0.03), vec3(0.34, 0.18, 0.06), crack);\n"
+    "        gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));\n"
+    "    } else if (u_mode > 0.5) {\n"
+    "        float target = mix(0.94, 0.30, u_fill);\n"       /* the ring closes as the sentence nears */
+    "        float band = 1.0 - smoothstep(0.0, 0.06 + 0.02 * u_fill, abs(r - target));\n"
+    "        float ang = atan(v_uv.y, v_uv.x);\n"
+    "        float arcs = 0.55 + 0.45 * sin(ang * 18.0 + u_fill * 22.0);\n"
+    "        float n = vnoise(vec2(ang * 3.0, r * 9.0 - u_fill * 5.0));\n"
+    "        float disc = (1.0 - smoothstep(0.0, target, r)) * 0.12 * u_fill;\n"
+    "        float a = (band * arcs * (0.55 + 0.45 * n) + disc) * u_alpha;\n"
+    "        vec3 col = mix(vec3(1.0, 0.62, 0.16), vec3(1.0, 0.92, 0.62), band * 0.8 + disc * 2.0);\n"
+    "        gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));\n"
+    "    } else {\n"
+    "        if (r > 1.0) discard;\n"
+    "        float core = 1.0 - smoothstep(0.0, 0.42, r);\n"
+    "        float halo = 1.0 - smoothstep(0.30, 1.0, r);\n"
+    "        float flick = 0.55 + 0.45 * vnoise(v_uv * 4.0 + vec2(v_age * 9.0, v_age * 5.0));\n"
+    "        float a = (core * 0.95 + halo * 0.35) * flick * (1.0 - v_age) * u_alpha;\n"
+    "        vec3 col = mix(vec3(1.0, 0.52, 0.10), vec3(1.0, 0.95, 0.72), core);\n"
+    "        gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));\n"
+    "    }\n"
+    "}\n";
+
+static void verdict_fx_init(void) {
+    verdict_fx_reset(&g_verdict_fx);   /* real seed, whether or not a shader ever comes up */
+    if (!gl_shader_load_extensions()) {
+        SDL_Log("verdict FX: GL extension loading failed -- using the fixed-function ring");
+        return;
+    }
+    GLuint vs = gl_compile_shader(GL_VERTEX_SHADER, g_verdict_vs_src);
+    GLuint fs = gl_compile_shader(GL_FRAGMENT_SHADER, g_verdict_fs_src);
+    g_verdict_program = gl_link_program(vs, fs);
+    if (!g_verdict_program) {
+        SDL_Log("verdict FX: shader link failed -- using the fixed-function ring");
+        return;
+    }
+    if (!gl_dynamic_vbo_init(&g_verdict_vbo, 6 * VERDICT_MOTE_MAX)) {
+        SDL_Log("verdict FX: dynamic VBO init failed -- using the fixed-function ring");
+        gl_use_program(0);
+        g_verdict_program = 0;
+        return;
+    }
+    g_verdict_ready = 1;
+}
+
+
+
+/* verdict_fx_draw -- the shader path, or the fixed-function fallback, for the ring (when a sentence is
+   being read, fill >= 0) and for every live mote. Ages are computed from wall-clock rather than
+   accumulated per frame: a stall drops frames, never the effect's timing. */
+static void verdict_fx_draw(const PlayerState *boss, float fill, unsigned int now_ms) {
+    if (!boss) return;
+    static const float corner[6][2] = { {-1.0f,-1.0f}, {1.0f,-1.0f}, {1.0f,1.0f},
+                                        {-1.0f,-1.0f}, {1.0f,1.0f}, {-1.0f,1.0f} };
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+
+    if (g_verdict_ready) {
+        Mat4 proj, modelview;
+        glGetFloatv(GL_PROJECTION_MATRIX, proj.m);
+        glGetFloatv(GL_MODELVIEW_MATRIX, modelview.m);
+        Mat4 vp = mat4_multiply(&proj, &modelview);
+        float rx = modelview.m[0], ry = modelview.m[4], rz = modelview.m[8];   /* camera right */
+        float ux = modelview.m[1], uy = modelview.m[5], uz = modelview.m[9];   /* camera up */
+
+        gl_use_program(g_verdict_program);
+        gl_uniform_matrix4fv(gl_get_uniform_location(g_verdict_program, "u_mvp"), vp.m);
+
+        if (fill >= 0.0f) {
+            float ring[36];
+            for (int i = 0; i < 6; i++) {
+                ring[i * 6 + 0] = boss->x + corner[i][0] * VERDICT_RING_RADIUS;
+                ring[i * 6 + 1] = boss->y + 0.05f;
+                ring[i * 6 + 2] = boss->z + corner[i][1] * VERDICT_RING_RADIUS;
+                ring[i * 6 + 3] = corner[i][0];
+                ring[i * 6 + 4] = corner[i][1];
+                ring[i * 6 + 5] = 0.0f;
+            }
+            gl_uniform1f(gl_get_uniform_location(g_verdict_program, "u_mode"), 1.0f);
+            gl_uniform1f(gl_get_uniform_location(g_verdict_program, "u_fill"), fill);
+            gl_uniform1f(gl_get_uniform_location(g_verdict_program, "u_alpha"), 0.55f + 0.45f * fill);
+            gl_dynamic_vbo_draw(&g_verdict_vbo, ring, 6, GL_TRIANGLES);
+        }
+
+        static float verts[VERDICT_MOTE_MAX * 36];
+        int n = 0;
+        for (int i = 0; i < VERDICT_MOTE_MAX; i++) {
+            float px, py, pz, age, size;
+            if (!verdict_mote_sample(&g_verdict_fx.mote[i], now_ms, &px, &py, &pz, &age, &size)) continue;
+            for (int k = 0; k < 6; k++) {
+                float cu = corner[k][0] * size, cv = corner[k][1] * size;
+                verts[n * 6 + 0] = px + rx * cu + ux * cv;
+                verts[n * 6 + 1] = py + ry * cu + uy * cv;
+                verts[n * 6 + 2] = pz + rz * cu + uz * cv;
+                verts[n * 6 + 3] = corner[k][0];
+                verts[n * 6 + 4] = corner[k][1];
+                verts[n * 6 + 5] = age;
+                n++;
+            }
+        }
+        if (n > 0) {
+            gl_uniform1f(gl_get_uniform_location(g_verdict_program, "u_mode"), 0.0f);
+            gl_uniform1f(gl_get_uniform_location(g_verdict_program, "u_alpha"), 1.0f);
+            gl_dynamic_vbo_draw(&g_verdict_vbo, verts, n, GL_TRIANGLES);
+        }
+        gl_use_program(0);
+    } else {
+        if (fill >= 0.0f) {
+            float radius = VERDICT_RING_RADIUS * (0.94f - 0.64f * fill);
+            glColor4f(1.0f, 0.72f, 0.20f, 0.45f + 0.55f * fill);
+            glLineWidth(3.0f);
+            glBegin(GL_LINE_LOOP);
+            for (int i = 0; i < 40; i++) {
+                float a = ((float)i / 40.0f) * 6.28318f;
+                glVertex3f(boss->x + cosf(a) * radius, boss->y + 0.05f, boss->z + sinf(a) * radius);
+            }
+            glEnd();
+            glLineWidth(1.0f);
+        }
+        glDisable(GL_TEXTURE_2D);
+        glBegin(GL_POINTS);
+        for (int i = 0; i < VERDICT_MOTE_MAX; i++) {
+            float px, py, pz, age, size;
+            if (!verdict_mote_sample(&g_verdict_fx.mote[i], now_ms, &px, &py, &pz, &age, &size)) continue;
+            (void)size;
+            glPointSize(2.0f + 5.0f * (1.0f - age));
+            glColor4f(1.0f, 0.78f - 0.30f * age, 0.20f, 1.0f - age);
+            glVertex3f(px, py, pz);
+        }
+        glEnd();
+    }
+
+    glDepthMask(GL_TRUE);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDisable(GL_BLEND);
+    glEnable(GL_CULL_FACE);
+}
+
+/* draw_verdict_scorches -- the marks served sentences leave on the floor. Deliberately independent of
+   the magistrate: a scorch outlives the boss, so it must keep drawing and keep fading after the bench
+   is dead, and it is filtered by scene_id so a mark earned in the district never follows the player
+   into another map. Alpha blending, not additive -- a scorch has to DARKEN the floor, and an additive
+   pass physically cannot. The mark's own detail (a charred disc, radial cracks, a warm rim) is the
+   shader's mode 2; the fallback below is a plain dark fan, honest about being the cheap path. */
+static void draw_verdict_scorches(unsigned int now_ms) {
+    verdict_fx_age(&g_verdict_fx, now_ms);
+    const VerdictScorches *scorches = story_ai_magistrate_scorches();
+    if (!scorches || verdict_scorches_live(scorches) == 0) return;
+    static const float corner[6][2] = { {-1.0f,-1.0f}, {1.0f,-1.0f}, {1.0f,1.0f},
+                                        {-1.0f,-1.0f}, {1.0f,1.0f}, {-1.0f,1.0f} };
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+    if (g_verdict_ready) {
+        static float verts[VERDICT_SCORCH_MAX * 36];
+        int n = 0;
+        Mat4 proj, modelview;
+        glGetFloatv(GL_PROJECTION_MATRIX, proj.m);
+        glGetFloatv(GL_MODELVIEW_MATRIX, modelview.m);
+        Mat4 vp = mat4_multiply(&proj, &modelview);
+        for (int i = 0; i < VERDICT_SCORCH_MAX; i++) {
+            const VerdictScorch *s = &scorches->pool[i];
+            if (!verdict_scorch_present(s, local_state.scene_id, now_ms)) continue;
+            float alpha = verdict_scorch_alpha(s, now_ms);
+            float age = 1.0f - alpha;    /* the shader fades on 1 - alpha, so the two agree */
+            for (int k = 0; k < 6; k++) {
+                verts[n * 6 + 0] = s->x + corner[k][0] * VERDICT_SCORCH_RADIUS;
+                verts[n * 6 + 1] = s->y + 0.06f;
+                verts[n * 6 + 2] = s->z + corner[k][1] * VERDICT_SCORCH_RADIUS;
+                verts[n * 6 + 3] = corner[k][0];
+                verts[n * 6 + 4] = corner[k][1];
+                verts[n * 6 + 5] = age;
+                n++;
+            }
+        }
+        if (n > 0) {
+            gl_use_program(g_verdict_program);
+            gl_uniform_matrix4fv(gl_get_uniform_location(g_verdict_program, "u_mvp"), vp.m);
+            gl_uniform1f(gl_get_uniform_location(g_verdict_program, "u_mode"), 2.0f);
+            gl_uniform1f(gl_get_uniform_location(g_verdict_program, "u_alpha"), 1.0f);
+            gl_dynamic_vbo_draw(&g_verdict_vbo, verts, n, GL_TRIANGLES);
+            gl_use_program(0);
+        }
+    } else {
+        glDisable(GL_TEXTURE_2D);
+        for (int i = 0; i < VERDICT_SCORCH_MAX; i++) {
+            const VerdictScorch *s = &scorches->pool[i];
+            if (!verdict_scorch_present(s, local_state.scene_id, now_ms)) continue;
+            float alpha = verdict_scorch_alpha(s, now_ms);
+            glColor4f(0.06f, 0.05f, 0.04f, 0.75f * alpha);
+            glBegin(GL_TRIANGLE_FAN);
+            glVertex3f(s->x, s->y + 0.06f, s->z);
+            for (int k = 0; k <= 24; k++) {
+                float a = ((float)k / 24.0f) * 6.28318f;
+                glVertex3f(s->x + cosf(a) * VERDICT_SCORCH_RADIUS, s->y + 0.06f,
+                           s->z + sinf(a) * VERDICT_SCORCH_RADIUS);
+            }
+            glEnd();
+        }
+    }
+    glDepthMask(GL_TRUE);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDisable(GL_BLEND);
+    glEnable(GL_CULL_FACE);
+}
+
+/* draw_civic_verdict_tell -- once per frame, in the world pass. Reads the sim, edge-triggers the cue
+   and the particles off it, then draws. One function because the audio, the motes and the shader ring
+   have to agree about WHICH sentence they are presenting; splitting them across three call sites is
+   how two of them end up a sentence behind. */
+static void draw_civic_verdict_tell(const PlayerState *listener, unsigned int now_ms) {
+    int slot = story_ai_role_slot(AI_ROLE_MAGISTRATE);
+    if (slot < 0 || slot >= MAX_CLIENTS) return;
+    const PlayerState *boss = &local_state.players[slot];
+    if (!boss->active) return;
+    float fill = story_ai_verdict_tell_fill(slot, now_ms);
+
+    unsigned int tells = 0, served = 0;
+    story_ai_magistrate_event_counts(&tells, &served);
+    if (tells < g_verdict_seen_tells || served < g_verdict_seen_served) {
+        /* story_ai_reset zeroes the sim's counters: a level load is a reset, not a burst of events. */
+        g_verdict_seen_tells = tells;
+        g_verdict_seen_served = served;
+    }
+    float lyaw = cam_yaw * 0.0174533f;
+    if (tells != g_verdict_seen_tells) {
+        g_verdict_seen_tells = tells;
+        verdict_fx_ring_embers(&g_verdict_fx, boss->x, boss->y, boss->z, now_ms);
+        if (listener)
+            audio_play_magistrate(0, boss->x, boss->y + 4.0f, boss->z,
+                                  listener->x, listener->y, listener->z, lyaw);
+    }
+    if (served != g_verdict_seen_served) {
+        g_verdict_seen_served = served;
+        verdict_fx_serve_burst(&g_verdict_fx, boss->x, boss->y, boss->z, now_ms);
+        /* The mark itself is pushed by the SIM in this same event (story_ai.c's serve branch): it is a
+           hazard as well as a picture, so the renderer must not own it. */
+        if (listener)
+            audio_play_magistrate(1, boss->x, boss->y + 4.0f, boss->z,
+                                  listener->x, listener->y, listener->z, lyaw);
+    }
+
+    int live = (fill >= 0.0f) || verdict_fx_live_motes(&g_verdict_fx) > 0;
+    if (!live) return;
+    verdict_fx_draw(boss, fill, now_ms);
+}
+
+/* THE CIVIC BOSS'S BAR. The magistrate is an ordinary PlayerState body (archetype 4, health from
+   PARENA's eu-archetype-health), so this reads the body itself rather than a parallel boss struct --
+   the same object every other system already damages, heals and respawns. Shown only while the fight
+   is actually on (within 320 units), because a bar over a courthouse nobody is in is just clutter.
+   The frame and the IN CONTEMPT label are driven by the same tell accessor the world ring uses, so
+   the player reads the sentence in two places at once: under the bench and at the top of the screen. */
+static void draw_civic_boss_hud(const PlayerState *hero, unsigned int now_ms) {
+    if (!hero) return;
+    int slot = story_ai_role_slot(AI_ROLE_MAGISTRATE);
+    if (slot < 0 || slot >= MAX_CLIENTS) return;
+    const PlayerState *boss = &local_state.players[slot];
+    if (!boss->active || boss->state == STATE_DEAD || boss->health <= 0) return;
+    float dx = boss->x - hero->x, dz = boss->z - hero->z;
+    if (dx * dx + dz * dz > 320.0f * 320.0f) return;
+
+    int max_hp = eu_archetype_health(story_ai_unit_archetype(slot));
+    if (max_hp <= 0) max_hp = boss->health > 0 ? boss->health : 1;
+    float pct = (float)boss->health / (float)max_hp;
+    if (pct < 0.0f) pct = 0.0f;
+    if (pct > 1.0f) pct = 1.0f;
+
+    float fill = story_ai_verdict_tell_fill(slot, now_ms);
+    int telling = (fill >= 0.0f);
+    float flash = telling ? 0.55f + 0.45f * sinf((float)now_ms * 0.02f) : 0.0f;
+
+    float x0 = 380.0f, x1 = 900.0f, y0 = 636.0f, y1 = 652.0f;
+    glColor4f(0.05f, 0.04f, 0.03f, 0.72f);
+    glRectf(x0 - 8.0f, y0 - 8.0f, x1 + 8.0f, y1 + 10.0f);
+    glColor3f(0.20f, 0.15f, 0.08f);
+    glRectf(x0, y0, x1, y1);
+    glColor3f(0.86f, 0.70f, 0.22f);
+    glRectf(x0, y0, x0 + (x1 - x0) * pct, y1);
+
+    glColor4f(0.86f + 0.14f * flash, 0.70f + 0.30f * flash, 0.22f * flash, 0.90f);
+    glLineWidth(2.0f);
+    glBegin(GL_LINE_LOOP);
+    glVertex2f(x0 - 4.0f, y0 - 4.0f);
+    glVertex2f(x1 + 4.0f, y0 - 4.0f);
+    glVertex2f(x1 + 4.0f, y1 + 4.0f);
+    glVertex2f(x0 - 4.0f, y1 + 4.0f);
+    glEnd();
+    glLineWidth(1.0f);
+
+    glColor3f(0.95f, 0.85f, 0.55f);
+    draw_string("MAGISTRATE", 380, 658, 3.5f);
+    if (telling) {
+        glColor4f(1.0f, 0.86f, 0.30f, 0.55f + 0.45f * flash);
+        draw_string("IN CONTEMPT", 760, 658, 3.0f);
+    }
+}
+
 static void draw_ammo_bars(const PlayerState *p) {
     if (!p) return;
     if (p->current_weapon == WPN_KNIFE || p->current_weapon == WPN_KATANA || p->current_weapon == WPN_HAMMER) return;
@@ -12437,6 +12851,7 @@ void draw_hud(PlayerState *p) {
             draw_string("YOU HAVE THE FLAG", 530, 634, 5);
         }
     }
+    draw_civic_boss_hud(p, now_ms);
     float x0 = 50.0f, x1 = vs0_art_direction_enabled ? 220.0f : 250.0f;
     float y_health0 = 50.0f, y_health1 = vs0_art_direction_enabled ? 66.0f : 70.0f;
     float y_shield0 = vs0_art_direction_enabled ? 72.0f : 80.0f, y_shield1 = vs0_art_direction_enabled ? 88.0f : 100.0f;
@@ -14854,6 +15269,44 @@ void draw_scene(PlayerState *render_p) {
 
         sky_weather_update(&g_sky_weather, (float)day_night_clock_minute_of_day(&local_state.story_clock),
                             (int)local_state.story_clock.weather, now_ms);
+
+        /* WIND (PARENA weather_audio_rules.prn). The storm's air is the one sound with no source to walk
+           away from, so its gain is capped by the rules rather than mixed by taste, and its brightness
+           and pan are what make it WEATHER instead of a loop: fast air hisses, fog dulls it, and turning
+           your back moves it behind you. The speed that sets that gain is stored for draw_ground_fog, so
+           the gust you hear and the scud you watch blow away are one number. */
+        {
+            const PlayerState *listener = &local_state.players[0];
+            int storm_pm = (int)(g_sky_weather.storm * 1000.0f);
+            int fog_pm   = (int)(g_sky_weather.fog_wash * 1000.0f);
+            int gust_pm  = weather_wind_gust_permille((int)now_ms);
+            int dir_deg  = weather_wind_direction_deg((int)now_ms);
+            int yaw_deg  = (int)(listener->yaw * 57.29578f);
+            g_wind_speed_pm = weather_wind_speed_permille(storm_pm, gust_pm);
+            g_wind_storm_pm = storm_pm;
+            audio_set_wind(weather_wind_gain_permille(storm_pm, fog_pm, g_wind_speed_pm) / 1000.0f,
+                           weather_wind_bright_permille(g_wind_speed_pm, fog_pm) / 1000.0f,
+                           weather_wind_pan_permille(dir_deg, yaw_deg) / 1000.0f);
+
+            /* THUNDER (founder: "thunder"). SkyWeather counts strikes and reports how far the flash
+               really was; the rumble is pushed NOW and released by the queue when its travel time is up,
+               so the flash is seen first and the sound arrives late, from the direction it came from.
+               Edge-triggered off the count, not off the flash value -- that value decays over several
+               frames, which would thunder the same bolt again and again. */
+            {
+                static unsigned int bolt_seen;
+                if (g_sky_weather.bolt_count != bolt_seen) {
+                    bolt_seen = g_sky_weather.bolt_count;
+                    int bolt_deg = (int)(atan2f(g_sky_weather.flash_dx, g_sky_weather.flash_dz) * 57.29578f);
+                    if (bolt_deg < 0) bolt_deg += 360;
+                    int bolt_dist = (int)(g_sky_weather.bolt_dist + 0.5f);
+                    audio_play_thunder(weather_thunder_delay_ms(bolt_dist),
+                                       weather_thunder_gain_permille(bolt_dist, storm_pm) / 1000.0f,
+                                       weather_wind_pan_permille(bolt_deg, yaw_deg) / 1000.0f);
+                }
+                audio_thunder_pump();
+            }
+        }
         sky_weather_draw(&g_sky_weather);
 
         /* BIG_O engine merge phase 7e -- the same real clock tick above now also drives the real
@@ -15029,6 +15482,8 @@ void draw_scene(PlayerState *render_p) {
         draw_flashlight_beam(p); /* other players' own beam cones are now visible too, not just yours */
         draw_spray_cone(p, 0);
     }
+    draw_verdict_scorches(now_ms);             /* the floor marks first: they sit under the ring */
+    draw_civic_verdict_tell(render_p, now_ms); /* the magistrate's tell: cue + motes + shader ring, world pass */
     shield_fx_observe(render_p, now_ms);   /* #539-541: detect shield hits/breaks/pickups, then draw the effects over the players */
     draw_shield_packs(now_ms);
     draw_shield_bubbles(render_p, now_ms);
@@ -17170,6 +17625,7 @@ int main(int argc, char* argv[]) {
     gband_shader_and_mesh_init();
     flashlight_shader_init();
     fireball_fx_init();
+    verdict_fx_init();
     g_fx_explosion_hook = fx_spawn_explosion;
     outline_shader_init();
     shield_fx_init();
@@ -17214,6 +17670,24 @@ int main(int argc, char* argv[]) {
     proc_tex_create(&g_wall_hps_bulb_tex, 128, 128);
     proctex_make_hps_bulb_rgba(&g_wall_hps_bulb_tex, 128, 128, 0x0951u);
     proctex_upload_to_gl(&g_wall_hps_bulb_tex);
+    proc_tex_create(&g_wall_tile_tex, 128, 128);
+    proctex_make_institutional_tile_rgba(&g_wall_tile_tex, 128, 128, 0x1a77u);
+    proctex_upload_to_gl(&g_wall_tile_tex);
+    proc_tex_create(&g_wall_plaster_tex, 128, 128);
+    proctex_make_plaster_rgba(&g_wall_plaster_tex, 128, 128, 0x2b31u);
+    proctex_upload_to_gl(&g_wall_plaster_tex);
+    proc_tex_create(&g_wall_marble_tex, 128, 128);
+    proctex_make_marble_rgba(&g_wall_marble_tex, 128, 128, 0x3c05u);
+    proctex_upload_to_gl(&g_wall_marble_tex);
+    proc_tex_create(&g_wall_wood_oak_tex, 128, 128);
+    proctex_make_wood_variant_rgba(&g_wall_wood_oak_tex, 128, 128, 0x4d11u, 6, 9, 0.64f, 0.47f, 0.28f);
+    proctex_upload_to_gl(&g_wall_wood_oak_tex);
+    proc_tex_create(&g_wall_wood_pine_tex, 128, 128);
+    proctex_make_wood_variant_rgba(&g_wall_wood_pine_tex, 128, 128, 0x5e22u, 4, 4, 0.72f, 0.60f, 0.38f);
+    proctex_upload_to_gl(&g_wall_wood_pine_tex);
+    proc_tex_create(&g_wall_wood_mahogany_tex, 128, 128);
+    proctex_make_wood_variant_rgba(&g_wall_wood_mahogany_tex, 128, 128, 0x6f33u, 7, 14, 0.42f, 0.22f, 0.16f);
+    proctex_upload_to_gl(&g_wall_wood_mahogany_tex);
     retro_sky_init(&g_retro_sky);
     sky_weather_init(&g_sky_weather);
     {

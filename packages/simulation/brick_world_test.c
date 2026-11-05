@@ -435,6 +435,26 @@ int main(void) {
         CHECK(g_brick.rec_count == rc);
     }
 
+    /* 10. the municipal district's materials (tools/build_municipal_district.py) carve like what they
+       are. This is the check that keeps a courthouse from being installed as bedrock: an unrecognised
+       material name resolves to -1 and brick_world_init_from_level treats it as a STATIC ANCHOR, so
+       tile/plaster/marble/wood_{oak,pine,mahogany} silently becoming indestructible would look like a
+       level that simply never takes damage. The three woods share BF_KIND_WOOD on purpose -- what makes
+       them different weights is their own density, which the material table carries. */
+    {
+        CHECK(brick_world_kind_for_material("tile") == BF_KIND_BRICK);
+        CHECK(brick_world_kind_for_material("marble") == BF_KIND_CONCRETE);
+        CHECK(brick_world_kind_for_material("plaster") == BF_KIND_CONCRETE);
+        CHECK(brick_world_kind_for_material("wood_oak") == BF_KIND_WOOD);
+        CHECK(brick_world_kind_for_material("wood_pine") == BF_KIND_WOOD);
+        CHECK(brick_world_kind_for_material("wood_mahogany") == BF_KIND_WOOD);
+        /* unchanged, and deliberately so: a metal frame and a light fixture are still not carvable */
+        CHECK(brick_world_kind_for_material("metal") == -1);
+        CHECK(brick_world_kind_for_material("hps_light") == -1);
+        CHECK(brick_world_kind_for_material("nonsense") == -1);
+        printf("municipal materials: tile=brick marble=concrete plaster=concrete woods=wood\n");
+    }
+
     structure_collapse_test();
     glass_chunk_test();
     if (g_fail) { printf("brick_world_test: %d FAILED\n", g_fail); return 1; }

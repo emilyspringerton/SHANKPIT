@@ -14,7 +14,7 @@
 #define NUM_CHANNELS   2        /* stereo */
 #define BUFFER_FRAMES  512
 
-#define MAX_SOUNDS     14       /* 0-5 weapons, 6-10 footstep pentatonic notes, 11-13 shield hit/break/pickup (#539-541) */
+#define MAX_SOUNDS     17       /* 0-5 weapons, 6-10 footstep pentatonic notes, 11-13 shield hit/break/pickup (#539-541), 14-15 the civic boss's verdict read/served, 16 thunder */
 #define MAX_MIX        16       /* simultaneous effect voices */
 #define MAX_CLIP_VOICES 4       /* spoken clips (TYLER VO) have their own pool, never stolen by effects */
 #define NUM_VOICES     (MAX_MIX + MAX_CLIP_VOICES)
@@ -49,6 +49,26 @@ static AudioChain     g_chain;        /* NOCK master chain (PARENA DSP), see aud
 static int            g_chain_on;
 #define CHAIN_MAX_FRAMES 8192
 static float          g_mixf[CHAIN_MAX_FRAMES * NUM_CHANNELS];
+
+/* Wind bed (founder: "add basic wind sound effects for storms"). One looping buffer of filtered noise,
+ * mixed under the effects -- gain, brightness and pan are resolved by PARENA's weather rules and handed in
+ * by the host through audio_set_wind, so this file never invents weather. */
+#define WIND_LOOP_FRAMES (SAMPLE_RATE * 4)
+#define WIND_FADE_FRAMES (SAMPLE_RATE / 2)   /* crossfaded so the 4 s loop joins without a click */
+static SoundBuf g_wind;
+static int      g_wind_pos;
+static float    g_wind_gain, g_wind_gain_target;
+static float    g_wind_bright, g_wind_bright_target;
+static float    g_wind_pan, g_wind_pan_target;
+static float    g_wind_lp;
+
+/* Thunder's whole character is that it ARRIVES LATE: a strike is SEEN first and HEARD later. A host
+ * pushes one when SkyWeather counts a bolt, the delay comes from PARENA's travel-time curve, and this
+ * queue holds it until it is due. Four deep -- a storm throws a bolt every 3.5-12.5 s and a rumble is 5 s
+ * long, so a fifth simultaneous wait means something is wrong upstream, and dropping is better than
+ * queueing a bang behind the flash that caused it. Host-thread only, like audio_clip_play's policy. */
+#define THUNDER_QUEUE 4
+static struct { int waiting; int due_ms; float gain, pan; } g_thunder[THUNDER_QUEUE];
 
 /* ── PCM synthesis helpers ───────────────────────────────────────────────── */
 
@@ -136,6 +156,86 @@ static SoundBuf synth_layer(SoundBuf *a, SoundBuf *b) {
     return out;
 }
 
+/* Looping wind bed: filtered noise with a low body and a hiss on top. The raw buffer is generated a
+ * half-second long, then that half second is crossfaded onto the head of the loop, so frame N joins frame
+ * 0 without the tick a naive loop makes. The brightness filter that shapes it lives in wind_add below,
+ * because it has to move while the buffer plays. */
+static SoundBuf synth_wind_loop(void) {
+    SoundBuf b = buf_alloc(WIND_LOOP_FRAMES);
+    int total = WIND_LOOP_FRAMES + WIND_FADE_FRAMES;
+    float *raw = (float *)calloc((size_t)total * 2, sizeof(float));
+    uint32_t rng = 0x51ED270Bu;
+    float lp = 0.0f, lp2 = 0.0f;
+    if (!raw) return b;
+    for (int i = 0; i < total; i++) {
+        rng = rng * 1664525u + 1013904223u;
+        float n = (float)(int32_t)rng / 2147483648.0f;
+        lp  += (n - lp) * 0.12f;     /* the body of the air */
+        lp2 += (lp - lp2) * 0.05f;   /* the low rumble under it */
+        float s = lp2 * 0.9f + (n - lp) * 0.35f;   /* body + hiss */
+        raw[i * 2] = s; raw[i * 2 + 1] = s;
+    }
+    for (int i = 0; i < WIND_LOOP_FRAMES; i++) {
+        float l = raw[i * 2], r = raw[i * 2 + 1];
+        if (i < WIND_FADE_FRAMES) {
+            float t = (float)i / (float)WIND_FADE_FRAMES;
+            l = raw[i * 2] * t + raw[(WIND_LOOP_FRAMES + i) * 2] * (1.0f - t);
+            r = raw[i * 2 + 1] * t + raw[(WIND_LOOP_FRAMES + i) * 2 + 1] * (1.0f - t);
+        }
+        buf_write(&b, i, l * 0.55f, r * 0.55f);
+    }
+    free(raw);
+    return b;
+}
+
+/* Thunder: a crack at the near end and a long rolling rumble under it. Five seconds, so a close strike
+ * still has a tail when the next one lands. The tumble comes from three overlapping swells of the SAME
+ * low-passed noise -- the first hard on the strike, two more at 1.5 s and 3.1 s -- rather than from a
+ * reverb this engine does not have. Nothing about the level is baked in: loudness and delay arrive from
+ * weather_audio_rules.prn, so a distant strike is the same sound, quieter and late. */
+static SoundBuf synth_thunder(void) {
+    int n = SAMPLE_RATE * 5;
+    SoundBuf b = buf_alloc(n);
+    uint32_t rng = 0x7A11B00Bu;
+    float lp = 0.0f, lp2 = 0.0f;
+    for (int i = 0; i < n; i++) {
+        float t = (float)i / (float)n;
+        rng = rng * 1664525u + 1013904223u;
+        float nz = (float)(int32_t)rng / 2147483648.0f;
+        lp  += (nz - lp) * 0.055f;    /* the body of the roll */
+        lp2 += (lp - lp2) * 0.004f;   /* the sub-bass under it */
+        float d1 = t - 0.05f, d2 = t - 0.30f, d3 = t - 0.62f;
+        float env = expf(-t * 22.0f)
+                  + 0.80f * expf(-d2 * d2 * 220.0f)
+                  + 0.45f * expf(-d3 * d3 * 150.0f);
+        float hiss = (nz - lp) * expf(-t * 90.0f) * 0.5f;   /* the crack, gone in a fraction of a second */
+        float s = ((lp2 * 1.7f + lp * 0.35f) * env + hiss) * 0.85f;
+        (void)d1;
+        buf_write(&b, i, s, s);
+    }
+    return b;
+}
+
+/* One frame of the wind bed, added to the caller's stereo accumulator. The brightness knob IS this
+ * one-pole's cutoff: dull air keeps only the body of the noise, a gale opens it to the hiss -- that is the
+ * whole of "it sounds different when it gets windier", one continuous number instead of a second sample.
+ * Targets are smoothed per frame so a gust stepping in the sim never clicks in the mix, and the pan uses
+ * the same one-sided law as spatial_gains so wind and gunshots agree about left and right. */
+static void wind_add(float *dl, float *dr) {
+    if (!g_wind.buf || g_wind.len <= 0) return;
+    float raw = (float)g_wind.buf[g_wind_pos * 2] / 32767.0f;
+    if (++g_wind_pos >= g_wind.len) g_wind_pos = 0;
+    float coeff = 0.05f + 0.40f * g_wind_bright;
+    g_wind_lp += (raw - g_wind_lp) * coeff;
+    g_wind_gain   += (g_wind_gain_target   - g_wind_gain)   * 0.0012f;
+    g_wind_bright += (g_wind_bright_target - g_wind_bright) * 0.0012f;
+    g_wind_pan    += (g_wind_pan_target    - g_wind_pan)    * 0.0012f;
+    float p = g_wind_pan;
+    float amp = g_wind_gain * 0.9f;
+    *dl += g_wind_lp * amp * (p > 0.0f ? 1.0f - p : 1.0f);
+    *dr += g_wind_lp * amp * (p < 0.0f ? 1.0f + p : 1.0f);
+}
+
 /* ── SDL audio callback (runs on audio thread) ───────────────────────────── */
 
 static void audio_callback(void *userdata, Uint8 *stream, int len) {
@@ -157,6 +257,8 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
             }
             if (v->pos >= v->snd->len) v->active = 0;
         }
+        /* the wind bed goes through the same master chain as everything else, before it is processed */
+        for (int i = 0; i < frames; i++) wind_add(&g_mixf[i * 2], &g_mixf[i * 2 + 1]);
         audio_chain_process(&g_chain, g_mixf, frames, NUM_CHANNELS);
         for (int i = 0; i < frames * NUM_CHANNELS; i++) out[i] = (int16_t)(fclampf(g_mixf[i], -1.0f, 1.0f) * 32767.0f);
         SDL_UnlockMutex(g_mutex);
@@ -174,6 +276,13 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
             out[i * 2 + 1] = (int16_t)(fclampf(or_, -1.0f, 1.0f) * 32767.0f);
         }
         if (v->pos >= v->snd->len) v->active = 0;
+    }
+    /* dry path: the bed is summed into the same int16 frames the effects wrote */
+    for (int i = 0; i < frames; i++) {
+        float wl = 0.0f, wr = 0.0f;
+        wind_add(&wl, &wr);
+        out[i * 2]     = (int16_t)(fclampf(out[i * 2]     / 32767.0f + wl, -1.0f, 1.0f) * 32767.0f);
+        out[i * 2 + 1] = (int16_t)(fclampf(out[i * 2 + 1] / 32767.0f + wr, -1.0f, 1.0f) * 32767.0f);
     }
     SDL_UnlockMutex(g_mutex);
 }
@@ -370,6 +479,32 @@ void audio_init(void) {
     /* 13: shield pack pickup -- rising chime */
     g_snd[13] = synth_chime(0.42f);
 
+    /* ── The civic boss's verdict (AI_ROLE_MAGISTRATE) ───────────
+       14: the sentence being READ -- a gavel rap on wood: a short high-to-mid pitch sweep (the block,
+           not a gunshot) plus a tight woody crack, deliberately quieter than any weapon so it reads as
+           "something is about to happen" and never as "you are being shot at". Its whole job is to be
+           audible through the magnum fire that is still going on around it. */
+    {
+        SoundBuf block = synth_kick(430.0f, 165.0f, 0.060f, 0.52f);
+        SoundBuf crack = synth_noise(0.038f, 0.26f, 62.0f);
+        g_snd[14] = synth_layer(&block, &crack);
+        free(block.buf); free(crack.buf);
+    }
+    /* 15: the sentence SERVED -- the same gavel, but heavy: a deep 110->26 Hz body sweep, a cymbal's
+       fizz on top for the room, so the two cues are obviously the same object hit twice, once to call
+       order and once to end the argument. */
+    {
+        SoundBuf body  = synth_kick(110.0f, 26.0f, 0.40f, 0.92f);
+        SoundBuf fizz  = synth_cymbal(0.55f, 0.30f);
+        SoundBuf stamp = synth_layer(&body, &fizz);
+        SoundBuf knock = synth_noise(0.05f, 0.30f, 40.0f);
+        g_snd[15] = synth_layer(&stamp, &knock);
+        free(body.buf); free(fizz.buf); free(stamp.buf); free(knock.buf);
+    }
+
+    /* 16: thunder. Held until its travel time is up -- see audio_play_thunder/audio_thunder_pump. */
+    g_snd[16] = synth_thunder();
+
     {
         const char *chain = getenv("SHANKPIT_SOUND_CHAIN");
         if (chain && *chain) {
@@ -377,6 +512,15 @@ void audio_init(void) {
             else SDL_Log("[audio] NOCK master chain '%s' could not be loaded; playing dry", chain);
         }
     }
+
+    /* the wind bed is silent until a host calls audio_set_wind -- a host that knows nothing about
+       weather gets exactly the mix it had before (this is the only ambient voice in the engine) */
+    g_wind = synth_wind_loop();
+    g_wind_pos = 0;
+    g_wind_gain = g_wind_gain_target = 0.0f;
+    g_wind_bright = g_wind_bright_target = 0.25f;
+    g_wind_pan = g_wind_pan_target = 0.0f;
+    g_wind_lp = 0.0f;
 
     SDL_PauseAudioDevice(g_dev, 0); /* start playback */
     SDL_Log("[audio] initialized: %d Hz stereo, %d sound buffers", SAMPLE_RATE, MAX_SOUNDS);
@@ -399,6 +543,10 @@ void audio_shutdown(void) {
             g_snd[i].buf = NULL;
         }
     }
+    free(g_wind.buf);
+    g_wind.buf = NULL;
+    g_wind.len = 0;
+    memset(g_thunder, 0, sizeof(g_thunder));   /* a stale queue must not fire into a new device */
 }
 
 void audio_play_weapon(int weapon_idx,
@@ -431,6 +579,59 @@ void audio_play_shield(int kind, float sx, float sy, float sz,
     float lgain, rgain;
     spatial_gains(sx, sy, sz, lx, ly, lz, lyaw, &lgain, &rgain);
     play_sound(11 + kind, lgain, rgain);
+}
+
+/* The civic boss's verdict: kind 0 = read (the telegraph), 1 = served. Same spatial_gains call as a
+ * weapon shot, so panning and distance falloff are shared with every other sound rather than a
+ * second, differently-wrong pan law living in the boss code. */
+void audio_play_magistrate(int kind, float sx, float sy, float sz,
+                           float lx, float ly, float lz, float lyaw) {
+    if (!g_dev || !g_mutex) return;
+    if (kind < 0 || kind > 1) return;
+    float lgain, rgain;
+    spatial_gains(sx, sy, sz, lx, ly, lz, lyaw, &lgain, &rgain);
+    play_sound(14 + kind, lgain, rgain);
+}
+
+/* The wind bed. Called every frame with numbers PARENA's weather rules already resolved (gain 0..1,
+ * brightness 0..1, pan -1..1); this function only stores smoothed targets, so it is safe to call from the
+ * render loop while the audio thread is mixing. */
+void audio_set_wind(float gain, float bright, float pan) {
+    if (!g_dev || !g_mutex) return;
+    SDL_LockMutex(g_mutex);
+    g_wind_gain_target   = fclampf(gain, 0.0f, 1.0f);
+    g_wind_bright_target = fclampf(bright, 0.0f, 1.0f);
+    g_wind_pan_target    = fclampf(pan, -1.0f, 1.0f);
+    SDL_UnlockMutex(g_mutex);
+}
+
+/* Thunder: see g_thunder at the top of this file for the queue's own policy. */
+void audio_play_thunder(int delay_ms, float gain, float pan) {
+    if (!g_dev) return;
+    int slot = -1;
+    for (int i = 0; i < THUNDER_QUEUE; i++) {
+        if (!g_thunder[i].waiting) { slot = i; break; }
+    }
+    if (slot < 0) {   /* all four already waiting: retire the oldest, keep the newest */
+        for (int i = 1; i < THUNDER_QUEUE; i++) g_thunder[i - 1] = g_thunder[i];
+        slot = THUNDER_QUEUE - 1;
+    }
+    g_thunder[slot].waiting = 1;
+    g_thunder[slot].due_ms = (int)SDL_GetTicks() + (delay_ms > 0 ? delay_ms : 0);
+    g_thunder[slot].gain = fclampf(gain, 0.0f, 1.0f);
+    g_thunder[slot].pan = fclampf(pan, -1.0f, 1.0f);
+}
+
+void audio_thunder_pump(void) {
+    if (!g_dev || !g_mutex) return;
+    int now = (int)SDL_GetTicks();
+    for (int i = 0; i < THUNDER_QUEUE; i++) {
+        if (!g_thunder[i].waiting || now < g_thunder[i].due_ms) continue;
+        g_thunder[i].waiting = 0;
+        float p = g_thunder[i].pan;
+        play_sound(16, g_thunder[i].gain * (p > 0.0f ? 1.0f - p : 1.0f),
+                       g_thunder[i].gain * (p < 0.0f ? 1.0f + p : 1.0f));
+    }
 }
 
 int audio_clip_load(const char *wav_path) {

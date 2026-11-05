@@ -1,0 +1,46 @@
+{
+ "buildings": [
+  {
+   "level": "mun_courthouse",
+   "x": 960,
+   "y": 0.0,
+   "z": 280,
+   "rot_y": 0
+  },
+  {
+   "level": "mun_city_hall",
+   "x": 960,
+   "y": 0.0,
+   "z": 480,
+   "rot_y": 90
+  },
+  {
+   "level": "mun_records_annex",
+   "x": 960,
+   "y": 0.0,
+   "z": 680,
+   "rot_y": 180
+  },
+  {
+   "level": "mun_precinct",
+   "x": 960,
+   "y": 0.0,
+   "z": 960,
+   "rot_y": 270
+  },
+  {
+   "level": "mun_clinic",
+   "x": 1160,
+   "y": 0.0,
+   "z": 280,
+   "rot_y": 0
+  },
+  {
+   "level": "mun_library",
+   "x": 1160,
+   "y": 0.0,
+   "z": 400,
+   "rot_y": 90
+  }
+ ]
+}

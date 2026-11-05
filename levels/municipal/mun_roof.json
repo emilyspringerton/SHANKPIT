@@ -1,0 +1,65 @@
+{
+ "version": 1,
+ "id": 310,
+ "name": "mun_roof",
+ "width": 20.0,
+ "height": 8.0,
+ "depth": 20.0,
+ "ground_plane_enabled": false,
+ "ground_plane_squares": 0,
+ "walls": [
+  {
+   "x": 0.0,
+   "y": 0.5,
+   "z": 0.0,
+   "sx": 20.0,
+   "sy": 1.0,
+   "sz": 20.0,
+   "r": 0.68,
+   "g": 0.65,
+   "b": 0.58,
+   "friction": 0.8,
+   "material": "tile"
+  },
+  {
+   "x": -9.6,
+   "y": 2.0,
+   "z": 0.0,
+   "sx": 0.8,
+   "sy": 3.0,
+   "sz": 20.0,
+   "r": 0.68,
+   "g": 0.65,
+   "b": 0.58,
+   "friction": 0.8,
+   "material": "plaster"
+  },
+  {
+   "x": 9.6,
+   "y": 2.0,
+   "z": 0.0,
+   "sx": 0.8,
+   "sy": 3.0,
+   "sz": 20.0,
+   "r": 0.68,
+   "g": 0.65,
+   "b": 0.58,
+   "friction": 0.8,
+   "material": "plaster"
+  },
+  {
+   "x": 0.0,
+   "y": 2.0,
+   "z": -9.6,
+   "sx": 20.0,
+   "sy": 3.0,
+   "sz": 0.8,
+   "r": 0.68,
+   "g": 0.65,
+   "b": 0.58,
+   "friction": 0.8,
+   "material": "plaster"
+  }
+ ],
+ "objects": []
+}

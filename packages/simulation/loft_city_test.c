@@ -59,7 +59,10 @@ int main(void) {
     ok(level_boxes_load_from_file("var/zombie/nextown_zombies.json", &g_level),
        "the loft city loads from var/zombie/nextown_zombies.json");
     ok(g_level.count > 1500, "with all eight lofts' geometry in it");
-    ok(g_level.chest_count == 24, "24 authored chests (each theme's own loot table)");
+    /* 24 loft chests plus one per municipal building (levels/municipal) -- the district beside the
+       lofts authors its own loot in the same file, so this asserts the lofts' share rather than the
+       city's whole count. */
+    ok(g_level.chest_count >= 24, "at least the 24 authored loft chests (each theme's own loot table)");
     printf("      %d authored characters\n", g_level.character_count);
     ok(g_level.character_count > 0 && g_level.character_count <= MAX_CLIENTS - 1,
        "the population fits MAX_CLIENTS-1 simultaneous slots (the tool budgets for exactly this)");

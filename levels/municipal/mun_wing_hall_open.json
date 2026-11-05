@@ -1,0 +1,41 @@
+{
+ "version": 1,
+ "id": 323,
+ "name": "mun_wing_hall_open",
+ "width": 40.0,
+ "height": 8.0,
+ "depth": 20.0,
+ "ground_plane_enabled": false,
+ "ground_plane_squares": 0,
+ "walls": [
+  {
+   "x": 10.0,
+   "y": 1.0,
+   "z": 10.0,
+   "sx": 40.0,
+   "sy": 1.0,
+   "sz": 0.4,
+   "r": 0.68,
+   "g": 0.65,
+   "b": 0.58,
+   "friction": 0.8,
+   "material": "metal"
+  }
+ ],
+ "objects": [
+  {
+   "ref_level_id": 301,
+   "x": 0,
+   "y": 0,
+   "z": 0,
+   "rot_y": 0
+  },
+  {
+   "ref_level_id": 303,
+   "x": 20.0,
+   "y": 0,
+   "z": 0,
+   "rot_y": 0
+  }
+ ]
+}

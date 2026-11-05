@@ -413,6 +413,136 @@ void proctex_make_hps_bulb_rgba(ProcTexture *t, int w, int h, uint32_t seed) {
     }
 }
 
+/* proctex_make_institutional_tile_rgba -- the municipal district's `tile` material (functionally:
+ * ceramic floor/wall tile over institutional masonry). PARENA authors the look in
+ * stdlib/shankpit/textures/institutional_tile.prn; this is the native client's own implementation of
+ * the same idea, the way proctex_make_wood_rgba is the native counterpart of a wood texture.
+ *
+ * A regular grid with a dark grout line on every cell edge and a small per-tile shade jitter -- a
+ * courthouse floor, not a checkerboard. The grid is 8 cells per side of a 128px canvas (16px tiles),
+ * and cell indices are hashed rather than random, so the same seed renders the same floor on every
+ * host. The pattern wraps because the cell index does: x=w is cell 0 exactly as x=0 is.
+ */
+void proctex_make_institutional_tile_rgba(ProcTexture *t, int w, int h, uint32_t seed) {
+    if (!t || !t->pixels || t->width != w || t->height != h) return;
+    const int cells = 8;
+    const int cw = w / cells > 0 ? w / cells : 1;
+    const int ch = h / cells > 0 ? h / cells : 1;
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            size_t idx = ((size_t)y * (size_t)w + (size_t)x) * 4u;
+            int cx = x / cw, cy = y / ch;
+            int gx = x % cw, gy = y % ch;
+            /* the last 12% of a cell approaching each seam is grout */
+            int grout = (gx >= cw - cw / 8 || gy >= ch - ch / 8);
+            float tile_shine = 0.88f + 0.12f * hash_2d(cx, cy, (int)seed);
+            float shade = grout ? 0.34f : tile_shine;
+            /* the grout reads green-grey, the tile a colder institutional white */
+            t->pixels[idx + 0] = (unsigned char)(shade * (grout ? 120.0f : 205.0f));
+            t->pixels[idx + 1] = (unsigned char)(shade * (grout ? 128.0f : 212.0f));
+            t->pixels[idx + 2] = (unsigned char)(shade * (grout ? 124.0f : 204.0f));
+            t->pixels[idx + 3] = 255;
+        }
+    }
+}
+
+/* proctex_make_plaster_rgba -- the district's `plaster` material: warm off-white render over masonry.
+ * A slow mottled cloud (fbm) plus a fine tooth, and nothing else -- plaster is the one wall in this city
+ * that is not allowed to have a pattern, because it is the flat ground the tile and the woods read
+ * against. Not asserted to tile seamlessly: a plaster wall is a noisy surface, so there is no seam for
+ * the eye to catch at a box boundary. */
+void proctex_make_plaster_rgba(ProcTexture *t, int w, int h, uint32_t seed) {
+    if (!t || !t->pixels || t->width != w || t->height != h) return;
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            size_t idx = ((size_t)y * (size_t)w + (size_t)x) * 4u;
+            float u = (float)x / (float)w, v = (float)y / (float)h;
+            float cloud = fbm_2d(u * 3.0f, v * 3.0f, (int)seed);
+            float tooth = hash_2d(x / 2, y / 2, (int)seed + 31) * 0.06f;
+            float shade = 0.74f + 0.16f * cloud + tooth;
+            if (shade > 1.0f) shade = 1.0f;
+            t->pixels[idx + 0] = (unsigned char)(shade * 238.0f);
+            t->pixels[idx + 1] = (unsigned char)(shade * 231.0f);
+            t->pixels[idx + 2] = (unsigned char)(shade * 214.0f);
+            t->pixels[idx + 3] = 255;
+        }
+    }
+}
+
+/* proctex_make_marble_rgba -- the district's `marble` material (columns, daises, entablatures).
+ * PARENA's courthouse_marble.prn is the authored look; this is the same two ideas: a pale warm base
+ * with a slow cloud in it, and a few DARK wandering veins rather than a fine pattern, because value
+ * contrast is what reads as expensive at distance in a fixed-function renderer. The vein frequency is
+ * a whole number, so the veins wrap across the seam like the grout in the tile above. */
+void proctex_make_marble_rgba(ProcTexture *t, int w, int h, uint32_t seed) {
+    if (!t || !t->pixels || t->width != w || t->height != h) return;
+    const float veins = 3.0f;
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            size_t idx = ((size_t)y * (size_t)w + (size_t)x) * 4u;
+            float u = (float)x / (float)w, v = (float)y / (float)h;
+            float warp = 0.35f * cosf(6.2831853f * 1.7f * v);          /* bends the veins, keeps them wrapped */
+            float phase = veins * u + warp + 0.08f * v;
+            float d = phase - floorf(phase) - 0.5f;
+            if (d < 0.0f) d = -d;
+            float vein = (0.5f - d) / 0.06f;
+            if (vein < 0.0f) vein = 0.0f;
+            if (vein > 1.0f) vein = 1.0f;
+            /* whole-number frequencies: a 1.3 here would make the cloud not meet itself at x=w and put
+               a brightness step on every box boundary (caught by the wrap assertion in the test) */
+            float cloud = 0.5f * (1.0f + cosf(6.2831853f * (1.0f * u + 1.0f * v)));
+            float base = 0.80f + 0.10f * cloud + 0.04f * (hash_2d(x, y, (int)seed) - 0.5f);
+            float shade = base * (1.0f - 0.55f * vein);
+            t->pixels[idx + 0] = (unsigned char)(shade * 247.0f);
+            t->pixels[idx + 1] = (unsigned char)(shade * 242.0f);
+            t->pixels[idx + 2] = (unsigned char)(shade * 234.0f);
+            t->pixels[idx + 3] = 255;
+        }
+    }
+}
+
+/* proctex_make_wood_variant_rgba -- one board generator for the district's three WOOD SPECIES.
+ * PARENA authors each species separately (stdlib/shankpit/textures/wood_{oak,pine,mahogany}.prn) and
+ * they differ in exactly three numbers: how many boards across the tile, how many growth rings a board
+ * shows, and the species' own colour. That is also what makes "multiple woods with different
+ * densities" more than a word in the level file -- the materials carry density 720/580/460 kg/m^3, so
+ * this generator is only the LOOK of the three bodies the physics already weighs differently.
+ *
+ * `planks` <= 0 or `rings` <= 0 falls back to the generic wood's own 5 boards, so a caller cannot make
+ * an empty texture by passing nonsense.
+ */
+void proctex_make_wood_variant_rgba(ProcTexture *t, int w, int h, uint32_t seed,
+                                    int planks, int rings,
+                                    float tint_r, float tint_g, float tint_b) {
+    if (!t || !t->pixels || t->width != w || t->height != h) return;
+    if (planks <= 0) planks = 5;
+    if (rings <= 0) rings = 6;
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            size_t idx = ((size_t)y * (size_t)w + (size_t)x) * 4u;
+            float v = (float)y / (float)h;
+            float row = v * (float)planks;
+            int plank = (int)row;
+            float row_f = row - (float)plank;
+            int seam = row_f < 0.05f;
+            /* the rings bow toward the ends of the board, which is what makes sawn timber read as
+               figured rather than as a printed stripe */
+            float bow = 0.10f * cosf(6.2831853f * ((float)x / (float)w));
+            float phase = (float)rings * row_f + bow;
+            float ring = 0.5f * (1.0f + cosf(6.2831853f * phase));
+            float grain = (hash_2d(x, plank, (int)seed) - 0.5f) * 0.06f;
+            float base = 0.72f + 0.20f * ring + grain;
+            if (base > 1.0f) base = 1.0f;
+            if (base < 0.0f) base = 0.0f;
+            if (seam) base *= 0.55f;
+            t->pixels[idx + 0] = (unsigned char)(base * tint_r * 255.0f);
+            t->pixels[idx + 1] = (unsigned char)(base * tint_g * 255.0f);
+            t->pixels[idx + 2] = (unsigned char)(base * tint_b * 255.0f);
+            t->pixels[idx + 3] = 255;
+        }
+    }
+}
+
 void proc_tex_fill_emily_vibe(ProcTexture *t, float seed, float t_sec) {
     if (!t || !t->pixels) return;
 

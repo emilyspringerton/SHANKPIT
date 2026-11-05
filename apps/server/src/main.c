@@ -281,6 +281,9 @@ static void server_advance_dm_rotation(unsigned int now_ms) {
     g_dm_rotation_idx = (g_dm_rotation_idx + 1) % (int)(sizeof(g_dm_rotation) / sizeof(g_dm_rotation[0]));
     g_server_match_scene = g_dm_rotation[g_dm_rotation_idx];
     scene_load(g_server_match_scene);
+    /* Built-in map: this host has no authored box list for it, so the clerks keep the old open-world
+       sightlines. Cleared rather than left over from the previous custom level, which would be worse. */
+    story_ai_set_sight(NULL, 0);
     g_round_start_ms = now_ms;
     for (int i = 0; i < MAX_CLIENTS; i++) {
         PlayerState *p = &local_state.players[i];
@@ -439,6 +442,7 @@ static void tdmo_activate_match(unsigned int now_ms) {
     local_init_match(1, MODE_TDMO);
     g_server_match_scene = SCENE_VOXWORLD;
     scene_load(g_server_match_scene);
+    story_ai_set_sight(NULL, 0);   /* no authored boxes here either -- see the rotation load above */
     local_state.game_mode = MODE_TDMO;
     local_state.score_limit = TDMO_SCORE_LIMIT;
     local_state.team_scores[TDMB_BLUE_TEAM] = 0;
@@ -556,6 +560,23 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
     g_server_match_scene = SCENE_CUSTOM_LEVEL;
     scene_load(g_server_match_scene);
 
+    /* LINE OF SIGHT (packages/simulation/sight.h). The AI used to see through every wall there is; the
+       client learned better first and the server -- which is where the clerks actually decide -- still
+       did not. Same boxes phys_set_custom_level just took above, copied INTO story_ai (not referenced),
+       so a mid-game level swap cannot leave a sight world pointing at freed level memory. Unlimited
+       arrays live for the match here, exactly like the converted level data they come from. */
+    {
+        static SightBox sight[LEVEL_BOXES_MAX];
+        int sn = lvl->count < LEVEL_BOXES_MAX ? lvl->count : LEVEL_BOXES_MAX;
+        for (int si = 0; si < sn; si++) {
+            sight[si].x = lvl->boxes[si].x; sight[si].y = lvl->boxes[si].y; sight[si].z = lvl->boxes[si].z;
+            sight[si].w = lvl->boxes[si].w; sight[si].h = lvl->boxes[si].h; sight[si].d = lvl->boxes[si].d;
+            sight[si].solid = 1;
+        }
+        story_ai_set_sight(sight, sn);
+        NET_SERVER_LOG("CUSTOM_LEVEL_SIGHT_BOXES count=%d", sn);
+    }
+
     // Story System Phase 1 -- dlopen this level's own real door scripts now that
     // g_custom_level_box_authored_y is populated (phys_set_custom_level above).
     story_doors_init(lvl);
@@ -631,7 +652,13 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
         // JSON, before NOCK's own dropdown gap was also fixed) would have silently lost that
         // character here, logged as an "invalid role," not spawned as the real, working
         // non-hostile ambient bot it actually is.
-        if (lc->role < AI_ROLE_RIFT_HOUND || lc->role > AI_ROLE_WANDERING_BOT) {
+        // The range itself now lives in story_ai.h's own story_ai_role_is_valid: writing it out
+        // here (and in apps/lobby, and in story_ai_spawn_unit_role, and in IDUNA) is how it shipped a
+        // value short last time. The civic boss made it worth one function instead of four copies.
+        int role_ok = story_ai_role_is_valid(lc->role);
+        /* An EMPIRE unit (archetype > 0) may author no role at all (-1, level_boxes.h) and keep its
+           archetype's own brain; every other character still needs a valid one. */
+        if (!role_ok && lc->archetype <= 0) {
             NET_SERVER_LOG("CUSTOM_LEVEL_CHARACTER_SKIPPED reason=invalid_role role=%d", lc->role);
             continue;
         }
@@ -642,9 +669,13 @@ static void server_apply_custom_level(const CustomLevelData *lvl) {
         int kit = story_ai_kit_is_valid(lc->kit) ? lc->kit : AI_KIT_AUTO;
         /* An authored EMPIRE unit (archetype > 0) goes through the order layer; everything else keeps
            spawning exactly as it did. */
+        /* An authored `role` overrides the archetype's brain (a sniper clerk, not a sixth guard);
+           -1 keeps the archetype's own. */
         int spawned_id = lc->archetype > 0
-                             ? story_ai_spawn_unit(&local_state, lc->archetype, kit, lc->faction,
-                                                   lc->orders, lc->x, lc->y, lc->z)
+                             ? story_ai_spawn_unit_role(&local_state, lc->archetype,
+                                                        role_ok ? lc->role : -1,
+                                                        kit, lc->faction, lc->orders,
+                                                        lc->x, lc->y, lc->z)
                              : story_ai_spawn_enemy(&local_state, (AIRole)lc->role, kit,
                                                     lc->x, lc->y, lc->z);
         /* S536: TYLER_VALHANNA_ICELAND_1986 authors exactly two characters, Tyler first then Hana

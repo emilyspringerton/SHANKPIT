@@ -49,4 +49,18 @@ void proctex_make_metal_rgba(ProcTexture *t, int w, int h, uint32_t seed);
 void proctex_make_ips_panel_rgba(ProcTexture *t, int w, int h, uint32_t seed);
 void proctex_make_hps_bulb_rgba(ProcTexture *t, int w, int h, uint32_t seed);
 
+/* The municipal district's materials (tools/build_municipal_district.py, 2026-11-05). Four generators
+ * for six level materials: `tile`, `plaster` and `marble` are their own looks, and the three WOOD
+ * SPECIES share one board generator driven by the three numbers that actually make oak, mahogany and
+ * pine different -- board count, ring density and colour. Without these the district's six new
+ * material names would all fall back to material_texture_for_name's brick default, which is the silent
+ * version of "the material exists in the file and nowhere on screen". `planks`/`rings` <= 0 fall back
+ * to sane values rather than producing an empty texture. */
+void proctex_make_institutional_tile_rgba(ProcTexture *t, int w, int h, uint32_t seed);
+void proctex_make_plaster_rgba(ProcTexture *t, int w, int h, uint32_t seed);
+void proctex_make_marble_rgba(ProcTexture *t, int w, int h, uint32_t seed);
+void proctex_make_wood_variant_rgba(ProcTexture *t, int w, int h, uint32_t seed,
+                                    int planks, int rings,
+                                    float tint_r, float tint_g, float tint_b);
+
 #endif

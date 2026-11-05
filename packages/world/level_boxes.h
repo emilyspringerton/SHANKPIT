@@ -356,7 +356,9 @@ typedef struct {
    see server_apply_custom_level's own real game-mode gate for why spawning here unconditionally
    would be unsafe in MODE_QUEUE (repeated per-round loads, no reset, real slot-exhaustion risk). */
 typedef struct {
-    int role;
+    int role; /* AIRole; -1 = not authored. An EMPIRE unit (archetype > 0) reads -1 as "keep the
+                 archetype's own brain"; a non-EMPIRE character with no role is skipped by the
+                 hosts, exactly as an out-of-range one always was. */
     int kit; /* S492 -- AIKit value (packages/simulation/story_ai.h); 0 = AI_KIT_AUTO, absent
                 from an older level's JSON parses as 0 too (level_boxes_parse_number's own
                 default), so every pre-S492 level keeps its exact current round-robin look. */
@@ -1449,7 +1451,11 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
                     LevelCharacter *ch = &out->characters[out->character_count];
                     memset(ch, 0, sizeof(*ch));
                     const char *v5;
-                    float role_f = 0.0f;
+                    /* -1, not 0: 0 is a REAL role (AI_ROLE_RIFT_HOUND), so defaulting an absent role
+                       to it would make "no role" and "the first role" the same number. -1 is what an
+                       EMPIRE unit (archetype > 0) reads as "keep the archetype's own brain"; the
+                       hosts still skip a -1 role on a non-EMPIRE character, same as out-of-range. */
+                    float role_f = -1.0f;
                     if ((v5 = level_boxes_find_key(cobj_start, cobj_end, "role"))) level_boxes_parse_number(v5, &role_f);
                     ch->role = (int)role_f;
                     float kit_f = 0.0f;

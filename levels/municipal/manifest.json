@@ -1,0 +1,92 @@
+{
+ "levels": [
+  {
+   "id": 301,
+   "file": "mun_spine.json"
+  },
+  {
+   "id": 302,
+   "file": "mun_hall.json"
+  },
+  {
+   "id": 303,
+   "file": "mun_hall_open.json"
+  },
+  {
+   "id": 304,
+   "file": "mun_court.json"
+  },
+  {
+   "id": 305,
+   "file": "mun_court_small.json"
+  },
+  {
+   "id": 306,
+   "file": "mun_records.json"
+  },
+  {
+   "id": 307,
+   "file": "mun_cells.json"
+  },
+  {
+   "id": 308,
+   "file": "mun_stair.json"
+  },
+  {
+   "id": 309,
+   "file": "mun_portico.json"
+  },
+  {
+   "id": 310,
+   "file": "mun_roof.json"
+  },
+  {
+   "id": 320,
+   "file": "mun_wing_court.json"
+  },
+  {
+   "id": 321,
+   "file": "mun_wing_court_small.json"
+  },
+  {
+   "id": 322,
+   "file": "mun_wing_hall.json"
+  },
+  {
+   "id": 323,
+   "file": "mun_wing_hall_open.json"
+  },
+  {
+   "id": 324,
+   "file": "mun_wing_records.json"
+  },
+  {
+   "id": 325,
+   "file": "mun_wing_cells.json"
+  },
+  {
+   "id": 340,
+   "file": "mun_courthouse.json"
+  },
+  {
+   "id": 341,
+   "file": "mun_city_hall.json"
+  },
+  {
+   "id": 342,
+   "file": "mun_records_annex.json"
+  },
+  {
+   "id": 343,
+   "file": "mun_precinct.json"
+  },
+  {
+   "id": 344,
+   "file": "mun_clinic.json"
+  },
+  {
+   "id": 345,
+   "file": "mun_library.json"
+  }
+ ]
+}

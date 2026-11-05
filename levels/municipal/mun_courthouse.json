@@ -1,0 +1,41 @@
+{
+ "version": 1,
+ "id": 340,
+ "name": "mun_courthouse",
+ "width": 80.0,
+ "height": 16.0,
+ "depth": 80.0,
+ "ground_plane_enabled": false,
+ "ground_plane_squares": 0,
+ "walls": [],
+ "objects": [
+  {
+   "ref_level_id": 309,
+   "x": 0,
+   "y": 0.0,
+   "z": 20.0,
+   "rot_y": 0
+  },
+  {
+   "ref_level_id": 320,
+   "x": 0.0,
+   "y": 0.0,
+   "z": 0.0,
+   "rot_y": 0
+  },
+  {
+   "ref_level_id": 324,
+   "x": 0.0,
+   "y": 0.0,
+   "z": -20.0,
+   "rot_y": 180
+  },
+  {
+   "ref_level_id": 310,
+   "x": 0,
+   "y": 8.0,
+   "z": 0,
+   "rot_y": 0
+  }
+ ]
+}

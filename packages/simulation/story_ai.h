@@ -77,8 +77,25 @@ typedef enum {
        way it already special-cases AI_ROLE_STORY_ALLY, just routing to AI_MODE_PATROL/
        AI_MODE_GREET only instead of ALLY_FOLLOW/COMBAT. Never joined to a squad, same as the
        three S462 solo archetypes. */
-    AI_ROLE_WANDERING_BOT
+    AI_ROLE_WANDERING_BOT,
+    /* The civic boss (founder: "add a civic boss"). Deliberately the only role that is not a
+       reskin of a threat the roster already had: a magistrate holds the bench instead of charging,
+       carries WPN_MAGNUM (the one weapon no other role uses) and its ability is a real sentence --
+       see ai_combat_magistrate in story_ai.c. Authored as the second body of the municipal
+       courthouse (tools/build_municipal_district.py's BUILDING_STAFF), i.e. the body behind the
+       bailiff rather than a third body in a district that has no slot to spare. */
+    AI_ROLE_MAGISTRATE
 } AIRole;
+
+/* story_ai_role_is_valid -- the one range check every role consumer should use, exactly the role
+   story_ai_kit_is_valid below already plays for kits. This range was written out by hand in
+   apps/server, apps/lobby and story_ai_spawn_unit_role (plus IDUNA's validateCharacters), and one of
+   those copies already shipped a value short -- AI_ROLE_WANDERING_BOT was real natively and rejected
+   at load. Adding the civic boss would have been a fourth copy to keep in step, so they become one
+   function instead. */
+static inline int story_ai_role_is_valid(int role) {
+    return role >= AI_ROLE_RIFT_HOUND && role <= AI_ROLE_MAGISTRATE;
+}
 
 /* AIKit (S492) -- a NOCK-authored character's chosen visual model, completely decoupled from
    AIRole (behavior) above -- the same "role picks the brain, kit picks the body" split
@@ -169,6 +186,18 @@ typedef struct {
 
     unsigned int next_attack_ms;
     unsigned int next_decision_ms;
+    /* AI_ROLE_MAGISTRATE's own ability clock (ai_combat_magistrate). Zeroed by spawn's own memset,
+       so a fresh magistrate's first sentence is available immediately -- the same "0 means ready"
+       convention next_attack_ms above already uses. Dead data on every other role, which never
+       reads it (the same honesty the WANDERING_BOT role defaults keep about unused fields). */
+    unsigned int next_verdict_ms;
+    /* The verdict's TELEGRAPH, not its result: when the cooldown is up and the player is in sight
+       the bench arms this deadline instead of stunning on the spot, and the sentence is only served
+       once the window elapses with the player still in sight. 0 means no sentence is in progress,
+       the same "0 means ready" convention next_verdict_ms uses. Read by the client through
+       story_ai_verdict_tell_fill below, so the ring and the boss bar cannot show a tell the AI is
+       not actually running. Dead data on every other role. */
+    unsigned int verdict_tell_until_ms;
 
     /* Humanness Phase 2 (docs/HUMANNESS_NORTHSTAR.md) -- real per-instance jitter/mood state,
        fed into ai_turn_towards' own real overshoot-then-settle turning and aim noise, and into
@@ -282,6 +311,19 @@ int story_ai_spawn_enemy(ServerState *s, AIRole role, int kit, float x, float y,
 int story_ai_spawn_unit(ServerState *s, int archetype, int kit, int faction, int orders,
                          float x, float y, float z);
 
+/* story_ai_spawn_unit_role -- the same spawn with an authored brain role: the level editor's own
+ * `role` field (level_boxes.h) laid over the archetype's. `role` < 0 means "the archetype's own",
+ * which is exactly what story_ai_spawn_unit calls this with, so that entry point is unchanged.
+ *
+ * Why the override exists: the EMPIRE layer's "archetype picks the brain" rule is a good default and
+ * a bad ceiling. A civic district staffing six buildings through it alone gets six identical pursuers
+ * (or, at best, two brains shared six ways); with the override each building can have its own threat
+ * -- a shotgun bailiff, a sniper archivist, a knife orderly -- while the archetype still supplies the
+ * health pool, the default skin and the order priorities. An out-of-range role is ignored, never
+ * clamped, so a stale reference cannot turn into a valid but different brain. */
+int story_ai_spawn_unit_role(ServerState *s, int archetype, int role, int kit, int faction, int orders,
+                             float x, float y, float z);
+
 /* The shared EMPIRE world (resource nodes + claimable cells + per-faction stockpiles). One per process,
  * owned here because this is the module that ticks units. The lobby's local sim and the server each have
  * their own, the same way each already owns its own ServerState. */
@@ -331,6 +373,43 @@ void story_ai_waves_enable(int on, unsigned int now_ms);
 int story_ai_waves_tick(ServerState *s, unsigned int now_ms);
 int story_ai_waves_remaining(void);
 int story_ai_unit_archetype(int player_id);
+/* story_ai_role_slot -- the PlayerState slot of the first active unit playing `role`, or -1. The
+   client needs this because PlayerState itself carries no role field (only story_ai.c's own
+   AIController does): the civic boss's health bar and its verdict tell both live on the body, and
+   they have to find that body without inventing a second copy of the role table in main.c. */
+int story_ai_role_slot(int role);
+/* story_ai_verdict_tell_fill -- the AI_ROLE_MAGISTRATE verdict's own telegraph, as a real 0..1
+   fraction of the tell window that has elapsed, or -1.0f when no sentence is in progress (the
+   magistrate's role, the wrong slot, or between sentences all read -1.0f). The sim is the
+   authority here: the ring and the boss bar in apps/lobby draw from this value, so breaking the
+   player's line of sight clears the telegraph on screen at the same tick it cancels the sentence,
+   and nothing can be telegraphed that is not really coming. */
+float story_ai_verdict_tell_fill(int player_id, unsigned int now_ms);
+/* story_ai_magistrate_event_counts -- two monotonic counters (tells armed, sentences served) so a
+   presentation layer can EDGE-trigger on the verdict instead of polling a state that goes -1 -> 0.x
+   -> -1: the client's spatial gavel cue and its ember/burst particles fire once per event because
+   they compare these against the values they last saw, not because they guessed from a fill value.
+   Reset to 0 by story_ai_reset, so a level change reads as a reset, not as a burst of a thousand
+   events; a caller that sees the count go backwards treats it the same way. */
+void story_ai_magistrate_event_counts(unsigned int *tells, unsigned int *served);
+/* story_ai_magistrate_scorches -- the sim's own scorch pool, read-only for the renderer.
+   verdict_scorch.h is the pool AND the hazard (radius, cadence, lifetime, scene filter); story_ai.c owns
+   the instance and ticks the damage, and apps/lobby draws exactly this pool, so the fire that burns the
+   player and the fire on the floor are the same fire instead of two parallel copies. Reset by
+   story_ai_reset with the rest of the civic boss's state. */
+#include "verdict_scorch.h"
+#include "sight.h"
+const VerdictScorches *story_ai_magistrate_scorches(void);
+
+/* LINE OF SIGHT (founder: "also require line of site"). Hands the host's solid level boxes to the AI
+ * brains, which copy them: perception (a body that is behind a wall is not seen, whatever the cone says)
+ * and the verdict's floor hazard (a mark does not burn through a bench) both query this. Call once per
+ * level load, from the host that owns the geometry -- apps/lobby does it inside its own
+ * level_boxes_apply_to_physics. NULL / count 0 clears the world back to "everything is visible", which is
+ * what a server or a test that has not federated its boxes keeps getting. Deliberately independent of
+ * story_ai_reset: the geometry outlives the encounter, and re-installing it every reset would let a level
+ * load and a respawn disagree about the same wall. */
+void story_ai_set_sight(const SightBox *boxes, int count);
 void story_ai_tick(ServerState *s, unsigned int now_ms);
 /* story_ai_seed_voxworld_encounter (the old MODE_STORY VOXWORLD combat-squad encounter) was
    removed in the BIG_O engine merge phase 7d content cutover -- see

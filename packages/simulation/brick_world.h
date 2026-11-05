@@ -210,6 +210,18 @@ static inline int brick_world_kind_for_material(const char *name) {
     if (strcmp(name, "concrete") == 0) return BF_KIND_CONCRETE;
     if (strcmp(name, "wood") == 0) return BF_KIND_WOOD;
     if (strcmp(name, "glass") == 0) return BF_KIND_GLASS;
+    /* THE MUNICIPAL DISTRICT'S MATERIALS (tools/build_municipal_district.py, 2026-11-05). Without these
+     * four lines the district's tile, plaster, marble and three woods would all resolve to -1 and be
+     * installed as STATIC anchors: a courthouse you cannot shoot a hole in, with a shell that the
+     * fracture layer treats as bedrock. Each one takes the kind whose damage behaviour it actually has
+     * -- timber splinters whichever species it is, ceramic tile and marble both shatter as masonry, and a
+     * plaster wall soaks an impact like the concrete it is rendered over. What makes the three woods
+     * different is their OWN density (720/580/460 kg/m^3 from the material), applied by the caller below
+     * with `if (dens > 0.0f) g_brick.parent[i].density = dens`, not a separate kind per species. */
+    if (strncmp(name, "wood_", 5) == 0) return BF_KIND_WOOD;
+    if (strcmp(name, "tile") == 0) return BF_KIND_BRICK;
+    if (strcmp(name, "marble") == 0) return BF_KIND_CONCRETE;
+    if (strcmp(name, "plaster") == 0) return BF_KIND_CONCRETE;
     return -1;
 }
 

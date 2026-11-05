@@ -43,6 +43,9 @@ typedef struct {
     float exposure;          /* >= 1 low-end compensation for the dimming */
     float flash_boost;       /* 0..0.30 extra scattered light a lightning strike throws right now */
     int interior;            /* 1 = enclosed level: no sky to radiate fog, so no fog pools indoors */
+    float wind_thin;         /* 0..1 multiplier on the pooled density (1 = still air), resolved from PARENA's
+                                weather-wind-fog-thin-permille so the fog the player sees thin is exactly the
+                                gust the wind bed is playing. <= 0 means "no wind data": untouched. */
 } GroundFogInputs;
 
 typedef struct {
@@ -96,6 +99,10 @@ static void ground_fog_eval_impl(const GroundFogInputs *in, GroundFog *out) {
         density += (1.0f - in->visibility / 900.0f) * 0.55f;
     density += cover * 0.06f;
     density *= 0.55f + 0.45f * storm;
+    /* The air moving eats the pooled fog (founder: wind "blows all the ... fog away"). Applied LAST, after
+     * the weather has decided how much fog there is, so a still storm and a gusting storm are the same
+     * weather with different air -- which is what the sound is telling you. */
+    if (in->wind_thin > 0.0f) density *= gf_clamp01(in->wind_thin);
     density = gf_clamp01(density);
 
     /* Indoors there is no sky to radiate fog, and a pool of it inside a sealed room would be a bug,

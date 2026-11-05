@@ -32,6 +32,37 @@
 #define STORY_AI_GREET_WAVE_MS 1800U
 #define STORY_AI_GREET_DANCE_MS 2800U
 
+/* AI_ROLE_MAGISTRATE -- the civic boss (see ai_combat_magistrate). These live here rather than in
+   PARENA because they are AI behaviour numbers (sightline, cadence), the same vocabulary as the role
+   table below; the unit's health, faction and orders still come from its EMPIRE archetype. The
+   verdict range is longer than every clerk's attack range -- the bench sees the whole gallery -- and
+   700 ms is a punctuation mark, not a death sentence. */
+#define STORY_AI_MAGISTRATE_VERDICT_RANGE 130.0f
+#define STORY_AI_MAGISTRATE_VERDICT_STUN_MS 700U
+#define STORY_AI_MAGISTRATE_VERDICT_COOLDOWN_MS 5000U
+/* The telegraph (founder: "telegraph verdict"). A sentence that simply appears on the tick the bench
+   decides is unstoppable by reading the screen -- it can only be learned by being hit. So the
+   verdict is announced and then served: 600 ms is longer than a human reaction plus a step (roughly
+   250 ms plus the distance a body covers in a third of a second) and shorter than the fight's own
+   rhythm, and breaking the line of sight inside it drops the sentence outright -- which turns the
+   courthouse's single long sightline into the counter-play instead of decoration. */
+#define STORY_AI_MAGISTRATE_VERDICT_TELL_MS 600U
+/* A dropped sentence is not re-read instantly: the bench takes a moment to consider again, so
+   stepping out and back in does not simply roll the same sentence at the next tick. */
+#define STORY_AI_MAGISTRATE_VERDICT_RETRY_MS 800U
+
+/* Presentation events for the verdict (see story_ai_magistrate_event_counts): monotonically counted
+   here because the transitions happen inside this file, in one place, and re-deriving them from
+   verdict_tell_until_ms on the client would mean guessing which edge a sampled frame landed on.
+   Reset only by story_ai_reset -- a level load is a real reset, a respawn is not. */
+static unsigned int g_magistrate_tells;
+static unsigned int g_magistrate_served;
+
+/* The served sentence's floor hazard (verdict_scorch.h). Sim-owned because a hazard that only exists
+   in the renderer cannot hurt anyone, and because the damage has to go through the engine's own death
+   and respawn path rather than a second one written in a draw call. */
+static VerdictScorches g_magistrate_scorches;
+
 
 static float ai_angle_diff(float a, float b) {
     float d = a - b;
@@ -65,6 +96,29 @@ static AINavGraph g_story_nav; /* S461-01 -- real, hand-authored waypoint/cover 
                                    in the BIG_O engine merge phase 7d content cutover). */
 static AISquad g_story_squads[STORY_AI_SQUAD_MAX]; /* S461-03 -- real squad leader system */
 
+/* LINE OF SIGHT (packages/simulation/sight.h, founder: "also require line of site"). The host hands over
+   its solid level boxes once per level load; the COPY is deliberate -- a level can be freed or reloaded
+   while the sim still holds queries, and 2048 boxes at load is cheaper than a dangling pointer at 60 Hz.
+   No boxes installed means an open world, which is exactly the behaviour every existing test and the
+   server have today. Eyes are at chest height on both bodies so a waist-high bench is cover for the
+   floor and not for a person. */
+#define STORY_AI_SIGHT_MAX      4096
+#define STORY_AI_SIGHT_EYE_Y     1.25f
+static SightBox g_sight_boxes[STORY_AI_SIGHT_MAX];
+static int      g_sight_box_count;
+
+void story_ai_set_sight(const SightBox *boxes, int count) {
+    g_sight_box_count = 0;
+    if (!boxes || count <= 0) return;
+    if (count > STORY_AI_SIGHT_MAX) count = STORY_AI_SIGHT_MAX;
+    memcpy(g_sight_boxes, boxes, sizeof(SightBox) * (size_t)count);
+    g_sight_box_count = count;
+}
+
+static int ai_sight_clear(float x0, float y0, float z0, float x1, float y1, float z1) {
+    return sight_segment_clear(g_sight_boxes, g_sight_box_count, x0, y0, z0, x1, y1, z1);
+}
+
 static float ai_len2(float x, float z) { return sqrtf(x * x + z * z); }
 /* Yaw (degrees) that makes an entity FACE/MOVE toward (dx, dz) in the simulation's own yaw
  * convention -- the one shared_movement.h's shankpit_yaw_basis_from_deg and physics.h's hitscan /
@@ -87,6 +141,13 @@ static float ai_clamp(float v, float lo, float hi) {
 
 static void ai_set_mode(AIController *ai, AIMode next_mode, unsigned int now_ms) {
     if (ai->mode == next_mode) return;
+    /* A verdict is only read while the bench is still engaged with the player. Found live by this
+       role's own telegraph test: losing sight drops the AI out of COMBAT, which means
+       ai_combat_magistrate stops running and an armed tell would sit frozen at its last value and
+       land whenever the player next walked back in -- a sentence served minutes after it was read.
+       Leaving combat drops it here, at the one funnel every mode change already goes through, so no
+       exit path can forget. Harmless dead data on every other role (always 0). */
+    if (next_mode != AI_MODE_COMBAT) ai->verdict_tell_until_ms = 0;
     ai->previous_mode = ai->mode;
     ai->mode = next_mode;
     ai->mode_entered_ms = now_ms;
@@ -124,6 +185,7 @@ static const char *ai_role_name(AIRole role) {
         case AI_ROLE_TERRITORIAL_BEAST: return "TERRITORIAL_BEAST";
         case AI_ROLE_BLIND_STALKER: return "BLIND_STALKER";
         case AI_ROLE_WANDERING_BOT: return "WANDERING_BOT";
+        case AI_ROLE_MAGISTRATE: return "MAGISTRATE";
         default: return "UNKNOWN";
     }
 }
@@ -338,6 +400,24 @@ static void ai_assign_role_defaults(AIController *ai, PlayerState *p) {
             ai->aim_error_deg = 7.0f;
             ai->move_speed_scale = 0.9f;
             break;
+        case AI_ROLE_MAGISTRATE:
+            /* The bench. WPN_MAGNUM is the one weapon no other role in the roster carries (45 a
+               round, eight in the cylinder), so the boss reads differently the moment it fires; the
+               long attack_range and the high preferred_range make it hold the far end of the gallery
+               instead of wading in. courage 1.0 keeps S461-01's flee gate shut -- a boss that runs at
+               29 health is a clerk with a title. aim_error_deg is the lowest in the roster on
+               purpose: the verdict below does the missing, not the spray. */
+            p->current_weapon = WPN_MAGNUM;
+            ai->vision_range = 240.0f;
+            ai->vision_fov_deg = 110.0f;
+            ai->hearing_range = 100.0f;
+            ai->attack_range = 120.0f;
+            ai->preferred_range = 90.0f;
+            ai->courage = 1.0f;
+            ai->aggression = 0.7f;
+            ai->aim_error_deg = 3.0f;
+            ai->move_speed_scale = 0.45f;
+            break;
         case AI_ROLE_WANDERING_BOT:
             /* S470 -- real, deliberately harmless: never fires (no combat function is ever
                dispatched for this role, see story_ai_tick's own decision-loop bypass), so
@@ -363,6 +443,9 @@ void story_ai_reset(ServerState *s) {
     g_story_debug_next_log_ms = 0;
     ai_nav_reset(&g_story_nav);
     memset(g_story_squads, 0, sizeof(g_story_squads));
+    g_magistrate_tells = 0;
+    g_magistrate_served = 0;
+    verdict_scorches_reset(&g_magistrate_scorches);
     if (!s) return;
     for (i = 1; i < MAX_CLIENTS; i++) {
         s->players[i].active = 0;
@@ -624,10 +707,30 @@ static void story_ai_downed_tick(ServerState *s, unsigned int now_ms) {
 
 int story_ai_spawn_unit(ServerState *s, int archetype, int kit, int faction, int orders,
                         float x, float y, float z) {
+    return story_ai_spawn_unit_role(s, archetype, -1, kit, faction, orders, x, y, z);
+}
+
+/* story_ai_spawn_unit_role -- the same spawn with an AUTHORED brain role laid over the archetype's.
+ *
+ * EMPIRE's rule is "archetype picks the brain role", and it stays the default; this is the level
+ * editor's other half. A level character already carries a `role` (level_boxes.h) and both hosts
+ * validate it -- but an archetype-authored body threw it away, so every clerk in a civic district was
+ * the same pursuer whatever the level said. With the override one EMPIRE layer can staff a sniper
+ * archivist and a knife orderly, while the archetype still owns the health pool, the skin default and
+ * the orders the unit will accept.
+ *
+ *   role: a real AIRole (story_ai_role_is_valid -- the range now includes the civic boss,
+ *         AI_ROLE_MAGISTRATE), or < 0 for "the archetype's own".
+ *         An out-of-range number is IGNORED rather than clamped: a stale reference must not silently
+ *         become RIFT_HOUND, which is exactly what a clamp would do.
+ */
+int story_ai_spawn_unit_role(ServerState *s, int archetype, int role, int kit, int faction, int orders,
+                             float x, float y, float z) {
     if (!s) return -1;
     EUUnit probe;
     eu_unit_init(&probe, archetype, kit, faction, orders);
     if (probe.archetype == EU_ARCH_NONE) return -1;
+    if (story_ai_role_is_valid(role)) probe.role = role;
     int pid = story_ai_spawn_enemy(s, (AIRole)probe.role, probe.kit, x, y, z);
     if (pid < 0) return -1;
     int idx = ai_index_by_player_id(pid);
@@ -640,6 +743,14 @@ int story_ai_spawn_unit(ServerState *s, int archetype, int kit, int faction, int
     /* The archetype's health pool is the point of an archetype (an ally outlasts a zombie). The brain
        defaults above already set the weapon/senses for the role it picked. */
     s->players[pid].health = probe.health;
+    /* A spawned body arrives with a LOADED weapon. Every other path that puts a gun in a hand fills the
+       magazine -- phys_respawn does it for every respawn, the lobby does it for a joining player -- and
+       this one did not: spawn_enemy memsets the slot, so ammo[] stayed zero. The brain then pulled the
+       trigger on a rifle it had no rounds for, and update_weapons (physics.h) answered the only way it
+       can: "empty, begin a full reload", every time, forever, because the same zero ammo starts the
+       next one. No brain-level test could see that -- in_shoot is intent, and the intent was always
+       correct -- which is exactly why the district's end-to-end test drives the weapon tick. */
+    for (int wp = 0; wp < MAX_WEAPONS; wp++) s->players[pid].ammo[wp] = WPN_STATS[wp].ammo_max;
     return pid;
 }
 
@@ -652,6 +763,41 @@ int story_ai_unit_order(int player_id) {
 int story_ai_unit_archetype(int player_id) {
     int idx = ai_index_by_player_id(player_id);
     return idx < 0 ? -1 : g_story_ai[idx].archetype;
+}
+
+// story_ai_role_slot -- see story_ai.h's own doc comment. A plain scan rather than
+// ai_index_by_player_id because the caller starts from the role, not from a slot.
+int story_ai_role_slot(int role) {
+    int i;
+    for (i = 0; i < STORY_AI_MAX; i++) {
+        if (g_story_ai[i].active && (int)g_story_ai[i].role == role) return g_story_ai[i].player_id;
+    }
+    return -1;
+}
+
+// story_ai_magistrate_scorches -- see story_ai.h's own doc comment.
+const VerdictScorches *story_ai_magistrate_scorches(void) {
+    return &g_magistrate_scorches;
+}
+
+// story_ai_magistrate_event_counts -- see story_ai.h's own doc comment.
+void story_ai_magistrate_event_counts(unsigned int *tells, unsigned int *served) {
+    if (tells) *tells = g_magistrate_tells;
+    if (served) *served = g_magistrate_served;
+}
+
+// story_ai_verdict_tell_fill -- see story_ai.h's own doc comment.
+float story_ai_verdict_tell_fill(int player_id, unsigned int now_ms) {
+    int i;
+    for (i = 0; i < STORY_AI_MAX; i++) {
+        if (!g_story_ai[i].active || g_story_ai[i].player_id != player_id) continue;
+        if (g_story_ai[i].role != AI_ROLE_MAGISTRATE) return -1.0f;
+        if (!g_story_ai[i].verdict_tell_until_ms) return -1.0f;
+        if (now_ms >= g_story_ai[i].verdict_tell_until_ms) return 1.0f;
+        return ai_clamp(1.0f - (float)(g_story_ai[i].verdict_tell_until_ms - now_ms) /
+                                 (float)STORY_AI_MAGISTRATE_VERDICT_TELL_MS, 0.0f, 1.0f);
+    }
+    return -1.0f;
 }
 
 static void ai_set_patrol(AIController *ai, int idx, float x, float y, float z, unsigned int wait_ms, int hint) {
@@ -825,7 +971,11 @@ static void ai_gather_perception(ServerState *s, AIController *ai, AIPerception 
     out->to_player_x = dx;
     out->to_player_z = dz;
 
-    if (dist <= ai->vision_range && in_fov && hero->state != STATE_DEAD) {
+    /* SIGHT IS NOT RANGE + CONE. The cheap FOV/range rejection stays first, then the geometry is asked:
+       a clerk does not see through the courthouse wall just because the hero is inside its cone. */
+    if (dist <= ai->vision_range && in_fov && hero->state != STATE_DEAD &&
+        ai_sight_clear(bot->x, bot->y + STORY_AI_SIGHT_EYE_Y, bot->z,
+                       hero->x, hero->y + STORY_AI_SIGHT_EYE_Y, hero->z)) {
         out->visible = 1;
         ai->last_seen_ms = now_ms;
         ai->last_known_x = hero->x;
@@ -1386,6 +1536,60 @@ static void ai_combat_ally(ServerState *s, AIController *ai, PlayerState *p, con
     if (ai_len2(hero->x - p->x, hero->z - p->z) < 7.0f) p->in_strafe = 0.6f;
 }
 
+/* AI_ROLE_MAGISTRATE -- the civic boss. Two things make it a boss rather than a louder clerk, and
+   both rest on mechanics that already exist below the AI layer:
+     (1) it does not charge. The bench holds its own range and fires a magnum down the gallery
+         (WPN_MAGNUM, the one weapon no other role in the roster carries), so the fight is a long
+         sightline with something heavy standing at the end of it.
+     (2) its ability is a sentence, and it is READ before it is SERVED. Every
+         STORY_AI_MAGISTRATE_VERDICT_COOLDOWN_MS, with the player actually in sight, the bench arms
+         a STORY_AI_MAGISTRATE_VERDICT_TELL_MS window (verdict_tell_until_ms, the value the client's
+         ring and boss bar draw from). Only when that window elapses with the player STILL in sight
+         does it hold them in contempt: p->stunned_until_ms is pushed forward -- the
+         same real field local_game.h's own input gate reads (`cmd_time < p->stunned_until_ms`) -- so
+         the player loses their inputs for that window while the bench keeps firing. Nothing here
+         invents a stun system: the field, its gate and its respawn clearing all pre-date this role.
+         What is new is an AI that writes it on purpose instead of a splash radius doing it by
+         accident.
+   It is deliberately not ranged-only: attack_range 120 against preferred_range 90 means backing off
+   down the hall works, and the boss follows at a walk (move_speed_scale 0.45, the slowest body in
+   the district) rather than teleporting the fight back to its opening distance. */
+static void ai_combat_magistrate(ServerState *s, AIController *ai, PlayerState *p, const AIPerception *per, unsigned int now_ms) {
+    PlayerState *hero = &s->players[0];
+    float target_yaw = ai_angle_to(per->to_player_x, per->to_player_z);
+    target_yaw += humanness_aim_noise(&ai->humanness, ai_clamp(1.0f - ai->aim_error_deg / 10.0f, 0.0f, 1.0f));
+    ai_turn_towards(ai, p, target_yaw, 4.0f);
+    if (per->dist > ai->preferred_range + 12.0f) p->in_fwd = 0.6f * ai->move_speed_scale;
+    else if (per->dist < ai->preferred_range - 20.0f) p->in_fwd = -0.5f * ai->move_speed_scale;
+    else p->in_fwd = 0.0f;
+    p->in_strafe = 0.0f; /* it walks the aisle, it does not weave */
+    if (per->dist <= ai->attack_range && now_ms >= ai->next_attack_ms) {
+        p->in_shoot = 1;
+        ai->next_attack_ms = now_ms + humanness_reaction_delay_ms(&ai->humanness, 620U);
+    }
+    /* Only a player actually IN SIGHT is sentenced: break the line down the gallery and nothing is
+       read at all, even with the doors still shut. The sight test is re-run when the tell expires
+       precisely because the window is meant to be played against -- leaving it is the counter. */
+    int in_reach = per->visible && per->dist <= STORY_AI_MAGISTRATE_VERDICT_RANGE;
+    if (ai->verdict_tell_until_ms) {
+        if (!in_reach) {
+            ai->verdict_tell_until_ms = 0;                         /* line broken: sentence dropped */
+            ai->next_verdict_ms = now_ms + STORY_AI_MAGISTRATE_VERDICT_RETRY_MS;
+        } else if (now_ms >= ai->verdict_tell_until_ms) {
+            unsigned int until = now_ms + STORY_AI_MAGISTRATE_VERDICT_STUN_MS;
+            if (until > hero->stunned_until_ms) hero->stunned_until_ms = until;
+            ai->verdict_tell_until_ms = 0;
+            ai->next_verdict_ms = now_ms + STORY_AI_MAGISTRATE_VERDICT_COOLDOWN_MS;
+            g_magistrate_served++;
+            /* The sentence leaves its mark where the bench is standing -- and that mark burns. */
+            verdict_scorch_push(&g_magistrate_scorches, p->x, p->y, p->z, p->scene_id, now_ms);
+        }
+    } else if (in_reach && now_ms >= ai->next_verdict_ms) {
+        ai->verdict_tell_until_ms = now_ms + STORY_AI_MAGISTRATE_VERDICT_TELL_MS;
+        g_magistrate_tells++;
+    }
+}
+
 static void ai_run_combat(ServerState *s, AIController *ai, const AIPerception *per, unsigned int now_ms) {
     PlayerState *p = &s->players[ai->player_id];
     if (ai->role == AI_ROLE_RIFT_HOUND) ai_combat_hound(s, ai, p, per, now_ms);
@@ -1396,8 +1600,85 @@ static void ai_run_combat(ServerState *s, AIController *ai, const AIPerception *
     else if (ai->role == AI_ROLE_RELENTLESS_PURSUER) ai_combat_pursuer(s, ai, p, per, now_ms);
     else if (ai->role == AI_ROLE_TERRITORIAL_BEAST) ai_combat_territorial_beast(s, ai, p, per, now_ms);
     else if (ai->role == AI_ROLE_BLIND_STALKER) ai_combat_blind_stalker(s, ai, p, per, now_ms);
+    else if (ai->role == AI_ROLE_MAGISTRATE) ai_combat_magistrate(s, ai, p, per, now_ms);
     else ai_combat_trooper(s, ai, p, per, now_ms);
     ai_squad_apply_role_bias(ai, p); /* S461-03 -- a real no-op for these roles, squad_id stays -1 */
+}
+
+/* ai_scorch_burn -- the floor mark's damage. Shield-then-health, the same order story_boss_tick and
+   witness_ai.c's own melee path use, and deliberately NOT physics.h's katana_apply_damage: physics.h
+   defines its functions non-static, so a second translation unit including it collides at link time
+   (confirmed live here -- `make lobby` failed with "multiple definition of phys_resolve_rewind"
+   against main.c's own copy, the exact collision witness_ai.c's hero-melee helper documents). The
+   essential death fields are reimplemented instead, minus attacker reward bookkeeping: a burn is not a
+   kill, and once the bench is dead this mark has no owner left to credit. Respawn delay 2000 ms
+   matches mode_respawn_delay_ms's MODE_STORY default that witness_ai.c's own copy names. */
+static void ai_scorch_burn(PlayerState *p, float from_x, float from_z, unsigned int now_ms) {
+    int damage = VERDICT_SCORCH_DAMAGE;
+    if (!p->active || p->state == STATE_DEAD) return;
+    if (p->shield > 0) {
+        if (p->shield >= damage) { p->shield -= damage; damage = 0; }
+        else { damage -= p->shield; p->shield = 0; }
+    }
+    p->health -= damage;
+    if (p->hit_feedback < 15) p->hit_feedback = 15;   /* defender knows it was hit, same floor as a shot */
+    if (p->health > 0) return;
+
+    p->health = 0;
+    p->state = STATE_DEAD;
+    p->in_shoot = 0;
+    p->in_reload = 0;
+    p->in_use = 0;
+    p->in_jump = 0;
+    p->in_ability = 0;
+    p->is_shooting = 0;
+    p->dash_timer = 0;
+    p->death_time_ms = now_ms;
+    p->death_duration_ms = 2000u;
+    p->respawn_time = now_ms + 2000u;
+    {
+        float away_x = p->x - from_x, away_z = p->z - from_z;
+        float len = ai_len2(away_x, away_z);
+        if (len > 0.0001f) {
+            p->death_dir_x = away_x / len;
+            p->death_dir_z = away_z / len;
+        } else {
+            p->death_dir_x = 0.0f;
+            p->death_dir_z = 1.0f;
+        }
+    }
+    p->vx = p->death_dir_x * 0.35f;
+    p->vz = p->death_dir_z * 0.35f;
+    p->vy = 0.14f;
+}
+
+/* ai_magistrate_scorches_tick -- the hazard half of a served verdict. One pass per scorch per tick,
+   so several players standing in the same mark all get burnt, and the cadence clock advances once
+   instead of once per body. AI bodies are excluded on purpose: the bench stands in its own scorch for
+   the rest of the fight, and a boss that immolates itself -- and its own bailiff -- would be a rule,
+   not a hazard. The mark outlives the boss: a scorch keeps burning for its full life after the
+   magistrate is dead, which is exactly what the death state above does not touch. */
+static void ai_magistrate_scorches_tick(ServerState *s, unsigned int now_ms) {
+    int i, pid;
+    if (verdict_scorches_live(&g_magistrate_scorches) == 0) return;
+    for (i = 0; i < VERDICT_SCORCH_MAX; i++) {
+        VerdictScorch *sc = &g_magistrate_scorches.pool[i];
+        if (!sc->active) continue;
+        int due = verdict_scorch_due(sc, now_ms);
+        int hit_any = 0;
+        for (pid = 0; due && pid < MAX_CLIENTS; pid++) {
+            PlayerState *p = &s->players[pid];
+            if (!p->active || p->state == STATE_DEAD || p->is_bot) continue;
+            if (!verdict_scorch_covers(sc, p->scene_id, p->x, p->z, now_ms)) continue;
+            /* standing in the mark is not enough if a bench, a wall or a pew is between you and it: the
+               burn is a fire on the floor, and fire does not go through cover. Same query the eyes use. */
+            if (!ai_sight_clear(sc->x, sc->y + 0.2f, sc->z, p->x, p->y + STORY_AI_SIGHT_EYE_Y, p->z)) continue;
+            ai_scorch_burn(p, sc->x, sc->z, now_ms);
+            hit_any = 1;
+        }
+        if (hit_any) verdict_scorch_advance(sc, now_ms);
+    }
+    verdict_scorches_age(&g_magistrate_scorches, now_ms);
 }
 
 void story_ai_tick(ServerState *s, unsigned int now_ms) {
@@ -1428,6 +1709,9 @@ void story_ai_tick(ServerState *s, unsigned int now_ms) {
     if (!tick_allowed) return;
 
     memset(&g_story_bb, 0, sizeof(g_story_bb));
+
+    /* the served sentence's floor hazard burns independently of what any AI is doing this tick */
+    ai_magistrate_scorches_tick(s, now_ms);
 
     for (i = 0; i < STORY_AI_MAX; i++) {
         AIController *ai = &g_story_ai[i];

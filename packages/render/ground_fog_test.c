@@ -187,6 +187,51 @@ int main(void) {
         printf("PASS: an enclosed level gets no ground fog\n");
     }
 
+    /* ---- WIND blows the fog away (founder: "blows all the ... fog away") ---- */
+    {
+        /* Not the fully saturated storm here: a pea-souper is already clamped to 1.0, so the RATIO has to
+           be measured on a bank with room to thin, or the test would be measuring the clamp. */
+        GroundFogInputs still = stormy();
+        GroundFogInputs windy = stormy();
+        GroundFog a, b;
+        still.fog_wash = 0.5f; still.visibility = 3000.0f; still.storm = 0.2f;
+        windy = still;
+        still.wind_thin = 1.0f;          /* still air: the rules' own "untouched" value */
+        windy.wind_thin = 0.4f;          /* a gale: the floor of weather-wind-fog-thin-permille */
+        ground_fog_eval(&still, &a);
+        ground_fog_eval(&windy, &b);
+        CHECK(fabsf(b.density - a.density * 0.4f) < 1.0e-4f,
+              "wind did not thin the density proportionally (%.3f vs %.3f)", b.density, a.density);
+        CHECK(ground_fog_density_at(&b, 2.0f) < ground_fog_density_at(&a, 2.0f),
+              "the wind thinned the density field but not the fog at head height");
+        printf("PASS: a gale thins the pooled fog to %.2f of its still-air density\n", b.density / a.density);
+
+        /* and a saturated bank still gets thinner, it just cannot get denser than the clamp */
+        GroundFogInputs soup = stormy();
+        GroundFogInputs soup_windy = stormy();
+        GroundFog s, sw;
+        soup.wind_thin = 1.0f;
+        soup_windy.wind_thin = 0.4f;
+        ground_fog_eval(&soup, &s);
+        ground_fog_eval(&soup_windy, &sw);
+        CHECK(sw.density < s.density, "a gale did not thin an already-saturated fog bank (%.3f vs %.3f)",
+              sw.density, s.density);
+    }
+
+    /* ---- no wind data is not the same thing as maximum wind ---- */
+    {
+        GroundFogInputs none = stormy();
+        GroundFogInputs dead = stormy();
+        GroundFog a, b;
+        none.wind_thin = 0.0f;           /* host predates the wind rules */
+        dead.wind_thin = 0.0001f;        /* the rules' floor, essentially */
+        ground_fog_eval(&none, &a);
+        ground_fog_eval(&dead, &b);
+        CHECK(a.density > 0.0f && a.density > b.density,
+              "0 wind_thin was treated as no fog (%.3f vs %.3f) instead of no data", a.density, b.density);
+        printf("PASS: 0 wind_thin means \"no wind data\", not \"wind removed all the fog\"\n");
+    }
+
     /* ---- layers stack upward with decreasing alpha, all sane and all above the ground ---- */
     {
         GroundFogInputs in = stormy();

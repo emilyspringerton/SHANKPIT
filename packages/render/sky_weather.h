@@ -48,6 +48,13 @@ typedef struct {
     float flash, flash_dx, flash_dz;
     unsigned int next_bolt_ms, bolt_seed;
     float bolt_age;
+    /* Thunder (2026-11-05): bolt_count increments once per strike so a host can edge-trigger exactly one
+     * rumble per flash, and bolt_dist is how far away that strike actually was, in world units, which is
+     * the whole of the sound's delay. The bolt is DRAWN 55 units out in the fog (a stylised strike on the
+     * horizon); the physical distance is deliberately not the drawn one -- a bolt at 900 units would be
+     * outside the fog entirely, and the sound is the part that has to be true. */
+    float bolt_dist;               /* 150..1300 world units */
+    unsigned int bolt_count;       /* strikes seen this session, monotone */
     /* derived each update */
     float sun[3], moon[3], sun_e;  /* sun direction, moon direction, sun elevation (-1..1) */
     float zen[3], hor[3], glow[3], glow_amt, light[3], clear[3], fog[3], fog_density, night;
