@@ -43,8 +43,8 @@ WASM_PROFILE      ?= bp_target_wasm_core
 
 .PHONY: game game-test game-smoke game-stream-smoke game-net-smoke game-level-relay-smoke \
         game-level-request-smoke game-mod-authority-smoke game-capped-client-smoke \
-        game-level-interest-smoke game-level-unregister-smoke game-multi-peer-smoke \
-        game-clang game-llvm game-test-clang core core-smoke wasm wasm-smoke
+        game-level-interest-smoke game-level-unregister-smoke game-level-transition-smoke \
+        game-multi-peer-smoke game-clang game-llvm game-test-clang core core-smoke wasm wasm-smoke
 
 game: $(GAME_BIN)
 
@@ -257,6 +257,26 @@ game-level-unregister-smoke: $(GAME_BIN)
 	  cat /tmp/shank_gone_host.log; cat /tmp/shank_gone_client.log; \
 	  grep -q 'level_rows=0' /tmp/shank_gone_host.log && \
 	  grep -q 'level=6 env=0 mods=0 rev=0' /tmp/shank_gone_client.log && \
+	  test $$CLIENT_STATUS -eq 0 -a $$HOST_STATUS -eq 0
+
+# The watched level is gone but the manifest still has a live replacement. The server offers packet
+# 7 every tick until the client re-advertises interest (packet 6); the client must reset onto level 1,
+# and the server must end with peer_level=1 and one row.
+game-level-transition-smoke: $(GAME_BIN)
+	@printf '%s' '{"levels":[{"id":1,"name":"SURFACE YARD","env":0},{"id":6,"name":"CLOSED YARD","env":0}]}' \
+	  > /tmp/shank_transition_levels.json
+	@rm -f /tmp/shank_transition_host.log /tmp/shank_transition_client.log
+	./$(GAME_BIN) --host 7800 --headless 900 --levels /tmp/shank_transition_levels.json \
+	  --level 6 --unregister-level 6 > /tmp/shank_transition_host.log 2>&1 & \
+	  HOST_PID=$$!; sleep 1; \
+	  ./$(GAME_BIN) --join 127.0.0.1 7800 --headless 180 --level 6 --env surface \
+	    > /tmp/shank_transition_client.log 2>&1; \
+	  CLIENT_STATUS=$$?; wait $$HOST_PID; HOST_STATUS=$$?; \
+	  cat /tmp/shank_transition_host.log; cat /tmp/shank_transition_client.log; \
+	  grep -q 'level=1 env=0 mods=31 rev=1' /tmp/shank_transition_client.log && \
+	  grep -q 'transitions=1' /tmp/shank_transition_client.log && \
+	  grep -q 'peer_level=1' /tmp/shank_transition_host.log && \
+	  grep -q 'level_rows=1' /tmp/shank_transition_host.log && \
 	  test $$CLIENT_STATUS -eq 0 -a $$HOST_STATUS -eq 0
 
 # Four levels are registered on the server; the client advertises interest in level 2, so the

@@ -76,6 +76,8 @@ int net_packet_level_mods(void);
 int net_packet_mod_request(void);
 int net_mod_request_size(void);
 int net_packet_caps(void);
+int net_packet_level_transition(void);
+int net_level_transition_size(void);
 int net_caps_size(void);
 int net_welcome_size(void);
 int net_max_peers(void);

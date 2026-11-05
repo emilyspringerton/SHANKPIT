@@ -225,6 +225,8 @@ static void test_net(void) {
     check(net_mod_request_size() == 20, "a mod request carries a per-peer token");
     check(net_packet_caps() == 6, "capability advertisements are packet type 6");
     check(net_caps_size() == 12, "a capability advertisement carries caps and a level");
+    check(net_packet_level_transition() == 7, "level transitions are packet type 7");
+    check(net_level_transition_size() == 16, "a transition names env/from/to and a sequence");
     check(net_packet_welcome() == 3 && net_welcome_size() == 16,
           "welcome names the assigned slot and issues a token");
     check(net_max_peers() == 4 && net_first_client_slot() == 8,
@@ -257,8 +259,9 @@ static void test_net(void) {
     check(net_level_mods_size() ==
               net_level_mods_header_bytes() + net_max_level_mods() * net_level_mod_bytes(),
           "level mods size is header + rows");
-    check(net_valid_packet(5) == 1 && net_valid_packet(6) == 1 && net_valid_packet(7) == 0,
-          "packets 0..6 on the wire, 7 refused");
+    check(net_valid_packet(5) == 1 && net_valid_packet(6) == 1 && net_valid_packet(7) == 1 &&
+              net_valid_packet(8) == 0,
+          "packets 0..7 on the wire, 8 refused");
     check(net_valid_level_count(0) == 1 && net_valid_level_count(1) == 1 &&
               net_valid_level_count(net_max_level_mods()) == 1,
           "an empty row set and a bounded row set are valid state");

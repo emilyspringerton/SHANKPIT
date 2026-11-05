@@ -104,6 +104,11 @@ jobs:
       - name: Level unregister smoke
         run: make game-level-unregister-smoke PARENA_BIN="$PWD/PARENA/parena"
 
+      # A removed watched level with a live replacement: packet 7 is offered until the client's
+      # packet 6 acknowledges the new level, then the server filters rows by the new interest.
+      - name: Level transition smoke
+        run: make game-level-transition-smoke PARENA_BIN="$PWD/PARENA/parena"
+
       # Two clients at once, different caps and levels: two peer rows, distinct slots.
       - name: Multi-peer smoke
         run: make game-multi-peer-smoke PARENA_BIN="$PWD/PARENA/parena"

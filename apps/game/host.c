@@ -119,11 +119,23 @@ typedef struct __attribute__((packed)) {
     uint32_t token_hi;
 } NetWelcome;
 
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint8_t type;
+    uint8_t env;
+    uint16_t from;
+    uint16_t to;
+    uint16_t seq;
+    uint32_t pad;
+} NetLevelTransition;
+
 _Static_assert(sizeof(NetLevelMod) == 8, "NetLevelMod must match net_level_mod_bytes()");
 _Static_assert(sizeof(NetLevelMods) == 72, "NetLevelMods must match net_level_mods_size()");
 _Static_assert(sizeof(NetModRequest) == 20, "NetModRequest must match net_mod_request_size()");
 _Static_assert(sizeof(NetCaps) == 12, "NetCaps must match net_caps_size()");
 _Static_assert(sizeof(NetWelcome) == 16, "NetWelcome must match net_welcome_size()");
+_Static_assert(sizeof(NetLevelTransition) == 16,
+               "NetLevelTransition must match net_level_transition_size()");
 
 /* ---- bodies ------------------------------------------------------------------------------------ */
 typedef struct {
@@ -178,6 +190,7 @@ typedef struct {
     int slot;
     int caps;
     int level;
+    int transition_to; /* replacement offered until the peer's packet 6 acknowledges it */
     int rows;
     int last_seen;
     uint64_t token;         /* opaque per-peer capability, issued in WELCOME */
@@ -207,9 +220,11 @@ static uint64_t g_request_token;
 static int g_request_token_set; /* test/debug override: send a deliberately wrong token */
 static int g_caps_sent;
 static int g_snapshots_received;
+static int g_level_transitions;
 
 static void net_recv_or_send(void);
 static void net_client_tick(void);
+static void start_round(void);
 
 /* ---- framebuffer -------------------------------------------------------------------------------- */
 static uint32_t g_fb[FRAME_W * FRAME_H];
@@ -662,6 +677,30 @@ static NetPeer *net_peer_register(const NetAddr *from) {
     }
 }
 
+/* First live level other than the one the peer is losing. The registry order is the server's
+ * fallback policy: no authored transition graph yet, but the offer/ack path is the same one an
+ * authored graph will use. */
+static int net_transition_target(int from) {
+    int i;
+    for (i = 0; i < LEVEL_MODS_MAX_LEVELS; i++) {
+        int id = level_mods_level_at(i);
+        if (id > 0 && id <= 65535 && id != from && level_mods_env(id) >= 0) return id;
+    }
+    return 0;
+}
+
+static void net_send_level_transition(const NetPeer *p, int from, int to) {
+    NetLevelTransition t;
+    memset(&t, 0, sizeof(t));
+    t.magic = (uint32_t)net_magic();
+    t.type = (uint8_t)net_packet_level_transition();
+    t.env = (uint8_t)level_mods_env(to);
+    t.from = (uint16_t)from;
+    t.to = (uint16_t)to;
+    t.seq = (uint16_t)(g_net_seq++);
+    net_transport_send(&p->addr, &t, (int)sizeof(t));
+}
+
 static void net_send_welcome(const NetPeer *p) {
     NetWelcome w;
     memset(&w, 0, sizeof(w));
@@ -730,6 +769,22 @@ static void net_send_level_mods(void) {
     for (pi = 0; pi < net_max_peers() && pi < MAXB; pi++) {
         NetPeer *p = &g_peers[pi];
         if (!p->used) continue;
+        int watch = p->level;
+        /* The watched level is gone: offer the first live replacement until the peer acknowledges
+         * with packet 6. Keep sending that replacement's row in the same absolute set, so a client
+         * that sees the row before the offer still has the target state waiting for it. */
+        if (watch != net_interest_all() && level_mods_env(watch) < 0) {
+            if (p->transition_to <= 0 || level_mods_env(p->transition_to) < 0) {
+                p->transition_to = net_transition_target(watch);
+            }
+            if (p->transition_to > 0) {
+                net_send_level_transition(p, watch, p->transition_to);
+                watch = p->transition_to;
+            }
+        } else {
+            p->transition_to = 0;
+        }
+
         memset(&m, 0, sizeof(m));
         m.magic = (uint32_t)net_magic();
         m.type = (uint8_t)net_packet_level_mods();
@@ -737,7 +792,7 @@ static void net_send_level_mods(void) {
         for (i = 0; i < LEVEL_MODS_MAX_LEVELS && m.count < net_max_level_mods(); i++) {
             int level_id = level_mods_level_at(i);
             if (level_id <= 0 || level_id > 65535) continue;
-            if (!net_interest_match(p->level, level_id)) continue;
+            if (!net_interest_match(watch, level_id)) continue;
             m.mods[m.count].level_id = (uint16_t)level_id;
             /* Per-peer interest: send the authoritative mask clamped to what this peer has ported.
              * The server's registry is untouched, and the client still clamps on arrival. */
@@ -773,6 +828,7 @@ static void net_host_recv(void) {
             if (!p) continue;
             p->caps = lm_sanitize((int)pkt.caps.caps);
             p->level = (int)pkt.caps.level;
+            p->transition_to = 0; /* packet 6 is the acknowledgement that ends a transition offer */
             p->last_seen = g_tick;
             continue;
         }
@@ -895,6 +951,7 @@ static void net_client_tick(void) {
         NetSnapshot snap;
         NetLevelMods mods;
         NetWelcome welcome;
+        NetLevelTransition transition;
     } pkt;
     NetAddr from;
 
@@ -949,6 +1006,31 @@ static void net_client_tick(void) {
             if (n != (ssize_t)sizeof(NetWelcome)) continue;
             net_apply_welcome((int)pkt.welcome.slot,
                               net_token_from_wire(pkt.welcome.token_lo, pkt.welcome.token_hi));
+            continue;
+        }
+
+        if (pkt.snap.type == net_packet_level_transition()) {
+            int from, to, env;
+            if (n != (ssize_t)sizeof(NetLevelTransition)) continue;
+            from = (int)pkt.transition.from;
+            to = (int)pkt.transition.to;
+            env = (int)pkt.transition.env;
+            /* A repeat of an offer we already accepted is an unacknowledged packet 6: advertise
+             * again next tick. This heals a lost acknowledgement without a new packet type. */
+            if (from != g_level_id) {
+                if (to == g_level_id) g_caps_sent = 0;
+                continue;
+            }
+            if (to <= 0 || to == from || !lm_env_valid(env)) continue;
+            /* Register the target first: if the table is full, stay on the old live level. */
+            if (!level_mods_register(to, env)) continue;
+            level_mods_unregister(g_level_id);
+            g_level_id = to;
+            g_level_env = env;
+            g_caps_sent = 0;
+            g_level_transitions++;
+            feed_push("LEVEL TRANSITION", 240);
+            start_round();
             continue;
         }
 
@@ -1447,6 +1529,7 @@ int main(int argc, char **argv) {
         net_mod_request_size() != (int)sizeof(NetModRequest) ||
         net_caps_size() != (int)sizeof(NetCaps) ||
         net_welcome_size() != (int)sizeof(NetWelcome) ||
+        net_level_transition_size() != (int)sizeof(NetLevelTransition) ||
         net_max_bodies() != MAXB || net_first_client_slot() + net_max_peers() != MAXB) {
         fprintf(stderr, "shank_game: wire struct size or peer-slot layout disagrees with net_rules.prn\n");
         return 2;
@@ -1541,8 +1624,8 @@ int main(int argc, char **argv) {
                 }
             }
             printf("headless %d ticks: target=%s net=%s mode=%d %s=%d score=%d hp=%d shield=%d"
-                   " bodies=%d events=%d level=%d env=%d mods=%d rev=%d snapshots=%d peer=%d"
-                   " peers=%d peer_caps=%d peer_level=%d level_rows=%d slot=%d"
+                   " bodies=%d events=%d level=%d env=%d mods=%d rev=%d snapshots=%d transitions=%d"
+                   " peer=%d peers=%d peer_caps=%d peer_level=%d level_rows=%d slot=%d"
                    " mod_policy=%s mod_requests=%u mod_refused=%u level_name=%s",
                    headless, build_profile_name(), build_profile_net_name(),
                    g_mode, g_mode == gp_mode_zombies() ? "wave" : "frags",
@@ -1550,7 +1633,8 @@ int main(int argc, char **argv) {
                    g_player_score, local_body()->hp, local_body()->shield, bot_count_alive(),
                    reflux_host_total_dispatched(), g_level_id, g_level_env,
                    level_mods_mask(g_level_id), level_mods_revision(g_level_id),
-                   g_snapshots_received, g_is_host ? (g_peer_count > 0) : g_peer_known,
+                   g_snapshots_received, g_level_transitions,
+                   g_is_host ? (g_peer_count > 0) : g_peer_known,
                    g_peer_count, first_caps, first_level, first_rows,
                    g_is_client ? g_local_slot : first_slot, net_mod_policy_name(g_mod_policy),
                    g_mod_requests, g_mod_refused, level_catalog_name(g_level_id));

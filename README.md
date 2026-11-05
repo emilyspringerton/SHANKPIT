@@ -1715,6 +1715,10 @@ a core-only client (3) meet, the server reports `peer_caps=3`, and the client st
 2; the server must send exactly one row (`level_rows=1`) carrying mask 11.
 `make game-multi-peer-smoke` runs two clients at once with different masks and watched levels: the
 server reports `peers=2`, slots 8 and 9, caps 31 and 3, and one independently clamped row for each.
+When a watched level is removed, packet 7 offers the first live replacement and repeats until packet
+6 comes back naming the new level. The client registers the target, resets its local round and
+re-advertises; a repeat of an offer it already accepted makes it send packet 6 again, so a dropped
+acknowledgement heals on the next tick.
 
 Packet 5 now carries the welcome token. A request from an unknown address is dropped rather than
 registering a peer, a token mismatch is refused, and accepted requests are limited to one per peer
@@ -1770,7 +1774,7 @@ target; a server can evolve level mods over whatever transport that target has.
 | 3 | Per-target profiles from one source | every client applies/reports `build_profiles.prn` through one `build_profile` module; a target is still chosen by one `SHANKPIT_BUILD_TARGET` define | the profile is emitted by the build system itself, so adding a target needs no second hand edit |
 | 4 | Mod-request authority | packet 5 requires the per-peer welcome token, enforces a 500 ms per-peer cooldown, and obeys an explicit `--mod-policy off|owner|peer` (default owner); unknown senders do not register | remote play commands/caps still carry no token, so the remaining identity work is across the rest of the play socket |
 | 5 | Durable stream identity | every JSONL line carries a persisted `stream` id that continues after the file's last line across process restarts; replay validates the whole contiguous sequence before applying anything and refuses gaps, duplicates or old unnumbered lines | done for the level-mod JSONL stream; replay schema versioning is step 8 |
-| 6 | Level unregister/transition | `level_mods_unregister` frees the slot and emits REFLUX row 143; JSONL/replay carry `unregistered`; the server sends an empty authoritative level-row packet when a level is gone, and a client drops its watched level instead of keeping the old mask | drop is done; a server-directed transition to a replacement level still needs a scene-change handshake |
+| 6 | Level unregister/transition | `level_mods_unregister` frees the slot and emits REFLUX row 143; JSONL/replay carry `unregistered`; an empty row set is authoritative; packet 7 offers the first live replacement until the client's packet 6 acknowledges it, and the client resets onto that level | complete; replacement currently follows registry order rather than an authored transition graph |
 | 7 | Manifest write-back | evolved masks are memory-only; replay is the only recovery path | an operator can persist the live mask/revision back to `levels.json` atomically, with the same validator as load |
 | 8 | Replay schema versioning | line parser trusts event names and skips unknowns | the stream carries a schema version; unknown versions/rows are refused rather than silently dropped |
 | 9 | Unified core packaging | WASM core now ships in every release; native clients ship separately | one core archive/build feeds native and browser shells, with a shared version string and no duplicated host glue |
@@ -1783,8 +1787,8 @@ are the payoff (one core, several shells) and are only meaningful after the port
 
 ### Verification for this slice
 
-- `make game-test` - 293 checks (registry, capabilities, profiles, token/policy rules, replay, relay, catalog, durable event streams, unregister).
-- `make game-test-clang` - the same 293 under Clang.
+- `make game-test` - 295 checks (registry, capabilities, profiles, token/policy rules, replay, relay, catalog, durable event streams, unregister, transition).
+- `make game-test-clang` - the same 295 under Clang.
 - `make game-clang` / `make game-llvm` then `--headless 5` - both boot, 31 modules on level 1.
 - `make wasm` / `make wasm-smoke` - zero-import module, wasm-core profile, caps 3, no transport, state 31 clamped to 3, trig checked, plus a rendered 1024x576 frame and fixed-step forward/turn movement.
 - `make core` / `make core-smoke` - native core with no networking: moon 3, capped 3, shed 27/rev 2,
@@ -1793,12 +1797,14 @@ are the payoff (one core, several shells) and are only meaningful after the port
 - `make game-capped-client-smoke` - surface server 31, core client 3 across UDP, server logs `peer_caps=3`.
 - `make game-level-interest-smoke` - four registered levels, one interested peer, exactly one row sent.
 - `make game-level-unregister-smoke` - the server removes its only level; the empty row set makes the client free the level (`mods=0 rev=0`) instead of keeping mask 31.
+- `make game-level-transition-smoke` - the watched level is gone but level 1 is live; the server offers packet 7 until the client acknowledges, and the client finishes on `level=1 mods=31 transitions=1`.
 - `make game-multi-peer-smoke` - two clients, independent caps 31/3 and levels 1/2, slots 8/9, two rows.
 - `make game-level-request-smoke` - the owner policy accepts the client's tokened request and reports `mod_requests=1 mod_refused=0`.
 - `make game-mod-authority-smoke` - a wrong token is refused and a correct one is accepted across two real clients (`mod_requests=1 mod_refused=1`).
 - `make game-stream-smoke` - two separate host processes append a contiguous `stream` 1..N sequence to one JSONL file, and replay accepts it.
 - `make game-level-relay-smoke`, `make game-smoke` - unchanged.
 
-Known limits: the WASM client core has no allocator and no audio or networking; its weather/sky
+Known limits: a level transition targets the first live level in registry order, not an authored
+per-level link; the WASM client core has no allocator and no audio or networking; its weather/sky
 module bits remain off; the trig is accurate for the rules' range but is not a full libm; the profile table is applied in every build but a target is still selected by one compile-time define; the transport seam exists but only one implementation (host-C UDP) does, packet scheduling is
 still host C, and no target is FFI-free yet; LLVM-LTO's size drop (90 KB to 69 KB) is a build result, not a measured runtime speedup. Packet 5 is token-authenticated, but caps and play commands still trust the UDP source address, and the 64-bit token is an opaque capability generated from the clock/address, not a cryptographic credential or an account identity.
