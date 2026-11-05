@@ -1646,3 +1646,74 @@ snapshot, the daemon and the WOTAN page are all real and tested end to end, but 
 deployed** (WOTAN's nginx proxies `/api/v1/shankpit-net/` to `127.0.0.1:8791`, which is the box that
 runs the world, not a cluster pod), nothing in the game draws the feed yet, and a finished match is
 not yet reported to IDUNA as a rated match.
+
+## Clean-room clients: GCC, Clang/LLVM, WASM core (2026-11-05)
+
+The clean-room game (`apps/game`, `packages/game`, `packages/reflux`) now builds the SAME PARENA
+level-module registry into several client families. "Pure LLM" in the request is read as the LLVM
+toolchain: Clang plus LTO, linked with `lld`, kept separate from the GCC build. Nothing is forked:
+all targets compile `build/game_rules.c` from the same `.prn` sources and link the same
+`level_mods_host.c` / `reflux_runtime.c`.
+
+### Target matrix
+
+| target | command | artifact | modules it admits |
+|---|---|---|---|
+| GCC native | `make game` | `bin/shank_game` | all 5 (core sim, level, weather render, weather audio, sky) |
+| Clang native | `make game-clang` | `bin/shank_game_clang` | all 5 |
+| LLVM-LTO native | `make game-llvm` | `bin/shank_game_llvm` (clang + `-flto` + `lld`) | all 5 |
+| Pure WASM core | `make wasm` | `bin/shank_core.wasm` (17 KB, zero imports) | core sim + level only (mask 3) |
+| Clang rules suite | `make game-test-clang` | `bin/shank_game_test_clang` | all 5 |
+| WASM boot check | `make wasm-smoke` | Node boots the real module | core sim + level only |
+
+The WASM module is a headless CORE, not a playable browser client yet: it needs no libc, no SDL,
+no imports, and carries its own `sin`/`cos`/`atan2`. It exports `wasm_boot`, registration, state
+apply, mask/revision/enabled queries and the rules' trig. `make wasm-smoke` instantiates it and
+proves a surface server state of 31 clamps to 3, an older state cannot roll it back, and the trig
+matches JavaScript's. The playable render/input/audio port is still ahead.
+
+### One registry, per-build capabilities
+
+A module id and its default/mandatory policy live in `packages/game/level_mods.prn`; the target
+does not re-implement any of that. A build that has only ported some modules declares its mask
+before registering anything:
+
+- `--capabilities MASK` on the native client (e.g. `3` = core sim + level),
+- `wasm_boot()` for the WASM core (always the ported set).
+
+Opening masks and incoming authoritative state are intersected with that mask, and enabling an
+unported module is refused before a REFLUX row is dispatched. Mandatory modules are always kept.
+`make game-capped-client-smoke` proves it across a real socket: a surface server (mask 31) and a
+core-only client (mask 3) meet, and the client stays at 3 even though the server's state arrived.
+
+### Next steps, in order
+
+| # | step | current state | done when |
+|---|---|---|---|
+| 1 | Capability handshake | client clamps locally; server does not know a peer's mask | a client advertises caps once and the server composes/optimizes masks per peer instead of sending one global level mask |
+| 2 | WASM render/input/audio | core registry only; no canvas, no input, no audio | a browser build boots a level, draws it, and moves a body with the same rules as native |
+| 3 | Per-target profiles from one source | `wasm_boot()` hardcodes mask 3; `--capabilities` is a flag | target module sets are declared once and emitted into C/WASM builds, so adding a port updates every target without editing bootstrap code |
+| 4 | Mod-request authority | packet 5 is unauthenticated on the play socket; only level/module/on are validated | identity (or a per-peer token), rate limiting, and an explicit server policy for who may shed modules |
+| 5 | Durable stream identity | JSONL `seq` restarts with each process; replay relies on file order | a persisted monotonically increasing stream id survives restarts, and replay rejects gaps/duplicates |
+| 6 | Level unregister/transition | the table only grows (8 slots); no way to remove a level | `level_mods_unregister` frees a slot, emits an event, and clients drop/transition without keeping a stale mask |
+| 7 | Manifest write-back | evolved masks are memory-only; replay is the only recovery path | an operator can persist the live mask/revision back to `levels.json` atomically, with the same validator as load |
+| 8 | Replay schema versioning | line parser trusts event names and skips unknowns | the stream carries a schema version; unknown versions/rows are refused rather than silently dropped |
+| 9 | Unified core packaging | WASM core now ships in every release; native clients ship separately | one core archive/build feeds native and browser shells, with a shared version string and no duplicated host glue |
+| 10 | Cross-target parity | GCC/Clang/LTO/WASM each have their own checks | one scenario runs through all targets and asserts identical masks, revisions and event counts |
+
+Ordering rationale: 1 and 3 make module porting safe before more ports land; 2 is the first
+user-visible WASM client; 4-8 harden the server/stream path the founder asked to evolve live; 9-10
+are the payoff (one core, several shells) and are only meaningful after the ports exist.
+
+### Verification for this slice
+
+- `make game-test` - 241 checks (registry, capabilities, replay, relay, catalog, event log).
+- `make game-test-clang` - the same 241 under Clang.
+- `make game-clang` / `make game-llvm` then `--headless 5` - both boot, 31 modules on level 1.
+- `make wasm` / `make wasm-smoke` - zero-import module, caps 3, state 31 clamped to 3, trig checked.
+- `make game-capped-client-smoke` - surface server 31, core client 3 across UDP.
+- `make game-level-request-smoke`, `make game-level-relay-smoke`, `make game-smoke` - unchanged.
+
+Known limits: the WASM core has no allocator and no player; the trig is accurate for the rules'
+range but is not a full libm; module sets are still hand-declared per target; LLVM-LTO's size drop
+(90 KB to 69 KB) is a build result, not a measured runtime speedup.
