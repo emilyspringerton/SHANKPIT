@@ -1,25 +1,25 @@
 #ifndef POLICE_PATROL_H
 #define POLICE_PATROL_H
 
-/* police_patrol.h -- the automated cruiser: a police rocket car with nobody in it, driving a loop.
+/* police_patrol.h -- the automated cruiser: a police rocket car with nobody in it, driving a beat.
  *
  * Founder (2026-11-05): "add automated police cars to the real zombies world ... the police ones when you
- * are boosting or hitting space for hover the siren is triggered by those things". Two halves:
+ * are boosting or hitting space for hover the siren is triggered by those things", then "add patrol lanes".
+ * Three halves, all here or next door:
  *
  *   1. A police car SOUNDS its siren when the driver boosts or hovers (PARENA's siren-trigger decides;
  *      physics.h records the driver's command in BuggyState.siren).
- *   2. A police car with no driver at all still drives: it circles the level on a ring, which is what
- *      makes a moving unmanned cruiser trigger the siren at all (the third arm of the same rule).
+ *   2. A police car with no driver still drives: it follows a LANE -- the level's own authored nav/waypoint
+ *      graph, the same nodes the AI pathfinder uses -- and falls back to a ring around its anchor when the
+ *      level authored none. Lanes matter because a ring is a circle in the middle of a city: it cuts corners
+ *      through walls, it never uses the roads the level actually has, and every cruiser in the level drives
+ *      the same shape. The lane is the level's own idea of where vehicles and people can be.
+ *   3. The third arm of the siren rule (a moving unmanned cruiser) is what makes all of that audible.
  *
- * This header is the second half only -- a STATELESS steering intent, so it is testable without physics,
- * a device or a clock and cannot drift into a second vehicle implementation. The host still calls the
- * ordinary simulate_buggy_state_ex with the intent, so the cruiser is a buggy with boosters and not a
- * special case the collision code has never seen. A ring rather than a stored route means no state to
- * desync: the target is a pure function of the clock, the car's id and the anchor the host placed it at.
- *
- * The ring is the LEVEL's, not the car's: an anchor + radius, chosen by whoever spawned the car (the
- * zombies level's own vehicle bay), so two cruisers on the same ring stay a patrol and not two cars
- * chasing each other's tails. */
+ * This header is steering only -- a stateless target plus a per-slot waypoint index -- so it is testable
+ * without physics, a device or a clock, and cannot drift into a second vehicle implementation. The host
+ * still calls the ordinary simulate_buggy_state_ex with the intent, so a cruiser is a buggy with boosters
+ * and not a special case the collision code has never seen. */
 
 #include <math.h>
 
@@ -28,14 +28,20 @@
 #ifndef POLICE_PATROL_MAX
 #define POLICE_PATROL_MAX 8
 #endif
+#define POLICE_PATROL_LANE_MAX      12       /* waypoints per cruiser; a beat, not a route map */
 #define POLICE_PATROL_RADIUS_DEFAULT 60.0f
-#define POLICE_PATROL_PERIOD_MS     48000u   /* one lap of the ring per 48 s: patrolling, not racing */
+#define POLICE_PATROL_PERIOD_MS     48000u   /* one lap of the fallback ring per 48 s */
+#define POLICE_PATROL_WAYPOINT_HIT  12.0f    /* how close counts as "reached this waypoint" */
 
 static float g_police_anchor_x[POLICE_PATROL_MAX];
 static float g_police_anchor_z[POLICE_PATROL_MAX];
 static float g_police_radius[POLICE_PATROL_MAX];
+static float g_police_lane_x[POLICE_PATROL_MAX][POLICE_PATROL_LANE_MAX];
+static float g_police_lane_z[POLICE_PATROL_MAX][POLICE_PATROL_LANE_MAX];
+static int   g_police_lane_n[POLICE_PATROL_MAX];
+static int   g_police_lane_wp[POLICE_PATROL_MAX];
 
-/* Anchor a cruiser's ring. Called once when the car is spawned; the ring lives with the slot, so a
+/* Anchor a cruiser's fallback ring. Called once when the car is spawned; the ring lives with the slot, so a
  * respawned or recycled buggy does not inherit somebody else's patrol. */
 static inline void police_patrol_set_anchor(int id, float cx, float cz, float radius) {
     if (id < 0 || id >= POLICE_PATROL_MAX) return;
@@ -44,6 +50,41 @@ static inline void police_patrol_set_anchor(int id, float cx, float cz, float ra
     g_police_radius[id] = (radius > 1.0f) ? radius : POLICE_PATROL_RADIUS_DEFAULT;
 }
 
+/* The lane: points the LEVEL authored (its nav graph), copied in, so the patrol cannot outlive the level
+ * data. Fewer than two points is not a lane -- clear it and the ring takes over. */
+static inline void police_patrol_set_lane(int id, const float *xs, const float *zs, int count) {
+    if (id < 0 || id >= POLICE_PATROL_MAX) return;
+    if (!xs || !zs || count < 2) { g_police_lane_n[id] = 0; g_police_lane_wp[id] = 0; return; }
+    if (count > POLICE_PATROL_LANE_MAX) count = POLICE_PATROL_LANE_MAX;
+    for (int i = 0; i < count; i++) {
+        g_police_lane_x[id][i] = xs[i];
+        g_police_lane_z[id][i] = zs[i];
+    }
+    g_police_lane_n[id] = count;
+    g_police_lane_wp[id] = 0;
+}
+
+static inline void police_patrol_clear_lane(int id) {
+    if (id < 0 || id >= POLICE_PATROL_MAX) return;
+    g_police_lane_n[id] = 0;
+    g_police_lane_wp[id] = 0;
+}
+
+/* Give every cruiser the same authored lane, each starting at a different waypoint, so a patrol spreads
+ * along the beat instead of driving nose to tail down the same road. */
+static inline void police_patrol_set_lane_from_graph(const float *xs, const float *zs, int count) {
+    for (int id = 0; id < POLICE_PATROL_MAX; id++) {
+        police_patrol_set_lane(id, xs, zs, count);
+        if (count >= 2 && g_police_lane_n[id] > 0) g_police_lane_wp[id] = id % g_police_lane_n[id];
+    }
+}
+
+static inline int police_patrol_has_lane(int id) {
+    return (id >= 0 && id < POLICE_PATROL_MAX) ? g_police_lane_n[id] : 0;
+}
+static inline int police_patrol_waypoint(int id) {
+    return (id >= 0 && id < POLICE_PATROL_MAX) ? g_police_lane_wp[id] : 0;
+}
 static inline float police_patrol_anchor_x(int id) {
     return (id >= 0 && id < POLICE_PATROL_MAX) ? g_police_anchor_x[id] : 0.0f;
 }
@@ -51,24 +92,34 @@ static inline float police_patrol_anchor_z(int id) {
     return (id >= 0 && id < POLICE_PATROL_MAX) ? g_police_anchor_z[id] : 0.0f;
 }
 
-/* Where on the ring this car should be heading right now. Exposed so a test (and the minimap, later) can
- * ask the same question the steering does, instead of re-deriving the ring. */
+/* Where this cruiser should be heading right now: the lane's current waypoint when the level authored one,
+ * otherwise a point on the fallback ring (pure in the clock, so the ring never desyncs). */
 static inline void police_patrol_target(int id, unsigned int now_ms, float *out_x, float *out_z) {
-    float r = (id >= 0 && id < POLICE_PATROL_MAX) ? g_police_radius[id] : POLICE_PATROL_RADIUS_DEFAULT;
+    if (id < 0 || id >= POLICE_PATROL_MAX) {
+        if (out_x) *out_x = 0.0f;
+        if (out_z) *out_z = 0.0f;
+        return;
+    }
+    if (g_police_lane_n[id] > 0) {
+        int wp = g_police_lane_wp[id];
+        if (wp < 0 || wp >= g_police_lane_n[id]) wp = 0;
+        if (out_x) *out_x = g_police_lane_x[id][wp];
+        if (out_z) *out_z = g_police_lane_z[id][wp];
+        return;
+    }
+    float r = g_police_radius[id];
     if (r <= 1.0f) r = POLICE_PATROL_RADIUS_DEFAULT;
-    /* spread the cruisers around the ring so two cars on one anchor do not drive nose to tail */
-    unsigned int slot_deg = (unsigned int)((id < 0 ? 0 : id) * 137) % 360u;
+    unsigned int slot_deg = (unsigned int)(id * 137) % 360u;
     unsigned int lap_deg = (unsigned int)(((unsigned long long)(now_ms % POLICE_PATROL_PERIOD_MS) * 360ull)
                                           / (unsigned long long)POLICE_PATROL_PERIOD_MS);
     unsigned int deg = (lap_deg + slot_deg) % 360u;
     float rad = (float)deg * 0.017453292f;
-    *out_x = police_patrol_anchor_x(id) + sinf(rad) * r;
-    *out_z = police_patrol_anchor_z(id) + cosf(rad) * r;
+    if (out_x) *out_x = g_police_anchor_x[id] + sinf(rad) * r;
+    if (out_z) *out_z = g_police_anchor_z[id] + cosf(rad) * r;
 }
 
-/* The intent the host hands to simulate_buggy_state_ex. throttle 0..1 (never reverse: a patrol that
- * backs up is a bug), steer -1..1. Close to the target it eases off rather than parking, because the ring
- * keeps turning and a stopped cruiser would stop sounding its siren. */
+/* The intent the host hands to simulate_buggy_state_ex. throttle 0..1 (never reverse: a patrol that backs
+ * up is a bug), steer -1..1. Reaching a lane waypoint advances it, which is the only state this adds. */
 static inline void police_patrol_intent(const BuggyState *b, unsigned int now_ms,
                                         float *out_throttle, float *out_steer) {
     float throttle = 0.0f, steer = 0.0f;
@@ -82,13 +133,18 @@ static inline void police_patrol_intent(const BuggyState *b, unsigned int now_ms
         float rel = bearing - b->yaw;
         while (rel > 180.0f) rel -= 360.0f;
         while (rel < -180.0f) rel += 360.0f;
-        /* steer hard when the target is behind, straighten as it comes ahead */
         steer = rel / 60.0f;
         if (steer > 1.0f) steer = 1.0f;
         if (steer < -1.0f) steer = -1.0f;
-        /* keep rolling while turning -- a car that stops to turn never catches a ring that keeps moving */
+        /* keep rolling while turning -- a car that stops to turn never catches a beat that keeps moving */
         throttle = (rel > 75.0f || rel < -75.0f) ? 0.45f : 1.0f;
         if (dist < 10.0f) throttle = 0.6f;
+        /* arrived: take the next waypoint on the beat. Only a LANE advances; the ring keeps turning on its
+         * own clock, so there is nothing to advance there. */
+        if (b->id >= 0 && b->id < POLICE_PATROL_MAX && g_police_lane_n[b->id] > 0 &&
+            dist < POLICE_PATROL_WAYPOINT_HIT) {
+            g_police_lane_wp[b->id] = (g_police_lane_wp[b->id] + 1) % g_police_lane_n[b->id];
+        }
     }
     if (out_throttle) *out_throttle = throttle;
     if (out_steer) *out_steer = steer;

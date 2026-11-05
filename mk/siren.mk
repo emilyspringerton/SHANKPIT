@@ -11,7 +11,7 @@
 PARENA_DIR ?= ../PARENA
 SIREN_PRN := $(PARENA_DIR)/stdlib/shankpit/siren_rules.prn
 
-.PHONY: regen-siren-rules check-siren-rules test-siren-rules test-police-patrol
+.PHONY: regen-siren-rules check-siren-rules test-siren-rules test-police-patrol test-siren-dsp
 
 regen-siren-rules:
 	@test -x $(PARENA_DIR)/parena || $(MAKE) -C $(PARENA_DIR) build >/dev/null
@@ -21,6 +21,14 @@ check-siren-rules:
 	@test -x $(PARENA_DIR)/parena || $(MAKE) -C $(PARENA_DIR) build >/dev/null
 	$(PARENA_DIR)/parena build $(SIREN_PRN) -o /tmp/siren_rules.regen.c >/dev/null
 	cmp /tmp/siren_rules.regen.c packages/simulation/siren_rules.c
+
+# test-siren-dsp -- the oscillator rendered OFFLINE. No device, no SDL, no lock: pitch by zero crossings,
+# pan by per-channel energy, and a hard ceiling no sample may cross. This is the closest this box can get
+# to hearing a siren, and it is what the "nothing has been heard" limit was asking for.
+test-siren-dsp: | $(BIN_DIR)
+	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/audio -Ipackages/simulation \
+		packages/audio/siren_dsp_test.c -o $(BIN_DIR)/siren_dsp_test $(LIBS_M)
+	./$(BIN_DIR)/siren_dsp_test
 
 test-siren-rules: | $(BIN_DIR)
 	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/simulation -Ipackages/world \

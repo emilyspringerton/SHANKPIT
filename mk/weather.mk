@@ -30,6 +30,16 @@ test-wind-audio: | $(BIN_DIR)
 
 # test-line-of-sight -- the query body ONLY. The behaviour that consumes it (a clerk that cannot see
 # through the courthouse, a scorch that cannot burn through a bench) is test-municipal-defense's job.
+# test-builtin-sight -- the built-in maps' own collision boxes, handed to the sight test. physics.h drags
+# its bot hooks in, so the test stubs them (the same convention the other physics tests use).
+test-builtin-sight: | $(BIN_DIR)
+	# -Wall -Werror (the hosts' own flag set, no -Wextra): this TU includes physics.h, which is written
+	# against the hosts' CFLAGS and has pre-existing unused-parameter warnings under -Wextra.
+	$(CC) -std=gnu99 -O1 -Wall -Werror -Ipackages/common -Ipackages/simulation -Ipackages/world \
+		packages/common/builtin_sight_test.c packages/world/terrain.c \
+		-o $(BIN_DIR)/builtin_sight_test $(LIBS_M)
+	./$(BIN_DIR)/builtin_sight_test
+
 test-line-of-sight: | $(BIN_DIR)
 	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/simulation \
 		packages/simulation/sight_test.c -o $(BIN_DIR)/sight_test $(LIBS_M)

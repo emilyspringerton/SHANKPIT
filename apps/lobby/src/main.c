@@ -47,6 +47,7 @@
 #include "../../../packages/simulation/empire_rules_host.h"
 #include "../../../packages/audio/wind_audio_rules.h" /* PARENA weather_audio_rules.prn */
 #include "../../../packages/simulation/siren_rules.h"   /* PARENA siren_rules.prn */
+#include "../../../packages/simulation/police_patrol.h"    /* the automated cruiser's lane */
 #include "../../../packages/simulation/empire_units_rules_host.h"
 /* Lab stations: labst_reach_tenths was also an implicit declaration in the Windows build. */
 #include "../../../packages/simulation/lab_station_host.h"
@@ -3715,6 +3716,25 @@ static void level_boxes_apply_to_physics(const CustomLevelData *lvl) {
         }
         story_ai_set_sight(sight, sn);
         SDL_Log("[LEVEL] %d solid box(es) federated to AI sight", sn);
+    }
+    /* PATROL LANES (founder: "add patrol lanes"): the automated cruisers drive the level's OWN authored
+       nav graph -- the same waypoints the AI pathfinder uses -- instead of a circle drawn around their
+       spawn. Copied in, so a level swap cannot leave a beat pointing at freed nodes; a level that authored
+       fewer than two nodes clears the lane and the ring fallback takes over, which is the honest default. */
+    {
+        static float lane_x[POLICE_PATROL_LANE_MAX], lane_z[POLICE_PATROL_LANE_MAX];
+        int ln = lvl->nav_node_count < POLICE_PATROL_LANE_MAX ? lvl->nav_node_count : POLICE_PATROL_LANE_MAX;
+        for (int li = 0; li < ln; li++) {
+            lane_x[li] = lvl->nav_nodes[li].x;
+            lane_z[li] = lvl->nav_nodes[li].z;
+        }
+        if (ln >= 2) {
+            police_patrol_set_lane_from_graph(lane_x, lane_z, ln);
+            SDL_Log("[LEVEL] patrol lanes: %d authored waypoint(s) for the cruisers", ln);
+        } else {
+            for (int pi = 0; pi < POLICE_PATROL_MAX; pi++) police_patrol_clear_lane(pi);
+            SDL_Log("[LEVEL] patrol lanes: none authored, cruisers hold their ring");
+        }
     }
     char mat_names[LEVEL_BOXES_MAX_MATERIALS][CUSTOM_LEVEL_MATERIAL_NAME_LEN];
     char mat_shaders[LEVEL_BOXES_MAX_MATERIALS][CUSTOM_LEVEL_MATERIAL_NAME_LEN];

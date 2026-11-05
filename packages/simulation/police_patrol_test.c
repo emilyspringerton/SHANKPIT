@@ -98,6 +98,49 @@ int main(void) {
         printf("PASS: each cruiser keeps its own ring; an out-of-range slot is ignored\n");
     }
 
+    /* ---- lanes: the level's own beat, with the ring as the fallback ---- */
+    {
+        float xs[4] = { 100.0f, 180.0f, 160.0f, 60.0f };
+        float zs[4] = { 0.0f, 40.0f, 140.0f, 120.0f };
+        police_patrol_set_anchor(0, 0.0f, 0.0f, 100.0f);
+        police_patrol_set_lane(0, xs, zs, 4);
+        CHECK(police_patrol_has_lane(0) == 4, "the lane did not take (has %d)", police_patrol_has_lane(0));
+        float tx, tz;
+        police_patrol_target(0, 0, &tx, &tz);
+        CHECK(tx == xs[0] && tz == zs[0], "a lane's first target is (%.1f,%.1f), not the authored (%.1f,%.1f)",
+              tx, tz, xs[0], zs[0]);
+        /* arriving at the waypoint advances the beat, and the last one wraps */
+        BuggyState b;
+        memset(&b, 0, sizeof(b));
+        b.active = 1; b.id = 0;
+        for (int wp = 0; wp < 4; wp++) {
+            police_patrol_target(0, 0, &tx, &tz);
+            b.x = tx; b.z = tz; b.yaw = 90.0f;
+            float th, st;
+            police_patrol_intent(&b, 0, &th, &st);
+            CHECK(police_patrol_waypoint(0) == (wp + 1) % 4,
+                  "reaching waypoint %d left the cruiser on %d", wp, police_patrol_waypoint(0));
+        }
+        printf("PASS: a cruiser follows the level's lane and wraps at the last waypoint\n");
+
+        /* a graph with no nodes clears the beat, and the ring comes back */
+        police_patrol_clear_lane(0);
+        CHECK(police_patrol_has_lane(0) == 0, "clearing the lane left %d waypoints", police_patrol_has_lane(0));
+        police_patrol_target(0, POLICE_PATROL_PERIOD_MS / 4, &tx, &tz);
+        CHECK(tx > 90.0f, "with no lane the ring did not return (target x %.1f)", tx);
+
+        /* every cruiser on one authored beat starts at a different waypoint */
+        police_patrol_set_lane_from_graph(xs, zs, 4);
+        CHECK(police_patrol_waypoint(0) != police_patrol_waypoint(1) &&
+              police_patrol_waypoint(1) != police_patrol_waypoint(2),
+              "cruisers share a starting waypoint (%d, %d, %d)", police_patrol_waypoint(0),
+              police_patrol_waypoint(1), police_patrol_waypoint(2));
+        CHECK(police_patrol_has_lane(3) == 4, "the graph did not reach every slot");
+        police_patrol_set_lane(0, xs, zs, 1);
+        CHECK(police_patrol_has_lane(0) == 0, "a one-point 'lane' was accepted as a beat");
+        printf("PASS: a graph spreads the cruisers along the beat; a bad lane falls back to the ring\n");
+    }
+
     printf("\n%s%d check(s) failed\n", g_failed ? "FAIL: " : "PASS: ", g_failed);
     return g_failed ? 1 : 0;
 }

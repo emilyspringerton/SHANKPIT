@@ -202,6 +202,27 @@ static NetServerDiag g_net_diag;
 static const int g_dm_rotation[] = { SCENE_STADIUM, SCENE_VOXWORLD, SCENE_OIL_TANKER, SCENE_POO_POO_ISLAND };
 static int g_dm_rotation_idx = 0;
 static int g_server_match_scene = SCENE_GARAGE_OSAKA;
+
+/* BUILT-IN MAP WALLS (2026-11-05). The custom-level path federates the level's authored boxes to AI sight;
+   the built-in maps have no level file, so they kept open sightlines and a clerk in the garage could shoot
+   through its wall. They do have geometry -- physics' own map_geo_* arrays, the ones collision and hitscan
+   already use -- so this installs THOSE. Copied, because story_ai keeps its own array and the scene's may
+   be rebuilt on the next load. An empty list (a scene with no boxes) still clears, which is the same
+   "no geometry means no blockers" rule the custom path follows. */
+static void server_install_builtin_sight(void) {
+    static SightBox sight[LEVEL_BOXES_MAX];
+    int n = 0;
+    const Box *boxes = phys_scene_boxes(&n);
+    if (!boxes || n <= 0) { story_ai_set_sight(NULL, 0); return; }
+    if (n > LEVEL_BOXES_MAX) n = LEVEL_BOXES_MAX;
+    for (int i = 0; i < n; i++) {
+        sight[i].x = boxes[i].x; sight[i].y = boxes[i].y; sight[i].z = boxes[i].z;
+        sight[i].w = boxes[i].w; sight[i].h = boxes[i].h; sight[i].d = boxes[i].d;
+        sight[i].solid = 1;
+    }
+    story_ai_set_sight(sight, n);
+    NET_SERVER_LOG("BUILTIN_LEVEL_SIGHT_BOXES count=%d scene=%d", n, g_server_match_scene);
+}
 static unsigned int g_round_start_ms = 0;
 static unsigned int g_queue_intermission_start_ms = 0; // S459-99, 0 = not currently in intermission
 static int g_fast_forward = 0; // S459-48 -- see --fast-forward's own doc comment in main() for the real rationale
@@ -281,9 +302,8 @@ static void server_advance_dm_rotation(unsigned int now_ms) {
     g_dm_rotation_idx = (g_dm_rotation_idx + 1) % (int)(sizeof(g_dm_rotation) / sizeof(g_dm_rotation[0]));
     g_server_match_scene = g_dm_rotation[g_dm_rotation_idx];
     scene_load(g_server_match_scene);
-    /* Built-in map: this host has no authored box list for it, so the clerks keep the old open-world
-       sightlines. Cleared rather than left over from the previous custom level, which would be worse. */
-    story_ai_set_sight(NULL, 0);
+    /* Built-in map: give the AIs the map's OWN collision boxes (see server_install_builtin_sight). */
+    server_install_builtin_sight();
     g_round_start_ms = now_ms;
     for (int i = 0; i < MAX_CLIENTS; i++) {
         PlayerState *p = &local_state.players[i];
@@ -442,7 +462,7 @@ static void tdmo_activate_match(unsigned int now_ms) {
     local_init_match(1, MODE_TDMO);
     g_server_match_scene = SCENE_VOXWORLD;
     scene_load(g_server_match_scene);
-    story_ai_set_sight(NULL, 0);   /* no authored boxes here either -- see the rotation load above */
+    server_install_builtin_sight();   /* same built-in geometry the rotation load uses, see above */
     local_state.game_mode = MODE_TDMO;
     local_state.score_limit = TDMO_SCORE_LIMIT;
     local_state.team_scores[TDMB_BLUE_TEAM] = 0;

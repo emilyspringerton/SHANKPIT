@@ -2,6 +2,7 @@
 #include "audio_wav.h"
 #include "audio_chain.h"
 #include "../simulation/siren_rules.h"   /* SIREN_KIND_SILENT: the kinds are PARENA's, not this file's */
+#include "siren_dsp.h"                   /* the oscillator, header-only so it can be measured offline */
 #include <SDL2/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -77,12 +78,10 @@ static struct { int waiting; int frames_left; float gain, pan; } g_thunder[THUND
  * because a listener hears the loudest siren near them: the host resolves which one that is with PARENA's
  * siren_rules.prn (frequency in millihertz, gain, pan) and this file only turns it into samples. The
  * frequency is integrated into a phase here, so a wail is a continuous glide and not a stepped sample. */
-static int   g_siren_kind;
-static float g_siren_hz;            /* current, smoothed toward the target in millihertz terms */
-static float g_siren_hz_target;
-static float g_siren_gain, g_siren_gain_target;
-static float g_siren_pan, g_siren_pan_target;
-static double g_siren_phase;
+/* The oscillator itself lives in siren_dsp.h: it is the one part of this file that can be verified without
+ * an audio device (siren_dsp_test.c renders it offline and measures pitch, pan and clipping), and keeping
+ * it here as four floats meant the only way to know it worked was to listen. */
+static SirenDsp g_siren;
 
 /* ── PCM synthesis helpers ───────────────────────────────────────────────── */
 
@@ -256,21 +255,10 @@ static void wind_add(float *dl, float *dr) {
  * sine lacks; the gain smoothing is faster than the wind bed's because a siren has to START when the driver
  * hits boost, not swell in over a second. Pan is the same one-sided law as everything else. */
 static void siren_add(float *dl, float *dr) {
-    g_siren_gain += (g_siren_gain_target - g_siren_gain) * 0.010f;
-    g_siren_pan  += (g_siren_pan_target  - g_siren_pan)  * 0.010f;
-    g_siren_hz   += (g_siren_hz_target   - g_siren_hz)   * 0.02f;
-    if (g_siren_kind == SIREN_KIND_SILENT && g_siren_gain < 0.0005f) { g_siren_gain = 0.0f; return; }
-    double step = (double)g_siren_hz / (double)SAMPLE_RATE;
-    g_siren_phase += step;
-    while (g_siren_phase >= 1.0) g_siren_phase -= 1.0;
-    const float pi2 = 6.2831853f;
-    float s = sinf((float)g_siren_phase * pi2);
-    s += 0.32f * sinf((float)g_siren_phase * pi2 * 2.0f);
-    s *= 0.45f;
-    float p = g_siren_pan;
-    float amp = g_siren_gain;
-    *dl += s * amp * (p > 0.0f ? 1.0f - p : 1.0f);
-    *dr += s * amp * (p < 0.0f ? 1.0f + p : 1.0f);
+    float sl = 0.0f, sr = 0.0f;
+    siren_dsp_step(&g_siren, &sl, &sr);
+    *dl += sl;
+    *dr += sr;
 }
 
 /* ── SDL audio callback (runs on audio thread) ───────────────────────────── */
@@ -574,11 +562,7 @@ void audio_init(void) {
     g_wind_lp = 0.0f;
 
     /* the siren is silent until a host calls audio_set_siren -- a host with no sirens gets the mix it had */
-    g_siren_kind = SIREN_KIND_SILENT;
-    g_siren_hz = g_siren_hz_target = 690.0f;
-    g_siren_gain = g_siren_gain_target = 0.0f;
-    g_siren_pan = g_siren_pan_target = 0.0f;
-    g_siren_phase = 0.0;
+    siren_dsp_init(&g_siren);
     memset(g_thunder, 0, sizeof(g_thunder));
 
     SDL_PauseAudioDevice(g_dev, 0); /* start playback */
@@ -703,10 +687,7 @@ static void thunder_service(int frames) {
 void audio_set_siren(int kind, int hz_milli, float gain, float pan) {
     if (!g_dev || !g_mutex) return;
     SDL_LockMutex(g_mutex);
-    g_siren_kind = kind;
-    g_siren_hz_target = (hz_milli > 0) ? (float)hz_milli * 0.001f : g_siren_hz_target;
-    g_siren_gain_target = fclampf(gain, 0.0f, 1.0f);
-    g_siren_pan_target = fclampf(pan, -1.0f, 1.0f);
+    siren_dsp_set(&g_siren, kind, (hz_milli > 0) ? (float)hz_milli * 0.001f : -1.0f, gain, pan);
     SDL_UnlockMutex(g_mutex);
 }
 

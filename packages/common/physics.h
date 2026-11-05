@@ -1934,6 +1934,16 @@ static inline void voxworld_build_bushes(void) {
 static inline void init_poo_poo_island_terrain(void);
 static inline void init_stadium_terrain(void);
 
+/* The BUILT-IN scene's own collision boxes -- the very array that stops a bullet (map_geo_garage and its
+ * siblings). Exposed for AI sight (packages/simulation/sight.h): the built-in maps always had real geometry,
+ * they simply never had a list a sight test could read, which is why a clerk in the garage could shoot
+ * through its walls. Call after phys_set_scene/scene_load; the pointer is the scene's own static array, so
+ * a caller must copy what it keeps (story_ai_set_sight does). */
+static inline const Box *phys_scene_boxes(int *out_count) {
+    if (out_count) *out_count = map_count;
+    return map_geo;
+}
+
 static inline void phys_set_scene(int scene_id) {
     phys_scene_id = scene_id;
     if (scene_id == SCENE_GARAGE_OSAKA) {
