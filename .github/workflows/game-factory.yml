@@ -63,11 +63,11 @@ jobs:
 
       # SDL2 headers are a dependency of the COMPILER, not just the game: the generated
       # tools/ci_status_gen.c includes runtime/parena_runtime.h, which unconditionally includes
-      # <SDL2/SDL.h>. Installing this after the build was the first red run of this workflow.
+      # <SDL2/SDL.h> and <SDL2/SDL_ttf.h>. Both were missing on the first two red runs.
       - name: Install SDL2 headers and zip
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libsdl2-dev zip
+          sudo apt-get install -y -qq libsdl2-dev libsdl2-ttf-dev zip
 
       - name: Build the PARENA compiler
         run: make -C PARENA parena -j2
@@ -128,7 +128,7 @@ jobs:
       - name: Install host SDL2, mingw-w64 and zip
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libsdl2-dev gcc-mingw-w64-x86-64 zip
+          sudo apt-get install -y -qq libsdl2-dev libsdl2-ttf-dev gcc-mingw-w64-x86-64 zip
 
       - name: Build the PARENA compiler
         run: make -C PARENA parena -j2
