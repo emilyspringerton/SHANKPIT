@@ -1663,6 +1663,7 @@ all targets compile `build/game_rules.c` from the same `.prn` sources and link t
 | Clang native | `make game-clang` | `bin/shank_game_clang` | all 5 |
 | LLVM-LTO native | `make game-llvm` | `bin/shank_game_llvm` (clang + `-flto` + `lld`) | all 5 |
 | Pure WASM core | `make wasm` | `bin/shank_core.wasm` (17 KB, zero imports) | core sim + level only (mask 3) |
+| Native core (no networking) | `make core` | `bin/shank_core` | all 5 level modules; net none |
 | Clang rules suite | `make game-test-clang` | `bin/shank_game_test_clang` | all 5 |
 | WASM boot check | `make wasm-smoke` | Node boots the real module | core sim + level only |
 
@@ -1671,6 +1672,9 @@ no imports, and carries its own `sin`/`cos`/`atan2`. It exports `wasm_boot`, reg
 apply, mask/revision/enabled queries and the rules' trig. `make wasm-smoke` instantiates it and
 proves a surface server state of 31 clamps to 3, an older state cannot roll it back, and the trig
 matches JavaScript's. The playable render/input/audio port is still ahead.
+
+The native core (`make core`, `bin/shank_core`) is the same registry with all five level modules but
+no SDL and no socket code. It is the "core without the networking mod" half of the ladder below.
 
 ### One registry, per-build capabilities
 
@@ -1681,10 +1685,42 @@ before registering anything:
 - `--capabilities MASK` on the native client (e.g. `3` = core sim + level),
 - `wasm_boot()` for the WASM core (always the ported set).
 
+Both read `packages/game/build_profiles.prn`, the one table that also records whether a target links a
+network transport at all (`bp-target-net`: none / host-C / PARENA).
+
 Opening masks and incoming authoritative state are intersected with that mask, and enabling an
 unported module is refused before a REFLUX row is dispatched. Mandatory modules are always kept.
 `make game-capped-client-smoke` proves it across a real socket: a surface server (mask 31) and a
 core-only client (mask 3) meet, and the client stays at 3 even though the server's state arrived.
+
+### Networking: host-C now, transport mod later
+
+The founder's example is the right shape, with one distinction worth keeping explicit: weather, sky and
+audio are PER-LEVEL level-module bits; networking is a BUILD capability. A level does not disable
+networking with a mask bit, and a server does not ship a transport inside a level update.
+
+Today:
+
+- The full native and LLVM clients bake UDP into `apps/game/host.c` -- regular host C, no transport
+  seam yet. `build_profiles.prn` reports that as `bp-net-host-c`.
+- `bin/shank_core` and `shank_core.wasm` link no sockets at all (`bp-net-none`) while still running the
+  same PARENA rules and registry. That proves the core has no hidden networking dependency.
+- `make core-smoke` runs the native core at a moon mask (3), a capped surface mask (3), and a surface
+  shed (27, revision 2).
+
+Porting ladder:
+
+1. **Host-C baked (today)**: the full client is the core plus the UDP host-C transport.
+2. **Transport seam**: `open/send/recv/close` behind a tiny host module; the full client links the UDP
+   implementation, the core links none. Still no level-mask involvement.
+3. **PARENA/REFLUX transport mod**: packet scheduling, interest/delta policy and level-mod state deltas
+   move into rules; the edge keeps only byte I/O. `net_rules.prn` already owns packet ids and sizes.
+4. **FFI-free edge**: a native LLVM transport and a WASM WebSocket/import edge, so the LLVM build can
+   ship with no C FFI and add or omit the networking mod like any other module. Until then, calling
+   the current build "FFI-free" would be false.
+
+What this buys: the core can be tested and shipped with no network; the transport can change per
+target; a server can evolve level mods over whatever transport that target has.
 
 ### Next steps, in order
 
@@ -1692,7 +1728,7 @@ core-only client (mask 3) meet, and the client stays at 3 even though the server
 |---|---|---|---|
 | 1 | Capability handshake | client clamps locally; server does not know a peer's mask | a client advertises caps once and the server composes/optimizes masks per peer instead of sending one global level mask |
 | 2 | WASM render/input/audio | core registry only; no canvas, no input, no audio | a browser build boots a level, draws it, and moves a body with the same rules as native |
-| 3 | Per-target profiles from one source | `wasm_boot()` hardcodes mask 3; `--capabilities` is a flag | target module sets are declared once and emitted into C/WASM builds, so adding a port updates every target without editing bootstrap code |
+| 3 | Per-target profiles from one source | `build_profiles.prn` now owns caps + net status; targets still pick a profile by hand | profiles are emitted into every build (no hand-passed `--capabilities`), so adding a port updates every target |
 | 4 | Mod-request authority | packet 5 is unauthenticated on the play socket; only level/module/on are validated | identity (or a per-peer token), rate limiting, and an explicit server policy for who may shed modules |
 | 5 | Durable stream identity | JSONL `seq` restarts with each process; replay relies on file order | a persisted monotonically increasing stream id survives restarts, and replay rejects gaps/duplicates |
 | 6 | Level unregister/transition | the table only grows (8 slots); no way to remove a level | `level_mods_unregister` frees a slot, emits an event, and clients drop/transition without keeping a stale mask |
@@ -1700,6 +1736,7 @@ core-only client (mask 3) meet, and the client stays at 3 even though the server
 | 8 | Replay schema versioning | line parser trusts event names and skips unknowns | the stream carries a schema version; unknown versions/rows are refused rather than silently dropped |
 | 9 | Unified core packaging | WASM core now ships in every release; native clients ship separately | one core archive/build feeds native and browser shells, with a shared version string and no duplicated host glue |
 | 10 | Cross-target parity | GCC/Clang/LTO/WASM each have their own checks | one scenario runs through all targets and asserts identical masks, revisions and event counts |
+| 11 | Networking transport | host-C UDP in `host.c`; native/WASM cores link no transport | transport seam + PARENA-owned scheduling, then FFI-free LLVM/WASM edges; core builds and ships without it |
 
 Ordering rationale: 1 and 3 make module porting safe before more ports land; 2 is the first
 user-visible WASM client; 4-8 harden the server/stream path the founder asked to evolve live; 9-10
@@ -1707,13 +1744,15 @@ are the payoff (one core, several shells) and are only meaningful after the port
 
 ### Verification for this slice
 
-- `make game-test` - 241 checks (registry, capabilities, replay, relay, catalog, event log).
-- `make game-test-clang` - the same 241 under Clang.
+- `make game-test` - 250 checks (registry, capabilities, profiles, replay, relay, catalog, event log).
+- `make game-test-clang` - the same 250 under Clang.
 - `make game-clang` / `make game-llvm` then `--headless 5` - both boot, 31 modules on level 1.
-- `make wasm` / `make wasm-smoke` - zero-import module, caps 3, state 31 clamped to 3, trig checked.
+- `make wasm` / `make wasm-smoke` - zero-import module, caps 3, no transport, state 31 clamped to 3, trig checked.
+- `make core` / `make core-smoke` - native core with no networking: moon 3, capped 3, shed 27/rev 2.
 - `make game-capped-client-smoke` - surface server 31, core client 3 across UDP.
 - `make game-level-request-smoke`, `make game-level-relay-smoke`, `make game-smoke` - unchanged.
 
 Known limits: the WASM core has no allocator and no player; the trig is accurate for the rules'
-range but is not a full libm; module sets are still hand-declared per target; LLVM-LTO's size drop
-(90 KB to 69 KB) is a build result, not a measured runtime speedup.
+range but is not a full libm; the profile table exists but each build still selects its profile by
+hand; networking is still host C with no transport seam, so no target is FFI-free yet; LLVM-LTO's
+size drop (90 KB to 69 KB) is a build result, not a measured runtime speedup.
