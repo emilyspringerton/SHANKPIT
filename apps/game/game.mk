@@ -41,9 +41,10 @@ GAME_TEST_PROFILE ?= bp_target_native
 CORE_PROFILE      ?= bp_target_native_core
 WASM_PROFILE      ?= bp_target_wasm_core
 
-.PHONY: game game-test game-smoke game-net-smoke game-level-relay-smoke game-level-request-smoke \
-        game-mod-authority-smoke game-capped-client-smoke game-level-interest-smoke game-multi-peer-smoke \
-        game-clang game-llvm game-test-clang core core-smoke wasm wasm-smoke
+.PHONY: game game-test game-smoke game-stream-smoke game-net-smoke game-level-relay-smoke \
+        game-level-request-smoke game-mod-authority-smoke game-capped-client-smoke \
+        game-level-interest-smoke game-multi-peer-smoke game-clang game-llvm game-test-clang \
+        core core-smoke wasm wasm-smoke
 
 game: $(GAME_BIN)
 
@@ -142,6 +143,19 @@ wasm-smoke: $(WASM_BIN)
 # rules produced. Used as the build smoke test in CI and after every change to the modules.
 game-smoke: $(GAME_BIN)
 	./$(GAME_BIN) --headless 240
+
+# Two separate host processes append to the same JSONL stream. The ids must continue across the
+# restart (1..N) instead of resetting, and replay must accept the resulting file.
+game-stream-smoke: $(GAME_BIN)
+	@rm -f /tmp/shank_stream_smoke.jsonl
+	./$(GAME_BIN) --headless 4 --level 6 --env surface \
+	  --event-log /tmp/shank_stream_smoke.jsonl > /tmp/shank_stream_first.log 2>&1
+	./$(GAME_BIN) --headless 4 --level 6 --env surface \
+	  --event-log /tmp/shank_stream_smoke.jsonl > /tmp/shank_stream_second.log 2>&1
+	@python3 -c 'import json; ids=[json.loads(l)["stream"] for l in open("/tmp/shank_stream_smoke.jsonl") if l.strip()]; assert ids == list(range(1, len(ids)+1)) and len(ids) >= 4, ids; print("stream ids:", ids)'
+	./$(GAME_BIN) --headless 1 --level 6 --env surface \
+	  --replay-events /tmp/shank_stream_smoke.jsonl > /tmp/shank_stream_replay.log 2>&1
+	@grep -q 'replayed 0 level mod row' /tmp/shank_stream_replay.log
 
 # Two real processes over loopback UDP: host on 7791, client joins for 120 frames, then both exit.
 game-net-smoke: $(GAME_BIN)

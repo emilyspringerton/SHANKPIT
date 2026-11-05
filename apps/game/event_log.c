@@ -15,28 +15,7 @@
 
 static FILE *g_file;
 static int g_cursor;
-
-int event_log_open(const char *path) {
-    if (!path) return 0;
-    event_log_close();
-    g_file = fopen(path, "ab");
-    if (!g_file) return 0;
-    /* Opening mid-run is not a replay: start at the current end. */
-    g_cursor = reflux_host_total_dispatched();
-    return 1;
-}
-
-void event_log_close(void) {
-    if (g_file) fclose(g_file);
-    g_file = NULL;
-    g_cursor = 0;
-}
-
-void event_log_reset_cursor(void) {
-    g_cursor = 0;
-}
-
-/* ---- replay ------------------------------------------------------------------------------------ */
+static int g_next_stream = 1;
 
 static int line_int(const char *line, const char *key, int fallback) {
     char pattern[32];
@@ -48,6 +27,59 @@ static int line_int(const char *line, const char *key, int fallback) {
     if (!p) return fallback;
     return (int)strtol(p + 1, NULL, 10);
 }
+
+static int line_is_blank(const char *line) {
+    return line[strspn(line, " \t\r\n")] == '\0';
+}
+
+/* Every non-blank line must carry stream N, starting at 1 and advancing by exactly one. This is the
+ * durability check: a restarted process continues the same sequence, while a truncated or duplicated
+ * file is refused instead of being replayed as if file order were truth. */
+static int stream_file_last(FILE *f, int *last) {
+    char line[1024];
+    int expected = 1;
+
+    if (fseek(f, 0, SEEK_SET) != 0) return 0;
+    while (fgets(line, sizeof(line), f)) {
+        int stream;
+        if (line_is_blank(line)) continue;
+        stream = line_int(line, "stream", 0);
+        if (stream != expected) return 0;
+        expected++;
+    }
+    *last = expected - 1;
+    return 1;
+}
+
+int event_log_open(const char *path) {
+    int last;
+    if (!path) return 0;
+    event_log_close();
+    g_file = fopen(path, "a+b");
+    if (!g_file) return 0;
+    if (!stream_file_last(g_file, &last)) {
+        fclose(g_file);
+        g_file = NULL;
+        return 0;
+    }
+    g_next_stream = last + 1;
+    /* Opening mid-run is not a replay: start at the current end. */
+    g_cursor = reflux_host_total_dispatched();
+    return 1;
+}
+
+void event_log_close(void) {
+    if (g_file) fclose(g_file);
+    g_file = NULL;
+    g_cursor = 0;
+    g_next_stream = 1;
+}
+
+void event_log_reset_cursor(void) {
+    g_cursor = 0;
+}
+
+/* ---- replay ------------------------------------------------------------------------------------ */
 
 static int line_string(const char *line, const char *key, char *out, size_t cap) {
     char pattern[32];
@@ -72,8 +104,19 @@ int event_log_replay(const char *path) {
     FILE *f;
     char line[1024];
     int applied = 0;
+    int last;
 
     if (!path || !(f = fopen(path, "rb"))) return -1;
+    /* Validate the whole sequence before touching live state, so a bad tail cannot leave a
+     * half-replayed registry behind. */
+    if (!stream_file_last(f, &last)) {
+        fclose(f);
+        return -1;
+    }
+    if (fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return -1;
+    }
     while (fgets(line, sizeof(line), f)) {
         char event[24];
         int level, mod, on, mask, revision, env;
@@ -116,7 +159,8 @@ int event_log_sync(int tick) {
 
     if (g_cursor > total) {
         /* The log was reset (a new round) and the cursor still points into the old one. */
-        fprintf(g_file, "{\"seq\":-1,\"tick\":%d,\"event\":\"log_reset\"}\n", tick);
+        fprintf(g_file, "{\"stream\":%d,\"seq\":-1,\"tick\":%d,\"event\":\"log_reset\"}\n",
+                g_next_stream++, tick);
         g_cursor = 0;
         written++;
     }
@@ -138,19 +182,19 @@ int event_log_sync(int tick) {
         if (reflux_action_is_level_mod(type)) {
             if (type == REFLUX_ACTION_LEVEL_REGISTERED) {
                 fprintf(g_file,
-                        "{\"seq\":%d,\"tick\":%d,\"event\":\"registered\","
+                        "{\"stream\":%d,\"seq\":%d,\"tick\":%d,\"event\":\"registered\","
                         "\"level\":%d,\"env\":%d,\"mask\":%d}\n",
-                        g_cursor, tick, a, b, c);
+                        g_next_stream++, g_cursor, tick, a, b, c);
             } else if (type == REFLUX_ACTION_LEVEL_MOD_SET) {
                 fprintf(g_file,
-                        "{\"seq\":%d,\"tick\":%d,\"event\":\"mod_set\","
+                        "{\"stream\":%d,\"seq\":%d,\"tick\":%d,\"event\":\"mod_set\","
                         "\"level\":%d,\"mod\":%d,\"on\":%d}\n",
-                        g_cursor, tick, a, b, c);
+                        g_next_stream++, g_cursor, tick, a, b, c);
             } else if (type == REFLUX_ACTION_LEVEL_STATE) {
                 fprintf(g_file,
-                        "{\"seq\":%d,\"tick\":%d,\"event\":\"state\","
+                        "{\"stream\":%d,\"seq\":%d,\"tick\":%d,\"event\":\"state\","
                         "\"level\":%d,\"mask\":%d,\"revision\":%d}\n",
-                        g_cursor, tick, a, b, c);
+                        g_next_stream++, g_cursor, tick, a, b, c);
             }
             written++;
         }

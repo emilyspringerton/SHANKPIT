@@ -554,6 +554,8 @@ static void test_event_log(void) {
     check(strstr(buf, "\"event\":\"registered\"") != NULL, "registered row is in the stream");
     check(strstr(buf, "\"event\":\"mod_set\"") != NULL, "mod_set row is in the stream");
     check(strstr(buf, "\"event\":\"state\"") != NULL, "state row is in the stream");
+    check(strstr(buf, "\"stream\":1") != NULL && strstr(buf, "\"stream\":3") != NULL,
+          "rows carry a contiguous durable stream id");
     check(strstr(buf, "\"tick\":77") != NULL, "the caller's tick is recorded");
     check(strstr(buf, "\"level\":31") != NULL, "the level id is recorded");
     remove(path);
@@ -567,12 +569,12 @@ static void test_event_replay(void) {
 
     check(f != NULL, "replay test stream opens");
     if (f) {
-        fputs("{\"seq\":0,\"tick\":0,\"event\":\"registered\",\"level\":41,\"env\":1,\"mask\":11}\n", f);
-        fputs("{\"seq\":1,\"tick\":1,\"event\":\"mod_set\",\"level\":41,\"mod\":3,\"on\":1}\n", f);
-        fputs("{\"seq\":2,\"tick\":2,\"event\":\"state\",\"level\":41,\"mask\":11,\"revision\":3}\n", f);
-        fputs("{\"seq\":3,\"tick\":3,\"event\":\"state\",\"level\":41,\"mask\":31,\"revision\":2}\n", f);
-        fputs("{\"seq\":4,\"tick\":4,\"event\":\"log_reset\"}\n", f);
-        fputs("{\"seq\":0,\"tick\":5,\"event\":\"registered\",\"level\":42,\"env\":2,\"mask\":3}\n", f);
+        fputs("{\"stream\":1,\"seq\":0,\"tick\":0,\"event\":\"registered\",\"level\":41,\"env\":1,\"mask\":11}\n", f);
+        fputs("{\"stream\":2,\"seq\":1,\"tick\":1,\"event\":\"mod_set\",\"level\":41,\"mod\":3,\"on\":1}\n", f);
+        fputs("{\"stream\":3,\"seq\":2,\"tick\":2,\"event\":\"state\",\"level\":41,\"mask\":11,\"revision\":3}\n", f);
+        fputs("{\"stream\":4,\"seq\":3,\"tick\":3,\"event\":\"state\",\"level\":41,\"mask\":31,\"revision\":2}\n", f);
+        fputs("{\"stream\":5,\"seq\":4,\"tick\":4,\"event\":\"log_reset\"}\n", f);
+        fputs("{\"stream\":6,\"seq\":0,\"tick\":5,\"event\":\"registered\",\"level\":42,\"env\":2,\"mask\":3}\n", f);
         fclose(f);
     }
 
@@ -587,6 +589,77 @@ static void test_event_replay(void) {
     check(event_log_replay("/tmp/shank_no_such_event_log.jsonl") == -1,
           "a missing replay stream is refused");
     remove(path);
+}
+
+/* The durable id, not file order, is what replay trusts. A second process appends after the first,
+ * and a file with a gap or duplicate id is refused before it can touch the registry. */
+static void test_event_stream_identity(void) {
+    const char *path = "/tmp/shank_event_stream_test.jsonl";
+    const char *gap = "/tmp/shank_event_stream_gap.jsonl";
+    const char *dup = "/tmp/shank_event_stream_dup.jsonl";
+    char buf[2048] = {0};
+    size_t n = 0;
+    FILE *f;
+
+    remove(path);
+    reflux_host_reset();
+    level_mods_reset();
+    check(event_log_open(path) == 1, "stream identity test opens");
+    event_log_reset_cursor();
+    check(level_mods_register(51, lm_env_surface()) == lm_default_mask(lm_env_surface()),
+          "stream identity level opens on the surface");
+    check(event_log_sync(1) == 1, "the first process writes stream 1");
+    event_log_close();
+
+    check(event_log_open(path) == 1, "an existing contiguous stream reopens for append");
+    level_mods_request(51, lm_mod_weather_render(), 0);
+    check(event_log_sync(2) == 1, "a second process continues the stream");
+    event_log_close();
+
+    f = fopen(path, "rb");
+    check(f != NULL, "stream identity file exists");
+    if (f) {
+        n = fread(buf, 1, sizeof(buf) - 1, f);
+        buf[n] = '\0';
+        fclose(f);
+    }
+    check(strstr(buf, "\"stream\":1") != NULL && strstr(buf, "\"stream\":2") != NULL,
+          "the stream id continued across the restart");
+
+    reflux_host_reset();
+    level_mods_reset();
+    check(event_log_replay(path) == 2, "replay accepts a contiguous stream");
+    check(level_mods_mask(51) ==
+              lm_set(lm_default_mask(lm_env_surface()), lm_mod_weather_render(), 0),
+          "replay applies the post-restart row");
+
+    f = fopen(gap, "wb");
+    check(f != NULL, "gap fixture opens");
+    if (f) {
+        fputs("{\"stream\":1,\"seq\":0,\"tick\":0,\"event\":\"registered\",\"level\":61,\"env\":0,\"mask\":31}\n", f);
+        fputs("{\"stream\":3,\"seq\":1,\"tick\":1,\"event\":\"state\",\"level\":61,\"mask\":27,\"revision\":2}\n", f);
+        fclose(f);
+    }
+    reflux_host_reset();
+    level_mods_reset();
+    check(event_log_replay(gap) == -1, "a gapped stream is refused");
+    check(level_mods_count() == 0, "a refused stream applies nothing");
+    check(event_log_open(gap) == 0, "a gapped stream cannot be appended to");
+
+    f = fopen(dup, "wb");
+    check(f != NULL, "duplicate fixture opens");
+    if (f) {
+        fputs("{\"stream\":1,\"seq\":0,\"tick\":0,\"event\":\"registered\",\"level\":62,\"env\":0,\"mask\":31}\n", f);
+        fputs("{\"stream\":1,\"seq\":1,\"tick\":1,\"event\":\"state\",\"level\":62,\"mask\":27,\"revision\":2}\n", f);
+        fclose(f);
+    }
+    reflux_host_reset();
+    level_mods_reset();
+    check(event_log_replay(dup) == -1, "a duplicate stream id is refused");
+
+    remove(path);
+    remove(gap);
+    remove(dup);
 }
 
 /* A build that has only ported core sim + level must not believe an incoming mask that enables a
@@ -649,6 +722,7 @@ int main(void) {
     test_level_catalog();
     test_event_log();
     test_event_replay();
+    test_event_stream_identity();
     test_capabilities();
     test_build_profiles();
     test_round_sim();

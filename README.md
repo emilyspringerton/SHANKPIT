@@ -1769,7 +1769,7 @@ target; a server can evolve level mods over whatever transport that target has.
 | 2 | WASM render/input/audio | browser canvas/input landed: fixed-step movement, arena renderer and RGBA framebuffer; audio and the weather/sky level modules are still unported | audio output and per-level render/sky module parity, so the browser client matches native's admitted modules |
 | 3 | Per-target profiles from one source | every client applies/reports `build_profiles.prn` through one `build_profile` module; a target is still chosen by one `SHANKPIT_BUILD_TARGET` define | the profile is emitted by the build system itself, so adding a target needs no second hand edit |
 | 4 | Mod-request authority | packet 5 requires the per-peer welcome token, enforces a 500 ms per-peer cooldown, and obeys an explicit `--mod-policy off|owner|peer` (default owner); unknown senders do not register | remote play commands/caps still carry no token, so the remaining identity work is across the rest of the play socket |
-| 5 | Durable stream identity | JSONL `seq` restarts with each process; replay relies on file order | a persisted monotonically increasing stream id survives restarts, and replay rejects gaps/duplicates |
+| 5 | Durable stream identity | every JSONL line carries a persisted `stream` id that continues after the file's last line across process restarts; replay validates the whole contiguous sequence before applying anything and refuses gaps, duplicates or old unnumbered lines | done for the level-mod JSONL stream; replay schema versioning is step 8 |
 | 6 | Level unregister/transition | the table only grows (8 slots); no way to remove a level | `level_mods_unregister` frees a slot, emits an event, and clients drop/transition without keeping a stale mask |
 | 7 | Manifest write-back | evolved masks are memory-only; replay is the only recovery path | an operator can persist the live mask/revision back to `levels.json` atomically, with the same validator as load |
 | 8 | Replay schema versioning | line parser trusts event names and skips unknowns | the stream carries a schema version; unknown versions/rows are refused rather than silently dropped |
@@ -1783,8 +1783,8 @@ are the payoff (one core, several shells) and are only meaningful after the port
 
 ### Verification for this slice
 
-- `make game-test` - 267 checks (registry, capabilities, profiles, token/policy rules, replay, relay, catalog, event log).
-- `make game-test-clang` - the same 267 under Clang.
+- `make game-test` - 283 checks (registry, capabilities, profiles, token/policy rules, replay, relay, catalog, durable event streams).
+- `make game-test-clang` - the same 283 under Clang.
 - `make game-clang` / `make game-llvm` then `--headless 5` - both boot, 31 modules on level 1.
 - `make wasm` / `make wasm-smoke` - zero-import module, wasm-core profile, caps 3, no transport, state 31 clamped to 3, trig checked, plus a rendered 1024x576 frame and fixed-step forward/turn movement.
 - `make core` / `make core-smoke` - native core with no networking: moon 3, capped 3, shed 27/rev 2,
@@ -1795,6 +1795,7 @@ are the payoff (one core, several shells) and are only meaningful after the port
 - `make game-multi-peer-smoke` - two clients, independent caps 31/3 and levels 1/2, slots 8/9, two rows.
 - `make game-level-request-smoke` - the owner policy accepts the client's tokened request and reports `mod_requests=1 mod_refused=0`.
 - `make game-mod-authority-smoke` - a wrong token is refused and a correct one is accepted across two real clients (`mod_requests=1 mod_refused=1`).
+- `make game-stream-smoke` - two separate host processes append a contiguous `stream` 1..N sequence to one JSONL file, and replay accepts it.
 - `make game-level-relay-smoke`, `make game-smoke` - unchanged.
 
 Known limits: the WASM client core has no allocator and no audio or networking; its weather/sky
