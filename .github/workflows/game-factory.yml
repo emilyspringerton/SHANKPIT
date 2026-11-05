@@ -1,0 +1,226 @@
+name: ShankPit Factory (Clean Room)
+
+# The clean-room game's factory. It builds the PARENA rules and the SDL2 host natively, cross-builds
+# the same host as a Windows exe, runs the headless rule suite and the real loopback-UDP smoke, and
+# packages both clients in the OG SHANKPIT layout:
+#
+#   ShankPit_Client/        ShankPit.exe, SDL2.dll, PLAY.bat   -> ShankPit_Client_<run>.zip
+#   ShankPit_Client_Linux/  ShankPit, PLAY.sh                  -> ShankPit_Client_Linux_<run>.zip
+#
+# On a push to master the release job tags the next minor version and publishes a NON-prerelease
+# GitHub Release with both zips, matching the main game's own auto-release rule.
+#
+# Scoped to apps/game + packages/game and the rule modules it compiles. The inherited
+# release.yml/tests.yml describe the pre-clean-room source tree (LOBBY_SRC, EDITOR.GAME,
+# PELLEGRINO); this workflow deliberately needs none of that.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "apps/game/**"
+      - "packages/game/**"
+      - "packages/reflux/**"
+      - "packages/sim/**"
+      - "packages/render/**"
+      - "packages/frame/**"
+      - "Makefile"
+      - ".github/workflows/game-factory.yml"
+  pull_request:
+    branches: [master]
+  workflow_dispatch: {}
+
+# Per-workflow group, the same hard-won rule the sibling workflows' own concurrency blocks document:
+# a shared group key across workflows cancels whichever of them loses the race.
+concurrency:
+  group: shankpit-cleanroom-factory-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # PARENA is the rules compiler, and the C it emits is only stable if the compiler is. Pinned to the
+  # commit this fork's rules were last verified against (the same revision the local tree builds
+  # apps/boot with), rather than whatever master happens to be that morning.
+  PARENA_REPO: emilyspringerton/PARENA
+  PARENA_REF: 2011af0e6807a0b23020464580b10f457683e5d6
+  SDL2_MINGW_URL: https://github.com/libsdl-org/SDL/releases/download/release-2.30.10/SDL2-devel-2.30.10-mingw.tar.gz
+
+jobs:
+  linux:
+    name: 🐧 Linux client, rules & smokes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout PARENA (rules compiler)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.PARENA_REPO }}
+          ref: ${{ env.PARENA_REF }}
+          path: PARENA
+
+      - name: Build the PARENA compiler
+        run: make -C PARENA parena -j2
+
+      - name: Install SDL2 and zip
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libsdl2-dev zip
+
+      - name: Rules test suite
+        run: make game-test PARENA_BIN="$PWD/PARENA/parena"
+
+      - name: Headless zombies round
+        run: make game-smoke PARENA_BIN="$PWD/PARENA/parena"
+
+      - name: Loopback UDP smoke (host + client in real time)
+        run: make game-net-smoke PARENA_BIN="$PWD/PARENA/parena"
+
+      - name: Build the Linux client
+        run: make game PARENA_BIN="$PWD/PARENA/parena"
+
+      - name: Package ShankPit_Client_Linux (PLAY.sh)
+        run: |
+          set -euo pipefail
+          out="ShankPit_Client_Linux"
+          mkdir -p "dist/$out"
+          cp bin/shank_game "dist/$out/ShankPit"
+          chmod +x "dist/$out/ShankPit"
+          printf '%s\n' '#!/bin/sh' '# SHANKPIT clean room -- Linux launcher' 'cd "$(dirname "$0")"' 'exec ./ShankPit "$@"' > "dist/$out/PLAY.sh"
+          chmod +x "dist/$out/PLAY.sh"
+          printf '%s\n' 'SHANKPIT -- clean room (Linux client)' '' 'Run ./PLAY.sh' '' '1 = ZOMBIES (the lobby), 2 = shankpit-460 FFA, Enter = deploy.' 'WASD/arrows move, mouse looks, left mouse fires, R respawns.' > "dist/$out/README.txt"
+          (cd dist && zip -qr "../ShankPit_Client_Linux_${{ github.run_number }}.zip" "$out")
+
+      - name: Prove the Linux zip layout
+        run: |
+          set -euo pipefail
+          zip="ShankPit_Client_Linux_${{ github.run_number }}.zip"
+          test "$(unzip -Z1 "$zip" | grep -cx 'ShankPit_Client_Linux/PLAY.sh')" = 1
+          test "$(unzip -Z1 "$zip" | grep -cx 'ShankPit_Client_Linux/ShankPit')" = 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-client
+          path: ShankPit_Client_Linux_*.zip
+          if-no-files-found: error
+
+  windows:
+    name: 🪟 Windows client (mingw cross-build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout PARENA (rules compiler)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.PARENA_REPO }}
+          ref: ${{ env.PARENA_REF }}
+          path: PARENA
+
+      - name: Build the PARENA compiler
+        run: make -C PARENA parena -j2
+
+      - name: Install mingw-w64 and zip
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-mingw-w64-x86-64 zip
+
+      - name: Fetch the SDL2 mingw development kit
+        run: |
+          set -euo pipefail
+          curl -sSL -o sdl2-mingw.tar.gz "$SDL2_MINGW_URL"
+          tar xzf sdl2-mingw.tar.gz
+          echo "SDL_MINGW=$PWD/SDL2-2.30.10/x86_64-w64-mingw32" >> "$GITHUB_ENV"
+
+      - name: Cross-build ShankPit.exe
+        run: |
+          make game \
+            GAME_BIN=bin/shank_game.exe \
+            CC=x86_64-w64-mingw32-gcc \
+            PARENA_BIN="$PWD/PARENA/parena" \
+            GAME_SDL_CFLAGS="-I$SDL_MINGW/include" \
+            GAME_SDL_LIBS="-L$SDL_MINGW/lib -lSDL2" \
+            GAME_EXTRA_LIBS="-lws2_32 -lm"
+
+      - name: Package ShankPit_Client (PLAY.bat, SDL2.dll)
+        run: |
+          set -euo pipefail
+          out="ShankPit_Client"
+          mkdir -p "dist/$out"
+          cp bin/shank_game.exe "dist/$out/ShankPit.exe"
+          cp "$SDL_MINGW/bin/SDL2.dll" "dist/$out/SDL2.dll"
+          # Same launcher the main game ships: PLAY.bat next to the exe, `start` so the console
+          # closes immediately. CRLF so Windows' shell is never guessing.
+          printf '%s\r\n' '@echo off' 'start "" ShankPit.exe' > "dist/$out/PLAY.bat"
+          printf '%s\r\n' 'SHANKPIT -- clean room (Windows client)' '' 'Double-click PLAY.bat (or ShankPit.exe).' '' '1 = ZOMBIES (the lobby), 2 = shankpit-460 FFA, Enter = deploy.' 'WASD/arrows move, mouse looks, left mouse fires, R respawns.' > "dist/$out/README.txt"
+          (cd dist && zip -qr "../ShankPit_Client_${{ github.run_number }}.zip" "$out")
+
+      - name: Prove the Windows zip layout (PLAY.bat is really in it)
+        run: |
+          set -euo pipefail
+          zip="ShankPit_Client_${{ github.run_number }}.zip"
+          unzip -l "$zip"
+          test "$(unzip -Z1 "$zip" | grep -cx 'ShankPit_Client/PLAY.bat')" = 1
+          test "$(unzip -Z1 "$zip" | grep -cx 'ShankPit_Client/ShankPit.exe')" = 1
+          test "$(unzip -Z1 "$zip" | grep -cx 'ShankPit_Client/SDL2.dll')" = 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-client
+          path: ShankPit_Client_*.zip
+          if-no-files-found: error
+
+  release:
+    name: 🚀 Tag & release (Windows + Linux)
+    # Only real master pushes publish. PRs and manual runs still build and package, so the artifacts
+    # are inspectable, but they never cut a version.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+
+      - name: Tag the next minor version and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+          # Same auto-bump rule as the main game: a passing build on master makes a real,
+          # non-prerelease release, bumping the minor and resetting the patch. Big bumps stay human.
+          latest=$(git tag --list 'v*' --sort=-v:refname | head -n1)
+          if [ -z "$latest" ]; then
+            next="v1.0.0"
+          else
+            v="${latest#v}"
+            major="${v%%.*}"
+            rest="${v#*.}"
+            minor="${rest%%.*}"
+            next="v${major}.$((minor + 1)).0"
+          fi
+          if gh release view "$next" >/dev/null 2>&1; then
+            echo "release $next already exists; nothing to do"
+            exit 0
+          fi
+          ls -l dist
+          git tag "$next"
+          git push origin "$next"
+          gh release create "$next" dist/*.zip \
+            --title "SHANKPIT clean room $next" \
+            --notes "Clean-room PARENA build of SHANKPIT.
+
+          * **Windows** -- \`ShankPit_Client_<run>.zip\`: unpack, then run **PLAY.bat** (next to \`ShankPit.exe\` and \`SDL2.dll\`).
+          * **Linux** -- \`ShankPit_Client_Linux_<run>.zip\`: unpack, then run \`./PLAY.sh\`.
+
+          Boots into **ZOMBIES** as the lobby; press \`2\` for the shankpit-460 arena-shooter **FFA**."

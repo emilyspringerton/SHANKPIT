@@ -20,8 +20,12 @@ GAME_PRN := packages/game/core_loop.prn \
 GAME_GEN    := build/game_rules.c
 GAME_CFLAGS := -O2 -Wall -Wextra -Wno-unused-parameter -D_REENTRANT \
                -Ipackages/reflux -Ipackages/game -Iapps/game
-GAME_LIBS   := $(shell pkg-config --libs sdl2) -lm
-GAME_CFLAGS_SDL := $(shell pkg-config --cflags sdl2)
+
+# SDL is the one dependency that differs per platform, so its flags are overridable: the Windows CI
+# job passes the mingw SDL2 development kit instead of the host's pkg-config output.
+GAME_SDL_CFLAGS ?= $(shell pkg-config --cflags sdl2)
+GAME_SDL_LIBS   ?= $(shell pkg-config --libs sdl2)
+GAME_EXTRA_LIBS ?= -lm
 GAME_BIN      := $(BIN_DIR)/shank_game
 GAME_TEST_BIN := $(BIN_DIR)/shank_game_test
 
@@ -36,8 +40,9 @@ $(GAME_GEN): $(GAME_PRN) $(PARENA_BIN)
 $(GAME_BIN): $(GAME_GEN) apps/game/host.c apps/game/game_api.h \
              packages/reflux/reflux_runtime.c packages/reflux/reflux_runtime.h
 	@mkdir -p $(BIN_DIR)
-	$(CC) $(GAME_CFLAGS) $(GAME_CFLAGS_SDL) \
-	  apps/game/host.c packages/reflux/reflux_runtime.c $(GAME_GEN) -o $@ $(GAME_LIBS)
+	$(CC) $(GAME_CFLAGS) $(GAME_SDL_CFLAGS) \
+	  apps/game/host.c packages/reflux/reflux_runtime.c $(GAME_GEN) -o $@ \
+	  $(GAME_SDL_LIBS) $(GAME_EXTRA_LIBS)
 
 $(GAME_TEST_BIN): $(GAME_GEN) apps/game/game_test.c apps/game/game_api.h \
                   packages/reflux/reflux_runtime.c packages/reflux/reflux_runtime.h

@@ -17,17 +17,37 @@
 #define SDL_MAIN_HANDLED
 #include <SDL2/SDL.h>
 
-#include <arpa/inet.h>
-#include <errno.h>
-#include <fcntl.h>
 #include <math.h>
-#include <netinet/in.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* The host ships as a Linux client and a Windows client from the same file, so the socket layer is
+ * the one place with a platform split. Everything else (SDL, the PARENA rules, the renderer) is
+ * identical on both. */
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0601 /* inet_pton */
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+typedef SOCKET shank_socket;
+#define SHANK_BAD_SOCKET INVALID_SOCKET
+#else
+#include <arpa/inet.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+typedef int shank_socket;
+#define SHANK_BAD_SOCKET (-1)
+#endif
 
 #include "game_api.h"
 #include "reflux_runtime.h"
@@ -110,7 +130,7 @@ static int g_feed_until[FEED_LINES];
 static int g_in_fwd, g_in_strafe, g_in_fire;
 
 /* ---- net --------------------------------------------------------------------------------------- */
-static int g_sock = -1;
+static shank_socket g_sock = SHANK_BAD_SOCKET;
 static int g_is_host, g_is_client;
 static struct sockaddr_in g_peer;
 static int g_peer_known;
@@ -469,15 +489,41 @@ static void update_round(void) {
 }
 
 /* ---- networking -------------------------------------------------------------------------------- */
-static int set_nonblocking(int fd) {
+static void shank_sleep_ms(int ms) {
+#ifdef _WIN32
+    Sleep((DWORD)ms);
+#else
+    usleep((useconds_t)(ms * 1000));
+#endif
+}
+
+static int shank_net_init(void) {
+#ifdef _WIN32
+    WSADATA wsa;
+    return WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
+#else
+    return 1;
+#endif
+}
+
+static int shank_set_nonblocking(shank_socket fd) {
+#ifdef _WIN32
+    u_long mode = 1;
+    return ioctlsocket(fd, FIONBIO, &mode) == 0;
+#else
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags < 0) return 0;
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+#endif
 }
 
 static void net_open(int port) {
+    if (!shank_net_init()) {
+        fprintf(stderr, "shank_game: socket layer init failed\n");
+        exit(1);
+    }
     g_sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (g_sock < 0) { perror("socket"); exit(1); }
+    if (g_sock == SHANK_BAD_SOCKET) { fprintf(stderr, "shank_game: socket() failed\n"); exit(1); }
     if (g_is_host) {
         struct sockaddr_in addr;
         memset(&addr, 0, sizeof(addr));
@@ -485,11 +531,11 @@ static void net_open(int port) {
         addr.sin_addr.s_addr = htonl(INADDR_ANY);
         addr.sin_port = htons((uint16_t)port);
         if (bind(g_sock, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
-            perror("bind");
+            fprintf(stderr, "shank_game: bind(%d) failed\n", port);
             exit(1);
         }
     }
-    set_nonblocking(g_sock);
+    shank_set_nonblocking(g_sock);
 }
 
 static void net_send_snapshot(void) {
@@ -516,7 +562,8 @@ static void net_send_snapshot(void) {
         s.count = (uint8_t)(i + 1);
     }
     if (g_peer_known) {
-        sendto(g_sock, &s, sizeof(s), 0, (struct sockaddr *)&g_peer, sizeof(g_peer));
+        sendto(g_sock, (const char *)&s, (int)sizeof(s), 0, (struct sockaddr *)&g_peer,
+               (int)sizeof(g_peer));
     }
 }
 
@@ -524,12 +571,14 @@ static void net_host_recv(void) {
     for (;;) {
         NetCmd cmd;
         struct sockaddr_in from;
+#ifdef _WIN32
+        int fromlen = (int)sizeof(from);
+#else
         socklen_t fromlen = sizeof(from);
-        ssize_t n = recvfrom(g_sock, &cmd, sizeof(cmd), 0, (struct sockaddr *)&from, &fromlen);
-        if (n < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) return;
-            return;
-        }
+#endif
+        int n = (int)recvfrom(g_sock, (char *)&cmd, (int)sizeof(cmd), 0,
+                              (struct sockaddr *)&from, &fromlen);
+        if (n < 0) return;
         if (n != (ssize_t)sizeof(cmd)) continue;
         if ((int)cmd.magic != net_magic()) continue;
         if (cmd.type != net_packet_cmd()) continue;
@@ -571,7 +620,7 @@ static void net_host_recv(void) {
 /* One call per simulation tick, whatever role this process is: the host drains client commands and
  * broadcasts at 30 Hz, a client sends its own command and applies whatever snapshot has arrived. */
 static void net_recv_or_send(void) {
-    if (g_sock < 0) return;
+    if (g_sock == SHANK_BAD_SOCKET) return;
     if (g_is_host) {
         net_host_recv();
         g_net_acc += loop_tick_ms();
@@ -596,11 +645,12 @@ static void net_client_tick(void) {
     cmd.strafe = (int16_t)g_in_strafe;
     cmd.yaw = p->yaw;
     cmd.fire = (uint8_t)(g_in_fire ? 1 : 0);
-    sendto(g_sock, &cmd, sizeof(cmd), 0, (struct sockaddr *)&g_peer, sizeof(g_peer));
+    sendto(g_sock, (const char *)&cmd, (int)sizeof(cmd), 0, (struct sockaddr *)&g_peer,
+           (int)sizeof(g_peer));
 
     for (;;) {
         NetSnapshot s;
-        ssize_t n = recv(g_sock, &s, sizeof(s), 0);
+        int n = (int)recv(g_sock, (char *)&s, (int)sizeof(s), 0);
         int i;
         if (n < 0) break;
         if (n != (ssize_t)sizeof(s)) continue;
@@ -994,7 +1044,10 @@ int main(int argc, char **argv) {
     if (g_is_client) {
         g_peer.sin_family = AF_INET;
         g_peer.sin_port = htons((uint16_t)port);
-        if (inet_pton(AF_INET, join_ip, &g_peer.sin_addr) != 1) {
+        /* IPv4 literal only, and inet_addr exists in both winsock and POSIX, so this is one line
+         * for both clients instead of a feature-test-macro dance around inet_pton. */
+        g_peer.sin_addr.s_addr = inet_addr(join_ip);
+        if (g_peer.sin_addr.s_addr == INADDR_NONE) {
             fprintf(stderr, "shank_game: bad join address %s\n", join_ip);
             return 2;
         }
@@ -1016,8 +1069,8 @@ int main(int argc, char **argv) {
             net_recv_or_send();
             poll_events();
             /* A real socket needs real time on both ends; the other headless paths are pure sim. */
-            if (g_is_host) usleep(8000);
-            else if (g_is_client) usleep(16000);
+            if (g_is_host) shank_sleep_ms(8);
+            else if (g_is_client) shank_sleep_ms(16);
         }
         printf("headless %d ticks: mode=%d %s=%d score=%d hp=%d shield=%d bodies=%d events=%d"
                " snapshots=%d peer=%d\n",
