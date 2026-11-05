@@ -37,6 +37,15 @@
 ;; The sky curve, checked at the two rows that must never disagree: the top of the frame is the sky-top
 ;; band and the middle is the horizon. scale 234 ~= 180 / tan(37.5 deg), the 75-degree FOV at 360 rows.
 (defn view-scale [] : F32 234.0)
+
+;; Every row of the frame, not just the two sampled above.
+(defn sky-scan [] : I32 (and (= (+ (band-count 0 (view-scale) 0.0 1.0)
+                                   (+ (band-count 1 (view-scale) 0.0 1.0)
+                                      (band-count 2 (view-scale) 0.0 1.0)))
+                                360)
+                            (> (band-count 2 (view-scale) 0.0 1.0) 0)
+                            (> (band-count 1 (view-scale) 0.0 1.0) 0)
+                            (= (band-inversions (view-scale) 0.0 1.0) 0)))
 (defn sky-check [] : I32
   (if (and (= (sky-band 0.0 (view-scale) 0.0 1.0) 2)
            (= (sky-band 180.0 (view-scale) 0.0 1.0) 0)
@@ -75,9 +84,10 @@
     (println "loop: 16 ms fixed tick, at most 6 steps a frame")
     (println "render: 460 palette -- pale concrete, warm dusk sky, ten muted hues")
     (println "sky: row 0 is the top band, row 180 is the horizon")
+    (println "sky: all 360 rows scanned, bands cover the frame and never invert")
     (if (and (> (level-width) 0) (> (level-depth) 0) (>= (spawn-y) 0)
              (> (turn-cap) 0) (< (turn-cap) 2000) (> (distance-bias) 1000)
-             (= (frame-check) 0) (= (palette-check) 0) (= (sky-check) 0))
+             (= (frame-check) 0) (= (palette-check) 0) (= (sky-check) 0) (>= (sky-scan) 1))
       (do
         (println "boot plan: the level's own spawner, zombie mode")
         0)

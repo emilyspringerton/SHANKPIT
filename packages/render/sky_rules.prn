@@ -34,3 +34,28 @@
 (defn sky-band [(y : F32) (scale : F32) (cam-sp : F32) (cam-cp : F32)] : I32
   (let [t (sky-t y scale cam-sp cam-cp)]
     (if (< t 0.175) 0 (if (< t 0.675) 1 2))))
+
+;; ---- scanning a whole frame -----------------------------------------------------------------------
+;; A frame is 360 rows, and both of the checks above look at two of them. These walk all of them, with no
+;; memory and no framebuffer: the bands must cover the frame exactly and must never run backwards down it
+;; (a row below the horizon can never be a higher band than a row above it), which is what catches a sign
+;; error in the curve that two sample rows would sail past.
+;;
+;; The row cursor is F32 for the same reason the curve's is: (f32 x) emits an undefined call here, so the
+;; loop counts in floats rather than converting on each iteration.
+(defn band-count [(band : I32) (scale : F32) (cam-sp : F32) (cam-cp : F32)] : I32
+  (loop [y 0.0 acc 0]
+    (if (< y 360.0)
+      (recur (+ y 1.0)
+             (if (= (sky-band y scale cam-sp cam-cp) band) (+ acc 1) acc))
+      acc)))
+
+(defn band-inversions [(scale : F32) (cam-sp : F32) (cam-cp : F32)] : I32
+  (loop [y 0.0 acc 0]
+    (if (< y 359.0)
+      (recur (+ y 1.0)
+             (if (< (sky-band y scale cam-sp cam-cp)
+                    (sky-band (+ y 1.0) scale cam-sp cam-cp))
+               (+ acc 1)
+               acc))
+      acc)))
