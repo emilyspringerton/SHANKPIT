@@ -147,6 +147,18 @@
 (defn hz [(i : I32)] : I32 (body-z i (place-ring) 0))
 (defn inside-arena? [(v : I32) (half : I32)] : Bool (<= (abs-i v) half))
 
+;; Wave 1's three bodies stand east, south and west, so they must face west, north and east respectively
+;; (codes in packages/sim/horde_rules.prn). A body facing its own outward direction is looking at the
+;; wall behind it, which is the case this check exists to catch.
+(defn horde-facing-check [] : I32
+  (if (and (= (body-facing 0) 3)
+           (= (body-facing 1) 2)
+           (= (body-facing 2) 1)
+           (!= (body-facing 0) (body-facing 1))
+           (!= (body-facing 1) (body-facing 2)))
+    0
+    1))
+
 (defn horde-place-check [] : I32
   (let [hw (/ (* (level-width) 1000) 2)
         hd (/ (* (level-depth) 1000) 2)]
@@ -172,10 +184,11 @@
     (println "sim: a body leaves the spawner, falls, and the floor stops it")
     (println "horde: wave 1 from wave_rules fits inside this arena")
     (println "horde: its 3 bodies stand inside the arena, apart from each other")
+    (println "horde: each body faces the arena's middle, not the wall behind it")
     (if (and (= (level-check) 0)
              (> (turn-cap) 0) (< (turn-cap) 2000) (> (distance-bias) 1000)
              (= (frame-check) 0) (= (palette-check) 0) (= (sky-check) 0) (>= (sky-scan) 1)
-             (= (sim-check) 0) (= (horde-check) 0) (= (horde-place-check) 0))
+             (= (sim-check) 0) (= (horde-check) 0) (= (horde-place-check) 0) (= (horde-facing-check) 0))
       (do
         (println "boot plan: the level's own spawner, zombie mode")
         0)
