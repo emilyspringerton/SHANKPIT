@@ -43,6 +43,6 @@ cc_library(
     # retro_sky_eval.h, which was never declared). Tighten to per-target lists once every
     # target here is known to build; the glob keeps the real compile inputs visible today.
     srcs = [":menu_gen_bazel.c"],
-    hdrs = glob(["*.h"]) + ["ui_bridge.c"],
+    hdrs = glob(["*.h"], allow_empty = True),
     visibility = ["//visibility:public"],
 )

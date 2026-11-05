@@ -6,10 +6,9 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 
 cc_library(
     name = "education",
-    srcs = glob(["*.c"], exclude = ["eduvm_mod.c", "*_test.c", "*_live_test.c"], allow_empty = True),
+    srcs = glob(["*.c"], exclude = ["*_live_test.c"], allow_empty = True),
     hdrs = glob(["*.h"]) + [
         # #included as text by a sibling .c (unity build), not compiled separately
-        "eduvm_mod.c",
     ],
     copts = ["-Ipackages/world", "-Ipackages/simulation", "-Ipackages/common", "-Ipackages/render"],
     deps = [

@@ -60,7 +60,7 @@ jobs:
       - name: Checkout SHANKPIT
         uses: actions/checkout@v4
         with:
-          path: SHANKPIT
+          path: SPGF
 
       - name: Checkout PARENA (local_path_override ../PARENA)
         uses: actions/checkout@v4
@@ -99,7 +99,7 @@ jobs:
       # The merged-layout shim tests.yml already carries: some commits land the trees as
       # apps2/packages2/docs2 only. Harmless when apps/packages already exist.
       - name: Normalize merged layout
-        working-directory: SHANKPIT
+        working-directory: SPGF
         run: |
           set -euo pipefail
           if [ ! -e apps ] && [ -d apps2 ]; then ln -s apps2 apps; fi
@@ -107,16 +107,18 @@ jobs:
           if [ ! -e docs ] && [ -d docs2 ]; then ln -s docs2 docs; fi
 
       - name: Build every package
-        working-directory: SHANKPIT
+        working-directory: SPGF
         run: bazel build //packages/...
 
-      # The point of the whole exercise: packages/ui/menu.prn is committed beside the C it
-      # produces, and this genrule regenerates that C through the real @parena//src:parena
-      # binary on every run. If someone edits the .prn and forgets scripts/gen_ui_menu.sh, the
-      # checked-in menu_gen.c is stale -- this diff is what says so, instead of a reviewer.
-      - name: PARENA emit-beside-source (menu.prn -> menu_gen.c must not drift)
-        working-directory: SHANKPIT
-        run: |
-          set -euo pipefail
-          bazel build //packages/ui:menu_gen_from_prn
-          diff -u packages/ui/menu_gen.c bazel-bin/packages/ui/menu_gen_bazel.c
+      # The emission contract, as a test: every module's C is produced by the real compiler and
+      # the checked-in .prn is the only copy. There is no generated C in this fork to diff against
+      # -- that is the point of deleting it -- so the assertion lives in the test, not a diff.
+      - name: Test the PARENA emission contract
+        working-directory: SPGF
+        run: bazel test //packages/... --test_output=errors
+
+      # Levels are data the engine boots into; declared as a target so a broken tree is a build
+      # failure rather than a runtime surprise.
+      - name: Verify levels are present as build data
+        working-directory: SPGF
+        run: bazel build //levels:levels

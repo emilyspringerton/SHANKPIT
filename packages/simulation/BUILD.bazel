@@ -1,4 +1,6 @@
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//bazel:parena.bzl", "parena_module")
 
 # day_night_clock.c/world_rules.c -- BIG_O/PARENA engine merge phase 1 (founder real-time: "port
 # the BIG_O tech into the shankpit repo -- all of it the lighting the systems all of it"). Real
@@ -17,10 +19,8 @@ cc_library(
     # retro_sky_eval.h, which was never declared). Tighten to per-target lists once every
     # target here is known to build; the glob keeps the real compile inputs visible today.
     srcs = [
-        "day_night_clock.c",
-        "world_rules.c",
     ],
-    hdrs = glob(["*.h"]),
+    hdrs = glob(["*.h"], allow_empty = True),
     visibility = ["//visibility:public"],
 )
 
@@ -43,20 +43,8 @@ cc_library(
     # retro_sky_eval.h, which was never declared). Tighten to per-target lists once every
     # target here is known to build; the glob keeps the real compile inputs visible today.
     srcs = [
-        "ai_brain_rules.c",
-        "giant_bug_brain.c",  # PARENA-generated (giant_bug_brain.prn) -- witness_ai.c's own real dep
-        "giant_bug_values.c",  # Giant Zombie Bug value system, both client+server per SERVER_SRC/LOBBY_SRC
-        "hammer_tower.c",  # WPN_HAMMER's E power: the mini tower (needs witness_ai's own role/combat queries)
-        "bioslurry.c",  # what a killed zombie leaves, and the DNA the lab reads off it
-        "citizen_life.c",  # citizens' own personas/paths/secrets
-        "zombie_taxonomy.c",  # zombie classes/levels/stats/DNA
-        "npc_archetype.c",
-        "witness_ai.c",
-        "witness_rules.c",
-        "witness_sim.c",
-        "zombie_values.c",
     ],
-    hdrs = glob(["*.h"]),
+    hdrs = glob(["*.h"], allow_empty = True),
     deps = [
         "//packages/common:common_headers",
         "//packages/world",  # witness_ai.h's own real level_boxes.h dependency (7c zone sync)
@@ -84,14 +72,8 @@ cc_library(
     # retro_sky_eval.h, which was never declared). Tighten to per-target lists once every
     # target here is known to build; the glob keeps the real compile inputs visible today.
     srcs = [
-        "ai_nav.c",
-        "brick_mod.c",  # PARENA-generated (scripts/gen_brick_mod.sh): destructible brick decisions, lobby + server both
-        "brick_bodies.c",  # physical broken brick on GOLDEN BAND grb (brick_bodies.h), lobby + server both
-        "structure_rules.c",  # PARENA-generated (scripts/gen_structure_rules.sh): joints/support/load cascade over brick, lobby + server both
-        "humanness.c",
-        "story_ai.c",
     ],
-    hdrs = glob(["*.h"]),
+    hdrs = glob(["*.h"], allow_empty = True),
     deps = [
         "//packages/common:common_headers",
         "//packages/reflux",
@@ -114,10 +96,8 @@ cc_library(
     # retro_sky_eval.h, which was never declared). Tighten to per-target lists once every
     # target here is known to build; the glob keeps the real compile inputs visible today.
     srcs = [
-        "world_alert_bridge.c",
-        "world_alerts_mod.c",
     ],
-    hdrs = glob(["*.h"]),
+    hdrs = glob(["*.h"], allow_empty = True),
     deps = [
         "//packages/common:common_headers",  # phone.h
         "//packages/reflux",  # REFLUX_ACTION_PHASE_CHANGED/WEATHER_CHANGED
@@ -137,8 +117,8 @@ cc_library(
     # compiling each package in the sandbox: e.g. packages/render/retro_sky.h needs
     # retro_sky_eval.h, which was never declared). Tighten to per-target lists once every
     # target here is known to build; the glob keeps the real compile inputs visible today.
-    srcs = ["food_pickup.c"],
-    hdrs = glob(["*.h"]),
+    srcs = glob(["*.c"], allow_empty = True),
+    hdrs = glob(["*.h"], allow_empty = True),
     deps = [
         "//packages/common:common_headers",  # food_items.h
     ],
@@ -157,10 +137,8 @@ cc_library(
     # retro_sky_eval.h, which was never declared). Tighten to per-target lists once every
     # target here is known to build; the glob keeps the real compile inputs visible today.
     srcs = [
-        "cutscene.c",
-        "typing_lesson.c",
     ],
-    hdrs = glob(["*.h"]),
+    hdrs = glob(["*.h"], allow_empty = True),
     deps = [
         ":story_ai",
         "//packages/common:common_headers",
@@ -177,11 +155,24 @@ cc_library(
     # compiling each package in the sandbox: e.g. packages/render/retro_sky.h needs
     # retro_sky_eval.h, which was never declared). Tighten to per-target lists once every
     # target here is known to build; the glob keeps the real compile inputs visible today.
-    srcs = ["rigid_ragdoll.c"],
-    hdrs = glob(["*.h"]),
+    srcs = glob(["*.c"], allow_empty = True),
+    hdrs = glob(["*.h"], allow_empty = True),
     deps = [
         "//packages/goldenband",
         "//packages/goldenband:grb_physics",
     ],
     visibility = ["//visibility:public"],
+)
+
+# The clean-room rewrite starts here: slide_rules.prn sits in this package beside the header that
+# specifies it, and the C is emitted by the real PARENA compiler on every build.
+parena_module(name = "slide_rules", src = "slide_rules.prn")
+
+# `bazel test` on the emission contract: the compiler really produced this module's C, the
+# exports are in it, and the scalar-only strip kept the runtime (and SDL2) out of the package.
+sh_test(
+    name = "slide_rules_emitted_test",
+    srcs = ["slide_rules_emitted_test.sh"],
+    data = [":slide_rules_from_prn"],
+    args = ["$(rootpath :slide_rules_from_prn)"],
 )

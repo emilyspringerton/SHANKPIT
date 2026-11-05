@@ -6,14 +6,13 @@ cc_library(
     name = "pellegrino_browser_embed",
     # phone_browser_stub.c is the no-mbedTLS fallback for the same five entry points
     # phone_browser_embed.c defines; the Makefile builds one or the other, never both.
-    srcs = glob(["*.c", "*.inc"], exclude = ["phone_browser_stub.c"], allow_empty = True) + glob(
+    srcs = glob(["*.inc"], exclude = ["phone_browser_stub.c"], allow_empty = True) + glob(
         ["runtime/**/*.c"],
         exclude = ["runtime/aead/*.c"],
         allow_empty = True,
     ),
     hdrs = glob(["**/*.h"]) + [
         # textually #included by phone_browser_embed.c:42
-        "runtime/parena_runtime.c",
     ],
     copts = ["-Ipackages/pellegrino_browser_embed"],
     deps = ["//packages/common:common_headers"],

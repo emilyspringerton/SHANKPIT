@@ -1,0 +1,2 @@
+# Marker package so //bazel:parena.bzl is loadable (Bazel requires every .bzl to live in a package).
+exports_files(["parena.bzl"])

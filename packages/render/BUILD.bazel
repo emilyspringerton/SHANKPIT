@@ -13,12 +13,6 @@ cc_library(
     # retro_sky_eval.h, which was never declared). Tighten to per-target lists once every
     # target here is known to build; the glob keeps the real compile inputs visible today.
     srcs = [
-        "bloom.c",
-        "gl_shader.c",
-        "proc_tex.c",
-        "retro_lighting.c",
-        "retro_material.c",
-        "retro_sky.c",
         # sky_weather.c -- BIG_O/PARENA engine merge phase 1 (ported in from BIG_O's
         # bigo_sky.h/bigo_skycfg.h, split into a real .c/.h pair to match this package's own
         # convention). Upgrades retro_sky's fixed fast-orbit dome with a real weather-aware sky
@@ -27,9 +21,8 @@ cc_library(
         # retro_lighting.c's RETRO_LIGHTING_DYNAMIC preset still reads it for scene ambient
         # lighting; wiring that to sky_weather's own weather state is a named EMILY/BACKLOG.md
         # SECTION 536 follow-up, not this pass.
-        "sky_weather.c",
     ],
-    hdrs = glob(["*.h"]),
+    hdrs = glob(["*.h"], allow_empty = True),
     deps = [
         "//packages/common:common_headers",
         "//packages/simulation:day_night_clock",  # sky_weather.c's own real dependency

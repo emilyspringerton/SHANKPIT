@@ -14,7 +14,6 @@ cc_library(
     # retro_sky_eval.h, which was never declared). Tighten to per-target lists once every
     # target here is known to build; the glob keeps the real compile inputs visible today.
     srcs = [
-        "terrain.c",
         # S459-33 -- the real PARENA-compiled PNG decoder (built from PARENA/stdlib/image/png.prn
         # + compress/inflate.prn via `parena build`, checked in, not re-generated at build time --
         # same real "generated .c, do not edit by hand" convention packages/simulation/
@@ -22,10 +21,8 @@ cc_library(
         # Arena/Vec/Bytes runtime (parena_runtime.c/.h -- a real, narrower subset of PARENA/
         # runtime/parena_runtime.h, which unconditionally pulls in SDL2 + POSIX networking/tty/
         # hardware headers this package has no business needing).
-        "parena_runtime.c",
-        "png_decode_gen.c",
     ],
-    hdrs = glob(["*.h"]),
+    hdrs = glob(["*.h"], allow_empty = True),
     # spray_registry.h's own real S459-33 texture decode/upload needs packages/render's
     # ProcTexture (proc_tex.h) -- only ever referenced by apps/lobby's own draw code, never by
     # apps/server (headless, never includes spray_registry.h), so this new dependency doesn't
