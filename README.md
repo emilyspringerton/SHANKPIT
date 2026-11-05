@@ -1662,16 +1662,28 @@ all targets compile `build/game_rules.c` from the same `.prn` sources and link t
 | GCC native | `make game` | `bin/shank_game` | all 5 (core sim, level, weather render, weather audio, sky) |
 | Clang native | `make game-clang` | `bin/shank_game_clang` | all 5 |
 | LLVM-LTO native | `make game-llvm` | `bin/shank_game_llvm` (clang + `-flto` + `lld`) | all 5 |
-| Pure WASM core | `make wasm` | `bin/shank_core.wasm` (17 KB, zero imports) | core sim + level only (mask 3) |
+| Pure WASM client core | `make wasm` | `bin/shank_core.wasm` (22 KB, zero imports) + `apps/game/wasm_client.html` | core sim + level only (mask 3); canvas/input host |
 | Native core (no networking) | `make core` | `bin/shank_core` | all 5 level modules; net none |
 | Clang rules suite | `make game-test-clang` | `bin/shank_game_test_clang` | all 5 |
 | WASM boot check | `make wasm-smoke` | Node boots the real module | core sim + level only |
 
-The WASM module is a headless CORE, not a playable browser client yet: it needs no libc, no SDL,
-no imports, and carries its own `sin`/`cos`/`atan2`. It exports `wasm_boot`, registration, state
-apply, mask/revision/enabled queries and the rules' trig. `make wasm-smoke` instantiates it and
-proves a surface server state of 31 clamps to 3, an older state cannot roll it back, and the trig
-matches JavaScript's. The playable render/input/audio port is still ahead.
+The WASM module needs no libc, no SDL and no imports, and carries its own `sin`/`cos`/`atan2`. It
+exports the registry/state API plus a playable ABI: `wasm_play_boot` registers a level and puts a
+body on the floor, `wasm_set_input`/`wasm_turn` feed the stick and look, `wasm_frame` spends elapsed
+milliseconds on the frame rules' fixed 16 ms ticks and draws through `rp_*` and the 460 palette, and
+`wasm_fb_ptr` exposes a 1024x576 RGBA framebuffer. Movement still calls the same `loop_move_x`/
+`loop_move_z` rules as the native host. `apps/game/wasm_client.html` is the canvas/keyboard shell:
+
+```sh
+make wasm
+python3 -m http.server 8080
+# open http://localhost:8080/apps/game/wasm_client.html
+```
+
+`make wasm-smoke` boots the real module, checks the clamped registry/state and trig, then renders a
+frame, asserts the framebuffer has real colours, moves forward and after a turn, and checks the
+six-tick stall cap. Audio, networking and the per-level weather/sky module bits are still ahead, so
+`wasm_boot` continues to advertise mask 3.
 
 The native core (`make core`, `bin/shank_core`) is the same registry with all five level modules but
 no SDL and no socket code. It is the "core without the networking mod" half of the ladder below.
@@ -1738,7 +1750,7 @@ target; a server can evolve level mods over whatever transport that target has.
 | # | step | current state | done when |
 |---|---|---|---|
 | 1 | Capability handshake | client advertises caps + level (packet 6); the server keeps four address-keyed peers, assigns slots 8-11 via welcome, and clamps/filters each independently; the client clamps locally too | per-peer token/auth (folded into step 4), so one address cannot impersonate another |
-| 2 | WASM render/input/audio | core registry only; no canvas, no input, no audio | a browser build boots a level, draws it, and moves a body with the same rules as native |
+| 2 | WASM render/input/audio | browser canvas/input landed: fixed-step movement, arena renderer and RGBA framebuffer; audio and the weather/sky level modules are still unported | audio output and per-level render/sky module parity, so the browser client matches native's admitted modules |
 | 3 | Per-target profiles from one source | `build_profiles.prn` now owns caps + net status; targets still pick a profile by hand | profiles are emitted into every build (no hand-passed `--capabilities`), so adding a port updates every target |
 | 4 | Mod-request authority | packet 5 is unauthenticated on the play socket; only level/module/on are validated | identity (or a per-peer token), rate limiting, and an explicit server policy for who may shed modules |
 | 5 | Durable stream identity | JSONL `seq` restarts with each process; replay relies on file order | a persisted monotonically increasing stream id survives restarts, and replay rejects gaps/duplicates |
@@ -1758,7 +1770,7 @@ are the payoff (one core, several shells) and are only meaningful after the port
 - `make game-test` - 256 checks (registry, capabilities, profiles, replay, relay, catalog, event log).
 - `make game-test-clang` - the same 256 under Clang.
 - `make game-clang` / `make game-llvm` then `--headless 5` - both boot, 31 modules on level 1.
-- `make wasm` / `make wasm-smoke` - zero-import module, caps 3, no transport, state 31 clamped to 3, trig checked.
+- `make wasm` / `make wasm-smoke` - zero-import module, caps 3, no transport, state 31 clamped to 3, trig checked, plus a rendered 1024x576 frame and fixed-step forward/turn movement.
 - `make core` / `make core-smoke` - native core with no networking: moon 3, capped 3, shed 27/rev 2,
   and no socket symbols in `nm -u`.
 - `make game-net-smoke` / relay / request / capped - the same wire behaviour through the seam.
@@ -1767,8 +1779,8 @@ are the payoff (one core, several shells) and are only meaningful after the port
 - `make game-multi-peer-smoke` - two clients, independent caps 31/3 and levels 1/2, slots 8/9, two rows.
 - `make game-level-request-smoke`, `make game-level-relay-smoke`, `make game-smoke` - unchanged.
 
-Known limits: the WASM core has no allocator and no player; the trig is accurate for the rules'
-range but is not a full libm; the profile table exists but each build still selects its profile by
+Known limits: the WASM client core has no allocator and no audio or networking; its weather/sky
+module bits remain off; the trig is accurate for the rules' range but is not a full libm; the profile table exists but each build still selects its profile by
 hand; the transport seam exists but only one implementation (host-C UDP) does, packet scheduling is
 still host C, the capability handshake is unauthenticated (identity is the source address), and no target is FFI-free
 yet; LLVM-LTO's size drop (90 KB to 69 KB) is a build result, not a measured runtime speedup.

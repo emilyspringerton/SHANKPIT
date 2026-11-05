@@ -250,11 +250,15 @@ jobs:
           set -euo pipefail
           make core-smoke PARENA_BIN="$PWD/PARENA/parena"
 
-      - name: Pure WASM core (PARENA rules, no libc, no imports)
+      - name: Pure WASM client core (PARENA rules, no libc, no imports)
         run: |
           set -euo pipefail
           make wasm PARENA_BIN="$PWD/PARENA/parena"
           make wasm-smoke PARENA_BIN="$PWD/PARENA/parena"
+          cp apps/game/wasm_client.html bin/wasm_client.html
+          sed -n '/<script type="module">/,/<\/script>/p' apps/game/wasm_client.html \
+            | sed '1d;$d' > /tmp/wasm_client.mjs
+          node --check /tmp/wasm_client.mjs
 
       - uses: actions/upload-artifact@v4
         with:
@@ -265,7 +269,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: wasm-core
-          path: bin/shank_core.wasm
+          path: |
+            bin/shank_core.wasm
+            bin/wasm_client.html
           if-no-files-found: error
 
   release:
@@ -322,13 +328,13 @@ jobs:
           done
           test "$pushed" = 1
           test -n "$(git ls-remote --tags origin "refs/tags/$next")"
-          gh release create "$next" dist/*.zip dist/*.wasm dist/shank_core \
+          gh release create "$next" dist/*.zip dist/*.wasm dist/*.html dist/shank_core \
             --title "SHANKPIT clean room $next" \
             --notes "Clean-room PARENA build of SHANKPIT.
 
           * **Windows** -- \`ShankPit_Client_<run>.zip\`: unpack, then run **PLAY.bat** (next to \`ShankPit.exe\` and \`SDL2.dll\`).
           * **Linux** -- \`ShankPit_Client_Linux_<run>.zip\`: unpack, then run \`./PLAY.sh\`.
-          * **WASM core** -- \`shank_core.wasm\`: the PARENA level-module core only (core sim + level); render/input/audio are not ported yet.
+          * **WASM client** -- \`shank_core.wasm\` + \`wasm_client.html\`: serve the directory and open the page; it boots a level, draws the arena and moves with WASD/arrows. Audio and networking are not ported yet.
           * **Native core** -- \`shank_core\`: the same registry with no SDL and no networking, the base a transport mod is added to.
 
           Boots into **ZOMBIES** as the lobby; press \`2\` for the shankpit-460 arena-shooter **FFA**."
