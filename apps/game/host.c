@@ -25,6 +25,7 @@
 
 #include "event_log.h"
 #include "net_transport.h"
+#include "build_profile.h"
 #include "game_api.h"
 #include "level_catalog.h"
 #include "level_mods_host.h"
@@ -1237,6 +1238,8 @@ int main(int argc, char **argv) {
     int level_env = lm_env_surface();
     int set_mod = 0;
     int set_on = 0;
+    int caps = 0;
+    int caps_set = 0;
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--headless") == 0 && i + 1 < argc) {
@@ -1268,8 +1271,9 @@ int main(int argc, char **argv) {
             g_request_mod = atoi(argv[++i]);
             g_request_on = atoi(argv[++i]) != 0;
         } else if (strcmp(argv[i], "--capabilities") == 0 && i + 1 < argc) {
-            /* A client that has only ported some modules declares its mask before registration. */
-            level_mods_set_capabilities(atoi(argv[++i]));
+            /* Test/debug override: apply it after the registry reset, before any registration. */
+            caps = atoi(argv[++i]);
+            caps_set = 1;
         } else if (strcmp(argv[i], "--level") == 0 && i + 1 < argc) {
             level_id = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--env") == 0 && i + 1 < argc) {
@@ -1317,6 +1321,8 @@ int main(int argc, char **argv) {
     }
     level_mods_reset();
     level_catalog_reset();
+    if (caps_set) level_mods_set_capabilities(caps);
+    else build_profile_apply();
     if (levels_path) {
         int n = level_catalog_load(levels_path);
         if (n <= 0) {
@@ -1392,10 +1398,11 @@ int main(int argc, char **argv) {
                     first_rows = p->rows;
                 }
             }
-            printf("headless %d ticks: mode=%d %s=%d score=%d hp=%d shield=%d bodies=%d events=%d"
-                   " level=%d env=%d mods=%d rev=%d snapshots=%d peer=%d peers=%d peer_caps=%d"
-                   " peer_level=%d level_rows=%d slot=%d level_name=%s",
-                   headless, g_mode, g_mode == gp_mode_zombies() ? "wave" : "frags",
+            printf("headless %d ticks: target=%s net=%s mode=%d %s=%d score=%d hp=%d shield=%d"
+                   " bodies=%d events=%d level=%d env=%d mods=%d rev=%d snapshots=%d peer=%d"
+                   " peers=%d peer_caps=%d peer_level=%d level_rows=%d slot=%d level_name=%s",
+                   headless, build_profile_name(), build_profile_net_name(),
+                   g_mode, g_mode == gp_mode_zombies() ? "wave" : "frags",
                    g_mode == gp_mode_zombies() ? g_wave + 1 : g_player_score,
                    g_player_score, local_body()->hp, local_body()->shield, bot_count_alive(),
                    reflux_host_total_dispatched(), g_level_id, g_level_env,

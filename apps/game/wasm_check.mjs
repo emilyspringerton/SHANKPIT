@@ -12,6 +12,7 @@ assert.equal(typeof core.wasm_boot, "function", "the module exports wasm_boot");
 const capabilities = core.wasm_boot();
 assert.equal(capabilities, 3, "core build declares core sim + level only");
 assert.equal(core.wasm_net_status(), 0, "the WASM core links no network transport");
+assert.equal(core.wasm_profile_target(), 2, "the WASM build reports the wasm-core profile");
 assert.equal(core.wasm_module_count(), 5, "all five module ids still exist in the rules");
 
 assert.equal(core.wasm_register_level(21, 0), 3, "surface opens at the core-only mask");

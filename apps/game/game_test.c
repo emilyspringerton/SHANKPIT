@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include "event_log.h"
+#include "build_profile.h"
 #include "game_api.h"
 #include "level_catalog.h"
 #include "level_mods_host.h"
@@ -606,6 +607,12 @@ static void test_build_profiles(void) {
           "unknown targets are refused");
     check(bp_target_capabilities(99) == 0 && bp_target_net(99) == bp_net_none(),
           "unknown targets admit nothing");
+    check(build_profile_target() == bp_target_native(),
+          "the test client applies its own compiled-in target");
+    check(build_profile_net() == bp_net_host_c(),
+          "the test client reports the profile's transport");
+    check(build_profile_apply() == lm_all_mask() && level_mods_capabilities() == lm_all_mask(),
+          "applying the native profile sets the registry mask");
 }
 
 int main(void) {

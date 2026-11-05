@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "build_profile.h"
 #include "game_api.h"
 #include "level_mods_host.h"
 #include "reflux_runtime.h"
@@ -59,7 +60,7 @@ int main(int argc, char **argv) {
     level_mods_reset();
     reflux_host_reset();
     if (caps_set) level_mods_set_capabilities(caps);
-    else level_mods_set_capabilities(bp_target_capabilities(bp_target_native_core()));
+    else build_profile_apply();
 
     if (level <= 0 || !lm_env_valid(env)) {
         fprintf(stderr, "shank_core: bad level %d / env %d\n", level, env);
@@ -74,7 +75,8 @@ int main(int argc, char **argv) {
         return 3;
     }
 
-    printf("shank_core target=native-core net=none caps=%d level=%d env=%d mods=%d rev=%d\n",
+    printf("shank_core target=%s net=%s caps=%d level=%d env=%d mods=%d rev=%d\n",
+           build_profile_name(), build_profile_net_name(),
            level_mods_capabilities(), level, level_mods_env(level),
            level_mods_mask(level), level_mods_revision(level));
     return 0;

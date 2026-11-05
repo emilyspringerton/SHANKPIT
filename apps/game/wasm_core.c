@@ -7,6 +7,7 @@
  * Every module decision (defaults, mandatory bits, sanitising) is still packages/game/level_mods.prn.
  * This file is only the exported ABI plus the two freestanding memory helpers clang may call.
  */
+#include "build_profile.h"
 #include "game_api.h"
 #include "level_mods_host.h"
 #include "reflux_runtime.h"
@@ -269,8 +270,7 @@ static void wasm_draw(void) {
 __attribute__((visibility("default"))) int wasm_boot(void) {
     level_mods_reset();
     reflux_host_reset();
-    return level_mods_set_capabilities(
-        bp_target_capabilities(bp_target_wasm_core()));
+    return build_profile_apply();
 }
 
 __attribute__((visibility("default"))) int wasm_register_level(int level_id, int env) {
@@ -323,9 +323,13 @@ __attribute__((visibility("default"))) int wasm_event_count(void) {
     return reflux_host_total_dispatched();
 }
 
-/* 0 = this build links no transport, matching bp-target-net(wasm-core). */
+/* 0 = this build links no transport, read from the same profile table wasm_boot applied. */
 __attribute__((visibility("default"))) int wasm_net_status(void) {
-    return bp_target_net(bp_target_wasm_core());
+    return build_profile_net();
+}
+
+__attribute__((visibility("default"))) int wasm_profile_target(void) {
+    return build_profile_target();
 }
 
 /* The rules' own trig, exported so a host can verify the freestanding implementation against its

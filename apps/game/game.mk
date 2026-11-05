@@ -34,6 +34,13 @@ CORE_BIN      := $(BIN_DIR)/shank_core
 WASM_BIN      := $(BIN_DIR)/shank_core.wasm
 WASM_CC       ?= clang
 
+# Every client compiles apps/game/build_profile.c with one target from build_profiles.prn. A new
+# target adds its table row and one variable here; no main() gets another hard-coded profile call.
+GAME_PROFILE      ?= bp_target_native
+GAME_TEST_PROFILE ?= bp_target_native
+CORE_PROFILE      ?= bp_target_native_core
+WASM_PROFILE      ?= bp_target_wasm_core
+
 .PHONY: game game-test game-smoke game-net-smoke game-level-relay-smoke game-level-request-smoke \
         game-capped-client-smoke game-level-interest-smoke game-multi-peer-smoke game-clang game-llvm \
         game-test-clang core core-smoke wasm wasm-smoke
@@ -45,35 +52,42 @@ $(GAME_GEN): $(GAME_PRN) $(PARENA_BIN)
 	$(PARENA_BIN) build $(GAME_PRN) -o $@
 
 $(GAME_BIN): $(GAME_GEN) apps/game/host.c apps/game/game_api.h \
+             apps/game/build_profile.c apps/game/build_profile.h \
              apps/game/net_transport.h apps/game/net_transport_udp.c \
              apps/game/level_catalog.c apps/game/level_catalog.h \
              apps/game/event_log.c apps/game/event_log.h \
              packages/game/level_mods_host.c packages/game/level_mods_host.h \
              packages/reflux/reflux_runtime.c packages/reflux/reflux_runtime.h
 	@mkdir -p $(BIN_DIR)
-	$(CC) $(GAME_CFLAGS) $(GAME_SDL_CFLAGS) \
-	  apps/game/host.c apps/game/net_transport_udp.c apps/game/level_catalog.c apps/game/event_log.c \
+	$(CC) $(GAME_CFLAGS) -DSHANKPIT_BUILD_TARGET=$(GAME_PROFILE) $(GAME_SDL_CFLAGS) \
+	  apps/game/host.c apps/game/build_profile.c apps/game/net_transport_udp.c \
+	  apps/game/level_catalog.c apps/game/event_log.c \
 	  packages/game/level_mods_host.c packages/reflux/reflux_runtime.c $(GAME_GEN) \
 	  -o $@ $(GAME_SDL_LIBS) $(GAME_EXTRA_LIBS)
 
 $(GAME_TEST_BIN): $(GAME_GEN) apps/game/game_test.c apps/game/game_api.h \
+                  apps/game/build_profile.c apps/game/build_profile.h \
                   apps/game/level_catalog.c apps/game/level_catalog.h \
                   apps/game/event_log.c apps/game/event_log.h \
                   packages/game/level_mods_host.c packages/game/level_mods_host.h \
                   packages/reflux/reflux_runtime.c packages/reflux/reflux_runtime.h
 	@mkdir -p $(BIN_DIR)
-	$(CC) $(GAME_CFLAGS) apps/game/game_test.c apps/game/level_catalog.c apps/game/event_log.c \
+	$(CC) $(GAME_CFLAGS) -DSHANKPIT_BUILD_TARGET=$(GAME_TEST_PROFILE) \
+	  apps/game/game_test.c apps/game/build_profile.c \
+	  apps/game/level_catalog.c apps/game/event_log.c \
 	  packages/game/level_mods_host.c packages/reflux/reflux_runtime.c $(GAME_GEN) -o $@ -lm
 
 game-test: $(GAME_TEST_BIN)
 	./$(GAME_TEST_BIN)
 
 # The core without the networking mod: same rules/registry, no host.c, no SDL, no sockets.
-$(CORE_BIN): $(GAME_GEN) apps/game/core_main.c packages/game/level_mods_host.c \
+$(CORE_BIN): $(GAME_GEN) apps/game/core_main.c apps/game/build_profile.c \
+             apps/game/build_profile.h packages/game/level_mods_host.c \
              packages/game/level_mods_host.h packages/reflux/reflux_runtime.c \
              packages/reflux/reflux_runtime.h
 	@mkdir -p $(BIN_DIR)
-	$(CC) $(GAME_CFLAGS) apps/game/core_main.c packages/game/level_mods_host.c \
+	$(CC) $(GAME_CFLAGS) -DSHANKPIT_BUILD_TARGET=$(CORE_PROFILE) \
+	  apps/game/core_main.c apps/game/build_profile.c packages/game/level_mods_host.c \
 	  packages/reflux/reflux_runtime.c $(GAME_GEN) -o $@ -lm
 
 core: $(CORE_BIN)
@@ -91,11 +105,12 @@ core-smoke: $(CORE_BIN)
 # clobbered by a clang build in the same tree.
 game-clang:
 	$(MAKE) -B game CC=clang GAME_BIN=$(BIN_DIR)/shank_game_clang \
-	  GAME_CFLAGS="$(GAME_CFLAGS) -Wno-parentheses-equality"
+	  GAME_PROFILE=bp_target_llvm GAME_CFLAGS="$(GAME_CFLAGS) -Wno-parentheses-equality"
 
 # "Pure LLVM": clang + LTO, linked with lld, so the whole C host goes through LLVM once.
 game-llvm:
 	$(MAKE) -B game CC=clang GAME_BIN=$(BIN_DIR)/shank_game_llvm \
+	  GAME_PROFILE=bp_target_llvm \
 	  GAME_CFLAGS="$(GAME_CFLAGS) -Wno-parentheses-equality -flto -fuse-ld=lld" \
 	  GAME_EXTRA_LIBS="-lm -flto"
 
@@ -105,15 +120,17 @@ game-test-clang:
 
 # The first pure-WASM slice: PARENA rules + REFLUX + the level registry, freestanding (no libc, no
 # SDL, no imports). Render/input/audio are still native-only and are declared unported by wasm_boot().
-$(WASM_BIN): $(GAME_GEN) apps/game/wasm_core.c packages/game/level_mods_host.c \
+$(WASM_BIN): $(GAME_GEN) apps/game/wasm_core.c apps/game/build_profile.c \
+             apps/game/build_profile.h packages/game/level_mods_host.c \
              packages/game/level_mods_host.h packages/reflux/reflux_runtime.c \
              packages/reflux/reflux_runtime.h
 	@mkdir -p $(BIN_DIR)
 	$(WASM_CC) --target=wasm32 -O2 -nostdlib -fno-builtin -ffunction-sections \
 	  -Wno-parentheses-equality -DSHANKPIT_REFLUX_PARENA_RUNTIME_H \
+	  -DSHANKPIT_BUILD_TARGET=$(WASM_PROFILE) \
 	  -Iapps/game/wasm_include -Ipackages/reflux -Ipackages/game -Iapps/game \
 	  -Wl,--no-entry -Wl,--export-all -Wl,--strip-all -Wl,--gc-sections \
-	  apps/game/wasm_core.c packages/game/level_mods_host.c \
+	  apps/game/wasm_core.c apps/game/build_profile.c packages/game/level_mods_host.c \
 	  packages/reflux/reflux_runtime.c $(GAME_GEN) -o $@
 
 wasm: $(WASM_BIN)
