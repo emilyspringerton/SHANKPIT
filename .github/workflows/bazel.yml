@@ -1,0 +1,122 @@
+name: SHANKPIT Bazel
+
+# The Bazel layer, 2026-11-05. Before this workflow *nothing* in CI ever ran `bazel` on this
+# repo -- MODULE.bazel's own header comment said so in as many words ("no bazel binary exists in
+# the sandbox this was written in, so this cross-repo resolution itself was never actually run").
+# When it was finally run for real the module graph did not even resolve:
+#   * ../EDITOR.GAME (local_path_override since S559) was never checked out anywhere, in CI or
+#     on the box;
+#   * ../PARENA was not a dependency at all, so the commit-the-.prn-beside-its-C feature
+#     (kanban PX-001/PX-BZ-001) had no Bazel path here.
+# Both are wired now, and this job is what keeps them wired.
+#
+# Deliberately scoped to //packages/... and NOT //...: the two app binaries still fail to LINK
+# under Bazel (their targets are narrower than the Makefile's own LOBBY_SRC/SERVER_SRC -- 117
+# undefined references on the server, 411 plus a vec_i32_at collision on the lobby), so
+# `bazel build //...` here would be red on arrival and teach nobody anything. //packages/... is
+# the part that is real and green today; widen this the moment the app targets have source-list
+# parity with the Makefile. The Makefile path itself is untouched and still what tests.yml /
+# release.yml build.
+
+on:
+  push:
+    branches: [ "master" ]
+    paths:
+      - "MODULE.bazel"
+      - "MODULE.bazel.lock"
+      - ".bazelrc"
+      - ".bazelversion"
+      - "**/*.bazel"
+      - "**/*.bzl"
+      - "packages/**"
+      - "apps/**"
+      - "scripts/**"
+      - ".github/workflows/bazel.yml"
+  pull_request:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+# Scoped per-workflow-file, same real bug the sibling workflows' own concurrency blocks document
+# (2026-08-25): a shared group key across workflows cancels whichever of them loses the race.
+concurrency:
+  group: shankpit-bazel-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: 🧱 bazel build //packages/...
+    runs-on: ubuntu-latest
+
+    steps:
+      # MODULE.bazel resolves editor_game and parena through
+      #   local_path_override(path = "../EDITOR.GAME")
+      #   local_path_override(path = "../PARENA")
+      # i.e. SIBLING checkouts, not subdirectories. So all three repositories are checked out
+      # side by side under $GITHUB_WORKSPACE and Bazel runs from the SHANKPIT one -- the exact
+      # layout this was verified in locally, rather than a CI-only arrangement invented here.
+      - name: Checkout SHANKPIT
+        uses: actions/checkout@v4
+        with:
+          path: SHANKPIT
+
+      - name: Checkout PARENA (local_path_override ../PARENA)
+        uses: actions/checkout@v4
+        with:
+          repository: emilyspringerton/PARENA
+          path: PARENA
+
+      - name: Checkout EDITOR.GAME (local_path_override ../EDITOR.GAME)
+        uses: actions/checkout@v4
+        with:
+          repository: emilyspringerton/EDITOR.GAME
+          path: EDITOR.GAME
+
+      # Same Bazel bootstrap PARENA's own ci.yml already uses (bazel-contrib/setup-bazel), so
+      # the version that actually runs here is whatever .bazelversion pins (9.2.0), not the
+      # runner image's own idea of "latest".
+      - uses: bazel-contrib/setup-bazel@0.15.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}
+          repository-cache: true
+
+      # .bazelrc's global -O2 -Wall -D_REENTRANT matches the Makefile's CFLAGS, but it cannot
+      # conjure headers: packages/{audio,render,ui,simulation,...} #include <SDL2/...> and GL.
+      # Same apt-is-normal-here precedent as PARENA ci.yml's own SDL2 install step.
+      - name: Install SDL2 / SDL2_ttf / GL dev headers
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            libsdl2-dev \
+            libsdl2-ttf-dev \
+            libgl1-mesa-dev \
+            libglu1-mesa-dev
+
+      # The merged-layout shim tests.yml already carries: some commits land the trees as
+      # apps2/packages2/docs2 only. Harmless when apps/packages already exist.
+      - name: Normalize merged layout
+        working-directory: SHANKPIT
+        run: |
+          set -euo pipefail
+          if [ ! -e apps ] && [ -d apps2 ]; then ln -s apps2 apps; fi
+          if [ ! -e packages ] && [ -d packages2 ]; then ln -s packages2 packages; fi
+          if [ ! -e docs ] && [ -d docs2 ]; then ln -s docs2 docs; fi
+
+      - name: Build every package
+        working-directory: SHANKPIT
+        run: bazel build //packages/...
+
+      # The point of the whole exercise: packages/ui/menu.prn is committed beside the C it
+      # produces, and this genrule regenerates that C through the real @parena//src:parena
+      # binary on every run. If someone edits the .prn and forgets scripts/gen_ui_menu.sh, the
+      # checked-in menu_gen.c is stale -- this diff is what says so, instead of a reviewer.
+      - name: PARENA emit-beside-source (menu.prn -> menu_gen.c must not drift)
+        working-directory: SHANKPIT
+        run: |
+          set -euo pipefail
+          bazel build //packages/ui:menu_gen_from_prn
+          diff -u packages/ui/menu_gen.c bazel-bin/packages/ui/menu_gen_bazel.c

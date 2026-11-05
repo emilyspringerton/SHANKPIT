@@ -11,14 +11,16 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 # broadcasts it (PACKET_WORLD_CLOCK) too, not just apps/lobby's own local-match/fallback tick.
 cc_library(
     name = "day_night_clock",
+    # Migration stage (2026-11-05): every header in this package, because this BUILD file
+    # predates Bazel ever running and omitted ~120 headers its own sources #include (found by
+    # compiling each package in the sandbox: e.g. packages/render/retro_sky.h needs
+    # retro_sky_eval.h, which was never declared). Tighten to per-target lists once every
+    # target here is known to build; the glob keeps the real compile inputs visible today.
     srcs = [
         "day_night_clock.c",
         "world_rules.c",
     ],
-    hdrs = [
-        "day_night_clock.h",
-        "parena_runtime.h",  # world_rules.c's own real dependency (minimal Arena/Vec/Bytes runtime)
-    ],
+    hdrs = glob(["*.h"]),
     visibility = ["//visibility:public"],
 )
 
@@ -35,6 +37,11 @@ cc_library(
 # since neither ai_nav.c/humanness.c NOR this whole family were ever wired into this file).
 cc_library(
     name = "witness_ai",
+    # Migration stage (2026-11-05): every header in this package, because this BUILD file
+    # predates Bazel ever running and omitted ~120 headers its own sources #include (found by
+    # compiling each package in the sandbox: e.g. packages/render/retro_sky.h needs
+    # retro_sky_eval.h, which was never declared). Tighten to per-target lists once every
+    # target here is known to build; the glob keeps the real compile inputs visible today.
     srcs = [
         "ai_brain_rules.c",
         "giant_bug_brain.c",  # PARENA-generated (giant_bug_brain.prn) -- witness_ai.c's own real dep
@@ -49,19 +56,7 @@ cc_library(
         "witness_sim.c",
         "zombie_values.c",
     ],
-    hdrs = [
-        "giant_bug_values.h",
-        "hammer_tower.h",
-        "bioslurry.h",
-        "citizen_life.h",
-        "zombie_taxonomy.h",
-        "humanness.h",  # npc_archetype.h's own real dependency
-        "npc_archetype.h",
-        "witness_ai.h",
-        "witness_live.h",
-        "witness_sim.h",
-        "zombie_values.h",
-    ],
+    hdrs = glob(["*.h"]),
     deps = [
         "//packages/common:common_headers",
         "//packages/world",  # witness_ai.h's own real level_boxes.h dependency (7c zone sync)
@@ -83,6 +78,11 @@ cc_library(
 # builds one without the other two.
 cc_library(
     name = "story_ai",
+    # Migration stage (2026-11-05): every header in this package, because this BUILD file
+    # predates Bazel ever running and omitted ~120 headers its own sources #include (found by
+    # compiling each package in the sandbox: e.g. packages/render/retro_sky.h needs
+    # retro_sky_eval.h, which was never declared). Tighten to per-target lists once every
+    # target here is known to build; the glob keeps the real compile inputs visible today.
     srcs = [
         "ai_nav.c",
         "brick_mod.c",  # PARENA-generated (scripts/gen_brick_mod.sh): destructible brick decisions, lobby + server both
@@ -91,20 +91,7 @@ cc_library(
         "humanness.c",
         "story_ai.c",
     ],
-    hdrs = [
-        "ai_nav.h",
-        "bot_ai.h",
-        "brain_weights.h",
-        "brick_world.h",  # destructible brick glue, header-only, included by both app mains
-        "brick_bodies.h",
-        "game_physics.h",
-        "humanness.h",
-        "local_game.h",
-        "neural_net.h",
-        "parena_runtime.h",
-        "story_ai.h",
-        "story_buttons.h",  # S485, REFLUX pub/sub buttons -- header-only, included by local_game.h
-    ],
+    hdrs = glob(["*.h"]),
     deps = [
         "//packages/common:common_headers",
         "//packages/reflux",
@@ -121,11 +108,16 @@ cc_library(
 # 6/7e's own doc comments already name). apps/lobby depends on this directly.
 cc_library(
     name = "world_alert_bridge",
+    # Migration stage (2026-11-05): every header in this package, because this BUILD file
+    # predates Bazel ever running and omitted ~120 headers its own sources #include (found by
+    # compiling each package in the sandbox: e.g. packages/render/retro_sky.h needs
+    # retro_sky_eval.h, which was never declared). Tighten to per-target lists once every
+    # target here is known to build; the glob keeps the real compile inputs visible today.
     srcs = [
         "world_alert_bridge.c",
         "world_alerts_mod.c",
     ],
-    hdrs = ["world_alert_bridge.h"],
+    hdrs = glob(["*.h"]),
     deps = [
         "//packages/common:common_headers",  # phone.h
         "//packages/reflux",  # REFLUX_ACTION_PHASE_CHANGED/WEATHER_CHANGED
@@ -140,8 +132,13 @@ cc_library(
 # lists it, SERVER_SRC does not.
 cc_library(
     name = "food_pickup",
+    # Migration stage (2026-11-05): every header in this package, because this BUILD file
+    # predates Bazel ever running and omitted ~120 headers its own sources #include (found by
+    # compiling each package in the sandbox: e.g. packages/render/retro_sky.h needs
+    # retro_sky_eval.h, which was never declared). Tighten to per-target lists once every
+    # target here is known to build; the glob keeps the real compile inputs visible today.
     srcs = ["food_pickup.c"],
-    hdrs = ["food_pickup.h"],
+    hdrs = glob(["*.h"]),
     deps = [
         "//packages/common:common_headers",  # food_items.h
     ],
@@ -154,14 +151,16 @@ cc_library(
 # rather than listing both simulation targets itself.
 cc_library(
     name = "simulation",
+    # Migration stage (2026-11-05): every header in this package, because this BUILD file
+    # predates Bazel ever running and omitted ~120 headers its own sources #include (found by
+    # compiling each package in the sandbox: e.g. packages/render/retro_sky.h needs
+    # retro_sky_eval.h, which was never declared). Tighten to per-target lists once every
+    # target here is known to build; the glob keeps the real compile inputs visible today.
     srcs = [
         "cutscene.c",
         "typing_lesson.c",
     ],
-    hdrs = [
-        "cutscene.h",
-        "typing_lesson.h",
-    ],
+    hdrs = glob(["*.h"]),
     deps = [
         ":story_ai",
         "//packages/common:common_headers",
@@ -173,8 +172,13 @@ cc_library(
 # skeleton loader + FK from :goldenband and the solver from :grb_physics. Test: `make test-physics`.
 cc_library(
     name = "rigid_ragdoll",
+    # Migration stage (2026-11-05): every header in this package, because this BUILD file
+    # predates Bazel ever running and omitted ~120 headers its own sources #include (found by
+    # compiling each package in the sandbox: e.g. packages/render/retro_sky.h needs
+    # retro_sky_eval.h, which was never declared). Tighten to per-target lists once every
+    # target here is known to build; the glob keeps the real compile inputs visible today.
     srcs = ["rigid_ragdoll.c"],
-    hdrs = ["rigid_ragdoll.h"],
+    hdrs = glob(["*.h"]),
     deps = [
         "//packages/goldenband",
         "//packages/goldenband:grb_physics",

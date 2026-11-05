@@ -1,0 +1,14 @@
+# Generated 2026-11-05: this package is #included by apps/* but had no Bazel package at
+# all, so the sandbox could not see its headers (`fatal error: ../../../packages/gfd_chat/x.h:
+# No such file or directory`). Same package-level glob migration stage the other packages
+# are on -- see packages/audio/BUILD.bazel for the note.
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(
+    name = "gfd_chat",
+    srcs = glob(["*.c"], exclude = ["*_test.c", "*_live_test.c"], allow_empty = True),
+    hdrs = glob(["*.h"]),
+    copts = ["-Ipackages/common", "-Ipackages/simulation", "-Ipackages/ui"],
+    deps = ["//packages/common:common_headers"],
+    visibility = ["//visibility:public"],
+)

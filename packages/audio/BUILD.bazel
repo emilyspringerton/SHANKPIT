@@ -2,8 +2,13 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 
 cc_library(
     name = "audio",
+    # Migration stage (2026-11-05): every header in this package, because this BUILD file
+    # predates Bazel ever running and omitted ~120 headers its own sources #include (found by
+    # compiling each package in the sandbox: e.g. packages/render/retro_sky.h needs
+    # retro_sky_eval.h, which was never declared). Tighten to per-target lists once every
+    # target here is known to build; the glob keeps the real compile inputs visible today.
     srcs = ["audio.c", "audio_wav.c", "audio_chain.c", "audio_dsp_gen.c"],
-    hdrs = ["audio.h", "audio_wav.h", "audio_chain.h", "audio_dsp_gen.h"],
+    hdrs = glob(["*.h"]),
     copts = ["-Wno-unused-parameter"],
     linkopts = ["-lm"],
     deps = ["//packages/common:common_headers"],

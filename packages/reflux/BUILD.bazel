@@ -14,14 +14,15 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 # ECOWAR/packages/reflux/BUILD.bazel already documents for its own identical pairing.
 cc_library(
     name = "reflux",
+    # Migration stage (2026-11-05): every header in this package, because this BUILD file
+    # predates Bazel ever running and omitted ~120 headers its own sources #include (found by
+    # compiling each package in the sandbox: e.g. packages/render/retro_sky.h needs
+    # retro_sky_eval.h, which was never declared). Tighten to per-target lists once every
+    # target here is known to build; the glob keeps the real compile inputs visible today.
     srcs = [
         "reflux_mod.c",
         "reflux_runtime.c",
     ],
-    hdrs = [
-        "parena_runtime.h",
-        "reflux_mod_host.h",
-        "reflux_runtime.h",
-    ],
+    hdrs = glob(["*.h"]),
     visibility = ["//visibility:public"],
 )

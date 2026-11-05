@@ -1,0 +1,20 @@
+# Generated 2026-11-05: this package is #included by apps/* but had no Bazel package at
+# all, so the sandbox could not see its headers (`fatal error: ../../../packages/education/x.h:
+# No such file or directory`). Same package-level glob migration stage the other packages
+# are on -- see packages/audio/BUILD.bazel for the note.
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(
+    name = "education",
+    srcs = glob(["*.c"], exclude = ["eduvm_mod.c", "*_test.c", "*_live_test.c"], allow_empty = True),
+    hdrs = glob(["*.h"]) + [
+        # #included as text by a sibling .c (unity build), not compiled separately
+        "eduvm_mod.c",
+    ],
+    copts = ["-Ipackages/world", "-Ipackages/simulation", "-Ipackages/common", "-Ipackages/render"],
+    deps = [
+        "//packages/common:common_headers",
+        "//packages/world",
+    ],
+    visibility = ["//visibility:public"],
+)

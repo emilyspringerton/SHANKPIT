@@ -13,6 +13,11 @@ cc_binary(
         "src/player_model.h",
     ],
     deps = [
+        "//packages/education",
+        "//packages/gfd_chat",
+        "//packages/iduna_login",
+        "//packages/pellegrino_browser_embed",
+        "//packages/protocol",
         "//packages/audio",
         "//packages/common:common_headers",
         "//packages/goldenband",
@@ -32,6 +37,10 @@ cc_binary(
         # REDGARDEN) still uses.
         "@editor_game//:editor_widget",
     ],
+    # The Makefile build passed its own INCLUDES (-Ipackages/common ...) on the gcc line;
+    # apps/*/src/main.c and the simulation headers it pulls in #include bare names like
+    # "protocol.h", so Bazel has to be told the same search paths.
+    copts = ["-Ipackages/common", "-Ipackages/simulation", "-Ipackages/render", "-Ipackages/world", "-Ipackages/goldenband", "-Ipackages/reflux"],
     linkopts = [
         "-lSDL2",
         "-lGL",
