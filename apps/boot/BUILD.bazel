@@ -29,6 +29,7 @@ parena_binary(
         "//packages/render:sky_rules.prn",
         "//packages/sim:fall_rules.prn",
         "//packages/sim:horde_rules.prn",
+        "//packages/sim:hit_rules.prn",
     ],
     deps = ["@parena//runtime:parena_runtime"],
 )

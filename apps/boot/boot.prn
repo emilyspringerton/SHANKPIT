@@ -201,6 +201,40 @@
     0
     1))
 
+;; ---- can the horde be killed, and by what ---------------------------------------------------------
+;; Hit points come from stats_bridge (job table), damage from hit_rules (this repo's own figures). The
+;; claim that matters is not "damage exists" but "the weapon table discriminates": an AR round must not
+;; remove a fresh shambler, a sniper round must, and it must not remove a fresh brute -- which is what
+;; makes a brute a brute. A head shot triples, so an AR head shot is 60 against the shambler's 63: three
+;; points short, and the check says so rather than rounding it away.
+(defn shambler-hp [] : I32 (sb-hp (job-shambler) 1))
+(defn brute-hp [] : I32 (sb-hp (job-brute) 1))
+
+(defn hit-check [] : I32
+  ;; Numbers from the job table's own curve (HP = base + per*(level-1)): a level-1 shambler (BLM) has 55,
+  ;; a level-1 brute (PLD) 95. The checks encode which answer each weapon is, using the real values so a
+  ;; change to either table fails here instead of quietly changing what a body survives:
+  ;;   AR 20 and magnum 45 are not kills; three AR rounds (60) are, two (40) are not;
+  ;;   an AR head shot (60) is a kill; a sniper round (101) drops either body;
+  ;;   overkill floors at zero, and zero or negative damage changes nothing.
+  (if (and (= (shambler-hp) 55)
+           (= (brute-hp) 95)
+           (> (brute-hp) (shambler-hp))
+           (!= (kills? (shambler-hp) (dmg-ar)) 1)
+           (!= (kills? (shambler-hp) (dmg-magnum)) 1)
+           (= (kills? (shambler-hp) (dmg-sniper)) 1)
+           (= (kills? (shambler-hp) (headshot-damage (dmg-ar))) 1)
+           (!= (kills? (brute-hp) (dmg-magnum)) 1)
+           (= (kills? (brute-hp) (dmg-sniper)) 1)
+           (= (kills? (brute-hp) (dmg-missile)) 1)
+           (= (damage-after (damage-after (shambler-hp) (dmg-ar)) (dmg-ar)) 15)
+           (= (damage-after (damage-after (damage-after (shambler-hp) (dmg-ar)) (dmg-ar)) (dmg-ar)) 0)
+           (= (damage-after (shambler-hp) 9999) 0)
+           (= (damage-after (shambler-hp) 0) (shambler-hp))
+           (= (damage-after (shambler-hp) -5) (shambler-hp)))
+    0
+    1))
+
 (defn shank-boot-main [] : I32
   (do
     (println "SHANKPIT clean-room boot")
@@ -218,10 +252,11 @@
     (println "horde: each body faces the arena's middle, not the wall behind it")
     (println "horde: the wave lands, and no body sinks through the floor")
     (println "horde: every body has hit points, ordered by class and level")
+    (println "horde: three AR rounds drop a shambler, one does not, and a sniper round drops a brute")
     (if (and (= (level-check) 0)
              (> (turn-cap) 0) (< (turn-cap) 2000) (> (distance-bias) 1000)
              (= (frame-check) 0) (= (palette-check) 0) (= (sky-check) 0) (>= (sky-scan) 1)
-             (= (sim-check) 0) (= (horde-check) 0) (= (horde-place-check) 0) (= (horde-facing-check) 0) (= (horde-rest-check) 0) (= (health-check) 0))
+             (= (sim-check) 0) (= (horde-check) 0) (= (horde-place-check) 0) (= (horde-facing-check) 0) (= (horde-rest-check) 0) (= (health-check) 0) (= (hit-check) 0))
       (do
         (println "boot plan: the level's own spawner, zombie mode")
         0)

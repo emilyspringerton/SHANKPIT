@@ -1,7 +1,7 @@
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//bazel:parena.bzl", "parena_module")
 
-exports_files(["fall_rules.prn", "horde_rules.prn"])
+exports_files(["fall_rules.prn", "horde_rules.prn", "hit_rules.prn"])
 
 # packages/sim/fall_rules.prn -- integer gravity integration for the first body (see its header for why
 # it is integer: neither the Arena path nor (f32 x) links in this build).
@@ -28,4 +28,17 @@ sh_test(
     srcs = ["//bazel:parena_emitted_test.sh"],
     data = [":horde_rules_from_prn"],
     args = ["$(rootpath :horde_rules_from_prn)"],
+)
+
+# packages/sim/hit_rules.prn -- what is left after a hit, and whether it was enough.
+parena_module(
+    name = "hit_rules",
+    src = "hit_rules.prn",
+)
+
+sh_test(
+    name = "hit_rules_emitted_test",
+    srcs = ["//bazel:parena_emitted_test.sh"],
+    data = [":hit_rules_from_prn"],
+    args = ["$(rootpath :hit_rules_from_prn)"],
 )

@@ -1,0 +1,32 @@
+;; packages/sim/hit_rules.prn -- a body with hit points meets a weapon.
+;;
+;; The damage figures are the ones this repository already states about itself: chest_rules.prn's own
+;; comment, "Hit points per tier (an AR round does 20, a magnum 45, a sniper 101, a missile 130)", plus
+;; KATANA_SLASH_DAMAGE 40 from packages/common/physics.h and the 460 rule that a head shot with no shield
+;; left counts triple (sp_phys's phys_try_melee_strike: damage *= 3).
+;;
+;; Nothing here decides whether a shot CONNECTS -- that is physics, and this build cannot run it (the
+;; Arena port does not link). This is the arithmetic after a hit: what is left, and whether it was enough.
+(module shankpit/hit)
+(export dmg-ar dmg-magnum dmg-sniper dmg-missile dmg-katana dmg-head-multiplier
+        damage-after headshot-damage kills?)
+
+(defn dmg-ar [] : I32 20)
+(defn dmg-magnum [] : I32 45)
+(defn dmg-sniper [] : I32 101)
+(defn dmg-missile [] : I32 130)
+(defn dmg-katana [] : I32 40)
+
+;; a head shot with no shield left is triple
+(defn dmg-head-multiplier [] : I32 3)
+
+;; health floors at zero: a body is dead, not owed negative hit points, and any caller that sums
+;; overkill into a score would otherwise count damage that was never dealt
+(defn damage-after [(hp : I32) (dmg : I32)] : I32
+  (if (< dmg 0) hp
+    (let [left (- hp dmg)]
+      (if (< left 0) 0 left))))
+
+(defn headshot-damage [(dmg : I32)] : I32 (* dmg (dmg-head-multiplier)))
+
+(defn kills? [(hp : I32) (dmg : I32)] : Bool (<= (damage-after hp dmg) 0))
