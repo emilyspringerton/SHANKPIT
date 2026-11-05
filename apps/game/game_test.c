@@ -558,6 +558,26 @@ static void test_event_replay(void) {
     remove(path);
 }
 
+/* A build that has only ported core sim + level must not believe an incoming mask that enables a
+ * module it cannot run, and must not dispatch an update it will refuse. */
+static void test_capabilities(void) {
+    int core_level = lm_bit(lm_mod_core_sim()) | lm_bit(lm_mod_level());
+
+    level_mods_reset();
+    reflux_host_reset();
+    check(level_mods_capabilities() == lm_all_mask(), "a native build supports every module by default");
+    check(level_mods_set_capabilities(core_level) == core_level, "a core build narrows capabilities");
+    check(level_mods_register(61, lm_env_surface()) == core_level,
+          "a capped build opens at its own mask, not the surface default");
+    check(level_mods_set(61, lm_mod_weather_render(), 1) == 0,
+          "a capped build refuses to enable an unported module");
+    check(level_mods_apply_state(61, lm_all_mask(), 2) == 0 && level_mods_mask(61) == core_level,
+          "incoming state cannot enable an unported module");
+    check(level_mods_revision(61) == 2, "a newer capped state still advances the revision");
+    check(level_mods_set_capabilities(lm_all_mask()) == lm_all_mask(), "capabilities restore for native tests");
+    level_mods_reset();
+}
+
 int main(void) {
     test_modes();
     test_loop();
@@ -570,6 +590,7 @@ int main(void) {
     test_level_catalog();
     test_event_log();
     test_event_replay();
+    test_capabilities();
     test_round_sim();
 
     printf("%s: %d checks, %d failure(s)\n",

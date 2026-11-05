@@ -27,6 +27,23 @@ typedef struct {
 
 static LevelModEntry g_levels[LEVEL_MODS_MAX_LEVELS];
 
+/* Unset means "this build links every module". See level_mods_set_capabilities(). */
+static int g_capabilities;
+static int g_capabilities_set;
+
+static int capabilities(void) {
+    return g_capabilities_set ? g_capabilities : lm_all_mask();
+}
+
+int level_mods_set_capabilities(int mask) {
+    /* lm_sanitize keeps the mandatory bits on, and lm_all_mask bounds the result to real modules. */
+    g_capabilities = lm_sanitize(mask) & lm_all_mask();
+    g_capabilities_set = 1;
+    return g_capabilities;
+}
+
+int level_mods_capabilities(void) { return capabilities(); }
+
 static LevelModEntry *find_level(int level_id) {
     int i;
     for (i = 0; i < LEVEL_MODS_MAX_LEVELS; i++) {
@@ -71,7 +88,7 @@ int level_mods_register(int level_id, int env) {
     e->used = 1;
     e->level_id = level_id;
     e->env = env;
-    e->mask = lm_sanitize(lm_default_mask(env));
+    e->mask = lm_sanitize(lm_default_mask(env)) & capabilities();
     e->revision = 1;
     e->cursor = reflux_host_total_dispatched();
 
@@ -83,6 +100,7 @@ int level_mods_request(int level_id, int mod, int on) {
     if (!find_level(level_id)) return 0;
     if (!lm_mod_valid(mod)) return 0;
     if (on == 0 && lm_mandatory(mod)) return 0;
+    if (on && !(capabilities() & lm_bit(mod))) return 0; /* this build has not ported that module */
     reflux_host_dispatch(lm_evt_mod_set(), level_id, mod, on ? 1 : 0);
     return 1;
 }
@@ -92,6 +110,7 @@ int level_mods_apply(int level_id, int mod, int on) {
     int after;
 
     if (!e) return 0;
+    if (on && !(capabilities() & lm_bit(mod))) return 0;
     after = lm_set(e->mask, mod, on ? 1 : 0);
     if (after == e->mask) return 0;
 
@@ -105,7 +124,7 @@ int level_mods_apply_state(int level_id, int mask, int revision) {
     int clean, rev;
 
     if (!e) return 0;
-    clean = lm_sanitize(mask);
+    clean = lm_sanitize(mask) & capabilities();
     rev = revision > 0 ? revision : e->revision;
     if (rev < e->revision) return 0; /* stale snapshot: the level has already moved on */
 

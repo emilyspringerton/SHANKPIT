@@ -29,8 +29,11 @@ GAME_SDL_LIBS   ?= $(shell pkg-config --libs sdl2)
 GAME_EXTRA_LIBS ?= -lm
 GAME_BIN      := $(BIN_DIR)/shank_game
 GAME_TEST_BIN := $(BIN_DIR)/shank_game_test
+WASM_BIN      := $(BIN_DIR)/shank_core.wasm
+WASM_CC       ?= clang
 
-.PHONY: game game-test game-smoke game-net-smoke game-level-relay-smoke game-level-request-smoke
+.PHONY: game game-test game-smoke game-net-smoke game-level-relay-smoke game-level-request-smoke \
+        game-capped-client-smoke game-clang game-llvm game-test-clang wasm wasm-smoke
 
 game: $(GAME_BIN)
 
@@ -61,6 +64,40 @@ $(GAME_TEST_BIN): $(GAME_GEN) apps/game/game_test.c apps/game/game_api.h \
 game-test: $(GAME_TEST_BIN)
 	./$(GAME_TEST_BIN)
 
+# The same C through a different native toolchain. Separate output names so a gcc build is never
+# clobbered by a clang build in the same tree.
+game-clang:
+	$(MAKE) -B game CC=clang GAME_BIN=$(BIN_DIR)/shank_game_clang \
+	  GAME_CFLAGS="$(GAME_CFLAGS) -Wno-parentheses-equality"
+
+# "Pure LLVM": clang + LTO, linked with lld, so the whole C host goes through LLVM once.
+game-llvm:
+	$(MAKE) -B game CC=clang GAME_BIN=$(BIN_DIR)/shank_game_llvm \
+	  GAME_CFLAGS="$(GAME_CFLAGS) -Wno-parentheses-equality -flto -fuse-ld=lld" \
+	  GAME_EXTRA_LIBS="-lm -flto"
+
+game-test-clang:
+	$(MAKE) -B game-test CC=clang GAME_TEST_BIN=$(BIN_DIR)/shank_game_test_clang \
+	  GAME_CFLAGS="$(GAME_CFLAGS) -Wno-parentheses-equality"
+
+# The first pure-WASM slice: PARENA rules + REFLUX + the level registry, freestanding (no libc, no
+# SDL, no imports). Render/input/audio are still native-only and are declared unported by wasm_boot().
+$(WASM_BIN): $(GAME_GEN) apps/game/wasm_core.c packages/game/level_mods_host.c \
+             packages/game/level_mods_host.h packages/reflux/reflux_runtime.c \
+             packages/reflux/reflux_runtime.h
+	@mkdir -p $(BIN_DIR)
+	$(WASM_CC) --target=wasm32 -O2 -nostdlib -fno-builtin -ffunction-sections \
+	  -Wno-parentheses-equality -DSHANKPIT_REFLUX_PARENA_RUNTIME_H \
+	  -Iapps/game/wasm_include -Ipackages/reflux -Ipackages/game -Iapps/game \
+	  -Wl,--no-entry -Wl,--export-all -Wl,--strip-all -Wl,--gc-sections \
+	  apps/game/wasm_core.c packages/game/level_mods_host.c \
+	  packages/reflux/reflux_runtime.c $(GAME_GEN) -o $@
+
+wasm: $(WASM_BIN)
+
+wasm-smoke: $(WASM_BIN)
+	node apps/game/wasm_check.mjs
+
 # No window: runs a real round of the default mode (zombies) for 240 ticks and prints the state the
 # rules produced. Used as the build smoke test in CI and after every change to the modules.
 game-smoke: $(GAME_BIN)
@@ -90,6 +127,19 @@ game-level-request-smoke: $(GAME_BIN)
 	  CLIENT_STATUS=$$?; wait $$HOST_PID; HOST_STATUS=$$?; \
 	  cat /tmp/shank_request_host.log; cat /tmp/shank_request_client.log; \
 	  grep -q 'level=6 env=0 mods=27' /tmp/shank_request_client.log && \
+	  test $$CLIENT_STATUS -eq 0 -a $$HOST_STATUS -eq 0
+
+# A client that has only ported core sim + level (mask 3) joins a surface server (mask 31). The
+# client must finish at 3: the server's state crossed the wire, but the local capability clamp held.
+game-capped-client-smoke: $(GAME_BIN)
+	@rm -f /tmp/shank_cap_host.log /tmp/shank_cap_client.log
+	./$(GAME_BIN) --host 7795 --headless 600 --level 8 --env surface > /tmp/shank_cap_host.log 2>&1 & \
+	  HOST_PID=$$!; sleep 1; \
+	  ./$(GAME_BIN) --join 127.0.0.1 7795 --headless 90 --level 8 --env surface \
+	    --capabilities 3 > /tmp/shank_cap_client.log 2>&1; \
+	  CLIENT_STATUS=$$?; wait $$HOST_PID; HOST_STATUS=$$?; \
+	  cat /tmp/shank_cap_host.log; cat /tmp/shank_cap_client.log; \
+	  grep -q 'level=8 env=0 mods=3' /tmp/shank_cap_client.log && \
 	  test $$CLIENT_STATUS -eq 0 -a $$HOST_STATUS -eq 0
 
 game-level-relay-smoke: $(GAME_BIN)

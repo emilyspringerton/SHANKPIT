@@ -53,6 +53,14 @@ int level_mods_publish(int level_id);
 
 void level_mods_reset(void);
 int level_mods_count(void);
+
+/* The modules THIS BINARY has ported. Defaults to every module. A WASM/core build sets a narrower
+ * mask before registering anything: opening masks are intersected with it, incoming authoritative
+ * state can never enable an unported module, and a request to enable one is refused. Mandatory
+ * modules are always kept, and the capability mask is a property of the build, so it survives
+ * level_mods_reset(). Returns the effective mask. */
+int level_mods_set_capabilities(int mask);
+int level_mods_capabilities(void);
 int level_mods_level_at(int index); /* -1 past the table */
 
 int level_mods_env(int level_id);      /* -1 for an unknown level */

@@ -91,6 +91,10 @@ jobs:
       - name: Live level optimization request smoke
         run: make game-level-request-smoke PARENA_BIN="$PWD/PARENA/parena"
 
+      # A core-only client (mask 3) joins a full surface server (mask 31) and stays at 3.
+      - name: Capped-client module smoke
+        run: make game-capped-client-smoke PARENA_BIN="$PWD/PARENA/parena"
+
       - name: Build the Linux client
         run: make game PARENA_BIN="$PWD/PARENA/parena"
 
@@ -199,12 +203,58 @@ jobs:
           path: ShankPit_Client_*.zip
           if-no-files-found: error
 
+  variants:
+    name: 🧬 Clang/LLVM + WASM core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout PARENA (rules compiler)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.PARENA_REPO }}
+          ref: ${{ env.PARENA_REF }}
+          path: PARENA
+
+      - name: Install SDL2 headers, clang and lld
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libsdl2-dev libsdl2-ttf-dev clang lld zip
+
+      - name: Build the PARENA compiler
+        run: make -C PARENA parena -j2
+
+      - name: Clang rules suite
+        run: make game-test-clang PARENA_BIN="$PWD/PARENA/parena"
+
+      - name: Clang and LLVM-LTO clients
+        run: |
+          set -euo pipefail
+          make game-clang PARENA_BIN="$PWD/PARENA/parena"
+          ./bin/shank_game_clang --headless 5 | tee clang-smoke.log
+          grep -q 'headless 5 ticks' clang-smoke.log
+          make game-llvm PARENA_BIN="$PWD/PARENA/parena"
+          ./bin/shank_game_llvm --headless 5 | tee llvm-smoke.log
+          grep -q 'headless 5 ticks' llvm-smoke.log
+
+      - name: Pure WASM core (PARENA rules, no libc, no imports)
+        run: |
+          set -euo pipefail
+          make wasm PARENA_BIN="$PWD/PARENA/parena"
+          make wasm-smoke
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-core
+          path: bin/shank_core.wasm
+          if-no-files-found: error
+
   release:
-    name: 🚀 Tag & release (Windows + Linux)
+    name: 🚀 Tag & release (Windows + Linux + WASM core)
     # Only real master pushes publish. PRs and manual runs still build and package, so the artifacts
     # are inspectable, but they never cut a version.
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    needs: [linux, windows]
+    needs: [linux, windows, variants]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -253,11 +303,12 @@ jobs:
           done
           test "$pushed" = 1
           test -n "$(git ls-remote --tags origin "refs/tags/$next")"
-          gh release create "$next" dist/*.zip \
+          gh release create "$next" dist/*.zip dist/*.wasm \
             --title "SHANKPIT clean room $next" \
             --notes "Clean-room PARENA build of SHANKPIT.
 
           * **Windows** -- \`ShankPit_Client_<run>.zip\`: unpack, then run **PLAY.bat** (next to \`ShankPit.exe\` and \`SDL2.dll\`).
           * **Linux** -- \`ShankPit_Client_Linux_<run>.zip\`: unpack, then run \`./PLAY.sh\`.
+          * **WASM core** -- \`shank_core.wasm\`: the PARENA level-module core only (core sim + level); render/input/audio are not ported yet.
 
           Boots into **ZOMBIES** as the lobby; press \`2\` for the shankpit-460 arena-shooter **FFA**."

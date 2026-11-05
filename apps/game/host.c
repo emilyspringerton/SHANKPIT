@@ -1185,6 +1185,9 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--request-mod") == 0 && i + 2 < argc) {
             g_request_mod = atoi(argv[++i]);
             g_request_on = atoi(argv[++i]) != 0;
+        } else if (strcmp(argv[i], "--capabilities") == 0 && i + 1 < argc) {
+            /* A client that has only ported some modules declares its mask before registration. */
+            level_mods_set_capabilities(atoi(argv[++i]));
         } else if (strcmp(argv[i], "--level") == 0 && i + 1 < argc) {
             level_id = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--env") == 0 && i + 1 < argc) {
@@ -1201,6 +1204,7 @@ int main(int argc, char **argv) {
                             " [--levels manifest.json] [--level N] [--event-log events.jsonl]"
                             " [--replay-events events.jsonl] [--request-mod MOD 0|1]"
                             " [--env surface|underground|moon] [--set-mod MOD 0|1]"
+                            " [--capabilities MASK]"
                             " [--headless N] [--frames N --shot out.bmp]\n", argv[0]);
             return 2;
         }
