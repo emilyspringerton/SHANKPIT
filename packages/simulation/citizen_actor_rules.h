@@ -26,6 +26,13 @@ typedef struct {
     int (*wield_range_milli)(void);      /* a citizen draws a weapon inside this range */
     int (*fire_range_milli)(void);
     int (*fire_cooldown_ms)(void);
+    int (*claw_reach_milli)(void);       /* a zombie's swing already reaches inside this */
+    int (*dodge_ms)(void);               /* a dodge commits for this long */
+    int (*cover_health_pm)(void);        /* hurt enough to stop trading shots */
+    int (*cover_ms)(void);
+    int (*cover_backpedal_milli)(void);  /* how fast cover gives ground */
+    int (*retreat_health_pm)(void);      /* badly hurt: stop fighting, leave */
+    int (*retreat_ms)(void);
     int (*heuristic_score)(int action, int dist_milli, int threat, int health_pm, int speed_milli, int ready);
     int (*policy_aggression)(int proximity, int hurt, int threat, int ready, int speed, int ground);
     int (*blended_score)(int action, int dist_milli, int threat, int health_pm, int speed_milli,
@@ -47,6 +54,13 @@ static int citizen_builtin_slide_jump_window_ms(void) { return 250; }
 static int citizen_builtin_wield_range_milli(void) { return 12000; }
 static int citizen_builtin_fire_range_milli(void) { return 14000; }
 static int citizen_builtin_fire_cooldown_ms(void) { return 260; }
+static int citizen_builtin_claw_reach_milli(void) { return 2600; }
+static int citizen_builtin_dodge_ms(void) { return 220; }
+static int citizen_builtin_cover_health_pm(void) { return 400; }
+static int citizen_builtin_cover_ms(void) { return 700; }
+static int citizen_builtin_cover_backpedal_milli(void) { return 450; }
+static int citizen_builtin_retreat_health_pm(void) { return 250; }
+static int citizen_builtin_retreat_ms(void) { return 900; }
 
 static int citizen_builtin_heuristic_score(int action, int dist, int threat, int health, int speed, int ready) {
     /* one scorer per action, in the mod's own order; see citizen_actor_rules.prn */
@@ -70,6 +84,13 @@ static int citizen_builtin_heuristic_score(int action, int dist, int threat, int
         return 500 + ((14000 - dist) * 400) / 14000;
     }
     if (action == 8) return (threat && health < 500 && dist > 6000) ? 300 : 0;    /* reload */
+    if (action == 9) {                                                            /* dodge */
+        if (!(threat && dist < 2600)) return 0;
+        return speed < 750 ? 1500 : 700;
+    }
+    if (action == 10)                                                             /* take cover */
+        return (threat && health < 400 && dist < 6000) ? 900 : 0;
+    if (action == 11) return (threat && health < 250) ? 1400 : 0;                 /* retreat */
     return 0;
 }
 
@@ -94,6 +115,9 @@ static int citizen_builtin_bias(int action) {
         case 6: return 220;
         case 7: return 160;
         case 8: return 60;
+        case 9: return 200;
+        case 10: return 120;
+        case 11: return 180;
         default: return 0;
     }
 }
@@ -107,7 +131,7 @@ static int citizen_builtin_blended_score(int action, int dist, int threat, int h
 
 static int citizen_builtin_pick(int dist, int threat, int health, int speed, int ready, int aggression) {
     int best = -1, best_action = 0;
-    for (int action = 0; action < 9; action++) {
+    for (int action = 0; action < 12; action++) {
         int score = citizen_builtin_blended_score(action, dist, threat, health, speed, ready, aggression);
         if (score > best) { best = score; best_action = action; }
     }
@@ -126,6 +150,13 @@ static const CitizenActorRules g_citizen_actor_builtin = {
     citizen_builtin_wield_range_milli,
     citizen_builtin_fire_range_milli,
     citizen_builtin_fire_cooldown_ms,
+    citizen_builtin_claw_reach_milli,
+    citizen_builtin_dodge_ms,
+    citizen_builtin_cover_health_pm,
+    citizen_builtin_cover_ms,
+    citizen_builtin_cover_backpedal_milli,
+    citizen_builtin_retreat_health_pm,
+    citizen_builtin_retreat_ms,
     citizen_builtin_heuristic_score,
     citizen_builtin_policy_aggression,
     citizen_builtin_blended_score,

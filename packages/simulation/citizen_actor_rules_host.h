@@ -21,6 +21,13 @@ int citizen_slide_jump_window_ms(void);
 int citizen_wield_range_milli(void);
 int citizen_fire_range_milli(void);
 int citizen_fire_cooldown_ms(void);
+int citizen_claw_reach_milli(void);
+int citizen_dodge_ms(void);
+int citizen_cover_health_pm(void);
+int citizen_cover_ms(void);
+int citizen_cover_backpedal_milli(void);
+int citizen_retreat_health_pm(void);
+int citizen_retreat_ms(void);
 int citizen_heuristic_score(int action, int dist_milli, int threat, int health_pm, int speed_milli, int ready);
 int citizen_policy_aggression(int proximity, int hurt, int threat, int ready, int speed, int ground);
 int citizen_blended_score(int action, int dist_milli, int threat, int health_pm, int speed_milli,
@@ -39,6 +46,13 @@ static const CitizenActorRules g_citizen_actor_rules_parena = {
     citizen_wield_range_milli,
     citizen_fire_range_milli,
     citizen_fire_cooldown_ms,
+    citizen_claw_reach_milli,
+    citizen_dodge_ms,
+    citizen_cover_health_pm,
+    citizen_cover_ms,
+    citizen_cover_backpedal_milli,
+    citizen_retreat_health_pm,
+    citizen_retreat_ms,
     citizen_heuristic_score,
     citizen_policy_aggression,
     citizen_blended_score,

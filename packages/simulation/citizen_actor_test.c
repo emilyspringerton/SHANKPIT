@@ -101,6 +101,19 @@ int main(void) {
         /* a zombie far off: run, do not shoot across the map */
         CHECK(r->pick(20000, 1, 1000, 0, 1, 360) == CITACT_RUN, "far pick %d",
               r->pick(20000, 1, 1000, 0, 1, 360));
+        /* the fight plan's three rungs: dodge a swing, give ground when hurt, leave when nearly
+           dead -- and the rungs stay ordered fight -> cover -> run, so a body never stands and
+           trades when it should be moving */
+        CHECK(r->pick(1500, 1, 800, 200, 1, 500) == CITACT_DODGE, "dodge pick %d",
+              r->pick(1500, 1, 800, 200, 1, 500));
+        CHECK(r->pick(5000, 1, 350, 0, 1, 500) == CITACT_TAKE_COVER, "cover pick %d",
+              r->pick(5000, 1, 350, 0, 1, 500));
+        CHECK(r->pick(6000, 1, 200, 0, 1, 500) == CITACT_RETREAT, "retreat pick %d",
+              r->pick(6000, 1, 200, 0, 1, 500));
+        CHECK(r->pick(1500, 1, 1000, 900, 1, 500) == CITACT_SLIDE_JUMP,
+              "a body already sliding should still slide-jump a claw, got %d",
+              r->pick(1500, 1, 1000, 900, 1, 500));
+
         /* every pick is a real action id */
         for (int dist = 0; dist <= 30000; dist += 1000)
             for (int threat = 0; threat < 2; threat++)
@@ -122,7 +135,7 @@ int main(void) {
     {
         PlayerState p;
         fresh_body(&p, 2, 30);
-        citizen_actor_tick(2, &p, 1, 6000, 0);
+        citizen_actor_tick(2, &p, 1, 0.0f, 6.0f, 0);
         CHECK(citizen_actor_action(2) == CITACT_JUMP, "action %d wanted jump", citizen_actor_action(2));
         citizen_actor_apply(2, &p, 0);
         CHECK(p.y > 0.0f, "jump left y=%f", p.y);
@@ -132,7 +145,7 @@ int main(void) {
         /* one millisecond later the body may not jump again: whatever it decides instead, the
            cooldown has to hold and nothing may leave the ground */
         p.y = 0.0f; p.vy = 0.0f; p.in_jump = 0;
-        citizen_actor_tick(2, &p, 1, 6000, 1);
+        citizen_actor_tick(2, &p, 1, 0.0f, 6.0f, 1);
         CHECK(citizen_actor_action(2) != CITACT_JUMP, "jumped again %d ms after a jump", 1);
         CHECK(citizen_actor_action(2) != CITACT_SLIDE_JUMP, "slide-jumped inside the cooldown");
         citizen_actor_apply(2, &p, 1);
@@ -140,7 +153,7 @@ int main(void) {
         CHECK(fabsf(p.y) < 0.0001f, "cooldown still lifted the body: y=%f", p.y);
 
         /* and exactly at the cooldown it may jump again */
-        citizen_actor_tick(2, &p, 1, 6000, (unsigned int)citizen_jump_cooldown_ms());
+        citizen_actor_tick(2, &p, 1, 0.0f, 6.0f, (unsigned int)citizen_jump_cooldown_ms());
         CHECK(citizen_actor_action(2) == CITACT_JUMP, "post-cooldown action %d", citizen_actor_action(2));
     }
 
@@ -148,21 +161,21 @@ int main(void) {
     {
         PlayerState p;
         fresh_body(&p, 3, 30);
-        citizen_actor_tick(3, &p, 1, 6000, 0);   /* jump first, to spend the cooldown */
+        citizen_actor_tick(3, &p, 1, 0.0f, 6.0f, 0);   /* jump first, to spend the cooldown */
         p.vx = 0.9f;
-        citizen_actor_tick(3, &p, 1, 2000, 10);
+        citizen_actor_tick(3, &p, 1, 0.0f, 2.0f, 10);
         CHECK(citizen_actor_action(3) == CITACT_SLIDE, "action %d wanted slide", citizen_actor_action(3));
         citizen_actor_apply(3, &p, 10);
         CHECK(p.crouching == 1, "slide did not crouch the body");
         int held = 0;
         for (unsigned int t = 11; t < 10u + (unsigned int)citizen_slide_min_ms(); t += 20) {
-            citizen_actor_tick(3, &p, 0, 0, t);
+            citizen_actor_tick(3, &p, 0, 0.0f, 0.0f, t);
             if (citizen_actor_action(3) == CITACT_SLIDE) held++;
         }
         CHECK(held > 0, "the slide ended immediately instead of holding its minimum");
 
         /* and when it is over the body stands up -- a latched crouch would be worse than no slide */
-        citizen_actor_tick(3, &p, 0, 0, 2000);
+        citizen_actor_tick(3, &p, 0, 0.0f, 0.0f, 2000);
         CHECK(citizen_actor_action(3) == CITACT_WALK, "post-slide action %d", citizen_actor_action(3));
         citizen_actor_apply(3, &p, 2000);
         CHECK(p.crouching == 0, "the body stayed crouched after the slide ended");
@@ -170,7 +183,7 @@ int main(void) {
         PlayerState q;
         fresh_body(&q, 4, 100);
         q.vx = 0.9f;
-        citizen_actor_tick(4, &q, 1, 4000, 0);
+        citizen_actor_tick(4, &q, 1, 0.0f, 4.0f, 0);
         CHECK(citizen_actor_action(4) == CITACT_SLIDE_JUMP, "action %d wanted slide-jump",
               citizen_actor_action(4));
         citizen_actor_apply(4, &q, 0);
@@ -182,7 +195,7 @@ int main(void) {
     {
         PlayerState p;
         fresh_body(&p, 5, 100);
-        citizen_actor_tick(5, &p, 1, 5000, 0);
+        citizen_actor_tick(5, &p, 1, 0.0f, 5.0f, 0);
         CHECK(citizen_actor_is_wielding(5) == 1, "no weapon drawn for a zombie 5 m away");
         CHECK(p.current_weapon == WPN_AR, "weapon %d, wanted the rifle", p.current_weapon);
         CHECK(p.ammo[WPN_AR] > 0, "drawn weapon had no ammo");
@@ -190,7 +203,7 @@ int main(void) {
         citizen_actor_apply(5, &p, 0);
         CHECK(p.in_shoot == 1, "shoot action did not pull the trigger");
 
-        citizen_actor_tick(5, &p, 0, 0, 10);
+        citizen_actor_tick(5, &p, 0, 0.0f, 0.0f, 10);
         CHECK(citizen_actor_is_wielding(5) == 0, "weapon stayed drawn with no threat");
         CHECK(p.current_weapon == WPN_KNIFE, "holstered to %d, wanted the knife slot", p.current_weapon);
         citizen_actor_apply(5, &p, 10);
@@ -202,7 +215,7 @@ int main(void) {
         reflux_host_reset();
         PlayerState p;
         fresh_body(&p, 6, 30);
-        citizen_actor_tick(6, &p, 1, 6000, 0);
+        citizen_actor_tick(6, &p, 1, 0.0f, 6.0f, 0);
         int saw_jump = 0, saw_wield = 0;
         for (int i = 0; i < reflux_host_log_size(); i++) {
             int t = reflux_host_action_type_at(i);
@@ -217,12 +230,13 @@ int main(void) {
         PlayerState q;
         fresh_body(&q, 7, 100);
         q.vx = 0.9f;
-        citizen_actor_tick(7, &q, 1, 4000, 0);
+        citizen_actor_tick(7, &q, 1, 0.0f, 4.0f, 0);
         int saw_slide_jump = 0;
         for (int i = 0; i < reflux_host_log_size(); i++)
             if (reflux_host_action_type_at(i) == REFLUX_ACTION_CITIZEN_SLIDE_JUMPED) saw_slide_jump = 1;
         CHECK(saw_slide_jump, "no REFLUX_ACTION_CITIZEN_SLIDE_JUMPED was dispatched");
         CHECK(reflux_action_is_citizen(REFLUX_ACTION_CITIZEN_FIRED), "family predicate misses FIRED");
+        CHECK(reflux_action_is_citizen(REFLUX_ACTION_CITIZEN_RETREATED), "family predicate misses RETREATED");
         CHECK(!reflux_action_is_citizen(REFLUX_ACTION_HORSE_POOPED), "family predicate swallowed the horses");
     }
 
@@ -232,7 +246,7 @@ int main(void) {
         PlayerState p;
         fresh_body(&p, 8, 100);
         p.vx = 0.9f;
-        citizen_actor_tick(8, &p, 1, 4000, 0);      /* one slide-jump and one wield */
+        citizen_actor_tick(8, &p, 1, 0.0f, 4.0f, 0);      /* one slide-jump and one wield */
         int total = reflux_host_total_dispatched();
         CHECK(total >= 2, "the relay had only %d row(s) to carry", total);
 
@@ -285,6 +299,105 @@ int main(void) {
         int b4 = reflux_host_total_dispatched();
         CHECK(citizen_sync_apply_events(&hostile, 1) == 0, "apply forwarded a horse event");
         CHECK(reflux_host_total_dispatched() == b4, "a refused row still reached the log");
+    }
+
+    printf("-- the fight plan sidesteps, gives ground, and breaks away --\n");
+    {
+        PlayerState p;
+        fresh_body(&p, 9, 100);
+        p.vx = 0.1f;
+        citizen_actor_tick(9, &p, 1, 0.0f, 1.5f, 0);   /* a zombie 1.5 m away, body standing */
+        CHECK(citizen_actor_action(9) == CITACT_DODGE, "action %d wanted dodge", citizen_actor_action(9));
+        citizen_actor_apply(9, &p, 0);
+        CHECK(fabsf(p.in_strafe) == 1.0f, "dodge strafe %f, wanted a full side-step", p.in_strafe);
+        CHECK(p.in_fwd == 0.0f, "dodge kept walking forward (%f)", p.in_fwd);
+        int side = (p.in_strafe > 0.0f) ? 1 : -1;
+        /* a dodge is a commitment: one tick later it is still stepping, on the same side */
+        p.in_strafe = 0.0f;
+        citizen_actor_tick(9, &p, 1, 0.0f, 1.5f, 10);
+        CHECK(citizen_actor_action(9) == CITACT_DODGE, "the dodge ended after one tick");
+        citizen_actor_apply(9, &p, 10);
+        CHECK(((p.in_strafe > 0.0f) ? 1 : -1) == side, "the dodge changed sides mid-step");
+        /* ...and it releases: a finished dodge must not leave the body walking sideways forever */
+        citizen_actor_tick(9, &p, 0, 0.0f, 0.0f, 5000);
+        citizen_actor_apply(9, &p, 5000);
+        CHECK(p.in_strafe == 0.0f, "the side-step latched after the dodge ended");
+
+        PlayerState q;
+        fresh_body(&q, 10, 35);   /* hurt, not dying: give ground rather than trade */
+        citizen_actor_tick(10, &q, 1, 0.0f, 5.0f, 0);
+        CHECK(citizen_actor_action(10) == CITACT_TAKE_COVER, "action %d wanted take-cover",
+              citizen_actor_action(10));
+        citizen_actor_apply(10, &q, 0);
+        CHECK(q.crouching == 1, "cover did not drop the profile");
+        CHECK(q.in_fwd < 0.0f, "cover walked forward (%f) instead of giving ground", q.in_fwd);
+        CHECK(fabsf(-q.in_fwd * 1000.0f - (float)citizen_cover_backpedal_milli()) < 1.0f,
+              "cover backpedals %f milli, PARENA says %d", -q.in_fwd * 1000.0f,
+              citizen_cover_backpedal_milli());
+
+        PlayerState z;
+        fresh_body(&z, 11, 20);   /* nearly dead: leave */
+        citizen_actor_tick(11, &z, 1, 0.0f, 9.0f, 0);   /* the zombie is straight ahead */
+        CHECK(citizen_actor_action(11) == CITACT_RETREAT, "action %d wanted retreat",
+              citizen_actor_action(11));
+        citizen_actor_apply(11, &z, 0);
+        CHECK(z.in_fwd > 0.9f, "retreat did not run (in_fwd %f)", z.in_fwd);
+        float away = z.yaw;
+        while (away < 0.0f) away += 360.0f;
+        CHECK(fabsf(away - 180.0f) < 1.0f, "retreat faced %.1f degrees, wanted away from the threat",
+              away);
+
+        /* and each of the three is announced on REFLUX, so a mod can watch a citizen defend itself */
+        reflux_host_reset();
+        PlayerState r2;
+        fresh_body(&r2, 12, 100);
+        citizen_actor_tick(12, &r2, 1, 0.0f, 1.5f, 0);
+        PlayerState c2;
+        fresh_body(&c2, 13, 35);
+        citizen_actor_tick(13, &c2, 1, 0.0f, 5.0f, 0);
+        PlayerState w2;
+        fresh_body(&w2, 14, 20);
+        citizen_actor_tick(14, &w2, 1, 0.0f, 9.0f, 0);
+        int saw_dodge = 0, saw_cover = 0, saw_retreat = 0;
+        for (int i = 0; i < reflux_host_log_size(); i++) {
+            int t = reflux_host_action_type_at(i);
+            if (t == REFLUX_ACTION_CITIZEN_DODGED) saw_dodge = 1;
+            if (t == REFLUX_ACTION_CITIZEN_TOOK_COVER) saw_cover = 1;
+            if (t == REFLUX_ACTION_CITIZEN_RETREATED) saw_retreat = 1;
+        }
+        CHECK(saw_dodge, "no REFLUX_ACTION_CITIZEN_DODGED was dispatched");
+        CHECK(saw_cover, "no REFLUX_ACTION_CITIZEN_TOOK_COVER was dispatched");
+        CHECK(saw_retreat, "no REFLUX_ACTION_CITIZEN_RETREATED was dispatched");
+    }
+
+    printf("-- a fight, printed tick by tick so it can be READ, not only asserted --\n");
+    {
+        /* There is no display on this box, so "watching a citizen fight" can only mean a trace a
+           human reads. The zombie closes from 9 m; the body's vertical motion is integrated here
+           the way update_entity does it (gravity, ground clamp) instead of through the whole shared
+           physics, so what is printed is the fight plan's decisions plus the inputs it writes. */
+        PlayerState p;
+        fresh_body(&p, 15, 100);
+        p.current_weapon = WPN_KNIFE;
+        printf("     t(ms)  dist  health  action       y      vy   crouch strafe  weapon shoot\n");
+        for (unsigned int t = 0; t <= 3000; t += 100) {
+            float dist = 9.0f - (float)t / 400.0f;   /* a zombie closing at about 2.5 m/s */
+            if (dist < 0.4f) dist = 0.4f;
+            citizen_actor_tick(15, &p, 1, 0.0f, dist, t);
+            citizen_actor_apply(15, &p, t);
+            if (p.y > 0.0f || p.vy > 0.0f) {
+                p.y += p.vy;
+                p.vy -= 0.09f;                       /* gravity, per tick, as update_entity does */
+                if (p.y <= 0.0f) { p.y = 0.0f; p.vy = 0.0f; }
+            }
+            p.on_ground = (p.y <= 0.0f) ? 1 : 0;
+            if (t % 300u == 0u)
+                printf("     %5u  %4.1f  %6d  %-11s %5.2f %6.2f   %d     %+5.1f     %d      %d\n",
+                       t, dist, p.health, citizen_actor_action_name(citizen_actor_action(15)),
+                       p.y, p.vy, p.crouching, p.in_strafe, (int)p.current_weapon, p.in_shoot);
+            CHECK(p.health > 0.0f, "the traced citizen bled out inside the trace");
+        }
+        CHECK(citizen_actor_actions_taken() > 0, "the traced fight never did anything");
     }
 
     citizen_actor_reset();

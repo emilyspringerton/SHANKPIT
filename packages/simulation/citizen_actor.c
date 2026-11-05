@@ -43,6 +43,9 @@ const char *citizen_actor_action_name(int action) {
         case CITACT_SLIDE_JUMP: return "slide-jump";
         case CITACT_SHOOT: return "shoot";
         case CITACT_RELOAD: return "reload";
+        case CITACT_DODGE: return "dodge";
+        case CITACT_TAKE_COVER: return "take-cover";
+        case CITACT_RETREAT: return "retreat";
         default: return "idle";
     }
 }
@@ -57,7 +60,16 @@ static int cit_speed_milli(const PlayerState *p) {
     return v;
 }
 
-void citizen_actor_tick(int player_id, PlayerState *p, int threat, int dist_milli, unsigned int now_ms) {
+/* Is this action one the body commits to for its own minimum duration? A slide that ends the tick
+ * after it began is a twitch, and the same is true of a dodge or a retreat: re-deciding every tick
+ * is exactly what would make a citizen never actually leave the line of a swing. */
+static int cit_is_commitment(int action) {
+    return action == CITACT_SLIDE || action == CITACT_DODGE || action == CITACT_TAKE_COVER ||
+           action == CITACT_RETREAT;
+}
+
+void citizen_actor_tick(int player_id, PlayerState *p, int threat, float threat_dx, float threat_dz,
+                        unsigned int now_ms) {
     if (!p || player_id <= 0 || player_id >= MAX_CLIENTS) return;
     CitizenActor *a = &g_actors[player_id];
 
@@ -72,6 +84,18 @@ void citizen_actor_tick(int player_id, PlayerState *p, int threat, int dist_mill
         a->action = CITACT_IDLE;
         a->last_action = CITACT_IDLE;
         a->weapon = WPN_AR;
+        a->dodge_side = 1;
+    }
+
+    /* One answer to "how far", derived from the same bearing the fight plan steers by. */
+    int dist_milli = 0;
+    if (threat) {
+        dist_milli = (int)(sqrtf(threat_dx * threat_dx + threat_dz * threat_dz) * 1000.0f);
+        a->threat_dx = threat_dx;
+        a->threat_dz = threat_dz;
+    } else {
+        a->threat_dx = 0.0f;
+        a->threat_dz = 0.0f;
     }
 
     int health_pm = p->health * 10;
@@ -95,9 +119,9 @@ void citizen_actor_tick(int player_id, PlayerState *p, int threat, int dist_mill
     int aggression = r->policy_aggression(proximity, hurt, threat, ready, speed, on_ground);
     int action = r->pick(dist_milli, threat, health_pm, speed, ready, aggression);
 
-    /* A slide is a commitment: it holds for its own minimum duration or it is not a slide at all.
-     * Anything else is re-decided every tick, which is what makes a chase read as alive. */
-    if (a->action == CITACT_SLIDE && now_ms < a->action_until_ms) action = CITACT_SLIDE;
+    /* A commitment holds for its own minimum duration or it is not that action at all. Anything
+     * else is re-decided every tick, which is what makes a chase read as alive. */
+    if (cit_is_commitment(a->action) && now_ms < a->action_until_ms) action = a->action;
 
     a->last_action = a->action;
     if (action != a->action) a->boosted = 0;
@@ -128,6 +152,27 @@ void citizen_actor_tick(int player_id, PlayerState *p, int threat, int dist_mill
         }
         a->action_until_ms = now_ms + (unsigned int)r->slide_min_ms();
         a->slide_jump_until_ms = a->action_until_ms + (unsigned int)r->slide_jump_window_ms();
+    } else if (action == CITACT_DODGE) {
+        if (a->last_action != CITACT_DODGE) {
+            /* alternate the side each time, so a citizen that dodges twice in a row does not
+               simply re-enter the same space it just left */
+            a->dodge_side = -a->dodge_side;
+            reflux_dispatch(REFLUX_ACTION_CITIZEN_DODGED, player_id, dist_milli, a->dodge_side);
+            g_actions_taken++;
+        }
+        a->action_until_ms = now_ms + (unsigned int)r->dodge_ms();
+    } else if (action == CITACT_TAKE_COVER) {
+        if (a->last_action != CITACT_TAKE_COVER) {
+            reflux_dispatch(REFLUX_ACTION_CITIZEN_TOOK_COVER, player_id, dist_milli, health_pm);
+            g_actions_taken++;
+        }
+        a->action_until_ms = now_ms + (unsigned int)r->cover_ms();
+    } else if (action == CITACT_RETREAT) {
+        if (a->last_action != CITACT_RETREAT) {
+            reflux_dispatch(REFLUX_ACTION_CITIZEN_RETREATED, player_id, health_pm, dist_milli);
+            g_actions_taken++;
+        }
+        a->action_until_ms = now_ms + (unsigned int)r->retreat_ms();
     } else if (action == CITACT_SHOOT) {
         if (now_ms >= a->next_fire_ms) {
             a->next_fire_ms = now_ms + (unsigned int)r->fire_cooldown_ms();
@@ -162,12 +207,16 @@ void citizen_actor_apply(int player_id, PlayerState *p, unsigned int now_ms) {
     if (!a->active || p->state != STATE_ALIVE) return;
     const CitizenActorRules *r = citizen_actor_rules();
 
-    /* The actor owns these two inputs for its body, so they are cleared here and only an action that
-       wants them sets them back. Without this a finished slide left the body permanently crouched and
-       a single shoot decision never released the trigger -- found while writing the test, not by
-       watching it, and exactly the kind of latch that would have made every citizen look broken. */
+    /* The actor owns these inputs for its body, so they are cleared here and only an action that
+       wants them sets them back. Without this a finished slide left the body permanently crouched
+       and a single shoot decision never released the trigger -- found while writing the test, not
+       by watching it, and exactly the kind of latch that would have made every citizen look
+       broken. The strafe is cleared for the same reason: a dodge that ended must not keep walking
+       sideways for the rest of the match. `in_fwd` is NOT cleared, because the citizen's own
+       wander/flee (witness_ai.c) writes it and a body with no opinion should keep walking. */
     p->crouching = 0;
     p->in_shoot = 0;
+    p->in_strafe = 0.0f;
 
     switch (a->action) {
         case CITACT_JUMP:
@@ -189,6 +238,26 @@ void citizen_actor_apply(int player_id, PlayerState *p, unsigned int now_ms) {
             break;
         case CITACT_CROUCH:
             p->crouching = 1; /* accelerate() caps a crouching body at CROUCH_SPEED */
+            break;
+        case CITACT_DODGE:
+            /* A side-step, through the same strafe input a human's A/D writes. The body keeps the
+               heading it had (a dodge is not a turn), and the momentum is the shared physics'. */
+            p->in_fwd = 0.0f;
+            p->in_strafe = (float)(a->dodge_side < 0 ? -1 : 1);
+            break;
+        case CITACT_TAKE_COVER:
+            /* Drop the profile and give ground with the threat still in front: crouched (the
+               engine's own CROUCH_SPEED cap) and backpedalling at PARENA's own slower rate. */
+            p->crouching = 1;
+            p->in_fwd = -(float)r->cover_backpedal_milli() / 1000.0f;
+            break;
+        case CITACT_RETREAT:
+            /* Turn away from the thing that is killing it and run. Which way is clear is geometry
+               and therefore the host's, but "away from the threat" is the only direction this
+               engine can point at that is always the right one. */
+            if (a->threat_dx != 0.0f || a->threat_dz != 0.0f)
+                p->yaw = atan2f(-a->threat_dx, -a->threat_dz) * (180.0f / 3.14159f);
+            p->in_fwd = 1.0f;
             break;
         case CITACT_SHOOT:
             p->in_shoot = 1; /* update_weapons owns rate of fire and ammo */

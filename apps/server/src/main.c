@@ -29,6 +29,7 @@
 #include "../../../packages/common/shared_movement.h"
 #include "../../../packages/common/net_sim.h"
 #include "../../../packages/simulation/local_game.h"
+#include "../../../packages/simulation/zombie_values.h" /* ZOMBIE_MOOD_HUNTING, for the citizen wire test's planted pair */
 #include "../../../packages/simulation/tyler_coldopen.h"
 #include "../../../packages/world/level_boxes.h"
 #include "../../../packages/world/story_doors.h"
@@ -1238,6 +1239,13 @@ int parse_server_mode(int argc, char **argv) {
              * and closed for MODE_STORY: without a flag, MODE_TYLER is real in the enum but
              * unreachable on the dedicated server. */
             mode = MODE_TYLER;
+        } else if (strcmp(argv[i], "--zombies") == 0) {
+            /* Same gap, one mode further along: MODE_ZOMBIES is real in the enum, real in the
+             * lobby (`lobby --zombies`), and reachable on a dedicated server only through this
+             * flag. Without it the citizen bodies (citizen_actor.c) had nowhere to be simulated
+             * except one machine's local match, which is exactly the "syncs to the network" half
+             * the citizens were missing. */
+            mode = MODE_ZOMBIES;
         }
     }
     return mode;
@@ -2230,6 +2238,47 @@ void server_broadcast_citizen_events(void) {
     }
 }
 
+/* server_test_plant_citizen_pair -- SHANKPIT_TEST_ZOMBIE_PAIR, a test-only population for
+ * `make test-citizen-wire`, in the same spirit as SHANKPIT_BAKED_LEVELS.
+ *
+ * Why it exists: a citizen's REFLUX actions can only be proved to reach a real socket by having a
+ * citizen actually FIGHT, and the organic MODE_ZOMBIES population is placed tens of metres out from
+ * a hero and wanders -- likely, but never certain, to meet a zombie inside a test's window. One
+ * citizen and one hunting zombie six metres apart make the fight certain instead of likely.
+ *
+ * Why it is planted on the first welcomed client instead of at boot: the first version ran at
+ * startup, and the client the net layer then seated took the very slot the citizen's body was in and
+ * memset it away -- the server logged a pair that no longer existed by the time anybody could see
+ * it. Planting after a seat exists also makes the body land in a slot the net layer has not handed
+ * out, which is the ordering witness_ai's own spawners already rely on in a real match. */
+static int g_test_pair_spawned = 0;
+static void server_test_plant_citizen_pair(unsigned int now_ms) {
+    if (g_test_pair_spawned) return;
+    const char *want = getenv("SHANKPIT_TEST_ZOMBIE_PAIR");
+    if (!want || want[0] != '1') { g_test_pair_spawned = 1; return; }
+    int seated = 0;
+    for (int i = 1; i < MAX_CLIENTS; i++)
+        if (slots[i].active && slots[i].welcomed) { seated = 1; break; }
+    if (!seated) return;
+    g_test_pair_spawned = 1;
+    /* TWO pairs, so one run proves both halves of what the wire is for: the trigger (a healthy
+     * citizen shooting) and the fight plan (a wounded one giving ground). A single pair could only
+     * ever show one of them -- a healthy citizen shoots and never covers, a wounded one covers and
+     * never shoots -- which is exactly how the first version of this hook passed one check and
+     * failed the other. */
+    static const struct { float x; int health; float zombie_z; } pairs[2] = {
+        { 4.0f, 35, 5.0f },    /* hurt + close: take cover (inside PARENA's 400 health / 6 m rungs) */
+        { 14.0f, 100, 6.0f },  /* healthy, a gun's range away: draw and fire */
+    };
+    for (int k = 0; k < 2; k++) {
+        int cid = witness_ai_spawn_citizen(&local_state, ZONE_PUBLIC, 40, 30, pairs[k].x, 8.0f, 0.0f, now_ms);
+        if (cid > 0 && cid < MAX_CLIENTS) local_state.players[cid].health = pairs[k].health;
+        int zid = witness_ai_spawn_zombie(&local_state, pairs[k].x, 8.0f, pairs[k].zombie_z, now_ms);
+        if (zid > 0) witness_ai_force_zombie_mood(zid, ZOMBIE_MOOD_HUNTING);
+        printf("[TEST] citizen pair %d: citizen=%d (%d health) zombie=%d\n", k, cid, pairs[k].health, zid);
+    }
+}
+
 /* EMPIRE unit rules from PARENA -- included here because this file has no block of rules includes yet;
    the server spawns authored units, so it must read the same archetype/order table the lobby does. */
 #include "../../../packages/simulation/empire_units_rules_host.h"
@@ -2308,10 +2357,14 @@ int main(int argc, char *argv[]) {
         g_round_start_ms = get_server_time();
         if (g_server_match_scene == SCENE_VOXWORLD) {
             printf("[HELI] authoritative voxworld spawn count=%d\n", server_scene_heli_count(SCENE_VOXWORLD));
+        }        } else if (mode == MODE_ZOMBIES) {
+            /* The sandbox's own world: VOXWORLD, the scene the lobby's --zombies tile loads, so a
+             * citizen on a dedicated server stands on the same ground a player does. */
+            g_server_match_scene = SCENE_VOXWORLD;
+            scene_load(g_server_match_scene);
+        } else {
+            g_server_match_scene = SCENE_GARAGE_OSAKA;
         }
-    } else {
-        g_server_match_scene = SCENE_GARAGE_OSAKA;
-    }
 
     // S473, STORY_LEVEL_SEQUENCING_NORTHSTAR.md Phase 1 (founder real-time: "lets not work on
     // voxworld this is a legacy world ... we dont need the text cutscene in the beginning we
@@ -2387,6 +2440,7 @@ int main(int argc, char *argv[]) {
     local_state.players[0].active = 0;
     local_state.players[0].health = 0;
     local_state.players[0].state = STATE_DEAD;
+
     NET_SERVER_LOG("SCENE_SELECTED scene=%d", g_server_match_scene);
     if (mode == MODE_TDM) {
         NET_SERVER_LOG("SERVER_MODE TEAM_DEATHMATCH");
@@ -2439,6 +2493,7 @@ int main(int argc, char *argv[]) {
            witness_ai_seed_voxworld_encounter (local_init_match) spawns for MODE_STORY's VOXWORLD
            scene. Same "safe to call unconditionally" property story_ai_tick's own comment above
            already established -- a real no-op whenever nothing is spawned. */
+        server_test_plant_citizen_pair(now);
         if (local_state.game_mode == MODE_ZOMBIES) witness_ai_zombies_tick(&local_state, now);
         witness_ai_tick(&local_state, now);
         story_check_level_exits(now);

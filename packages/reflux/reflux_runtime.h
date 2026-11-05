@@ -166,18 +166,25 @@ static inline int reflux_action_is_horse(int action_type) {
  * a jump leaves the ground, a slide is entered, a slide becomes a jump, a weapon is drawn, a shot
  * is taken -- so a mod can watch a citizen fight without polling its PlayerState.
  *
- * Host-local on purpose, and named as a limit rather than papered over: citizens only exist on the
- * peer that simulates them (the dedicated server, or the lobby's own local match) and their bodies
- * already reach clients in the ordinary snapshot, so these rows are not relayed -- there is no
- * citizen event packet in protocol.h, and adding one is a wire change larger than this feature. */
+ * RELAYED, not host-local: the dedicated server drains this family past an absolute cursor and
+ * ships it as PACKET_CITIZEN_EVENTS (packages/simulation/citizen_sync.h), and each client
+ * re-dispatches the rows into its own log. There is no citizen STATE packet, on purpose -- a
+ * citizen's body is a PlayerState and already travels in the ordinary snapshot, so only the FACT
+ * needs to cross the wire. Arriving rows are untrusted; reflux_action_is_citizen is the bound. */
 #define REFLUX_ACTION_CITIZEN_JUMPED 121        /* a = citizen player_id, b = dist to threat milli, c = speed milli */
 #define REFLUX_ACTION_CITIZEN_SLID 122          /* a = citizen player_id, b = speed milli, c unused */
 #define REFLUX_ACTION_CITIZEN_SLIDE_JUMPED 123  /* a = citizen player_id, b = dist to threat milli, c = speed milli */
 #define REFLUX_ACTION_CITIZEN_WIELDED 124       /* a = citizen player_id, b = WPN_*, c = dist to threat milli */
 #define REFLUX_ACTION_CITIZEN_FIRED 125         /* a = citizen player_id, b = dist to threat milli, c = WPN_* */
+/* The fight plan's own three moves (PARENA citizen_actor_rules.prn): a claw inside reach, hurt enough
+ * to stop trading shots, hurt enough to leave. A mod that wants to react to a citizen defending
+ * itself needs these as much as it needs the jump. */
+#define REFLUX_ACTION_CITIZEN_DODGED 126        /* a = citizen player_id, b = dist to threat milli, c = +/-1 side */
+#define REFLUX_ACTION_CITIZEN_TOOK_COVER 127    /* a = citizen player_id, b = dist to threat milli, c = health milli */
+#define REFLUX_ACTION_CITIZEN_RETREATED 128     /* a = citizen player_id, b = health milli, c = dist to threat milli */
 
 #define REFLUX_ACTION_CITIZEN_FIRST REFLUX_ACTION_CITIZEN_JUMPED
-#define REFLUX_ACTION_CITIZEN_LAST  REFLUX_ACTION_CITIZEN_FIRED
+#define REFLUX_ACTION_CITIZEN_LAST  REFLUX_ACTION_CITIZEN_RETREATED
 
 /* Is this action type part of the citizen family? One predicate in one place, the same shape
  * reflux_action_is_horse uses, so a future relay validates against the family rather than

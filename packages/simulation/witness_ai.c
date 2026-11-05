@@ -1734,7 +1734,7 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
             cp->in_fwd = 0.0f;
             /* forget the body: skip doesn't tick it, and a slot reused by a zombie must never be
                driven by a citizen's leftover slide/jump (citizen_actor.h's g_actors[slot]) */
-            citizen_actor_tick(c->player_id, cp, 0, 0, now_ms);
+            citizen_actor_tick(c->player_id, cp, 0, 0.0f, 0.0f, now_ms);
             continue;
         }
 
@@ -1744,6 +1744,10 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
         /* Any hunting zombie, not just one inside flee range: citizen_actor.h's policy wants to know
            how close the nearest problem is even when the body is not running from it yet. -1 = none. */
         float nearest_d2 = -1.0f;
+        /* ...and WHICH WAY it is, because the fight plan steers by the bearing: a dodge steps off
+           the line of a swing, a cover keeps the zombie in front while it gives ground, and a
+           retreat turns away from it. Distance alone cannot express any of those. */
+        float nearest_dx = 0.0f, nearest_dz = 0.0f;
         for (int zi = 0; zi < WITNESS_AI_MAX_ZOMBIES; zi++) {
             WitnessAiZombie *z = &g_zombies[zi];
             if (!z->active) continue;
@@ -1752,7 +1756,11 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
             if (zp->state == STATE_DEAD || zp->scene_id != cp->scene_id) continue;
             float dx = cp->x - zp->x, dz = cp->z - zp->z;
             float d2 = dx * dx + dz * dz;
-            if (nearest_d2 < 0.0f || d2 < nearest_d2) nearest_d2 = d2;
+            if (nearest_d2 < 0.0f || d2 < nearest_d2) {
+                nearest_d2 = d2;
+                nearest_dx = -dx;   /* dx above is citizen - zombie; the actor wants TOWARD it */
+                nearest_dz = -dz;
+            }
             if (d2 <= best_d2) { best_d2 = d2; away_dx = dx; away_dz = dz; fleeing = 1; }
         }
 
@@ -1777,13 +1785,8 @@ void witness_ai_tick(ServerState *s, unsigned int now_ms) {
            MODE_ZOMBIES only: MODE_STORY's population is scripted and its bodies belong to story_ai.c,
            and MODE_SURVIVAL's are the wave enemies, not bystanders. */
         if (s->game_mode == MODE_ZOMBIES) {
-            int threat = 0;
-            int dist_milli = 0;
-            if (nearest_d2 >= 0.0f) {
-                threat = 1;
-                dist_milli = (int)(sqrtf(nearest_d2) * 1000.0f);
-            }
-            citizen_actor_tick(c->player_id, cp, threat, dist_milli, now_ms);
+            int threat = (nearest_d2 >= 0.0f) ? 1 : 0;
+            citizen_actor_tick(c->player_id, cp, threat, nearest_dx, nearest_dz, now_ms);
         }
     }
 

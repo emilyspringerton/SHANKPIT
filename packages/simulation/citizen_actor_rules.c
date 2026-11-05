@@ -17,6 +17,13 @@ int citizen_slide_jump_window_ms();
 int citizen_wield_range_milli();
 int citizen_fire_range_milli();
 int citizen_fire_cooldown_ms();
+int citizen_claw_reach_milli();
+int citizen_dodge_ms();
+int citizen_cover_health_pm();
+int citizen_cover_ms();
+int citizen_cover_backpedal_milli();
+int citizen_retreat_health_pm();
+int citizen_retreat_ms();
 int citizen_idle_score(int, int, int, int, int);
 int citizen_walk_score(int, int, int, int, int);
 int citizen_run_score(int, int, int, int, int);
@@ -26,6 +33,9 @@ int citizen_slide_score(int, int, int, int, int);
 int citizen_slide_jump_score(int, int, int, int, int);
 int citizen_shoot_score(int, int, int, int, int);
 int citizen_reload_score(int, int, int, int, int);
+int citizen_dodge_score(int, int, int, int, int);
+int citizen_cover_score(int, int, int, int, int);
+int citizen_retreat_score(int, int, int, int, int);
 int citizen_heuristic_score(int, int, int, int, int, int);
 int citizen_policy_aggression(int, int, int, int, int, int);
 int citizen_bias(int);
@@ -86,6 +96,34 @@ int citizen_fire_range_milli(void) {
 
 int citizen_fire_cooldown_ms(void) {
     return 260;
+}
+
+int citizen_claw_reach_milli(void) {
+    return 2600;
+}
+
+int citizen_dodge_ms(void) {
+    return 220;
+}
+
+int citizen_cover_health_pm(void) {
+    return 400;
+}
+
+int citizen_cover_ms(void) {
+    return 700;
+}
+
+int citizen_cover_backpedal_milli(void) {
+    return 450;
+}
+
+int citizen_retreat_health_pm(void) {
+    return 250;
+}
+
+int citizen_retreat_ms(void) {
+    return 900;
 }
 
 int citizen_idle_score(int dist __attribute__((unused)), int threat __attribute__((unused)), int health __attribute__((unused)), int speed __attribute__((unused)), int ready __attribute__((unused))) {
@@ -176,6 +214,34 @@ int citizen_reload_score(int dist __attribute__((unused)), int threat __attribut
     }
 }
 
+int citizen_dodge_score(int dist __attribute__((unused)), int threat __attribute__((unused)), int health __attribute__((unused)), int speed __attribute__((unused)), int ready __attribute__((unused))) {
+    if (((threat == 1) && (dist < citizen_claw_reach_milli()))) {
+    if ((speed < citizen_slide_speed_milli())) {
+    return 1500;
+    } else {
+    return 700;
+    }
+    } else {
+    return 0;
+    }
+}
+
+int citizen_cover_score(int dist __attribute__((unused)), int threat __attribute__((unused)), int health __attribute__((unused)), int speed __attribute__((unused)), int ready __attribute__((unused))) {
+    if (((threat == 1) && ((health < citizen_cover_health_pm()) && (dist < 6000)))) {
+    return 900;
+    } else {
+    return 0;
+    }
+}
+
+int citizen_retreat_score(int dist __attribute__((unused)), int threat __attribute__((unused)), int health __attribute__((unused)), int speed __attribute__((unused)), int ready __attribute__((unused))) {
+    if (((threat == 1) && (health < citizen_retreat_health_pm()))) {
+    return 1400;
+    } else {
+    return 0;
+    }
+}
+
 int citizen_heuristic_score(int action __attribute__((unused)), int dist __attribute__((unused)), int threat __attribute__((unused)), int health __attribute__((unused)), int speed __attribute__((unused)), int ready __attribute__((unused))) {
     if ((action == 0)) {
     return citizen_idle_score(dist, threat, health, speed, ready);
@@ -204,7 +270,19 @@ int citizen_heuristic_score(int action __attribute__((unused)), int dist __attri
     if ((action == 8)) {
     return citizen_reload_score(dist, threat, health, speed, ready);
     } else {
+    if ((action == 9)) {
+    return citizen_dodge_score(dist, threat, health, speed, ready);
+    } else {
+    if ((action == 10)) {
+    return citizen_cover_score(dist, threat, health, speed, ready);
+    } else {
+    if ((action == 11)) {
+    return citizen_retreat_score(dist, threat, health, speed, ready);
+    } else {
     return 0;
+    }
+    }
+    }
     }
     }
     }
@@ -248,7 +326,19 @@ int citizen_bias(int action __attribute__((unused))) {
     if ((action == 8)) {
     return 60;
     } else {
+    if ((action == 9)) {
+    return 200;
+    } else {
+    if ((action == 10)) {
+    return 120;
+    } else {
+    if ((action == 11)) {
+    return 180;
+    } else {
     return 0;
+    }
+    }
+    }
     }
     }
     }
@@ -270,7 +360,7 @@ int citizen_pick(int dist __attribute__((unused)), int threat __attribute__((unu
     int best = -1;
     int best_action = 0;
     while (1) {
-        if ((action >= 9)) {
+        if ((action >= 12)) {
         __loop_result_0 = best_action;
         break;
         } else {
