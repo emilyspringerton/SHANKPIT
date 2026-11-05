@@ -21,6 +21,10 @@
 ;; reason: the shield is part of whether a body is down, and a kill rule that forgets it is wrong in the
 ;; direction that starts fights nobody won.
 ;;
+;; Shield recovery is part of this surface too (see combat-shield-after-regen below): a knocked-off
+;; shield is gone for four seconds after the last hit, then a tick every second that starts at 1 point
+;; and grows to 10 -- packages/sim/shield_rules.prn owns that arithmetic.
+;;
 ;; HONEST GAP: REFLUX itself is a host log (reflux_host_* in packages/reflux/reflux_runtime.h). This
 ;; fork's boot is a PARENA translation unit with no host log linked in, so nothing dispatches yet. What
 ;; DOES exist here is every decision a dispatcher needs: which row a hit is (HIT, or HIT + KO on the
@@ -30,6 +34,10 @@
 (module shankpit/combat_api)
 
 (export combat-shield-after combat-health-after combat-killed? combat-ko? combat-damage-carried
+        combat-shield-max combat-shield-regen-delay-ms combat-shield-regen-interval-ms
+        combat-shield-regen-delay-ticks combat-shield-regen-interval-ticks
+        combat-shield-counter-ms combat-shield-waiting? combat-shield-tick-amount
+        combat-shield-after-regen
         combat-score-for combat-respawn-ticks combat-respawn-hp
         combat-dmg-dealt
         combat-evt-hit combat-evt-ko combat-evt-first combat-evt-last combat-evt-is-combat?)
@@ -70,6 +78,42 @@
 ;; alive test, so a body already at zero (or below, from an older build) is never "killed again".
 (defn combat-ko? [(hp : I32) (shield : I32) (dmg : I32) (head : I32)] : I32
   (if (and (> hp 0) (<= (combat-health-after hp shield dmg head) 0)) 1 0))
+
+;; ---- the shield's own recovery ---------------------------------------------------------------------
+;; The verbs above say what a hit LEAVES. These say what an undisturbed body gets back, and they are the
+;; only door to shield_rules.prn -- a mod or a HUD asks combat_api, never the arithmetic, for the same
+;; reason the hit verbs work this way: the curve can move without every caller moving with it.
+;;
+;; A host keeps two numbers per body: the shield it held when damage last landed, and the ms since that
+;; hit. Every verb below takes those two (or the elapsed time alone) and returns a number -- nothing is
+;; stored, and nothing is reset. A hit RESETS THE COUNTER by rewriting those two numbers, which is why
+;; there is no combat-shield-reset verb to call and forget.
+(defn combat-shield-max [] : I32 (shield-max))
+
+;; The vulnerable window and the tick cadence, in ms, for a host that schedules instead of counting.
+(defn combat-shield-regen-delay-ms [] : I32 (shield-regen-delay-ms))
+(defn combat-shield-regen-interval-ms [] : I32 (shield-regen-interval-ms))
+
+;; The same two numbers as a TICK COUNT, rounded up, for a host that schedules in ticks instead of
+;; accumulating ms -- a counter that floors would fire the regen a tick early, which on a 16 ms tick is
+;; a shield that is back before the four seconds it was owed.
+(defn combat-shield-regen-delay-ticks [(tick-ms : I32)] : I32 (sh-regen-delay-ticks tick-ms))
+(defn combat-shield-regen-interval-ticks [(tick-ms : I32)] : I32 (sh-regen-interval-ticks tick-ms))
+
+;; The 4-second counter a HUD draws: ms left before the first regen tick, 0 once it has started.
+(defn combat-shield-counter-ms [(since-ms : I32)] : I32 (sh-regen-in-ms since-ms))
+
+;; 1 while the body is still inside the 4 seconds -- shield gone and nothing coming back yet.
+(defn combat-shield-waiting? [(since-ms : I32)] : I32 (sh-regen-waiting? since-ms))
+
+;; One regen tick's worth by index: 1, 2, 3, ... capped. This is the ramp a HUD can show as the next
+;; tick's value; it starts smaller than it ends, which is the whole point of the curve.
+(defn combat-shield-tick-amount [(tick-index : I32)] : I32 (sh-regen-tick-amount tick-index))
+
+;; The shield held `since-ms` after the hit that started its regen, given the shield held THEN. Asking
+;; at 3999 ms returns the shield the body already had; asking at 4000 ms returns one point more.
+(defn combat-shield-after-regen [(shield : I32) (since-ms : I32)] : I32
+  (sh-shield-at shield since-ms))
 
 ;; ---- after the KO: score and respawn ----------------------------------------------------------------
 ;; Two numbers a death has to produce, and both are class-shaped rather than body-shaped: the job table's

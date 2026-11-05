@@ -30,6 +30,7 @@ for want in \
   "horde: every body has hit points" \
   "horde: three AR rounds drop a shambler" \
   "horde: a shield soaks first" \
+  "horde: a broken shield waits 4 s, then regen ticks ramp" \
   "horde: combat goes through combat_api" \
   "horde: the killing hit fires the KO event once" \
   "mods: the hook ABI runs in one fixed order" \
@@ -39,4 +40,4 @@ for want in \
   printf '%s\n' "$out" | grep -Fq "$want" || { echo "missing line: $want" >&2; printf '%s\n' "$out" >&2; exit 1; }
 done
 
-echo "boot smoke ok (exit 0, 22 expected lines present)"
+echo "boot smoke ok (exit 0, 23 expected lines present)"

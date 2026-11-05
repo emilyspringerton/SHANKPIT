@@ -30,6 +30,7 @@ parena_binary(
         "//packages/sim:fall_rules.prn",
         "//packages/sim:horde_rules.prn",
         "//packages/sim:hit_rules.prn",
+        "//packages/sim:shield_rules.prn",
         "//packages/sim:combat_api.prn",
         "//packages/sim:mod_abi.prn",
         "//packages/sim:shambler_mod.prn",

@@ -254,6 +254,82 @@
     0
     1))
 
+;; ---- losing the shield, and getting it back --------------------------------------------------------
+;; The founder's rule: a knocked-off shield costs FOUR SECONDS of vulnerability, then comes back in ONE
+;; SECOND ticks that start small and grow (FFXI's healing-tick curve -- the longer the body is left
+;; alone, the more each tick is worth). Two claims boot can make without a game loop: nothing comes
+;; back before 4000 ms, and what comes back after it grows. The "a hit restarts the 4 seconds" case is
+;; the same function with a fresh clock, which is why there is no reset verb to forget to call.
+(defn regen-tick-sum [(n : I32)] : I32
+  (loop [i 0 total 0]
+    (if (< i n)
+      (recur (+ i 1) (+ total (combat-shield-tick-amount i)))
+      total)))
+
+;; A body at 0 shield 5 s after the hit has 3 points back (1 + 2). A 3-damage hit landed at that
+;; moment eats exactly those points through combat-shield-after, so the body is at 0 again and the next
+;; point is a full 4 s away -- the counter restarted, because the rule only ever asks "ms since the last
+;; hit". 3999 ms later it still holds 0; at 4000 ms the first tick lands again.
+(defn regen-restart-check [] : I32
+  (let [before (combat-shield-after-regen 0 5000)
+        after-hit (combat-shield-after before 3 0)]
+    (if (and (= before 3)
+             (= after-hit 0)
+             (= (combat-shield-after-regen after-hit 3999) 0)
+             (= (combat-shield-after-regen after-hit 4000) 1))
+      0
+      1)))
+
+(defn regen-check [] : I32
+  (if (and (= (combat-shield-max) 100)
+           (= (combat-shield-regen-delay-ms) 4000)
+           (= (combat-shield-regen-interval-ms) 1000)
+           ;; the 4-second counter: full at the hit, one ms left just before the first tick, gone after
+           (= (combat-shield-counter-ms 0) 4000)
+           (= (combat-shield-counter-ms 3999) 1)
+           (= (combat-shield-counter-ms 4000) 0)
+           (= (combat-shield-counter-ms 9000) 0)
+           (= (combat-shield-waiting? 0) 1)
+           (= (combat-shield-waiting? 3999) 1)
+           (= (combat-shield-waiting? 4000) 0)
+           ;; four seconds of real vulnerability: the shield does not move
+           (= (combat-shield-after-regen 0 0) 0)
+           (= (combat-shield-after-regen 0 1000) 0)
+           (= (combat-shield-after-regen 0 3999) 0)
+           ;; the first tick lands exactly at 4000 and is worth 1
+           (= (combat-shield-tick-amount 0) 1)
+           (= (combat-shield-after-regen 0 4000) 1)
+           (= (combat-shield-after-regen 0 4999) 1)
+           ;; the ramp: 1,2,3,...,10 then flat, so the curve really starts slower than it ends
+           (= (combat-shield-tick-amount 1) 2)
+           (= (combat-shield-tick-amount 9) 10)
+           (= (combat-shield-tick-amount 10) 10)
+           (= (combat-shield-tick-amount 99) 10)
+           (< (combat-shield-tick-amount 0) (combat-shield-tick-amount 9))
+           ;; the running totals match the per-tick curve they summarise
+           (= (regen-tick-sum 0) 0)
+           (= (regen-tick-sum 1) 1)
+           (= (regen-tick-sum 2) 3)
+           (= (regen-tick-sum 3) 6)
+           (= (regen-tick-sum 10) 55)
+           (= (regen-tick-sum 11) 65)
+           (= (combat-shield-after-regen 0 5000) 3)
+           (= (combat-shield-after-regen 0 6000) 6)
+           (= (combat-shield-after-regen 0 7000) 10)
+           (= (combat-shield-after-regen 0 8000) 15)
+           (= (combat-shield-after-regen 40 5000) 43)
+           ;; never more than the bar: a nearly whole shield is clamped, a full one stays put
+           (= (combat-shield-after-regen 95 9000) 100)
+           (= (combat-shield-after-regen 100 0) 100)
+           (= (combat-shield-after-regen 100 20000) 100)
+           ;; a host that schedules in ticks gets rounded-up counts, never early ones (16 ms ticks)
+           (= (combat-shield-regen-delay-ticks 16) 250)
+           (= (combat-shield-regen-interval-ticks 16) 63)
+           (= (* (combat-shield-regen-delay-ticks 16) 16) (combat-shield-regen-delay-ms))
+           (= (regen-restart-check) 0))
+    0
+    1))
+
 ;; The REFLUX family: the two action types, the boundaries, the predicate that filters a shared log, and
 ;; the damage-dealt field that stops a scoreboard counting overkill.
 (defn event-check [] : I32
@@ -356,6 +432,7 @@
     (println "horde: every body has hit points, ordered by class and level")
     (println "horde: three AR rounds drop a shambler, one does not, and a sniper round drops a brute")
     (println "horde: a shield soaks first, and a head shot through one is an ordinary hit")
+    (println "horde: a broken shield waits 4 s, then regen ticks ramp 1 to 10 a second")
     (println "horde: combat goes through combat_api, and its events are the REFLUX family 129-130")
     (println "horde: the killing hit fires the KO event once, and a corpse is not killed again")
     (println "mods: the hook ABI runs in one fixed order, and 1 means the mod handled it")
@@ -364,7 +441,7 @@
     (if (and (= (level-check) 0)
              (> (turn-cap) 0) (< (turn-cap) 2000) (> (distance-bias) 1000)
              (= (frame-check) 0) (= (palette-check) 0) (= (sky-check) 0) (>= (sky-scan) 1)
-             (= (sim-check) 0) (= (horde-check) 0) (= (horde-place-check) 0) (= (horde-facing-check) 0) (= (horde-rest-check) 0) (= (health-check) 0) (= (hit-check) 0) (= (shield-check) 0) (= (event-check) 0) (= (death-check) 0) (= (mod-check) 0) (= (rules-check) 0))
+             (= (sim-check) 0) (= (horde-check) 0) (= (horde-place-check) 0) (= (horde-facing-check) 0) (= (horde-rest-check) 0) (= (health-check) 0) (= (hit-check) 0) (= (shield-check) 0) (= (regen-check) 0) (= (event-check) 0) (= (death-check) 0) (= (mod-check) 0) (= (rules-check) 0))
       (do
         (println "boot plan: the level's own spawner, zombie mode")
         0)

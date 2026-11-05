@@ -5,6 +5,7 @@ exports_files([
     "fall_rules.prn",
     "horde_rules.prn",
     "hit_rules.prn",
+    "shield_rules.prn",
     "combat_api.prn",
     "mod_abi.prn",
     "shambler_mod.prn",
@@ -48,6 +49,19 @@ sh_test(
     srcs = ["//bazel:parena_emitted_test.sh"],
     data = [":hit_rules_from_prn"],
     args = ["$(rootpath :hit_rules_from_prn)"],
+)
+
+# packages/sim/shield_rules.prn -- a broken shield comes back: 4 s of nothing, then 1 s ticks that ramp.
+parena_module(
+    name = "shield_rules",
+    src = "shield_rules.prn",
+)
+
+sh_test(
+    name = "shield_rules_emitted_test",
+    srcs = ["//bazel:parena_emitted_test.sh"],
+    data = [":shield_rules_from_prn"],
+    args = ["$(rootpath :shield_rules_from_prn)"],
 )
 
 # packages/sim/combat_api.prn -- the mod-facing surface over hit_rules (verbs + the REFLUX family).
