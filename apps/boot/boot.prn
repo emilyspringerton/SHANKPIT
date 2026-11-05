@@ -170,6 +170,18 @@
       0
       1)))
 
+;; ---- the wave lands -------------------------------------------------------------------------------
+;; Every body starts at the spawner's height and, ten simulated seconds later, is resting on the floor --
+;; and no tick in between puts any of them through it. A body that sinks is worse than one that floats:
+;; the renderer draws it below the arena and every later collision test starts from a wrong position.
+(defn horde-rest-check [] : I32
+  (if (and (= (resting-y (spawn-y-mm) 0) (spawn-y-mm))
+           (= (resting-y (spawn-y-mm) 600) 0)
+           (= (floor-honoured (spawn-y-mm) 600) 1)
+           (= (horde-size) 3))
+    0
+    1))
+
 (defn shank-boot-main [] : I32
   (do
     (println "SHANKPIT clean-room boot")
@@ -185,10 +197,11 @@
     (println "horde: wave 1 from wave_rules fits inside this arena")
     (println "horde: its 3 bodies stand inside the arena, apart from each other")
     (println "horde: each body faces the arena's middle, not the wall behind it")
+    (println "horde: the wave lands, and no body sinks through the floor")
     (if (and (= (level-check) 0)
              (> (turn-cap) 0) (< (turn-cap) 2000) (> (distance-bias) 1000)
              (= (frame-check) 0) (= (palette-check) 0) (= (sky-check) 0) (>= (sky-scan) 1)
-             (= (sim-check) 0) (= (horde-check) 0) (= (horde-place-check) 0) (= (horde-facing-check) 0))
+             (= (sim-check) 0) (= (horde-check) 0) (= (horde-place-check) 0) (= (horde-facing-check) 0) (= (horde-rest-check) 0))
       (do
         (println "boot plan: the level's own spawner, zombie mode")
         0)

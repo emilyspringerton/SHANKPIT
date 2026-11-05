@@ -10,7 +10,7 @@
 ;; This is not 460's movement code and does not pretend to be: 460 integrates in F32 with double
 ;; gravity per tick, a jump arc, friction and slide. What is shared is the tick rate.
 (module shankpit/fall)
-(export gravity-milli dt-ms gravity-per-tick fall-vy fall-y floor-y)
+(export gravity-milli dt-ms gravity-per-tick fall-vy fall-y floor-y resting-y floor-honoured)
 
 ;; 9.8 m/s^2, in mm/s^2.
 (defn gravity-milli [] : I32 9800)
@@ -40,3 +40,15 @@
 
 ;; the arena floor is y = 0 (resolve-player's own floor in physics.prn), so a body stops there
 (defn floor-y [(y : I32)] : I32 (if (< y 0) 0 y))
+
+;; the height a body actually holds at tick n: the floor wins over the integrator
+(defn resting-y [(y0-mm : I32) (ticks : I32)] : I32 (floor-y (fall-y y0-mm ticks)))
+
+;; 1 if no tick from 0..limit puts the body below the floor, 0 if any does. One integer, because the
+;; invariant that matters is "nothing sinks through the arena" and it has to hold on every tick, not the
+;; tick a caller happened to sample.
+(defn floor-honoured [(y0-mm : I32) (limit : I32)] : I32
+  (loop [i 0 ok 1]
+    (if (< i limit)
+      (recur (+ i 1) (if (< (resting-y y0-mm i) 0) 0 ok))
+      ok)))
