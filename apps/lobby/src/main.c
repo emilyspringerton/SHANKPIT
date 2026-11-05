@@ -12685,26 +12685,20 @@ static void draw_shield_regen_tags(const PlayerState *viewer, unsigned int now_m
         float dx, dy, dz, dist, fade;
         GLdouble sx = 0.0, sy = 0.0, sz = 0.0;
         char buf[24];
-        int tenths, landed;
+        int phase;
         if (!q->active || q->state != STATE_ALIVE || q->id == viewer->id) continue;
-        if (q->shield >= shield_max()) continue;
         dx = q->x - viewer->x; dy = q->y - viewer->y; dz = q->z - viewer->z;
         dist = sqrtf(dx * dx + dy * dy + dz * dz);
-        if (dist > 45.0f) continue;
+        /* Who gets a tag, and what it says: one shared decision (shield_regen.h), so the rule is
+           tested headlessly and this pass only projects and paints. */
+        phase = shield_regen_tag_text(q, now_ms, dist, buf, (int)sizeof(buf));
+        if (!phase) continue;
         if (gluProject(q->x, q->y + 2.3, q->z, g_tag_model, g_tag_proj, g_tag_viewport,
                        &sx, &sy, &sz) == GL_FALSE) continue;
         if (sz < 0.0 || sz > 1.0) continue;
-        landed = sh_regen_ticks_landed(shield_regen_since_ms(q, now_ms));
-        tenths = shield_regen_counter_tenths(q, now_ms);
-        if (landed == 0 && tenths == 0) continue;   /* never hit: nothing to count down */
-        fade = 0.45f + 0.55f * (1.0f - dist / 45.0f);   /* readable up close, unobtrusive far away */
-        if (tenths > 0) {
-            snprintf(buf, sizeof(buf), "%d.%d", tenths / 10, tenths % 10);
-            glColor3f(1.0f * fade, 0.42f * fade, 0.38f * fade);
-        } else {
-            snprintf(buf, sizeof(buf), "+%d", shield_regen_next_amount(q, now_ms));
-            glColor3f(0.42f * fade, 0.72f * fade, 1.0f * fade);
-        }
+        fade = 0.45f + 0.55f * (1.0f - dist / SHIELD_REGEN_TAG_MAX_DIST);   /* readable up close, quiet far away */
+        if (phase == 1) glColor3f(1.0f * fade, 0.42f * fade, 0.38f * fade);
+        else glColor3f(0.42f * fade, 0.72f * fade, 1.0f * fade);
         draw_string(buf, (float)sx - 9.0f, (float)sy + 8.0f, dist < 14.0f ? 3.0f : 2.0f);
         drawn++;
     }

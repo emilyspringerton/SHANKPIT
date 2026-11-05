@@ -26,6 +26,7 @@
  * the server's now_ms). A host that only counts frames converts on its own side with
  * sh_regen_delay_ticks()/sh_regen_interval_ticks(), which round up. */
 
+#include <stdio.h>
 #include "protocol.h"
 #include "shield_regen_rules.h"
 
@@ -181,6 +182,34 @@ static inline int shield_regen_next_amount(const PlayerState *p, unsigned int no
  * zero before the shield actually moves. */
 static inline int shield_regen_counter_tenths(const PlayerState *p, unsigned int now_ms) {
     return (shield_regen_counter_ms(p, now_ms) + 99) / 100;
+}
+
+/* How far away an opponent's regen tag is still worth drawing. */
+#define SHIELD_REGEN_TAG_MAX_DIST 45.0f
+
+/* Should this body carry an OPPONENT-VISIBLE regen tag, and what does it say?
+ *
+ * Returns 0 for "no tag" (full shield, nothing to count, or too far to matter), 1 while the four
+ * seconds are running, 2 once ticks are landing. The label goes in `out`: "3.2" for the countdown,
+ * "+4" for the next tick's value. Shared with the lobby's tag pass so the decision -- who gets a
+ * tag and what it reads -- is testable without a GL context; the projection and drawing stay in the
+ * lobby, which is the only place that has a camera. */
+static inline int shield_regen_tag_text(const PlayerState *p, unsigned int now_ms, float distance,
+                                        char *out, int out_n) {
+    int tenths, landed;
+    if (!p || !out || out_n <= 0) return 0;
+    out[0] = '\0';
+    if (p->shield >= shield_max()) return 0;
+    if (distance > SHIELD_REGEN_TAG_MAX_DIST) return 0;
+    landed = sh_regen_ticks_landed(shield_regen_since_ms(p, now_ms));
+    tenths = shield_regen_counter_tenths(p, now_ms);
+    if (landed == 0 && tenths == 0) return 0;
+    if (tenths > 0) {
+        snprintf(out, (size_t)out_n, "%d.%d", tenths / 10, tenths % 10);
+        return 1;
+    }
+    snprintf(out, (size_t)out_n, "+%d", shield_regen_next_amount(p, now_ms));
+    return 2;
 }
 
 /* The bar's fill in permille (0..1000), so a renderer does not need to know the cap. */

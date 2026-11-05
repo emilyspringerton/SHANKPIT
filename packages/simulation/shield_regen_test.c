@@ -287,6 +287,25 @@ int main(void) {
     p = fresh(0, 0);
     ok(shield_regen_tick_step(&p, 13000) == 9, "the stock ramp's cap (10 points) tops out at rung 9");
 
+    /* Opponent tags: who gets one and what it reads. The projection and painting are the lobby's,
+     * but this decision is what a wrong tag would get wrong -- a full shield tagged, a culled body
+     * still labelled, "+n" while the body is actually still vulnerable. */
+    {
+        char tag[24];
+        p = fresh(0, 0);
+        ok(shield_regen_tag_text(&p, 1000, 10.0f, tag, sizeof tag) == 1 && strcmp(tag, "3.0") == 0,
+           "a body inside its four seconds carries a countdown tag");
+        p = fresh(0, 0);
+        ok(shield_regen_tag_text(&p, 5000, 10.0f, tag, sizeof tag) == 2 && strcmp(tag, "+3") == 0,
+           "a body already ticking carries the next tick's value");
+        p = fresh(100, 0);
+        ok(shield_regen_tag_text(&p, 9000, 10.0f, tag, sizeof tag) == 0, "a full shield gets no tag");
+        p = fresh(0, 0);
+        ok(shield_regen_tag_text(&p, 1000, 80.0f, tag, sizeof tag) == 0, "past 45 units the tag is culled");
+        p = fresh(0, 0);
+        ok(shield_regen_tag_text(NULL, 1000, 10.0f, tag, sizeof tag) == 0, "a null body is refused, not dereferenced");
+    }
+
     /* Respawn: a body brought back at full shield must not inherit the last death's clock. */
     p = fresh(0, 0);
     shield_regen_note_damage(&p, 0);
