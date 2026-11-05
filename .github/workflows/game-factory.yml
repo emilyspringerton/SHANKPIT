@@ -99,6 +99,11 @@ jobs:
       - name: Level interest smoke
         run: make game-level-interest-smoke PARENA_BIN="$PWD/PARENA/parena"
 
+      # The server removes its only level: the empty authoritative row set must make the client
+      # free its level instead of keeping a stale mask.
+      - name: Level unregister smoke
+        run: make game-level-unregister-smoke PARENA_BIN="$PWD/PARENA/parena"
+
       # Two clients at once, different caps and levels: two peer rows, distinct slots.
       - name: Multi-peer smoke
         run: make game-multi-peer-smoke PARENA_BIN="$PWD/PARENA/parena"
