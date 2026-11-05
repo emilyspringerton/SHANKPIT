@@ -40,19 +40,22 @@ $(GAME_GEN): $(GAME_PRN) $(PARENA_BIN)
 
 $(GAME_BIN): $(GAME_GEN) apps/game/host.c apps/game/game_api.h \
              apps/game/level_catalog.c apps/game/level_catalog.h \
+             apps/game/event_log.c apps/game/event_log.h \
              packages/game/level_mods_host.c packages/game/level_mods_host.h \
              packages/reflux/reflux_runtime.c packages/reflux/reflux_runtime.h
 	@mkdir -p $(BIN_DIR)
 	$(CC) $(GAME_CFLAGS) $(GAME_SDL_CFLAGS) \
-	  apps/game/host.c apps/game/level_catalog.c packages/game/level_mods_host.c \
-	  packages/reflux/reflux_runtime.c $(GAME_GEN) -o $@ $(GAME_SDL_LIBS) $(GAME_EXTRA_LIBS)
+	  apps/game/host.c apps/game/level_catalog.c apps/game/event_log.c \
+	  packages/game/level_mods_host.c packages/reflux/reflux_runtime.c $(GAME_GEN) \
+	  -o $@ $(GAME_SDL_LIBS) $(GAME_EXTRA_LIBS)
 
 $(GAME_TEST_BIN): $(GAME_GEN) apps/game/game_test.c apps/game/game_api.h \
                   apps/game/level_catalog.c apps/game/level_catalog.h \
+                  apps/game/event_log.c apps/game/event_log.h \
                   packages/game/level_mods_host.c packages/game/level_mods_host.h \
                   packages/reflux/reflux_runtime.c packages/reflux/reflux_runtime.h
 	@mkdir -p $(BIN_DIR)
-	$(CC) $(GAME_CFLAGS) apps/game/game_test.c apps/game/level_catalog.c \
+	$(CC) $(GAME_CFLAGS) apps/game/game_test.c apps/game/level_catalog.c apps/game/event_log.c \
 	  packages/game/level_mods_host.c packages/reflux/reflux_runtime.c $(GAME_GEN) -o $@ -lm
 
 game-test: $(GAME_TEST_BIN)

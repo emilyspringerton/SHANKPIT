@@ -49,6 +49,7 @@ typedef int shank_socket;
 #define SHANK_BAD_SOCKET (-1)
 #endif
 
+#include "event_log.h"
 #include "game_api.h"
 #include "level_catalog.h"
 #include "level_mods_host.h"
@@ -1049,8 +1050,12 @@ static void start_round(void) {
     g_player_score = 0;
     g_local_slot = g_is_client ? CLIENT_SLOT : 0;
     spawn_body(g_local_slot, 0, 0, -700, 0, gp_mode_hp(g_mode), gp_mode_shield(g_mode));
+    /* Flush anything that happened before the round (startup registration, a --set-mod) before the
+     * reset empties the shared log; otherwise the audit stream would start mid-story. */
+    event_log_sync(g_tick);
     reflux_host_reset();
     g_cursor = 0;
+    event_log_reset_cursor();
     /* The log just emptied, so re-publish the level's full state before the round's own rows: a late
      * reader must be able to reconstruct which mods this level runs without a reload. */
     level_mods_publish(g_level_id);
@@ -1098,6 +1103,7 @@ int main(int argc, char **argv) {
     int port = net_port();
     int boot_mode = gp_mode_default();
     const char *levels_path = NULL;
+    const char *event_log_path = NULL;
     int level_id = 0; /* 0 = unspecified: the manifest's first level, or level 1 without one */
     int level_env = lm_env_surface();
     int set_mod = 0;
@@ -1125,6 +1131,8 @@ int main(int argc, char **argv) {
             port = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--levels") == 0 && i + 1 < argc) {
             levels_path = argv[++i];
+        } else if (strcmp(argv[i], "--event-log") == 0 && i + 1 < argc) {
+            event_log_path = argv[++i];
         } else if (strcmp(argv[i], "--level") == 0 && i + 1 < argc) {
             level_id = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--env") == 0 && i + 1 < argc) {
@@ -1138,7 +1146,7 @@ int main(int argc, char **argv) {
             set_on = atoi(argv[++i]) != 0;
         } else {
             fprintf(stderr, "usage: %s [--host [port]] [--join ip [port]] [--start] [--ffa]"
-                            " [--levels manifest.json] [--level N]"
+                            " [--levels manifest.json] [--level N] [--event-log events.jsonl]"
                             " [--env surface|underground|moon] [--set-mod MOD 0|1]"
                             " [--headless N] [--frames N --shot out.bmp]\n", argv[0]);
             return 2;
@@ -1158,6 +1166,12 @@ int main(int argc, char **argv) {
         return 2;
     }
     g_mode = boot_mode;
+    /* Open the stream before any level row exists, so startup registration and any --set-mod are
+     * part of the audit trail instead of being skipped by the "no replay of earlier rows" rule. */
+    if (event_log_path && !event_log_open(event_log_path)) {
+        fprintf(stderr, "shank_game: cannot open event log %s\n", event_log_path);
+        return 2;
+    }
     level_mods_reset();
     level_catalog_reset();
     if (levels_path) {
@@ -1215,6 +1229,7 @@ int main(int argc, char **argv) {
             update_round();
             net_recv_or_send();
             poll_events();
+            event_log_sync(g_tick);
             /* A real socket needs real time on both ends; the other headless paths are pure sim. */
             if (g_is_host) shank_sleep_ms(8);
             else if (g_is_client) shank_sleep_ms(16);
@@ -1227,6 +1242,7 @@ int main(int argc, char **argv) {
                reflux_host_total_dispatched(), g_level_id, g_level_env,
                level_mods_mask(g_level_id), level_mods_revision(g_level_id),
                g_snapshots_received, g_peer_known, level_catalog_name(g_level_id));
+        event_log_close();
         return 0;
     }
 
@@ -1307,6 +1323,7 @@ int main(int argc, char **argv) {
                 }
             }
             poll_events();
+            event_log_sync(g_tick);
             draw_frame();
             SDL_UpdateTexture(tex, NULL, g_fb, FRAME_W * 4);
             SDL_RenderClear(ren);
@@ -1332,6 +1349,7 @@ int main(int argc, char **argv) {
         SDL_DestroyRenderer(ren);
         SDL_DestroyWindow(win);
     }
+    event_log_close();
     SDL_Quit();
     return 0;
 }

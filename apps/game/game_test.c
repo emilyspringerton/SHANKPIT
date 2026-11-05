@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "event_log.h"
 #include "game_api.h"
 #include "level_catalog.h"
 #include "level_mods_host.h"
@@ -487,6 +488,43 @@ static void test_level_catalog(void) {
     remove(path);
 }
 
+/* The JSONL tail: every level-family row appears exactly once, with its real payload. */
+static void test_event_log(void) {
+    const char *path = "/tmp/shank_event_log_test.jsonl";
+    char buf[2048] = {0};
+    size_t n = 0;
+    FILE *f;
+
+    remove(path);
+    reflux_host_reset();
+    level_mods_reset();
+    check(event_log_open(path) == 1, "event log opens");
+    event_log_reset_cursor();
+
+    level_mods_register(31, lm_env_underground()); /* registered */
+    level_mods_request(31, lm_mod_sky(), 1);       /* mod_set */
+    level_mods_apply(31, lm_mod_sky(), 1);         /* applies, does not dispatch */
+    level_mods_publish(31);                        /* state */
+
+    check(event_log_sync(77) == 3, "three level rows stream to the log");
+    check(event_log_sync(78) == 0, "a second sync writes nothing");
+    event_log_close();
+
+    f = fopen(path, "rb");
+    check(f != NULL, "event log file exists");
+    if (f) {
+        n = fread(buf, 1, sizeof(buf) - 1, f);
+        buf[n] = '\0';
+        fclose(f);
+    }
+    check(strstr(buf, "\"event\":\"registered\"") != NULL, "registered row is in the stream");
+    check(strstr(buf, "\"event\":\"mod_set\"") != NULL, "mod_set row is in the stream");
+    check(strstr(buf, "\"event\":\"state\"") != NULL, "state row is in the stream");
+    check(strstr(buf, "\"tick\":77") != NULL, "the caller's tick is recorded");
+    check(strstr(buf, "\"level\":31") != NULL, "the level id is recorded");
+    remove(path);
+}
+
 int main(void) {
     test_modes();
     test_loop();
@@ -497,6 +535,7 @@ int main(void) {
     test_reflux();
     test_level_mods();
     test_level_catalog();
+    test_event_log();
     test_round_sim();
 
     printf("%s: %d checks, %d failure(s)\n",
