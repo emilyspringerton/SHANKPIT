@@ -731,3 +731,6 @@ roblox-install:
 .PHONY: regen-roblox-rules
 regen-roblox-rules:
 	roblox/scripts/gen_460_rules.sh
+
+# ---- clean-room PARENA game ----
+include apps/game/game.mk

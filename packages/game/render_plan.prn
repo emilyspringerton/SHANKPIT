@@ -1,0 +1,81 @@
+;; packages/game/render_plan.prn -- the renderer's decisions, as PARENA rules.
+;;
+;; Non-REFLUX, like the loop. This module answers the questions a rasteriser must ask and nothing
+;; else: is this body in front of the camera, where on the screen does it stand, how tall is it, which
+;; sky stop does this row use, how dark is the floor at this depth. The host
+;; (apps/game/host.c) writes pixels -- SDL2 has the framebuffer, and PARENA has no Bytes to write
+;; into one (docs/PARENA_GAPS.md 5) -- but it has no camera, projection or palette arithmetic of its
+;; own. The 460 palette is packages/render/palette_rules.prn, not a copy.
+(module shankpit/rp)
+(export rp-width rp-height rp-focal rp-cam-h rp-near rp-horizon
+        rp-fwd rp-right rp-visible rp-screen-x rp-feet-y rp-body-h rp-body-w
+        rp-sky-stop rp-floor-shade rp-wall-shade rp-hud-scale rp-nearest-yaw)
+
+(defn rp-width [] : I32 1024)
+(defn rp-height [] : I32 576)
+(defn rp-focal [] : I32 (loop-focal))
+(defn rp-cam-h [] : I32 (loop-cam-height))
+(defn rp-horizon [] : I32 (loop-horizon))
+;; Closer than 8 cm a projected rect is meaningless (it is the camera's own body), so it is culled
+;; rather than drawn as a screen-filling smear.
+(defn rp-near [] : I32 8)
+
+;; ---- camera space ----------------------------------------------------------------------------------
+(defn rp-fwd [(dx : I32) (dz : I32) (yaw : I32)] : F64
+  (+ (* (loop-to-f dx) (loop-sin yaw)) (* (loop-to-f dz) (loop-cos yaw))))
+
+(defn rp-right [(dx : I32) (dz : I32) (yaw : I32)] : F64
+  (- (* (loop-to-f dx) (loop-cos yaw)) (* (loop-to-f dz) (loop-sin yaw))))
+
+(defn rp-visible [(f : F64)] : I32 (if (> f (loop-to-f (rp-near))) 1 0))
+
+;; ---- screen space ----------------------------------------------------------------------------------
+;; x: centre + (right/forward) * focal. Behind the near plane this returns the centre, but callers
+;; gate on rp-visible? first -- the function is total so a test can call it on any input.
+(defn rp-screen-x [(dx : I32) (dz : I32) (yaw : I32)] : I32
+  (let [f (rp-fwd dx dz yaw)]
+    (if (<= f (loop-to-f (rp-near)))
+      (/ (rp-width) 2)
+      (+ (/ (rp-width) 2)
+         (loop-to-i (* (/ (rp-right dx dz yaw) f) (loop-to-f (rp-focal))))))))
+
+;; Feet sit below the horizon by the camera height at that depth -- the classic floor projection, and
+;; the reason a body further away stands closer to the horizon.
+(defn rp-feet-y [(dx : I32) (dz : I32) (yaw : I32)] : I32
+  (let [f (rp-fwd dx dz yaw)]
+    (if (<= f (loop-to-f (rp-near)))
+      (rp-horizon)
+      (+ (rp-horizon)
+         (loop-to-i (* (/ (loop-to-f (rp-cam-h)) f) (loop-to-f (rp-focal))))))))
+
+(defn rp-body-h [(f : F64) (h : I32)] : I32
+  (if (<= f (loop-to-f (rp-near)))
+    0
+    (loop-to-i (* (/ (loop-to-f h) f) (loop-to-f (rp-focal))))))
+
+;; A body is a third as wide as it is tall; clamped so a distant one is still a visible sliver.
+(defn rp-body-w [(f : F64) (h : I32)] : I32
+  (let [w (/ (rp-body-h f h) 3)]
+    (if (< w 2) 2 w)))
+
+;; ---- shading ---------------------------------------------------------------------------------------
+;; 0 = warm horizon stop, 1 = sky-mid, 2 = pale top. The three stops come from the 460 palette; this
+;; is only where the two seams sit (row 90 and row 190 of a 576-row frame).
+(defn rp-sky-stop [(y : I32)] : I32
+  (if (< y 90) 2 (if (< y 190) 1 0)))
+
+;; 0..100, darker as the floor recedes. Used to fade grid lines instead of letting them alias.
+(defn rp-floor-shade [(f : F64)] : I32
+  (loop-clamp (- 70 (loop-to-i (/ (* f 60.0) (+ f 900.0)))) 8 70))
+
+;; Walls and pillars keep their own flat stop; the top edge gets a thin lighter rim the host draws.
+(defn rp-wall-shade [] : I32 100)
+
+;; HUD text scale at 1024x576.
+(defn rp-hud-scale [] : I32 2)
+
+;; ---- aim -------------------------------------------------------------------------------------------
+;; The yaw that puts (bx,bz) dead centre from (ax,az) -- used by the bots and by the net client's own
+;; local aim, so a shot never disagrees with what the renderer drew.
+(defn rp-nearest-yaw [(ax : I32) (az : I32) (bx : I32) (bz : I32)] : I32
+  (loop-face-yaw ax az bx bz))

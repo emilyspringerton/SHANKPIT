@@ -1,0 +1,110 @@
+;; packages/game/core_loop.prn -- the core game loop and world, as PARENA rules.
+;;
+;; Non-REFLUX on purpose. This is the part of SHANKPIT that is not a mod: the fixed timestep, the
+;; arena, how a body moves, where a spawn ring puts a body, and the camera. Nothing here dispatches
+;; or polls REFLUX -- see packages/game/gameplay_mod.prn for the evented half.
+;;
+;; Units are centimetres and milliseconds, integers only: the fork's pinned PARENA has no f32
+;; conversion and no Arena/Bytes (docs/PARENA_GAPS.md 3 and 5), so the trig the loop needs goes
+;; through #target inline-c the same way packages/../PARENA stdlib physics does, and every position
+;; it returns is an integer the host can compare without a float tolerance.
+(module shankpit/loop)
+(export loop-tick-ms loop-max-steps loop-arena-half loop-wall-height loop-speed
+        loop-body-radius loop-cam-height loop-focal loop-horizon
+        loop-sin loop-cos loop-sin-deg loop-cos-deg loop-to-f loop-to-i
+        loop-clamp loop-clamp-pos loop-move-x loop-move-z
+        loop-ring-x loop-ring-z loop-face-yaw loop-atan2
+        loop-arc-deg loop-arc-x loop-arc-z)
+
+;; ---- the tick ------------------------------------------------------------------------------------
+;; packages/frame/frame_rules.prn owns the same 16 ms and apps/boot asserts the two agree before it
+;; trusts a frame; the game test repeats that assertion for this module.
+(defn loop-tick-ms [] : I32 16)
+(defn loop-max-steps [] : I32 6)
+
+;; ---- the arena -----------------------------------------------------------------------------------
+;; 28 m square: big enough that a 950 cm spawn ring is inside the walls, small enough that the two
+;; spawn rings (950 zombies, 520 FFA, packages/game/gameplay_mod.prn) never overlap.
+(defn loop-arena-half [] : I32 1400)
+(defn loop-wall-height [] : I32 260)
+
+;; ---- a body --------------------------------------------------------------------------------------
+;; 7 cm per tick at full stick is 4.375 m/s at 16 ms -- 460's arena shooter pace, not Quake's.
+(defn loop-speed [] : I32 7)
+(defn loop-body-radius [] : I32 24)
+(defn loop-cam-height [] : I32 165)
+
+;; ---- the camera ----------------------------------------------------------------------------------
+;; 1024x576 framebuffer, horizon at row 250, 620 px focal length: the projection in
+;; packages/game/render_plan.prn is built out of these four numbers alone.
+(defn loop-focal [] : I32 620)
+(defn loop-horizon [] : I32 250)
+
+;; ---- scalars --------------------------------------------------------------------------------------
+;; `md` is milliradians. Inline-c argument names must match the PARENA parameter names (that is how
+;; the VS0 FFI binds them -- see stdlib physics' own mv-fsqrt), hence the short names.
+(defn loop-sin [(md : I32)] : F64 #target {:c (inline-c "sin(((double)md) * 0.001)")})
+(defn loop-cos [(md : I32)] : F64 #target {:c (inline-c "cos(((double)md) * 0.001)")})
+(defn loop-sin-deg [(deg : I32)] : F64 #target {:c (inline-c "sin(((double)deg) * 0.017453292519943295)")})
+(defn loop-cos-deg [(deg : I32)] : F64 #target {:c (inline-c "cos(((double)deg) * 0.017453292519943295)")})
+(defn loop-to-f [(n : I32)] : F64 #target {:c (inline-c "(double)n")})
+(defn loop-to-i [(v : F64)] : I32 #target {:c (inline-c "(int)v")})
+(defn loop-atan2 [(dz : I32) (dx : I32)] : F64
+  #target {:c (inline-c "atan2((double)dx, (double)dz)")})
+
+(defn loop-clamp [(v : I32) (lo : I32) (hi : I32)] : I32
+  (if (< v lo) lo (if (> v hi) hi v)))
+
+;; A body stays one radius inside the walls, so a renderer never has to clip a torso in half.
+(defn loop-clamp-pos [(v : I32)] : I32
+  (loop-clamp v
+              (- 0 (- (loop-arena-half) (loop-body-radius)))
+              (- (loop-arena-half) (loop-body-radius))))
+
+;; ---- movement --------------------------------------------------------------------------------------
+;; fwd/strafe are -100..100 (a stick, not a velocity). Forward is (sin yaw, cos yaw) in XZ, right is
+;; (cos yaw, -sin yaw), which is the same basis the renderer projects with -- one definition of
+;; "forward" for the loop, the camera and the net.
+(defn loop-move-x [(x : I32) (yaw : I32) (fwd : I32) (strafe : I32)] : I32
+  (loop-clamp-pos
+    (+ x (loop-to-i
+           (* (+ (* (loop-sin yaw) (loop-to-f fwd))
+                 (* (loop-cos yaw) (loop-to-f strafe)))
+              (/ (loop-to-f (loop-speed)) 100.0))))))
+
+(defn loop-move-z [(z : I32) (yaw : I32) (fwd : I32) (strafe : I32)] : I32
+  (loop-clamp-pos
+    (+ z (loop-to-i
+           (* (- (* (loop-cos yaw) (loop-to-f fwd))
+                 (* (loop-sin yaw) (loop-to-f strafe)))
+              (/ (loop-to-f (loop-speed)) 100.0))))))
+
+;; ---- spawn rings -----------------------------------------------------------------------------------
+;; `slot` of `count` around a circle of `radius`, measured from +Z (yaw 0), clockwise. count <= 0 is a
+;; refusal rather than a divide: the caller has no ring to place anything on.
+(defn loop-ring-deg [(slot : I32) (count : I32)] : I32
+  (if (<= count 0) 0 (/ (* slot 360) count)))
+
+(defn loop-ring-x [(slot : I32) (count : I32) (radius : I32)] : I32
+  (loop-to-i (* (loop-sin-deg (loop-ring-deg slot count)) (loop-to-f radius))))
+
+(defn loop-ring-z [(slot : I32) (count : I32) (radius : I32)] : I32
+  (loop-to-i (* (loop-cos-deg (loop-ring-deg slot count)) (loop-to-f radius))))
+
+;; ---- spawn arcs -----------------------------------------------------------------------------------
+;; A ring of three puts two shamblers behind the player, which is a fine trap and a terrible first
+;; second of a match. An arc centres `count` spawns on +Z and spreads them across `spread` degrees,
+;; so a wave walks in from what the player is already looking at.
+(defn loop-arc-deg [(slot : I32) (count : I32) (spread : I32)] : I32
+  (if (<= count 1) 0 (- (/ (* slot spread) (- count 1)) (/ spread 2))))
+
+(defn loop-arc-x [(slot : I32) (count : I32) (radius : I32) (spread : I32)] : I32
+  (loop-to-i (* (loop-sin-deg (loop-arc-deg slot count spread)) (loop-to-f radius))))
+
+(defn loop-arc-z [(slot : I32) (count : I32) (radius : I32) (spread : I32)] : I32
+  (loop-to-i (* (loop-cos-deg (loop-arc-deg slot count spread)) (loop-to-f radius))))
+
+;; ---- facing ----------------------------------------------------------------------------------------
+;; The yaw a body at (ax,az) needs to look at (bx,bz). Same basis as movement: atan2(dx, dz).
+(defn loop-face-yaw [(ax : I32) (az : I32) (bx : I32) (bz : I32)] : I32
+  (loop-to-i (* (loop-atan2 (- bz az) (- bx ax)) 1000.0)))

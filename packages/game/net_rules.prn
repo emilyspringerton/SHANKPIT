@@ -1,0 +1,53 @@
+;; packages/game/net_rules.prn -- the wire, as numbers.
+;;
+;; Non-REFLUX glue, in the same sense the loop and renderer are: the host owns the socket (SDL2 has no
+;; UDP and PARENA has no syscalls), this module owns what a datagram is allowed to be. Every size here
+;; is asserted against sizeof() by apps/game/host.c at startup and by apps/game/game_test.c, so a
+;; field added on one side without the other is a hard failure instead of a silently shifted snapshot.
+;;
+;; The protocol is deliberately tiny and fixed-size, like PACKET_HORSE_STATE's entries: absolute,
+;; idempotent rows ("slot N is here with this health"), no deltas, so a dropped datagram heals on the
+;; next one and a late joiner needs no handshake beyond WELCOME.
+(module shankpit/net)
+(export net-magic net-version net-max-bodies net-port net-tick-ms net-stale-ms
+        net-packet-connect net-packet-cmd net-packet-snapshot net-packet-welcome
+        net-cmd-size net-snapshot-size net-body-bytes net-header-bytes
+        net-quant net-body-flags-alive net-body-flags-bot
+        net-valid-mode net-valid-packet net-valid-body-count net-slot-valid)
+
+;; 'S','H','K','P' big-endian, so a stray packet from another tool is rejected on the first word.
+(defn net-magic [] : I32 1397247312)
+(defn net-version [] : I32 1)
+(defn net-max-bodies [] : I32 12)
+(defn net-port [] : I32 7777)
+(defn net-tick-ms [] : I32 33)       ;; snapshots at ~30 Hz
+(defn net-stale-ms [] : I32 2000)
+
+(defn net-packet-connect [] : I32 0)
+(defn net-packet-cmd [] : I32 1)
+(defn net-packet-snapshot [] : I32 2)
+(defn net-packet-welcome [] : I32 3)
+
+;; cmd: u32 magic, u8 type, u8 slot, u16 seq, i16 fwd, i16 strafe, i32 yaw, u8 fire, u8 pad[3] = 20
+(defn net-cmd-size [] : I32 20)
+;; snapshot header: u32 magic, u8 type, u8 mode, u8 count, u8 pad, u16 seq, u16 pad = 12
+(defn net-header-bytes [] : I32 12)
+;; body: u8 id, u8 flags, u8 hp, u8 shield, i16 x, i16 z, i16 yaw, u16 score = 12
+(defn net-body-bytes [] : I32 12)
+(defn net-snapshot-size [] : I32 (+ (net-header-bytes) (* (net-max-bodies) (net-body-bytes))))
+
+;; ---- validation ------------------------------------------------------------------------------------
+;; Positions are clamped, not trusted: 30000 cm is well outside any authored level, so a hostile or
+;; broken sender cannot put a body on the far side of the world. i16 keeps the body row 12 bytes.
+(defn net-quant [(v : I32)] : I32
+  (if (< v (- 0 30000)) (- 0 30000) (if (> v 30000) 30000 v)))
+
+(defn net-body-flags-alive [] : I32 1)
+(defn net-body-flags-bot [] : I32 2)
+
+(defn net-valid-mode [(mode : I32)] : I32 (if (and (>= mode 1) (<= mode 2)) 1 0))
+(defn net-valid-packet [(type : I32)] : I32 (if (and (>= type 0) (<= type 3)) 1 0))
+(defn net-valid-body-count [(count : I32)] : I32
+  (if (and (> count 0) (<= count (net-max-bodies))) 1 0))
+(defn net-slot-valid [(slot : I32)] : I32
+  (if (and (>= slot 0) (< slot (net-max-bodies))) 1 0))

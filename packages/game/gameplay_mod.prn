@@ -1,0 +1,122 @@
+;; packages/game/gameplay_mod.prn -- the gameplay core, as a REFLUX mod.
+;;
+;; This is the evented half of SHANKPIT. It owns the two modes (ZOMBIES, which the game boots into as
+;; its lobby, and shankpit-460 FFA), every per-mode number, the combat verbs, and the three REFLUX
+;; action types the game dispatches. It stores nothing and draws nothing: a host calls these
+;; functions, dispatches the rows they name, and any number of subscribers poll the shared log
+;; without the mod knowing they exist (packages/reflux/reflux_runtime.h's own contract).
+;;
+;; The combat arithmetic is not reimplemented here -- combat_api.prn is the one door to hit_rules /
+;; shield_rules, and it is the module packages/sim/shambler_mod.prn and the shield-regen feature
+;; already use. What is per-mode is here; what is combat is there.
+(module shankpit/gameplay)
+(export gp-mode-zombies gp-mode-ffa gp-mode-default gp-mode-valid gp-mode-count
+        gp-mode-hp gp-mode-shield gp-mode-bots gp-mode-wave-size gp-mode-wave-hp
+        gp-mode-wave-break-ms gp-mode-respawn-ticks gp-mode-frag-limit gp-mode-spawn-radius
+        gp-mode-name-id
+        gp-kill-score gp-hit-shield gp-hit-health gp-hit-killed
+        gp-regen-shield gp-regen-waiting gp-regen-delay-ms gp-regen-interval-ms
+        gp-weapon-damage
+        gp-evt-hit gp-evt-ko gp-evt-mode gp-evt-is-gameplay?)
+
+;; ---- the modes -------------------------------------------------------------------------------------
+;; 1 ZOMBIES: the lobby. It is the default because the fork's whole point is that a clean tree boots
+;; into the mode the original game opens on, not into a menu.
+(defn gp-mode-zombies [] : I32 1)
+(defn gp-mode-ffa [] : I32 2)
+(defn gp-mode-default [] : I32 (gp-mode-zombies))
+(defn gp-mode-valid [(mode : I32)] : I32
+  (if (and (>= mode (gp-mode-zombies)) (<= mode (gp-mode-ffa))) 1 0))
+(defn gp-mode-count [] : I32 2)
+
+;; ZOMBIES gives the player 50 shield and the shamblers none: a wave is won with the regen curve, not
+;; by out-trading 130-damage rounds. FFA is arena-shooter standard 100/100.
+(defn gp-mode-hp [(mode : I32)] : I32 100)
+(defn gp-mode-shield [(mode : I32)] : I32 (if (= mode (gp-mode-zombies)) 50 100))
+
+;; Bots in the ring at boot. ZOMBIES spawns its population in waves instead (gp-mode-wave-size), so
+;; the fixed roster is FFA's five.
+(defn gp-mode-bots [(mode : I32)] : I32 (if (= mode (gp-mode-ffa)) 5 0))
+
+;; ZOMBIES: 3 shamblers in wave 0, +1 per wave, capped at 10 (the wire holds 12 bodies incl. the
+;; player). FFA has no waves.
+(defn gp-mode-wave-size [(mode : I32) (wave : I32)] : I32
+  (if (= mode (gp-mode-zombies))
+    (let [n (+ 3 wave)] (if (> n 10) 10 n))
+    0))
+
+;; Wave 0 is the 55-hp light shambler combat_api's own score curve documents; +5 hp per wave, capped
+;; at 120 so it stays one class below the 130-damage missile.
+(defn gp-mode-wave-hp [(mode : I32) (wave : I32)] : I32
+  (if (= mode (gp-mode-zombies))
+    (let [hp (+ 55 (* wave 5))] (if (> hp 120) 120 hp))
+    90))
+
+;; 3.5 s between a cleared wave and the next one -- long enough to watch the shield tick up.
+(defn gp-mode-wave-break-ms [(mode : I32)] : I32
+  (if (= mode (gp-mode-zombies)) 3500 0))
+
+(defn gp-mode-respawn-ticks [(mode : I32) (hp : I32)] : I32 (combat-respawn-ticks hp))
+(defn gp-mode-frag-limit [(mode : I32)] : I32 (if (= mode (gp-mode-ffa)) 25 0))
+(defn gp-mode-spawn-radius [(mode : I32)] : I32
+  (if (= mode (gp-mode-zombies)) 950 520))
+
+;; HUD names, as ids: the host maps 1 -> "ZOMBIES" and 2 -> "460 FFA". Kept numeric because VS0 has
+;; no strings across the FFI boundary.
+(defn gp-mode-name-id [(mode : I32)] : I32 mode)
+
+;; ---- combat ----------------------------------------------------------------------------------------
+;; Thin, mode-aware wrappers. ZOMBIES pays 1 for a light body and 3 for a heavy one (combat_api's own
+;; curve); FFA pays a flat frag, doubled for a head.
+(defn gp-kill-score [(mode : I32) (hp : I32) (head : I32)] : I32
+  (if (= mode (gp-mode-ffa))
+    (if (= head 1) 2 1)
+    (combat-score-for hp head)))
+
+(defn gp-hit-shield [(shield : I32) (dmg : I32) (head : I32)] : I32
+  (combat-shield-after shield dmg head))
+
+(defn gp-hit-health [(hp : I32) (shield : I32) (dmg : I32) (head : I32)] : I32
+  (combat-health-after hp shield dmg head))
+
+;; The EDGE, not the state: a body already at zero is never "killed again", which is what lets the
+;; host dispatch KO exactly once per death. combat-killed? answers the state question; this verb is
+;; the one a dispatcher wants.
+(defn gp-hit-killed [(hp : I32) (shield : I32) (dmg : I32) (head : I32)] : I32
+  (combat-ko? hp shield dmg head))
+
+;; ---- shield recovery -------------------------------------------------------------------------------
+;; The FFXI-style rule already shipped (packages/sim/shield_rules.prn): 4 s vulnerable, then one tick
+;; a second ramping 1..10. The gameplay mod does not restate the curve, it asks combat_api for it.
+(defn gp-regen-shield [(shield : I32) (since-ms : I32)] : I32
+  (combat-shield-after-regen shield since-ms))
+
+(defn gp-regen-waiting [(since-ms : I32)] : I32 (combat-shield-waiting? since-ms))
+(defn gp-regen-delay-ms [] : I32 (combat-shield-regen-delay-ms))
+(defn gp-regen-interval-ms [] : I32 (combat-shield-regen-interval-ms))
+
+;; The roster's damage, by weapon id. The numbers are hit_rules'; this maps the game's weapon slot
+;; onto them, and refuses an unknown slot with the rifle's 20 rather than a zero that would look like
+;; a miss.
+(defn gp-weapon-damage [(weapon : I32)] : I32
+  (if (= weapon 1) (dmg-magnum)
+    (if (= weapon 2) (dmg-ar)
+      (if (= weapon 3) 128
+        (if (= weapon 4) (dmg-sniper)
+          (if (= weapon 6) (dmg-missile)
+            (if (= weapon 8) 70 (dmg-katana))))))))
+
+;; ---- the REFLUX event family -----------------------------------------------------------------------
+;; 129/130 are combat's own pair (packages/sim/combat_api.prn); 131 is this mod's mode-change row, the
+;; next free type after it. Payloads:
+;;   HIT  (129): a = attacker slot, b = victim slot, c = damage actually dealt
+;;   KO   (130): a = victim slot, b = attacker slot, c = weapon id
+;;   MODE (131): a = old mode, b = new mode, c = 0
+(defn gp-evt-hit [] : I32 (combat-evt-hit))
+(defn gp-evt-ko [] : I32 (combat-evt-ko))
+(defn gp-evt-mode [] : I32 131)
+
+;; One predicate for the whole family, so a poller filtering the shared log has exactly one definition
+;; to agree with.
+(defn gp-evt-is-gameplay? [(action-type : I32)] : I32
+  (if (and (>= action-type (gp-evt-hit)) (<= action-type (gp-evt-mode))) 1 0))

@@ -1,0 +1,338 @@
+/* apps/game/game_test.c -- headless acceptance tests for the clean-room game rules.
+ *
+ * No SDL, no window, no socket: this is the part of the game that must be true before anything is
+ * drawn or sent. It pins the mode table (the game must boot into zombies), the loop/render/net
+ * arithmetic, the combat and regen verbs the mod exposes, and the REFLUX contract itself
+ * (dispatch rows, poll them back through a cursor, and survive a ring wrap).
+ *
+ * Run with `make game-test`. Exit 0 = all checks passed, 1 = at least one failed.
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "game_api.h"
+#include "reflux_runtime.h"
+
+static int g_checks;
+static int g_failures;
+
+static void check(int ok, const char *what) {
+    g_checks++;
+    if (!ok) {
+        g_failures++;
+        printf("FAIL  %s\n", what);
+    }
+}
+
+static int near(int a, int b, int tol) {
+    int d = a - b;
+    if (d < 0) d = -d;
+    return d <= tol;
+}
+
+static int abs_i(int v) { return v < 0 ? -v : v; }
+
+/* Replays the host's own per-tick regen loop: keep the shield held when damage landed plus ms since,
+ * and ask the rule for the value this tick. Feeding the CURRENT shield back in would compound the
+ * ramp, which is the bug this test exists to catch. */
+static int regen_after(int base, int since_ms, int ticks) {
+    int shield = base;
+    int t;
+    for (t = 0; t < ticks; t++) {
+        since_ms += 16;
+        shield = gp_regen_shield(base, since_ms);
+    }
+    return shield;
+}
+
+static void test_modes(void) {
+    check(gp_mode_default() == gp_mode_zombies(), "boot mode is zombies (the lobby)");
+    check(gp_mode_zombies() == 1 && gp_mode_ffa() == 2, "mode ids are 1 and 2");
+    check(gp_mode_count() == 2, "two modes");
+    check(gp_mode_valid(gp_mode_zombies()) == 1, "zombies is valid");
+    check(gp_mode_valid(gp_mode_ffa()) == 1, "ffa is valid");
+    check(gp_mode_valid(0) == 0 && gp_mode_valid(3) == 0, "invalid modes are refused");
+    check(gp_mode_name_id(gp_mode_ffa()) == gp_mode_ffa(), "name id round-trips");
+
+    check(gp_mode_hp(gp_mode_zombies()) == 100, "zombies hp 100");
+    check(gp_mode_shield(gp_mode_zombies()) == 50, "zombies shield 50");
+    check(gp_mode_shield(gp_mode_ffa()) == 100, "ffa shield 100");
+    check(gp_mode_bots(gp_mode_ffa()) == 5, "ffa fields five bots");
+    check(gp_mode_bots(gp_mode_zombies()) == 0, "zombies is wave-driven, not a fixed roster");
+    check(gp_mode_frag_limit(gp_mode_ffa()) == 25, "ffa frag limit 25");
+    check(gp_mode_frag_limit(gp_mode_zombies()) == 0, "zombies has no frag limit");
+    check(gp_mode_spawn_radius(gp_mode_zombies()) == 950, "zombies spawn ring 950");
+    check(gp_mode_spawn_radius(gp_mode_ffa()) == 520, "ffa spawn ring 520");
+    check(gp_mode_wave_break_ms(gp_mode_zombies()) == 3500, "zombies wave break 3.5 s");
+}
+
+static void test_loop(void) {
+    int i;
+    check(loop_tick_ms() == 16, "loop tick 16 ms");
+    check(loop_tick_ms() == tick_ms(), "loop and frame rules agree on the tick");
+    check(loop_max_steps() == frame_budget(), "loop and frame rules agree on the step budget");
+    check(loop_arena_half() > 900, "arena contains the spawn ring");
+    check(loop_wall_height() > 200, "walls are taller than a body");
+    check(loop_horizon() < rp_height(), "horizon is on screen");
+    check(rp_focal() > 400, "camera has a sane focal length");
+
+    /* forward at yaw 0 is +Z; at yaw 90 deg it is +X (pi/2 rad = 1571 mrad). */
+    check(loop_move_z(0, 0, 100, 0) > 0, "full forward at yaw 0 moves +Z");
+    check(near(loop_move_x(0, 0, 100, 0), 0, 1), "full forward at yaw 0 does not drift in X");
+    check(loop_move_x(0, 1571, 100, 0) > 0, "full forward at yaw 90 deg moves +X");
+    check(loop_move_x(0, 0, 0, 100) > 0, "full right strafe moves +X");
+
+    /* The clamp holds on every tick of a long run in every direction, not just the first. */
+    {
+        int x = 0, z = 0, ok = 1;
+        for (i = 0; i < 4000; i++) {
+            x = loop_move_x(x, 700, 100, 30);
+            z = loop_move_z(z, 700, 100, 30);
+            if (x > loop_arena_half() || x < -loop_arena_half() ||
+                z > loop_arena_half() || z < -loop_arena_half()) ok = 0;
+        }
+        check(ok, "4000 ticks of movement stay inside the arena");
+        check(x != 0 || z != 0, "movement actually moved");
+    }
+    check(loop_clamp(200, 0, 100) == 100 && loop_clamp(-5, 0, 100) == 0, "clamp");
+
+    /* ring: slot 0 faces +Z, one quarter turn faces +X */
+    check(near(loop_ring_x(0, 4, 100), 0, 2), "ring slot 0 x ~ 0");
+    check(near(loop_ring_z(0, 4, 100), 100, 2), "ring slot 0 z ~ radius");
+    check(near(loop_ring_x(1, 4, 100), 100, 2), "ring slot 1 x ~ radius");
+    check(loop_ring_x(0, 0, 100) == 0, "empty ring is a refusal, not a divide");
+
+    /* arcs: a single body straight ahead, three symmetric about +Z */
+    check(loop_arc_x(0, 1, 100, 90) == 0 && near(loop_arc_z(0, 1, 100, 90), 100, 2),
+          "a one-body arc is straight ahead");
+    check(near(loop_arc_x(1, 3, 100, 90), 0, 2), "the middle of a three-body arc is ahead");
+    check(near(loop_arc_x(0, 3, 100, 90), -70, 2) && near(loop_arc_x(2, 3, 100, 90), 70, 2),
+          "a three-body arc spreads symmetrically");
+
+    /* facing: from origin, +Z is yaw 0, +X is 90 deg */
+    check(near(loop_face_yaw(0, 0, 0, 100), 0, 30), "facing +Z is yaw 0");
+    check(near(abs_i(loop_face_yaw(0, 0, 100, 0)), 1571, 40), "facing +X is yaw 90 deg");
+}
+
+static void test_render(void) {
+    check(rp_width() == 1024 && rp_height() == 576, "framebuffer is 1024x576");
+    check(rp_horizon() == loop_horizon(), "renderer uses the loop's horizon");
+
+    /* dead ahead at yaw 0: centred, feet below the horizon, body height positive */
+    check(rp_visible(rp_fwd(0, 100, 0)) == 1, "point 1 m ahead is visible");
+    check(rp_visible(rp_fwd(0, -100, 0)) == 0, "point behind the camera is culled");
+    check(near(rp_screen_x(0, 200, 0), rp_width() / 2, 1), "centre projection");
+    check(rp_feet_y(0, 500, 0) > rp_horizon(), "feet project below the horizon");
+    check(rp_feet_y(0, 500, 0) < rp_height(), "feet of a body 5 m out are on screen");
+    check(rp_feet_y(0, 900, 0) < rp_feet_y(0, 500, 0), "the floor rises with distance");
+    check(rp_body_h(rp_fwd(0, 200, 0), 180) > rp_body_h(rp_fwd(0, 900, 0), 180),
+          "a far body is shorter");
+    check(rp_body_w(rp_fwd(0, 900, 0), 180) >= 2, "a far body still has a visible width");
+    check(rp_screen_x(0, 0, 0) == rp_width() / 2, "degenerate projection is total");
+    check(rp_visible(rp_fwd(0, 0, 0)) == 0, "the camera's own body is culled");
+
+    /* sky stops run pale top -> warm horizon, never backwards down the frame */
+    check(rp_sky_stop(0) == 2 && rp_sky_stop(100) == 1 && rp_sky_stop(300) == 0,
+          "sky stops top -> horizon");
+    check(rp_sky_stop(89) >= rp_sky_stop(90) && rp_sky_stop(189) >= rp_sky_stop(190),
+          "sky stops never run backwards");
+    check(rp_floor_shade(rp_fwd(0, 200, 0)) >= rp_floor_shade(rp_fwd(0, 1200, 0)),
+          "near floor is lighter than far floor");
+    check(rp_wall_shade() == 100, "wall shade is full");
+
+    /* the 460 art direction itself is intact (three distinct sky stops, floor != wall, distinct hues) */
+    check(palette_check() == 0, "460 palette check passes");
+    check(sky_top() != sky_mid() && sky_mid() != sky_horizon(), "sky stops are distinct");
+    check(floor_color() != wall_color(), "floor and wall are distinct");
+    check(player_hue(0) != player_hue(1) && player_hue(0) != player_hue(9), "player hues are distinct");
+}
+
+static void test_combat(void) {
+    /* shield first, then health -- the rule the shield-regen feature shipped */
+    check(gp_hit_shield(50, 20, 0) == 30, "20 through a 50 shield leaves 30");
+    check(gp_hit_health(100, 50, 20, 0) == 100, "a shielded body takes no health damage");
+    check(gp_hit_shield(100, 130, 0) == 0, "an overkill shot empties the shield");
+    check(gp_hit_health(100, 100, 130, 0) == 70, "the remainder carries into health");
+
+    check(gp_hit_killed(10, 0, 45, 0) == 1, "a 45 hit kills a 10 hp body");
+    check(gp_hit_killed(100, 50, 45, 0) == 0, "a shielded body survives a magnum round");
+    check(gp_hit_killed(0, 0, 45, 0) == 0, "a corpse is never killed twice");
+    check(gp_hit_killed(10, 0, 30, 1) == 1, "a head shot kills");
+    check(combat_dmg_dealt(100, 70) == 30, "damage dealt is before minus after");
+    check(combat_dmg_dealt(70, 100) == 0, "damage dealt never goes negative");
+
+    check(gp_weapon_damage(2) == 20, "rifle does 20");
+    check(gp_weapon_damage(1) == 45, "magnum does 45");
+    check(gp_weapon_damage(4) == 101, "sniper does 101");
+    check(gp_weapon_damage(99) == 40, "an unknown slot falls back to melee, not zero");
+
+    /* scoring: light body 1, heavy 3, head doubles; FFA pays flat frags */
+    check(gp_kill_score(gp_mode_zombies(), 55, 0) == 1, "zombies light kill is 1");
+    check(gp_kill_score(gp_mode_zombies(), 100, 0) == 3, "zombies heavy kill is 3");
+    check(gp_kill_score(gp_mode_zombies(), 55, 1) == 2, "a head shot doubles it");
+    check(gp_kill_score(gp_mode_ffa(), 100, 0) == 1, "ffa frag is 1");
+    check(gp_kill_score(gp_mode_ffa(), 100, 1) == 2, "ffa headshot frag is 2");
+    check(gp_mode_respawn_ticks(gp_mode_ffa(), 100) == 180, "a 100 hp body waits 180 ticks");
+    check(gp_mode_respawn_ticks(gp_mode_zombies(), 55) == 90, "a light body waits 90 ticks");
+
+    /* waves */
+    check(gp_mode_wave_size(gp_mode_zombies(), 0) == 3, "wave 0 is three shamblers");
+    check(gp_mode_wave_size(gp_mode_zombies(), 3) == 6, "wave 3 is six");
+    check(gp_mode_wave_size(gp_mode_zombies(), 20) == 10, "waves cap at ten");
+    check(gp_mode_wave_size(gp_mode_ffa(), 4) == 0, "ffa has no waves");
+    check(gp_mode_wave_hp(gp_mode_zombies(), 0) == 55, "wave 0 shambler has 55 hp");
+    check(gp_mode_wave_hp(gp_mode_zombies(), 3) == 70, "wave 3 shambler has 70 hp");
+    check(gp_mode_wave_hp(gp_mode_zombies(), 99) == 120, "wave hp caps at 120");
+}
+
+static void test_regen(void) {
+    int base = gp_regen_shield(0, gp_regen_delay_ms() - 1);
+    check(gp_regen_delay_ms() == 4000, "regen delay is 4 s");
+    check(gp_regen_interval_ms() == 1000, "regen ticks once a second");
+    check(gp_regen_waiting(gp_regen_delay_ms() - 1) == 1, "still waiting just before 4 s");
+    check(gp_regen_waiting(gp_regen_delay_ms()) == 0, "no longer waiting at 4 s");
+    check(base == 0, "nothing comes back before 4 s");
+    check(regen_after(0, 4400, 10) > 0, "regen actually ramps");
+    check(regen_after(0, 4400, 10) == gp_regen_shield(0, 4400), "regen is idempotent per elapsed ms");
+    check(gp_regen_shield(0, 20000) <= shield_max(), "regen never passes the shield cap");
+    check(gp_regen_shield(80, 20000) <= shield_max(), "a damaged-high shield stays capped");
+    check(gp_regen_shield(30, 4000) > 0, "a 30 base gets its first tick at 4 s");
+}
+
+static void test_net(void) {
+    check(net_magic() == 1397247312, "magic is 'SHKP'");
+    check(net_cmd_size() == 20, "cmd is 20 bytes");
+    check(net_snapshot_size() == 156, "snapshot is 156 bytes");
+    check(net_snapshot_size() == net_header_bytes() + net_max_bodies() * net_body_bytes(),
+          "snapshot size is header + bodies");
+    check(net_snapshot_size() <= 512, "snapshot fits one comfortable datagram");
+    check(net_quant(40000) == 30000 && net_quant(-40000) == -30000, "positions clamp to i16 range");
+    check(net_quant(1234) == 1234, "ordinary positions pass through");
+    check(net_valid_mode(gp_mode_zombies()) == 1 && net_valid_mode(gp_mode_ffa()) == 1, "modes on the wire");
+    check(net_valid_mode(0) == 0 && net_valid_mode(7) == 0, "invalid modes on the wire");
+    check(net_valid_body_count(1) == 1 && net_valid_body_count(net_max_bodies()) == 1, "counts");
+    check(net_valid_body_count(0) == 0 && net_valid_body_count(999) == 0, "bad counts refused");
+    check(net_slot_valid(0) == 1 && net_slot_valid(11) == 1 && net_slot_valid(12) == 0, "slots");
+    check(net_body_flags_alive() == 1 && net_body_flags_bot() == 2, "flags are bits");
+    check(net_port() == 7777 && net_tick_ms() == 33, "port and snapshot cadence");
+}
+
+static void test_reflux(void) {
+    RefluxLog log;
+    int cursor = 0;
+    int hits = 0, kos = 0, modes = 0;
+    int i;
+
+    reflux_log_reset(&log);
+    check(reflux_log_length(&log) == 0, "empty log");
+
+    /* The gameplay mod names the rows; the host dispatches them; a subscriber polls. This is the
+     * exact path apps/game/host.c takes, just without the socket and the pixels. */
+    reflux_log_dispatch(&log, gp_evt_hit(), 0, 3, 20);
+    reflux_log_dispatch(&log, gp_evt_hit(), 3, 0, 20);
+    reflux_log_dispatch(&log, gp_evt_ko(), 3, 0, 2);
+    reflux_log_dispatch(&log, gp_evt_mode(), gp_mode_zombies(), gp_mode_ffa(), 0);
+
+    for (i = cursor; i < reflux_log_length(&log); i++) {
+        const RefluxAction *row = reflux_log_at(&log, i);
+        check(row != NULL, "row exists");
+        if (!row) continue;
+        check(gp_evt_is_gameplay_(row->action_type) == 1, "row is in the gameplay family");
+        if (row->action_type == gp_evt_hit()) hits++;
+        if (row->action_type == gp_evt_ko()) {
+            kos++;
+            check(row->a == 3 && row->b == 0 && row->c == 2, "KO payload is (victim, attacker, weapon)");
+        }
+        if (row->action_type == gp_evt_mode()) {
+            modes++;
+            check(row->a == gp_mode_zombies() && row->b == gp_mode_ffa(), "mode payload is (old, new)");
+        }
+    }
+    check(hits == 2 && kos == 1 && modes == 1, "the family is readable by cursor");
+    check(reflux_log_at(&log, 4) == NULL, "out-of-range read is NULL");
+
+    /* The ring's real bound: after it wraps, the oldest rows are gone and the accessors say so
+     * instead of silently pretending the cursor is still valid. */
+    reflux_log_reset(&log);
+    for (i = 0; i < REFLUX_LOG_CAPACITY + 44; i++) {
+        reflux_log_dispatch(&log, gp_evt_hit(), i, 1, 2);
+    }
+    check(reflux_log_length(&log) == REFLUX_LOG_CAPACITY, "ring saturates at capacity");
+    check(log.total_dispatched == REFLUX_LOG_CAPACITY + 44, "total counts past the ring");
+    check(reflux_log_at(&log, 0) != NULL, "oldest retained row is readable");
+    check(reflux_log_at(&log, 0)->a == 44, "oldest retained row is the 45th dispatch");
+    check(reflux_log_at(&log, REFLUX_LOG_CAPACITY - 1)->a == REFLUX_LOG_CAPACITY + 43,
+          "newest row is the last dispatch");
+    check(reflux_log_at(&log, REFLUX_LOG_CAPACITY) == NULL, "one past the end is NULL");
+    check(gp_evt_is_gameplay_(gp_evt_mode()) == 1, "mode change is in the family");
+    check(gp_evt_is_gameplay_(1) == 0 && gp_evt_is_gameplay_(130 + 2) == 0,
+          "a foreign action is not in the family");
+    check(gp_evt_hit() == combat_evt_first() && gp_evt_ko() == combat_evt_last(),
+          "the mod reuses combat's own 129/130, not a private pair");
+}
+
+/* ---- a short simulated round: waves spawn, enemies close, hits and KOs are dispatched ----------- */
+static void test_round_sim(void) {
+    int tick;
+    int player_hp = gp_mode_hp(gp_mode_zombies());
+    int player_shield = gp_mode_shield(gp_mode_zombies());
+    int sp = 0, sh = player_shield;
+    int base = player_shield;
+    int since = 0;
+    int damage_seen = 0;
+    int wave = 0;
+    int bots = 0;
+    int kos = 0;
+
+    reflux_host_reset();
+    /* wave 0 ring */
+    bots = gp_mode_wave_size(gp_mode_zombies(), wave);
+    check(bots == 3, "wave 0 spawns three bodies");
+    check(gp_mode_wave_hp(gp_mode_zombies(), wave) == 55, "wave 0 bodies have 55 hp");
+
+    for (tick = 0; tick < 240; tick++) {
+        /* one shambler lands a rifle hit on the player every 12 ticks, as the host's bot AI does */
+        if (tick % 12 == 0) {
+            int killed = gp_hit_killed(player_hp, sh, 20, 0);
+            int hp = gp_hit_health(player_hp, sh, 20, 0);
+            int after = gp_hit_shield(sh, 20, 0);
+            reflux_host_dispatch(gp_evt_hit(), 1, 0, 20);
+            sp = sh - after;
+            damage_seen += sp;
+            sh = after;
+            player_hp = hp;
+            base = sh;
+            since = 0;
+            if (killed) reflux_host_dispatch(gp_evt_ko(), 0, 1, 2);
+        }
+        since += 16;
+        sh = gp_regen_shield(base, since);
+    }
+    check(damage_seen > 0, "a shambler actually took shield off the player");
+    check(player_hp <= 100, "hp stayed bounded");
+    check(sh >= 0 && sh <= shield_max(), "shield stayed bounded");
+
+    /* the subscriber the host runs: count KOs without the dispatcher knowing */
+    for (tick = 0; tick < reflux_host_total_dispatched(); tick++) {
+        int idx = reflux_host_index_for_abs(tick);
+        if (idx >= 0 && reflux_host_action_type_at(idx) == gp_evt_ko()) kos++;
+    }
+    check(kos >= 1, "the round dispatched at least one KO");
+    check(reflux_host_log_size() > 0, "the host log is live");
+}
+
+int main(void) {
+    test_modes();
+    test_loop();
+    test_render();
+    test_combat();
+    test_regen();
+    test_net();
+    test_reflux();
+    test_round_sim();
+
+    printf("%s: %d checks, %d failure(s)\n",
+           g_failures == 0 ? "game-test OK" : "game-test FAILED", g_checks, g_failures);
+    return g_failures == 0 ? 0 : 1;
+}

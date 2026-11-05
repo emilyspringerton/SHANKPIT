@@ -1,0 +1,35 @@
+load("//bazel:parena.bzl", "parena_module")
+
+# The clean-room game's rule modules. apps/game's Makefile fragment (`make game`) compiles these same
+# four files with `parena build` on nodes without bazel; this is the canonical declaration the rest of
+# the repo uses, kept in step with that list.
+#
+# gameplay_mod is the REFLUX gameplay core mod (it names action rows 129/130/131); core_loop,
+# render_plan and net_rules are deliberately non-REFLUX: the loop, the renderer and the wire are not
+# subscribers or dispatchers.
+parena_module(
+    name = "core_loop",
+    src = "core_loop.prn",
+)
+
+parena_module(
+    name = "render_plan",
+    src = "render_plan.prn",
+)
+
+parena_module(
+    name = "net_rules",
+    src = "net_rules.prn",
+)
+
+parena_module(
+    name = "gameplay_mod",
+    src = "gameplay_mod.prn",
+)
+
+exports_files([
+    "core_loop.prn",
+    "render_plan.prn",
+    "net_rules.prn",
+    "gameplay_mod.prn",
+])

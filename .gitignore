@@ -58,3 +58,6 @@ var/deadweight/
 
 # written by the client at first run (a player file, not a build artifact)
 shankpit_macros.cfg
+
+# Generated rule C for the clean-room game (`make game` writes build/game_rules.c).
+/build/
