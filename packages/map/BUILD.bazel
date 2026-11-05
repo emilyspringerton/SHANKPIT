@@ -1,0 +1,11 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//bazel:parena.bzl", "parena_stdlib_module")
+
+# Adds the package to the Bazel graph: the fork keeps these headers, and a header-only library is
+# what makes them declared inputs for anything that includes them.
+cc_library(
+    name = "map",
+    srcs = glob(["*.c"], allow_empty = True),
+    hdrs = glob(["*.h"], allow_empty = True),
+    visibility = ["//visibility:public"],
+)

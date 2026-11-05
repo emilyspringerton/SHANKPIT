@@ -1,0 +1,15 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//bazel:parena.bzl", "parena_stdlib_module")
+
+# Adds the package to the Bazel graph: the fork keeps these headers, and a header-only library is
+# what makes them declared inputs for anything that includes them.
+cc_library(
+    name = "physics_parena",
+    srcs = glob(["*.c"], allow_empty = True),
+    hdrs = glob(["*.h"], allow_empty = True),
+    visibility = ["//visibility:public"],
+)
+
+# physics.prn and movement.prn are Vec/Arena modules: their emitted C needs parena_runtime.h and the
+# runtime's own symbols, so they cannot ride the scalar-only path the other rules use. Named, not
+# silently dropped -- wiring @parena's runtime as a real dependency is the next step here.

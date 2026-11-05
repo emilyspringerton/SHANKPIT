@@ -294,3 +294,24 @@ sh_test(
         "$(rootpath :stats_bridge_from_prn)",
     ],
 )
+parena_stdlib_module(name = "era_tech_rules", module = "era_tech_rules")
+parena_stdlib_module(name = "mining_rules", module = "mining_rules")
+parena_stdlib_module(name = "citizen_day_rules", module = "citizen_day_rules")
+parena_stdlib_module(name = "queue_rules", module = "queue_rules")
+
+sh_test(
+    name = "simulation_more_emitted_test",
+    srcs = ["//bazel:parena_emitted_test.sh"],
+    data = [
+        ":era_tech_rules_from_prn",
+        ":mining_rules_from_prn",
+        ":citizen_day_rules_from_prn",
+        ":queue_rules_from_prn",
+    ],
+    args = [
+        "$(rootpath :era_tech_rules_from_prn)",
+        "$(rootpath :mining_rules_from_prn)",
+        "$(rootpath :citizen_day_rules_from_prn)",
+        "$(rootpath :queue_rules_from_prn)",
+    ],
+)

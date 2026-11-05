@@ -1,4 +1,6 @@
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//bazel:parena.bzl", "parena_stdlib_module")
 
 # REFLUX (S485) -- SHANKPIT's own native port of ECOWAR's real cross-mod pub/sub primitive
 # (ECOWAR/packages/reflux/reflux_runtime.h, EMILY/BACKLOG.md SECTION 380/381). Same API/ABI, own
@@ -23,4 +25,16 @@ cc_library(
     ],
     hdrs = glob(["*.h"], allow_empty = True),
     visibility = ["//visibility:public"],
+)
+parena_stdlib_module(name = "world_alerts_mod", module = "world_alerts_mod")
+
+sh_test(
+    name = "reflux_more_emitted_test",
+    srcs = ["//bazel:parena_emitted_test.sh"],
+    data = [
+        ":world_alerts_mod_from_prn",
+    ],
+    args = [
+        "$(rootpath :world_alerts_mod_from_prn)",
+    ],
 )
