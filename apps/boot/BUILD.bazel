@@ -25,6 +25,7 @@ parena_binary(
         "//packages/frame:frame_rules.prn",
         "//packages/render:palette_rules.prn",
         "//packages/render:sky_rules.prn",
+        "//packages/sim:fall_rules.prn",
     ],
     deps = ["@parena//runtime:parena_runtime"],
 )

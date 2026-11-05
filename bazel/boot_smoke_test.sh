@@ -22,8 +22,9 @@ for want in \
   "render: 460 palette" \
   "sky: row 0 is the top band" \
   "sky: all 360 rows scanned" \
+  "sim: a body leaves the spawner" \
   "boot plan:"; do
   printf '%s\n' "$out" | grep -Fq "$want" || { echo "missing line: $want" >&2; printf '%s\n' "$out" >&2; exit 1; }
 done
 
-echo "boot smoke ok (exit 0, 9 expected lines present)"
+echo "boot smoke ok (exit 0, 10 expected lines present)"

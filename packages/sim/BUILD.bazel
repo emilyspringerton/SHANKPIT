@@ -1,0 +1,18 @@
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//bazel:parena.bzl", "parena_module")
+
+exports_files(["fall_rules.prn"])
+
+# packages/sim/fall_rules.prn -- integer gravity integration for the first body (see its header for why
+# it is integer: neither the Arena path nor (f32 x) links in this build).
+parena_module(
+    name = "fall_rules",
+    src = "fall_rules.prn",
+)
+
+sh_test(
+    name = "fall_rules_emitted_test",
+    srcs = ["//bazel:parena_emitted_test.sh"],
+    data = [":fall_rules_from_prn"],
+    args = ["$(rootpath :fall_rules_from_prn)"],
+)

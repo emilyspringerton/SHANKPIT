@@ -95,6 +95,23 @@
     0
     1))
 
+
+;; ---- the first motion ----------------------------------------------------------------------------
+;; One body leaves the level's spawner at rest and is integrated for ten simulated seconds. The three
+;; things that must hold: the loop's step is the step being integrated, the body moves downward, and the
+;; floor stops it rather than letting it fall through the arena.
+(defn spawn-y-mm [] : I32 (* (spawn-y) 1000))
+(defn fell-one [] : I32 (fall-y (spawn-y-mm) 1))
+(defn fell-ten-s [] : I32 (floor-y (fall-y (spawn-y-mm) 600)))
+
+(defn sim-check [] : I32
+  (if (and (= (tick-ms) (dt-ms))
+           (= (fall-vy 1) (- 0 (gravity-per-tick)))
+           (< (fell-one) (spawn-y-mm))
+           (= (fell-ten-s) 0))
+    0
+    1))
+
 (defn shank-boot-main [] : I32
   (do
     (println "SHANKPIT clean-room boot")
@@ -106,9 +123,11 @@
     (println "render: 460 palette -- pale concrete, warm dusk sky, ten muted hues")
     (println "sky: row 0 is the top band, row 180 is the horizon")
     (println "sky: all 360 rows scanned, bands cover the frame and never invert")
+    (println "sim: a body leaves the spawner, falls, and the floor stops it")
     (if (and (= (level-check) 0)
              (> (turn-cap) 0) (< (turn-cap) 2000) (> (distance-bias) 1000)
-             (= (frame-check) 0) (= (palette-check) 0) (= (sky-check) 0) (>= (sky-scan) 1))
+             (= (frame-check) 0) (= (palette-check) 0) (= (sky-check) 0) (>= (sky-scan) 1)
+             (= (sim-check) 0))
       (do
         (println "boot plan: the level's own spawner, zombie mode")
         0)
