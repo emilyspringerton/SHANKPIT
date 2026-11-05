@@ -1,0 +1,88 @@
+#ifndef SHIELD_REGEN_H
+#define SHIELD_REGEN_H
+
+/* shield_regen.h -- the HOST half of a broken shield coming back.
+ *
+ * packages/sim/shield_rules.prn owns the rule (four seconds of vulnerability after the last hit, then
+ * a one-second tick that starts at 1 point and grows to 10); this header owns the two things a host
+ * has to do with it:
+ *
+ *   1. REMEMBER what the rule needs. PlayerState carries the shield the body held when damage last
+ *      landed (shield_regen_base) and the time it landed (shield_regen_at_ms). That pair IS the
+ *      counter: a hit rewrites both, so "the four seconds restart" needs no reset code of its own.
+ *   2. ADVANCE the shield once per tick. shield_regen_tick() recomputes it from that pair, so calling
+ *      it twice in a tick, or missing a tick, cannot double-count or bank extra points -- the answer
+ *      is a function of elapsed time, not of how many times it was called.
+ *
+ * A hit MUST be reported with shield_regen_note_damage() AFTER the shield has absorbed its share (see
+ * the call sites in physics.h/local_game.h). Snapshotting before the subtraction would let the regen
+ * restore the shield the hit had already removed.
+ *
+ * The HUD needs no state of its own: shield_regen_counter_ms() is the 4-second countdown (0 once the
+ * ticks start) and shield_regen_next_amount() is what the next tick will be worth, both read from the
+ * same pair the simulation uses, so the bar and the number cannot drift.
+ *
+ * HONEST LIMIT: the lobby's own draw_hud is not in this checkout (commit 45a4eda removed the C sources
+ * and kept the headers), so this exposes exactly the numbers a HUD needs and nothing draws them here.
+ * The first host to add the draw call reads these two functions and nothing else.
+ *
+ * TICK LENGTH: the rule is in milliseconds, so a host passes real elapsed time (the engine's cmd_time,
+ * the server's now_ms). A host that only counts frames converts on its own side with
+ * sh_regen_delay_ticks()/sh_regen_interval_ticks(), which round up. */
+
+#include "protocol.h"
+#include "shield_rules.h"
+
+/* Ten minutes. A clock that jumped backwards (respawn, a level load, a wrapped unsigned) would
+ * otherwise read as an enormous elapsed time and hand back a full bar from nothing; capping the
+ * elapsed time keeps a stale anchor harmless instead of generous. */
+#define SHIELD_REGEN_MAX_ELAPSED_MS 600000
+
+/* Call after damage has been applied to the shield: this is the body's new regen baseline and t=0 for
+ * its four seconds. A hit during the window simply calls this again, which is the restart. */
+static inline void shield_regen_note_damage(PlayerState *p, unsigned int now_ms) {
+    if (!p) return;
+    if (p->shield < 0) p->shield = 0;
+    p->shield_regen_base = p->shield;
+    p->shield_regen_at_ms = now_ms;
+    p->shield_regen_timer = 0;
+}
+
+/* How long since the last hit started the clock, clamped so a stale anchor cannot invent a bar. */
+static inline int shield_regen_since_ms(const PlayerState *p, unsigned int now_ms) {
+    unsigned int since = now_ms - p->shield_regen_at_ms;
+    return since > (unsigned int)SHIELD_REGEN_MAX_ELAPSED_MS ? SHIELD_REGEN_MAX_ELAPSED_MS : (int)since;
+}
+
+/* Once per tick: put the shield where the rule says it should be. A body already at the bar only has
+ * its anchor refreshed (there is nothing to regenerate, and a later hit must not inherit an old
+ * clock). Uses the elapsed time, so a duplicated call is a no-op. */
+static inline void shield_regen_tick(PlayerState *p, unsigned int now_ms) {
+    if (!p) return;
+    int since = shield_regen_since_ms(p, now_ms);
+    if (p->shield >= shield_max()) {
+        p->shield_regen_base = p->shield;
+        p->shield_regen_at_ms = now_ms;
+        p->shield_regen_timer = 0;
+        return;
+    }
+    p->shield_regen_timer = since;                 /* the ms-since-hit mirror the old field carried */
+    p->shield = sh_shield_at(p->shield_regen_base, since);
+}
+
+/* The 4-second countdown for the HUD: ms left before the first tick, 0 once regen has started. */
+static inline int shield_regen_counter_ms(const PlayerState *p, unsigned int now_ms) {
+    return sh_regen_in_ms(shield_regen_since_ms(p, now_ms));
+}
+
+/* 1 while the body is still inside its four seconds of vulnerability. */
+static inline int shield_regen_waiting(const PlayerState *p, unsigned int now_ms) {
+    return sh_regen_waiting_(shield_regen_since_ms(p, now_ms));
+}
+
+/* What the NEXT tick will be worth (1, 2, 3, ... 10) -- the ramp, for a HUD that wants to show it. */
+static inline int shield_regen_next_amount(const PlayerState *p, unsigned int now_ms) {
+    return sh_regen_tick_amount(sh_regen_ticks_landed(shield_regen_since_ms(p, now_ms)));
+}
+
+#endif /* SHIELD_REGEN_H */

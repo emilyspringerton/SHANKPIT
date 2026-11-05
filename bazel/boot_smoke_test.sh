@@ -35,9 +35,10 @@ for want in \
   "horde: the killing hit fires the KO event once" \
   "mods: the hook ABI runs in one fixed order" \
   "mods: shambler_mod enrages below a quarter health" \
+  "mods: a mod owns the shield regen curve" \
   "horde: a kill scores by weight class" \
   "boot plan:"; do
   printf '%s\n' "$out" | grep -Fq "$want" || { echo "missing line: $want" >&2; printf '%s\n' "$out" >&2; exit 1; }
 done
 
-echo "boot smoke ok (exit 0, 23 expected lines present)"
+echo "boot smoke ok (exit 0, 24 expected lines present)"

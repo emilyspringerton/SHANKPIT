@@ -13,6 +13,7 @@
 (module shankpit/mod_abi)
 
 (export hook-on-spawn hook-on-tick hook-on-hit-dealt hook-on-hit-taken hook-on-shield hook-on-ko
+        hook-on-shield-regen hook-regen-amount
         hook-count hook-at hook-is-valid hook-resolve)
 
 (defn hook-on-spawn [] : I32 11)
@@ -21,11 +22,20 @@
 (defn hook-on-hit-taken [] : I32 14)
 (defn hook-on-shield [] : I32 15)
 (defn hook-on-ko [] : I32 16)
-(defn hook-count [] : I32 6)
+
+;; 17 -- the ONE hook that returns a value rather than a handled flag: what the next shield regen tick
+;; is worth to THIS body, 0 meaning "no opinion, use the host's curve". Appended after the KO on
+;; purpose. Indices 0..5 keep the meaning they shipped with (a mod written to the six-hook ABI still
+;; runs in the same order), and a body killed this tick runs its regen hook last, so a host that checks
+;; "is it alive" after the KO can skip it -- a corpse must not regenerate.
+(defn hook-on-shield-regen [] : I32 17)
+(defn hook-count [] : I32 7)
 
 ;; The fixed order every mod's hooks run in inside one tick: spawn, tick, the hit it dealt, the hit it
-;; took, its shield event, its KO. Determinism is the point -- a replay and a live tick must run a mod's
-;; hooks in the same sequence, so the order lives in one function rather than at each call site.
+;; took, its shield event, its KO, then what its shield regen tick is worth. Determinism is the point --
+;; a replay and a live tick must run a mod's hooks in the same sequence, so the order lives in one
+;; function rather than at each call site. The regen hook is APPENDED, not inserted: the six-hook order
+;; this build shipped is unchanged for every mod already written to it.
 (defn hook-at [(index : I32)] : I32
   (if (= index 0) (hook-on-spawn)
     (if (= index 1) (hook-on-tick)
@@ -33,14 +43,24 @@
         (if (= index 3) (hook-on-hit-taken)
           (if (= index 4) (hook-on-shield)
             (if (= index 5) (hook-on-ko)
-              -1)))))))
+              (if (= index 6) (hook-on-shield-regen)
+                -1))))))))
+
 
 ;; Is this a hook id this build knows? -1 from hook-at and 0 from this both mean "not a hook": a host
-;; that fell through a bad id would silently skip a mod's rules, so the check is explicit.
+;; that fell through a bad id would silently skip a mod's rules, so the check is explicit. The range is
+;; every id from spawn (11) to shield-regen (17); ids are stable names, not array indices.
 (defn hook-is-valid [(hook : I32)] : I32
-  (if (and (>= hook (hook-on-spawn)) (<= hook (hook-on-ko))) 1 0))
+  (if (and (>= hook (hook-on-spawn)) (<= hook (hook-on-shield-regen))) 1 0))
 
 ;; The fall-through rule, in one place: a mod returning 1 handled the hook, anything else (including a
 ;; hook a mod chose not to implement, which the host passes as 0) leaves the host's own default.
 (defn hook-resolve [(mod-result : I32) (host-default : I32)] : I32
   (if (= mod-result 1) 1 host-default))
+
+;; The same rule for the ONE hook that carries a number instead of a flag: a positive amount is the
+;; mod's curve, 0 (or a negative, from a mod that has no opinion) leaves the host's own tick amount.
+;; Written here rather than in the caller so every host resolves it the same way -- and so a mod that
+;; returns 1 by habit cannot turn a 10-point tick into a 1-point one.
+(defn hook-regen-amount [(mod-result : I32) (host-default : I32)] : I32
+  (if (> mod-result 0) mod-result host-default))

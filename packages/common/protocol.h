@@ -296,6 +296,12 @@ typedef struct {
 
 #define RELOAD_TIME_FULL 60
 #define RELOAD_TIME_TACTICAL 42
+/* Legacy: 180 frames at 60 Hz was this engine's old "~3 s" shield delay and, until 2026-11-05, nothing
+ * decremented it. The live rule is milliseconds and lives in packages/sim/shield_rules.prn -- four
+ * seconds after the last hit, then a one-second tick that ramps 1..10 -- and reachability of that rule
+ * is what packages/simulation/shield_regen.h ticks. The define is kept so an out-of-tree host still
+ * compiles; nothing in this tree sets it any more (the four damage sites call
+ * shield_regen_note_damage instead). */
 #define SHIELD_REGEN_DELAY 180
 
 /* Missile launcher (WPN_MISSILE) is SHANKPIT's first travelling-projectile
@@ -827,6 +833,14 @@ typedef struct {
     int reload_timer; int attack_cooldown;
     int is_shooting; int jump_timer;
     int health; int shield; int shield_regen_timer; int state;
+    /* Shield recovery (packages/simulation/shield_regen.h, rule in packages/sim/shield_rules.prn).
+     * shield_regen_base is the shield the body held WHEN damage last landed, shield_regen_at_ms is when
+     * it landed: the pair is the whole "4 seconds, then 1 s ramping ticks" state, and damage rewrites
+     * both, which is what makes a hit restart the counter. shield_regen_timer is the ms-since-hit
+     * mirror the old field already carried. Not on the wire -- NetPlayer sends the resulting shield, and
+     * a client that wants the countdown for ITS OWN body can derive it from these same two numbers. */
+    int shield_regen_base;
+    unsigned int shield_regen_at_ms;
     int kills; int deaths; int hit_feedback; float recoil_anim;
     // kill_streak / last_kill_time_ms -- S459-52, founder real-time: "add double kills to
     // SHANKPIT and then make the bot double kill aware in terms of rewards (spike)" / "same for

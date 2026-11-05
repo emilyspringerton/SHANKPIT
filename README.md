@@ -925,7 +925,9 @@ changes at a round boundary (`make test-queue-level`); previously a client kept 
 - **Shield break (#540):** shield reaching zero bursts the bubble (cracking lattice, expanding fade), throws ~56 blue
   shards, and plays a synthesized snare + crash cymbal (`audio_play_shield`, no sample files).
 - **Shield packs (#541):** in QUEUE, a dying player has a 25% chance to drop a pack; walking onto one refills your
-  shield to full (only if it is below full). Shields still do not regenerate. The server alone rolls and grants
+  shield to full (only if it is below full). A shield nobody refills also comes back on its own now: four
+  seconds of nothing after the last hit, then a one-second tick worth 1, 2, 3 ... 10 points (rule in
+  `packages/sim/shield_rules.prn`, ticked by `packages/simulation/shield_regen.h`). The server alone rolls and grants
   (`packages/simulation/shield_packs.h`, `make test-shield-packs`) and sends the whole set as `PACKET_SHIELD_PACKS`.
   **Needs the new server binary** -- an old server sends no packs and clients simply show none.
 - Verified: shield + outline shaders compile and render under Xvfb/llvmpipe (screenshots of the hex bubble and of the
@@ -1165,8 +1167,10 @@ target.health -= damage
 
 **Shield Mechanics**:
 - **Capacity**: 100 points
-- **Regen Delay**: 3 seconds after last hit
-- **Regen Rate**: 1 point per frame (60/sec) after delay
+- **Regen Delay**: 4 seconds after the last hit; any hit inside the window restarts it
+- **Regen Rate**: one tick per second after the delay, worth 1, 2, 3 ... 10 points (capped), so the longer a
+  body is left alone the more each tick gives back. The curve is `packages/sim/shield_rules.prn`;
+  `packages/simulation/shield_regen.h` ticks it per entity and exposes the countdown a HUD draws.
 - **Damage Absorption**: Shields take all damage before health
 
 **Weapon-Specific Logic**:

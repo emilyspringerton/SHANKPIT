@@ -7,12 +7,16 @@
 ;; faster, it bites harder into a body whose shield is already gone, and it stays down when it dies --
 ;; whether a body comes back is the level's decision (combat_api's respawn rules), not the mod's.
 ;;
-;; Spooky spaghetti is allowed INSIDE a mod. The boundary is the point: four hooks, I32 in, I32 out.
+;; Spooky spaghetti is allowed INSIDE a mod. The boundary is the point: five hooks, I32 in, I32 out.
+;; The fifth is the shield-regen curve (mod_abi's hook 17): a shambler's shield crawls back at a flat
+;; one point per tick instead of the host's 1..10 ramp, so "the longer you leave it alone the more you
+;; get" is the PLAYER's rule and an undead body deliberately does not get it.
 ;; The quarter-health test is `hp*4 <= max` rather than `hp <= max/4` so it never rounds a body into
 ;; enraging early, and hp > 0 keeps a corpse from being "enraged".
 (module shankpit/shambler_mod)
 
-(export shambler-on-tick shambler-on-hit-dealt shambler-on-hit-taken shambler-on-ko)
+(export shambler-on-tick shambler-on-hit-dealt shambler-on-hit-taken shambler-on-ko
+        shambler-on-shield-regen)
 
 ;; on-tick: per-mille speed. Full health walks at 1000; a body at or below a quarter health lurches at
 ;; 1250. The host multiplies its own base speed by this, so the mod never sets a speed itself.
@@ -31,3 +35,9 @@
 
 ;; on-ko: ticks the mod wants the body to stay down. 0 = no opinion, the host's respawn rule applies.
 (defn shambler-on-ko [] : I32 0)
+
+;; on-shield-regen: what the next tick is worth to this body. 1, flat, at every index -- a shambler
+;; recovers its shield but never reaches the ramp's 10, so a player who disengages refills twice as fast
+;; as the thing they were fighting. The index is accepted and deliberately ignored; that is the mod's
+;; opinion, not an oversight.
+(defn shambler-on-shield-regen [(tick-index : I32)] : I32 1)
