@@ -10,6 +10,18 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
-# physics.prn and movement.prn are Vec/Arena modules: their emitted C needs parena_runtime.h and the
-# runtime's own symbols, so they cannot ride the scalar-only path the other rules use. Named, not
-# silently dropped -- wiring @parena's runtime as a real dependency is the next step here.
+# physics.prn and movement.prn are Vec/Arena modules: their emitted C keeps the
+# `#include "parena_runtime.h"` (strip_runtime = False) and links the real runtime, which is a
+# declared dep rather than a header that happens to be on the box.
+parena_stdlib_module(
+    name = "physics",
+    module = "physics",
+    strip_runtime = False,
+    deps = ["@parena//runtime:parena_runtime"],
+)
+parena_stdlib_module(
+    name = "movement",
+    module = "movement",
+    strip_runtime = False,
+    deps = ["@parena//runtime:parena_runtime"],
+)
