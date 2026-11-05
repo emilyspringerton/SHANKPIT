@@ -17,12 +17,19 @@
 ;;   * events are a REFLUX family, not callbacks: this module names the action types and the payload
 ;;     convention, and a mod polls the shared log for them (see the event section below).
 ;;
+;; The verb above and combat-ko? both ask combat-health-after rather than kills? for exactly this
+;; reason: the shield is part of whether a body is down, and a kill rule that forgets it is wrong in the
+;; direction that starts fights nobody won.
+;;
 ;; HONEST GAP: REFLUX itself is a host log (reflux_host_* in packages/reflux/reflux_runtime.h). This
-;; fork's boot is a PARENA translation unit with no host log linked in, so nothing dispatches yet --
-;; the family is defined and checked here, and wiring it to a log is the next increment, not this one.
+;; fork's boot is a PARENA translation unit with no host log linked in, so nothing dispatches yet. What
+;; DOES exist here is every decision a dispatcher needs: which row a hit is (HIT, or HIT + KO on the
+;; killing blow via combat-ko?), and what each field carries. Appending those rows to a real log is the
+;; next increment; it needs a log this build can link, which the allocator gap in docs/PARENA_GAPS.md
+;; currently blocks.
 (module shankpit/combat_api)
 
-(export combat-shield-after combat-health-after combat-killed? combat-damage-carried
+(export combat-shield-after combat-health-after combat-killed? combat-ko? combat-damage-carried
         combat-dmg-dealt
         combat-evt-hit combat-evt-ko combat-evt-first combat-evt-last combat-evt-is-combat?)
 
@@ -39,7 +46,10 @@
 ;; 1 when the body is down after this hit, 0 when it still stands -- I32 rather than Bool because this
 ;; is what a mod's own decision function returns to the host (horse_api's verbs are the same shape).
 (defn combat-killed? [(hp : I32) (shield : I32) (dmg : I32) (head : I32)] : I32
-  (if (kills? hp (hit-damage shield dmg head)) 1 0))
+  ;; Decided against health AFTER the shield, not kills? on raw damage. kills? knows nothing about
+  ;; shields, so asking it directly reported a 55-hp body behind a 100 shield dead to a 101 sniper round
+  ;; when it survives with 54 -- a real bug this API had, found by boot's shielded cases.
+  (if (<= (combat-health-after hp shield dmg head) 0) 1 0))
 
 ;; What a hit actually carries once the head flag and the shield have agreed between themselves. This is
 ;; the function a caller writes to the event log as the damage-dealt field, and the reason there is no
@@ -52,6 +62,13 @@
 ;; did not have. A scoreboard that sums this cannot award more damage than was dealt.
 (defn combat-dmg-dealt [(before : I32) (after : I32)] : I32
   (if (>= after before) 0 (- before after)))
+
+;; A KO is an EDGE, not a state: the killing hit fires it exactly once, and a corpse that takes another
+;; round fires nothing. Without that rule a body at zero health would dispatch REFLUX_ACTION_COMBAT_KO
+;; every tick it stayed on the floor, and a mod counting deaths would count frames. `hp > 0` is the
+;; alive test, so a body already at zero (or below, from an older build) is never "killed again".
+(defn combat-ko? [(hp : I32) (shield : I32) (dmg : I32) (head : I32)] : I32
+  (if (and (> hp 0) (<= (combat-health-after hp shield dmg head) 0)) 1 0))
 
 ;; ---- the event family ------------------------------------------------------------------------------
 ;; REFLUX action types 129 and 130 -- the next free pair after the citizen family (128) in

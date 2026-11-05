@@ -226,6 +226,9 @@
            (= (combat-killed? 95 0 (dmg-sniper) 0) 1)
            (= (combat-killed? 95 0 (dmg-missile) 0) 1)
            (= (combat-killed? 55 0 (dmg-ar) 1) 1)
+           (= (combat-killed? 55 100 (dmg-sniper) 0) 0)
+           (= (combat-killed? 55 100 (dmg-missile) 0) 0)
+           (= (combat-killed? 55 100 200 0) 1)
            (= (combat-health-after (combat-health-after 55 0 (dmg-ar) 0) 0 (dmg-ar) 0) 15)
            (= (combat-health-after (combat-health-after (combat-health-after 55 0 (dmg-ar) 0) 0 (dmg-ar) 0)
                                   0 (dmg-ar) 0) 0)
@@ -269,6 +272,23 @@
     0
     1))
 
+;; The killing blow is the only one that dispatches a KO row: a corpse taking another sniper round fires
+;; nothing, and a shield that eats the damage means the body was never in danger. Both are the same
+;; function, so a dispatcher cannot count a death twice or call one that did not happen.
+(defn death-check [] : I32
+  (if (and (= (combat-ko? 55 0 (dmg-ar) 0) 0)
+           (= (combat-ko? 55 0 (dmg-sniper) 0) 1)
+           (= (combat-ko? 55 0 (dmg-ar) 1) 1)
+           (= (combat-ko? 95 0 (dmg-magnum) 0) 0)
+           (= (combat-ko? 95 0 (dmg-sniper) 0) 1)
+           (= (combat-ko? 5 0 (dmg-missile) 0) 1)
+           (= (combat-ko? 55 100 (dmg-sniper) 0) 0)
+           (= (combat-ko? 55 100 (dmg-missile) 0) 0)
+           (= (combat-ko? 0 0 (dmg-sniper) 0) 0)
+           (= (combat-ko? -3 0 (dmg-sniper) 0) 0))
+    0
+    1))
+
 (defn shank-boot-main [] : I32
   (do
     (println "SHANKPIT clean-room boot")
@@ -289,10 +309,11 @@
     (println "horde: three AR rounds drop a shambler, one does not, and a sniper round drops a brute")
     (println "horde: a shield soaks first, and a head shot through one is an ordinary hit")
     (println "horde: combat goes through combat_api, and its events are the REFLUX family 129-130")
+    (println "horde: the killing hit fires the KO event once, and a corpse is not killed again")
     (if (and (= (level-check) 0)
              (> (turn-cap) 0) (< (turn-cap) 2000) (> (distance-bias) 1000)
              (= (frame-check) 0) (= (palette-check) 0) (= (sky-check) 0) (>= (sky-scan) 1)
-             (= (sim-check) 0) (= (horde-check) 0) (= (horde-place-check) 0) (= (horde-facing-check) 0) (= (horde-rest-check) 0) (= (health-check) 0) (= (hit-check) 0) (= (shield-check) 0) (= (event-check) 0))
+             (= (sim-check) 0) (= (horde-check) 0) (= (horde-place-check) 0) (= (horde-facing-check) 0) (= (horde-rest-check) 0) (= (health-check) 0) (= (hit-check) 0) (= (shield-check) 0) (= (event-check) 0) (= (death-check) 0))
       (do
         (println "boot plan: the level's own spawner, zombie mode")
         0)
