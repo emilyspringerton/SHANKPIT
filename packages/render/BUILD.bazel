@@ -70,3 +70,12 @@ parena_module(
     name = "palette_rules",
     src = "palette_rules.prn",
 )
+
+# packages/render/sky_rules.prn -- 460's sky-row arithmetic, without the framebuffer write. Exported so
+# apps/boot can compile it into its own translation unit.
+exports_files(["sky_rules.prn"])
+
+parena_module(
+    name = "sky_rules",
+    src = "sky_rules.prn",
+)

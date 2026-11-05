@@ -15,7 +15,7 @@
 
 ;; frame_rules.prn rides in the same build: the loop the program would run is the 460's, as numbers.
 (export frame-total frame-check)
-(export palette-check)
+(export palette-check sky-check)
 
 (defn level-name [] : I32 0)                       ;; name is a string; boot prints it as a literal
 (defn level-width [] : I32 @LEVEL_WIDTH@)
@@ -33,6 +33,17 @@
 (defn turn-cap [] : I32 (zb-turn-cap (spawn-class)))
 (defn distance-bias [] : I32 (zb-distance-bias (spawn-class)))
 
+
+;; The sky curve, checked at the two rows that must never disagree: the top of the frame is the sky-top
+;; band and the middle is the horizon. scale 234 ~= 180 / tan(37.5 deg), the 75-degree FOV at 360 rows.
+(defn view-scale [] : F32 234.0)
+(defn sky-check [] : I32
+  (if (and (= (sky-band 0.0 (view-scale) 0.0 1.0) 2)
+           (= (sky-band 180.0 (view-scale) 0.0 1.0) 0)
+           (<= (sky-t 0.0 (view-scale) 0.0 1.0) 1.0)
+           (>= (sky-t 359.0 (view-scale) 0.0 1.0) 0.0))
+    0
+    1))
 
 ;; ---- the frame loop -------------------------------------------------------------------------------
 ;; Four frames of 16 ms: the accumulator carries nothing, so each frame is owed exactly one tick.
@@ -63,9 +74,10 @@
     (println "tick 1: shaped by zombie_brain_rules for the spawn class")
     (println "loop: 16 ms fixed tick, at most 6 steps a frame")
     (println "render: 460 palette -- pale concrete, warm dusk sky, ten muted hues")
+    (println "sky: row 0 is the top band, row 180 is the horizon")
     (if (and (> (level-width) 0) (> (level-depth) 0) (>= (spawn-y) 0)
              (> (turn-cap) 0) (< (turn-cap) 2000) (> (distance-bias) 1000)
-             (= (frame-check) 0) (= (palette-check) 0))
+             (= (frame-check) 0) (= (palette-check) 0) (= (sky-check) 0))
       (do
         (println "boot plan: the level's own spawner, zombie mode")
         0)

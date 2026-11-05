@@ -1,0 +1,36 @@
+;; packages/render/sky_rules.prn -- which band of the dusk sky a screen row belongs to.
+;;
+;; This is the arithmetic inside shankpit-460's draw-sky! (PARENA/stdlib/shankpit460/sp_view.prn), ported
+;; without the framebuffer write:
+;;
+;;   m   = (180 - y) / scale          how far above the horizon this row sits, in projection units
+;;   tp  = cam-sp / cam-cp            the camera pitch, as a slope
+;;   den = 1 - m * tp                 the row's ground-plane intersection, denominator form
+;;   e   = (m + tp) / den             ... with 460's own +/-20 fallback near the horizon
+;;   t   = clamp(1.3 * e, 0, 1)       where 0 is the warm horizon and 1 is the pale top of the sky
+;;
+;; 460 then mixes sky-horizon -> sky-mid below t = 0.35 and sky-mid -> sky-top above it; sky-band reports
+;; which of those two halves a row falls in, so a caller can pick the palette stop without duplicating the
+;; curve. Fork-local because sp_view.prn does not compile here (see packages/frame): the maths is 460's,
+;; the transcription is mine.
+(module shankpit/sky)
+(export sky-t sky-band)
+
+;; `y` arrives as F32 rather than I32 deliberately: this compiler emits an undefined `f32(...)` call for
+;; the conversion builtin (confirmed as a link error), so nothing here converts -- there is nothing to
+;; convert. Callers pass the row as 0.0 / 180.0 / 359.0.
+(defn sky-t [(y : F32) (scale : F32) (cam-sp : F32) (cam-cp : F32)] : F32
+  (let [m (/ (- 180.0 y) scale)
+        tp (/ cam-sp cam-cp)
+        den (- 1.0 (* m tp))
+        e (if (> (fabs den) 0.05)
+            (/ (+ m tp) den)
+            (if (> m 0.0) 20.0 (- 20.0)))
+        t (* e 1.3)]
+    (if (< t 0.0) 0.0 (if (> t 1.0) 1.0 t))))
+
+;; 0 = below the mix (horizon stop), 1 = the lower half, 2 = the upper half (sky-top stop).
+;; 460 splits at t = 0.35; the halves are reported at their midpoints so a row is never exactly on a seam.
+(defn sky-band [(y : F32) (scale : F32) (cam-sp : F32) (cam-cp : F32)] : I32
+  (let [t (sky-t y scale cam-sp cam-cp)]
+    (if (< t 0.175) 0 (if (< t 0.675) 1 2))))
