@@ -224,6 +224,9 @@ static void test_net(void) {
     check(net_mod_request_size() == 12, "a mod request fits one small datagram");
     check(net_packet_caps() == 6, "capability advertisements are packet type 6");
     check(net_caps_size() == 12, "a capability advertisement carries caps and a level");
+    check(net_packet_welcome() == 3 && net_welcome_size() == 8, "welcome names the assigned slot");
+    check(net_max_peers() == 4 && net_first_client_slot() == 8,
+          "four client slots sit above seven bot slots");
     check(net_interest_match(net_interest_all(), 7) == 1, "interest 0 watches every level");
     check(net_interest_match(7, 7) == 1 && net_interest_match(7, 8) == 0,
           "a peer watching level 7 receives only level 7");

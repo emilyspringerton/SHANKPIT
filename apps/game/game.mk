@@ -35,8 +35,8 @@ WASM_BIN      := $(BIN_DIR)/shank_core.wasm
 WASM_CC       ?= clang
 
 .PHONY: game game-test game-smoke game-net-smoke game-level-relay-smoke game-level-request-smoke \
-        game-capped-client-smoke game-level-interest-smoke game-clang game-llvm game-test-clang \
-        core core-smoke wasm wasm-smoke
+        game-capped-client-smoke game-level-interest-smoke game-multi-peer-smoke game-clang game-llvm \
+        game-test-clang core core-smoke wasm wasm-smoke
 
 game: $(GAME_BIN)
 
@@ -166,6 +166,31 @@ game-capped-client-smoke: $(GAME_BIN)
 	  grep -q 'peer_caps=3' /tmp/shank_cap_host.log && \
 	  grep -q 'peer_level=8' /tmp/shank_cap_host.log && \
 	  test $$CLIENT_STATUS -eq 0 -a $$HOST_STATUS -eq 0
+
+# Two clients at once: different caps and different watched levels. The server must keep two peer
+# rows, assign distinct slots, clamp/filter each independently, and each client must learn its slot.
+game-multi-peer-smoke: $(GAME_BIN)
+	@rm -f /tmp/shank_multi_host.log /tmp/shank_multi_a.log /tmp/shank_multi_b.log
+	./$(GAME_BIN) --host 7797 --headless 900 --levels assets/game/levels.json --level 1 \
+	  > /tmp/shank_multi_host.log 2>&1 & \
+	  HOST_PID=$$!; sleep 1; \
+	  ./$(GAME_BIN) --join 127.0.0.1 7797 --headless 150 --level 1 --env surface \
+	    > /tmp/shank_multi_a.log 2>&1 & \
+	  A_PID=$$!; sleep 0.4; \
+	  ./$(GAME_BIN) --join 127.0.0.1 7797 --headless 150 --level 2 --env underground \
+	    --capabilities 3 > /tmp/shank_multi_b.log 2>&1 & \
+	  B_PID=$$!; \
+	  wait $$A_PID; A_STATUS=$$?; wait $$B_PID; B_STATUS=$$?; \
+	  wait $$HOST_PID; HOST_STATUS=$$?; \
+	  cat /tmp/shank_multi_host.log; cat /tmp/shank_multi_a.log; cat /tmp/shank_multi_b.log; \
+	  grep -q 'peers=2' /tmp/shank_multi_host.log && \
+	  grep -q 'p0_slot=8 p0_caps=31 p0_level=1 p0_rows=1' /tmp/shank_multi_host.log && \
+	  grep -q 'p1_slot=9 p1_caps=3 p1_level=2 p1_rows=1' /tmp/shank_multi_host.log && \
+	  grep -q 'slot=8' /tmp/shank_multi_a.log && \
+	  grep -q 'level=1 env=0 mods=31' /tmp/shank_multi_a.log && \
+	  grep -q 'slot=9' /tmp/shank_multi_b.log && \
+	  grep -q 'level=2 env=1 mods=3' /tmp/shank_multi_b.log && \
+	  test $$A_STATUS -eq 0 -a $$B_STATUS -eq 0 -a $$HOST_STATUS -eq 0
 
 # Four levels are registered on the server; the client advertises interest in level 2, so the
 # server must send one row (level_rows=1), not all four, and the client must adopt mask 11.

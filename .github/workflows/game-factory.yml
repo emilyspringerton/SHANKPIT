@@ -99,6 +99,10 @@ jobs:
       - name: Level interest smoke
         run: make game-level-interest-smoke PARENA_BIN="$PWD/PARENA/parena"
 
+      # Two clients at once, different caps and levels: two peer rows, distinct slots.
+      - name: Multi-peer smoke
+        run: make game-multi-peer-smoke PARENA_BIN="$PWD/PARENA/parena"
+
       - name: Build the Linux client
         run: make game PARENA_BIN="$PWD/PARENA/parena"
 

@@ -15,6 +15,7 @@
         net-cmd-size net-snapshot-size net-body-bytes net-header-bytes
         net-level-mod-bytes net-level-mods-header-bytes net-max-level-mods net-level-mods-size
         net-mod-request-size net-caps-size net-interest-match net-interest-all
+        net-welcome-size net-max-peers net-first-client-slot
         net-quant net-body-flags-alive net-body-flags-bot
         net-valid-mode net-valid-packet net-valid-body-count net-slot-valid
         net-valid-level-count)
@@ -31,6 +32,9 @@
 (defn net-packet-cmd [] : I32 1)
 (defn net-packet-snapshot [] : I32 2)
 (defn net-packet-welcome [] : I32 3)
+;; welcome: u32 magic, u8 type, u8 slot, u16 pad = 8. The server assigns a client slot; the client
+;; echoes it in commands and uses it to recognise itself in snapshots.
+(defn net-welcome-size [] : I32 8)
 
 ;; The server's live level-mod state. Absolute rows, like a snapshot: a dropped packet heals on the
 ;; next one, and a late joiner needs no handshake -- the next 30 Hz tick carries every live level's
@@ -56,6 +60,11 @@
 ;; Interest management: 0 means "every level" (the pre-handshake default); otherwise only the level
 ;; the peer named. A pure rule so the server's row filter is not a second policy in host C.
 (defn net-interest-all [] : I32 0)
+
+;; Four simultaneous remote peers get the top four body ids; bots stay below them. Server-assigned so
+;; two clients cannot claim the same body, and so a client never has to guess its slot.
+(defn net-max-peers [] : I32 4)
+(defn net-first-client-slot [] : I32 (- (net-max-bodies) (net-max-peers)))
 (defn net-interest-match [(peer-level : I32) (level : I32)] : I32
   (if (= peer-level (net-interest-all))
     1

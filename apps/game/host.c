@@ -106,10 +106,18 @@ typedef struct __attribute__((packed)) {
     uint16_t pad2;
 } NetCaps;
 
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint8_t type;
+    uint8_t slot;
+    uint16_t pad;
+} NetWelcome;
+
 _Static_assert(sizeof(NetLevelMod) == 8, "NetLevelMod must match net_level_mod_bytes()");
 _Static_assert(sizeof(NetLevelMods) == 72, "NetLevelMods must match net_level_mods_size()");
 _Static_assert(sizeof(NetModRequest) == 12, "NetModRequest must match net_mod_request_size()");
 _Static_assert(sizeof(NetCaps) == 12, "NetCaps must match net_caps_size()");
+_Static_assert(sizeof(NetWelcome) == 8, "NetWelcome must match net_welcome_size()");
 
 /* ---- bodies ------------------------------------------------------------------------------------ */
 typedef struct {
@@ -151,11 +159,24 @@ static int g_in_fwd, g_in_strafe, g_in_fire;
 
 /* ---- net --------------------------------------------------------------------------------------- */
 static int g_is_host, g_is_client;
-static NetAddr g_peer;
-static int g_peer_known;
-static int g_peer_caps;  /* modules the server has learned this peer can run */
-static int g_peer_level; /* level the peer asked to watch; 0 = all */
-static int g_last_level_rows;
+static NetAddr g_peer;  /* client only: the server this process joined */
+static int g_peer_known; /* client only: g_peer is usable */
+
+/* The server's peer table. Address is the identity; the slot is assigned by the server and sent back
+ * in a welcome packet, so two clients cannot claim the same body. Caps and interest are per peer. */
+typedef struct {
+    int used;
+    NetAddr addr;
+    int slot;
+    int caps;
+    int level;
+    int rows;
+    int last_seen;
+} NetPeer;
+
+static NetPeer g_peers[MAXB];
+static int g_peer_count;
+static int g_slot_known; /* client only: welcome assigned our body slot */
 static int g_net_acc;
 static int g_net_seq;
 
@@ -169,8 +190,6 @@ static int g_snapshots_received;
 
 static void net_recv_or_send(void);
 static void net_client_tick(void);
-
-static const int CLIENT_SLOT = 11; /* 0 player, 1..10 bots, 11 the one remote client */
 
 /* ---- framebuffer -------------------------------------------------------------------------------- */
 static uint32_t g_fb[FRAME_W * FRAME_H];
@@ -321,7 +340,9 @@ static void spawn_wave(int wave) {
     int radius = gp_mode_spawn_radius(gp_mode_zombies());
     int hp = gp_mode_wave_hp(gp_mode_zombies(), wave);
     int i;
-    for (i = 1; i < MAXB - 1; i++) {
+    int bot_slots = net_first_client_slot() - 1;
+    if (n > bot_slots) n = bot_slots;
+    for (i = 1; i <= bot_slots; i++) {
         g_bodies[i].used = 0;
         g_bodies[i].alive = 0;
     }
@@ -521,13 +542,71 @@ static void update_round(void) {
 }
 
 /* ---- networking -------------------------------------------------------------------------------- */
+static NetPeer *net_peer_find(const NetAddr *from) {
+    int i;
+    for (i = 0; i < net_max_peers() && i < MAXB; i++) {
+        NetPeer *p = &g_peers[i];
+        if (p->used && p->addr.addr == from->addr && p->addr.port == from->port) return p;
+    }
+    return NULL;
+}
+
+static void net_peer_drop_body(NetPeer *p) {
+    if (p->slot < 0 || p->slot >= MAXB) return;
+    if (g_bodies[p->slot].used && !g_bodies[p->slot].bot) memset(&g_bodies[p->slot], 0, sizeof(Body));
+}
+
+/* Register an address on first contact, or reclaim the least recently seen peer when all slots are
+ * taken. A client never picks its own slot: two clients cannot collide on one body. */
+static NetPeer *net_peer_register(const NetAddr *from) {
+    NetPeer *p = net_peer_find(from);
+    int i;
+    if (p) return p;
+    for (i = 0; i < net_max_peers() && i < MAXB; i++) {
+        int slot = net_first_client_slot() + i;
+        if (g_peers[i].used || slot < 0 || slot >= MAXB) continue;
+        p = &g_peers[i];
+        memset(p, 0, sizeof(*p));
+        p->used = 1;
+        p->addr = *from;
+        p->slot = slot;
+        p->caps = lm_all_mask();
+        p->level = net_interest_all();
+        p->last_seen = g_tick;
+        g_peer_count++;
+        return p;
+    }
+    {
+        NetPeer *oldest = NULL;
+        for (i = 0; i < net_max_peers() && i < MAXB; i++) {
+            if (!g_peers[i].used) continue;
+            if (!oldest || g_peers[i].last_seen < oldest->last_seen) oldest = &g_peers[i];
+        }
+        if (!oldest) return NULL;
+        net_peer_drop_body(oldest);
+        memset(oldest, 0, sizeof(*oldest));
+        g_peer_count--;
+        return net_peer_register(from);
+    }
+}
+
+static void net_send_welcome(const NetPeer *p) {
+    NetWelcome w;
+    memset(&w, 0, sizeof(w));
+    w.magic = (uint32_t)net_magic();
+    w.type = (uint8_t)net_packet_welcome();
+    w.slot = (uint8_t)p->slot;
+    net_transport_send(&p->addr, &w, (int)sizeof(w));
+}
+
 static void net_open(int bind_port) {
     if (net_transport_open(bind_port) != 0) {
         fprintf(stderr, "shank_game: transport open (bind %d) failed\n", bind_port);
         exit(1);
     }
-    g_peer_caps = lm_all_mask();      /* until a peer advertises otherwise */
-    g_peer_level = net_interest_all();
+    memset(g_peers, 0, sizeof(g_peers));
+    g_peer_count = 0;
+    g_slot_known = 0;
 }
 
 static void net_send_snapshot(void) {
@@ -553,43 +632,55 @@ static void net_send_snapshot(void) {
         nb->score = (uint16_t)b->score;
         s.count = (uint8_t)(i + 1);
     }
-    if (g_peer_known) net_transport_send(&g_peer, &s, (int)sizeof(s));
+    for (i = 0; i < net_max_peers() && i < MAXB; i++) {
+        NetPeer *p = &g_peers[i];
+        if (!p->used) continue;
+        net_send_welcome(p);
+        net_transport_send(&p->addr, &s, (int)sizeof(s));
+    }
 }
 
 /* Broadcast every live level's mask. Absolute state, not a delta: the client may miss any packet and
  * still be correct after the next one, and a client joining late needs no extra handshake. */
 static void net_send_level_mods(void) {
     NetLevelMods m;
-    int i;
+    int i, pi;
 
-    memset(&m, 0, sizeof(m));
-    m.magic = (uint32_t)net_magic();
-    m.type = (uint8_t)net_packet_level_mods();
-    m.seq = (uint16_t)(g_net_seq++);
-    for (i = 0; i < LEVEL_MODS_MAX_LEVELS && m.count < net_max_level_mods(); i++) {
-        int level_id = level_mods_level_at(i);
-        if (level_id <= 0 || level_id > 65535) continue;
-        if (!net_interest_match(g_peer_level, level_id)) continue;
-        m.mods[m.count].level_id = (uint16_t)level_id;
-        /* Per-peer interest: send the authoritative mask clamped to what this peer has ported. The
-         * server's own registry is untouched, and the client still clamps on arrival. */
-        m.mods[m.count].mask = (uint16_t)lm_sanitize(level_mods_mask(level_id) & g_peer_caps);
-        m.mods[m.count].revision = (uint16_t)level_mods_revision(level_id);
-        m.count++;
+    /* Each peer gets its own packet: the row set and the clamped masks are per peer. Absolute state,
+     * so a dropped datagram heals on the next tick. */
+    for (pi = 0; pi < net_max_peers() && pi < MAXB; pi++) {
+        NetPeer *p = &g_peers[pi];
+        if (!p->used) continue;
+        memset(&m, 0, sizeof(m));
+        m.magic = (uint32_t)net_magic();
+        m.type = (uint8_t)net_packet_level_mods();
+        m.seq = (uint16_t)(g_net_seq++);
+        for (i = 0; i < LEVEL_MODS_MAX_LEVELS && m.count < net_max_level_mods(); i++) {
+            int level_id = level_mods_level_at(i);
+            if (level_id <= 0 || level_id > 65535) continue;
+            if (!net_interest_match(p->level, level_id)) continue;
+            m.mods[m.count].level_id = (uint16_t)level_id;
+            /* Per-peer interest: send the authoritative mask clamped to what this peer has ported.
+             * The server's registry is untouched, and the client still clamps on arrival. */
+            m.mods[m.count].mask = (uint16_t)lm_sanitize(level_mods_mask(level_id) & p->caps);
+            m.mods[m.count].revision = (uint16_t)level_mods_revision(level_id);
+            m.count++;
+        }
+        p->rows = m.count;
+        if (m.count > 0) net_transport_send(&p->addr, &m, (int)sizeof(m));
     }
-    g_last_level_rows = m.count;
-    if (g_peer_known && m.count > 0) net_transport_send(&g_peer, &m, (int)sizeof(m));
 }
 
 static void net_host_recv(void) {
     for (;;) {
-        /* Two real client datagrams arrive here: a 20-byte command and a 12-byte mod request. Both
+        /* Three real client datagrams arrive here: a command, a caps row and a mod request. They
          * share magic+type at the same offsets, so one buffer is inspected and then size-checked. */
         union {
             NetCmd cmd;
             NetModRequest req;
             NetCaps caps;
         } pkt;
+        NetPeer *p;
         NetAddr from;
         int n = net_transport_recv(&from, &pkt, (int)sizeof(pkt));
         if (n < 0) return;
@@ -597,10 +688,11 @@ static void net_host_recv(void) {
 
         if (pkt.cmd.type == net_packet_caps()) {
             if (n != (ssize_t)sizeof(NetCaps)) continue;
-            g_peer = from;
-            g_peer_known = 1;
-            g_peer_caps = lm_sanitize((int)pkt.caps.caps);
-            g_peer_level = (int)pkt.caps.level;
+            p = net_peer_register(&from);
+            if (!p) continue;
+            p->caps = lm_sanitize((int)pkt.caps.caps);
+            p->level = (int)pkt.caps.level;
+            p->last_seen = g_tick;
             continue;
         }
 
@@ -608,6 +700,9 @@ static void net_host_recv(void) {
             if (n != (ssize_t)sizeof(NetModRequest)) continue;
             if (pkt.req.on > 1) continue;
             if (level_mods_env((int)pkt.req.level) < 0) continue; /* only a live level */
+            p = net_peer_register(&from);
+            if (!p) continue;
+            p->last_seen = g_tick;
             /* Server authority: this applies through the same validated path a server-side update
              * uses (mandatory modules refused by level_mods_request via level_mods_set). */
             level_mods_set((int)pkt.req.level, (int)pkt.req.mod, (int)pkt.req.on);
@@ -615,19 +710,16 @@ static void net_host_recv(void) {
         }
 
         if (pkt.cmd.type != net_packet_cmd() || n != (ssize_t)sizeof(NetCmd)) continue;
-        if (!g_peer_known || from.addr != g_peer.addr || from.port != g_peer.port) {
-            g_peer_caps = lm_all_mask(); /* a new peer has advertised nothing yet */
-            g_peer_level = net_interest_all();
-        }
-        g_peer = from;
-        g_peer_known = 1;
+        p = net_peer_register(&from);
+        if (!p) continue;
+        p->last_seen = g_tick;
 
-        if (!g_bodies[CLIENT_SLOT].used) {
-            spawn_body(CLIENT_SLOT, 0, loop_ring_x(2, 8, 620), loop_ring_z(2, 8, 620), 0,
+        if (!g_bodies[p->slot].used) {
+            spawn_body(p->slot, 0, loop_ring_x(p->slot, 8, 620), loop_ring_z(p->slot, 8, 620), 0,
                        gp_mode_hp(g_mode), gp_mode_shield(g_mode));
         }
         {
-            Body *b = &g_bodies[CLIENT_SLOT];
+            Body *b = &g_bodies[p->slot];
             int fwd = pkt.cmd.fwd, strafe = pkt.cmd.strafe;
             b->yaw = pkt.cmd.yaw;
             if (b->alive) {
@@ -641,14 +733,14 @@ static void net_host_recv(void) {
                     int d2;
                     double f, r;
                     Body *o = &g_bodies[i];
-                    if (!o->used || !o->alive || i == CLIENT_SLOT) continue;
+                    if (!o->used || !o->alive || i == p->slot) continue;
                     f = rp_fwd(o->x - b->x, o->z - b->z, b->yaw);
                     r = rp_right(o->x - b->x, o->z - b->z, b->yaw);
                     if (f < 30.0 || f > 1600.0 || fabs(r) > 70.0 + f * 0.06) continue;
                     d2 = (o->x - b->x) * (o->x - b->x) + (o->z - b->z) * (o->z - b->z);
                     if (d2 < bestd) { bestd = d2; best = i; }
                 }
-                if (best >= 0) apply_damage(best, gp_weapon_damage(2), CLIENT_SLOT, 2);
+                if (best >= 0) apply_damage(best, gp_weapon_damage(2), p->slot, 2);
             }
         }
     }
@@ -671,21 +763,36 @@ static void net_recv_or_send(void) {
     }
 }
 
+static void net_apply_welcome(int slot) {
+    if (slot < net_first_client_slot() || slot >= MAXB) return;
+    if (slot != g_local_slot) {
+        Body moved = g_bodies[g_local_slot];
+        memset(&g_bodies[g_local_slot], 0, sizeof(Body));
+        g_bodies[slot] = moved;
+        g_local_slot = slot;
+    }
+    if (!g_bodies[g_local_slot].used) {
+        spawn_body(g_local_slot, 0, 0, -700, 0, gp_mode_hp(g_mode), gp_mode_shield(g_mode));
+    }
+    g_slot_known = 1;
+}
+
 static void net_client_tick(void) {
     NetCmd cmd;
     Body *p = local_body();
-    /* One receive buffer, two real packet shapes. The header is identical up to `type`, so the tag is
-     * read once and the rest of the datagram is only trusted after its own exact size is checked. */
+    /* One receive buffer, three real packet shapes. The header is identical up to `type`, so the tag
+     * is read once and the rest of the datagram is only trusted after its own exact size is checked. */
     union {
         NetSnapshot snap;
         NetLevelMods mods;
+        NetWelcome welcome;
     } pkt;
     NetAddr from;
 
     memset(&cmd, 0, sizeof(cmd));
     cmd.magic = (uint32_t)net_magic();
     cmd.type = (uint8_t)net_packet_cmd();
-    cmd.slot = (uint8_t)CLIENT_SLOT;
+    cmd.slot = (uint8_t)g_local_slot;
     cmd.seq = (uint16_t)(g_net_seq++);
     cmd.fwd = (int16_t)g_in_fwd;
     cmd.strafe = (int16_t)g_in_strafe;
@@ -724,6 +831,12 @@ static void net_client_tick(void) {
         if (n < 0) break;
         if (n < (int)sizeof(uint32_t) || (int)pkt.snap.magic != net_magic()) continue;
 
+        if (pkt.snap.type == net_packet_welcome()) {
+            if (n != (ssize_t)sizeof(NetWelcome)) continue;
+            net_apply_welcome((int)pkt.welcome.slot);
+            continue;
+        }
+
         if (pkt.snap.type == net_packet_level_mods()) {
             if (n != (ssize_t)sizeof(NetLevelMods)) continue;
             if (!net_valid_level_count(pkt.mods.count)) continue;
@@ -740,6 +853,9 @@ static void net_client_tick(void) {
         if (pkt.snap.type != net_packet_snapshot()) continue;
         if (n != (ssize_t)sizeof(NetSnapshot)) continue;
         if (!net_valid_mode(pkt.snap.mode)) continue;
+        /* A snapshot sent before the welcome names a body we do not own yet. Drop it; the next one
+         * arrives 33 ms later and the server repeats the welcome with every snapshot. */
+        if (!g_slot_known) continue;
         {
             NetSnapshot *s = &pkt.snap;
             g_snapshots_received++;
@@ -946,7 +1062,8 @@ static void draw_hud(void) {
     if (g_is_host) {
         draw_text(FRAME_W - 150, FRAME_H - 24, 1, rgb(0x60d080), "HOST 7777");
     } else if (g_is_client) {
-        draw_text(FRAME_W - 190, FRAME_H - 24, 1, rgb(0x60c8ff), "CLIENT 11");
+        snprintf(buf, sizeof(buf), "CLIENT %d", g_local_slot);
+        draw_text(FRAME_W - 190, FRAME_H - 24, 1, rgb(0x60c8ff), buf);
     }
 
     /* crosshair */
@@ -1058,7 +1175,8 @@ static void start_round(void) {
     g_wave = 0;
     g_wave_timer = 0;
     g_player_score = 0;
-    g_local_slot = g_is_client ? CLIENT_SLOT : 0;
+    g_local_slot = g_is_client ? net_first_client_slot() : 0;
+    g_slot_known = g_is_client ? 0 : 1;
     spawn_body(g_local_slot, 0, 0, -700, 0, gp_mode_hp(g_mode), gp_mode_shield(g_mode));
     /* Flush anything that happened before the round (startup registration, a --set-mod) before the
      * reset empties the shared log; otherwise the audit stream would start mid-story. */
@@ -1184,8 +1302,10 @@ int main(int argc, char **argv) {
         net_level_mod_bytes() != (int)sizeof(NetLevelMod) ||
         net_level_mods_size() != (int)sizeof(NetLevelMods) ||
         net_mod_request_size() != (int)sizeof(NetModRequest) ||
-        net_caps_size() != (int)sizeof(NetCaps)) {
-        fprintf(stderr, "shank_game: wire struct size disagrees with net_rules.prn\n");
+        net_caps_size() != (int)sizeof(NetCaps) ||
+        net_welcome_size() != (int)sizeof(NetWelcome) ||
+        net_max_bodies() != MAXB || net_first_client_slot() + net_max_peers() != MAXB) {
+        fprintf(stderr, "shank_game: wire struct size or peer-slot layout disagrees with net_rules.prn\n");
         return 2;
     }
     g_mode = boot_mode;
@@ -1260,16 +1380,37 @@ int main(int argc, char **argv) {
             if (g_is_host) SDL_Delay(8);
             else if (g_is_client) SDL_Delay(16);
         }
-        printf("headless %d ticks: mode=%d %s=%d score=%d hp=%d shield=%d bodies=%d events=%d"
-               " level=%d env=%d mods=%d rev=%d snapshots=%d peer=%d peer_caps=%d peer_level=%d"
-               " level_rows=%d level_name=%s\n",
-               headless, g_mode, g_mode == gp_mode_zombies() ? "wave" : "frags",
-               g_mode == gp_mode_zombies() ? g_wave + 1 : g_player_score,
-               g_player_score, local_body()->hp, local_body()->shield, bot_count_alive(),
-               reflux_host_total_dispatched(), g_level_id, g_level_env,
-               level_mods_mask(g_level_id), level_mods_revision(g_level_id),
-               g_snapshots_received, g_peer_known, g_peer_caps, g_peer_level, g_last_level_rows,
-               level_catalog_name(g_level_id));
+        {
+            int pi, first_slot = 0, first_caps = 0, first_level = 0, first_rows = 0;
+            for (pi = 0; pi < net_max_peers() && pi < MAXB; pi++) {
+                NetPeer *p = &g_peers[pi];
+                if (!p->used) continue;
+                if (first_slot == 0) {
+                    first_slot = p->slot;
+                    first_caps = p->caps;
+                    first_level = p->level;
+                    first_rows = p->rows;
+                }
+            }
+            printf("headless %d ticks: mode=%d %s=%d score=%d hp=%d shield=%d bodies=%d events=%d"
+                   " level=%d env=%d mods=%d rev=%d snapshots=%d peer=%d peers=%d peer_caps=%d"
+                   " peer_level=%d level_rows=%d slot=%d level_name=%s",
+                   headless, g_mode, g_mode == gp_mode_zombies() ? "wave" : "frags",
+                   g_mode == gp_mode_zombies() ? g_wave + 1 : g_player_score,
+                   g_player_score, local_body()->hp, local_body()->shield, bot_count_alive(),
+                   reflux_host_total_dispatched(), g_level_id, g_level_env,
+                   level_mods_mask(g_level_id), level_mods_revision(g_level_id),
+                   g_snapshots_received, g_is_host ? (g_peer_count > 0) : g_peer_known,
+                   g_peer_count, first_caps, first_level, first_rows,
+                   g_is_client ? g_local_slot : first_slot, level_catalog_name(g_level_id));
+            for (pi = 0; pi < net_max_peers() && pi < MAXB; pi++) {
+                NetPeer *p = &g_peers[pi];
+                if (!p->used) continue;
+                printf(" p%d_slot=%d p%d_caps=%d p%d_level=%d p%d_rows=%d",
+                       pi, p->slot, pi, p->caps, pi, p->level, pi, p->rows);
+            }
+            printf("\n");
+        }
         net_transport_close();
         event_log_close();
         return 0;
