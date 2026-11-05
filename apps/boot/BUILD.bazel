@@ -1,9 +1,22 @@
 load("//bazel:parena.bzl", "parena_binary")
 
-# The boot entry point is PARENA, and the C that `main` lives in is a build output.
+# levels/starter.json -> shank_boot.prn: the boot program's constants are the level's own numbers.
+genrule(
+    name = "boot_prn",
+    srcs = [
+        "boot.prn",
+        "//levels:starter.json",
+    ],
+    outs = ["shank_boot.prn"],
+    tools = ["gen_boot_prn.py"],
+    cmd = "python3 $(location gen_boot_prn.py) $(location boot.prn) $(location //levels:starter.json) $@",
+    visibility = ["//visibility:private"],
+)
+
+# The program's whole translation unit is emitted by PARENA; `main` is appended by the macro.
 parena_binary(
     name = "shank_boot",
-    src = "boot.prn",
+    src = ":boot_prn",
     entry = "shank_boot_main",
     deps = ["@parena//runtime:parena_runtime"],
 )

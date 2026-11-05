@@ -1,21 +1,29 @@
 ;; apps/boot/boot.prn -- the clean-room fork's entry point, written in PARENA.
 ;;
-;; What this is, precisely: the boot decision and its report. It prints the mode it selected and the
-;; level it would load, then exits 0. It is NOT a game loop yet -- no level parser, no tick, no
-;; renderer -- and it does not pretend otherwise. What it does prove is that a program's whole
-;; translation unit can come out of the PARENA compiler with the fork carrying no C at all.
+;; The level tokens below are filled in by gen_boot_prn.py from levels/starter.json at build time, so
+;; the numbers this program boots with are the level's own numbers. Still not a game loop: it makes
+;; the boot decision, reports it, and exits 0. No parser at runtime, no tick, no renderer.
 (module shankpit/boot)
 (import process)
-(export shank-boot-main)
+(export shank-boot-main level-name level-width level-depth spawn-x spawn-y spawn-z)
 
-;; MODE_ZOMBIE from packages/common/protocol.h. Named here rather than inlined so the next step
-;; (reading it from the level instead of a constant) has one place to change.
+(defn level-name [] : I32 0)                       ;; name is a string; boot prints it as a literal
+(defn level-width [] : I32 @LEVEL_WIDTH@)
+(defn level-depth [] : I32 @LEVEL_DEPTH@)
+(defn spawn-x [] : I32 @SPAWN_X@)
+(defn spawn-y [] : I32 @SPAWN_Y@)
+(defn spawn-z [] : I32 @SPAWN_Z@)
+
+;; MODE_ZOMBIE (packages/common/protocol.h).
 (defn boot-mode-zombie [] : I32 4)
 
 (defn shank-boot-main [] : I32
   (do
     (println "SHANKPIT clean-room boot")
-    (println "level: levels/starter.json")
+    (println "level: @LEVEL_NAME@ (generated from levels/starter.json)")
     (println "mode: zombies (MODE_ZOMBIE)")
-    (println "engine: PARENA-emitted, no C in tree")
-    0))
+    (if (and (> (level-width) 0) (> (level-depth) 0) (>= (spawn-y) 0))
+      (do
+        (println "boot plan: the level's own spawner, zombie mode")
+        0)
+      1)))

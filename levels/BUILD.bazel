@@ -1,6 +1,8 @@
 # The levels are data, and they are the thing the engine boots into: starter.json plus the
 # authored trees under lofts/ and municipal/ (50 JSON files). Declared as build inputs so a
 # target can depend on them instead of reaching into the working directory.
+exports_files(["starter.json"])
+
 filegroup(
     name = "levels",
     srcs = glob(["**/*.json"]),
