@@ -1,6 +1,6 @@
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@rules_cc//cc:defs.bzl", "cc_library")
-load("//bazel:parena.bzl", "parena_module")
+load("//bazel:parena.bzl", "parena_module", "parena_stdlib_module")
 
 # day_night_clock.c/world_rules.c -- BIG_O/PARENA engine merge phase 1 (founder real-time: "port
 # the BIG_O tech into the shankpit repo -- all of it the lighting the systems all of it"). Real
@@ -175,4 +175,39 @@ sh_test(
     srcs = ["slide_rules_emitted_test.sh"],
     data = [":slide_rules_from_prn"],
     args = ["$(rootpath :slide_rules_from_prn)"],
+)
+
+
+# ---- engine rule modules, compiled from PARENA stdlib -------------------------------------------
+# packages/simulation/*.h each name the stdlib file their numbers live in (e.g. wave_rules.h says
+# "PARENA/stdlib/shankpit/wave_rules.prn"). These are those modules, compiled into this package by
+# the real compiler on every build -- the pure-logic half of the engine, back without a single
+# checked-in .c.
+parena_stdlib_module(name = "world_rules", module = "world_rules")
+parena_stdlib_module(name = "zombie_brain_rules", module = "zombie_brain_rules")
+parena_stdlib_module(name = "brick_rules", module = "brick_rules")
+parena_stdlib_module(name = "ai_brain_rules", module = "ai_brain_rules")
+parena_stdlib_module(name = "zone_rules", module = "zone_rules")
+parena_stdlib_module(name = "wave_rules", module = "wave_rules")
+
+# One test over the whole batch: each module really emitted C with at least one definition.
+sh_test(
+    name = "stdlib_modules_emitted_test",
+    srcs = ["stdlib_modules_emitted_test.sh"],
+    data = [
+        ":world_rules_from_prn",
+        ":zombie_brain_rules_from_prn",
+        ":brick_rules_from_prn",
+        ":ai_brain_rules_from_prn",
+        ":zone_rules_from_prn",
+        ":wave_rules_from_prn",
+    ],
+    args = [
+        "$(rootpath :world_rules_from_prn)",
+        "$(rootpath :zombie_brain_rules_from_prn)",
+        "$(rootpath :brick_rules_from_prn)",
+        "$(rootpath :ai_brain_rules_from_prn)",
+        "$(rootpath :zone_rules_from_prn)",
+        "$(rootpath :wave_rules_from_prn)",
+    ],
 )

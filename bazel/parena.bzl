@@ -55,3 +55,42 @@ def parena_module(
         deps = deps + runtime_deps,
         visibility = visibility or ["//visibility:public"],
     )
+
+def parena_stdlib_module(
+        name,
+        module,
+        deps = [],
+        copts = [],
+        visibility = None,
+        strip_runtime = True,
+        subdir = "shankpit"):
+    """Compile a PARENA stdlib module (`@parena//stdlib:<subdir>/<module>.prn`) into this package.
+
+    Same shape as parena_module, but the source of truth is PARENA's own stdlib rather than a copy:
+    the header comments in these packages name that stdlib file as where the numbers live, so a
+    fork-local duplicate would be a second place to drift. The emitted C is a per-package build
+    output, exactly as if the .prn sat here.
+    """
+    src = "@parena//stdlib:%s/%s.prn" % (subdir, module)
+    out = name + "_gen.c"
+    steps = ["$(location @parena//src:parena) build $(location %s) -o $(location :%s)" % (src, out)]
+    if strip_runtime:
+        steps.append(
+            "sed -i 's|^#include \"parena_runtime.h\"$$|/* %s: scalar-only, runtime not needed */|' $(location :%s)" % (module, out),
+        )
+    native.genrule(
+        name = name + "_from_prn",
+        srcs = [src],
+        outs = [out],
+        tools = ["@parena//src:parena"],
+        cmd = " && ".join(steps),
+        visibility = ["//visibility:private"],
+    )
+    cc_library(
+        name = name,
+        srcs = [":" + out],
+        hdrs = native.glob(["*.h"], allow_empty = True),
+        copts = copts,
+        deps = deps,
+        visibility = visibility or ["//visibility:public"],
+    )
