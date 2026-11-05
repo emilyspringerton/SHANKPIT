@@ -2,10 +2,16 @@
 ;;
 ;; The level tokens below are filled in by gen_boot_prn.py from levels/starter.json at build time, so
 ;; the numbers this program boots with are the level's own numbers. Still not a game loop: it makes
-;; the boot decision, reports it, and exits 0. No parser at runtime, no tick, no renderer.
+;; the boot decision, reads the horde's own shaping for the class it is about to spawn, reports, and
+;; exits 0. No runtime parser, no renderer, no per-tick loop yet -- one honest tick of rule code.
 (module shankpit/boot)
 (import process)
-(export shank-boot-main level-name level-width level-depth spawn-x spawn-y spawn-z)
+(export shank-boot-main level-name level-width level-depth spawn-x spawn-y spawn-z
+        spawn-class turn-cap distance-bias)
+
+;; zombie_brain_rules.prn is compiled into THIS translation unit (apps/boot/BUILD.bazel extra_srcs),
+;; so the boot decision is made by the same rule code the horde will run on, not a copy of it.
+(export zb-turn-cap zb-distance-bias)
 
 (defn level-name [] : I32 0)                       ;; name is a string; boot prints it as a literal
 (defn level-width [] : I32 @LEVEL_WIDTH@)
@@ -17,12 +23,20 @@
 ;; MODE_ZOMBIE (packages/common/protocol.h).
 (defn boot-mode-zombie [] : I32 4)
 
+;; The class the level's first spawner would put on the floor. 3 = BRUTE (zombie_taxonomy.h): the
+;; slowest-turning, longest-reading body, so a wrong class shows up immediately in the numbers below.
+(defn spawn-class [] : I32 3)
+(defn turn-cap [] : I32 (zb-turn-cap (spawn-class)))
+(defn distance-bias [] : I32 (zb-distance-bias (spawn-class)))
+
 (defn shank-boot-main [] : I32
   (do
     (println "SHANKPIT clean-room boot")
     (println "level: @LEVEL_NAME@ (generated from levels/starter.json)")
     (println "mode: zombies (MODE_ZOMBIE)")
-    (if (and (> (level-width) 0) (> (level-depth) 0) (>= (spawn-y) 0))
+    (println "tick 1: shaped by zombie_brain_rules for the spawn class")
+    (if (and (> (level-width) 0) (> (level-depth) 0) (>= (spawn-y) 0)
+             (> (turn-cap) 0) (< (turn-cap) 2000) (> (distance-bias) 1000))
       (do
         (println "boot plan: the level's own spawner, zombie mode")
         0)

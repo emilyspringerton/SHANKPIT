@@ -14,9 +14,13 @@ genrule(
 )
 
 # The program's whole translation unit is emitted by PARENA; `main` is appended by the macro.
+# zombie_brain_rules.prn rides in the same build so boot calls the real rule code, not a copy.
 parena_binary(
     name = "shank_boot",
     src = ":boot_prn",
     entry = "shank_boot_main",
+    extra_srcs = [
+        "@parena//stdlib:shankpit/zombie_brain_rules.prn",
+    ],
     deps = ["@parena//runtime:parena_runtime"],
 )

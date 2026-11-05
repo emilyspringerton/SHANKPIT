@@ -99,6 +99,7 @@ def parena_binary(
         name,
         src,
         entry,
+        extra_srcs = [],
         deps = [],
         copts = [],
         visibility = None,
@@ -108,10 +109,15 @@ def parena_binary(
     The emitter has no notion of an entry point, so the genrule appends a one-line `main` that calls
     the exported function by its emitted (underscore) name. Nothing is checked in: the whole
     translation unit, wrapper included, is a build output.
+
+    `extra_srcs` are further `.prn` files compiled into the SAME translation unit (`parena build`
+    takes many inputs), so a program can call another module's exported functions directly -- no
+    host header standing in for the compiler's own view of the types.
     """
     out = name + "_main.c"
+    inputs = ["$(location %s)" % src] + ["$(location %s)" % s for s in extra_srcs]
     steps = [
-        "$(location @parena//src:parena) build $(location %s) -o $(location :%s)" % (src, out),
+        "$(location @parena//src:parena) build %s -o $(location :%s)" % (" ".join(inputs), out),
     ]
     if strip_runtime:
         steps.append(
@@ -122,7 +128,7 @@ def parena_binary(
     )
     native.genrule(
         name = name + "_gen",
-        srcs = [src],
+        srcs = [src] + extra_srcs,
         outs = [out],
         tools = ["@parena//src:parena"],
         cmd = " && ".join(steps),
