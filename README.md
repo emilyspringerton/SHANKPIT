@@ -1690,11 +1690,13 @@ network transport at all (`bp-target-net`: none / host-C / PARENA).
 
 Opening masks and incoming authoritative state are intersected with that mask, and enabling an
 unported module is refused before a REFLUX row is dispatched. Mandatory modules are always kept.
-The client also advertises its mask once the first snapshot proves the server is live (packet 6); the
-server clamps the level-state masks it sends to that peer, leaving its own registry untouched. Both
-sides therefore clamp independently. `make game-capped-client-smoke` proves it across a real socket:
-a surface server (mask 31) and a core-only client (mask 3) meet, the server reports `peer_caps=3`,
-and the client stays at 3.
+The client also advertises its mask and the level it watches once the first snapshot proves the server
+is live (packet 6). The server clamps the level-state masks it sends to that peer and filters rows
+through `net-interest-match`, leaving its own registry untouched. Both sides therefore clamp
+independently. `make game-capped-client-smoke` proves the mask half across a real socket: a surface
+server (31) and a core-only client (3) meet, the server reports `peer_caps=3`, and the client stays
+at 3. `make game-level-interest-smoke` registers four levels on the server and has the client watch
+level 2; the server must send exactly one row (`level_rows=1`) carrying mask 11.
 
 ### Networking: host-C now, transport mod later
 
@@ -1732,7 +1734,7 @@ target; a server can evolve level mods over whatever transport that target has.
 
 | # | step | current state | done when |
 |---|---|---|---|
-| 1 | Capability handshake | client advertises caps (packet 6) and the server clamps outgoing masks per peer; the client clamps locally too | per-peer identity/token and interest management, so a multi-client server tracks more than one mask |
+| 1 | Capability handshake | client advertises caps + level (packet 6); the server clamps masks and filters rows by interest; the client clamps locally too | per-peer identity/token and multiple simultaneous peers, so a server tracks more than one mask |
 | 2 | WASM render/input/audio | core registry only; no canvas, no input, no audio | a browser build boots a level, draws it, and moves a body with the same rules as native |
 | 3 | Per-target profiles from one source | `build_profiles.prn` now owns caps + net status; targets still pick a profile by hand | profiles are emitted into every build (no hand-passed `--capabilities`), so adding a port updates every target |
 | 4 | Mod-request authority | packet 5 is unauthenticated on the play socket; only level/module/on are validated | identity (or a per-peer token), rate limiting, and an explicit server policy for who may shed modules |
@@ -1758,6 +1760,7 @@ are the payoff (one core, several shells) and are only meaningful after the port
   and no socket symbols in `nm -u`.
 - `make game-net-smoke` / relay / request / capped - the same wire behaviour through the seam.
 - `make game-capped-client-smoke` - surface server 31, core client 3 across UDP, server logs `peer_caps=3`.
+- `make game-level-interest-smoke` - four registered levels, one interested peer, exactly one row sent.
 - `make game-level-request-smoke`, `make game-level-relay-smoke`, `make game-smoke` - unchanged.
 
 Known limits: the WASM core has no allocator and no player; the trig is accurate for the rules'
