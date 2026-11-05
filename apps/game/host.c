@@ -113,8 +113,18 @@ typedef struct __attribute__((packed)) {
 _Static_assert(sizeof(NetCmd) == 20, "NetCmd must match net_cmd_size()");
 _Static_assert(sizeof(NetSnapBody) == 12, "NetSnapBody must match net_body_bytes()");
 _Static_assert(sizeof(NetSnapshot) == 156, "NetSnapshot must match net_snapshot_size()");
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint8_t type;
+    uint8_t on;
+    uint16_t level;
+    uint16_t mod;
+    uint16_t pad;
+} NetModRequest;
+
 _Static_assert(sizeof(NetLevelMod) == 8, "NetLevelMod must match net_level_mod_bytes()");
 _Static_assert(sizeof(NetLevelMods) == 72, "NetLevelMods must match net_level_mods_size()");
+_Static_assert(sizeof(NetModRequest) == 12, "NetModRequest must match net_mod_request_size()");
 
 /* ---- bodies ------------------------------------------------------------------------------------ */
 typedef struct {
@@ -161,6 +171,12 @@ static struct sockaddr_in g_peer;
 static int g_peer_known;
 static int g_net_acc;
 static int g_net_seq;
+
+/* A one-shot client optimization request (--request-mod), sent once the server's snapshots prove the
+ * peer is live. It is only a request: the server validates it and rebroadcasts the resulting mask. */
+static int g_request_mod;
+static int g_request_on;
+static int g_request_sent;
 static int g_snapshots_received;
 
 static void net_recv_or_send(void);
@@ -621,19 +637,35 @@ static void net_send_level_mods(void) {
 
 static void net_host_recv(void) {
     for (;;) {
-        NetCmd cmd;
+        /* Two real client datagrams arrive here: a 20-byte command and a 12-byte mod request. Both
+         * share magic+type at the same offsets, so one buffer is inspected and then size-checked. */
+        union {
+            NetCmd cmd;
+            NetModRequest req;
+        } pkt;
         struct sockaddr_in from;
+        int n;
 #ifdef _WIN32
         int fromlen = (int)sizeof(from);
 #else
         socklen_t fromlen = sizeof(from);
 #endif
-        int n = (int)recvfrom(g_sock, (char *)&cmd, (int)sizeof(cmd), 0,
-                              (struct sockaddr *)&from, &fromlen);
+        n = (int)recvfrom(g_sock, (char *)&pkt, (int)sizeof(pkt), 0,
+                          (struct sockaddr *)&from, &fromlen);
         if (n < 0) return;
-        if (n != (ssize_t)sizeof(cmd)) continue;
-        if ((int)cmd.magic != net_magic()) continue;
-        if (cmd.type != net_packet_cmd()) continue;
+        if (n < (int)sizeof(uint32_t) || (int)pkt.cmd.magic != net_magic()) continue;
+
+        if (pkt.cmd.type == net_packet_mod_request()) {
+            if (n != (ssize_t)sizeof(NetModRequest)) continue;
+            if (pkt.req.on > 1) continue;
+            if (level_mods_env((int)pkt.req.level) < 0) continue; /* only a live level */
+            /* Server authority: this applies through the same validated path a server-side update
+             * uses (mandatory modules refused by level_mods_request via level_mods_set). */
+            level_mods_set((int)pkt.req.level, (int)pkt.req.mod, (int)pkt.req.on);
+            continue;
+        }
+
+        if (pkt.cmd.type != net_packet_cmd() || n != (ssize_t)sizeof(NetCmd)) continue;
         g_peer = from;
         g_peer_known = 1;
 
@@ -643,13 +675,13 @@ static void net_host_recv(void) {
         }
         {
             Body *b = &g_bodies[CLIENT_SLOT];
-            int fwd = cmd.fwd, strafe = cmd.strafe;
-            b->yaw = cmd.yaw;
+            int fwd = pkt.cmd.fwd, strafe = pkt.cmd.strafe;
+            b->yaw = pkt.cmd.yaw;
             if (b->alive) {
                 b->x = loop_move_x(b->x, b->yaw, fwd, strafe);
                 b->z = loop_move_z(b->z, b->yaw, fwd, strafe);
             }
-            if (cmd.fire && b->alive && g_tick >= b->fire_at) {
+            if (pkt.cmd.fire && b->alive && g_tick >= b->fire_at) {
                 int i, best = -1, bestd = 1600 * 1600;
                 b->fire_at = g_tick + 6;
                 for (i = 1; i < MAXB; i++) {
@@ -707,6 +739,20 @@ static void net_client_tick(void) {
     cmd.fire = (uint8_t)(g_in_fire ? 1 : 0);
     sendto(g_sock, (const char *)&cmd, (int)sizeof(cmd), 0, (struct sockaddr *)&g_peer,
            (int)sizeof(g_peer));
+
+    /* One-shot: only after a snapshot proves the server has us as its peer. */
+    if (g_request_mod && !g_request_sent && g_snapshots_received > 0) {
+        NetModRequest req;
+        memset(&req, 0, sizeof(req));
+        req.magic = (uint32_t)net_magic();
+        req.type = (uint8_t)net_packet_mod_request();
+        req.level = (uint16_t)g_level_id;
+        req.mod = (uint16_t)g_request_mod;
+        req.on = (uint8_t)(g_request_on ? 1 : 0);
+        sendto(g_sock, (const char *)&req, (int)sizeof(req), 0, (struct sockaddr *)&g_peer,
+               (int)sizeof(g_peer));
+        g_request_sent = 1;
+    }
 
     for (;;) {
         int n = (int)recv(g_sock, (char *)&pkt, (int)sizeof(pkt), 0);
@@ -1136,6 +1182,9 @@ int main(int argc, char **argv) {
             event_log_path = argv[++i];
         } else if (strcmp(argv[i], "--replay-events") == 0 && i + 1 < argc) {
             replay_path = argv[++i];
+        } else if (strcmp(argv[i], "--request-mod") == 0 && i + 2 < argc) {
+            g_request_mod = atoi(argv[++i]);
+            g_request_on = atoi(argv[++i]) != 0;
         } else if (strcmp(argv[i], "--level") == 0 && i + 1 < argc) {
             level_id = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--env") == 0 && i + 1 < argc) {
@@ -1150,7 +1199,7 @@ int main(int argc, char **argv) {
         } else {
             fprintf(stderr, "usage: %s [--host [port]] [--join ip [port]] [--start] [--ffa]"
                             " [--levels manifest.json] [--level N] [--event-log events.jsonl]"
-                            " [--replay-events events.jsonl]"
+                            " [--replay-events events.jsonl] [--request-mod MOD 0|1]"
                             " [--env surface|underground|moon] [--set-mod MOD 0|1]"
                             " [--headless N] [--frames N --shot out.bmp]\n", argv[0]);
             return 2;
@@ -1165,7 +1214,8 @@ int main(int argc, char **argv) {
     if (net_cmd_size() != (int)sizeof(NetCmd) || net_snapshot_size() != (int)sizeof(NetSnapshot) ||
         net_body_bytes() != (int)sizeof(NetSnapBody) ||
         net_level_mod_bytes() != (int)sizeof(NetLevelMod) ||
-        net_level_mods_size() != (int)sizeof(NetLevelMods)) {
+        net_level_mods_size() != (int)sizeof(NetLevelMods) ||
+        net_mod_request_size() != (int)sizeof(NetModRequest)) {
         fprintf(stderr, "shank_game: wire struct size disagrees with net_rules.prn\n");
         return 2;
     }

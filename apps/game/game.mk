@@ -30,7 +30,7 @@ GAME_EXTRA_LIBS ?= -lm
 GAME_BIN      := $(BIN_DIR)/shank_game
 GAME_TEST_BIN := $(BIN_DIR)/shank_game_test
 
-.PHONY: game game-test game-smoke game-net-smoke game-level-relay-smoke
+.PHONY: game game-test game-smoke game-net-smoke game-level-relay-smoke game-level-request-smoke
 
 game: $(GAME_BIN)
 
@@ -79,6 +79,19 @@ game-net-smoke: $(GAME_BIN)
 # Two real processes with DIFFERENT level environments: the server runs a moon bunker (mask 3), the
 # client joins as a surface level (mask 31). The client must finish with the server's mask, which is
 # only possible if the level-mod packet actually crossed the wire and was applied.
+# A live optimization request: the server starts on the surface (mask 31), the client asks it to drop
+# weather rendering, and the next level-state packet must carry the new mask (31 -> 27) back.
+game-level-request-smoke: $(GAME_BIN)
+	@rm -f /tmp/shank_request_host.log /tmp/shank_request_client.log
+	./$(GAME_BIN) --host 7794 --headless 600 --level 6 --env surface > /tmp/shank_request_host.log 2>&1 & \
+	  HOST_PID=$$!; sleep 1; \
+	  ./$(GAME_BIN) --join 127.0.0.1 7794 --headless 120 --level 6 --env surface \
+	    --request-mod 3 0 > /tmp/shank_request_client.log 2>&1; \
+	  CLIENT_STATUS=$$?; wait $$HOST_PID; HOST_STATUS=$$?; \
+	  cat /tmp/shank_request_host.log; cat /tmp/shank_request_client.log; \
+	  grep -q 'level=6 env=0 mods=27' /tmp/shank_request_client.log && \
+	  test $$CLIENT_STATUS -eq 0 -a $$HOST_STATUS -eq 0
+
 game-level-relay-smoke: $(GAME_BIN)
 	@rm -f /tmp/shank_relay_host.log /tmp/shank_relay_client.log
 	./$(GAME_BIN) --host 7792 --headless 600 --level 5 --env moon > /tmp/shank_relay_host.log 2>&1 & \

@@ -86,6 +86,11 @@ jobs:
       - name: Level-mod relay smoke (moon server, surface client)
         run: make game-level-relay-smoke PARENA_BIN="$PWD/PARENA/parena"
 
+      # The client asks a surface server to drop weather render; the server applied and rebroadcast
+      # mask 27, which is the only way the client can print it.
+      - name: Live level optimization request smoke
+        run: make game-level-request-smoke PARENA_BIN="$PWD/PARENA/parena"
+
       - name: Build the Linux client
         run: make game PARENA_BIN="$PWD/PARENA/parena"
 

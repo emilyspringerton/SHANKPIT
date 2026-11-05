@@ -73,6 +73,8 @@ int net_packet_cmd(void);
 int net_packet_snapshot(void);
 int net_packet_welcome(void);
 int net_packet_level_mods(void);
+int net_packet_mod_request(void);
+int net_mod_request_size(void);
 int net_cmd_size(void);
 int net_snapshot_size(void);
 int net_level_mod_bytes(void);

@@ -220,11 +220,14 @@ static void test_net(void) {
     check(net_body_flags_alive() == 1 && net_body_flags_bot() == 2, "flags are bits");
     check(net_port() == 7777 && net_tick_ms() == 33, "port and snapshot cadence");
     check(net_packet_level_mods() == 4, "level mods are packet type 4");
+    check(net_packet_mod_request() == 5, "mod requests are packet type 5");
+    check(net_mod_request_size() == 12, "a mod request fits one small datagram");
     check(net_level_mods_size() == 72, "level mods packet is one fixed datagram");
     check(net_level_mods_size() ==
               net_level_mods_header_bytes() + net_max_level_mods() * net_level_mod_bytes(),
           "level mods size is header + rows");
-    check(net_valid_packet(4) == 1 && net_valid_packet(5) == 0, "packet 4 on the wire, 5 refused");
+    check(net_valid_packet(4) == 1 && net_valid_packet(5) == 1 && net_valid_packet(6) == 0,
+          "packets 0..5 on the wire, 6 refused");
     check(net_valid_level_count(1) == 1 && net_valid_level_count(net_max_level_mods()) == 1,
           "a level mods count is bounded");
     check(net_valid_level_count(0) == 0 && net_valid_level_count(9) == 0, "bad counts refused");
