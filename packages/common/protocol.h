@@ -994,6 +994,14 @@ typedef struct {
        the authority. Appended here for the same reason rocket/tank are: the replicated fields above
        stay untouched. */
     int origin;
+    /* POLICE (LEVEL_VEHICLE_POLICE): a rocket car in livery with a siren. police is the KIND, siren is
+       the DRIVER'S COMMAND this tick (boost or lift held, written by simulate_rocket_car_state).
+       Whether it actually sounds, and which siren, is PARENA's rule (siren_rules.prn siren-trigger),
+       applied by the host that owns the speaker -- a silent dedicated server still simulates both bits.
+       Appended after origin for the same reason rocket/tank/origin were: the replicated fields above
+       stay untouched. */
+    int police;
+    int siren;
 } BuggyState;
 
 /* A QUADCOPTER (packages/simulation/drone_flight.h). Two airframes share this state: DRONE_KIND_RECON

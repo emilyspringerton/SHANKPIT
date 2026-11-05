@@ -14,6 +14,7 @@
 #include "horse_rules.h"   /* the tölt mount's numbers -- PARENA mod, see horse_rules_host.h */
 #include "horse_goals.h"   /* what a loose horse decides -- PARENA mod, see horse_goals_host.h */
 #include "horse_poop.h"
+#include "police_patrol.h"   /* the automated cruiser's ring: a police car with nobody in it still drives */
 #include "citizen_actor.h"   /* MODE_ZOMBIES bodies: the inputs that make a citizen jump, slide, fight */    /* what comes out the other end -- PARENA mod, see horse_poop_host.h */
 #include "humanness.h"     /* MISHRI's mood/reaction/aim layer -- the horse's mind, same primitives as story_ai */
 #include "../reflux/reflux_runtime.h" /* REFLUX_ACTION_HORSE_* -- the family a horse dispatches (the dispatch itself is a hook, see below) */
@@ -445,14 +446,21 @@ static inline void scene_load(int scene_id) {
                 float vz = g_custom_level_vehicle_z[vi];
                 float vyaw = g_custom_level_vehicle_yaw[vi];
                 int vorigin = g_custom_level_vehicle_origin[vi];
-                if (vk == 0 || vk == 1) {
+                /* 0 buggy, 1 rocket, 6 police -- level_boxes.h's LEVEL_VEHICLE_* numbering. Spelled as
+                   numbers here for the same reason the comment above spells the rest out: this frame
+                   lives below level_boxes.h and must not grow a dependency on it. */
+                if (vk == 0 || vk == 1 || vk == 6) {
                     if (bi >= MAX_BUGGIES) continue;
                     buggy_spawn_defaults(&local_state.buggies[bi], bi, scene_id, vx, vz, vyaw);
                     local_state.buggies[bi].y = vy + BUGGY_WHEEL_RADIUS + BUGGY_CHASSIS_CLEARANCE;
-                    local_state.buggies[bi].rocket = (vk == 1) ? 1 : 0;
+                    local_state.buggies[bi].rocket = (vk == 0) ? 0 : 1;
+                    /* a police car is the SAME airframe with a siren (PARENA siren_rules.prn), not a
+                       second vehicle: physics, tank and handling are the rocket car's, unchanged. */
+                    local_state.buggies[bi].police = (vk == 6) ? 1 : 0;
                     local_state.buggies[bi].origin = vorigin;   /* provenance: what a garage reads */
                     printf("[VEHICLE] %s id=%d scene=%d (level) x=%.1f z=%.1f yaw=%.0f\n",
-                           vk == 1 ? "rocket car" : "buggy", bi, scene_id, vx, vz, vyaw);
+                           vk == 6 ? "police car" : (vk == 1 ? "rocket car" : "buggy"),
+                           bi, scene_id, vx, vz, vyaw);
                     bi++;
                 } else if (vk == 2) {
                     if (hi >= MAX_HELICOPTERS) continue;
@@ -473,6 +481,35 @@ static inline void scene_load(int scene_id) {
                     airplane_spawn_defaults(&local_state.airplanes[ai], ai, scene_id, vx, vz, vyaw);
                     printf("[VEHICLE] C-110 id=%d scene=%d (level) x=%.1f z=%.1f yaw=%.0f\n", ai, scene_id, vx, vz, vyaw);
                     ai++;
+                }
+            }
+            /* AUTOMATED POLICE (founder: "add automated police cars to the real zombies world"). Two
+               unmanned cruisers on a patrol ring anchored at the level's own first vehicle bay -- where
+               vehicles already belong -- so the world has a force in it without a script and without
+               spawning anything inside a wall. A level that authored police cars of its own gets no
+               extras: authorship wins over the default, the same convention the rest of this block uses.
+               Unmanned is not decorative: buggy_tick_all drives them (police_patrol.h) and PARENA's
+               siren-trigger sounds them once they are moving. */
+            {
+                int authored_police = 0;
+                for (int vi = 0; vi < g_custom_level_vehicle_count; vi++)
+                    if (g_custom_level_vehicle_kind[vi] == 6) authored_police = 1;
+                if (!authored_police) {
+                    float px = (g_custom_level_vehicle_count > 0) ? g_custom_level_vehicle_x[0] : 0.0f;
+                    float pz = (g_custom_level_vehicle_count > 0) ? g_custom_level_vehicle_z[0] : 0.0f;
+                    float py = (g_custom_level_vehicle_count > 0) ? g_custom_level_vehicle_y[0] : 12.0f;
+                    for (int pi = 0; pi < 2 && bi < MAX_BUGGIES; pi++, bi++) {
+                        buggy_spawn_defaults(&local_state.buggies[bi], bi, scene_id,
+                                             px + 7.0f * (float)pi, pz + 9.0f, 180.0f);
+                        local_state.buggies[bi].y = py + BUGGY_WHEEL_RADIUS + BUGGY_CHASSIS_CLEARANCE;
+                        local_state.buggies[bi].rocket = 1;
+                        local_state.buggies[bi].police = 1;
+                        local_state.buggies[bi].tank = phys_rocket_tank_max();
+                        /* ring centred a little ahead of the bay, so a cruiser pulls OUT of the nest */
+                        police_patrol_set_anchor(bi, px, pz + 45.0f, 55.0f);
+                        printf("[POLICE] automated cruiser id=%d scene=%d anchor=(%.1f,%.1f) r=55\n",
+                               bi, scene_id, px, pz + 45.0f);
+                    }
                 }
             }
         }
@@ -695,10 +732,19 @@ static inline void buggy_tick_all(unsigned int now_ms) {
             boost = occ->in_boost;
         } else {
             b->occupant_player_id = -1;
+            /* An unmanned POLICE car drives itself around its ring (police_patrol.h). That is what makes
+               the third arm of PARENA's siren-trigger -- a moving cruiser with nobody in it -- audible at
+               all; every other empty car still sits where it was left. */
+            if (b->police) {
+                float pth = 0.0f, pst = 0.0f;
+                police_patrol_intent(b, now_ms, &pth, &pst);
+                throttle = pth;
+                steer_intent = pst;
+            }
         }
         phys_set_scene(b->scene_id);
         simulate_buggy_state_ex(b, throttle, steer_intent, SHANKPIT_NET_FIXED_DT,
-                                b->occupant_player_id >= 0, lift, boost);
+                                b->occupant_player_id >= 0 || b->police, lift, boost);
         {
             /* Seeded from the car's own id, so its flicker and fuse are that car's on every host.
                Reset on a respawned/replacement car rather than inheriting a dead one's burn. */

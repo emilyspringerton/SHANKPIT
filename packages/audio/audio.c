@@ -1,6 +1,7 @@
 #include "audio.h"
 #include "audio_wav.h"
 #include "audio_chain.h"
+#include "../simulation/siren_rules.h"   /* SIREN_KIND_SILENT: the kinds are PARENA's, not this file's */
 #include <SDL2/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -68,7 +69,20 @@ static float    g_wind_lp;
  * long, so a fifth simultaneous wait means something is wrong upstream, and dropping is better than
  * queueing a bang behind the flash that caused it. Host-thread only, like audio_clip_play's policy. */
 #define THUNDER_QUEUE 4
-static struct { int waiting; int due_ms; float gain, pan; } g_thunder[THUNDER_QUEUE];
+/* frames_left, not a wall clock: the callback itself counts the wait down, so thunder is sample-accurate
+ * and cannot drift with the frame rate or with a second clock the host happens to be using. */
+static struct { int waiting; int frames_left; float gain, pan; } g_thunder[THUNDER_QUEUE];
+
+/* The siren (founder: "add sound affordances for sirens ... classic ems and police sirens"). ONE voice,
+ * because a listener hears the loudest siren near them: the host resolves which one that is with PARENA's
+ * siren_rules.prn (frequency in millihertz, gain, pan) and this file only turns it into samples. The
+ * frequency is integrated into a phase here, so a wail is a continuous glide and not a stepped sample. */
+static int   g_siren_kind;
+static float g_siren_hz;            /* current, smoothed toward the target in millihertz terms */
+static float g_siren_hz_target;
+static float g_siren_gain, g_siren_gain_target;
+static float g_siren_pan, g_siren_pan_target;
+static double g_siren_phase;
 
 /* ── PCM synthesis helpers ───────────────────────────────────────────────── */
 
@@ -236,7 +250,32 @@ static void wind_add(float *dl, float *dr) {
     *dr += g_wind_lp * amp * (p < 0.0f ? 1.0f + p : 1.0f);
 }
 
+/* One frame of the siren, added to the caller's stereo accumulator. A siren is a TONE, not a buffer: the
+ * phase is integrated from PARENA's millihertz every frame, so an EMS hi-lo steps between its two notes and
+ * a police wail glides, both without a sample file. The second harmonic gives it the horn bite that a pure
+ * sine lacks; the gain smoothing is faster than the wind bed's because a siren has to START when the driver
+ * hits boost, not swell in over a second. Pan is the same one-sided law as everything else. */
+static void siren_add(float *dl, float *dr) {
+    g_siren_gain += (g_siren_gain_target - g_siren_gain) * 0.010f;
+    g_siren_pan  += (g_siren_pan_target  - g_siren_pan)  * 0.010f;
+    g_siren_hz   += (g_siren_hz_target   - g_siren_hz)   * 0.02f;
+    if (g_siren_kind == SIREN_KIND_SILENT && g_siren_gain < 0.0005f) { g_siren_gain = 0.0f; return; }
+    double step = (double)g_siren_hz / (double)SAMPLE_RATE;
+    g_siren_phase += step;
+    while (g_siren_phase >= 1.0) g_siren_phase -= 1.0;
+    const float pi2 = 6.2831853f;
+    float s = sinf((float)g_siren_phase * pi2);
+    s += 0.32f * sinf((float)g_siren_phase * pi2 * 2.0f);
+    s *= 0.45f;
+    float p = g_siren_pan;
+    float amp = g_siren_gain;
+    *dl += s * amp * (p > 0.0f ? 1.0f - p : 1.0f);
+    *dr += s * amp * (p < 0.0f ? 1.0f + p : 1.0f);
+}
+
 /* ── SDL audio callback (runs on audio thread) ───────────────────────────── */
+
+static void thunder_service(int frames);   /* defined with the voice dispatch below */
 
 static void audio_callback(void *userdata, Uint8 *stream, int len) {
     (void)userdata;
@@ -245,6 +284,9 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
     memset(out, 0, len);
 
     SDL_LockMutex(g_mutex);
+    /* service thunder here, INSIDE the lock and before the mix: a delayed strike starts on the exact
+       buffer its travel time expires in, not on the next render frame. */
+    thunder_service(frames);
     if (g_chain_on && frames <= CHAIN_MAX_FRAMES) {
         /* NOCK master chain: mix in float, run the PARENA chain, convert once at the end. */
         memset(g_mixf, 0, sizeof(float) * (size_t)frames * NUM_CHANNELS);
@@ -258,7 +300,8 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
             if (v->pos >= v->snd->len) v->active = 0;
         }
         /* the wind bed goes through the same master chain as everything else, before it is processed */
-        for (int i = 0; i < frames; i++) wind_add(&g_mixf[i * 2], &g_mixf[i * 2 + 1]);
+        for (int i = 0; i < frames; i++) { wind_add(&g_mixf[i * 2], &g_mixf[i * 2 + 1]);
+                                            siren_add(&g_mixf[i * 2], &g_mixf[i * 2 + 1]); }
         audio_chain_process(&g_chain, g_mixf, frames, NUM_CHANNELS);
         for (int i = 0; i < frames * NUM_CHANNELS; i++) out[i] = (int16_t)(fclampf(g_mixf[i], -1.0f, 1.0f) * 32767.0f);
         SDL_UnlockMutex(g_mutex);
@@ -281,6 +324,7 @@ static void audio_callback(void *userdata, Uint8 *stream, int len) {
     for (int i = 0; i < frames; i++) {
         float wl = 0.0f, wr = 0.0f;
         wind_add(&wl, &wr);
+        siren_add(&wl, &wr);
         out[i * 2]     = (int16_t)(fclampf(out[i * 2]     / 32767.0f + wl, -1.0f, 1.0f) * 32767.0f);
         out[i * 2 + 1] = (int16_t)(fclampf(out[i * 2 + 1] / 32767.0f + wr, -1.0f, 1.0f) * 32767.0f);
     }
@@ -317,11 +361,12 @@ static void spatial_gains(float sx, float sy, float sz,
 
 /* ── Voice dispatch ──────────────────────────────────────────────────────── */
 
-static void play_sound(int snd_id, float lgain, float rgain) {
+/* start_voice -- the dispatch, assuming the caller already holds g_mutex. Split out of play_sound so the
+ * audio callback (which holds the lock for the whole buffer) can start a thunder rumble without deadlocking
+ * on a second lock. */
+static void start_voice(int snd_id, float lgain, float rgain) {
     if (snd_id < 0 || snd_id >= MAX_SOUNDS) return;
     if (!g_snd[snd_id].buf) return;
-
-    SDL_LockMutex(g_mutex);
     /* Find a free voice; steal the furthest-along if all busy */
     int slot = -1;
     int best_pos = -1;
@@ -334,6 +379,12 @@ static void play_sound(int snd_id, float lgain, float rgain) {
     g_voices[slot].lgain  = lgain;
     g_voices[slot].rgain  = rgain;
     g_voices[slot].active = 1;
+}
+
+static void play_sound(int snd_id, float lgain, float rgain) {
+    if (!g_dev || !g_mutex) return;
+    SDL_LockMutex(g_mutex);
+    start_voice(snd_id, lgain, rgain);
     SDL_UnlockMutex(g_mutex);
 }
 
@@ -502,7 +553,7 @@ void audio_init(void) {
         free(body.buf); free(fizz.buf); free(stamp.buf); free(knock.buf);
     }
 
-    /* 16: thunder. Held until its travel time is up -- see audio_play_thunder/audio_thunder_pump. */
+    /* 16: thunder. Held until its travel time is up -- see audio_play_thunder/thunder_service. */
     g_snd[16] = synth_thunder();
 
     {
@@ -521,6 +572,14 @@ void audio_init(void) {
     g_wind_bright = g_wind_bright_target = 0.25f;
     g_wind_pan = g_wind_pan_target = 0.0f;
     g_wind_lp = 0.0f;
+
+    /* the siren is silent until a host calls audio_set_siren -- a host with no sirens gets the mix it had */
+    g_siren_kind = SIREN_KIND_SILENT;
+    g_siren_hz = g_siren_hz_target = 690.0f;
+    g_siren_gain = g_siren_gain_target = 0.0f;
+    g_siren_pan = g_siren_pan_target = 0.0f;
+    g_siren_phase = 0.0;
+    memset(g_thunder, 0, sizeof(g_thunder));
 
     SDL_PauseAudioDevice(g_dev, 0); /* start playback */
     SDL_Log("[audio] initialized: %d Hz stereo, %d sound buffers", SAMPLE_RATE, MAX_SOUNDS);
@@ -607,7 +666,9 @@ void audio_set_wind(float gain, float bright, float pan) {
 
 /* Thunder: see g_thunder at the top of this file for the queue's own policy. */
 void audio_play_thunder(int delay_ms, float gain, float pan) {
-    if (!g_dev) return;
+    if (!g_dev || !g_mutex) return;
+    if (delay_ms < 0) delay_ms = 0;
+    if (delay_ms > 60000) delay_ms = 60000;
     int slot = -1;
     for (int i = 0; i < THUNDER_QUEUE; i++) {
         if (!g_thunder[i].waiting) { slot = i; break; }
@@ -617,21 +678,36 @@ void audio_play_thunder(int delay_ms, float gain, float pan) {
         slot = THUNDER_QUEUE - 1;
     }
     g_thunder[slot].waiting = 1;
-    g_thunder[slot].due_ms = (int)SDL_GetTicks() + (delay_ms > 0 ? delay_ms : 0);
+    g_thunder[slot].frames_left = (delay_ms * SAMPLE_RATE) / 1000;
     g_thunder[slot].gain = fclampf(gain, 0.0f, 1.0f);
     g_thunder[slot].pan = fclampf(pan, -1.0f, 1.0f);
 }
 
-void audio_thunder_pump(void) {
-    if (!g_dev || !g_mutex) return;
-    int now = (int)SDL_GetTicks();
+/* Called from the audio callback with the lock held: count each waiting strike down by this buffer and start
+ * the ones whose time is up. Sample-accurate by construction -- no clock to read, nothing to drift. */
+static void thunder_service(int frames) {
     for (int i = 0; i < THUNDER_QUEUE; i++) {
-        if (!g_thunder[i].waiting || now < g_thunder[i].due_ms) continue;
+        if (!g_thunder[i].waiting) continue;
+        g_thunder[i].frames_left -= frames;
+        if (g_thunder[i].frames_left > 0) continue;
         g_thunder[i].waiting = 0;
         float p = g_thunder[i].pan;
-        play_sound(16, g_thunder[i].gain * (p > 0.0f ? 1.0f - p : 1.0f),
-                       g_thunder[i].gain * (p < 0.0f ? 1.0f + p : 1.0f));
+        start_voice(16, g_thunder[i].gain * (p > 0.0f ? 1.0f - p : 1.0f),
+                        g_thunder[i].gain * (p < 0.0f ? 1.0f + p : 1.0f));
     }
+}
+
+/* The siren voice. kind is a SIREN_KIND_* (0 silences it, with the gain ramping down rather than cutting),
+ * hz_milli the frequency PARENA's siren rules resolved for this frame, gain 0..1 and pan -1..1. Stores
+ * targets only, so it is safe to call from a render loop while the audio thread is mixing. */
+void audio_set_siren(int kind, int hz_milli, float gain, float pan) {
+    if (!g_dev || !g_mutex) return;
+    SDL_LockMutex(g_mutex);
+    g_siren_kind = kind;
+    g_siren_hz_target = (hz_milli > 0) ? (float)hz_milli * 0.001f : g_siren_hz_target;
+    g_siren_gain_target = fclampf(gain, 0.0f, 1.0f);
+    g_siren_pan_target = fclampf(pan, -1.0f, 1.0f);
+    SDL_UnlockMutex(g_mutex);
 }
 
 int audio_clip_load(const char *wav_path) {

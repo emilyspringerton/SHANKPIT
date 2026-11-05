@@ -193,6 +193,11 @@ enum {
     LEVEL_VEHICLE_RECON,
     LEVEL_VEHICLE_FLY,
     LEVEL_VEHICLE_PLANE,
+    /* A police rocket car (2026-11-05): the same airframe and air tank as LEVEL_VEHICLE_ROCKET, but in
+       livery, with a siren that goes off on boost or hover (PARENA siren_rules.prn). Appended LAST so
+       every existing kind number -- and every level, wire message and editor dropdown that already
+       speaks them -- keeps its meaning. */
+    LEVEL_VEHICLE_POLICE,
     LEVEL_VEHICLE_KIND_COUNT
 };
 /* PROVENANCE -- where a car came from (the founder's "vehicles of questionable origin"). The garage
@@ -218,7 +223,7 @@ static inline int level_boxes_vehicle_origin_from_name(const char *s) {
     return LEVEL_VEHICLE_ORIGIN_CIVILIAN;
 }
 static const char *const LEVEL_VEHICLE_KIND_NAMES[LEVEL_VEHICLE_KIND_COUNT] = {
-    "buggy", "rocket", "heli", "recon", "fly", "plane"
+    "buggy", "rocket", "heli", "recon", "fly", "plane", "police"
 };
 /* Human-friendly aliases: the words a person actually types into a wall's name. Anything else is a
    buggy, which is the old default and the harmless one (never invent a helicopter). */
@@ -232,6 +237,8 @@ static inline int level_boxes_vehicle_kind_from_name(const char *s) {
     if (strcmp(s, "drone") == 0 || strcmp(s, "recon_drone") == 0) return LEVEL_VEHICLE_RECON;
     if (strcmp(s, "mini") == 0 || strcmp(s, "mini_fly") == 0 || strcmp(s, "micro") == 0) return LEVEL_VEHICLE_FLY;
     if (strcmp(s, "rocket_car") == 0) return LEVEL_VEHICLE_ROCKET;
+    if (strcmp(s, "police_car") == 0 || strcmp(s, "cop") == 0 || strcmp(s, "cruiser") == 0)
+        return LEVEL_VEHICLE_POLICE;
     return LEVEL_VEHICLE_BUGGY;
 }
 static inline const char *level_boxes_vehicle_kind_name(int kind) {

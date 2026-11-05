@@ -4049,6 +4049,10 @@ static inline void simulate_rocket_car_state(BuggyState *b, float throttle, floa
        the car leaves the surface the way BR's car does) and pay 26/s out of the tank; released, the
        spring catches it again and settles it back down. */
     const int lifting = (lift > 0.02f && b->tank > 0);
+    /* THE SIREN'S TWO KEYS (founder: "when you are boosting or hitting space for hover the siren is
+       triggered by those things"). This records the COMMAND only; siren_rules.prn decides whether a
+       police car sounds, and which siren, so the rule is not copied into the integration. */
+    b->siren = (b->police && (boost || lifting)) ? 1 : 0;
     if (lifting) b->tank = phys_rocket_tank_step(b->tank, phys_rocket_lift_drain(dts_milli));
     float err_milli = (rest - b->y) * 1000.0f;
     float fan = (b->tank > 0) ? 1.0f : 0.0f;
@@ -4088,6 +4092,7 @@ static inline void simulate_buggy_state_ex(BuggyState *b, float throttle, float 
                                            float lift, int boost) {
     if (!b || !b->active) return;
     if (b->rocket) { simulate_rocket_car_state(b, throttle, steer, dt, apply_input, lift, boost); return; }
+    b->siren = 0;   /* an ordinary buggy has no siren, whatever the last car in this slot was */
 
     if (throttle > 1.0f) throttle = 1.0f;
     if (throttle < -1.0f) throttle = -1.0f;

@@ -46,6 +46,7 @@
    the human baseline, order priorities). */
 #include "../../../packages/simulation/empire_rules_host.h"
 #include "../../../packages/audio/wind_audio_rules.h" /* PARENA weather_audio_rules.prn */
+#include "../../../packages/simulation/siren_rules.h"   /* PARENA siren_rules.prn */
 #include "../../../packages/simulation/empire_units_rules_host.h"
 /* Lab stations: labst_reach_tenths was also an implicit declaration in the Windows build. */
 #include "../../../packages/simulation/lab_station_host.h"
@@ -7657,15 +7658,23 @@ static void rc_face(const float *p0, const float *p1, const float *p2, const flo
     glEnd();
 }
 
-/* body-pal (br_mesh.prn): 1 paint, 2 paint darker, 3 glass, 4 carbon */
+/* body-pal (br_mesh.prn): 1 paint, 2 paint darker, 3 glass, 4 carbon.
+ * POLICE livery (2026-11-05): white body, near-black roof, so a cruiser is identifiable from behind at
+ * patrol distance without a second model -- the same airframe, which is the whole point of a variant. */
+static int g_rc_police;
 static void rc_body_col(int s, int k, float *r, float *g, float *b) {
     if (k == 5) { *r = 0.09f; *g = 0.09f; *b = 0.10f; return; }            /* the underside */
-    if (k == 0 || k == 4) { *r = 0.30f; *g = 0.05f; *b = 0.05f; return; }  /* the sills */
+    if (k == 0 || k == 4) {
+        if (g_rc_police) { *r = 0.10f; *g = 0.11f; *b = 0.14f; return; }   /* police sills: black */
+        *r = 0.30f; *g = 0.05f; *b = 0.05f; return;                       /* the sills */
+    }
     if (k == 2) {                                                         /* the top */
         if (s == 2 || s == 4) { *r = 0.11f; *g = 0.13f; *b = 0.17f; return; }  /* windscreen, rear window */
+        if (g_rc_police) { *r = 0.06f; *g = 0.07f; *b = 0.10f; return; }  /* roof: the black half */
         *r = 0.66f; *g = 0.12f; *b = 0.10f; return;                       /* hood, roof, deck */
     }
     if (s >= 2 && s <= 4) { *r = 0.11f; *g = 0.13f; *b = 0.17f; return; }  /* the side windows */
+    if (g_rc_police) { *r = 0.92f; *g = 0.93f; *b = 0.95f; return; }      /* police paint: white */
     *r = 0.66f; *g = 0.12f; *b = 0.10f;
 }
 
@@ -7691,7 +7700,7 @@ static void rc_section_face(int s, int k0, int k1, int k2, int k3, float r, floa
 }
 
 static void draw_rocket_car_model(const BuggyState *b) {
-    (void)b;
+    g_rc_police = (b && b->police) ? 1 : 0;
     const GLboolean lit_was_on = glIsEnabled(GL_LIGHTING); /* same save/restore as the other vehicles */
     glDisable(GL_LIGHTING);
     glDisable(GL_TEXTURE_2D);
@@ -7739,6 +7748,26 @@ static void draw_rocket_car_model(const BuggyState *b) {
         glVertex3f( 0.60f * RC_SCALE, 0.0f, -0.90f * RC_SCALE);
         glVertex3f(-0.60f * RC_SCALE, 0.0f, -0.90f * RC_SCALE);
         glEnd();
+        glPopMatrix();
+    }
+
+    /* POLICE lightbar: two pods on the roof, red and blue, with a housing between them. The SIREN itself is
+       audio (PARENA siren_rules.prn); this is the affordance that says which car is making the noise. */
+    if (g_rc_police) {
+        glColor3f(0.08f, 0.08f, 0.09f);
+        glPushMatrix();
+        glTranslatef(0.0f, 1.62f * RC_SCALE, 0.30f * RC_SCALE);
+        draw_box_solid(2.90f * RC_SCALE, 0.26f * RC_SCALE, 0.55f * RC_SCALE);
+        glPopMatrix();
+        glColor3f(0.95f, 0.12f, 0.10f);
+        glPushMatrix();
+        glTranslatef(-1.05f * RC_SCALE, 1.80f * RC_SCALE, 0.30f * RC_SCALE);
+        draw_box_solid(0.85f * RC_SCALE, 0.22f * RC_SCALE, 0.42f * RC_SCALE);
+        glPopMatrix();
+        glColor3f(0.18f, 0.34f, 0.98f);
+        glPushMatrix();
+        glTranslatef(1.05f * RC_SCALE, 1.80f * RC_SCALE, 0.30f * RC_SCALE);
+        draw_box_solid(0.85f * RC_SCALE, 0.22f * RC_SCALE, 0.42f * RC_SCALE);
         glPopMatrix();
     }
 
@@ -15304,7 +15333,33 @@ void draw_scene(PlayerState *render_p) {
                                        weather_thunder_gain_permille(bolt_dist, storm_pm) / 1000.0f,
                                        weather_wind_pan_permille(bolt_deg, yaw_deg) / 1000.0f);
                 }
-                audio_thunder_pump();
+            }
+
+            /* SIRENS (PARENA siren_rules.prn). One voice, because that is what a listener hears: the
+               loudest siren near them. Police cars are the only source -- a civilian car never sounds
+               one, whatever the driver does -- and a car's own siren is loudest of all when it is yours.
+               The kind comes from the rule (boost or hover, or a moving unmanned cruiser), the tone from
+               siren-hz-milli, and the pan from the same shortest-way-round rule the wind bed uses. */
+            {
+                int best_kind = 0;
+                float best_gain = 0.0f, best_pan = 0.0f;
+                for (int vi = 0; vi < MAX_BUGGIES; vi++) {
+                    const BuggyState *vb = &local_state.buggies[vi];
+                    if (!vb->active || !vb->police) continue;
+                    float dx = vb->x - listener->x, dz = vb->z - listener->z;
+                    float dist = sqrtf(dx * dx + dz * dz);
+                    int spd_pm = (int)((fabsf(vb->vx) + fabsf(vb->vz)) * 100.0f);
+                    int kind = siren_trigger(vb->police, vb->siren, 0, spd_pm);
+                    if (kind == SIREN_KIND_SILENT) continue;
+                    float g = (float)siren_gain_permille((int)(dist + 0.5f), spd_pm) / 1000.0f;
+                    if (g <= best_gain) continue;
+                    int bdeg = (int)(atan2f(dx, dz) * 57.29578f);
+                    if (bdeg < 0) bdeg += 360;
+                    best_kind = kind;
+                    best_gain = g;
+                    best_pan = (float)siren_pan_permille(bdeg, yaw_deg) / 1000.0f;
+                }
+                audio_set_siren(best_kind, siren_hz_milli(best_kind, (int)now_ms), best_gain, best_pan);
             }
         }
         sky_weather_draw(&g_sky_weather);
