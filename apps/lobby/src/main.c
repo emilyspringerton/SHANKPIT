@@ -13835,6 +13835,32 @@ static void client_load_queue_level(void) {
     client_load_queue_level_id(found_id);
 }
 
+// BUILT-IN MAP WALLS (2026-11-05): the custom-level path federates the level's authored boxes to AI sight
+// (level_boxes_apply_to_physics); the built-in scenes have no level file, so they kept open sightlines and a
+// clerk in the garage could shoot through its outer wall. They DO have geometry -- physics' own map_geo_*
+// arrays, the ones collision and hitscan already use -- so a scene change installs those, exactly as the
+// server does (server_install_builtin_sight). SCENE_CUSTOM_LEVEL is skipped: that path has already installed
+// its authored boxes and this would overwrite them with whatever phys_set_scene left behind.
+// The PATROL LANES are cleared at the same moment, and for the same reason: a lane is a copy of the level
+// that authored it, so leaving a custom level without clearing it would send cruisers down a road that now
+// belongs to a garage. Cleared rather than left stale, and the built-in ring fallback takes over.
+static void lobby_install_builtin_sight(int scene_id) {
+    for (int id = 0; id < POLICE_PATROL_MAX; id++) police_patrol_clear_lane(id);
+    if (scene_id == SCENE_CUSTOM_LEVEL) return;
+    static SightBox sight[LEVEL_BOXES_MAX];
+    int n = 0;
+    const Box *boxes = phys_scene_boxes(&n);
+    if (!boxes || n <= 0) { story_ai_set_sight(NULL, 0); return; }
+    int sn = n < LEVEL_BOXES_MAX ? n : LEVEL_BOXES_MAX;
+    for (int si = 0; si < sn; si++) {
+        sight[si].x = boxes[si].x; sight[si].y = boxes[si].y; sight[si].z = boxes[si].z;
+        sight[si].w = boxes[si].w; sight[si].h = boxes[si].h; sight[si].d = boxes[si].d;
+        sight[si].solid = 1;
+    }
+    story_ai_set_sight(sight, sn);
+    SDL_Log("[LEVEL] built-in scene %d: %d collision box(es) federated to AI sight", scene_id, sn);
+}
+
 static void client_apply_scene_id(int scene_id, unsigned int now_ms) {
     if (scene_id < 0) return;
     if (local_state.scene_id != scene_id) {
@@ -13850,6 +13876,7 @@ static void client_apply_scene_id(int scene_id, unsigned int now_ms) {
         client_prefetch_bullet_holes(); // founder 2026-10-01 -- same off-gameplay checkpoint, once per process
         client_prefetch_default_spray(); // S459-74 -- real, off-input-path resolve, every scene entry (cheap no-op once resolved)
         phys_set_scene(scene_id);
+        lobby_install_builtin_sight(scene_id);   /* built-in walls + stale-lane clear, see above */
         travel_overlay_until_ms = now_ms + 500;
         for (int i = 0; i < MAX_PROJECTILES; i++) {
             local_state.projectiles[i].active = 0;

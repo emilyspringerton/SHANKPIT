@@ -3,6 +3,8 @@
 #include "audio_chain.h"
 #include "../simulation/siren_rules.h"   /* SIREN_KIND_SILENT: the kinds are PARENA's, not this file's */
 #include "siren_dsp.h"                   /* the oscillator, header-only so it can be measured offline */
+#include "wind_dsp.h"                    /* the bed's filter/smoothing/pan law, same reason */
+#include "thunder_dsp.h"                 /* the rumble's five seconds, same reason */
 #include <SDL2/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -59,10 +61,10 @@ static float          g_mixf[CHAIN_MAX_FRAMES * NUM_CHANNELS];
 #define WIND_FADE_FRAMES (SAMPLE_RATE / 2)   /* crossfaded so the 4 s loop joins without a click */
 static SoundBuf g_wind;
 static int      g_wind_pos;
-static float    g_wind_gain, g_wind_gain_target;
-static float    g_wind_bright, g_wind_bright_target;
-static float    g_wind_pan, g_wind_pan_target;
-static float    g_wind_lp;
+/* The SHAPING lives in wind_dsp.h: gain, brightness and pan smoothing, the brightness one-pole and the
+ * one-sided pan law. It is the part that can be measured with no device (wind_dsp_test.c), so it is the part
+ * that is not in this file. What stays here is the buffer and its read position. */
+static WindDsp  g_wind_dsp;
 
 /* Thunder's whole character is that it ARRIVES LATE: a strike is SEEN first and HEARD later. A host
  * pushes one when SkyWeather counts a bolt, the delay comes from PARENA's travel-time curve, and this
@@ -201,31 +203,19 @@ static SoundBuf synth_wind_loop(void) {
     return b;
 }
 
-/* Thunder: a crack at the near end and a long rolling rumble under it. Five seconds, so a close strike
- * still has a tail when the next one lands. The tumble comes from three overlapping swells of the SAME
- * low-passed noise -- the first hard on the strike, two more at 1.5 s and 3.1 s -- rather than from a
- * reverb this engine does not have. Nothing about the level is baked in: loudness and delay arrive from
+/* Thunder: a crack at the near end and a long rolling rumble under it. The generator itself is
+ * thunder_dsp.h -- a pure fill function, so its decay and its peak can be measured offline
+ * (thunder_dsp_test.c) instead of only guessed at. Five seconds, so a close strike still has a tail when the
+ * next one lands. Nothing about the level is baked in: loudness and delay arrive from
  * weather_audio_rules.prn, so a distant strike is the same sound, quieter and late. */
 static SoundBuf synth_thunder(void) {
-    int n = SAMPLE_RATE * 5;
+    int n = SAMPLE_RATE * THUNDER_DSP_SECONDS;
     SoundBuf b = buf_alloc(n);
-    uint32_t rng = 0x7A11B00Bu;
-    float lp = 0.0f, lp2 = 0.0f;
-    for (int i = 0; i < n; i++) {
-        float t = (float)i / (float)n;
-        rng = rng * 1664525u + 1013904223u;
-        float nz = (float)(int32_t)rng / 2147483648.0f;
-        lp  += (nz - lp) * 0.055f;    /* the body of the roll */
-        lp2 += (lp - lp2) * 0.004f;   /* the sub-bass under it */
-        float d1 = t - 0.05f, d2 = t - 0.30f, d3 = t - 0.62f;
-        float env = expf(-t * 22.0f)
-                  + 0.80f * expf(-d2 * d2 * 220.0f)
-                  + 0.45f * expf(-d3 * d3 * 150.0f);
-        float hiss = (nz - lp) * expf(-t * 90.0f) * 0.5f;   /* the crack, gone in a fraction of a second */
-        float s = ((lp2 * 1.7f + lp * 0.35f) * env + hiss) * 0.85f;
-        (void)d1;
-        buf_write(&b, i, s, s);
-    }
+    float *tmp = (float *)calloc((size_t)n * 2, sizeof(float));
+    if (!tmp) return b;
+    thunder_dsp_fill(tmp, n, SAMPLE_RATE);
+    for (int i = 0; i < n; i++) buf_write(&b, i, tmp[i * 2], tmp[i * 2 + 1]);
+    free(tmp);
     return b;
 }
 
@@ -238,15 +228,10 @@ static void wind_add(float *dl, float *dr) {
     if (!g_wind.buf || g_wind.len <= 0) return;
     float raw = (float)g_wind.buf[g_wind_pos * 2] / 32767.0f;
     if (++g_wind_pos >= g_wind.len) g_wind_pos = 0;
-    float coeff = 0.05f + 0.40f * g_wind_bright;
-    g_wind_lp += (raw - g_wind_lp) * coeff;
-    g_wind_gain   += (g_wind_gain_target   - g_wind_gain)   * 0.0012f;
-    g_wind_bright += (g_wind_bright_target - g_wind_bright) * 0.0012f;
-    g_wind_pan    += (g_wind_pan_target    - g_wind_pan)    * 0.0012f;
-    float p = g_wind_pan;
-    float amp = g_wind_gain * 0.9f;
-    *dl += g_wind_lp * amp * (p > 0.0f ? 1.0f - p : 1.0f);
-    *dr += g_wind_lp * amp * (p < 0.0f ? 1.0f + p : 1.0f);
+    float wl = 0.0f, wr = 0.0f;
+    wind_dsp_frame(&g_wind_dsp, raw, &wl, &wr);
+    *dl += wl;
+    *dr += wr;
 }
 
 /* One frame of the siren, added to the caller's stereo accumulator. A siren is a TONE, not a buffer: the
@@ -556,10 +541,7 @@ void audio_init(void) {
        weather gets exactly the mix it had before (this is the only ambient voice in the engine) */
     g_wind = synth_wind_loop();
     g_wind_pos = 0;
-    g_wind_gain = g_wind_gain_target = 0.0f;
-    g_wind_bright = g_wind_bright_target = 0.25f;
-    g_wind_pan = g_wind_pan_target = 0.0f;
-    g_wind_lp = 0.0f;
+    wind_dsp_init(&g_wind_dsp);
 
     /* the siren is silent until a host calls audio_set_siren -- a host with no sirens gets the mix it had */
     siren_dsp_init(&g_siren);
@@ -642,9 +624,7 @@ void audio_play_magistrate(int kind, float sx, float sy, float sz,
 void audio_set_wind(float gain, float bright, float pan) {
     if (!g_dev || !g_mutex) return;
     SDL_LockMutex(g_mutex);
-    g_wind_gain_target   = fclampf(gain, 0.0f, 1.0f);
-    g_wind_bright_target = fclampf(bright, 0.0f, 1.0f);
-    g_wind_pan_target    = fclampf(pan, -1.0f, 1.0f);
+    wind_dsp_set(&g_wind_dsp, gain, bright, pan);
     SDL_UnlockMutex(g_mutex);
 }
 

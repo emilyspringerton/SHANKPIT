@@ -6,12 +6,12 @@
 #
 #   make regen-wind-audio-rules   regenerate the C from a sibling ../PARENA checkout
 #   make check-wind-audio-rules   fail if the checked-in generated file is stale vs the .prn
-#   make test-wind-audio          the curves, headless (no device)
+#   maketest-wind-audio          the curves, headless (no device)
 #   make test-line-of-sight       the segment-vs-box query, headless
 PARENA_DIR ?= ../PARENA
 WIND_AUDIO_PRN := $(PARENA_DIR)/stdlib/shankpit/weather_audio_rules.prn
 
-.PHONY: regen-wind-audio-rules check-wind-audio-rules test-wind-audio test-line-of-sight
+.PHONY: regen-wind-audio-rules check-wind-audio-rulestest-wind-audio test-line-of-sight
 
 regen-wind-audio-rules:
 	@test -x $(PARENA_DIR)/parena || $(MAKE) -C $(PARENA_DIR) build >/dev/null
@@ -30,6 +30,20 @@ test-wind-audio: | $(BIN_DIR)
 
 # test-line-of-sight -- the query body ONLY. The behaviour that consumes it (a clerk that cannot see
 # through the courthouse, a scorch that cannot burn through a bench) is test-municipal-defense's job.
+# test-wind-dsp / test-thunder-dsp -- the ambient voices rendered OFFLINE, the same trick as test-siren-dsp:
+# no device, no SDL, no lock. The wind test measures the shaping law alone (brightness opens the filter, the
+# bed swells rather than clicks, hard right is one-sided, full gain stays under the rails); the thunder test
+# measures a strike's front-loaded decay, its determinism and its peak.
+test-wind-dsp: | $(BIN_DIR)
+	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/audio \
+		packages/audio/wind_dsp_test.c -o $(BIN_DIR)/wind_dsp_test $(LIBS_M)
+	./$(BIN_DIR)/wind_dsp_test
+
+test-thunder-dsp: | $(BIN_DIR)
+	$(CC) -std=gnu99 -O1 -Wall -Wextra -Werror -Ipackages/audio \
+		packages/audio/thunder_dsp_test.c -o $(BIN_DIR)/thunder_dsp_test $(LIBS_M)
+	./$(BIN_DIR)/thunder_dsp_test
+
 # test-builtin-sight -- the built-in maps' own collision boxes, handed to the sight test. physics.h drags
 # its bot hooks in, so the test stubs them (the same convention the other physics tests use).
 test-builtin-sight: | $(BIN_DIR)
