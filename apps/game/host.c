@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "event_log.h"
 #include "net_transport.h"
@@ -96,6 +97,8 @@ typedef struct __attribute__((packed)) {
     uint16_t level;
     uint16_t mod;
     uint16_t pad;
+    uint32_t token_lo;
+    uint32_t token_hi;
 } NetModRequest;
 
 typedef struct __attribute__((packed)) {
@@ -112,13 +115,15 @@ typedef struct __attribute__((packed)) {
     uint8_t type;
     uint8_t slot;
     uint16_t pad;
+    uint32_t token_lo;
+    uint32_t token_hi;
 } NetWelcome;
 
 _Static_assert(sizeof(NetLevelMod) == 8, "NetLevelMod must match net_level_mod_bytes()");
 _Static_assert(sizeof(NetLevelMods) == 72, "NetLevelMods must match net_level_mods_size()");
-_Static_assert(sizeof(NetModRequest) == 12, "NetModRequest must match net_mod_request_size()");
+_Static_assert(sizeof(NetModRequest) == 20, "NetModRequest must match net_mod_request_size()");
 _Static_assert(sizeof(NetCaps) == 12, "NetCaps must match net_caps_size()");
-_Static_assert(sizeof(NetWelcome) == 8, "NetWelcome must match net_welcome_size()");
+_Static_assert(sizeof(NetWelcome) == 16, "NetWelcome must match net_welcome_size()");
 
 /* ---- bodies ------------------------------------------------------------------------------------ */
 typedef struct {
@@ -162,6 +167,8 @@ static int g_in_fwd, g_in_strafe, g_in_fire;
 static int g_is_host, g_is_client;
 static NetAddr g_peer;  /* client only: the server this process joined */
 static int g_peer_known; /* client only: g_peer is usable */
+static uint64_t g_server_token; /* client only: the token from the latest welcome */
+static int g_server_token_known;
 
 /* The server's peer table. Address is the identity; the slot is assigned by the server and sent back
  * in a welcome packet, so two clients cannot claim the same body. Caps and interest are per peer. */
@@ -173,10 +180,20 @@ typedef struct {
     int level;
     int rows;
     int last_seen;
+    uint64_t token;         /* opaque per-peer capability, issued in WELCOME */
+    unsigned int order;     /* join order, used by the `owner` request policy */
+    int mod_next_ms;        /* earliest wall-clock time another request can be accepted */
+    unsigned int mod_requests; /* authenticated requests that passed policy */
+    unsigned int mod_refused;  /* refused requests from this peer */
 } NetPeer;
 
 static NetPeer g_peers[MAXB];
 static int g_peer_count;
+static int g_peer_order;
+static int g_mod_policy;
+static unsigned int g_mod_requests;
+static unsigned int g_mod_refused;
+static uint64_t g_token_state;
 static int g_slot_known; /* client only: welcome assigned our body slot */
 static int g_net_acc;
 static int g_net_seq;
@@ -186,6 +203,8 @@ static int g_net_seq;
 static int g_request_mod;
 static int g_request_on;
 static int g_request_sent;
+static uint64_t g_request_token;
+static int g_request_token_set; /* test/debug override: send a deliberately wrong token */
 static int g_caps_sent;
 static int g_snapshots_received;
 
@@ -552,6 +571,55 @@ static NetPeer *net_peer_find(const NetAddr *from) {
     return NULL;
 }
 
+/* A per-peer capability, not a password: 64 mixed bits seeded from the clock and the peer address.
+ * It is issued in WELCOME and must come back on a mod request, so a datagram that merely spoofs the
+ * source address cannot change the level. */
+static uint64_t net_token_mix(uint64_t z) {
+    z += UINT64_C(0x9E3779B97F4A7C15);
+    z = (z ^ (z >> 30)) * UINT64_C(0xBF58476D1CE4E5B9);
+    z = (z ^ (z >> 27)) * UINT64_C(0x94D049BB133111EB);
+    return z ^ (z >> 31);
+}
+
+static uint64_t net_peer_token_new(const NetAddr *from) {
+    uint64_t seed, token;
+    if (g_token_state == 0) {
+        seed = ((uint64_t)(unsigned long)time(NULL) << 32) ^
+               (uint64_t)(unsigned long)clock();
+        seed ^= ((uint64_t)from->addr << 17) ^ (uint64_t)from->port;
+        g_token_state = seed ? seed : UINT64_C(0x5A17C0DE12345678);
+    }
+    g_token_state += UINT64_C(0x9E3779B97F4A7C15);
+    token = net_token_mix(g_token_state ^ ((uint64_t)from->addr << 32) ^ (uint64_t)from->port);
+    return token ? token : UINT64_C(1);
+}
+
+static uint64_t net_token_from_wire(uint32_t lo, uint32_t hi) {
+    return (uint64_t)lo | ((uint64_t)hi << 32);
+}
+
+/* The earliest peer still sending traffic. A disconnected client stops being the owner after the
+ * same stale window the rest of the peer table uses, so the session does not lock to a dead slot. */
+static NetPeer *net_peer_owner(void) {
+    NetPeer *owner = NULL;
+    int stale_ticks = net_stale_ms() / loop_tick_ms();
+    int i;
+    for (i = 0; i < net_max_peers() && i < MAXB; i++) {
+        NetPeer *p = &g_peers[i];
+        if (!p->used) continue;
+        if (g_tick - p->last_seen > stale_ticks) continue;
+        if (!owner || p->order < owner->order) owner = p;
+    }
+    return owner;
+}
+
+static const char *net_mod_policy_name(int policy) {
+    if (policy == net_mod_policy_off()) return "off";
+    if (policy == net_mod_policy_owner()) return "owner";
+    if (policy == net_mod_policy_peer()) return "peer";
+    return "invalid";
+}
+
 static void net_peer_drop_body(NetPeer *p) {
     if (p->slot < 0 || p->slot >= MAXB) return;
     if (g_bodies[p->slot].used && !g_bodies[p->slot].bot) memset(&g_bodies[p->slot], 0, sizeof(Body));
@@ -574,6 +642,9 @@ static NetPeer *net_peer_register(const NetAddr *from) {
         p->caps = lm_all_mask();
         p->level = net_interest_all();
         p->last_seen = g_tick;
+        p->token = net_peer_token_new(from);
+        p->order = (unsigned int)++g_peer_order;
+        p->mod_next_ms = 0;
         g_peer_count++;
         return p;
     }
@@ -597,6 +668,8 @@ static void net_send_welcome(const NetPeer *p) {
     w.magic = (uint32_t)net_magic();
     w.type = (uint8_t)net_packet_welcome();
     w.slot = (uint8_t)p->slot;
+    w.token_lo = (uint32_t)(p->token & UINT64_C(0xffffffff));
+    w.token_hi = (uint32_t)(p->token >> 32);
     net_transport_send(&p->addr, &w, (int)sizeof(w));
 }
 
@@ -607,7 +680,12 @@ static void net_open(int bind_port) {
     }
     memset(g_peers, 0, sizeof(g_peers));
     g_peer_count = 0;
+    g_peer_order = 0;
+    g_mod_requests = 0;
+    g_mod_refused = 0;
     g_slot_known = 0;
+    g_server_token = 0;
+    g_server_token_known = 0;
 }
 
 static void net_send_snapshot(void) {
@@ -698,15 +776,39 @@ static void net_host_recv(void) {
         }
 
         if (pkt.cmd.type == net_packet_mod_request()) {
+            NetPeer *owner;
+            uint64_t token;
+            int now_ms, is_owner;
             if (n != (ssize_t)sizeof(NetModRequest)) continue;
-            if (pkt.req.on > 1) continue;
-            if (level_mods_env((int)pkt.req.level) < 0) continue; /* only a live level */
-            p = net_peer_register(&from);
-            if (!p) continue;
+            /* No registration here: a request is only meaningful from a peer the server has already
+             * welcomed, because that is the only way it can have a token. */
+            p = net_peer_find(&from);
+            if (!p) {
+                g_mod_refused++;
+                continue;
+            }
             p->last_seen = g_tick;
-            /* Server authority: this applies through the same validated path a server-side update
-             * uses (mandatory modules refused by level_mods_request via level_mods_set). */
-            level_mods_set((int)pkt.req.level, (int)pkt.req.mod, (int)pkt.req.on);
+            token = net_token_from_wire(pkt.req.token_lo, pkt.req.token_hi);
+            owner = net_peer_owner();
+            is_owner = owner == p ? 1 : 0;
+            now_ms = (int)SDL_GetTicks();
+            if (!net_mod_request_authorized(g_mod_policy, is_owner, token == p->token,
+                                            now_ms, p->mod_next_ms)) {
+                p->mod_refused++;
+                g_mod_refused++;
+                continue;
+            }
+            /* Authenticated attempts consume the cooldown even when the level/module is bad, so a
+             * peer cannot use invalid requests as a free polling loop. */
+            p->mod_next_ms = now_ms + net_mod_request_cooldown_ms();
+            p->mod_requests++;
+            g_mod_requests++;
+            if (pkt.req.on > 1 || level_mods_env((int)pkt.req.level) < 0 ||
+                (p->level != net_interest_all() && (int)pkt.req.level != p->level) ||
+                !level_mods_set((int)pkt.req.level, (int)pkt.req.mod, (int)pkt.req.on)) {
+                p->mod_refused++;
+                g_mod_refused++;
+            }
             continue;
         }
 
@@ -764,8 +866,12 @@ static void net_recv_or_send(void) {
     }
 }
 
-static void net_apply_welcome(int slot) {
+static void net_apply_welcome(int slot, uint64_t token) {
     if (slot < net_first_client_slot() || slot >= MAXB) return;
+    if (token != 0) {
+        g_server_token = token;
+        g_server_token_known = 1;
+    }
     if (slot != g_local_slot) {
         Body moved = g_bodies[g_local_slot];
         memset(&g_bodies[g_local_slot], 0, sizeof(Body));
@@ -813,15 +919,20 @@ static void net_client_tick(void) {
         g_caps_sent = 1;
     }
 
-    /* One-shot: only after a snapshot proves the server has us as its peer. */
-    if (g_request_mod && !g_request_sent && g_snapshots_received > 0) {
+    /* One-shot: only after a welcome has issued the token and a snapshot proves the server has us as
+     * its peer. --request-token is a test/debug override for a deliberately bad credential. */
+    if (g_request_mod && !g_request_sent && g_snapshots_received > 0 &&
+        (g_server_token_known || g_request_token_set)) {
         NetModRequest req;
+        uint64_t token = g_request_token_set ? g_request_token : g_server_token;
         memset(&req, 0, sizeof(req));
         req.magic = (uint32_t)net_magic();
         req.type = (uint8_t)net_packet_mod_request();
         req.level = (uint16_t)g_level_id;
         req.mod = (uint16_t)g_request_mod;
         req.on = (uint8_t)(g_request_on ? 1 : 0);
+        req.token_lo = (uint32_t)(token & UINT64_C(0xffffffff));
+        req.token_hi = (uint32_t)(token >> 32);
         net_transport_send(&g_peer, &req, (int)sizeof(req));
         g_request_sent = 1;
     }
@@ -834,7 +945,8 @@ static void net_client_tick(void) {
 
         if (pkt.snap.type == net_packet_welcome()) {
             if (n != (ssize_t)sizeof(NetWelcome)) continue;
-            net_apply_welcome((int)pkt.welcome.slot);
+            net_apply_welcome((int)pkt.welcome.slot,
+                              net_token_from_wire(pkt.welcome.token_lo, pkt.welcome.token_hi));
             continue;
         }
 
@@ -1241,6 +1353,7 @@ int main(int argc, char **argv) {
     int caps = 0;
     int caps_set = 0;
 
+    g_mod_policy = net_mod_policy_owner();
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--headless") == 0 && i + 1 < argc) {
             headless = atoi(argv[++i]);
@@ -1270,6 +1383,19 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--request-mod") == 0 && i + 2 < argc) {
             g_request_mod = atoi(argv[++i]);
             g_request_on = atoi(argv[++i]) != 0;
+        } else if (strcmp(argv[i], "--request-token") == 0 && i + 1 < argc) {
+            /* Test/debug only: send this token instead of the one the welcome issued. */
+            g_request_token = strtoull(argv[++i], NULL, 0);
+            g_request_token_set = 1;
+        } else if (strcmp(argv[i], "--mod-policy") == 0 && i + 1 < argc) {
+            const char *v = argv[++i];
+            if (strcmp(v, "off") == 0) g_mod_policy = net_mod_policy_off();
+            else if (strcmp(v, "owner") == 0) g_mod_policy = net_mod_policy_owner();
+            else if (strcmp(v, "peer") == 0) g_mod_policy = net_mod_policy_peer();
+            else {
+                fprintf(stderr, "shank_game: --mod-policy must be off, owner or peer\n");
+                return 2;
+            }
         } else if (strcmp(argv[i], "--capabilities") == 0 && i + 1 < argc) {
             /* Test/debug override: apply it after the registry reset, before any registration. */
             caps = atoi(argv[++i]);
@@ -1289,6 +1415,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "usage: %s [--host [port]] [--join ip [port]] [--start] [--ffa]"
                             " [--levels manifest.json] [--level N] [--event-log events.jsonl]"
                             " [--replay-events events.jsonl] [--request-mod MOD 0|1]"
+                            " [--request-token HEX] [--mod-policy off|owner|peer]"
                             " [--env surface|underground|moon] [--set-mod MOD 0|1]"
                             " [--capabilities MASK]"
                             " [--headless N] [--frames N --shot out.bmp]\n", argv[0]);
@@ -1400,7 +1527,8 @@ int main(int argc, char **argv) {
             }
             printf("headless %d ticks: target=%s net=%s mode=%d %s=%d score=%d hp=%d shield=%d"
                    " bodies=%d events=%d level=%d env=%d mods=%d rev=%d snapshots=%d peer=%d"
-                   " peers=%d peer_caps=%d peer_level=%d level_rows=%d slot=%d level_name=%s",
+                   " peers=%d peer_caps=%d peer_level=%d level_rows=%d slot=%d"
+                   " mod_policy=%s mod_requests=%u mod_refused=%u level_name=%s",
                    headless, build_profile_name(), build_profile_net_name(),
                    g_mode, g_mode == gp_mode_zombies() ? "wave" : "frags",
                    g_mode == gp_mode_zombies() ? g_wave + 1 : g_player_score,
@@ -1409,12 +1537,15 @@ int main(int argc, char **argv) {
                    level_mods_mask(g_level_id), level_mods_revision(g_level_id),
                    g_snapshots_received, g_is_host ? (g_peer_count > 0) : g_peer_known,
                    g_peer_count, first_caps, first_level, first_rows,
-                   g_is_client ? g_local_slot : first_slot, level_catalog_name(g_level_id));
+                   g_is_client ? g_local_slot : first_slot, net_mod_policy_name(g_mod_policy),
+                   g_mod_requests, g_mod_refused, level_catalog_name(g_level_id));
             for (pi = 0; pi < net_max_peers() && pi < MAXB; pi++) {
                 NetPeer *p = &g_peers[pi];
                 if (!p->used) continue;
-                printf(" p%d_slot=%d p%d_caps=%d p%d_level=%d p%d_rows=%d",
-                       pi, p->slot, pi, p->caps, pi, p->level, pi, p->rows);
+                printf(" p%d_slot=%d p%d_caps=%d p%d_level=%d p%d_rows=%d"
+                       " p%d_requests=%u p%d_refused=%u",
+                       pi, p->slot, pi, p->caps, pi, p->level, pi, p->rows,
+                       pi, p->mod_requests, pi, p->mod_refused);
             }
             printf("\n");
         }

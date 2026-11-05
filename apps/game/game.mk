@@ -42,8 +42,8 @@ CORE_PROFILE      ?= bp_target_native_core
 WASM_PROFILE      ?= bp_target_wasm_core
 
 .PHONY: game game-test game-smoke game-net-smoke game-level-relay-smoke game-level-request-smoke \
-        game-capped-client-smoke game-level-interest-smoke game-multi-peer-smoke game-clang game-llvm \
-        game-test-clang core core-smoke wasm wasm-smoke
+        game-mod-authority-smoke game-capped-client-smoke game-level-interest-smoke game-multi-peer-smoke \
+        game-clang game-llvm game-test-clang core core-smoke wasm wasm-smoke
 
 game: $(GAME_BIN)
 
@@ -167,7 +167,28 @@ game-level-request-smoke: $(GAME_BIN)
 	  CLIENT_STATUS=$$?; wait $$HOST_PID; HOST_STATUS=$$?; \
 	  cat /tmp/shank_request_host.log; cat /tmp/shank_request_client.log; \
 	  grep -q 'level=6 env=0 mods=27' /tmp/shank_request_client.log && \
+	  grep -q 'mod_policy=owner mod_requests=1 mod_refused=0' /tmp/shank_request_host.log && \
 	  test $$CLIENT_STATUS -eq 0 -a $$HOST_STATUS -eq 0
+
+# Request authority, both halves: a peer that sends packet 5 with the wrong token is refused, then a
+# peer with the welcome token is accepted. The server stays up across both clients and reports one
+# authenticated request and one refusal. `--mod-policy peer` isolates the token check from owner
+# selection, which `game-level-request-smoke` already covers.
+game-mod-authority-smoke: $(GAME_BIN)
+	@rm -f /tmp/shank_auth_host.log /tmp/shank_auth_bad.log /tmp/shank_auth_good.log
+	./$(GAME_BIN) --host 7798 --headless 700 --level 6 --env surface --mod-policy peer \
+	  > /tmp/shank_auth_host.log 2>&1 & \
+	  HOST_PID=$$!; sleep 1; \
+	  ./$(GAME_BIN) --join 127.0.0.1 7798 --headless 70 --level 6 --env surface \
+	    --request-mod 3 0 --request-token 0 > /tmp/shank_auth_bad.log 2>&1; \
+	  BAD_STATUS=$$?; sleep 0.4; \
+	  ./$(GAME_BIN) --join 127.0.0.1 7798 --headless 120 --level 6 --env surface \
+	    --request-mod 3 0 > /tmp/shank_auth_good.log 2>&1; \
+	  GOOD_STATUS=$$?; wait $$HOST_PID; HOST_STATUS=$$?; \
+	  cat /tmp/shank_auth_host.log; cat /tmp/shank_auth_bad.log; cat /tmp/shank_auth_good.log; \
+	  grep -q 'mod_policy=peer mod_requests=1 mod_refused=1' /tmp/shank_auth_host.log && \
+	  grep -q 'level=6 env=0 mods=27' /tmp/shank_auth_good.log && \
+	  test $$BAD_STATUS -eq 0 -a $$GOOD_STATUS -eq 0 -a $$HOST_STATUS -eq 0
 
 # A client that has only ported core sim + level (mask 3) joins a surface server (mask 31). The
 # client must finish at 3: the server's state crossed the wire, but the local capability clamp held.

@@ -222,15 +222,37 @@ static void test_net(void) {
     check(net_port() == 7777 && net_tick_ms() == 33, "port and snapshot cadence");
     check(net_packet_level_mods() == 4, "level mods are packet type 4");
     check(net_packet_mod_request() == 5, "mod requests are packet type 5");
-    check(net_mod_request_size() == 12, "a mod request fits one small datagram");
+    check(net_mod_request_size() == 20, "a mod request carries a per-peer token");
     check(net_packet_caps() == 6, "capability advertisements are packet type 6");
     check(net_caps_size() == 12, "a capability advertisement carries caps and a level");
-    check(net_packet_welcome() == 3 && net_welcome_size() == 8, "welcome names the assigned slot");
+    check(net_packet_welcome() == 3 && net_welcome_size() == 16,
+          "welcome names the assigned slot and issues a token");
     check(net_max_peers() == 4 && net_first_client_slot() == 8,
           "four client slots sit above seven bot slots");
     check(net_interest_match(net_interest_all(), 7) == 1, "interest 0 watches every level");
     check(net_interest_match(7, 7) == 1 && net_interest_match(7, 8) == 0,
           "a peer watching level 7 receives only level 7");
+    check(net_mod_policy_off() == 0 && net_mod_policy_owner() == 1 && net_mod_policy_peer() == 2,
+          "request policy ids are stable");
+    check(net_mod_policy_valid(net_mod_policy_off()) == 1 &&
+              net_mod_policy_valid(net_mod_policy_peer()) == 1 &&
+              net_mod_policy_valid(99) == 0,
+          "only known request policies are accepted");
+    check(net_mod_policy_allows(net_mod_policy_peer(), 0) == 1,
+          "peer policy admits any active peer");
+    check(net_mod_policy_allows(net_mod_policy_owner(), 1) == 1 &&
+              net_mod_policy_allows(net_mod_policy_owner(), 0) == 0,
+          "owner policy admits only the owner");
+    check(net_mod_policy_allows(net_mod_policy_off(), 1) == 0,
+          "off policy admits nobody");
+    check(net_mod_request_cooldown_ms() == 500, "one request per half second");
+    check(net_mod_request_authorized(net_mod_policy_peer(), 0, 1, 1000, 1000) == 1,
+          "a correctly tokened request inside policy is accepted");
+    check(net_mod_request_authorized(net_mod_policy_peer(), 0, 0, 1000, 1000) == 0 &&
+              net_mod_request_authorized(net_mod_policy_peer(), 0, 1, 1000, 1001) == 0 &&
+              net_mod_request_authorized(net_mod_policy_owner(), 0, 1, 1000, 1000) == 0 &&
+              net_mod_request_authorized(net_mod_policy_off(), 1, 1, 1000, 1000) == 0,
+          "bad token, rate, owner and off policy are all refused");
     check(net_level_mods_size() == 72, "level mods packet is one fixed datagram");
     check(net_level_mods_size() ==
               net_level_mods_header_bytes() + net_max_level_mods() * net_level_mod_bytes(),

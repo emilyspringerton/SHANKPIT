@@ -15,6 +15,8 @@
         net-cmd-size net-snapshot-size net-body-bytes net-header-bytes
         net-level-mod-bytes net-level-mods-header-bytes net-max-level-mods net-level-mods-size
         net-mod-request-size net-caps-size net-interest-match net-interest-all
+        net-mod-policy-off net-mod-policy-owner net-mod-policy-peer net-mod-policy-valid
+        net-mod-policy-allows net-mod-request-cooldown-ms net-mod-request-authorized
         net-welcome-size net-max-peers net-first-client-slot
         net-quant net-body-flags-alive net-body-flags-bot
         net-valid-mode net-valid-packet net-valid-body-count net-slot-valid
@@ -32,9 +34,10 @@
 (defn net-packet-cmd [] : I32 1)
 (defn net-packet-snapshot [] : I32 2)
 (defn net-packet-welcome [] : I32 3)
-;; welcome: u32 magic, u8 type, u8 slot, u16 pad = 8. The server assigns a client slot; the client
-;; echoes it in commands and uses it to recognise itself in snapshots.
-(defn net-welcome-size [] : I32 8)
+;; welcome: u32 magic, u8 type, u8 slot, u16 pad, u32 token-lo, u32 token-hi = 16. The server
+;; assigns a client slot and an opaque per-peer token; the client echoes the slot in commands and the
+;; token in its one authority-bearing packet type (mod request).
+(defn net-welcome-size [] : I32 16)
 
 ;; The server's live level-mod state. Absolute rows, like a snapshot: a dropped packet heals on the
 ;; next one, and a late joiner needs no handshake -- the next 30 Hz tick carries every live level's
@@ -43,12 +46,12 @@
 ;;   row:    u16 level, u16 mask, u16 revision, u16 pad = 8
 (defn net-packet-level-mods [] : I32 4)
 
-;; A client's request that one module change on one level. It is a REQUEST: the server validates the
-;; level/module and applies it through the same registry path a server-side update uses, then the next
-;; level-mods packet carries the result. Mandatory modules are refused by level_mods_request().
-;;   u32 magic, u8 type, u8 on, u16 level, u16 mod, u16 pad = 12
+;; A client's request that one module change on one level. It is a REQUEST: the server verifies the
+;; welcome token, applies its policy and rate limit, then validates the level/module through the same
+;; registry path a server-side update uses. Mandatory modules are refused by level_mods_request().
+;;   u32 magic, u8 type, u8 on, u16 level, u16 mod, u16 pad, u32 token-lo, u32 token-hi = 20
 (defn net-packet-mod-request [] : I32 5)
-(defn net-mod-request-size [] : I32 12)
+(defn net-mod-request-size [] : I32 20)
 
 ;; A client's ported-module mask and the level it is watching, sent once after the first snapshot.
 ;; The server clamps the level state it sends to this peer and filters rows by interest; the client
@@ -60,6 +63,30 @@
 ;; Interest management: 0 means "every level" (the pre-handshake default); otherwise only the level
 ;; the peer named. A pure rule so the server's row filter is not a second policy in host C.
 (defn net-interest-all [] : I32 0)
+
+;; Who may ask the server to change a level's modules. The server picks one of these explicitly;
+;; `owner` is the earliest peer still active, so one client cannot race another for the shared mask.
+(defn net-mod-policy-off [] : I32 0)
+(defn net-mod-policy-owner [] : I32 1)
+(defn net-mod-policy-peer [] : I32 2)
+(defn net-mod-policy-valid [(policy : I32)] : I32
+  (if (and (>= policy (net-mod-policy-off)) (<= policy (net-mod-policy-peer))) 1 0))
+(defn net-mod-policy-allows [(policy : I32) (is-owner : I32)] : I32
+  (if (= policy (net-mod-policy-peer))
+    1
+    (if (and (= policy (net-mod-policy-owner)) (= is-owner 1)) 1 0)))
+
+;; One authenticated request per half second, per peer. The host keeps the clock; this is the number.
+(defn net-mod-request-cooldown-ms [] : I32 500)
+
+;; The whole request gate as one pure decision. The caller has already found the peer and assembled
+;; its token; `token-ok` is a plain equality result (this is an opaque capability, not a password
+;; hash). A refused request never changes the level.
+(defn net-mod-request-authorized [(policy : I32) (is-owner : I32) (token-ok : I32)
+                                  (now-ms : I32) (next-ms : I32)] : I32
+  (if (and (and (= (net-mod-policy-valid policy) 1) (= token-ok 1))
+           (and (= (net-mod-policy-allows policy is-owner) 1) (>= now-ms next-ms)))
+    1 0))
 
 ;; Four simultaneous remote peers get the top four body ids; bots stay below them. Server-assigned so
 ;; two clients cannot claim the same body, and so a client never has to guess its slot.

@@ -1706,15 +1706,28 @@ The table is the one place that also records whether a target links a network tr
 Opening masks and incoming authoritative state are intersected with that mask, and enabling an
 unported module is refused before a REFLUX row is dispatched. Mandatory modules are always kept.
 The client also advertises its mask and the level it watches once the first snapshot proves the server
-is live (packet 6). The server keeps four address-keyed peers, assigns each a body slot from 8-11 in a
-welcome packet, and clamps/filters that peer's level rows through `net-interest-match`, leaving its
-own registry untouched. Both sides therefore clamp independently. `make game-capped-client-smoke`
-proves the mask half across a real socket: a surface server (31) and a core-only client (3) meet, the
-server reports `peer_caps=3`, and the client stays at 3. `make game-level-interest-smoke` registers
-four levels on the server and has the client watch level 2; the server must send exactly one row
-(`level_rows=1`) carrying mask 11. `make game-multi-peer-smoke` runs two clients at once with
-different masks and watched levels: the server reports `peers=2`, slots 8 and 9, caps 31 and 3, and
-one independently clamped row for each.
+is live (packet 6). The server keeps four address-keyed peers, assigns each a body slot from 8-11 and a 64-bit
+per-peer token in a welcome packet, and clamps/filters that peer's level rows through
+`net-interest-match`, leaving its own registry untouched. Both sides therefore clamp independently.
+`make game-capped-client-smoke` proves the mask half across a real socket: a surface server (31) and
+a core-only client (3) meet, the server reports `peer_caps=3`, and the client stays at 3.
+`make game-level-interest-smoke` registers four levels on the server and has the client watch level
+2; the server must send exactly one row (`level_rows=1`) carrying mask 11.
+`make game-multi-peer-smoke` runs two clients at once with different masks and watched levels: the
+server reports `peers=2`, slots 8 and 9, caps 31 and 3, and one independently clamped row for each.
+
+Packet 5 now carries the welcome token. A request from an unknown address is dropped rather than
+registering a peer, a token mismatch is refused, and accepted requests are limited to one per peer
+per 500 ms. The server chooses who may ask with `--mod-policy`:
+
+- `owner` (default) - the earliest peer still sending traffic; a disconnected owner goes stale after
+  the same 2 s window the peer table uses, so the session does not lock to a dead slot;
+- `peer` - any active peer with its own token;
+- `off` - no remote requests (the operator's local `--set-mod` still works).
+
+`make game-level-request-smoke` proves the default owner path and `make game-mod-authority-smoke`
+starts a peer-policy server, sends one request with a deliberately wrong token and one with the
+issued token, and requires `mod_requests=1 mod_refused=1` plus the accepted mask change.
 
 ### Networking: host-C now, transport mod later
 
@@ -1752,10 +1765,10 @@ target; a server can evolve level mods over whatever transport that target has.
 
 | # | step | current state | done when |
 |---|---|---|---|
-| 1 | Capability handshake | client advertises caps + level (packet 6); the server keeps four address-keyed peers, assigns slots 8-11 via welcome, and clamps/filters each independently; the client clamps locally too | per-peer token/auth (folded into step 4), so one address cannot impersonate another |
+| 1 | Capability handshake | client advertises caps + level (packet 6); the server keeps four address-keyed peers, assigns slots 8-11 and a token via welcome, and clamps/filters each independently; the client clamps locally too | packet 5 now uses the per-peer token; play commands and caps still use the source address, so the whole play socket does not share one identity check yet |
 | 2 | WASM render/input/audio | browser canvas/input landed: fixed-step movement, arena renderer and RGBA framebuffer; audio and the weather/sky level modules are still unported | audio output and per-level render/sky module parity, so the browser client matches native's admitted modules |
 | 3 | Per-target profiles from one source | every client applies/reports `build_profiles.prn` through one `build_profile` module; a target is still chosen by one `SHANKPIT_BUILD_TARGET` define | the profile is emitted by the build system itself, so adding a target needs no second hand edit |
-| 4 | Mod-request authority | packet 5 is unauthenticated on the play socket; only level/module/on are validated | identity (or a per-peer token), rate limiting, and an explicit server policy for who may shed modules |
+| 4 | Mod-request authority | packet 5 requires the per-peer welcome token, enforces a 500 ms per-peer cooldown, and obeys an explicit `--mod-policy off|owner|peer` (default owner); unknown senders do not register | remote play commands/caps still carry no token, so the remaining identity work is across the rest of the play socket |
 | 5 | Durable stream identity | JSONL `seq` restarts with each process; replay relies on file order | a persisted monotonically increasing stream id survives restarts, and replay rejects gaps/duplicates |
 | 6 | Level unregister/transition | the table only grows (8 slots); no way to remove a level | `level_mods_unregister` frees a slot, emits an event, and clients drop/transition without keeping a stale mask |
 | 7 | Manifest write-back | evolved masks are memory-only; replay is the only recovery path | an operator can persist the live mask/revision back to `levels.json` atomically, with the same validator as load |
@@ -1770,8 +1783,8 @@ are the payoff (one core, several shells) and are only meaningful after the port
 
 ### Verification for this slice
 
-- `make game-test` - 259 checks (registry, capabilities, profiles, replay, relay, catalog, event log).
-- `make game-test-clang` - the same 259 under Clang.
+- `make game-test` - 267 checks (registry, capabilities, profiles, token/policy rules, replay, relay, catalog, event log).
+- `make game-test-clang` - the same 267 under Clang.
 - `make game-clang` / `make game-llvm` then `--headless 5` - both boot, 31 modules on level 1.
 - `make wasm` / `make wasm-smoke` - zero-import module, wasm-core profile, caps 3, no transport, state 31 clamped to 3, trig checked, plus a rendered 1024x576 frame and fixed-step forward/turn movement.
 - `make core` / `make core-smoke` - native core with no networking: moon 3, capped 3, shed 27/rev 2,
@@ -1780,9 +1793,10 @@ are the payoff (one core, several shells) and are only meaningful after the port
 - `make game-capped-client-smoke` - surface server 31, core client 3 across UDP, server logs `peer_caps=3`.
 - `make game-level-interest-smoke` - four registered levels, one interested peer, exactly one row sent.
 - `make game-multi-peer-smoke` - two clients, independent caps 31/3 and levels 1/2, slots 8/9, two rows.
-- `make game-level-request-smoke`, `make game-level-relay-smoke`, `make game-smoke` - unchanged.
+- `make game-level-request-smoke` - the owner policy accepts the client's tokened request and reports `mod_requests=1 mod_refused=0`.
+- `make game-mod-authority-smoke` - a wrong token is refused and a correct one is accepted across two real clients (`mod_requests=1 mod_refused=1`).
+- `make game-level-relay-smoke`, `make game-smoke` - unchanged.
 
 Known limits: the WASM client core has no allocator and no audio or networking; its weather/sky
 module bits remain off; the trig is accurate for the rules' range but is not a full libm; the profile table is applied in every build but a target is still selected by one compile-time define; the transport seam exists but only one implementation (host-C UDP) does, packet scheduling is
-still host C, the capability handshake is unauthenticated (identity is the source address), and no target is FFI-free
-yet; LLVM-LTO's size drop (90 KB to 69 KB) is a build result, not a measured runtime speedup.
+still host C, and no target is FFI-free yet; LLVM-LTO's size drop (90 KB to 69 KB) is a build result, not a measured runtime speedup. Packet 5 is token-authenticated, but caps and play commands still trust the UDP source address, and the 64-bit token is an opaque capability generated from the clock/address, not a cryptographic credential or an account identity.
