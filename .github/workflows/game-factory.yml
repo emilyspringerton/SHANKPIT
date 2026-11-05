@@ -241,8 +241,18 @@ jobs:
             exit 0
           fi
           ls -l dist
-          git tag "$next"
-          git push origin "$next"
+          git tag "$next" 2>/dev/null || true
+          # GitHub has returned a transient "fatal error in commit_refs" on ref pushes (seen on both
+          # a local push and this job's tag). The tag push is idempotent once the ref exists, so retry
+          # it and confirm the ref is really on the remote before creating the release.
+          pushed=0
+          for attempt in 1 2 3 4 5; do
+            if git push origin "$next"; then pushed=1; break; fi
+            echo "tag push attempt $attempt failed; retrying in 5s"
+            sleep 5
+          done
+          test "$pushed" = 1
+          test -n "$(git ls-remote --tags origin "refs/tags/$next")"
           gh release create "$next" dist/*.zip \
             --title "SHANKPIT clean room $next" \
             --notes "Clean-room PARENA build of SHANKPIT.
