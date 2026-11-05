@@ -1701,18 +1701,21 @@ networking with a mask bit, and a server does not ship a transport inside a leve
 
 Today:
 
-- The full native and LLVM clients bake UDP into `apps/game/host.c` -- regular host C, no transport
-  seam yet. `build_profiles.prn` reports that as `bp-net-host-c`.
-- `bin/shank_core` and `shank_core.wasm` link no sockets at all (`bp-net-none`) while still running the
-  same PARENA rules and registry. That proves the core has no hidden networking dependency.
+- `apps/game/net_transport.h` is the seam: `open/close/addr/send/recv` take only `NetAddr`, so no
+  socket header reaches `host.c`. `apps/game/net_transport_udp.c` is the host-C implementation the
+  full native/LLVM clients link. `build_profiles.prn` reports that as `bp-net-host-c`.
+- `bin/shank_core` and `shank_core.wasm` link no transport implementation at all (`bp-net-none`) while
+  still running the same PARENA rules and registry. `core-smoke` also checks `nm -u shank_core` for
+  socket symbols, so a hidden dependency would be a red build.
 - `make core-smoke` runs the native core at a moon mask (3), a capped surface mask (3), and a surface
   shed (27, revision 2).
 
 Porting ladder:
 
-1. **Host-C baked (today)**: the full client is the core plus the UDP host-C transport.
-2. **Transport seam**: `open/send/recv/close` behind a tiny host module; the full client links the UDP
-   implementation, the core links none. Still no level-mask involvement.
+1. **Host-C baked**: the full client is the core plus the host-C UDP transport. No longer the whole
+   story: the socket API now sits behind the seam below.
+2. **Transport seam (done)**: `host.c` owns protocol behaviour and speaks only `NetAddr` + send/recv;
+   the UDP implementation is a swappable file the full client links and the core does not.
 3. **PARENA/REFLUX transport mod**: packet scheduling, interest/delta policy and level-mod state deltas
    move into rules; the edge keeps only byte I/O. `net_rules.prn` already owns packet ids and sizes.
 4. **FFI-free edge**: a native LLVM transport and a WASM WebSocket/import edge, so the LLVM build can
@@ -1736,7 +1739,7 @@ target; a server can evolve level mods over whatever transport that target has.
 | 8 | Replay schema versioning | line parser trusts event names and skips unknowns | the stream carries a schema version; unknown versions/rows are refused rather than silently dropped |
 | 9 | Unified core packaging | WASM core now ships in every release; native clients ship separately | one core archive/build feeds native and browser shells, with a shared version string and no duplicated host glue |
 | 10 | Cross-target parity | GCC/Clang/LTO/WASM each have their own checks | one scenario runs through all targets and asserts identical masks, revisions and event counts |
-| 11 | Networking transport | host-C UDP in `host.c`; native/WASM cores link no transport | transport seam + PARENA-owned scheduling, then FFI-free LLVM/WASM edges; core builds and ships without it |
+| 11 | Networking transport | transport seam exists (`net_transport.h`, host-C UDP impl); native/WASM cores link none; scheduling is still host C | PARENA-owned scheduling, then FFI-free LLVM/WASM edges; core builds and ships without it |
 
 Ordering rationale: 1 and 3 make module porting safe before more ports land; 2 is the first
 user-visible WASM client; 4-8 harden the server/stream path the founder asked to evolve live; 9-10
@@ -1748,11 +1751,14 @@ are the payoff (one core, several shells) and are only meaningful after the port
 - `make game-test-clang` - the same 250 under Clang.
 - `make game-clang` / `make game-llvm` then `--headless 5` - both boot, 31 modules on level 1.
 - `make wasm` / `make wasm-smoke` - zero-import module, caps 3, no transport, state 31 clamped to 3, trig checked.
-- `make core` / `make core-smoke` - native core with no networking: moon 3, capped 3, shed 27/rev 2.
+- `make core` / `make core-smoke` - native core with no networking: moon 3, capped 3, shed 27/rev 2,
+  and no socket symbols in `nm -u`.
+- `make game-net-smoke` / relay / request / capped - the same wire behaviour through the seam.
 - `make game-capped-client-smoke` - surface server 31, core client 3 across UDP.
 - `make game-level-request-smoke`, `make game-level-relay-smoke`, `make game-smoke` - unchanged.
 
 Known limits: the WASM core has no allocator and no player; the trig is accurate for the rules'
 range but is not a full libm; the profile table exists but each build still selects its profile by
-hand; networking is still host C with no transport seam, so no target is FFI-free yet; LLVM-LTO's
-size drop (90 KB to 69 KB) is a build result, not a measured runtime speedup.
+hand; the transport seam exists but only one implementation (host-C UDP) does, packet scheduling is
+still host C, and no target is FFI-free yet; LLVM-LTO's size drop (90 KB to 69 KB) is a build result,
+not a measured runtime speedup.
