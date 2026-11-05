@@ -38,18 +38,29 @@ int icecream_pan_permille(int bearing_deg, int yaw_deg);
 /* is the song playing right now: 1 for a vendor truck that is actually moving */
 int icecream_trigger(int ice_cream, int speed_pm);
 
-/* -- which truck sings in which key, and what the window sells -------------------------------------
- * Two trucks in the same key are one truck as far as an ear is concerned, so the key is derived from the
- * truck's own slot id (a fact every host already agrees on) rather than hand-assigned. */
+/* -- which truck sings WHICH TUNE, when it pulls over, and what the window sells --------------------
+ * Two trucks in the same key are one truck as far as an ear is concerned, so each jingle is its own melody:
+ * this is derived from the truck's own slot id (a fact every host already agrees on) rather than
+ * hand-assigned. Jingle 0 IS the authored song, note for note; the rest are generated walks. */
 int icecream_jingle_count(void);
 /* a truck slot's jingle, always inside 0..icecream_jingle_count()-1, negative ids included */
 int icecream_jingle_for_id(int id);
-/* how far that jingle is transposed, in semitones (unison, +2, -3, +5) */
-int icecream_jingle_semitones(int v);
-/* the same transposition as a permille multiplier of the tune (1000 = as written) */
-int icecream_jingle_key_permille(int v);
-/* one step of the tune in a given jingle's key, in millihertz */
-int icecream_note_hz_milli_keyed(int i, int v);
+/* the pentatonic the generated motifs walk, in millihertz, 8 degrees */
+int icecream_scale_hz_milli(int deg);
+/* step i of jingle v as a scale degree (both ends of the loop are the tonic) */
+int icecream_motif_degree(int i, int v);
+/* step i of jingle v in millihertz; jingle 0 is the authored song exactly */
+int icecream_note_hz_milli_for(int i, int v);
+
+/* -- pulling over ----------------------------------------------------------------------------------
+ * The window only opens while the truck is STOPPED, and an unmanned vendor has no driver to decide that,
+ * so the stop is a rule on the town clock: every cycle it parks for the dwell, on its own side of the road
+ * (keep-right already put it at the kerb). Clock-derived, so the server and every client agree with no
+ * state to replicate and nothing to desync. */
+int icecream_stop_cycle_ms(void);
+int icecream_dwell_ms(void);
+/* 1 while a vendor is parked (the first icecream_dwell_ms of every cycle) */
+int icecream_parked(int now_ms);
 
 /* how close to a truck counts as at its window, in world units */
 int icecream_window_units(void);

@@ -15462,7 +15462,7 @@ void draw_scene(PlayerState *render_p) {
             {
                 int playing = 0;
                 float best_gain = 0.0f, best_pan = 0.0f;
-                int best_key = icecream_jingle_key_permille(icecream_jingle_for_id(0));
+                int best_jingle = icecream_jingle_for_id(0);
                 for (int vi = 0; vi < MAX_BUGGIES; vi++) {
                     const BuggyState *vb = &local_state.buggies[vi];
                     if (!vb->active || !vb->ice_cream) continue;
@@ -15477,10 +15477,10 @@ void draw_scene(PlayerState *render_p) {
                     playing = 1;
                     best_gain = g;
                     best_pan = (float)icecream_pan_permille(bdeg, yaw_deg) / 1000.0f;
-                    /* and in ITS key: which truck you are hearing is a thing you can hear */
-                    best_key = icecream_jingle_key_permille(icecream_jingle_for_id(vb->id));
+                    /* and with ITS tune: which truck you are hearing is a thing you can hear */
+                    best_jingle = icecream_jingle_for_id(vb->id);
                 }
-                audio_set_icecream(playing, best_gain, best_pan, best_key);
+                audio_set_icecream(playing, best_gain, best_pan, best_jingle);
             }
 
             /* THE WINDOW (PARENA icecream_rules.prn, vendor_serve.h). The song brings you to the truck; this is
@@ -15518,11 +15518,18 @@ void draw_scene(PlayerState *render_p) {
                                                nearest_truck == VENDOR_SERVE_NONE ? 999999
                                                                                   : (int)(nearest_dist + 0.5f),
                                                nearest_speed_pm, vdt_ms);
-                if (served) {
+                /* Only when THIS process is the authority. In a networked match the server owns every
+                   player's health and runs vendor_serve_tick itself (apps/server's server_vendor_tick), so
+                   a client that healed itself here would fight the next snapshot every frame. The client
+                   still ticks the machine, because that is what draws the progress ring. */
+                if (served && sock < 0) {
                     PlayerState *buyer = &local_state.players[0];
                     int before = buyer->health;
                     buyer->health = vendor_serve_heal(buyer->health, 100);  /* PlayerState's own 0..100 scale */
                     SDL_Log("[VENDOR] cone from truck %d: health %d -> %d", nearest_truck, before, buyer->health);
+                } else if (served) {
+                    SDL_Log("[VENDOR] cone from truck %d handed over by the SERVER (this client never heals itself)",
+                            nearest_truck);
                 }
             }
         }

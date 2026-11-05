@@ -21,9 +21,12 @@ int icecream_pan_permille(int, int);
 int icecream_trigger(int, int);
 int icecream_jingle_count();
 int icecream_jingle_for_id(int);
-int icecream_jingle_semitones(int);
-int icecream_jingle_key_permille(int);
-int icecream_note_hz_milli_keyed(int, int);
+int icecream_scale_hz_milli(int);
+int icecream_motif_degree(int, int);
+int icecream_note_hz_milli_for(int, int);
+int icecream_stop_cycle_ms();
+int icecream_dwell_ms();
+int icecream_parked(int);
 int icecream_window_units();
 int icecream_serve_ms();
 int icecream_serve_heal();
@@ -196,40 +199,85 @@ int icecream_jingle_for_id(int id __attribute__((unused))) {
     return (i - ((i / n) * n));
 }
 
-int icecream_jingle_semitones(int v __attribute__((unused))) {
-    if ((v == 1)) {
-    return 2;
+int icecream_scale_hz_milli(int deg __attribute__((unused))) {
+    if ((deg == 1)) {
+    return 587000;
     } else {
-    if ((v == 2)) {
-    return -3;
+    if ((deg == 2)) {
+    return 659000;
     } else {
-    if ((v == 3)) {
-    return 5;
+    if ((deg == 3)) {
+    return 784000;
+    } else {
+    if ((deg == 4)) {
+    return 880000;
+    } else {
+    if ((deg == 5)) {
+    return 1047000;
+    } else {
+    if ((deg == 6)) {
+    return 1175000;
+    } else {
+    if ((deg == 7)) {
+    return 1319000;
+    } else {
+    return 523000;
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+}
+
+int icecream_motif_degree(int i __attribute__((unused)), int v __attribute__((unused))) {
+    int n __attribute__((unused)) = icecream_note_count();
+    int m __attribute__((unused)) = (i - ((i / n) * n));
+    int k __attribute__((unused)) = (((v < 0) ? 0 : v) + 1);
+    int raw __attribute__((unused)) = (((m * 5) + ((m * m) * 3)) + (k * 7));
+    int deg __attribute__((unused)) = (raw - ((raw / 8) * 8));
+    if ((k <= 1)) {
+    return 0;
+    } else {
+    if ((m == 0)) {
+    return 0;
+    } else {
+    if ((m == (n - 1))) {
+    return 0;
+    } else {
+    return deg;
+    }
+    }
+    }
+}
+
+int icecream_note_hz_milli_for(int i __attribute__((unused)), int v __attribute__((unused))) {
+    if ((v <= 0)) {
+    return icecream_note_hz_milli(i);
+    } else {
+    return icecream_scale_hz_milli(icecream_motif_degree(i, v));
+    }
+}
+
+int icecream_stop_cycle_ms(void) {
+    return 60000;
+}
+
+int icecream_dwell_ms(void) {
+    return 15000;
+}
+
+int icecream_parked(int now_ms __attribute__((unused))) {
+    int cycle __attribute__((unused)) = icecream_stop_cycle_ms();
+    int c __attribute__((unused)) = ((cycle > 0) ? cycle : 1);
+    int t __attribute__((unused)) = ((now_ms < 0) ? 0 : now_ms);
+    int m __attribute__((unused)) = (t - ((t / c) * c));
+    if ((m < icecream_dwell_ms())) {
+    return 1;
     } else {
     return 0;
     }
-    }
-    }
-}
-
-int icecream_jingle_key_permille(int v __attribute__((unused))) {
-    if ((v == 1)) {
-    return 1122;
-    } else {
-    if ((v == 2)) {
-    return 841;
-    } else {
-    if ((v == 3)) {
-    return 1335;
-    } else {
-    return 1000;
-    }
-    }
-    }
-}
-
-int icecream_note_hz_milli_keyed(int i __attribute__((unused)), int v __attribute__((unused))) {
-    return ((icecream_note_hz_milli(i) * icecream_jingle_key_permille(v)) / 1000);
 }
 
 int icecream_window_units(void) {

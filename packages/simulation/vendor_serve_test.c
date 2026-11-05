@@ -110,6 +110,32 @@ int main(void) {
         printf("PASS: a cone is %d health and the player's ceiling holds\n", icecream_serve_heal());
     }
 
+    /* ---- the truck has to pull over, and pulling over is a rule on the town clock ---- */
+    {
+        int cycle = icecream_stop_cycle_ms(), dwell = icecream_dwell_ms();
+        printf("      vendor parks %d ms in every %d ms cycle\n", dwell, cycle);
+        CHECK(cycle > dwell, "the park window (%d ms) does not fit its cycle (%d ms)", dwell, cycle);
+        CHECK(dwell > 0, "a vendor parks for %d ms", dwell);
+        CHECK(icecream_parked(0) == 1, "a vendor was already driving at t=0");
+        CHECK(icecream_parked(dwell - 1) == 1, "the vendor left a millisecond before its dwell was up");
+        CHECK(icecream_parked(dwell) == 0, "the vendor was still parked past its dwell");
+        CHECK(icecream_parked(cycle - 1) == 0, "the vendor parked through its whole cycle");
+        CHECK(icecream_parked(cycle) == 1, "the stop window did not come round again");
+        CHECK(icecream_parked(cycle + dwell) == 0, "the second cycle's window never closed");
+        CHECK(icecream_parked(-5) == icecream_parked(0), "a negative clock time parked the truck differently");
+        printf("PASS: the vendor pulls over for %d ms of every %d ms, on the clock every host shares\n",
+               dwell, cycle);
+
+        /* a PARKED truck inside the window really serves; the same truck rolling does not */
+        VendorServe v;
+        vendor_serve_init(&v);
+        int served = 0;
+        for (int t = 0; t < icecream_serve_ms() + 200; t += 100)
+            served += vendor_serve_tick(&v, 0, 2, 0, 100);      /* stopped: speed_pm 0 */
+        CHECK(served == 1, "a stopped vendor handed over %d cone(s), not one", served);
+        printf("PASS: a parked vendor is the one that can sell\n");
+    }
+
     printf("\n%s%d check(s) failed\n", g_failed ? "FAIL: " : "PASS: ", g_failed);
     return g_failed ? 1 : 0;
 }

@@ -658,12 +658,12 @@ void audio_set_wind(float gain, float bright, float pan) {
 /* The ice-cream truck's song. Called every frame with numbers PARENA's icecream rules already resolved
  * (whether a vendor is out and its speed, then gain and pan at the listener); this only stores smoothed
  * targets, so it is safe from the render loop while the audio thread mixes. */
-void audio_set_icecream(int playing, float gain, float pan, int key_permille) {
+void audio_set_icecream(int playing, float gain, float pan, int jingle) {
     if (!g_dev || !g_mutex) return;
     SDL_LockMutex(g_mutex);
     icecream_dsp_set(&g_icecream, playing, gain, pan);
-    /* the truck's own key: two vendors in one district are two tunes, not one tune twice */
-    icecream_dsp_set_key(&g_icecream, key_permille);
+    /* the truck's own melody: two vendors in one district are two tunes, not one tune twice */
+    icecream_dsp_set_jingle(&g_icecream, jingle);
     SDL_UnlockMutex(g_mutex);
 }
 

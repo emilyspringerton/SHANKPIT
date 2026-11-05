@@ -52,6 +52,7 @@
 #include "../../../packages/simulation/rocket_car_rules_host.h"   /* the rocket car's PARENA model */
 #include "../../../packages/simulation/kit_call.h"   /* PACKET_KIT_CALL: the kit's vehicle gadgets */
 #include "../../../packages/protocol/wow_server.h"   /* PACKET_WOW_WIRE: targets, casts, macro bytecode */
+#include "../../../packages/simulation/vendor_serve.h"  /* the ice cream truck's window, server-authoritative */
 #include "../../../packages/common/units_rules.h"        /* the cast range's yards -> metres conversion */
 #include "../../../packages/common/third_person.h"   /* tp_yaw_pitch_to_point: aim a cast at its target */
 #include "../../../packages/protocol/wow_ticket.h"   /* the IDUNA player ticket, verified locally */
@@ -1410,6 +1411,63 @@ int process_user_cmd(int client_id, UserCmd *cmd) {
     return 1;
 }
 
+/* ---- VENDING (PARENA icecream_rules.prn, packages/simulation/vendor_serve.h) ----
+ * The window is SERVER-AUTHORITATIVE, because this file already owns every player's health: the cone is a
+ * health change like any other, so it belongs where the health lives rather than on whichever client is
+ * standing closest. The client runs the same state machine only to draw the progress ring, and applies
+ * nothing (apps/lobby gates its own heal on sock < 0, i.e. no server to ask).
+ *
+ * Why this is not a packet: a buy REQUEST would need the server to re-check reach, the truck being stopped
+ * and the buyer's cooldown anyway -- and it can see all three itself. So a client cannot buy a cone it did
+ * not stand for, cannot buy two, and cannot buy one from a truck that is driving off; a reconnect does not
+ * matter either, because the health it heals is the state the snapshot already carries.
+ *
+ * dt is clamped: a server stall must not hand out a cone (or five) in one tick. */
+static VendorServe g_vendor_serve[MAX_CLIENTS];
+static int g_vendor_serve_ready;
+static unsigned int g_vendor_serve_last_ms;
+
+static void server_vendor_tick(unsigned int now_ms) {
+    if (!g_vendor_serve_ready) {
+        for (int i = 0; i < MAX_CLIENTS; i++) vendor_serve_init(&g_vendor_serve[i]);
+        g_vendor_serve_ready = 1;
+    }
+    int dt_ms = g_vendor_serve_last_ms ? (int)(now_ms - g_vendor_serve_last_ms) : 16;
+    if (dt_ms < 0 || dt_ms > 200) dt_ms = 16;
+    g_vendor_serve_last_ms = now_ms;
+
+    for (int cid = 0; cid < MAX_CLIENTS; cid++) {
+        PlayerState *p = &local_state.players[cid];
+        if (!p->active || p->is_bot || p->state != STATE_ALIVE) {
+            /* a buyer who left, died or was never a person banks nothing and keeps no queue */
+            if (g_vendor_serve[cid].truck_id != VENDOR_SERVE_NONE || g_vendor_serve[cid].held_ms) {
+                vendor_serve_init(&g_vendor_serve[cid]);
+            }
+            continue;
+        }
+        int truck = VENDOR_SERVE_NONE, speed_pm = 0, dist_units = 999999;
+        float best = 1.0e9f;
+        for (int bi = 0; bi < MAX_BUGGIES; bi++) {
+            const BuggyState *b = &local_state.buggies[bi];
+            if (!b->active || !b->ice_cream || b->scene_id != p->scene_id) continue;
+            float dx = b->x - p->x, dz = b->z - p->z;
+            float d = sqrtf(dx * dx + dz * dz);
+            if (d < best) {
+                best = d;
+                truck = b->id;
+                speed_pm = (int)((fabsf(b->vx) + fabsf(b->vz)) * 100.0f);
+            }
+        }
+        if (truck != VENDOR_SERVE_NONE) dist_units = (int)(best + 0.5f);
+        if (vendor_serve_tick(&g_vendor_serve[cid], truck, dist_units, speed_pm, dt_ms)) {
+            int before = p->health;
+            p->health = vendor_serve_heal(p->health, 100);   /* PlayerState's own 0..100 scale */
+            NET_SERVER_LOG("VENDOR_SALE client_id=%d truck=%d health=%d->%d", cid, truck, before, p->health);
+            (void)before;   /* read only by the log above, which the macro strips when verbose is off */
+        }
+    }
+}
+
 void server_handle_packet(struct sockaddr_in *sender, char *buffer, int size) {
     if (size < (int)sizeof(NetHeader)) {
         g_net_diag.malformed++;
@@ -2551,6 +2609,8 @@ int main(int argc, char *argv[]) {
         server_test_plant_citizen_pair(now);
         if (local_state.game_mode == MODE_ZOMBIES) witness_ai_zombies_tick(&local_state, now);
         witness_ai_tick(&local_state, now);
+        /* VENDING: the cone is a health change, and health lives here (see server_vendor_tick). */
+        server_vendor_tick(now);
         story_check_level_exits(now);
         /* S536, TYLER VALHANNA -- same "safe to call unconditionally" property story_ai_tick's
          * own comment above already established: tyler_coldopen_tick no-ops the instant

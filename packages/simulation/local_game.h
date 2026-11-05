@@ -15,6 +15,7 @@
 #include "horse_goals.h"   /* what a loose horse decides -- PARENA mod, see horse_goals_host.h */
 #include "horse_poop.h"
 #include "police_patrol.h"   /* the automated cruiser's ring: a police car with nobody in it still drives */
+#include "icecream_rules.h"   /* PARENA icecream rules: a vendor's park window, the tune, the window's numbers */
 #include "citizen_actor.h"   /* MODE_ZOMBIES bodies: the inputs that make a citizen jump, slide, fight */    /* what comes out the other end -- PARENA mod, see horse_poop_host.h */
 #include "humanness.h"     /* MISHRI's mood/reaction/aim layer -- the horse's mind, same primitives as story_ai */
 #include "../reflux/reflux_runtime.h" /* REFLUX_ACTION_HORSE_* -- the family a horse dispatches (the dispatch itself is a hook, see below) */
@@ -765,6 +766,11 @@ static inline void buggy_tick_all(unsigned int now_ms) {
             if (b->police || b->ice_cream) {
                 float pth = 0.0f, pst = 0.0f;
                 police_patrol_intent(b, now_ms, &pth, &pst);
+                /* An unmanned VENDOR pulls over on the town clock (PARENA icecream-parked): while its shift's
+                   stop window is open it holds the brakes, which is what opens the window that sells the
+                   cone. It stops where keep-right already put it -- its own side of the road, at the kerb.
+                   A cruiser never stops, so a police car is unaffected whatever the rule says. */
+                if (b->ice_cream && icecream_parked((int)(now_ms % 3600000u))) pth = 0.0f;
                 throttle = pth;
                 steer_intent = pst;
             }

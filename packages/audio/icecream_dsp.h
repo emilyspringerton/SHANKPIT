@@ -33,7 +33,7 @@ typedef struct {
     int    playing;
     double ms;               /* position in the loop, milliseconds (double so it cannot drift) */
     int    last_note_hz_milli;
-    int    key_permille;     /* the key THIS truck sings in (1000 = the tune as written) */
+    int    jingle;           /* which MELODY this truck sings (PARENA icecream-jingle-for-id) */
     double phase;            /* 0..1, reset on every note: a music box strikes from silence */
     float  gain, gain_target;
     float  pan, pan_target;
@@ -45,7 +45,7 @@ static inline void icecream_dsp_init(IceCreamDsp *c) {
     c->playing = 0;
     c->ms = 0.0;
     c->last_note_hz_milli = 0;
-    c->key_permille = 1000;
+    c->jingle = 0;
     c->phase = 0.0;
     c->gain = c->gain_target = 0.0f;
     c->pan = c->pan_target = 0.0f;
@@ -59,14 +59,16 @@ static inline void icecream_dsp_set(IceCreamDsp *c, int playing, float gain, flo
     c->pan_target = pan < -1.0f ? -1.0f : (pan > 1.0f ? 1.0f : pan);
 }
 
-/* Which key this truck sings in, as a permille multiplier of the tune -- PARENA's icecream-jingle-key-permille
- * decides the values (1000 as written, 1122 up a tone, 841 down a minor third, 1335 up a fourth). Clamped
- * because a rule can be edited to something absurd and a jingle must not become a dog whistle. */
-static inline void icecream_dsp_set_key(IceCreamDsp *c, int key_permille) {
+/* Which melody this truck sings -- PARENA's icecream-jingle-for-id decides the value, and jingle 0 is the
+ * authored song note for note. Clamped to the rule's own count because a rule can be edited to something
+ * absurd and a vendor must not index a table that is not there. */
+static inline void icecream_dsp_set_jingle(IceCreamDsp *c, int jingle) {
     if (!c) return;
-    if (key_permille < 500) key_permille = 500;
-    if (key_permille > 2000) key_permille = 2000;
-    c->key_permille = key_permille;
+    int count = icecream_jingle_count();
+    if (count <= 0) count = 1;
+    if (jingle < 0) jingle = 0;
+    if (jingle >= count) jingle = jingle % count;
+    c->jingle = jingle;
 }
 
 /* Which step of the tune is sounding at song_ms, and where inside it. Walks the rule's own step lengths, so
@@ -99,10 +101,7 @@ static inline void icecream_dsp_step(IceCreamDsp *c, float *out_l, float *out_r)
         if (!c->playing) c->ms = 0.0;
         int idx = 0, pos = 0, dur = 1;
         icecream_dsp_note((int)c->ms, &idx, &pos, &dur);
-        int hz_milli = icecream_note_hz_milli(idx);
-        /* the tune in THIS truck's key -- the same shift as PARENA's icecream-note-hz-milli-keyed, done on
-           the note already chosen rather than walking a second table */
-        if (hz_milli > 0) hz_milli = (hz_milli * c->key_permille) / 1000;
+        int hz_milli = icecream_note_hz_milli_for(idx, c->jingle);
         if (c->playing && hz_milli > 0 && c->gain > 0.0005f) {
             if (hz_milli != c->last_note_hz_milli) {
                 c->phase = 0.0;                     /* strike the new note from silence */

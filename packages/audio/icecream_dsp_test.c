@@ -135,21 +135,23 @@ int main(void) {
         CHECK(lpk < rpk * 0.05f, "hard right leaks into the left ear (left %.4f, right %.4f)", lpk, rpk);
     }
 
-    /* (7) two trucks, two keys. A listener has to be able to tell the truck on the next block from the one
-       about to turn into it, and the key is the only thing that tells them apart: it is PARENA that decides
-       which truck gets which key (icecream-jingle-for-id) and what that key is worth. Each key is rendered on
-       its own and the first note is measured, so this is the real tune in that real key, not a table check. */
+    /* (7) FOUR TRUCKS, FOUR TUNES. One tune transposed four ways is still one truck to an ear, so each
+       jingle is its own melody (PARENA icecream-note-hz-milli-for): jingle 0 IS the authored song, the rest
+       are generated pentatonic walks. EVERY step of EVERY jingle is rendered and its pitch measured -- "it
+       is in the table" and "it sounds" are different claims, and this test only makes the second one. */
     {
-        int bad = 0, distinct = 0;
-        int prev_hz = 0;
+        int bad = 0, silent = 0;
         for (int v = 0; v < icecream_jingle_count(); v++) {
-            int permille = icecream_jingle_key_permille(v);
-            int want = icecream_note_hz_milli_keyed(0, v);
+          for (int step = 0; step < icecream_note_count(); step++) {
+            int want = icecream_note_hz_milli_for(step, v);
             IceCreamDsp c;
             icecream_dsp_init(&c);
             icecream_dsp_set(&c, 1, 1.0f, 0.0f);
-            icecream_dsp_set_key(&c, permille);
-            int dur = icecream_note_ms(0);
+            icecream_dsp_set_jingle(&c, v);
+            double at = 0.0;
+            for (int j = 0; j < step; j++) at += (double)icecream_note_ms(j);
+            c.ms = at;                             /* put the song clock on this step */
+            int dur = icecream_note_ms(step);
             int to = (int)((double)((dur * 6) / 10) * RATE / 1000.0);
             int crossings = 0;
             float prev = 0.0f;
@@ -160,32 +162,52 @@ int main(void) {
                 prev = ll;
             }
             int measured = (int)((double)crossings / (2.0 * (double)to / RATE) + 0.5);
-            printf("      jingle %d: %d permille (%+d semitones) asked %.1f Hz, sounded %.1f Hz\n",
-                   v, permille, icecream_jingle_semitones(v), want / 1000.0, (double)measured);
-            if (want <= 0) { bad++; continue; }
+            if (want <= 0) { silent++; continue; }
             if (fabs((double)measured - (double)want / 1000.0) > (double)want / 1000.0 * 0.08) {
                 bad++;
-                printf("FAIL: jingle %d asked %.1f Hz, sounded %.1f Hz\n", v, want / 1000.0, (double)measured);
+                printf("FAIL: jingle %d step %d asked %.1f Hz, sounded %.1f Hz\n",
+                       v, step, want / 1000.0, (double)measured);
             }
-            if (prev_hz && abs(measured - prev_hz) > 2) distinct++;
-            prev_hz = measured;
+          }
         }
-        CHECK(bad == 0, "%d of %d jingles did not sound in their own key", bad, icecream_jingle_count());
-        CHECK(distinct >= icecream_jingle_count() - 1,
-              "only %d of %d jingles are distinguishable by pitch", distinct, icecream_jingle_count());
-        CHECK(icecream_jingle_key_permille(icecream_jingle_for_id(0)) !=
-              icecream_jingle_key_permille(icecream_jingle_for_id(1)),
-              "two trucks parked side by side sing in the same key");
+        CHECK(bad == 0, "%d note(s) did not sound in their own jingle's melody", bad);
+        CHECK(silent == 0, "%d step(s) of some jingle are silent", silent);
         for (int id = 0; id < 8; id++) {
             int j = icecream_jingle_for_id(id);
             CHECK(j >= 0 && j < icecream_jingle_count(), "truck %d got jingle %d, outside the table", id, j);
         }
         CHECK(icecream_jingle_for_id(-3) >= 0 && icecream_jingle_for_id(-3) < icecream_jingle_count(),
               "a negative truck id was handed jingle %d", icecream_jingle_for_id(-3));
-        for (int v = 0; v < icecream_jingle_count(); v++)
-            CHECK(abs(icecream_note_hz_milli_keyed(0, v) -
-                      icecream_note_hz_milli(0) * icecream_jingle_key_permille(v) / 1000) <= 1,
-                  "keyed note %d is not the tune times its own key", v);
+        /* jingle 0 is the authored song, and the generated ones come home at the wrap */
+        for (int i = 0; i < icecream_note_count(); i++)
+            CHECK(icecream_note_hz_milli_for(i, 0) == icecream_note_hz_milli(i),
+                  "jingle 0 is not the authored song at step %d (%d vs %d)", i,
+                  icecream_note_hz_milli_for(i, 0), icecream_note_hz_milli(i));
+        for (int v = 1; v < icecream_jingle_count(); v++) {
+            CHECK(icecream_note_hz_milli_for(0, v) == icecream_note_hz_milli_for(icecream_note_count() - 1, v),
+                  "jingle %d does not end on the note it began on (%.1f vs %.1f Hz)", v,
+                  icecream_note_hz_milli_for(0, v) / 1000.0,
+                  icecream_note_hz_milli_for(icecream_note_count() - 1, v) / 1000.0);
+            int in_scale = 1;
+            for (int i = 0; i < icecream_note_count(); i++) {
+                int deg = icecream_motif_degree(i, v);
+                if (deg < 0 || deg > 7) in_scale = 0;
+                if (icecream_note_hz_milli_for(i, v) != icecream_scale_hz_milli(deg)) in_scale = 0;
+            }
+            CHECK(in_scale, "jingle %d left its own scale", v);
+        }
+
+        /* and no two trucks are the same truck: every pair differs in at least half its steps */
+        for (int a = 0; a < icecream_jingle_count(); a++)
+            for (int b = a + 1; b < icecream_jingle_count(); b++) {
+                int diff = 0;
+                for (int i = 0; i < icecream_note_count(); i++)
+                    if (icecream_note_hz_milli_for(i, a) != icecream_note_hz_milli_for(i, b)) diff++;
+                printf("      jingles %d and %d differ on %d of %d steps\n", a, b, diff, icecream_note_count());
+                CHECK(diff >= icecream_note_count() / 2,
+                      "jingles %d and %d are the same tune (%d of %d steps differ)", a, b, diff,
+                      icecream_note_count());
+            }
     }
 
     free(l);

@@ -17,9 +17,11 @@
  * The window is open only when the truck is STOPPED, which is the mirror image of the song's trigger: while
  * it drives you hear it, when it stops you can buy. Same rule, opposite halves of one affordance.
  *
- * Named limit: this is CLIENT-LOCAL, the same scope cut food_pickup.h's own doc comment makes -- the cone is
- * applied to the local player's health and never travels the wire, so a server-authoritative vending
- * transaction is a real, separate follow-up rather than something this header pretends to have solved.
+ * WHO OWNS THE CONE: the authority on health, which is the server in a networked match (apps/server's own
+ * server_vendor_tick runs this same state machine against the authoritative PlayerState and heals it, so
+ * the cone reaches the owner through the ordinary snapshot and survives a reconnect) and the lobby itself
+ * when there is no server (sock < 0). One rule, one implementation, one place that adds the health per
+ * authority -- a client never heals itself out from under the server's snapshot.
  *
  *   make test-vendor-serve
  */

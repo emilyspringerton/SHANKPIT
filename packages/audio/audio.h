@@ -65,10 +65,10 @@ void audio_play_thunder(int delay_ms, float gain, float pan);
  * frequency in millihertz those rules resolved for this frame, gain 0..1 and pan -1..1. A host with no
  * sirens never calls it and hears exactly what it heard before. */
 void audio_set_siren(int kind, int hz_milli, float gain, float pan);
-/* The vendor's jingle: playing = PARENA icecream-trigger, gain/pan resolved at the listener, and
- * key_permille the truck's OWN key (icecream-jingle-key-permille) so two trucks on one street are two
- * tunes to the ear rather than one. 1000 = the song as written. */
-void audio_set_icecream(int playing, float gain, float pan, int key_permille);
+/* The vendor's jingle: playing = PARENA icecream-trigger, gain/pan resolved at the listener, and jingle
+ * the truck's OWN melody (icecream-jingle-for-id) so two trucks on one street are two tunes to the ear
+ * rather than one tune in two keys. Jingle 0 is the authored song. */
+void audio_set_icecream(int playing, float gain, float pan, int jingle);
 
 /* NOCK master chain (2026-09-27): run a filter chain authored in IDUNA's NOCK "Sounds" tab over
  * the whole engine mix. audio_init() loads SHANKPIT_SOUND_CHAIN=<name> automatically from
