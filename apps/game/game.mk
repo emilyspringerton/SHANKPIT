@@ -162,6 +162,7 @@ game-capped-client-smoke: $(GAME_BIN)
 	  CLIENT_STATUS=$$?; wait $$HOST_PID; HOST_STATUS=$$?; \
 	  cat /tmp/shank_cap_host.log; cat /tmp/shank_cap_client.log; \
 	  grep -q 'level=8 env=0 mods=3' /tmp/shank_cap_client.log && \
+	  grep -q 'peer_caps=3' /tmp/shank_cap_host.log && \
 	  test $$CLIENT_STATUS -eq 0 -a $$HOST_STATUS -eq 0
 
 game-level-relay-smoke: $(GAME_BIN)

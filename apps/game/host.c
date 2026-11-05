@@ -97,9 +97,17 @@ typedef struct __attribute__((packed)) {
     uint16_t pad;
 } NetModRequest;
 
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint8_t type;
+    uint8_t pad;
+    uint16_t caps;
+} NetCaps;
+
 _Static_assert(sizeof(NetLevelMod) == 8, "NetLevelMod must match net_level_mod_bytes()");
 _Static_assert(sizeof(NetLevelMods) == 72, "NetLevelMods must match net_level_mods_size()");
 _Static_assert(sizeof(NetModRequest) == 12, "NetModRequest must match net_mod_request_size()");
+_Static_assert(sizeof(NetCaps) == 8, "NetCaps must match net_caps_size()");
 
 /* ---- bodies ------------------------------------------------------------------------------------ */
 typedef struct {
@@ -143,6 +151,7 @@ static int g_in_fwd, g_in_strafe, g_in_fire;
 static int g_is_host, g_is_client;
 static NetAddr g_peer;
 static int g_peer_known;
+static int g_peer_caps; /* modules the server has learned this peer can run */
 static int g_net_acc;
 static int g_net_seq;
 
@@ -151,6 +160,7 @@ static int g_net_seq;
 static int g_request_mod;
 static int g_request_on;
 static int g_request_sent;
+static int g_caps_sent;
 static int g_snapshots_received;
 
 static void net_recv_or_send(void);
@@ -512,6 +522,7 @@ static void net_open(int bind_port) {
         fprintf(stderr, "shank_game: transport open (bind %d) failed\n", bind_port);
         exit(1);
     }
+    g_peer_caps = lm_all_mask(); /* until a peer advertises otherwise */
 }
 
 static void net_send_snapshot(void) {
@@ -554,7 +565,9 @@ static void net_send_level_mods(void) {
         int level_id = level_mods_level_at(i);
         if (level_id <= 0 || level_id > 65535) continue;
         m.mods[m.count].level_id = (uint16_t)level_id;
-        m.mods[m.count].mask = (uint16_t)level_mods_mask(level_id);
+        /* Per-peer interest: send the authoritative mask clamped to what this peer has ported. The
+         * server's own registry is untouched, and the client still clamps on arrival. */
+        m.mods[m.count].mask = (uint16_t)lm_sanitize(level_mods_mask(level_id) & g_peer_caps);
         m.mods[m.count].revision = (uint16_t)level_mods_revision(level_id);
         m.count++;
     }
@@ -568,11 +581,20 @@ static void net_host_recv(void) {
         union {
             NetCmd cmd;
             NetModRequest req;
+            NetCaps caps;
         } pkt;
         NetAddr from;
         int n = net_transport_recv(&from, &pkt, (int)sizeof(pkt));
         if (n < 0) return;
         if (n < (int)sizeof(uint32_t) || (int)pkt.cmd.magic != net_magic()) continue;
+
+        if (pkt.cmd.type == net_packet_caps()) {
+            if (n != (ssize_t)sizeof(NetCaps)) continue;
+            g_peer = from;
+            g_peer_known = 1;
+            g_peer_caps = lm_sanitize((int)pkt.caps.caps);
+            continue;
+        }
 
         if (pkt.cmd.type == net_packet_mod_request()) {
             if (n != (ssize_t)sizeof(NetModRequest)) continue;
@@ -585,6 +607,9 @@ static void net_host_recv(void) {
         }
 
         if (pkt.cmd.type != net_packet_cmd() || n != (ssize_t)sizeof(NetCmd)) continue;
+        if (!g_peer_known || from.addr != g_peer.addr || from.port != g_peer.port) {
+            g_peer_caps = lm_all_mask(); /* a new peer has advertised nothing yet */
+        }
         g_peer = from;
         g_peer_known = 1;
 
@@ -658,6 +683,17 @@ static void net_client_tick(void) {
     cmd.yaw = p->yaw;
     cmd.fire = (uint8_t)(g_in_fire ? 1 : 0);
     net_transport_send(&g_peer, &cmd, (int)sizeof(cmd));
+
+    /* One-shot capability advertisement, also only after the server has proved it is live. */
+    if (!g_caps_sent && g_snapshots_received > 0) {
+        NetCaps caps;
+        memset(&caps, 0, sizeof(caps));
+        caps.magic = (uint32_t)net_magic();
+        caps.type = (uint8_t)net_packet_caps();
+        caps.caps = (uint16_t)level_mods_capabilities();
+        net_transport_send(&g_peer, &caps, (int)sizeof(caps));
+        g_caps_sent = 1;
+    }
 
     /* One-shot: only after a snapshot proves the server has us as its peer. */
     if (g_request_mod && !g_request_sent && g_snapshots_received > 0) {
@@ -1137,7 +1173,8 @@ int main(int argc, char **argv) {
         net_body_bytes() != (int)sizeof(NetSnapBody) ||
         net_level_mod_bytes() != (int)sizeof(NetLevelMod) ||
         net_level_mods_size() != (int)sizeof(NetLevelMods) ||
-        net_mod_request_size() != (int)sizeof(NetModRequest)) {
+        net_mod_request_size() != (int)sizeof(NetModRequest) ||
+        net_caps_size() != (int)sizeof(NetCaps)) {
         fprintf(stderr, "shank_game: wire struct size disagrees with net_rules.prn\n");
         return 2;
     }
@@ -1214,13 +1251,13 @@ int main(int argc, char **argv) {
             else if (g_is_client) SDL_Delay(16);
         }
         printf("headless %d ticks: mode=%d %s=%d score=%d hp=%d shield=%d bodies=%d events=%d"
-               " level=%d env=%d mods=%d rev=%d snapshots=%d peer=%d level_name=%s\n",
+               " level=%d env=%d mods=%d rev=%d snapshots=%d peer=%d peer_caps=%d level_name=%s\n",
                headless, g_mode, g_mode == gp_mode_zombies() ? "wave" : "frags",
                g_mode == gp_mode_zombies() ? g_wave + 1 : g_player_score,
                g_player_score, local_body()->hp, local_body()->shield, bot_count_alive(),
                reflux_host_total_dispatched(), g_level_id, g_level_env,
                level_mods_mask(g_level_id), level_mods_revision(g_level_id),
-               g_snapshots_received, g_peer_known, level_catalog_name(g_level_id));
+               g_snapshots_received, g_peer_known, g_peer_caps, level_catalog_name(g_level_id));
         net_transport_close();
         event_log_close();
         return 0;

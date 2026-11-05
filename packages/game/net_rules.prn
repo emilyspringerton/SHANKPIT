@@ -11,10 +11,10 @@
 (module shankpit/net)
 (export net-magic net-version net-max-bodies net-port net-tick-ms net-stale-ms
         net-packet-connect net-packet-cmd net-packet-snapshot net-packet-welcome
-        net-packet-level-mods net-packet-mod-request
+        net-packet-level-mods net-packet-mod-request net-packet-caps
         net-cmd-size net-snapshot-size net-body-bytes net-header-bytes
         net-level-mod-bytes net-level-mods-header-bytes net-max-level-mods net-level-mods-size
-        net-mod-request-size
+        net-mod-request-size net-caps-size
         net-quant net-body-flags-alive net-body-flags-bot
         net-valid-mode net-valid-packet net-valid-body-count net-slot-valid
         net-valid-level-count)
@@ -45,6 +45,12 @@
 ;;   u32 magic, u8 type, u8 on, u16 level, u16 mod, u16 pad = 12
 (defn net-packet-mod-request [] : I32 5)
 (defn net-mod-request-size [] : I32 12)
+
+;; A client's ported-module mask, sent once after the first snapshot. The server clamps the level
+;; state it sends to this peer; the client still clamps locally, so neither side has to trust the
+;; other. u32 magic, u8 type, u8 pad, u16 caps = 8.
+(defn net-packet-caps [] : I32 6)
+(defn net-caps-size [] : I32 8)
 (defn net-level-mod-bytes [] : I32 8)
 (defn net-level-mods-header-bytes [] : I32 8)
 (defn net-max-level-mods [] : I32 8)
@@ -69,7 +75,7 @@
 (defn net-body-flags-bot [] : I32 2)
 
 (defn net-valid-mode [(mode : I32)] : I32 (if (and (>= mode 1) (<= mode 2)) 1 0))
-(defn net-valid-packet [(type : I32)] : I32 (if (and (>= type 0) (<= type 5)) 1 0))
+(defn net-valid-packet [(type : I32)] : I32 (if (and (>= type 0) (<= type 6)) 1 0))
 (defn net-valid-level-count [(count : I32)] : I32
   (if (and (> count 0) (<= count (net-max-level-mods))) 1 0))
 (defn net-valid-body-count [(count : I32)] : I32
