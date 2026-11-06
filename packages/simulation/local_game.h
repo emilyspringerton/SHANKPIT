@@ -2338,7 +2338,9 @@ static void apply_projectile_damage(PlayerState *owner, PlayerState *target, int
         else { damage -= target->shield; target->shield = 0; }
     }
     shield_regen_note_damage(target, now_ms);   /* after the absorb: this is the new baseline */
+    int damage_taken = damage;
     target->health -= damage;
+    if (owner && damage_taken > 0) combat_text_note_damage((PlayerState *)owner, damage_taken, now_ms);
     /* Per-damage reward: accurate shooting is rewarded independent of kill. */
     if (owner && owner->is_bot && damage > 0)
         owner->accumulated_reward += (float)damage * 0.5f;

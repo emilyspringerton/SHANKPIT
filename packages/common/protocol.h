@@ -757,6 +757,10 @@ typedef struct {
     // on its own clock (SDL_GetTicks) and the prediction tick, the HUD countdown and a training client
     // all read one number instead of each keeping a private, drifting copy. 4 bytes/player/snapshot.
     unsigned int shield_regen_since_ms;
+    // Floating combat text (PARENA-based): damage numbers shown above actors.
+    signed short combat_text_damage;
+    unsigned int combat_text_time;
+    unsigned char combat_text_type;
 } NetPlayer;
 
 typedef struct {
@@ -943,6 +947,10 @@ typedef struct {
        class as in_roll/in_lift/in_boost above. */
     int hammer_cast_ticks;
     int hammer_tower_ready;
+    /* Floating combat text: last damage dealt/taken for on-actor display. */
+    int combat_text_damage;
+    unsigned int combat_text_time;
+    unsigned char combat_text_type; /* 0 = damage, 1 = heal, 2 = shield */
 } PlayerState;
 
 typedef struct {

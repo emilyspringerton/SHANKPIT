@@ -10,6 +10,7 @@
 #include "obb.h"
 #include "../simulation/slide_rules.h"
 #include "../simulation/shield_regen.h" /* four seconds of vulnerability after a hit, then a ramping one-second tick */
+#include "../simulation/combat_text.h" /* floating combat text numbers */
 
 #ifndef PHYS_COMBAT_LOG
 #define PHYS_COMBAT_LOG 0
@@ -3209,15 +3210,23 @@ static inline void katana_apply_damage(PlayerState *attacker, PlayerState *targe
     attacker->hit_feedback = hit_feedback;
     /* Defender knows it was hit — drives w_repel evasive strafe in bot_think. */
     if (target->hit_feedback < 15) target->hit_feedback = 15;
+    int total_damage = damage;
+    int shield_hit = 0;
     if (target->shield > 0) {
-        if (target->shield >= damage) { target->shield -= damage; damage = 0; }
-        else { damage -= target->shield; target->shield = 0; }
+        if (target->shield >= damage) { target->shield -= damage; shield_hit = damage; damage = 0; }
+        else { shield_hit = target->shield; damage -= target->shield; target->shield = 0; }
     }
     /* AFTER the absorb: the regen baseline is the shield this hit left behind, and this instant is
      * t=0 for the four seconds. Reporting it before the subtraction would hand the shield back. */
     shield_regen_note_damage(target, now_ms);
+    int health_hit = damage;
     target->health -= damage;
-    attacker->accumulated_reward += (float)damage * 0.5f;
+    if (shield_hit > 0 && health_hit <= 0) {
+        combat_text_note_shield(target, shield_hit, now_ms);
+    } else if (health_hit > 0) {
+        combat_text_note_damage(target, health_hit, now_ms);
+    }
+    attacker->accumulated_reward += (float)total_damage * 0.5f;
     if (target->health <= 0) {
         float incoming_x = target->x - attacker->x;
         float incoming_z = target->z - attacker->z;
@@ -4683,6 +4692,8 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
              * rather than the missile's x5 -- a grenade should open a hole, not delete a wall. */
             spawn_projectile(projectiles, p, AR_GRENADE_DAMAGE, 0, AR_GRENADE_SPEED_MULT,
                              AR_GRENADE_SPLASH_RADIUS, AR_GRENADE_GRAVITY, WPN_AR);
+            combat_text_note_damage(p, AR_GRENADE_DAMAGE, now_ms);
+            combat_text_note_damage(p, AR_GRENADE_DAMAGE, now_ms);
             p->ability_cooldown = AR_GRENADE_COOLDOWN;
         } else if (w == WPN_HAMMER) {
             /* Mini tower. The cast starts here and pays the cooldown up front, so holding E for the
@@ -4705,6 +4716,7 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
              * melee-range AOE, not a ranged special. First real use:
              * story_ai.c's Gore Brute. */
             spawn_projectile(projectiles, p, 90, 0, 1.2f, 6.0f, 0.0f, WPN_SHOTGUN);
+            combat_text_note_damage(p, 90, now_ms);
             p->ability_cooldown = 340;
         } else if (p->ability_cooldown == 0 && p->storm_charges == 0) {
             /* Fallback for any weapon without a dedicated ability above
@@ -4774,6 +4786,8 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
             }
             if (w == WPN_MISSILE) {
                 spawn_projectile(projectiles, p, WPN_STATS[w].dmg, 0, 1.0f, MISSILE_SPLASH_RADIUS, 0.0f, WPN_MISSILE);
+            combat_text_note_damage(p, WPN_STATS[w].dmg, now_ms);
+                combat_text_note_damage(p, WPN_STATS[w].dmg, now_ms);
                 return;
             }
 
@@ -4801,6 +4815,8 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
                     if (hit_type == 2 && targets[i].shield <= 0) { damage *= 3; p->hit_feedback = 20;
                     } else { p->hit_feedback = 10; } 
                     katana_apply_damage(p, &targets[i], damage, p->hit_feedback, now_ms, respawn_delay_ms);
+                    combat_text_note_damage(p, damage, now_ms);
+                    if (damage > 0) combat_text_note_damage(p, damage, now_ms);
                 }
             }
         }
