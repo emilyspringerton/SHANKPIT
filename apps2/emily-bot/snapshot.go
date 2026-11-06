@@ -43,9 +43,9 @@ const (
 	// self-play opponent). Now 88 bytes (84 + anim_override) -- re-verified via the same real,
 	// compiled offsetof()/sizeof() probe technique this file's own module doc comment already
 	// establishes, never hand-guessed.
-	netPlayerSize = 92 // S470 class of bug, avoided by construction: shield_regen_since_ms (4 bytes)
+	netPlayerSize = 104 // S470 class of bug, avoided by construction: shield_regen_since_ms + combat_text (12 bytes)
 	// appended at the END of NetPlayer, so every earlier offset is unchanged and only the stride grows
-	// (88 -> 92). Verified with the same compiled probe technique this file's doc comment describes.
+	// 104-stride. The trailing (88 -> 92) in this comment is stale and measured wrong: shield_regen_since_ms and combat_text appended at the END grow the stride 88 -> 104. Verified with the same compiled probe technique this file's doc comment describes.
 
 	// NetPlayer field byte offsets, matching packages/common/protocol.h's real field order and
 	// this platform's real struct alignment (verified via a compiled offsetof() probe, not
@@ -85,6 +85,10 @@ const (
 	offVy              = 76
 	offVz              = 80
 	offShieldRegenSince = 88 // shield_regen_since_ms: ms since the hit that started the regen clock (0 = just hit / never hit)
+	offCombatTextDamage = 92 // combat_text_damage (signed short: negative = taken)
+	offCombatTextTime   = 96 // combat_text_time (when the number was rendered)
+	offCombatTextType   = 100 // combat_text_type (0=damage 1=heal 2=shield)
+	offCombatTextFull   = 101 // past the type byte, unused padding
 )
 
 func f32(buf []byte, off int) float32 {
@@ -155,6 +159,9 @@ type decodedPlayer struct {
 	abilityCooldown uint16
 	// killStreak -- S459-52 (never decoded here before this file's own S459-69 stride fix).
 	killStreak uint8
+	combatTextDamage         int16
+	combatTextTime           uint32
+	combatTextColorType      uint8
 	// vx, vy, vz -- S459-69, real, server-authoritative velocity, now on the wire.
 	vx, vy, vz float32
 }
@@ -200,6 +207,9 @@ func decodePacketSnapshot(buf []byte, n int) ([]decodedPlayer, bool) {
 			reloadTimer:   u16(buf, off+offReloadTimer),
 			abilityCooldown: u16(buf, off+offAbilityCooldown),
 			killStreak:    buf[off+offKillStreak],
+			combatTextDamage:         i16(buf, off+offCombatTextDamage),
+			combatTextTime:           binary.LittleEndian.Uint32(buf[off+offCombatTextTime:]),
+			combatTextColorType:      buf[off+offCombatTextType],
 			vx:            f32(buf, off+offVx),
 			vy:            f32(buf, off+offVy),
 			vz:            f32(buf, off+offVz),
@@ -209,4 +219,8 @@ func decodePacketSnapshot(buf []byte, n int) ([]decodedPlayer, bool) {
 		off += netPlayerSize
 	}
 	return out, true
+}
+
+func i16(buf []byte, off int) int16 {
+	return int16(int8(buf[off+1])<<8) | int16(int8(buf[off]))
 }

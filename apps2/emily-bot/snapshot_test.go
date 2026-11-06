@@ -85,16 +85,20 @@ func TestDecodePacketSnapshot_TruncatedBuffer(t *testing.T) {
 }
 
 // TestDecodePacketSnapshot_ShieldRegenClock -- the regen clock rides at the very END of NetPlayer
-// (offset 88 of a 92-byte stride), so this is the field the old 88-byte stride would have read out of
+// (offset 88 of a 104-byte stride), so this is the field the old 104-byte stride would have read out of
 // the NEXT entity's id bytes. Two entities with different clocks prove both the offset and the stride,
 // which is the exact class of bug this package has hit three times before.
 func TestDecodePacketSnapshot_ShieldRegenClock(t *testing.T) {
-	if netPlayerSize != 92 {
-		t.Fatalf("netPlayerSize is %d, want 92 (protocol.h's NetPlayer grew when shield_regen_since_ms was appended)", netPlayerSize)
+	if netPlayerSize != 104 {
+		t.Fatalf("netPlayerSize is %d, want 104 (protocol.h's NetPlayer grew with shield_regen_since_ms + combat_text)", netPlayerSize)
 	}
-	if offShieldRegenSince+4 != netPlayerSize {
-		t.Fatalf("shield_regen_since_ms is not the last field: offset %d of a %d-byte stride", offShieldRegenSince, netPlayerSize)
-	}
+	// shield_regen_since_ms (at 88) plus combat_text (at 92, 96, 100) are the last three
+	// fields of the 104-byte stride -- nothing after combat_text_type (offset 100 + 3 pad = 104).
+
+// This test now lives under the new 104-byte stride; the old offShieldRegenSince+4 assertion is replaced by the combat-text decode below.
+// Drift-replay: decode a real-shaped snapshot and assert the combat_text fields decode correctly.
+
+
 
 	buf := make([]byte, netHeaderSize+1+netPlayerSize*2)
 	buf[0] = 2 // PACKET_SNAPSHOT
@@ -123,5 +127,42 @@ func TestDecodePacketSnapshot_ShieldRegenClock(t *testing.T) {
 	}
 	if entities[0].shield != 12 || entities[1].shield != 7 || entities[1].id != 2 {
 		t.Fatalf("the clock must not have shifted the rest of the entity: %+v %+v", entities[0], entities[1])
+	}
+}
+
+// TestDecodePacketSnapshot_CombatText -- combat text rides at offsets 92/96/100 of the new 104-stride.
+func TestDecodePacketSnapshot_CombatText(t *testing.T) {
+	if netPlayerSize != 104 {
+		t.Fatalf("netPlayerSize is %d, want 104", netPlayerSize)
+	}
+	if offCombatTextDamage != 92 || offCombatTextTime != 96 || offCombatTextType != 100 {
+		t.Fatalf("unexpected combat text offsets: %d/%d/%d", offCombatTextDamage, offCombatTextTime, offCombatTextType)
+	}
+
+	// 104-byte entity: id=1, shield_regen_since_ms=0 -> combat_text fields zero.
+	// Second entity: combat_text_damage=-4, time=41230, type=0.
+	buf := make([]byte, netHeaderSize+1+netPlayerSize*2)
+	buf[0] = 2 // PACKET_SNAPSHOT
+	buf[8] = 2 // entity_count
+	buf[netHeaderSize] = 2
+	e0 := netHeaderSize + 1
+	e1 := e0 + netPlayerSize
+	buf[e0+offID] = 1
+	buf[e0+offShieldRegenSince] = 0
+	buf[e1+offID] = 2
+	buf[e1+offShieldRegenSince] = 100
+	binary.LittleEndian.PutUint16(buf[e1+offCombatTextDamage:], 65532) // -4 (signed short 16-bit little-endian)
+	binary.LittleEndian.PutUint32(buf[e1+offCombatTextTime:], 1000)
+	buf[e1+offCombatTextType] = 0
+
+	entities, ok := decodePacketSnapshot(buf, len(buf))
+	if !ok || len(entities) != 2 {
+		t.Fatalf("decode failed: ok=%v count=%d", ok, len(entities))
+	}
+	if entities[0].combatTextDamage != 0 || entities[0].combatTextColorType != 0 || entities[0].combatTextTime != 0 {
+		t.Fatalf("entity 0 combat text: %+v", entities[0])
+	}
+	if entities[1].combatTextDamage != -4 || entities[1].combatTextTime != 1000 || entities[1].combatTextColorType != 0 {
+		t.Fatalf("entity 1 combat text: %+v", entities[1])
 	}
 }

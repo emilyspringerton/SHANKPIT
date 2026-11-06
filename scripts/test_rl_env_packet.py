@@ -24,12 +24,12 @@ class TestStructSizes(unittest.TestCase):
     def test_user_cmd_is_36_bytes(self):
         self.assertEqual(ctypes.sizeof(UserCmd), 36)
 
-    def test_net_player_is_92_bytes(self):
+    def test_net_player_size(self):
         # S470: grew from 84 to 88 when anim_override was added (S459-69 grew it 72->84 before
         # that, for vx/vy/vz) -- this exact assertion is what should have caught the mirror
         # drifting stale a second time; it didn't because this test itself wasn't updated either.
         # shield_regen_since_ms appended at the END takes it to 92 (offset 88).
-        self.assertEqual(ctypes.sizeof(NetPlayer), 92)
+        self.assertEqual(ctypes.sizeof(NetPlayer), 104)
 
     def test_net_player_field_offsets_match_the_real_compiled_c_struct(self):
         # Real offsets verified via a compiled sizeof/offsetof C probe against protocol.h during
@@ -362,6 +362,75 @@ class TestShieldRegenClockDecode(unittest.TestCase):
         self.assertAlmostEqual(float(obs[28]), 1.0)
         me.shield_regen_since_ms = 1000
         self.assertAlmostEqual(float(build_observation(me, [], None)[28]), 0.75)
+
+
+class TestCombatTextDecode(unittest.TestCase):
+    """NetPlayer.combat_text is at offsets 92/96/100 of the new 104-byte stride.
+    Decoded end to end -- not asserted from the struct definition alone."""
+
+    def _snapshot(self):
+        size = ctypes.sizeof(NetPlayer)
+        buf = bytearray(13 + 2 * size)
+        buf[0] = 2  # PACKET_SNAPSHOT
+        buf[8] = 2  # entity_count
+        buf[12] = 2  # redundant count
+        # Entity 0: untouched (all combat text zero).
+        # Entity 1: damage over the head, -4 points, 41.230 s ago.
+        for i, pid in enumerate([1, 2]):
+            off = 13 + i * size
+            buf[off + 0] = pid
+            buf[off + 1] = 9  # scene_id
+            if pid == 2:
+                # combat text: damage=-4 (signed short), time=41230 ms ago, type=0
+                buf[off + 92:off + 94] = struct.pack("<h", -4)
+                buf[off + 96:off + 100] = struct.pack("<I", 41230)
+                buf[off + 100] = 0
+        return bytes(buf)
+
+    def test_decode_reads_combat_text_of_every_entity(self):
+        players = decode_snapshot(self._snapshot())
+        self.assertIsNotNone(players)
+        self.assertEqual(len(players), 2)
+        self.assertEqual(players[0].combat_text_damage, 0)
+        self.assertEqual(players[0].combat_text_time, 0)
+        self.assertEqual(players[0].combat_text_type, 0)
+        self.assertEqual(players[1].combat_text_damage, -4)
+        self.assertEqual(players[1].combat_text_time, 41230)
+        self.assertEqual(players[1].combat_text_type, 0)
+
+    def test_decode_combat_text_respects_stride(self):
+        # A stale 104-byte stride must not bleed into a second entity's bytes.
+        size = ctypes.sizeof(NetPlayer)
+        buf = bytearray(13 + size)
+        buf[0] = 2  # PACKET_SNAPSHOT
+        buf[8] = 1  # entity_count
+        buf[12] = 1
+        off = 13 + 0 * size
+        buf[off + 0] = 1
+        buf[off + 92:off + 94] = struct.pack("<h", -4)
+        buf[off + 96:off + 100] = struct.pack("<I", 41230)
+        players = decode_snapshot(bytes(buf))
+        self.assertIsNotNone(players)
+        self.assertEqual(len(players), 1)
+        self.assertEqual(players[0].combat_text_damage, -4)
+        self.assertEqual(players[0].combat_text_time, 41230)
+        self.assertEqual(players[0].combat_text_type, 0)
+
+    def test_decode_rejects_short_combat_text_buffer(self):
+        # Make the buffer shorter than one full entity (13 + 104 = 117 bytes) so decode is
+        # forced to run on a buffer that cannot hold a whole combat_text field.
+        # decode must refuse a truncated entity instead of misreading adjacent bytes.
+        buf = bytearray(13 + 92)  # header + 13 bytes of entity prefix (kills + vx/vy/vz), no combat_text
+        buf[0] = 2  # PACKET_SNAPSHOT
+        buf[8] = 1  # entity_count
+        buf[12] = 1
+        off = 13
+        buf[off + 0] = 1                    # id
+        buf[off + 1] = 9                    # scene_id
+        buf[off + 88:off + 92] = struct.pack("<I", 0)   # shield_regen_since_ms = 0
+        buf[off + 92:off + 94] = struct.pack("<h", -4)  # combat_text_damage (NOT in buffer)
+        decoded = decode_snapshot(bytes(buf))
+        self.assertEqual(len(decoded), 0, "truncated entity must not decode")
 
 
 if __name__ == "__main__":

@@ -127,7 +127,7 @@ assert ctypes.sizeof(UserCmd) == 36, ctypes.sizeof(UserCmd)
 
 
 class NetPlayer(ctypes.LittleEndianStructure):
-    _pack_ = 1
+    _pack_ = 0
     _fields_ = [
         ("id", ctypes.c_uint8),
         ("scene_id", ctypes.c_uint8),
@@ -201,10 +201,16 @@ class NetPlayer(ctypes.LittleEndianStructure):
         ("_pad5", ctypes.c_uint8),  # compiler padding: the next field is 4-byte aligned (offset 88)
         # shield_regen_since_ms -- the shield regen clock (PARENA stdlib/shankpit/shield_regen_rules.prn):
         # ms since the hit that started the four-second window, then a one-second tick worth 1..10.
-        # Appended at the END so every earlier offset is unchanged; only the stride grows 88 -> 92.
+        # Appended at the END so every earlier offset is unchanged; stride grows 88 -> 104 with
+        # combat_text fields following (signed short at 92, uint32 time at 96, uint8 type at 100).
         ("shield_regen_since_ms", ctypes.c_uint32),
+        # combat_text -- floating combat text (combat_text_rules.prn) damage numbers over actors.
+        ("combat_text_damage", ctypes.c_short),   # signed short: negative = taken, positive = heal
+        ("combat_text_time", ctypes.c_uint32),    # ms when the number was rendered
+        ("combat_text_type", ctypes.c_uint8),     # 0=damage 1=heal 2=shield
+        ("_ct_pad", ctypes.c_uint8 * 3),          # 3-byte padding past the type byte to 4-byte align
     ]
-assert ctypes.sizeof(NetPlayer) == 92, ctypes.sizeof(NetPlayer)
+assert ctypes.sizeof(NetPlayer) == 104, ctypes.sizeof(NetPlayer)
 
 
 # --- Encode/decode helpers, matching apps2/emily-bot/main.go + snapshot.go byte-for-byte ---
@@ -238,8 +244,8 @@ def decode_snapshot(data: bytes):
     """Returns a list of NetPlayer copies, or None if data is too short to trust. Mirrors
     apps2/emily-bot/snapshot.go's own decodePacketSnapshot exactly: entity_count lives at
     NetHeader offset 8, entities start at offset 13 (12-byte header + 1 redundant count byte),
-    each entity is sizeof(NetPlayer)=92 bytes (shield_regen_since_ms appended at the END; S470 grew
-    it 84->88 for anim_override, itself grown from 72 by S459-69's own vx/vy/vz).
+    each entity is sizeof(NetPlayer)=104 bytes (shield_regen_since_ms and combat_text appended at the END; S470 grew
+    it 84->88 for anim_override, itself grown from 72 by S459-69's vx/vy/vz).
     A truncated/overclaiming buffer stops safely at however many whole entities actually fit,
     never misparses past the real buffer end."""
     if len(data) < 13 or data[0] != PACKET_SNAPSHOT:
