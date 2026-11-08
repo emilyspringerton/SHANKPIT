@@ -151,7 +151,7 @@ wh_status wh_instantiate(const uint8_t *bytes, size_t n, const wh_import *import
     Bytes d;
     M3Result r;
     int ni, i;
-    char text[320];
+    char text[2 * WH_NAME_MAX + 160]; /* two names at their cap plus the longest sentence */
 
     if (!out) return WH_ERR_ARGS;
     *out = NULL;
