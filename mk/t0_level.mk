@@ -12,6 +12,7 @@
 #   make regen-level-manager  PARENA/stdlib/shankpit/level_manager_rules.prn -> packages/simulation/level_manager_rules.c
 #   make check-strict-t0      every new T0 host file at the doctrine bar, gcc and (if present) mingw
 #   make regen-wasm-surface   PARENA/stdlib/wasm/surface.prn -> packages/wasm_host/wasm_surface_gen.c
+#   make check-wasm-fixtures  the hand-assembled test modules match scripts/gen_wasm_test_fixtures.py
 #   make brawlpit-level       rebuild assets/levels/brawlpit/ (the module from ../PARENA's level.manifest,
 #                             the art from ../WOTAN); needs the LLVM 18 toolchain (MONOREPO BOOTSTRAP.md)
 #   make check-brawlpit-level fail if the committed module or art differs from a fresh build (skips loudly
@@ -23,7 +24,7 @@ WASM3_CFLAGS := -std=c99 -O2 -w
 T0_BIN := $(BIN_DIR)/t0
 WASM3_OBJS := $(patsubst third_party/wasm3/source/%.c,$(T0_BIN)/wasm3/%.o,$(WASM3_SRC))
 
-.PHONY: test-wasm-host test-level-abi test-level-host test-level-manager regen-level-manager check-strict-t0 regen-wasm-surface brawlpit-level check-brawlpit-level
+.PHONY: check-wasm-fixtures test-wasm-host test-level-abi test-level-host test-level-manager regen-level-manager check-strict-t0 regen-wasm-surface brawlpit-level check-brawlpit-level
 
 $(T0_BIN)/wasm3/%.o: third_party/wasm3/source/%.c
 	@mkdir -p $(dir $@)
@@ -78,3 +79,6 @@ brawlpit-level:
 
 check-brawlpit-level:
 	scripts/build_brawlpit_level.sh --check
+
+check-wasm-fixtures:
+	python3 -I scripts/gen_wasm_test_fixtures.py --check
