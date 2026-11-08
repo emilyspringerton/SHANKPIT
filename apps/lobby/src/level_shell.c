@@ -31,7 +31,7 @@ static int32_t g_trace_cursor = 0;
 
 static const char *state_name(int s) {
     static const char *names[] = {"NONE", "LOADING", "FG", "BG", "SOURCE", "SOURCE_NONE"};
-    return (s >= 0 && s < 6) ? names[s] : "?";
+    return (s >= 0 && s < 6) ? names[s] : "BOOT";
 }
 
 /* one line per transition, and with SHANKPIT_LEVEL_TRACE every lifecycle / BRAWLPIT row as it lands: what
@@ -260,8 +260,8 @@ void level_shell_draw(void) {
     begin_2d();
     glDisable(GL_TEXTURE_2D);
     /* top centre: the world's HUD owns the bottom rows and the top-right corner */
-    if (banner == 1) draw_text_centered("SHIFT+M  RESUME BRAWLPIT     SHIFT+X  CLOSE IT", LS_BANNER_Y, 2.5f, 1.0f, 0.85f, 0.2f);
-    else if (banner == 2) draw_text_centered("SHIFT+M  PLAY BRAWLPIT", LS_BANNER_Y, 2.5f, 0.6f, 0.9f, 1.0f);
+    if (banner == 1) draw_text_centered("SHIFT+M RESUME BRAWLPIT   SHIFT+X CLOSE IT", LS_BANNER_Y, 2.5f, 1.0f, 0.85f, 0.2f);
+    else if (banner == 2) draw_text_centered("SHIFT+M PLAY BRAWLPIT", LS_BANNER_Y, 2.5f, 0.6f, 0.9f, 1.0f);
     if (level_host_message(&g_lh)[0]) draw_text_centered(level_host_message(&g_lh), LS_BANNER_Y - 28.0f, 2.0f, 1.0f, 0.45f, 0.4f);
     end_2d();
 }

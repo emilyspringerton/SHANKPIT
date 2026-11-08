@@ -10,6 +10,8 @@
 #                             assets, the fixed step, every load failure, traps (the committed module + fixtures)
 #   make test-level-manager   the level manager's decisions (PARENA level_manager_rules.prn, generated C)
 #   make regen-level-manager  PARENA/stdlib/shankpit/level_manager_rules.prn -> packages/simulation/level_manager_rules.c
+#   make level-smoke          the real lobby under Xvfb, real X key events: boot in front, Shift+M, keys reach
+#                             BRAWLPIT, Shift+X closes, Shift+M reloads (needs Xvfb + python-xlib + Pillow)
 #   make check-strict-t0      every new T0 host file at the doctrine bar, gcc and (if present) mingw
 #   make regen-wasm-surface   PARENA/stdlib/wasm/surface.prn -> packages/wasm_host/wasm_surface_gen.c
 #   make check-wasm-fixtures  the hand-assembled test modules match scripts/gen_wasm_test_fixtures.py
@@ -24,7 +26,7 @@ WASM3_CFLAGS := -std=c99 -O2 -w
 T0_BIN := $(BIN_DIR)/t0
 WASM3_OBJS := $(patsubst third_party/wasm3/source/%.c,$(T0_BIN)/wasm3/%.o,$(WASM3_SRC))
 
-.PHONY: check-wasm-fixtures test-wasm-host test-level-abi test-level-host test-level-manager regen-level-manager check-strict-t0 regen-wasm-surface brawlpit-level check-brawlpit-level
+.PHONY: level-smoke check-wasm-fixtures test-wasm-host test-level-abi test-level-host test-level-manager regen-level-manager check-strict-t0 regen-wasm-surface brawlpit-level check-brawlpit-level
 
 $(T0_BIN)/wasm3/%.o: third_party/wasm3/source/%.c
 	@mkdir -p $(dir $@)
@@ -82,3 +84,6 @@ check-brawlpit-level:
 
 check-wasm-fixtures:
 	python3 -I scripts/gen_wasm_test_fixtures.py --check
+
+level-smoke:
+	scripts/level_smoke_test.sh
