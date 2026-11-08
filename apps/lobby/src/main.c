@@ -18161,6 +18161,7 @@ int main(int argc, char* argv[]) {
         if (prev_app_state == STATE_LOBBY && app_state != STATE_LOBBY) {
             accumulator = 0.0;
         }
+        if (prev_app_state != STATE_LOBBY && app_state == STATE_LOBBY) level_shell_leave_world(); /* T0 */
         prev_app_state = app_state;
         accumulator += frame_time;
 
@@ -18178,8 +18179,11 @@ int main(int argc, char* argv[]) {
                 if (!g_chat_open && !g_orb_open) SDL_StopTextInput();
             }
         }
-        /* T0 level shell: its chords never fire while something has the keyboard for text */
-        int lv_text_focus = g_chat_open || g_orb_open || ui_edit_index >= 0 || editor_widget_overlay_is_open() ||
+        /* T0 level shell: its chords never fire while something in a GAME state has the keyboard for text. The
+         * lobby's own owners (a tile rename, the NOTES panel) are left out: their handlers only run in the lobby,
+         * so carried into a game they would block every chord for good (milestone review). The source overlay
+         * routes its own keys in the shell. */
+        int lv_text_focus = g_chat_open || g_orb_open ||
                             (g_story_phone.open && (g_story_phone.app == BP_APP_PELLEGRINO || g_story_phone.app == BP_APP_GFD));
         while(SDL_PollEvent(&e)) {
             if(e.type == SDL_QUIT) { lobby_level_snapshot(0); running = 0; }
@@ -18937,7 +18941,10 @@ int main(int argc, char* argv[]) {
         }
         else {
             level_shell_frame(frame_time); /* T0: load / poll REFLUX / step the level, before the world reads input */
-            const Uint8 *k = SDL_GetKeyboardState(NULL);
+            /* T0: while a level or the source overlay is in front, the world's keyboard snapshot is all-up -- every
+               polled key below (movement, Space lift, Shift boost, [ ] paint, ...) at once, not one gate each */
+            static const Uint8 lv_no_keys[SDL_NUM_SCANCODES];
+            const Uint8 *k = level_shell_world_input() ? SDL_GetKeyboardState(NULL) : lv_no_keys;
             int control_pid = (app_state == STATE_GAME_NET && my_client_id > 0 && my_client_id < MAX_CLIENTS) ? my_client_id : 0;
             int in_heli = local_state.players[control_pid].in_vehicle && local_state.players[control_pid].vehicle_type == VEH_HELICOPTER;
             float fwd=0, str=0;
@@ -19369,7 +19376,10 @@ int main(int argc, char* argv[]) {
             bloom_begin_scene(bloom_w, bloom_h);
             if (g_broadcast_on) broadcast_frame(&blended); else draw_scene(&blended);
             bloom_end_scene_and_composite(bloom_w, bloom_h);
-            level_shell_draw(); /* T0: BRAWLPIT over the world while it is in front, else the world-view hint */
+            { /* T0: BRAWLPIT over the world while it is in front, else the world-view hint */
+                level_shell_view lv_draw_view = { g_vp_x, g_vp_y, g_vp_w, g_vp_h, g_win_w, g_win_h };
+                level_shell_draw(&lv_draw_view);
+            }
             SDL_GL_SwapWindow(win);
         }
     }

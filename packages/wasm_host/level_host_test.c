@@ -302,9 +302,46 @@ static void test_failures(void) {
     CHECK(level_host_rejected(&h) == 1, "the refusal count survives the unload");
 }
 
+/* the view-source overlay and SUSPEND (leaving the world for the menu): every overlay state has a way out,
+ * the level never steps under the overlay, and only the transitions that change what is in front announce */
+static void test_overlay_and_suspend(void) {
+    level_host h;
+    int hidden, ticks;
+    CHECK(load_one(&h, "lh_ok_overlay", fx_lv_ok, sizeof fx_lv_ok) == lm_st_fg(), "a minimal level loads for the overlay run");
+    CHECK(level_host_chord(&h, 'j', 1, 1, 0, 0, 0, 0, 0) == 1 && level_host_state(&h) == lm_st_source() &&
+              last_is(REFLUX_ACTION_LEVEL_HIDDEN, 1, 0, 0),
+          "Ctrl+Shift+J in the foreground: SOURCE, LEVEL_HIDDEN");
+    CHECK(!level_host_owns_input(&h) && level_host_banner(&h) == 0, "under the overlay the level owns no input and no hint is drawn");
+    ticks = h.ticks;
+    level_host_frame(&h, 50000);
+    CHECK(h.ticks == ticks && level_host_memory(&h, NULL) != NULL, "no steps under the overlay, and the level stays loaded");
+    CHECK(level_host_command(&h, lm_cmd_overlay_closed()) == 1 && level_host_state(&h) == lm_st_fg() &&
+              last_is(REFLUX_ACTION_LEVEL_SHOWN, 1, 0, 0),
+          "OVERLAY_CLOSED: back into the level, LEVEL_SHOWN");
+    CHECK(level_host_command(&h, lm_cmd_suspend()) == 1 && level_host_state(&h) == lm_st_bg() &&
+              last_is(REFLUX_ACTION_LEVEL_HIDDEN, 1, 0, 0),
+          "SUSPEND in the foreground: BG, LEVEL_HIDDEN (BRAWLPIT pauses its match on it)");
+    hidden = count_rows(REFLUX_ACTION_LEVEL_HIDDEN);
+    CHECK(level_host_chord(&h, 'j', 1, 1, 0, 0, 0, 0, 0) == 1 && level_host_state(&h) == lm_st_source() &&
+              count_rows(REFLUX_ACTION_LEVEL_HIDDEN) == hidden,
+          "Ctrl+Shift+J in the world view: SOURCE, nothing announced (already hidden)");
+    CHECK(level_host_command(&h, lm_cmd_suspend()) == 1 && level_host_state(&h) == lm_st_bg(),
+          "SUSPEND under the overlay: BG");
+    CHECK(level_host_command(&h, lm_cmd_suspend()) == 0 && level_host_state(&h) == lm_st_bg(), "SUSPEND in BG changes nothing");
+    CHECK(shift_x(&h) == 1 && level_host_state(&h) == lm_st_none(), "Shift+X closes it");
+    CHECK(level_host_chord(&h, 'j', 1, 1, 0, 0, 0, 0, 0) == 1 && level_host_state(&h) == lm_st_source_none() &&
+              level_host_command(&h, lm_cmd_overlay_closed()) == 1 && level_host_state(&h) == lm_st_none(),
+          "with nothing loaded: SOURCE_NONE, and closing the overlay goes back to NONE");
+    CHECK(level_host_chord(&h, 'j', 1, 1, 0, 0, 0, 0, 0) == 1 && level_host_command(&h, lm_cmd_suspend()) == 1 &&
+              level_host_state(&h) == lm_st_none() && shift_m(&h) == 1 && level_host_state(&h) == lm_st_loading(),
+          "SUSPEND from SOURCE_NONE: NONE, and Shift+M still loads (no wedge)");
+    level_host_shutdown(&h);
+}
+
 int main(void) {
     test_brawlpit_life();
     test_failures();
+    test_overlay_and_suspend();
     if (failures) { printf("level_host_test: %d of %d FAILED\n", failures, checks); return 1; }
     printf("level_host_test: ALL PASS (%d checks)\n", checks);
     return 0;

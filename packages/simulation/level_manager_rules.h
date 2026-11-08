@@ -21,6 +21,7 @@ int lm_cmd_load_ok(void);        /* 4 */
 int lm_cmd_load_fail(void);      /* 5 */
 int lm_cmd_trap(void);           /* 6 */
 int lm_cmd_overlay_closed(void); /* 7 */
+int lm_cmd_suspend(void);        /* 8: the game leaves the world for its menu: FG/SOURCE -> BG, SOURCE_NONE -> NONE */
 
 /* the command a key-down is, 0 none. sym = SDL keycode; the flags are 0/1; mac = running on macOS;
  * text_focus = chat, orb, a phone text app, a lobby text field or the editor overlay has the keyboard;

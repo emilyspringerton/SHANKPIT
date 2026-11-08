@@ -27,7 +27,9 @@ static GLuint g_tex = 0;
 static int g_tex_w = 0, g_tex_h = 0;
 static int g_have_frame = 0;      /* the texture holds a frame of the current instance */
 static SDL_Keycode g_chord_sym = 0; /* a consumed chord's key: its repeats and its key-up are swallowed too */
-static int g_buttons = 0;         /* the level's view of the mouse buttons (bit 0 = primary) */
+static int g_buttons = 0;         /* the level's view of the mouse buttons (bit 0 = primary): only presses made
+                                   * while it is in front count, so a button held in the world across Shift+M
+                                   * never arrives as a click nobody made in the level */
 static char g_last_msg[256];
 static int g_logged_state = -1;   /* the state last printed: every transition is one stdout line */
 static int g_trace = 0;           /* SHANKPIT_LEVEL_TRACE set: print every level-family REFLUX row too */
@@ -135,7 +137,7 @@ static void after_transition(int old) {
     static char path[512]; /* static: the editor widget is handed this path (it copies since EDITOR.GAME's fix) */
     if (now == old) return;
     if (lm_world_input(old) && !lm_world_input(now)) SDL_SetRelativeMouseMode(SDL_FALSE);
-    if (lm_owns_input(old) && !lm_owns_input(now)) g_buttons = 0;
+    if (lm_owns_input(old) != lm_owns_input(now)) g_buttons = 0;
     if (in_source(now) && !in_source(old) && !(source_entry(path, sizeof path) && editor_widget_overlay_open_file(path))) {
         notice("the source editor could not open (no editor widget in this build)");
         level_host_command(&g_lh, lm_cmd_overlay_closed());
@@ -205,7 +207,6 @@ int level_shell_event(const SDL_Event *e, int text_focus, const level_shell_view
         return was_fg; /* the level reads key codes; the world must not get the text */
     case SDL_MOUSEMOTION:
         if (!was_fg || !v) return 0;
-        g_buttons = (e->motion.state & SDL_BUTTON_LMASK) ? 1 : 0;
         map_pointer(v, e->motion.x, e->motion.y, &fx, &fy);
         level_host_pointer(&g_lh, fx, fy, g_buttons);
         return 1;
@@ -230,6 +231,19 @@ int level_shell_event(const SDL_Event *e, int text_focus, const level_shell_view
     }
 }
 
+void level_shell_leave_world(void) {
+    int old;
+    if (!g_inited) return;
+    old = level_host_state(&g_lh);
+    if (in_source(old)) editor_widget_overlay_close();
+    if (level_host_command(&g_lh, lm_cmd_suspend())) {
+        after_transition(old);
+        note();
+    }
+    g_buttons = 0;
+    g_chord_sym = 0;
+}
+
 void level_shell_frame(double frame_seconds) {
     int old, dt_us;
     const char *msg;
@@ -248,6 +262,9 @@ void level_shell_frame(double frame_seconds) {
     level_host_frame(&g_lh, dt_us);
     after_transition(old);
     note();
+    /* whoever grabbed the mouse meanwhile (a mode start, a menu), it is not the world's while something is in
+     * front of it */
+    if (!lm_world_input(level_host_state(&g_lh)) && SDL_GetRelativeMouseMode()) SDL_SetRelativeMouseMode(SDL_FALSE);
     msg = level_host_message(&g_lh);
     if (msg[0] && strcmp(msg, g_last_msg) != 0) fprintf(stderr, "[level] %s\n", msg);
     snprintf(g_last_msg, sizeof g_last_msg, "%s", msg);
@@ -300,14 +317,16 @@ static void draw_notice(void) {
     if (notice_live()) draw_text_centered(g_notice, LS_BANNER_Y - 56.0f, 2.0f, 0.9f, 0.9f, 0.95f);
 }
 
-void level_shell_draw(void) {
+void level_shell_draw(const level_shell_view *v) {
     int w = 0, h = 0, dirty = 0, banner, st;
     const uint8_t *fb;
     if (!g_inited) return;
     st = level_host_state(&g_lh);
     if (in_source(st)) {
-        /* the view-source overlay (EDITOR.GAME's widget) over the world, the level suspended under it */
+        /* the view-source overlay (EDITOR.GAME's widget) over the world, the level suspended under it; the
+         * bridge maps the mouse over the WHOLE window, so draw it there */
         begin_2d();
+        if (v) glViewport(0, 0, v->win_w, v->win_h);
         editor_widget_overlay_tick_and_draw(g_last_dt);
         glDisable(GL_TEXTURE_2D);
         draw_notice();
@@ -319,6 +338,14 @@ void level_shell_draw(void) {
         if (!fb) return;
         begin_2d();
         glDisable(GL_BLEND);
+        if (v) {
+            /* the letterbox map_pointer maps the mouse through, bars black: the world's passes (bloom) may
+             * have left the viewport on the whole window */
+            glViewport(0, 0, v->win_w, v->win_h);
+            glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            glViewport(v->vp_x, v->vp_y, v->vp_w, v->vp_h);
+        }
         if (!g_tex) glGenTextures(1, &g_tex);
         glBindTexture(GL_TEXTURE_2D, g_tex);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
@@ -353,6 +380,7 @@ void level_shell_draw(void) {
     banner = level_host_banner(&g_lh);
     if (!banner && !level_host_message(&g_lh)[0] && !notice_live()) return;
     begin_2d();
+    if (v) glViewport(v->vp_x, v->vp_y, v->vp_w, v->vp_h);
     glDisable(GL_TEXTURE_2D);
     /* top centre: the world's HUD owns the bottom rows and the top-right corner */
     if (banner == 1) draw_text_centered("SHIFT+M RESUME BRAWLPIT   SHIFT+X CLOSE IT", LS_BANNER_Y, 2.5f, 1.0f, 0.85f, 0.2f);

@@ -85,7 +85,7 @@ view and pauses BRAWLPIT."* The same BRAWLPIT WOTAN serves on the web, compiled 
 | (boot) | BRAWLPIT loads in front of the ZOMBIES world, at its title screen |
 | **Shift+M** | BRAWLPIT <-> the world. Leaving mid-fight opens BRAWLPIT's own pause menu; the world shows a "resume / close" hint |
 | **Shift+X** (world view) | closes BRAWLPIT; **Shift+M** then loads a fresh one |
-| **Ctrl+Shift+J** (Cmd+Option+J on macOS) | BRAWLPIT's PARENA source (`bp_level.prn`) in the editor overlay; Escape goes back into the game. Dev boxes only: needs `../PARENA`. **In progress:** the first Xvfb run found the screen freezing under the overlay (the editor widget's GL context) and autosave writing to a garbage path; both fixed in code, re-verification pending |
+| **Ctrl+Shift+J** (Cmd+Option+J on macOS) | BRAWLPIT's PARENA source (`bp_level.prn`) in the editor overlay; Escape goes back into the game. Dev boxes only: needs `../PARENA` |
 
 While BRAWLPIT is in front the world keeps simulating but gets no keys, mouse or pad (so in ZOMBIES an idle player
 can still be attacked -- the contract's choice, flagged for review). How it fits together (contract:
@@ -109,7 +109,7 @@ can still be attacked -- the contract's choice, flagged for review). How it fits
   and mingw, -O1 and -O2).
 
 Status, honestly: verified on Linux under Xvfb with Mesa software GL. **Not yet run on Windows or on a real GPU.**
-Not built yet: save -> recompile -> hot swap of the level (T0 step 6). `make level-smoke`'s two view-source picture checks fail on the build before those fixes. Windows: `make check-windows` passes (all 155 lobby sources compile under mingw against the SDL2 2.30.10 kit, link symbols clean); not run on Windows. Not forwarded to levels: gamepad, hats.
+Not built yet: save -> recompile -> hot swap of the level (T0 step 6). Windows: `make check-windows` passes (all 155 lobby sources compile under mingw against the SDL2 2.30.10 kit, link symbols clean); not run on Windows. Not forwarded to levels: gamepad, hats.
 Measured on the 2.2 GHz dev box: `level_tick` ~0.01 ms, `level_render` ~7 ms (960x540 software renderer in wasm).
 
 ## In-phone PELLEGRINO browser (2026-10-16)

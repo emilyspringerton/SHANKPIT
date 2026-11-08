@@ -44,29 +44,39 @@ static void test_chords(void) {
 }
 
 static void test_state_machine(void) {
-    /* expect[state][cmd], cmd 0 = none .. 7 = OVERLAY_CLOSED */
-    static const int expect[6][8] = {
-        /* NONE        */ {0, 1, 5, 0, 0, 0, 0, 0},
-        /* LOADING     */ {1, 1, 1, 1, 2, 0, 1, 1},
-        /* FG          */ {2, 3, 4, 2, 2, 2, 0, 2},
-        /* BG          */ {3, 2, 4, 0, 3, 3, 0, 3},
-        /* SOURCE      */ {4, 4, 4, 4, 4, 4, 0, 2},
-        /* SOURCE_NONE */ {5, 5, 5, 5, 5, 5, 5, 0},
+    /* expect[state][cmd], cmd 0 = none .. 7 = OVERLAY_CLOSED, 8 = SUSPEND */
+    static const int expect[6][9] = {
+        /* NONE        */ {0, 1, 5, 0, 0, 0, 0, 0, 0},
+        /* LOADING     */ {1, 1, 1, 1, 2, 0, 1, 1, 1},
+        /* FG          */ {2, 3, 4, 2, 2, 2, 0, 2, 3},
+        /* BG          */ {3, 2, 4, 0, 3, 3, 0, 3, 3},
+        /* SOURCE      */ {4, 4, 4, 4, 4, 4, 0, 2, 3},
+        /* SOURCE_NONE */ {5, 5, 5, 5, 5, 5, 5, 0, 0},
     };
     int s, c, bad = 0;
     CHECK(lm_st_none() == 0 && lm_st_loading() == 1 && lm_st_fg() == 2 && lm_st_bg() == 3 && lm_st_source() == 4 &&
               lm_st_source_none() == 5,
           "state numbering is the contract's");
     CHECK(lm_cmd_toggle() == 1 && lm_cmd_source() == 2 && lm_cmd_close() == 3 && lm_cmd_load_ok() == 4 &&
-              lm_cmd_load_fail() == 5 && lm_cmd_trap() == 6 && lm_cmd_overlay_closed() == 7,
+              lm_cmd_load_fail() == 5 && lm_cmd_trap() == 6 && lm_cmd_overlay_closed() == 7 && lm_cmd_suspend() == 8,
           "command numbering is the contract's");
     for (s = 0; s < 6; s++)
-        for (c = 0; c < 8; c++)
+        for (c = 0; c < 9; c++)
             if (lm_next(s, c) != expect[s][c]) {
                 printf("  lm_next(%d, %d) = %d, expected %d\n", s, c, lm_next(s, c), expect[s][c]);
                 bad++;
             }
-    CHECK(bad == 0, "lm_next matches the contract's table in all 48 cases");
+    CHECK(bad == 0, "lm_next matches the contract's table in all 54 cases");
+    CHECK(lm_announce(lm_st_fg(), lm_next(lm_st_fg(), lm_cmd_suspend())) == 1002 &&
+              lm_announce(lm_st_source(), lm_next(lm_st_source(), lm_cmd_suspend())) == 0,
+          "SUSPEND from the foreground announces HIDDEN; from the overlay (already hidden) nothing");
+    for (s = 0, bad = 0; s < 6; s++) {
+        int t = s, steps;
+        for (steps = 0; steps < 3 && (t == lm_st_source() || t == lm_st_source_none()); steps++) t = lm_next(t, lm_cmd_overlay_closed());
+        if (t == lm_st_source() || t == lm_st_source_none()) bad++;
+    }
+    CHECK(bad == 0 && lm_next(lm_st_source(), lm_cmd_suspend()) == lm_st_bg(),
+          "the overlay states always have a way out (OVERLAY_CLOSED, SUSPEND): no wedge");
     CHECK(lm_next(99, 1) == 99 && lm_next(2, 99) == 2, "an unknown state or command changes nothing");
     CHECK(lm_next(lm_next(lm_st_loading(), lm_cmd_load_ok()), lm_cmd_toggle()) == lm_st_bg() &&
               lm_next(lm_st_bg(), lm_cmd_toggle()) == lm_st_fg(),

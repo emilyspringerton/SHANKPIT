@@ -18,6 +18,7 @@ int lm_cmd_load_ok();
 int lm_cmd_load_fail();
 int lm_cmd_trap();
 int lm_cmd_overlay_closed();
+int lm_cmd_suspend();
 int lm_act_shown();
 int lm_act_hidden();
 int lm_act_closed();
@@ -104,6 +105,10 @@ int lm_cmd_overlay_closed(void) {
     return 7;
 }
 
+int lm_cmd_suspend(void) {
+    return 8;
+}
+
 int lm_act_shown(void) {
     return 1001;
 }
@@ -161,7 +166,7 @@ int lm_next_loading(int cmd __attribute__((unused))) {
 }
 
 int lm_next_fg(int cmd __attribute__((unused))) {
-    return ((cmd == lm_cmd_toggle()) ? lm_st_bg() : ((cmd == lm_cmd_source()) ? lm_st_source() : lm_st_fg()));
+    return (((cmd == lm_cmd_toggle()) || (cmd == lm_cmd_suspend())) ? lm_st_bg() : ((cmd == lm_cmd_source()) ? lm_st_source() : lm_st_fg()));
 }
 
 int lm_next_bg(int cmd __attribute__((unused))) {
@@ -169,7 +174,7 @@ int lm_next_bg(int cmd __attribute__((unused))) {
 }
 
 int lm_next(int s __attribute__((unused)), int cmd __attribute__((unused))) {
-    return (((cmd == lm_cmd_trap()) && (lm_loaded(s) == 1)) ? lm_st_none() : ((s == lm_st_none()) ? lm_next_none(cmd) : ((s == lm_st_loading()) ? lm_next_loading(cmd) : ((s == lm_st_fg()) ? lm_next_fg(cmd) : ((s == lm_st_bg()) ? lm_next_bg(cmd) : ((s == lm_st_source()) ? ((cmd == lm_cmd_overlay_closed()) ? lm_st_fg() : s) : ((s == lm_st_source_none()) ? ((cmd == lm_cmd_overlay_closed()) ? lm_st_none() : s) : s)))))));
+    return (((cmd == lm_cmd_trap()) && (lm_loaded(s) == 1)) ? lm_st_none() : ((s == lm_st_none()) ? lm_next_none(cmd) : ((s == lm_st_loading()) ? lm_next_loading(cmd) : ((s == lm_st_fg()) ? lm_next_fg(cmd) : ((s == lm_st_bg()) ? lm_next_bg(cmd) : ((s == lm_st_source()) ? ((cmd == lm_cmd_overlay_closed()) ? lm_st_fg() : ((cmd == lm_cmd_suspend()) ? lm_st_bg() : s)) : ((s == lm_st_source_none()) ? (((cmd == lm_cmd_overlay_closed()) || (cmd == lm_cmd_suspend())) ? lm_st_none() : s) : s)))))));
 }
 
 int lm_announce(int old __attribute__((unused)), int new __attribute__((unused))) {

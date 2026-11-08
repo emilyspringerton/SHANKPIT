@@ -33,7 +33,11 @@ void level_shell_init(int boot_level, unsigned int seed);
 int level_shell_event(const SDL_Event *e, int text_focus, const level_shell_view *v);
 
 void level_shell_frame(double frame_seconds);
-void level_shell_draw(void);
+/* v: the same viewport the events were mapped through (the level fills its letterbox, bars black) */
+void level_shell_draw(const level_shell_view *v);
+/* the game is leaving the world for its menu (net drop, Esc): the level steps back (LEVEL_HIDDEN, blur), the
+ * source overlay closes -- PARENA lm-cmd-suspend */
+void level_shell_leave_world(void);
 int level_shell_owns_input(void);
 /* 1 = the world reads its own keys, mouse and pad and may grab the mouse: nothing (no level, no source
  * overlay) is in front of it (PARENA lm-world-input). main.c gates every polled input and mouse grab on this. */

@@ -278,10 +278,20 @@ Each step names its test; "done" means that test passes on this box.
   the level. Without the source on the machine the chord says so and changes nothing (decision B). D6 stays
   legacy-first: the PARENA-side widget split is still queued. JetBrains Mono now ships in `assets/fonts/` (the
   editor widget could not open its font on a machine without it, NOTES included).
-  **In progress:** level-smoke's first run found two bugs, fixed in code and not yet re-verified: the widget's
-  GL-backed SDL renderer left its own context current (the game window froze under the overlay; the bridge now
-  restores the game's context), and `editor_widget_create` kept the caller's path pointer (autosave wrote a copy
-  of bp_level.prn to a garbage filename in the cwd, deleted; EDITOR.GAME now copies it).
+  **Done, verified by `make level-smoke`** (24 checks: the overlay shows `bp_level.prn` over the world, Escape
+  returns into the level). Its first run found two real bugs, fixed: the widget's GL-backed SDL renderer left its
+  own context current (the game window froze under the overlay; the bridge now restores the game's context --
+  this also fixes the lobby's NOTES panel), and `editor_widget_create` kept the caller's path pointer (autosave
+  wrote a copy of bp_level.prn to a garbage filename in the cwd, deleted; EDITOR.GAME 4c3f676 copies it).
+- **Milestone review (lifecycle lens; the trust and build lenses and the verifier hit the usage limit, re-run
+  pending):** six findings, all fixed: a SOURCE wedge before step 5 existed (now every overlay state has a way out,
+  tested); lobby-only text-focus owners carried into games disabled every chord; the world still polled Space /
+  Shift / [ ] under the level (its keyboard snapshot is now all-up whenever `lm-world-input` is 0); leaving the
+  world for the menu with the level in front skipped HIDDEN and blur (new `lm-cmd-suspend` 8: FG/SOURCE -> BG,
+  SOURCE_NONE -> NONE; the mouse is released every frame something is in front); the level quad was drawn in
+  bloom's whole-window viewport but the pointer mapped through the letterbox (the shell now draws in the letterbox,
+  bars black); a button held in the world across Shift+M arrived as a click (buttons latch only from presses made
+  in the foreground).
 - **Next:** step 6 (save -> compile -> swap on the next entry), Windows (`make check-windows` with the SDL2 mingw
   kit; a run on the founder's machine), the milestone review's findings.
 
