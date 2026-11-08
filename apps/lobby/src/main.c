@@ -68,6 +68,7 @@ static int g_drawing_local_third_person = 0;
 
 
 #include "editor_widget_bridge.h"
+#include "level_shell.h" /* T0: BRAWLPIT as a WASM level inside the world (docs/T0_LEVEL_WASM_CONTRACT.md) */
 #include "../../../packages/ui/turtle_text.h"
 #define UI_BRIDGE_DECL static
 #include "../../../packages/ui/menu_gen.h" /* PARENA stdlib/ui/menu.prn (card #483) */
@@ -17860,6 +17861,7 @@ int main(int argc, char* argv[]) {
     int cli_coop_find_port = ZONE_BEACON_PORT;
     int cli_third_person = 0;
     int cli_legacy_menu = 0;
+    int cli_no_level = 0;
     for(int i=1; i<argc; i++) {
         if(strcmp(argv[i], "--third") == 0) {
             cli_third_person = 1; /* with --city: start in third person (also toggled in-game with V) */
@@ -17878,6 +17880,8 @@ int main(int argc, char* argv[]) {
             cli_start_lab = 1; /* straight into the BIG_O LAB level */
         } else if(strcmp(argv[i], "--menu") == 0) {
             cli_legacy_menu = 1; /* opt out of the straight-into-zombies default: boot to the legacy menu */
+        } else if(strcmp(argv[i], "--no-level") == 0) {
+            cli_no_level = 1; /* T0: boot without BRAWLPIT in the foreground (Shift+M still loads it) */
         } else if(strcmp(argv[i], "--zombies") == 0) {
             cli_start_zombies = 1; /* straight into the ZOMBIES sandbox (menu tile equivalent) */
         } else if(strcmp(argv[i], "--dungeon") == 0) {
@@ -18126,6 +18130,9 @@ int main(int argc, char* argv[]) {
             app_state = STATE_LOBBY;
         }
     }
+    /* T0, founder real-time 2026-11-08: "Boot the SHANKPIT world plus BRAWLPIT as WASM, BRAWLPIT in the foreground."
+     * The level loads on the first game frame; --no-level boots the world alone (Shift+M loads it). */
+    level_shell_init(!cli_no_level, SDL_GetTicks());
     if (cli_start_zombies) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_ZOMBIES); lobby_modes_bypass = 0; }
     if (cli_start_editmap) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_EDITMAP); lobby_modes_bypass = 0; if (cli_edit_session[0]) es_start(strcmp(cli_edit_session, "new") ? cli_edit_session : NULL); }
     if (cli_start_lab) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_LAB); lobby_modes_bypass = 0; }
@@ -18171,6 +18178,9 @@ int main(int argc, char* argv[]) {
                 if (!g_chat_open && !g_orb_open) SDL_StopTextInput();
             }
         }
+        /* T0 level shell: its chords never fire while something has the keyboard for text */
+        int lv_text_focus = g_chat_open || g_orb_open || ui_edit_index >= 0 || editor_widget_overlay_is_open() ||
+                            (g_story_phone.open && (g_story_phone.app == BP_APP_PELLEGRINO || g_story_phone.app == BP_APP_GFD));
         while(SDL_PollEvent(&e)) {
             if(e.type == SDL_QUIT) { lobby_level_snapshot(0); running = 0; }
             if(e.type == SDL_CONTROLLERDEVICEADDED && !g_shank_pad) {
@@ -18186,8 +18196,8 @@ int main(int argc, char* argv[]) {
                 g_win_h = e.window.data2;
                 recalc_viewport();
             }
-            if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED && app_state != STATE_LOBBY) SDL_SetRelativeMouseMode(SDL_TRUE);
-            if (e.type == SDL_MOUSEBUTTONDOWN && app_state != STATE_LOBBY) SDL_SetRelativeMouseMode(SDL_TRUE);
+            if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED && app_state != STATE_LOBBY && !level_shell_owns_input()) SDL_SetRelativeMouseMode(SDL_TRUE);
+            if (e.type == SDL_MOUSEBUTTONDOWN && app_state != STATE_LOBBY && !level_shell_owns_input()) SDL_SetRelativeMouseMode(SDL_TRUE);
 
             /* Editor widget panel -- checked FIRST, before any of lobby's own STATE_LOBBY
              * event handling below, same real "modal overlay gets first refusal on every
@@ -18434,6 +18444,12 @@ int main(int argc, char* argv[]) {
                     }
                 }
             } else {
+                /* T0 level shell first: a chord it applies (Shift+M / Shift+X), and every input event while
+                 * BRAWLPIT is in front -- the world keeps simulating but gets no input (contract "Shortcuts"). */
+                {
+                    level_shell_view lv_view = { g_vp_x, g_vp_y, g_vp_w, g_vp_h, g_win_w, g_win_h };
+                    if (level_shell_event(&e, lv_text_focus, &lv_view)) continue;
+                }
                 /* Architect's Orb (#494): owns text + keys while open */
                 if (g_orb_open && e.type == SDL_TEXTINPUT) { orb_text(e.text.text); continue; }
                 if (g_story_phone.open && g_story_phone.app == BP_APP_GFD && e.type == SDL_TEXTINPUT) {
@@ -18791,7 +18807,7 @@ int main(int argc, char* argv[]) {
                         /* V: toggle first/third person in a local match (card T62892945). MODE_TYLER
                            owns its own third_person flag and is left alone. */
                         local_state.players[0].third_person = !local_state.players[0].third_person;
-                    } else if (e.key.keysym.sym == SDLK_m) {
+                    } else if (e.key.keysym.sym == SDLK_m && !(e.key.keysym.mod & KMOD_SHIFT)) { /* Shift+M is the level shell's */
                         overlay_cycle_mode(&g_overlay);
                         printf("[OVERLAY] mode=%s\n", overlay_mode_name(g_overlay.mode));
                     } else if (e.key.keysym.sym == SDLK_ESCAPE && app_state == STATE_GAME_LOCAL &&
@@ -18870,7 +18886,7 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
-        if (app_state != STATE_LOBBY && !g_paused) SDL_SetRelativeMouseMode(SDL_TRUE);
+        if (app_state != STATE_LOBBY && !g_paused && !level_shell_owns_input()) SDL_SetRelativeMouseMode(SDL_TRUE);
         if (app_state == STATE_LOBBY) {
              unsigned int now = SDL_GetTicks();
              if (ui_use_server && (now - ui_last_poll) > 1000) {
@@ -18920,6 +18936,7 @@ int main(int argc, char* argv[]) {
              SDL_GL_SwapWindow(win);
         }
         else {
+            level_shell_frame(frame_time); /* T0: load / poll REFLUX / step the level, before the world reads input */
             const Uint8 *k = SDL_GetKeyboardState(NULL);
             int control_pid = (app_state == STATE_GAME_NET && my_client_id > 0 && my_client_id < MAX_CLIENTS) ? my_client_id : 0;
             int in_heli = local_state.players[control_pid].in_vehicle && local_state.players[control_pid].vehicle_type == VEH_HELICOPTER;
@@ -18962,7 +18979,7 @@ int main(int argc, char* argv[]) {
             g_input_paint_prev = k[SDL_SCANCODE_LEFTBRACKET] ? 1 : 0;
             int pheromone = k[SDL_SCANCODE_G]; /* MODE_ZOMBIES/MODE_SURVIVAL pheromone throw, BIG_O/
                 NORTHSTAR.md section 10's own G-key convention */
-            if (g_shank_pad) {
+            if (g_shank_pad && !level_shell_owns_input()) { /* T0: the pad is not the world's while a level is in front */
                 const float SHANK_STICK_DEADZONE = 0.2f;
                 float lx = (float)SDL_GameControllerGetAxis(g_shank_pad, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0f;
                 float ly = (float)SDL_GameControllerGetAxis(g_shank_pad, SDL_CONTROLLER_AXIS_LEFTY) / 32767.0f;
@@ -18984,12 +19001,12 @@ int main(int argc, char* argv[]) {
                 float move_len2 = sqrtf(fwd * fwd + str * str);
                 if (move_len2 > 1.0f) { fwd /= move_len2; str /= move_len2; }
             }
-            if (g_paused) {
+            if (g_paused || level_shell_owns_input()) {
                 fwd = 0.0f; str = 0.0f; jump = 0; crouch = 0; shoot = 0; reload = 0; use = 0; ability = 0; secondary = 0; bike = 0; pheromone = 0;
             }
             input_fwd = fwd; input_str = str;
             input_jump = jump; input_crouch = crouch; input_shoot = shoot; input_reload = reload; input_use = use; input_ability = ability; input_secondary = secondary; input_bike = bike; input_pheromone = pheromone;
-            if (!g_paused) {
+            if (!g_paused && !level_shell_owns_input()) {
                 if(k[SDL_SCANCODE_1]) wpn_req=0;
                 if(k[SDL_SCANCODE_2]) wpn_req=1;
                 if(k[SDL_SCANCODE_3]) wpn_req=2;
@@ -19005,7 +19022,7 @@ int main(int argc, char* argv[]) {
             int fov_pid = (app_state == STATE_GAME_NET && net_local_pid > 0 && local_state.players[net_local_pid].active)
                 ? net_local_pid
                 : 0;
-            float target_fov = (!g_paused && local_state.players[fov_pid].current_weapon == WPN_SNIPER && (SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_RIGHT))) ? 20.0f : 75.0f;
+            float target_fov = (!g_paused && !level_shell_owns_input() && local_state.players[fov_pid].current_weapon == WPN_SNIPER && (SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_RIGHT))) ? 20.0f : 75.0f;
             current_fov += (target_fov - current_fov) * 0.2f;
             glViewport(g_vp_x, g_vp_y, g_vp_w, g_vp_h);
             glMatrixMode(GL_PROJECTION); glLoadIdentity(); gluPerspective(current_fov, (float)VIRTUAL_W/(float)VIRTUAL_H, 0.1, Z_FAR);
@@ -19258,7 +19275,8 @@ int main(int argc, char* argv[]) {
                    signature (shared by six callers) does not grow a plane-only argument. */
                 {
                     const Uint8 *roll_keys = SDL_GetKeyboardState(NULL);
-                    local_state.players[0].in_roll = (roll_keys[SDL_SCANCODE_J] || roll_keys[SDL_SCANCODE_LEFT]) ? -1
+                    local_state.players[0].in_roll = level_shell_owns_input() ? 0 /* T0: the keys are the level's */
+                                                   : (roll_keys[SDL_SCANCODE_J] || roll_keys[SDL_SCANCODE_LEFT]) ? -1
                                                    : ((roll_keys[SDL_SCANCODE_L] || roll_keys[SDL_SCANCODE_RIGHT]) ? 1 : 0);
                 }
                 local_update(input_fwd, input_str, local_aim_yaw, local_aim_pitch, input_shoot, wpn_req, input_jump, input_crouch, input_reload, input_ability, input_secondary, input_bike, NULL, now_ms);
@@ -19351,9 +19369,11 @@ int main(int argc, char* argv[]) {
             bloom_begin_scene(bloom_w, bloom_h);
             if (g_broadcast_on) broadcast_frame(&blended); else draw_scene(&blended);
             bloom_end_scene_and_composite(bloom_w, bloom_h);
+            level_shell_draw(); /* T0: BRAWLPIT over the world while it is in front, else the world-view hint */
             SDL_GL_SwapWindow(win);
         }
     }
+    level_shell_shutdown();
     proc_tex_destroy(&g_vehicle_noise_tex);
     proc_tex_destroy(&g_vehicle_glitch_tex);
     retro_sky_shutdown(&g_retro_sky);
