@@ -193,6 +193,54 @@ static inline int reflux_action_is_citizen(int action_type) {
     return action_type >= REFLUX_ACTION_CITIZEN_FIRST && action_type <= REFLUX_ACTION_CITIZEN_LAST;
 }
 
+/* Levels: untrusted WASM modules the level shell runs inside the world (T0, founder real-time
+ * 2026-11-08: "Boot the SHANKPIT world plus BRAWLPIT as WASM, BRAWLPIT in the foreground. Shift+M
+ * toggles to the world view and pauses BRAWLPIT."; contract docs/T0_LEVEL_WASM_CONTRACT.md section 2).
+ * Two RESERVED families, so the trust boundary is one range check rather than a list of members:
+ *
+ *   1000-1099  level lifecycle. Dispatched ONLY by the host's level manager (trusted). A module's
+ *              reflux_host_dispatch import refuses this whole range, so untrusted code can never
+ *              fake "level closed" or "level loaded" to another mod.
+ *   1100-1199  BRAWLPIT's own family: the only types the BRAWLPIT module's dispatch import accepts.
+ *
+ * FIRST/LAST here bound the reserved range, which is wider than the members defined so far (unlike the
+ * horse and citizen families, whose FIRST/LAST are their first and last members): a new member needs
+ * no change to the check a relay or the import bridge makes. Lifecycle payload a is always the level
+ * id; BRAWLPIT is level 1. A mod polls these exactly like any other row. */
+#define REFLUX_LEVEL_BRAWLPIT 1                  /* level id, lifecycle payload a */
+
+#define REFLUX_ACTION_LEVEL_LOADED 1000          /* a = level id, b = level_api(), c = generation (1 = first load) */
+#define REFLUX_ACTION_LEVEL_SHOWN 1001           /* a = level id: the level is in the foreground */
+#define REFLUX_ACTION_LEVEL_HIDDEN 1002          /* a = level id: the world is in the foreground (Shift+M) */
+#define REFLUX_ACTION_LEVEL_CLOSED 1003          /* a = level id, b = 0 the player closed it (Shift+X), 1 a trap */
+#define REFLUX_ACTION_LEVEL_LOAD_FAILED 1004     /* a = level id, b = REFLUX_LEVEL_FAIL_* stage, c = wh_status (0 = the call ran, its answer was refused) */
+#define REFLUX_ACTION_LEVEL_SWAPPED 1005         /* a = level id, b = generation: a recompiled module took over */
+
+/* LEVEL_LOAD_FAILED payload b: the step that refused the module */
+#define REFLUX_LEVEL_FAIL_READ 1                 /* the .wasm file is missing or unreadable */
+#define REFLUX_LEVEL_FAIL_BIND 2                 /* instantiate, an import, or an export (wrong name or signature) */
+#define REFLUX_LEVEL_FAIL_API 3                  /* level_api() is not the surface this host speaks */
+#define REFLUX_LEVEL_FAIL_ENTER 4                /* level_enter() returned nonzero, or trapped */
+
+#define REFLUX_ACTION_LEVEL_FIRST 1000
+#define REFLUX_ACTION_LEVEL_LAST  1099
+
+#define REFLUX_ACTION_BP_MATCH_STARTED 1100      /* a = mode (0 vs CPU, 1 local 2P, 2 free-for-all, 3 practice), b = stage id, c = fighters */
+#define REFLUX_ACTION_BP_MATCH_ENDED 1101        /* a = winner slot (-1 none), b = sim frames, c = mode */
+
+#define REFLUX_ACTION_BP_FIRST 1100
+#define REFLUX_ACTION_BP_LAST  1199
+
+/* The level manager's own family: never accepted from a module. */
+static inline int reflux_action_is_level(int action_type) {
+    return action_type >= REFLUX_ACTION_LEVEL_FIRST && action_type <= REFLUX_ACTION_LEVEL_LAST;
+}
+
+/* BRAWLPIT's family: the bound the BRAWLPIT module's dispatch import enforces. */
+static inline int reflux_action_is_brawlpit(int action_type) {
+    return action_type >= REFLUX_ACTION_BP_FIRST && action_type <= REFLUX_ACTION_BP_LAST;
+}
+
 #define REFLUX_LOG_CAPACITY 256
 
 typedef struct {

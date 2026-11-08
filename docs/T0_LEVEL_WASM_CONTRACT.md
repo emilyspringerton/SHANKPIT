@@ -85,14 +85,14 @@ Live types are 1-5 and 101-128; a door subscriber opens on type 1 (`main.c:3564`
 
 | Type | Name | Dispatched by | Payload a, b, c |
 |---|---|---|---|
-| 1000-1099 | level lifecycle family | the level manager (host side, trusted) | |
+| 1000-1099 | level lifecycle family (`reflux_action_is_level`) | the level manager (host side, trusted) | |
 | 1000 | `LEVEL_LOADED` | after a module instantiates and `level_enter` returns 0 | level id, api, generation |
 | 1001 | `LEVEL_SHOWN` | level comes to the foreground | level id, 0, 0 |
 | 1002 | `LEVEL_HIDDEN` | world view comes to the foreground (Shift+M) | level id, 0, 0 |
 | 1003 | `LEVEL_CLOSED` | Shift+X in world view, a trap, or a refused module | level id, reason (0 user, 1 trap), 0 |
-| 1004 | `LEVEL_LOAD_FAILED` | instantiate / bind / `level_api` / `level_enter` refused | level id, `wh_status` or enter code, 0 |
+| 1004 | `LEVEL_LOAD_FAILED` | read / instantiate / bind / `level_api` / `level_enter` refused | level id, stage (`REFLUX_LEVEL_FAIL_READ` 1, `_BIND` 2, `_API` 3, `_ENTER` 4), `wh_status` (0 = the call ran and its answer was refused) |
 | 1005 | `LEVEL_SWAPPED` | a recompiled module replaced the running one on entry | level id, generation, 0 |
-| 1100-1199 | BRAWLPIT family | the BRAWLPIT module (the only range its `reflux_host_dispatch` import accepts) | |
+| 1100-1199 | BRAWLPIT family (`reflux_action_is_brawlpit`) | the BRAWLPIT module (the only range its `reflux_host_dispatch` import accepts) | |
 | 1100 | `BP_MATCH_STARTED` | a match leaves fighter select (or REMATCH) | mode, stage, fighters |
 | 1101 | `BP_MATCH_ENDED` | the results screen appears | winner slot, sim frames, mode |
 

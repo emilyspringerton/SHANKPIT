@@ -6,6 +6,10 @@
 #                             (WH_FIXTURE=<path>, default ../WOTAN/BRAWLPIT/brawlpit.wasm; skipped if absent)
 #   make check-strict-t0      every new T0 host file at the doctrine bar, gcc and (if present) mingw
 #   make regen-wasm-surface   PARENA/stdlib/wasm/surface.prn -> packages/wasm_host/wasm_surface_gen.c
+#   make brawlpit-level       rebuild assets/levels/brawlpit/ (the module from ../PARENA's level.manifest,
+#                             the art from ../WOTAN); needs the LLVM 18 toolchain (MONOREPO BOOTSTRAP.md)
+#   make check-brawlpit-level fail if the committed module or art differs from a fresh build (skips loudly
+#                             without ../PARENA or the toolchain)
 
 STRICT_CFLAGS := -std=c99 -Wall -Wextra -pedantic -Werror
 T0_STRICT_FILES := $(T0_HOST_SRC) packages/wasm_host/wasm_host_test.c
@@ -13,7 +17,7 @@ WASM3_CFLAGS := -std=c99 -O2 -w
 T0_BIN := $(BIN_DIR)/t0
 WASM3_OBJS := $(patsubst third_party/wasm3/source/%.c,$(T0_BIN)/wasm3/%.o,$(WASM3_SRC))
 
-.PHONY: test-wasm-host check-strict-t0 regen-wasm-surface
+.PHONY: test-wasm-host check-strict-t0 regen-wasm-surface brawlpit-level check-brawlpit-level
 
 $(T0_BIN)/wasm3/%.o: third_party/wasm3/source/%.c
 	@mkdir -p $(dir $@)
@@ -35,3 +39,9 @@ check-strict-t0:
 
 regen-wasm-surface:
 	scripts/gen_wasm_surface.sh
+
+brawlpit-level:
+	scripts/build_brawlpit_level.sh
+
+check-brawlpit-level:
+	scripts/build_brawlpit_level.sh --check
