@@ -69,8 +69,48 @@ display) check it; `SHANKPIT_OS_MENU=classic` selects the old grid. Regenerate t
 isolation; the whole lobby has not been built/run with it on the dev box yet, and the skin/level/spray overlays,
 title and the small corner buttons are still hand-drawn GL.
 
-## Boot behaviour (2026-10-16)
-`./bin/shank_lobby` has no title screen or main menu: it drops straight into a ZOMBIES game. Esc goes to the legacy menu; `--menu` starts there instead. Explicit flags (`--survival`, `--lab`, `--city`, `--edit-map`) still win.
+## Boot behaviour (2026-10-16, 2026-11-08)
+`./bin/shank_lobby` has no title screen or main menu: it drops straight into a ZOMBIES game -- with **BRAWLPIT in
+front of it** since 2026-11-08 (next section; `--no-level` boots the world alone). Esc goes to the legacy menu (in the
+world view); `--menu` starts there instead. Explicit flags (`--survival`, `--lab`, `--city`, `--edit-map`) still win.
+
+## BRAWLPIT runs inside the world as a WASM level (T0, 2026-11-08)
+
+Founder: *"Boot the SHANKPIT world plus BRAWLPIT as WASM, BRAWLPIT in the foreground. Shift+M toggles to the world
+view and pauses BRAWLPIT."* The same BRAWLPIT WOTAN serves on the web, compiled from PARENA to an 87 KB wasm32 module
+(`assets/levels/brawlpit/brawlpit_level.wasm`, with WOTAN's `sprites.png`/`duck.png`), runs inside the game process:
+
+| Keys | What happens |
+|---|---|
+| (boot) | BRAWLPIT loads in front of the ZOMBIES world, at its title screen |
+| **Shift+M** | BRAWLPIT <-> the world. Leaving mid-fight opens BRAWLPIT's own pause menu; the world shows a "resume / close" hint |
+| **Shift+X** (world view) | closes BRAWLPIT; **Shift+M** then loads a fresh one |
+| **Ctrl+Shift+J** (Cmd+Option+J on macOS) | BRAWLPIT's PARENA source (`bp_level.prn`) in the editor overlay; Escape goes back into the game. Dev boxes only: needs `../PARENA`. **In progress:** the first Xvfb run found the screen freezing under the overlay (the editor widget's GL context) and autosave writing to a garbage path; both fixed in code, re-verification pending |
+
+While BRAWLPIT is in front the world keeps simulating but gets no keys, mouse or pad (so in ZOMBIES an idle player
+can still be attacked -- the contract's choice, flagged for review). How it fits together (contract:
+`docs/T0_LEVEL_WASM_CONTRACT.md`):
+- **A level is a mod.** It talks to the world only through REFLUX, with the same eight `reflux_host_*` calls every mod
+  uses: BRAWLPIT announces `BP_MATCH_STARTED`/`ENDED` (1100/1101) and pauses itself on `LEVEL_HIDDEN`; the host
+  announces `LEVEL_LOADED`/`SHOWN`/`HIDDEN`/`CLOSED`/`LOAD_FAILED` (1000-1004). A level's dispatch outside its own
+  family is refused and counted, so untrusted code can't fake "level closed" or a button press.
+- **Decisions are PARENA.** `PARENA/stdlib/shankpit/level_manager_rules.prn` (chords, the state machine, the fixed
+  60 Hz step, SDL key -> DOM keyCode) generates `packages/simulation/level_manager_rules.c`;
+  `PARENA/stdlib/brawlpit/bp_level.prn` is the level's surface over the game. The C is plumbing:
+  `packages/wasm_host/` (`wasm_host` over a vendored wasm3, labeled STOPGAP -- imports are checked by PARENA's own
+  `stdlib/wasm/surface.prn` before wasm3 sees them; `level_abi`; `level_host`, the whole lifecycle with no SDL) and
+  `apps/lobby/src/level_shell.c` (SDL events in, one GL quad out).
+- **Rebuild the module:** `make brawlpit-level` (needs `../PARENA` and LLVM 18, MONOREPO `BOOTSTRAP.md`);
+  `make check-brawlpit-level` fails if the committed module or art is stale (the build is byte-reproducible).
+- **Tests:** `make test-wasm-host test-level-abi test-level-host test-level-manager` (headless: the real module driven
+  like a player, every load failure, traps, the refused dispatches, all 48 state x command cases), `make level-smoke`
+  (the real lobby under Xvfb with real X key events -- boot, Shift+M, keys reaching BRAWLPIT, Shift+X, reload,
+  Ctrl+Shift+J; needs python-xlib and Pillow), `make check-strict-t0` (the new C at `-std=c99 -pedantic -Werror`, gcc
+  and mingw, -O1 and -O2).
+
+Status, honestly: verified on Linux under Xvfb with Mesa software GL. **Not yet run on Windows or on a real GPU.**
+Not built yet: save -> recompile -> hot swap of the level (T0 step 6). `make level-smoke`'s two view-source picture checks fail on the build before those fixes. Windows: `make check-windows` passes (all 155 lobby sources compile under mingw against the SDL2 2.30.10 kit, link symbols clean); not run on Windows. Not forwarded to levels: gamepad, hats.
+Measured on the 2.2 GHz dev box: `level_tick` ~0.01 ms, `level_render` ~7 ms (960x540 software renderer in wasm).
 
 ## In-phone PELLEGRINO browser (2026-10-16)
 

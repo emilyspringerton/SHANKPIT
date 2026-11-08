@@ -10,6 +10,7 @@
 #   level_smoke_drive.py differ A.png B.png                   the two differ on average by more than 0.05
 #   level_smoke_drive.py banner A.png R,G,B                   >= 40 pixels of that colour (+-48 per channel) in the
 #                                                             level shell's hint strip (window rows 12..48)
+#   level_smoke_drive.py editor A.png                         EDITOR.GAME's panel background fills half the panel
 import sys
 import time
 
@@ -106,6 +107,21 @@ def banner(path, rgb):
     return 0 if hits >= 40 else 1
 
 
+def editor(path):
+    # EDITOR.GAME's widget clears to (24, 24, 28) and SHANKPIT's bridge draws it as a 1000x460 panel at
+    # (20, 60) in the 1280x720 virtual screen, bottom-left origin: window rows 200..659, columns 20..1019
+    img = load(path)
+    hits = total = 0
+    for y in range(210, 650, 7):
+        for x in range(30, 1010, 7):
+            p = img.getpixel((x, y))
+            total += 1
+            if all(abs(p[i] - (24, 24, 28)[i]) <= 10 for i in range(3)):
+                hits += 1
+    print("editor background %d/%d" % (hits, total))
+    return 0 if hits * 2 >= total else 1
+
+
 def main(argv):
     if len(argv) < 2:
         print(__doc__ or "usage: see the header", file=sys.stderr)
@@ -123,6 +139,8 @@ def main(argv):
         return differ(argv[2], argv[3])
     elif cmd == "banner":
         return banner(argv[2], argv[3])
+    elif cmd == "editor":
+        return editor(argv[2])
     else:
         print("unknown command %s" % cmd, file=sys.stderr)
         return 2

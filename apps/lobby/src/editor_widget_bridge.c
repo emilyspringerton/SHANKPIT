@@ -31,6 +31,8 @@ extern int editor_widget_should_close(void);
 extern void editor_widget_reset_close_flag(void);
 extern int editor_widget_width(void);
 extern int editor_widget_height(void);
+extern int editor_widget_open_file(const char *path);       /* EDITOR.GAME 8ff1ac6 */
+extern const char *editor_widget_current_path(void);
 
 /* Real, fixed panel geometry in the SAME 1280x720 logical ortho space
  * setup_lobby_2d() already establishes for the rest of the lobby UI
@@ -63,9 +65,24 @@ static int g_widget_w = 0, g_widget_h = 0;
 #define VIRTUAL_H 720
 #endif
 
-static void editor_widget_ensure_created(void) {
-    if (g_created) return;
-    g_created = editor_widget_create("shankpit_os_notes.prn", "shankpit-lobby", 1 /* hidden */);
+#define EDITOR_NOTES_PATH "shankpit_os_notes.prn"
+
+/* first use creates the hidden widget on initial_path; later uses switch the one widget's file in place
+ * (editor_widget_open_file) -- NOTES and the T0 level view-source share it */
+static void editor_widget_ensure_created(const char *initial_path) {
+    if (g_created) {
+        if (strcmp(editor_widget_current_path(), initial_path) != 0) editor_widget_open_file(initial_path);
+        return;
+    }
+    {
+        /* the widget's SDL renderer is GL-backed and makes ITS context current; every GL call after that
+         * (the game's frame, this file's texture) would go to the hidden window and the real one would
+         * freeze -- found by SHANKPIT's level-smoke (T0 view-source). Put the game's context back. */
+        SDL_Window *gw = SDL_GL_GetCurrentWindow();
+        SDL_GLContext gc = SDL_GL_GetCurrentContext();
+        g_created = editor_widget_create(initial_path, "shankpit-lobby", 1 /* hidden */);
+        if (gw && gc) SDL_GL_MakeCurrent(gw, gc);
+    }
     if (!g_created) {
         fprintf(stderr, "editor_widget_bridge: editor_widget_create failed -- panel disabled\n");
         return;
@@ -82,7 +99,7 @@ static void editor_widget_ensure_created(void) {
 }
 
 void editor_widget_overlay_open(void) {
-    editor_widget_ensure_created();
+    editor_widget_ensure_created(EDITOR_NOTES_PATH);
     if (!g_created) return;
     g_open = 1;
     /* Same real SDL_StartTextInput()/SDL_StopTextInput() convention
@@ -90,6 +107,15 @@ void editor_widget_overlay_open(void) {
      * own text fields -- SDL only delivers SDL_TEXTINPUT events while
      * this is active. */
     SDL_StartTextInput();
+}
+
+int editor_widget_overlay_open_file(const char *path) {
+    if (!path || !path[0]) return 0;
+    editor_widget_ensure_created(path);
+    if (!g_created) return 0;
+    g_open = 1;
+    SDL_StartTextInput();
+    return 1;
 }
 
 void editor_widget_overlay_close(void) {
@@ -188,11 +214,16 @@ int editor_widget_overlay_handle_sdl_event(const SDL_Event *e) {
 void editor_widget_overlay_tick_and_draw(double dt_seconds) {
     if (!editor_widget_overlay_is_open()) return;
 
-    editor_widget_begin_frame();
-    editor_widget_render_frame();
-    editor_widget_capture_rgba(g_rgba);
-    editor_widget_present();
-    editor_widget_tick_autosave(dt_seconds);
+    {
+        SDL_Window *gw = SDL_GL_GetCurrentWindow();       /* see ensure_created: the widget's renderer */
+        SDL_GLContext gc = SDL_GL_GetCurrentContext();    /* switches GL contexts on every draw call */
+        editor_widget_begin_frame();
+        editor_widget_render_frame();
+        editor_widget_capture_rgba(g_rgba);
+        editor_widget_present();
+        editor_widget_tick_autosave(dt_seconds);
+        if (gw && gc) SDL_GL_MakeCurrent(gw, gc);
+    }
 
     if (editor_widget_should_close()) {
         /* The widget's own internal Escape/Quit handling fired (real,

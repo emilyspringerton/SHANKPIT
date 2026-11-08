@@ -18196,8 +18196,8 @@ int main(int argc, char* argv[]) {
                 g_win_h = e.window.data2;
                 recalc_viewport();
             }
-            if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED && app_state != STATE_LOBBY && !level_shell_owns_input()) SDL_SetRelativeMouseMode(SDL_TRUE);
-            if (e.type == SDL_MOUSEBUTTONDOWN && app_state != STATE_LOBBY && !level_shell_owns_input()) SDL_SetRelativeMouseMode(SDL_TRUE);
+            if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED && app_state != STATE_LOBBY && level_shell_world_input()) SDL_SetRelativeMouseMode(SDL_TRUE);
+            if (e.type == SDL_MOUSEBUTTONDOWN && app_state != STATE_LOBBY && level_shell_world_input()) SDL_SetRelativeMouseMode(SDL_TRUE);
 
             /* Editor widget panel -- checked FIRST, before any of lobby's own STATE_LOBBY
              * event handling below, same real "modal overlay gets first refusal on every
@@ -18886,7 +18886,7 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
-        if (app_state != STATE_LOBBY && !g_paused && !level_shell_owns_input()) SDL_SetRelativeMouseMode(SDL_TRUE);
+        if (app_state != STATE_LOBBY && !g_paused && level_shell_world_input()) SDL_SetRelativeMouseMode(SDL_TRUE);
         if (app_state == STATE_LOBBY) {
              unsigned int now = SDL_GetTicks();
              if (ui_use_server && (now - ui_last_poll) > 1000) {
@@ -18979,7 +18979,7 @@ int main(int argc, char* argv[]) {
             g_input_paint_prev = k[SDL_SCANCODE_LEFTBRACKET] ? 1 : 0;
             int pheromone = k[SDL_SCANCODE_G]; /* MODE_ZOMBIES/MODE_SURVIVAL pheromone throw, BIG_O/
                 NORTHSTAR.md section 10's own G-key convention */
-            if (g_shank_pad && !level_shell_owns_input()) { /* T0: the pad is not the world's while a level is in front */
+            if (g_shank_pad && level_shell_world_input()) { /* T0: no pad for the world under a level or the source overlay */
                 const float SHANK_STICK_DEADZONE = 0.2f;
                 float lx = (float)SDL_GameControllerGetAxis(g_shank_pad, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0f;
                 float ly = (float)SDL_GameControllerGetAxis(g_shank_pad, SDL_CONTROLLER_AXIS_LEFTY) / 32767.0f;
@@ -19001,12 +19001,12 @@ int main(int argc, char* argv[]) {
                 float move_len2 = sqrtf(fwd * fwd + str * str);
                 if (move_len2 > 1.0f) { fwd /= move_len2; str /= move_len2; }
             }
-            if (g_paused || level_shell_owns_input()) {
+            if (g_paused || !level_shell_world_input()) {
                 fwd = 0.0f; str = 0.0f; jump = 0; crouch = 0; shoot = 0; reload = 0; use = 0; ability = 0; secondary = 0; bike = 0; pheromone = 0;
             }
             input_fwd = fwd; input_str = str;
             input_jump = jump; input_crouch = crouch; input_shoot = shoot; input_reload = reload; input_use = use; input_ability = ability; input_secondary = secondary; input_bike = bike; input_pheromone = pheromone;
-            if (!g_paused && !level_shell_owns_input()) {
+            if (!g_paused && level_shell_world_input()) {
                 if(k[SDL_SCANCODE_1]) wpn_req=0;
                 if(k[SDL_SCANCODE_2]) wpn_req=1;
                 if(k[SDL_SCANCODE_3]) wpn_req=2;
@@ -19022,7 +19022,7 @@ int main(int argc, char* argv[]) {
             int fov_pid = (app_state == STATE_GAME_NET && net_local_pid > 0 && local_state.players[net_local_pid].active)
                 ? net_local_pid
                 : 0;
-            float target_fov = (!g_paused && !level_shell_owns_input() && local_state.players[fov_pid].current_weapon == WPN_SNIPER && (SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_RIGHT))) ? 20.0f : 75.0f;
+            float target_fov = (!g_paused && level_shell_world_input() && local_state.players[fov_pid].current_weapon == WPN_SNIPER && (SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_RIGHT))) ? 20.0f : 75.0f;
             current_fov += (target_fov - current_fov) * 0.2f;
             glViewport(g_vp_x, g_vp_y, g_vp_w, g_vp_h);
             glMatrixMode(GL_PROJECTION); glLoadIdentity(); gluPerspective(current_fov, (float)VIRTUAL_W/(float)VIRTUAL_H, 0.1, Z_FAR);
@@ -19275,7 +19275,7 @@ int main(int argc, char* argv[]) {
                    signature (shared by six callers) does not grow a plane-only argument. */
                 {
                     const Uint8 *roll_keys = SDL_GetKeyboardState(NULL);
-                    local_state.players[0].in_roll = level_shell_owns_input() ? 0 /* T0: the keys are the level's */
+                    local_state.players[0].in_roll = !level_shell_world_input() ? 0 /* T0: the keys are the level's or the overlay's */
                                                    : (roll_keys[SDL_SCANCODE_J] || roll_keys[SDL_SCANCODE_LEFT]) ? -1
                                                    : ((roll_keys[SDL_SCANCODE_L] || roll_keys[SDL_SCANCODE_RIGHT]) ? 1 : 0);
                 }

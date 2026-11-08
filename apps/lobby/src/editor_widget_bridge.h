@@ -43,6 +43,11 @@
  * the panel is NOT the same as quitting the editor. */
 void editor_widget_overlay_open(void);
 
+/* T0 view-source (SHANKPIT docs/T0_LEVEL_WASM_CONTRACT.md, Ctrl+Shift+J): open the panel on `path`, switching
+ * the one widget's file in place if it is on another (NOTES reopens its own file the same way). 1 = open,
+ * 0 = the widget could not be created (no display font, or a build without ../EDITOR.GAME). */
+int editor_widget_overlay_open_file(const char *path);
+
 /* Hides the panel (does not destroy the underlying widget/its state --
  * see editor_widget_overlay_open's own header comment). Safe to call
  * whether or not the panel is currently open. */

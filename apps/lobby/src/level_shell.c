@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "editor_widget_bridge.h"
 #include "../../../packages/reflux/reflux_runtime.h"
 #include "../../../packages/simulation/level_manager_rules.h"
 #include "../../../packages/wasm_host/level_host.h"
@@ -16,6 +17,9 @@ void draw_string(const char *str, float x, float y, float size);
 #define LS_VIRTUAL_W 1280.0f
 #define LS_VIRTUAL_H 720.0f
 #define LS_BANNER_Y 700.0f /* glyphs hang down from y: 7 rows * size */
+/* the level's build manifest, inside the PARENA checkout ($PARENA_DIR, default ../PARENA): its `entry` line is
+ * the file view-source opens (contract D11; decision B: source and compile are dev-box features) */
+#define LS_MANIFEST "stdlib/brawlpit/level.manifest"
 
 static level_host g_lh;
 static int g_inited = 0;
@@ -28,6 +32,17 @@ static char g_last_msg[256];
 static int g_logged_state = -1;   /* the state last printed: every transition is one stdout line */
 static int g_trace = 0;           /* SHANKPIT_LEVEL_TRACE set: print every level-family REFLUX row too */
 static int32_t g_trace_cursor = 0;
+static double g_last_dt = 1.0 / 60.0; /* the frame time, for the overlay's own tick */
+static char g_notice[160];          /* a short-lived line under the hint (e.g. "no source on this machine") */
+static Uint32 g_notice_until = 0;
+
+static void notice(const char *text) {
+    snprintf(g_notice, sizeof g_notice, "%s", text);
+    g_notice_until = SDL_GetTicks() + 4000;
+    fprintf(stderr, "[level] %s\n", text);
+}
+
+static int in_source(int st) { return st == lm_st_source() || st == lm_st_source_none(); }
 
 static const char *state_name(int s) {
     static const char *names[] = {"NONE", "LOADING", "FG", "BG", "SOURCE", "SOURCE_NONE"};
@@ -88,13 +103,44 @@ void level_shell_init(int boot_level, unsigned int seed) {
 
 int level_shell_owns_input(void) { return g_inited && level_host_owns_input(&g_lh); }
 
+int level_shell_world_input(void) { return !g_inited || lm_world_input(level_host_state(&g_lh)); }
+
+/* the level's entry source file (the manifest's `entry`, under the PARENA checkout); 1 = it is readable */
+static int source_entry(char *out, size_t n) {
+    const char *root = getenv("PARENA_DIR");
+    char manifest[512], line[512], key[16], val[400];
+    FILE *f;
+    if (!root || !root[0]) root = "../PARENA";
+    snprintf(manifest, sizeof manifest, "%s/%s", root, LS_MANIFEST);
+    out[0] = 0;
+    f = fopen(manifest, "r");
+    if (!f) return 0;
+    while (fgets(line, sizeof line, f))
+        if (sscanf(line, "%15s %399s", key, val) == 2 && strcmp(key, "entry") == 0) {
+            snprintf(out, n, "%s/%s", root, val);
+            break;
+        }
+    fclose(f);
+    if (!out[0] || !(f = fopen(out, "r"))) return 0;
+    fclose(f);
+    return 1;
+}
+
 int level_shell_rejected_dispatches(void) { return g_inited ? level_host_rejected(&g_lh) : 0; }
 
-/* after any transition: the mouse is the level's (a visible cursor) while it is in front */
-static void after_transition(int was_fg) {
-    int fg = level_host_owns_input(&g_lh);
-    if (fg && !was_fg) SDL_SetRelativeMouseMode(SDL_FALSE);
-    if (!fg && was_fg) g_buttons = 0;
+/* after any transition: a visible cursor whenever the world is not the one reading input (the level or the
+ * overlay has it); into the overlay, the level's entry file opens in the editor */
+static void after_transition(int old) {
+    int now = level_host_state(&g_lh);
+    static char path[512]; /* static: the editor widget is handed this path (it copies since EDITOR.GAME's fix) */
+    if (now == old) return;
+    if (lm_world_input(old) && !lm_world_input(now)) SDL_SetRelativeMouseMode(SDL_FALSE);
+    if (lm_owns_input(old) && !lm_owns_input(now)) g_buttons = 0;
+    if (in_source(now) && !in_source(old) && !(source_entry(path, sizeof path) && editor_widget_overlay_open_file(path))) {
+        notice("the source editor could not open (no editor widget in this build)");
+        level_host_command(&g_lh, lm_cmd_overlay_closed());
+        after_transition(now);
+    }
 }
 
 /* window pixels -> framebuffer pixels, through the letterboxed viewport */
@@ -107,18 +153,41 @@ static void map_pointer(const level_shell_view *v, int wx, int wy, int *fx, int 
     *fy = y < 0 ? 0 : y >= fbh ? fbh - 1 : y;
 }
 
+/* an input event the world must not see while something is in front of it */
+static int is_input_event(Uint32 type) {
+    return type == SDL_KEYDOWN || type == SDL_KEYUP || type == SDL_TEXTINPUT || type == SDL_TEXTEDITING ||
+           type == SDL_MOUSEMOTION || type == SDL_MOUSEBUTTONDOWN || type == SDL_MOUSEBUTTONUP ||
+           type == SDL_MOUSEWHEEL || type == SDL_CONTROLLERBUTTONDOWN || type == SDL_CONTROLLERBUTTONUP ||
+           type == SDL_CONTROLLERAXISMOTION;
+}
+
 int level_shell_event(const SDL_Event *e, int text_focus, const level_shell_view *v) {
-    int was_fg, fx, fy;
+    int was_fg, fx, fy, old;
     if (!g_inited || !e) return 0;
+    old = level_host_state(&g_lh);
     was_fg = level_host_owns_input(&g_lh);
+    /* under the view-source overlay every input event is the editor's (Escape closes it) */
+    if (in_source(old) && e->type != SDL_WINDOWEVENT) {
+        if (editor_widget_overlay_is_open() && editor_widget_overlay_handle_sdl_event(e)) return 1;
+        return is_input_event(e->type);
+    }
     switch (e->type) {
     case SDL_KEYDOWN: {
         SDL_Keymod m = (SDL_Keymod)e->key.keysym.mod;
+        int shift = (m & KMOD_SHIFT) != 0, ctrl = (m & KMOD_CTRL) != 0, alt = (m & KMOD_ALT) != 0;
+        int gui = (m & KMOD_GUI) != 0, rep = e->key.repeat != 0;
+        char path[512];
         if (g_chord_sym && e->key.keysym.sym == g_chord_sym && e->key.repeat) return 1;
-        if (level_host_chord(&g_lh, (int)e->key.keysym.sym, (m & KMOD_SHIFT) != 0, (m & KMOD_CTRL) != 0,
-                             (m & KMOD_ALT) != 0, (m & KMOD_GUI) != 0, is_mac(), text_focus, e->key.repeat != 0)) {
+        /* view-source needs the level's source on this machine (decision B): say so instead of opening nothing */
+        if (lm_chord((int)e->key.keysym.sym, shift, ctrl, alt, gui, is_mac(), text_focus, rep) == lm_cmd_source() &&
+            !source_entry(path, sizeof path)) {
+            notice("BRAWLPIT's source is not on this machine (view-source needs a PARENA checkout at ../PARENA)");
             g_chord_sym = e->key.keysym.sym;
-            after_transition(was_fg);
+            return 1;
+        }
+        if (level_host_chord(&g_lh, (int)e->key.keysym.sym, shift, ctrl, alt, gui, is_mac(), text_focus, rep)) {
+            g_chord_sym = e->key.keysym.sym;
+            after_transition(old);
             note();
             return 1;
         }
@@ -162,14 +231,22 @@ int level_shell_event(const SDL_Event *e, int text_focus, const level_shell_view
 }
 
 void level_shell_frame(double frame_seconds) {
-    int was_fg, dt_us;
+    int old, dt_us;
     const char *msg;
     if (!g_inited) return;
-    was_fg = level_host_owns_input(&g_lh);
+    g_last_dt = frame_seconds > 0.0 ? frame_seconds : 0.0;
+    old = level_host_state(&g_lh);
+    /* the overlay closed itself (Escape, or the editor's own quit): an entry back into the level, or nothing */
+    if (in_source(old) && !editor_widget_overlay_is_open()) {
+        level_host_command(&g_lh, lm_cmd_overlay_closed());
+        after_transition(old);
+        note();
+        old = level_host_state(&g_lh);
+    }
     dt_us = frame_seconds <= 0.0 ? 0 : frame_seconds >= 1.0 ? 1000000 : (int)(frame_seconds * 1.0e6);
-    if (level_host_state(&g_lh) == lm_st_loading()) g_have_frame = 0;
+    if (old == lm_st_loading()) g_have_frame = 0;
     level_host_frame(&g_lh, dt_us);
-    after_transition(was_fg);
+    after_transition(old);
     note();
     msg = level_host_message(&g_lh);
     if (msg[0] && strcmp(msg, g_last_msg) != 0) fprintf(stderr, "[level] %s\n", msg);
@@ -217,10 +294,26 @@ static void draw_text_centered(const char *text, float y, float size, float r, f
     draw_string(s, (LS_VIRTUAL_W - w) * 0.5f, y, size);
 }
 
+/* the short-lived notice, third line from the top (inside begin_2d) */
+static int notice_live(void) { return g_notice[0] && SDL_GetTicks() < g_notice_until; }
+static void draw_notice(void) {
+    if (notice_live()) draw_text_centered(g_notice, LS_BANNER_Y - 56.0f, 2.0f, 0.9f, 0.9f, 0.95f);
+}
+
 void level_shell_draw(void) {
-    int w = 0, h = 0, dirty = 0, banner;
+    int w = 0, h = 0, dirty = 0, banner, st;
     const uint8_t *fb;
     if (!g_inited) return;
+    st = level_host_state(&g_lh);
+    if (in_source(st)) {
+        /* the view-source overlay (EDITOR.GAME's widget) over the world, the level suspended under it */
+        begin_2d();
+        editor_widget_overlay_tick_and_draw(g_last_dt);
+        glDisable(GL_TEXTURE_2D);
+        draw_notice();
+        end_2d();
+        return;
+    }
     if (level_host_owns_input(&g_lh)) {
         fb = level_host_fb(&g_lh, &w, &h, &dirty);
         if (!fb) return;
@@ -251,18 +344,21 @@ void level_shell_draw(void) {
         glTexCoord2f(0.0f, 1.0f); glVertex2f(0.0f, 0.0f);
         glEnd();
         glBindTexture(GL_TEXTURE_2D, 0);
+        glDisable(GL_TEXTURE_2D);
+        draw_notice();
         end_2d();
         return;
     }
     g_have_frame = 0;
     banner = level_host_banner(&g_lh);
-    if (!banner && !level_host_message(&g_lh)[0]) return;
+    if (!banner && !level_host_message(&g_lh)[0] && !notice_live()) return;
     begin_2d();
     glDisable(GL_TEXTURE_2D);
     /* top centre: the world's HUD owns the bottom rows and the top-right corner */
     if (banner == 1) draw_text_centered("SHIFT+M RESUME BRAWLPIT   SHIFT+X CLOSE IT", LS_BANNER_Y, 2.5f, 1.0f, 0.85f, 0.2f);
     else if (banner == 2) draw_text_centered("SHIFT+M PLAY BRAWLPIT", LS_BANNER_Y, 2.5f, 0.6f, 0.9f, 1.0f);
     if (level_host_message(&g_lh)[0]) draw_text_centered(level_host_message(&g_lh), LS_BANNER_Y - 28.0f, 2.0f, 1.0f, 0.45f, 0.4f);
+    draw_notice();
     end_2d();
 }
 

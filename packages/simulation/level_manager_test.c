@@ -96,6 +96,9 @@ static void test_announce(void) {
           "an instance exists in FG, BG and SOURCE only");
     CHECK(lm_ticks(2) && !lm_ticks(3) && !lm_ticks(4) && lm_owns_input(2) && !lm_owns_input(3) && !lm_owns_input(0),
           "only FG ticks and owns input");
+    CHECK(lm_world_input(0) && lm_world_input(3) && !lm_world_input(1) && !lm_world_input(2) && !lm_world_input(4) &&
+              !lm_world_input(5),
+          "the world reads input only with nothing in front of it (NONE, BG): not under the level or the overlay");
     CHECK(lm_banner(3) == 1 && lm_banner(0) == 2 && lm_banner(2) == 0 && lm_banner(4) == 0,
           "banner: resume/close over a suspended level, play with none, nothing otherwise");
 }

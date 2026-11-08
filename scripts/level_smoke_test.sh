@@ -10,6 +10,8 @@
 #   Shift+M              FG -> BG again (BRAWLPIT pauses its match: proven headless by make test-level-host)
 #   Shift+X              BG -> NONE; LEVEL_CLOSED (1, 0, 0); the cyan "play" hint
 #   Shift+M              NONE -> LOADING -> FG; LEVEL_LOADED (1, 1, 2): a fresh BRAWLPIT, generation 2
+#   Ctrl+Shift+J         FG -> SOURCE; LEVEL_HIDDEN; EDITOR.GAME's overlay shows bp_level.prn (dev box: ../PARENA)
+#   Escape               SOURCE -> FG; LEVEL_SHOWN (closing the overlay is an entry back into the level)
 # and the lobby is still running at the end. The shell's log lines (one per transition; every lifecycle and
 # BRAWLPIT REFLUX row with SHANKPIT_LEVEL_TRACE=1) are the assertions; the screenshots in $OUT are the evidence.
 #
@@ -100,14 +102,36 @@ expect "[level] reflux 1000 (1, 1, 2)" 1 5 "LEVEL_LOADED generation 2"
 sleep 2
 $DRIVE shot "$OUT/5_reloaded.png"
 
+# view-source (T0 step 5): needs the level's PARENA source on this machine (decision B)
+if [ -f "${PARENA_DIR:-../PARENA}/stdlib/brawlpit/level.manifest" ]; then
+  $DRIVE key ctrl+shift+j
+  expect "[level] BRAWLPIT FG -> SOURCE" 1 10 "Ctrl+Shift+J: the level's source opens over the world"
+  expect "[level] reflux 1002 (1, 0, 0)" 3 5 "LEVEL_HIDDEN as the overlay takes the screen"
+  sleep 2
+  $DRIVE shot "$OUT/6_source.png"
+  $DRIVE key Escape
+  expect "[level] BRAWLPIT SOURCE -> FG" 1 10 "Escape closes the overlay: back into the level"
+  expect "[level] reflux 1001 (1, 0, 0)" 4 5 "LEVEL_SHOWN on the way back in"
+  sleep 1.5
+  $DRIVE shot "$OUT/7_back_from_source.png"
+  SOURCE_SHOTS=("$OUT/6_source.png" "$OUT/7_back_from_source.png")
+else
+  echo "SKIP: view-source steps (no ../PARENA checkout; set PARENA_DIR)"
+  SOURCE_SHOTS=()
+fi
+
 if kill -0 "$LOBBY_PID" 2>/dev/null; then pass "the lobby is still running"; else bad "the lobby exited (see $LOG)"; fi
 
-shots=("$OUT"/1_boot.png "$OUT"/2_world.png "$OUT"/3_match.png "$OUT"/4_closed.png "$OUT"/5_reloaded.png)
+shots=("$OUT"/1_boot.png "$OUT"/2_world.png "$OUT"/3_match.png "$OUT"/4_closed.png "$OUT"/5_reloaded.png "${SOURCE_SHOTS[@]}")
 if $DRIVE nonblack "${shots[@]}"; then pass "no screenshot is black"; else bad "a screenshot is black"; fi
 if $DRIVE differ "$OUT/1_boot.png" "$OUT/2_world.png" >/dev/null; then pass "the world view is not the level view"; else bad "Shift+M changed nothing on screen"; fi
 if $DRIVE banner "$OUT/2_world.png" 1.0,0.85,0.2 >/dev/null; then pass "the resume/close hint is drawn over the world"; else bad "no resume/close hint in $OUT/2_world.png"; fi
 if $DRIVE banner "$OUT/4_closed.png" 0.6,0.9,1.0 >/dev/null; then pass "the play hint is drawn once BRAWLPIT is closed"; else bad "no play hint in $OUT/4_closed.png"; fi
 if $DRIVE banner "$OUT/1_boot.png" 1.0,0.85,0.2 >/dev/null; then bad "a hint is drawn over BRAWLPIT in the foreground"; else pass "nothing is drawn over BRAWLPIT in the foreground"; fi
+if [ ${#SOURCE_SHOTS[@]} -gt 0 ]; then
+  if $DRIVE differ "$OUT/5_reloaded.png" "$OUT/6_source.png" >/dev/null; then pass "the source overlay is on screen"; else bad "Ctrl+Shift+J changed nothing on screen"; fi
+  if $DRIVE editor "$OUT/6_source.png" >/dev/null; then pass "the overlay is the editor's panel (its background fills the panel)"; else bad "no editor panel in $OUT/6_source.png"; fi
+fi
 
 echo "screenshots and log: $OUT"
 [ $fail -eq 0 ] && echo "level-smoke: ALL PASS" || { echo "level-smoke: FAILED"; exit 1; }

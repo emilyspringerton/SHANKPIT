@@ -37,6 +37,7 @@ int lm_announce(int, int);
 int lm_close_reason(int);
 int lm_ticks(int);
 int lm_owns_input(int);
+int lm_world_input(int);
 int lm_banner(int);
 int lm_max_steps();
 int lm_tick_us();
@@ -193,6 +194,14 @@ int lm_ticks(int s __attribute__((unused))) {
 
 int lm_owns_input(int s __attribute__((unused))) {
     if ((s == lm_st_fg())) {
+    return 1;
+    } else {
+    return 0;
+    }
+}
+
+int lm_world_input(int s __attribute__((unused))) {
+    if (((s == lm_st_none()) || (s == lm_st_bg()))) {
     return 1;
     } else {
     return 0;

@@ -41,3 +41,5 @@ int editor_widget_should_close(void) { return 0; }
 void editor_widget_reset_close_flag(void) {}
 int editor_widget_width(void) { return 0; }
 int editor_widget_height(void) { return 0; }
+int editor_widget_open_file(const char *path) { (void)path; return 0; }
+const char *editor_widget_current_path(void) { return ""; }

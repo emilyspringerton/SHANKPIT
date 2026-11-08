@@ -264,5 +264,24 @@ Each step names its test; "done" means that test passes on this box.
 - **Measured (this 2.2 GHz cloud core, wasm3):** `level_tick` ~0.01 ms (sim only); `level_render` 6.5-7.4 ms on the
   match screen. The 13-19 ms quoted above is the web build's `bp_frame` on the title screen (tick + draw). The
   frame budget is still a Windows acceptance item, not asserted here.
-- **Next:** step 4 (the shell: level-manager `.prn` mod, keyCode table, `level_shell.c`, main.c hooks, Xvfb smoke).
+- **Step 4 done.** PARENA `stdlib/shankpit/level_manager_rules.prn` -> `packages/simulation/level_manager_rules.c`
+  (`make test-level-manager`: all 48 state x command cases, 36 announce pairs, chords, four display rates, every
+  BRAWLPIT key reachable); `packages/wasm_host/level_host` (the lifecycle with no SDL; `make test-level-host`, 41
+  checks, ASan/UBSan clean); `apps/lobby/src/level_shell.c` + `main.c` hooks; `make level-smoke` drives the real
+  lobby under Xvfb with real X key events. Additions over the table above, each a rules function: `lm-world-input`
+  (the world reads input only in NONE and BG -- not under the level, the overlay, or on the LOADING frame),
+  `lm-close-reason`, `lm-loaded`, the accumulator trio, `lm-dom-key`; `lm-chord` takes `repeat` (a held chord fires
+  once). The loader dispatches LOADED / LOAD_FAILED (stage + `wh_status`) itself; `lm-announce` covers SHOWN /
+  HIDDEN / CLOSED.
+- **Step 5 (view-source):** Ctrl+Shift+J opens the manifest's `entry` (under `$PARENA_DIR`, default `../PARENA`) in
+  EDITOR.GAME's widget over the world (`editor_widget_open_file`, EDITOR.GAME 8ff1ac6); Escape closes it back into
+  the level. Without the source on the machine the chord says so and changes nothing (decision B). D6 stays
+  legacy-first: the PARENA-side widget split is still queued. JetBrains Mono now ships in `assets/fonts/` (the
+  editor widget could not open its font on a machine without it, NOTES included).
+  **In progress:** level-smoke's first run found two bugs, fixed in code and not yet re-verified: the widget's
+  GL-backed SDL renderer left its own context current (the game window froze under the overlay; the bridge now
+  restores the game's context), and `editor_widget_create` kept the caller's path pointer (autosave wrote a copy
+  of bp_level.prn to a garbage filename in the cwd, deleted; EDITOR.GAME now copies it).
+- **Next:** step 6 (save -> compile -> swap on the next entry), Windows (`make check-windows` with the SDL2 mingw
+  kit; a run on the founder's machine), the milestone review's findings.
 

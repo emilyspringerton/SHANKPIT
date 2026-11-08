@@ -33,6 +33,7 @@ int lm_close_reason(int cmd);           /* LEVEL_CLOSED payload b: 1 trap, 0 the
 int lm_loaded(int state);               /* 1: an instance exists (FG, BG, SOURCE) */
 int lm_ticks(int state);                /* 1: step the level this frame */
 int lm_owns_input(int state);           /* 1: keyboard/mouse go to the level, the world gets none */
+int lm_world_input(int state);          /* 1: the world reads its keys/mouse/pad and may grab the mouse (NONE, BG) */
 int lm_banner(int state);               /* 0 none, 1 "Shift+M resume / Shift+X close", 2 "Shift+M play" */
 
 /* the fixed 60 Hz step, in microseconds */

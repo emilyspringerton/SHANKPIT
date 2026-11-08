@@ -11,7 +11,9 @@
  *   level_shell_event()  first thing in the game-state event branch: 1 = consumed, skip the world's handling
  *   level_shell_frame()  once per frame, before the world reads its own input
  *   level_shell_draw()   last thing before SDL_GL_SwapWindow: the level over the world, or the banner
- *   level_shell_owns_input()  the world reads no keyboard, mouse or pad and never grabs the mouse while 1 */
+ *   level_shell_world_input() the world reads keyboard, mouse and pad and grabs the mouse only while 1
+ * Ctrl+Shift+J (Cmd+Option+J on macOS) opens the level's PARENA source in EDITOR.GAME's overlay over the world
+ * (dev boxes: it needs ../PARENA); Escape closes it, back into the level. */
 #ifndef SHANKPIT_LEVEL_SHELL_H
 #define SHANKPIT_LEVEL_SHELL_H
 
@@ -33,6 +35,9 @@ int level_shell_event(const SDL_Event *e, int text_focus, const level_shell_view
 void level_shell_frame(double frame_seconds);
 void level_shell_draw(void);
 int level_shell_owns_input(void);
+/* 1 = the world reads its own keys, mouse and pad and may grab the mouse: nothing (no level, no source
+ * overlay) is in front of it (PARENA lm-world-input). main.c gates every polled input and mouse grab on this. */
+int level_shell_world_input(void);
 int level_shell_rejected_dispatches(void);  /* the level's dispatches the REFLUX bridge refused */
 void level_shell_shutdown(void);
 
