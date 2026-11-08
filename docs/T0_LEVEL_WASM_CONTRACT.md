@@ -32,52 +32,133 @@ imports. Recorded divergence, not an accident.
 | Build bar | Makefile is `-O2 -Wall -D_REENTRANT`. Under the strict bar 5 legacy files fail (`humanness.c` M_PI, `level_boxes.h:2037` popen, `coop_host.c` nanosleep, `gband_skel_npc.c` pedantic); `reflux_runtime.c`/`reflux_mod.c` pass | |
 | Windows build | `build_win.bat` is **dead** (targets nonexistent `apps/shank-fps`). Real path: `.github/workflows/release.yml` mingw cross-build with a hand-kept source list, and `make check-windows` | release.yml:148+, 201-202 |
 
-## 2. Contract (rev 2) — names as they appear on the wire
+## 2. Contract (rev 3) — names as they appear on the wire
+
+Rev 3 (2026-11-08, implementation pass; founder: "implement"). Changes from rev 2, each with its reason:
+- **The host holds the level's REFLUX cursor** (INV-3R.3). Rev 2 had `level_enter(cursor)` and the module keeping
+  it. Now `level_enter()` takes nothing and `level_poll(cursor) -> cursor` reads from a host-held absolute cursor
+  and returns the new one, the same "host holds the state, PARENA decides" split every SHANKPIT mod uses.
+- **Tick and render are split** (`level_tick` = one sim step, `level_render` = draw). One BRAWLPIT frame costs
+  14-16 ms under wasm3 on this box, mostly the software renderer, so a frame that owes two steps must not draw twice.
+- **`level_api() -> 1`**, so a host refuses a module built against a different surface instead of trapping later.
+- **The module may dispatch only its own family** (1100-1199). Lifecycle actions (1000-1099) are the level
+  manager's, so untrusted code cannot fake "level closed".
 
 New PARENA file `PARENA/stdlib/brawlpit/bp_level.prn` wraps the existing `bp-*` functions; game logic reused.
-New build `PARENA/scripts/build_brawlpit_level_wasm.sh` = existing SRC list + `bp_level.prn` + `stdlib/reflux/reflux.prn`.
+New build `PARENA/scripts/build_brawlpit_level_wasm.sh` reads `PARENA/stdlib/brawlpit/level.manifest` (source
+list, entry file, output name) = the web build's sources + `bp_level.prn` + `stdlib/reflux/reflux.prn`.
 **The web build (`build_brawlpit_wasm.sh`, `bp_*` exports, zero imports) stays untouched**, so WOTAN and the node tests keep passing.
 
-### Exports (explicit `--export=` list, not `--export-all`; build asserts the set is exact)
+### Exports (explicit `--export=` list; the build asserts the set is exact)
 
 | PARENA | Wire | Signature | Meaning |
 |---|---|---|---|
-| `level-enter` | `level_enter` | `(cursor : I32) -> I32` | host passes current `reflux_host_total_dispatched()`; 0 ok, nonzero = failure code (level not shown, session intact) |
-| `level-tick` | `level_tick` | `() -> Unit` | exactly **one** 60 Hz sim step + render. Host owns the accumulator (an I32-ms dt would drift from the parity-tested 16.666 ms step). Paused = host stops calling |
+| `level-api` | `level_api` | `() -> I32` | `1`. Host refuses any other value |
+| `level-enter` | `level_enter` | `() -> I32` | fresh BRAWLPIT at its title screen. 0 ok; nonzero = failure code (level not shown, session intact) |
+| `level-poll` | `level_poll` | `(cursor : I32) -> I32` | reads REFLUX rows `[cursor, total)`, decides, returns the new cursor; the host stores it. A cursor below `oldest_abs` was overtaken: the level skips to the oldest row and counts the loss |
+| `level-tick` | `level_tick` | `() -> Unit` | exactly **one** 60 Hz sim step, no drawing. Host owns the accumulator (an I32-ms dt would drift from the parity-tested 16.666 ms step). Paused = host stops calling |
+| `level-render` | `level_render` | `() -> Unit` | draws the current state into the framebuffer; the host calls it once per display frame that ran at least one tick |
 | `level-exit` | `level_exit` | `() -> Unit` | host may then drop the instance |
-| `level-seed` | `level_seed` | `(s : I32) -> Unit` | replaces the wall-clock RNG seed `bp-frame` took from `now` |
+| `level-seed` | `level_seed` | `(s : I32) -> Unit` | the base of the level's own millisecond clock, which BRAWLPIT seeds matches from (it used the browser's wall clock) |
 | `level-key` | `level_key` | `(code : I32, down : I32) -> Unit` | **DOM keyCode**, +256 for right-hand Shift/Ctrl/Alt (`bp_input.prn:89-111`) |
-| `level-pointer` | `level_pointer` | `(x : I32, y : I32, buttons : I32) -> Unit` | fb pixel coords |
+| `level-pointer` | `level_pointer` | `(x : I32, y : I32, buttons : I32) -> Unit` | fb pixel coords; `buttons` bit 0 = primary |
 | `level-blur` | `level_blur` | `() -> Unit` | clear held keys; host calls on every Shift+M, overlay open, text focus (else the Shift of Shift+M leaves P1 shield held) |
-| `level-fb-addr/w/h` | `level_fb_addr/_w/_h` | `() -> I32` | 960×540, bytes R,G,B,A (`SDL_PIXELFORMAT_RGBA32`), stride 3840 |
-| `level-asset-addr` | `level_asset_addr` | `(slot : I32) -> I32` | 0 = sprites, 1 = duck atlas (870400 B) |
+| `level-fb-addr/w/h` | `level_fb_addr/_w/_h` | `() -> I32` | 960×540, bytes R,G,B,A (`SDL_PIXELFORMAT_RGBA32` / GL `RGBA`), stride 3840 |
+| `level-asset-addr` | `level_asset_addr` | `(slot : I32) -> I32` | 0 = portraits: 8 tiles of 128×128 RGBA, 65536 B apart (the 512×256 `sprites.png` cut in 4×2 tiles, row-major), 1 = duck atlas, 640×340 RGBA (870400 B). Other slots: 0 |
 | `level-asset-set` | `level_asset_set` | `(slot : I32, loaded : I32) -> Unit` | host writes decoded RGBA then sets |
+| `level-lost-rows` | `level_lost_rows` | `() -> I32` | introspection: REFLUX rows that were overtaken before the level could read them |
 | `memory` | `memory` | exported, 8 MB fixed | |
 
 Gamepad (`bp_pad`, F32 sticks): **deferred by name** for T0. Hats (browser-rasterized emoji): deferred.
 
-### Imports (module `env`; exactly these, enforced by `--allow-undefined-file=reflux.syms` + a non-node checker)
+### Imports (module `env`; exactly these, enforced by `--allow-undefined-file=reflux.syms` + the PARENA surface checker)
 
-Names match `packages/reflux/reflux_runtime.h:228-248` 1:1 and `stdlib/reflux/reflux.prn` (PARENA-first, no new FFI):
-`reflux_host_dispatch(i32,i32,i32,i32)`, `reflux_host_action_{type,a,b,c}_at(i32)->i32`,
-**plus the absolute-cursor trio** `reflux_host_total_dispatched()`, `reflux_host_index_for_abs(i32)`,
-`reflux_host_oldest_abs()` — to be added to `reflux.prn` with `:c` and `:llvm` keys.
-`reflux_host_log_size()` is **not** used for cursors: it saturates at `REFLUX_LOG_CAPACITY` 256 and a cursor taken
-from it goes silent forever (`reflux_runtime.h:231-235`, the horse_sync bug). Level cursors are absolute; the module
-handles "overtaken" (`oldest_abs` > cursor).
+`reflux_host_dispatch(i32,i32,i32,i32)`, `reflux_host_total_dispatched()->i32`, `reflux_host_index_for_abs(i32)->i32`,
+`reflux_host_oldest_abs()->i32`, `reflux_host_action_{type,a,b,c}_at(i32)->i32` — names match
+`packages/reflux/reflux_runtime.h` 1:1 and `stdlib/reflux/reflux.prn` (the cursor trio is added there with `:c` and
+`:llvm` keys). `reflux_host_log_size()` is **not** imported: it saturates at `REFLUX_LOG_CAPACITY` 256 and a cursor
+taken from it goes silent forever (`reflux_runtime.h:231-235`, the horse_sync bug).
 
-### Action-type range (reserve before step 4)
+### Action types (shared table `packages/reflux/reflux_runtime.h`, POL-3R.4)
 
-Live types are 1-5 and 101-128; a door subscriber opens on type 1 (`main.c:3564`, `story_doors.h:195`). Reserve
-**1000-1099 level lifecycle / 1100-1199 BRAWLPIT** in `reflux_runtime.h` with FIRST/LAST macros and
-`reflux_action_is_level()`. The host's `reflux_host_dispatch` import **rejects** types outside the module's range:
-the module is untrusted code.
+Live types are 1-5 and 101-128; a door subscriber opens on type 1 (`main.c:3564`, `story_doors.h:195`).
+
+| Type | Name | Dispatched by | Payload a, b, c |
+|---|---|---|---|
+| 1000-1099 | level lifecycle family | the level manager (host side, trusted) | |
+| 1000 | `LEVEL_LOADED` | after a module instantiates and `level_enter` returns 0 | level id, api, generation |
+| 1001 | `LEVEL_SHOWN` | level comes to the foreground | level id, 0, 0 |
+| 1002 | `LEVEL_HIDDEN` | world view comes to the foreground (Shift+M) | level id, 0, 0 |
+| 1003 | `LEVEL_CLOSED` | Shift+X in world view, a trap, or a refused module | level id, reason (0 user, 1 trap), 0 |
+| 1004 | `LEVEL_LOAD_FAILED` | instantiate / bind / `level_api` / `level_enter` refused | level id, `wh_status` or enter code, 0 |
+| 1005 | `LEVEL_SWAPPED` | a recompiled module replaced the running one on entry | level id, generation, 0 |
+| 1100-1199 | BRAWLPIT family | the BRAWLPIT module (the only range its `reflux_host_dispatch` import accepts) | |
+| 1100 | `BP_MATCH_STARTED` | a match leaves fighter select (or REMATCH) | mode, stage, fighters |
+| 1101 | `BP_MATCH_ENDED` | the results screen appears | winner slot, sim frames, mode |
+
+Level id 1 = BRAWLPIT. The host drops an out-of-family dispatch from the module and counts it
+(`level_shell_rejected_dispatches()`); it never reaches the log.
+
+The level's own poll decision (PARENA, `bp_level.prn`): if it sees `LEVEL_HIDDEN` for itself while a match is
+running and unpaused, it opens BRAWLPIT's own pause menu, so returning with Shift+M never drops the player
+straight back into a live fight.
+
+### Level manager mod (PARENA, `PARENA/stdlib/shankpit/level_manager_rules.prn` → `packages/simulation/level_manager_rules.c`)
+
+All I32, total, no state; the host holds the state and calls these (Root I, INV-1.2).
+
+| Function | Signature | Result |
+|---|---|---|
+| `lm-chord` | `(sym, shift, ctrl, alt, gui, mac, text-focus) -> I32` | 0 none, 1 TOGGLE (Shift+M), 2 SOURCE (Ctrl+Shift+J; Cmd+Option+J on macOS), 3 CLOSE (Shift+X). `sym` = SDL keycode (lowercase ASCII for letters). Any chord with text focus → 0 |
+| `lm-next` | `(state, cmd) -> I32` | state machine below; an inapplicable command returns `state` |
+| `lm-announce` | `(old, new) -> I32` | the lifecycle action type to dispatch for that transition, 0 = none |
+| `lm-ticks?` | `(state) -> I32` | 1 = host steps the level this frame |
+| `lm-owns-input?` | `(state) -> I32` | 1 = keyboard/mouse go to the level and the world gets none |
+| `lm-banner` | `(state) -> I32` | which world-view hint to draw: 0 none, 1 "Shift+M resume · Shift+X close", 2 "Shift+M play BRAWLPIT" |
+| `lm-max-steps` | `() -> I32` | catch-up cap per display frame (2); the rest of the owed time is dropped |
+
+States: 0 NONE (nothing loaded), 1 LOADING (host instantiates this frame), 2 FG (level foreground, running),
+3 BG (world foreground, level suspended), 4 SOURCE (VS0 overlay over a suspended level), 5 SOURCE_NONE (overlay, no
+level). Commands: 1 TOGGLE, 2 SOURCE, 3 CLOSE, 4 LOAD_OK, 5 LOAD_FAIL, 6 TRAP, 7 OVERLAY_CLOSED.
+NONE+TOGGLE→LOADING; LOADING+LOAD_OK→FG; LOADING+LOAD_FAIL→NONE; FG+TOGGLE→BG; BG+TOGGLE→FG; BG+CLOSE→NONE;
+FG|BG+SOURCE→SOURCE; NONE+SOURCE→SOURCE_NONE; SOURCE+OVERLAY_CLOSED→FG (an entry: a newer compiled module swaps in
+here); SOURCE_NONE+OVERLAY_CLOSED→NONE; any loaded state+TRAP→NONE. Boot = LOADING (BRAWLPIT in the foreground).
+
+### Host C API (`packages/wasm_host/wasm_host.h`, strict C99; the wasm3 backend is the labeled STOPGAP)
+
+`wh_instantiate(bytes, n, imports, n_imports, &inst, msg, msglen) -> wh_status`: reads the module's import section
+with the PARENA surface reader first and **refuses** any import the host does not offer, or offers with another
+signature (`WH_ERR_IMPORT_UNBOUND` / `WH_ERR_IMPORT_SIG` / `WH_ERR_IMPORT_KIND`) — wasm3 would otherwise trap only on
+the first call. `wh_lookup(inst, name, sig, &fn)` binds an export by exact name and signature (`WH_ERR_EXPORT_MISSING`
+/ `WH_ERR_EXPORT_SIG`). `wh_call(fn, args, ret)`; a trap returns `WH_ERR_TRAP` and marks the instance dead (every later
+call refuses). `wh_memory(inst, &size)`. Host functions are `int32_t fn(void *user, const int32_t *args)`; signatures
+use wasm3's notation (`i(ii)`, `v(iiii)`, `v(F)`).
+
+### PARENA wasm surface reader (`PARENA/stdlib/wasm/surface.prn`)
+
+The binary-format half of a wasm loader, in PARENA (core-deps-PARENA-first), and the first brick of the queued
+PARENA-native interpreter. Scalar API over `Bytes`: `ws-valid?`, `ws-import-count`, `ws-import-kind`,
+`ws-import-{module,field}-{off,len}`, `ws-import-sig`, `ws-export-count`, `ws-export-kind`, `ws-export-name-{off,len}`,
+`ws-export-sig`. Counts are -1 on a malformed module. A signature is one I32: result type in bits 0-2 (0 none,
+1 i32, 2 i64, 3 f32, 4 f64), parameter count in bits 3-6, parameter k in bits 7+3k (up to 8); -2 = not expressible.
+Consumers: the host's bind-or-refuse (generated C) and the level build's exact-surface check (`tools/wasm_surface_check`).
+
+### Shortcuts (POL-4.6.6 conventions)
+
+Shift+M toggles level ⇄ world; with nothing loaded it loads BRAWLPIT. Shift+X in world view closes the level.
+Ctrl+Shift+J (Cmd+Option+J on macOS) opens the VS0 view-source overlay on the level's entry file. All three are
+ignored while text focus is active (chat, orb, phone text apps, a lobby text field, the editor overlay). The shell
+sees each event before the world does, so the world's bare-M overlay cycle never fires on Shift+M.
+
+While BRAWLPIT is in the foreground the world keeps simulating but gets no input (keys, mouse, pad), and the cursor
+is released; the world gets it back on Shift+M.
 
 ### Failure modes
 
-Unbound import → refused at load with a defined code (wasm3/WAMR otherwise trap only on first call). Trap in
-`level_tick` → shell closes the level, world keeps running. Compile failure → previous `.wasm` stays, errors shown
-in VS0 mapped back to file:line (the build concatenates 15 files).
+Unbound import → refused at load (`LEVEL_LOAD_FAILED`, reason = the `wh_status`). Trap in any level call → the shell
+drops the instance (`LEVEL_CLOSED`, reason 1), the world keeps running, the banner says why. Compile failure → the
+previous `.wasm` stays, the error is shown mapped back to `file:line` (the build concatenates the manifest's files).
+Missing asset → BRAWLPIT draws its own shape fallbacks (`bp_view.prn:319-321`); the shell logs it once.
 
 ## 3. Dependencies the plan needs (rev-1 gaps)
 
@@ -105,6 +186,15 @@ Decided (conventions, POL-4.6.6):
 - Toggle/close/load decisions live in a `.prn` level-manager mod (INV-1.2/2.1); the host only intercepts keys.
 - Shortcuts: Shift+M checked before the bare-M branch (which gets `!(mod & KMOD_SHIFT)`) and before `macro_key_run`;
   Ctrl+Shift+J = `KMOD_CTRL|KMOD_SHIFT`, macOS `KMOD_GUI|KMOD_ALT`; both ignored while text focus is active.
+
+Working defaults (founder said "implement" without picking, 2026-11-08; both reversible, both in EMILY/BACKLOG.md):
+- **A → wasm3**, vendored at a pinned commit under `third_party/wasm3/`, labeled STOPGAP in code and backlog,
+  hidden behind `wh_*` so WAMR or the PARENA interpreter can replace it without touching callers.
+- **B → (c)**: save→compile runs on a dev box that has the D1 toolchain and a sibling `../PARENA`; elsewhere the
+  shell says "compile unavailable" and keeps the shipped module.
+- **D6 → legacy first (POL-4.6.7)**: the overlay is the EDITOR.GAME widget SHANKPIT already links
+  (`editor_widget_bridge.c`), plus one new call, `editor_widget_open_file(path)`. Splitting PARENA's own
+  `editor_main.c` into a widget and re-pointing SHANKPIT at it is queued, not dropped (the two forks have diverged).
 
 For the founder (two at a time, POL-4.6.4):
 - **A. Runtime: wasm3 or WAMR.** Measured on the real module, 2-core box, init + 600 frames: wasm3 ≈ 14-16 ms/frame,
