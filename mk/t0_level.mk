@@ -6,6 +6,8 @@
 #                             (WH_FIXTURE=<path>, default ../WOTAN/BRAWLPIT/brawlpit.wasm; skipped if absent)
 #   make test-level-abi       the level's REFLUX imports (range-checked) + exports, against hand-assembled
 #                             modules and the committed assets/levels/brawlpit/brawlpit_level.wasm
+#   make test-level-manager   the level manager's decisions (PARENA level_manager_rules.prn, generated C)
+#   make regen-level-manager  PARENA/stdlib/shankpit/level_manager_rules.prn -> packages/simulation/level_manager_rules.c
 #   make check-strict-t0      every new T0 host file at the doctrine bar, gcc and (if present) mingw
 #   make regen-wasm-surface   PARENA/stdlib/wasm/surface.prn -> packages/wasm_host/wasm_surface_gen.c
 #   make brawlpit-level       rebuild assets/levels/brawlpit/ (the module from ../PARENA's level.manifest,
@@ -14,12 +16,12 @@
 #                             without ../PARENA or the toolchain)
 
 STRICT_CFLAGS := -std=c99 -Wall -Wextra -pedantic -Werror
-T0_STRICT_FILES := $(T0_HOST_SRC) packages/wasm_host/wasm_host_test.c packages/wasm_host/level_abi_test.c
+T0_STRICT_FILES := $(T0_HOST_SRC) packages/wasm_host/wasm_host_test.c packages/wasm_host/level_abi_test.c packages/simulation/level_manager_test.c
 WASM3_CFLAGS := -std=c99 -O2 -w
 T0_BIN := $(BIN_DIR)/t0
 WASM3_OBJS := $(patsubst third_party/wasm3/source/%.c,$(T0_BIN)/wasm3/%.o,$(WASM3_SRC))
 
-.PHONY: test-wasm-host test-level-abi check-strict-t0 regen-wasm-surface brawlpit-level check-brawlpit-level
+.PHONY: test-wasm-host test-level-abi test-level-manager regen-level-manager check-strict-t0 regen-wasm-surface brawlpit-level check-brawlpit-level
 
 $(T0_BIN)/wasm3/%.o: third_party/wasm3/source/%.c
 	@mkdir -p $(dir $@)
@@ -36,6 +38,15 @@ test-level-abi: $(WASM3_OBJS)
 		packages/wasm_host/wasm_host.c packages/wasm_host/wasm_surface_gen.c packages/world/parena_runtime.c \
 		packages/reflux/reflux_runtime.c $(WASM3_OBJS) -o $(T0_BIN)/level_abi_test -lm
 	./$(T0_BIN)/level_abi_test
+
+test-level-manager:
+	@mkdir -p $(T0_BIN)
+	$(CC) $(STRICT_CFLAGS) -O2 -Ipackages/world packages/simulation/level_manager_test.c \
+		packages/simulation/level_manager_rules.c -o $(T0_BIN)/level_manager_test
+	./$(T0_BIN)/level_manager_test
+
+regen-level-manager:
+	scripts/gen_level_manager_rules.sh
 
 check-strict-t0:
 	@for f in $(T0_STRICT_FILES); do \
