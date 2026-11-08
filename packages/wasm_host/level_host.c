@@ -214,6 +214,51 @@ fail:
     return 0;
 }
 
+int level_host_swap(level_host *h, const char *module_path) {
+    wh_instance *old_inst;
+    level_exports old_x;
+    level_reflux_bridge old_bridge;
+    int32_t old_fb_addr, old_fb_w, old_fb_h, old_cursor;
+    int old_ticks, old_renders, old_assets, stage = 0, status = 0;
+    const char *old_path;
+    char m[64];
+    if (!h->inst || !lm_loaded(h->state) || !module_path) return 0;
+    /* the old instance is parked, not called, while the new one loads into the same fields (its imports point at
+     * h->bridge too, so the bridge is saved and put back if the new module is refused) */
+    old_inst = h->inst;
+    old_x = h->x;
+    old_bridge = h->bridge;
+    old_fb_addr = h->fb_addr;
+    old_fb_w = h->fb_w;
+    old_fb_h = h->fb_h;
+    old_cursor = h->cursor;
+    old_ticks = h->ticks;
+    old_renders = h->renders;
+    old_assets = h->assets_loaded;
+    old_path = h->desc.module_path;
+    h->inst = NULL;
+    h->desc.module_path = module_path;
+    if (!load(h, &stage, &status)) {
+        h->inst = old_inst;
+        h->x = old_x;
+        h->bridge = old_bridge;
+        h->fb_addr = old_fb_addr;
+        h->fb_w = old_fb_w;
+        h->fb_h = old_fb_h;
+        h->cursor = old_cursor;
+        h->ticks = old_ticks;
+        h->renders = old_renders;
+        h->assets_loaded = old_assets;
+        h->desc.module_path = old_path;
+        return 0; /* load() counts generations only on success: nothing changed, h->msg says why */
+    }
+    if (!wh_is_dead(old_inst)) wh_call_i32(&old_x.exit, NULL, 0, NULL, m, sizeof m);
+    h->rejected_total += old_bridge.rejected;
+    wh_destroy(old_inst);
+    reflux_host_dispatch(REFLUX_ACTION_LEVEL_SWAPPED, h->desc.level_id, h->generation, 0);
+    return 1;
+}
+
 /* ---- the shell's calls ------------------------------------------------------------------------- */
 
 int level_host_chord(level_host *h, int sdl_sym, int shift, int ctrl, int alt, int gui, int mac, int text_focus,

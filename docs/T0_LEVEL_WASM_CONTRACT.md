@@ -292,6 +292,19 @@ Each step names its test; "done" means that test passes on this box.
   bloom's whole-window viewport but the pointer mapped through the letterbox (the shell now draws in the letterbox,
   bars black); a button held in the world across Shift+M arrived as a click (buttons latch only from presses made
   in the foreground).
-- **Next:** step 6 (save -> compile -> swap on the next entry), Windows (`make check-windows` with the SDL2 mingw
-  kit; a run on the founder's machine), the milestone review's findings.
+- **Step 6 done (save -> compile -> swap, decision B).** The shell watches the manifest and its `src` files (once a
+  second; a change is a CONTENT change, so the editor's autosave rewriting the same bytes is not one) and, when
+  PARENA `lm-compile-now` says so, runs `PARENA/scripts/build_level_wasm.sh` in a child process into
+  `var/levels/brawlpit_level.wasm` (gitignored). A good build swaps in on the next entry `lm-swap-on` names (SOURCE ->
+  FG, BG -> FG) through `level_host_swap`, which loads the new module into a fresh instance first and drops the old
+  one only if it fully loads (LEVEL_SWAPPED (id, generation); module_path follows, so a later reload uses it); a
+  refused build leaves the old instance running and dispatches nothing. A failed compile shows the build's own
+  located error (`compile error at stdlib/brawlpit/bp_level.prn:148: ...`) and keeps the running build. Found
+  building it: EDITOR.GAME's widget sets SIGCHLD to SIG_IGN, after which `system()` reports -1 for a build that
+  succeeded -- the build now runs in its own child with SIGCHLD reset and writes its exit code to a status file.
+  Tests: `make test-level-manager` 45, `make test-level-host` 61 (refused swaps keep the old level running; a good
+  swap; a reload after it uses the new build), `make level-smoke` 34 (in the real game, against a scratch copy of
+  PARENA: a save compiles in the background and swaps in on Escape; a broken save is located and kept out).
+- **Next:** a run on Windows and on a real GPU (founder's machine; `make check-windows` passes), the trust/build
+  review lenses (running), README/backlog bookkeeping.
 

@@ -90,6 +90,13 @@ int level_host_rejected(const level_host *h);   /* dispatches refused by the bri
  * this call clears. */
 const uint8_t *level_host_fb(level_host *h, int *w, int *hgt, int *dirty);
 
+/* Swap a newly compiled module in for the running one (T0 step 6; the shell calls it on an entry lm_swap_on
+ * names). The new module is loaded into a fresh instance FIRST; only if it fully loads (bind, api, enter, assets,
+ * first render) is the old one exited and dropped, LEVEL_SWAPPED (id, generation) dispatched, and module_path
+ * moved to the new file so a later reload uses it. Otherwise the old instance keeps running untouched, nothing is
+ * dispatched (the level is still loaded), and h->msg says why. Only while a level is loaded. 1 = swapped. */
+int level_host_swap(level_host *h, const char *module_path);
+
 /* The module's memory, for tests and diagnostics; NULL when none. */
 uint8_t *level_host_memory(level_host *h, uint32_t *size);
 

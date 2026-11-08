@@ -47,6 +47,7 @@ pkg/
 # StandardOutput/StandardError append targets, S459-34) -- runtime data, not source.
 var/local_nock_gen.c
 var/logs/
+var/levels/
 
 # Claude Code session directory.
 .claude/

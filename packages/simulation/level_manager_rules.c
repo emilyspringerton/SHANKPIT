@@ -52,6 +52,8 @@ int lm_dom_punct(int);
 int lm_dom_mod(int);
 int lm_dom_scan(int);
 int lm_dom_key(int);
+int lm_compile_now(int, int, int);
+int lm_swap_on(int, int);
 
 int lm_st_none(void) {
     return 0;
@@ -271,5 +273,21 @@ int lm_dom_scan(int sc __attribute__((unused))) {
 
 int lm_dom_key(int sym __attribute__((unused))) {
     return (((sym >= 97) && (sym <= 122)) ? (sym - 32) : (((sym >= 48) && (sym <= 57)) ? sym : (((sym >= lm_sdl_scan(0)) && (sym <= lm_sdl_scan(511))) ? lm_dom_scan((sym - lm_sdl_scan(0))) : lm_dom_punct(sym))));
+}
+
+int lm_compile_now(int changed __attribute__((unused)), int compiling __attribute__((unused)), int can_build __attribute__((unused))) {
+    if (((changed != 0) && ((compiling == 0) && (can_build != 0)))) {
+    return 1;
+    } else {
+    return 0;
+    }
+}
+
+int lm_swap_on(int old __attribute__((unused)), int new __attribute__((unused))) {
+    if (((new == lm_st_fg()) && ((old == lm_st_source()) || (old == lm_st_bg())))) {
+    return 1;
+    } else {
+    return 0;
+    }
 }
 

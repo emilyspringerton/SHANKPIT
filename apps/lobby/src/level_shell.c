@@ -1,4 +1,7 @@
 /* apps/lobby/src/level_shell.c -- see level_shell.h. SDL/GL plumbing over packages/wasm_host/level_host. */
+#ifndef _WIN32
+#define _POSIX_C_SOURCE 200112L /* stat, getcwd: save -> compile is a dev-box feature (decision B) */
+#endif
 #include "level_shell.h"
 
 #include <SDL2/SDL_opengl.h>
@@ -10,6 +13,16 @@
 #include "../../../packages/reflux/reflux_runtime.h"
 #include "../../../packages/simulation/level_manager_rules.h"
 #include "../../../packages/wasm_host/level_host.h"
+
+#ifndef _WIN32
+#include <signal.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#define LS_CAN_COMPILE 1
+#else
+#define LS_CAN_COMPILE 0 /* decision B: compiling levels is a dev-box (Linux) feature in T0 */
+#endif
 
 /* main.c's 1280x720 virtual-screen text (packages/ui/turtle_text.h: 5x7 glyphs, 6 * size px a character) */
 void draw_string(const char *str, float x, float y, float size);
@@ -35,11 +48,40 @@ static int g_logged_state = -1;   /* the state last printed: every transition is
 static int g_trace = 0;           /* SHANKPIT_LEVEL_TRACE set: print every level-family REFLUX row too */
 static int32_t g_trace_cursor = 0;
 static double g_last_dt = 1.0 / 60.0; /* the frame time, for the overlay's own tick */
-static char g_notice[160];          /* a short-lived line under the hint (e.g. "no source on this machine") */
+static char g_notice[256];          /* a short-lived line under the hint (e.g. "no source on this machine") */
 static Uint32 g_notice_until = 0;
 
+/* ---- save -> compile -> swap (T0 step 6). PARENA decides when (lm-compile-now) and where it swaps in
+ * (lm-swap-on); this file watches the manifest's sources, runs PARENA/scripts/build_level_wasm.sh on a thread, and
+ * hands the result to level_host_swap. The build writes var/levels/brawlpit_level.wasm (a build output, not a user
+ * file: the INV-4.4.1 reading in the contract) and refuses to overwrite it on failure. */
+#define LS_MAX_WATCH 48
+#define LS_BUILD_OUT "var/levels/brawlpit_level.wasm"
+#define LS_BUILD_LOG "var/levels/brawlpit_build.log"
+#define LS_BUILD_STATUS "var/levels/brawlpit_build.status" /* the build's own exit code, written by its shell */
+#if LS_CAN_COMPILE
+static char g_watch[LS_MAX_WATCH][512]; /* the manifest and every `src` it lists */
+static long g_watch_mtime[LS_MAX_WATCH];
+static int g_nwatch = 0;
+static int g_can_build = 0;               /* ../PARENA's build script and the LLVM 18 toolchain are here */
+static int g_changed = 0;                 /* a watched file changed since the last build started */
+static unsigned long g_watch_hash = 0;    /* the watched files' contents when the last build started (or at boot):
+                                           * an mtime change with the same bytes -- the editor's autosave rewriting
+                                           * what is on disk -- is not a change */
+static Uint32 g_next_watch = 0;
+static char g_build_cmd[4096];
+#endif
+static SDL_atomic_t g_build;              /* 0 idle, 1 building, 2 built, 3 failed */
+static char g_built_path[640];            /* the newest good build (absolute) */
+static int g_pending_swap = 0;            /* a good build waits for the next entry into the foreground */
+static void watch_init(void);
+static void watch_tick(void);
+
 static void notice(const char *text) {
-    snprintf(g_notice, sizeof g_notice, "%s", text);
+    size_t n = strlen(text);
+    if (n >= sizeof g_notice) n = sizeof g_notice - 1; /* the screen shows ~100 characters; the log gets all */
+    memcpy(g_notice, text, n);
+    g_notice[n] = 0;
     g_notice_until = SDL_GetTicks() + 4000;
     fprintf(stderr, "[level] %s\n", text);
 }
@@ -100,6 +142,9 @@ void level_shell_init(int boot_level, unsigned int seed) {
     g_trace = getenv("SHANKPIT_LEVEL_TRACE") != NULL;
     g_trace_cursor = reflux_host_total_dispatched();
     g_logged_state = -1;
+    SDL_AtomicSet(&g_build, 0);
+    g_pending_swap = 0;
+    watch_init();
     note();
 }
 
@@ -112,7 +157,7 @@ static int source_entry(char *out, size_t n) {
     const char *root = getenv("PARENA_DIR");
     char manifest[512], line[512], key[16], val[400];
     FILE *f;
-    if (!root || !root[0]) root = "../PARENA";
+    if (!root || !root[0]) root = "../PARENA"; /* parena_root(), spelled out: this is defined above it */
     snprintf(manifest, sizeof manifest, "%s/%s", root, LS_MANIFEST);
     out[0] = 0;
     f = fopen(manifest, "r");
@@ -130,6 +175,168 @@ static int source_entry(char *out, size_t n) {
 
 int level_shell_rejected_dispatches(void) { return g_inited ? level_host_rejected(&g_lh) : 0; }
 
+#if LS_CAN_COMPILE
+static const char *parena_root(void) {
+    const char *root = getenv("PARENA_DIR");
+    return (root && root[0]) ? root : "../PARENA";
+}
+
+static long file_mtime(const char *p) {
+    struct stat st;
+    return stat(p, &st) == 0 ? (long)st.st_mtime : -1;
+}
+
+/* FNV-1a over every watched file's bytes */
+static unsigned long hash_files(void) {
+    unsigned long h = 2166136261UL;
+    int i, c;
+    for (i = 0; i < g_nwatch; i++) {
+        FILE *f = fopen(g_watch[i], "rb");
+        h = (h ^ (unsigned long)i) * 16777619UL;
+        if (!f) continue;
+        while ((c = fgetc(f)) != EOF) h = ((h ^ (unsigned long)c) * 16777619UL) & 0xffffffffUL;
+        fclose(f);
+    }
+    return h;
+}
+
+/* the manifest and its `src` files, under the PARENA root; whether this machine can build at all */
+static void watch_init(void) {
+    const char *tc = getenv("LLVM_TOOLCHAIN_ROOT"), *home = getenv("HOME");
+    char path[512], line[512], key[16], val[400];
+    FILE *f;
+    int i;
+    g_nwatch = 0;
+    snprintf(path, sizeof path, "%s/%s", parena_root(), LS_MANIFEST);
+    f = fopen(path, "r");
+    if (!f) return;
+    snprintf(g_watch[g_nwatch++], sizeof g_watch[0], "%s", path);
+    while (fgets(line, sizeof line, f) && g_nwatch < LS_MAX_WATCH)
+        if (sscanf(line, "%15s %399s", key, val) == 2 && strcmp(key, "src") == 0)
+            snprintf(g_watch[g_nwatch++], sizeof g_watch[0], "%s/%s", parena_root(), val);
+    fclose(f);
+    for (i = 0; i < g_nwatch; i++) g_watch_mtime[i] = file_mtime(g_watch[i]);
+    g_watch_hash = hash_files();
+    if (tc && tc[0]) snprintf(path, sizeof path, "%s/usr/lib/llvm-18/bin/wasm-ld", tc);
+    else snprintf(path, sizeof path, "%s/.local/opt/llvm-toolchain/usr/lib/llvm-18/bin/wasm-ld", home ? home : "");
+    g_can_build = file_mtime(path) >= 0;
+    snprintf(path, sizeof path, "%s/scripts/build_level_wasm.sh", parena_root());
+    if (file_mtime(path) < 0) g_can_build = 0;
+}
+
+/* The build runs in a child of our own: system() cannot be trusted here. EDITOR.GAME's widget sets SIGCHLD to
+ * SIG_IGN (so the editors it spawns reap themselves), after which this process can never wait for a child --
+ * system() returned -1 for a build that had succeeded (found by level-smoke). So the child gets SIGCHLD back to
+ * the default before exec (its shell must wait for the build script), and the shell writes the build's exit
+ * code to a status file this thread polls for. */
+static int SDLCALL build_thread(void *unused) {
+    FILE *f;
+    int code = -1, waited;
+    pid_t pid;
+    (void)unused;
+    remove(LS_BUILD_STATUS);
+    pid = fork();
+    if (pid == 0) {
+        signal(SIGCHLD, SIG_DFL);
+        execl("/bin/sh", "sh", "-c", g_build_cmd, (char *)NULL);
+        _exit(127);
+    }
+    if (pid < 0) { SDL_AtomicSet(&g_build, 3); return 0; }
+    for (waited = 0; waited < 6000 && code < 0; waited++) { /* up to 10 minutes */
+        SDL_Delay(100);
+        if ((f = fopen(LS_BUILD_STATUS, "r")) != NULL) {
+            if (fscanf(f, "%d", &code) != 1) code = -1;
+            fclose(f);
+        }
+    }
+    waitpid(pid, NULL, WNOHANG); /* reaps it when SIGCHLD is not ignored; harmless when it is */
+    SDL_AtomicSet(&g_build, code == 0 ? 2 : 3);
+    return 0;
+}
+
+static void build_start(void) {
+    char cwd[512];
+    SDL_Thread *t;
+    if (!getcwd(cwd, sizeof cwd)) { notice("cannot compile: the working directory is unknown"); return; }
+    mkdir("var", 0755);        /* EEXIST is fine */
+    mkdir("var/levels", 0755);
+    snprintf(g_built_path, sizeof g_built_path, "%s/%s", cwd, LS_BUILD_OUT);
+    if (snprintf(g_build_cmd, sizeof g_build_cmd,
+                 "'%s/scripts/build_level_wasm.sh' '%s' '%s' > '%s/%s' 2>&1; echo $? > '%s/%s.tmp' && mv '%s/%s.tmp' '%s/%s'",
+                 parena_root(), LS_MANIFEST, g_built_path, cwd, LS_BUILD_LOG, cwd, LS_BUILD_STATUS, cwd,
+                 LS_BUILD_STATUS, cwd, LS_BUILD_STATUS) >= (int)sizeof g_build_cmd ||
+        strchr(parena_root(), '\'') || strchr(cwd, '\'')) {
+        notice("cannot compile: the PARENA or working-directory path is too long or contains a quote");
+        g_changed = 0;
+        return;
+    }
+    SDL_AtomicSet(&g_build, 1);
+    t = SDL_CreateThread(build_thread, "level-build", NULL);
+    if (!t) { SDL_AtomicSet(&g_build, 0); notice("cannot compile: no thread"); return; }
+    SDL_DetachThread(t);
+    g_changed = 0;
+    g_watch_hash = hash_files();
+    notice("compiling BRAWLPIT from its PARENA source...");
+}
+
+/* the build's own located error (build_level_wasm.sh prints "build_level_wasm: compile error at file:line: ...") */
+static void build_failed_notice(void) {
+    FILE *f = fopen(LS_BUILD_LOG, "r");
+    char line[512], text[600];
+    const char *found = NULL;
+    while (f && fgets(line, sizeof line, f))
+        if (strncmp(line, "build_level_wasm:", 17) == 0) { found = line + 18; break; }
+    if (f) fclose(f);
+    if (found) {
+        line[strcspn(line, "\n")] = 0;
+        snprintf(text, sizeof text, "compile failed (the running BRAWLPIT is kept): %s", found);
+    } else {
+        snprintf(text, sizeof text, "compile failed (the running BRAWLPIT is kept): see %s", LS_BUILD_LOG);
+    }
+    notice(text);
+}
+
+/* once a second: did a watched file change; is a build to start or to collect */
+static void watch_tick(void) {
+    int i, st;
+    Uint32 now = SDL_GetTicks();
+    st = SDL_AtomicGet(&g_build);
+    if (st == 2 || st == 3) {
+        SDL_AtomicSet(&g_build, 0);
+        if (st == 2) {
+            if (lm_loaded(level_host_state(&g_lh))) {
+                g_pending_swap = 1;
+                notice("built: the new BRAWLPIT swaps in when you go back to it (Escape / Shift+M)");
+            } else {
+                g_lh.desc.module_path = g_built_path; /* nothing loaded: the next load is the new build */
+                notice("built: Shift+M loads the new BRAWLPIT");
+            }
+        } else {
+            build_failed_notice();
+        }
+    }
+    if (!g_nwatch || (Sint32)(now - g_next_watch) < 0) return;
+    g_next_watch = now + 1000;
+    {
+        int touched = 0;
+        for (i = 0; i < g_nwatch; i++) {
+            long m = file_mtime(g_watch[i]);
+            if (m != g_watch_mtime[i]) { g_watch_mtime[i] = m; touched = 1; }
+        }
+        if (touched && hash_files() != g_watch_hash) g_changed = 1;
+    }
+    if (g_changed && !g_can_build) {
+        g_changed = 0;
+        notice("saved -- but this machine cannot compile levels (needs ../PARENA and LLVM 18: MONOREPO BOOTSTRAP.md)");
+        return;
+    }
+    if (lm_compile_now(g_changed, SDL_AtomicGet(&g_build) != 0, g_can_build)) build_start();
+}
+#else
+static void watch_init(void) {}
+static void watch_tick(void) {}
+#endif
+
 /* after any transition: a visible cursor whenever the world is not the one reading input (the level or the
  * overlay has it); into the overlay, the level's entry file opens in the editor */
 static void after_transition(int old) {
@@ -137,6 +344,18 @@ static void after_transition(int old) {
     static char path[512]; /* static: the editor widget is handed this path (it copies since EDITOR.GAME's fix) */
     if (now == old) return;
     if (lm_world_input(old) && !lm_world_input(now)) SDL_SetRelativeMouseMode(SDL_FALSE);
+    /* an entry into the foreground: where a newer build swaps in (PARENA lm-swap-on) */
+    if (g_pending_swap && lm_swap_on(old, now)) {
+        char text[300];
+        g_pending_swap = 0;
+        if (level_host_swap(&g_lh, g_built_path)) {
+            snprintf(text, sizeof text, "BRAWLPIT rebuilt from source (generation %d)", g_lh.generation);
+            g_have_frame = 0;
+        } else {
+            snprintf(text, sizeof text, "the new build was refused, the old one keeps running: %s", level_host_message(&g_lh));
+        }
+        notice(text);
+    }
     if (lm_owns_input(old) != lm_owns_input(now)) g_buttons = 0;
     if (in_source(now) && !in_source(old) && !(source_entry(path, sizeof path) && editor_widget_overlay_open_file(path))) {
         notice("the source editor could not open (no editor widget in this build)");
@@ -257,6 +476,7 @@ void level_shell_frame(double frame_seconds) {
         note();
         old = level_host_state(&g_lh);
     }
+    watch_tick();
     dt_us = frame_seconds <= 0.0 ? 0 : frame_seconds >= 1.0 ? 1000000 : (int)(frame_seconds * 1.0e6);
     if (old == lm_st_loading()) g_have_frame = 0;
     level_host_frame(&g_lh, dt_us);

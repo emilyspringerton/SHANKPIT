@@ -196,7 +196,19 @@ static void test_keys(void) {
     }
 }
 
+static void test_compile_swap(void) {
+    int o, n, bad = 0;
+    CHECK(lm_compile_now(1, 0, 1) == 1 && lm_compile_now(0, 0, 1) == 0 && lm_compile_now(1, 1, 1) == 0 &&
+              lm_compile_now(1, 0, 0) == 0,
+          "compile only when a source changed, no build is running, and this machine can build");
+    for (o = 0; o < 6; o++)
+        for (n = 0; n < 6; n++)
+            if (lm_swap_on(o, n) != (n == 2 && (o == 4 || o == 3))) bad++;
+    CHECK(bad == 0, "a new build swaps in exactly on SOURCE -> FG and BG -> FG (never LOADING -> FG, never in FG)");
+}
+
 int main(void) {
+    test_compile_swap();
     test_chords();
     test_state_machine();
     test_announce();

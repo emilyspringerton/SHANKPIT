@@ -12,6 +12,11 @@
 #   Shift+M              NONE -> LOADING -> FG; LEVEL_LOADED (1, 1, 2): a fresh BRAWLPIT, generation 2
 #   Ctrl+Shift+J         FG -> SOURCE; LEVEL_HIDDEN; EDITOR.GAME's overlay shows bp_level.prn (dev box: ../PARENA)
 #   Escape               SOURCE -> FG; LEVEL_SHOWN (closing the overlay is an entry back into the level)
+#   Ctrl+Shift+J, save   (T0 step 6) a save to the level's PARENA source compiles it in the background; Escape
+#                        swaps the new build in: LEVEL_SWAPPED (1, 3, 0). A save that does not compile shows the
+#                        located error and BRAWLPIT keeps running the old build (no LEVEL_SWAPPED)
+# The view-source and compile steps run against a scratch copy of ../PARENA ($OUT/parena, PARENA_DIR), so the real
+# checkout is never edited.
 # and the lobby is still running at the end. The shell's log lines (one per transition; every lifecycle and
 # BRAWLPIT REFLUX row with SHANKPIT_LEVEL_TRACE=1) are the assertions; the screenshots in $OUT are the evidence.
 #
@@ -40,7 +45,14 @@ sleep 1
 export DISPLAY="$DISPLAY_NUM"
 
 LOG="$OUT/lobby.log"
-SHANKPIT_LEVEL_TRACE=1 "$BIN" > "$LOG" 2>&1 &
+REAL_PARENA="${PARENA_DIR:-../PARENA}"
+SCRATCH=""
+if [ -f "$REAL_PARENA/stdlib/brawlpit/level.manifest" ]; then
+  SCRATCH="$(cd "$OUT" && pwd)/parena"
+  rm -rf "$SCRATCH" && mkdir -p "$SCRATCH"
+  (cd "$REAL_PARENA" && tar --exclude=.git -cf - .) | (cd "$SCRATCH" && tar xpf -)
+fi
+PARENA_DIR="${SCRATCH:-$REAL_PARENA}" SHANKPIT_LEVEL_TRACE=1 "$BIN" > "$LOG" 2>&1 &
 LOBBY_PID=$!
 
 fail=0
@@ -103,7 +115,7 @@ sleep 2
 $DRIVE shot "$OUT/5_reloaded.png"
 
 # view-source (T0 step 5): needs the level's PARENA source on this machine (decision B)
-if [ -f "${PARENA_DIR:-../PARENA}/stdlib/brawlpit/level.manifest" ]; then
+if [ -n "$SCRATCH" ]; then
   $DRIVE key ctrl+shift+j
   expect "[level] BRAWLPIT FG -> SOURCE" 1 10 "Ctrl+Shift+J: the level's source opens over the world"
   expect "[level] reflux 1002 (1, 0, 0)" 3 5 "LEVEL_HIDDEN as the overlay takes the screen"
@@ -115,6 +127,34 @@ if [ -f "${PARENA_DIR:-../PARENA}/stdlib/brawlpit/level.manifest" ]; then
   sleep 1.5
   $DRIVE shot "$OUT/7_back_from_source.png"
   SOURCE_SHOTS=("$OUT/6_source.png" "$OUT/7_back_from_source.png")
+
+  # save -> compile -> swap (T0 step 6), when this machine can build levels (LLVM 18, MONOREPO BOOTSTRAP.md)
+  if [ -x "${LLVM_TOOLCHAIN_ROOT:-$HOME/.local/opt/llvm-toolchain}/usr/lib/llvm-18/bin/wasm-ld" ]; then
+    SRC="$SCRATCH/stdlib/brawlpit/bp_level.prn"
+    $DRIVE key ctrl+shift+j
+    expect "[level] BRAWLPIT FG -> SOURCE" 2 10 "Ctrl+Shift+J again, to edit"
+    sleep 1
+    printf '\n;; level-smoke: a save that compiles\n' >> "$SRC"
+    expect "compiling BRAWLPIT from its PARENA source" 1 15 "a save to the level's source starts a background build"
+    expect "built: the new BRAWLPIT swaps in" 1 240 "the build succeeds (the game kept running meanwhile)"
+    $DRIVE key Escape
+    expect "[level] BRAWLPIT SOURCE -> FG" 2 10 "Escape: back into the level"
+    expect "[level] reflux 1005 (1, 3, 0)" 1 10 "the new build swapped in on that entry: LEVEL_SWAPPED (1, generation 3)"
+    expect "BRAWLPIT rebuilt from source (generation 3)" 1 5 "and the player is told so"
+    $DRIVE key shift+m
+    expect "[level] BRAWLPIT FG -> BG" 3 10 "Shift+M to the world"
+    printf '\n)\n' >> "$SRC"
+    expect "compile failed (the running BRAWLPIT is kept): compile error at stdlib/brawlpit/bp_level.prn:" 1 240 \
+      "a save that does not compile: the error is located at bp_level.prn:LINE, the old build is kept"
+    $DRIVE key shift+m
+    expect "[level] BRAWLPIT BG -> FG" 2 10 "Shift+M back: the level is still there"
+    sleep 1
+    if [ "$(grep -cF "[level] reflux 1005" "$LOG")" -eq 1 ]; then pass "no swap after the failed build"; else bad "a failed build swapped something in"; fi
+    $DRIVE shot "$OUT/8_after_swap.png"
+    SOURCE_SHOTS+=("$OUT/8_after_swap.png")
+  else
+    echo "SKIP: save -> compile -> swap (no LLVM 18 toolchain on this machine)"
+  fi
 else
   echo "SKIP: view-source steps (no ../PARENA checkout; set PARENA_DIR)"
   SOURCE_SHOTS=()

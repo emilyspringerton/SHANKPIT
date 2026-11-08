@@ -338,10 +338,43 @@ static void test_overlay_and_suspend(void) {
     level_host_shutdown(&h);
 }
 
+/* save -> compile -> swap (T0 step 6): a newly built module replaces the running one only if it fully loads */
+static void test_swap(void) {
+    level_host h;
+    int before;
+    CHECK(load_one(&h, "lh_ok_swap", fx_lv_ok, sizeof fx_lv_ok) == lm_st_fg(), "a minimal level is running");
+    CHECK(level_host_swap(&h, "assets/levels/brawlpit/no_such_build.wasm") == 0 && level_host_state(&h) == lm_st_fg() &&
+              level_host_memory(&h, NULL) != NULL && strstr(level_host_message(&h), "no_such_build.wasm") != NULL &&
+              count_rows(REFLUX_ACTION_LEVEL_SWAPPED) == 0 && count_rows(REFLUX_ACTION_LEVEL_LOAD_FAILED) == 0,
+          "a build that cannot be read is refused: the old level keeps running, nothing dispatched, the message says why");
+    CHECK(level_host_swap(&h, tmp_module("lh_swap_enter7", fx_lv_enter7, sizeof fx_lv_enter7)) == 0 &&
+              level_host_state(&h) == lm_st_fg() && h.generation == 1,
+          "a build whose level_enter refuses is refused the same way (generation unchanged)");
+    before = h.ticks;
+    level_host_frame(&h, 16667);
+    CHECK(h.ticks == before + 1, "and the old level still steps after both refusals");
+    CHECK(level_host_swap(&h, BRAWLPIT_WASM) == 1 && level_host_state(&h) == lm_st_fg() && h.generation == 2 &&
+              last_is(REFLUX_ACTION_LEVEL_SWAPPED, 1, 2, 0) && gw(&h, G_PHASE) == 0,
+          "a good build swaps in: LEVEL_SWAPPED (1, generation 2), a fresh BRAWLPIT at its title, still in front");
+    before = gw(&h, G_LV_TICKS);
+    level_host_frame(&h, 16667);
+    CHECK(gw(&h, G_LV_TICKS) == before + 1, "the new module is the one that steps");
+    shift_m(&h);
+    shift_x(&h);
+    shift_m(&h);
+    level_host_frame(&h, 16667);
+    CHECK(level_host_state(&h) == lm_st_fg() && h.generation == 3 && gw(&h, G_PHASE) == 0 &&
+              last_is(REFLUX_ACTION_LEVEL_SHOWN, 1, 0, 0),
+          "a later close + reload loads the swapped-in build (module_path followed it)");
+    level_host_shutdown(&h);
+    CHECK(level_host_swap(&h, BRAWLPIT_WASM) == 0, "nothing to swap when no level is loaded");
+}
+
 int main(void) {
     test_brawlpit_life();
     test_failures();
     test_overlay_and_suspend();
+    test_swap();
     if (failures) { printf("level_host_test: %d of %d FAILED\n", failures, checks); return 1; }
     printf("level_host_test: ALL PASS (%d checks)\n", checks);
     return 0;

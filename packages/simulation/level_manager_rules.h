@@ -48,4 +48,8 @@ int lm_acc_left(int acc_us);            /* the accumulator after running them */
 /* SDL keycode -> the DOM keyCode a level reads (+256 = right-hand Shift/Ctrl/Alt/Meta), 0 = not given */
 int lm_dom_key(int sym);
 
+/* save -> compile -> swap (T0 step 6, dev boxes): build now? / does this transition swap in a new build? */
+int lm_compile_now(int changed, int compiling, int can_build);
+int lm_swap_on(int old_state, int new_state);
+
 #endif /* SHANKPIT_LEVEL_MANAGER_RULES_H */
