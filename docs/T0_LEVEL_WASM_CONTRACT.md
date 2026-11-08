@@ -240,3 +240,27 @@ gamepad, hats.
 Refuted in audit (kept for the record): "and/or are eager in wasm, so levels trap" — accurate but BRAWLPIT's guarded
 divisors are constant (`bp_view.prn:244,314`), so no T0 dependency; "must auto-start a match on boot" — the title
 screen in the foreground satisfies the brief.
+
+## 6. Status (implementation pass, 2026-11-08)
+
+Each step names its test; "done" means that test passes on this box.
+
+- **Step 0 done.** D1/D3 recipes in MONOREPO `BOOTSTRAP.md` (LLVM 18 + lld-18, SDL2/GL/mbedtls dev prefix, mingw-w64).
+- **Step 1 done.** `packages/wasm_host` over vendored wasm3 (STOPGAP, `third_party/wasm3/VENDORED.md`); imports are
+  bound-or-refused by the PARENA surface reader before wasm3 sees them. `make test-wasm-host` (26 checks).
+- **Step 2 done.** PARENA `bp_level.prn` + `level.manifest` + `scripts/build_level_wasm.sh` (`make test-level-wasm-build`,
+  8 checks); REFLUX families reserved in `reflux_runtime.h`; the module and WOTAN's art committed under
+  `assets/levels/brawlpit/` (`make brawlpit-level`, byte-exact `make check-brawlpit-level`).
+- **Step 3 done.** `packages/wasm_host/level_abi.{h,c}`: the eight REFLUX imports, dispatch range-checked with the
+  family predicate, and the 16 exports bound by name and signature. `make test-level-abi` drives the real module
+  like a player: match start announced once, `LEVEL_HIDDEN` on the start step itself (found in review: it froze the
+  countdown at 170 and re-announced the match on every paused step; the pause is now owed one step), mid-fight
+  pause, other levels' rows ignored, an overtaken cursor counted, a full match to `BP_MATCH_ENDED`, REMATCH, and a
+  press in the frame the level loses focus dropped (`level_blur` also clears pending presses now). Hand-assembled
+  modules prove the refusals: lifecycle, world and out-of-range types never reach the log; `reflux_host_log_size`
+  and a wrong dispatch signature are refused at load. The host's export table is checked against the manifest.
+- **Measured (this 2.2 GHz cloud core, wasm3):** `level_tick` ~0.01 ms (sim only); `level_render` 6.5-7.4 ms on the
+  match screen. The 13-19 ms quoted above is the web build's `bp_frame` on the title screen (tick + draw). The
+  frame budget is still a Windows acceptance item, not asserted here.
+- **Next:** step 4 (the shell: level-manager `.prn` mod, keyCode table, `level_shell.c`, main.c hooks, Xvfb smoke).
+
