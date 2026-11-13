@@ -241,6 +241,17 @@ static inline int reflux_action_is_brawlpit(int action_type) {
     return action_type >= REFLUX_ACTION_BP_FIRST && action_type <= REFLUX_ACTION_BP_LAST;
 }
 
+/* 2000-2999: RESERVED for the Collection of Value (founder's WoW Forever addons, 2026-11-13). Not dispatched
+ * by this host; reserved here so no SHANKPIT family is ever numbered into it and a relay between hosts never
+ * sees two meanings for one type. Ten types per addon number 1..100 (addon n: 2000 + (n-1)*10 .. +9); the
+ * definition and its tests live in PARENA/stdlib/collection/ids.prn. */
+#define REFLUX_ACTION_COLLECTION_FIRST 2000
+#define REFLUX_ACTION_COLLECTION_LAST  2999
+
+static inline int reflux_action_is_collection(int action_type) {
+    return action_type >= REFLUX_ACTION_COLLECTION_FIRST && action_type <= REFLUX_ACTION_COLLECTION_LAST;
+}
+
 #define REFLUX_LOG_CAPACITY 256
 
 typedef struct {
