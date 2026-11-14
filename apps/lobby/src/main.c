@@ -74,6 +74,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/ui/menu_gen.h" /* PARENA stdlib/ui/menu.prn (card #483) */
 #include "../../../packages/ui/ui_bridge.h"
 #include "../../../packages/ui/gear_board.h" /* the WoW gear board (I): the plugin forge's board.tsv */
+#include "../../../packages/simulation/skate.h" /* the skateboard (K): rules in PARENA skate_rules.prn */
 #include "../../../packages/ui/ui_bridge.c"
 
 #include "../../../packages/common/protocol.h"
@@ -2977,6 +2978,113 @@ static int bigo_wiring_active(void) {
              local_state.story_phase == STORY_PHASE_PLAYING));
 }
 
+/* ---- the skateboard (K) -- founder, 2026-11-14: "can we get shankpit skateboarding working?" ------------------
+ * packages/simulation/skate.h owns the board (PARENA skate_rules.prn its feel). Here: the keys, the per-tick hookup
+ * -- the engine still does gravity, the jump (the ollie) and collision, the board does the horizontal motion -- the
+ * HUD line, and the board model under the rider's feet. Any local game mode; not in a vehicle. */
+static Skate g_skate;
+static void draw_box_solid(float hx, float hy, float hz);
+
+static void lobby_skate_toggle(void) {
+    PlayerState *p = &local_state.players[0];
+    if (!g_skate.on && g_skate.bail_ticks == 0 && (p->in_vehicle || p->state != STATE_ALIVE)) return;
+    skate_toggle(&g_skate, p->yaw);
+}
+
+static void lobby_skate_tick(PlayerState *p, float fwd, int grab) {
+    if (!g_skate.on && g_skate.bail_ticks == 0) return;
+    if (p->in_vehicle || p->state != STATE_ALIVE) { g_skate.on = 0; g_skate.bail_ticks = 0; return; }
+    float dx = 0.0f, dz = 0.0f, mx = 0.0f, mz = 0.0f;
+    int ny = phys_slide_surface_permille(p, &dx, &dz);
+    int ev = skate_tick(&g_skate, fwd, p->yaw, p->on_ground, p->vy, ny, dx, dz, grab, &mx, &mz);
+    {   /* SHANKPIT_SKATE_TRACE: 1 = events and take-off/landing, 2 = also every airborne tick, 3 = every tick.
+           How the board was verified in the real game. */
+        static int trace = -1, last_air = -1;
+        if (trace < 0) { const char *t = getenv("SHANKPIT_SKATE_TRACE"); trace = t ? atoi(t) : 0; }
+        if (trace && (ev != SKATE_EV_NONE || g_skate.airborne != last_air || trace >= 3 || (trace == 2 && !p->on_ground))) {
+            printf("[SKATE] t=%u ev=%d air=%d ground=%d y=%.2f vy=%.3f speed=%.3f heading=%.1f flip=%d/%d spin=%.0f combo=%d score=%d text=\"%s\"\n",
+                   SDL_GetTicks(), ev, g_skate.airborne, p->on_ground, p->y, p->vy, g_skate.speed, g_skate.heading, g_skate.flip,
+                   g_skate.flip_left, g_skate.air_spin, g_skate.combo, g_skate.score, g_skate.text);
+            fflush(stdout);
+            last_air = g_skate.airborne;
+        }
+    }
+    float want = sqrtf(mx * mx + mz * mz);
+    if (want <= 0.0f) return;
+    float x0 = p->x, z0 = p->z;
+    int grounded = p->on_ground;
+    p->x += mx;
+    p->z += mz;
+    resolve_collision(p);
+    /* resolve_collision clears on_ground and only boxes set it back -- the terrain floor is the next local_update's
+       job, which checks the jump BEFORE it gets there. Left cleared, the ollie never fired while rolling on terrain
+       (found in the real game: Space worked standing still and on a box, never while riding the street). Rolling
+       off a ledge is still caught: the next tick's gravity clears it. */
+    if (grounded) p->on_ground = 1;
+    float gx = p->x - x0, gz = p->z - z0;
+    skate_blocked(&g_skate, want, sqrtf(gx * gx + gz * gz));
+}
+
+/* The deck and four wheels at the rider's feet, turned to the board's heading; a flip rolls it about its long axis. */
+static void draw_skateboard(const PlayerState *p) {
+    if (!g_skate.on || p->in_vehicle || p->state != STATE_ALIVE) return;
+    float roll = 0.0f;
+    if (g_skate.flip_left > 0) {
+        float done = 1.0f - (float)g_skate.flip_left / (float)skate_flip_ticks();
+        roll = (g_skate.flip == SKATE_TRICK_HEELFLIP ? -360.0f : 360.0f) * done;
+    }
+    /* Under the model's soles, not at p->y: draw_player_3rd puts the model's origin 0.2 above p->y and its legs
+       (hip 0.24, thigh 0.80, shin 0.72, foot 0.20 -- draw_player_leg) reach 1.48 below that, so the soles are at
+       p->y - 1.28. The deck's top (0.045 + grip) sits there and the wheels hang below. Found by looking: at
+       p->y + 0.22 the board floated at the rider's knees. */
+    float soles = p->y + 0.2f + 0.24f - (RONIN_LEG_UPPER_H + RONIN_LEG_LOWER_H + RONIN_FOOT_H);
+    glPushMatrix();
+    glTranslatef(p->x, soles - 0.05f, p->z);
+    glRotatef(g_skate.heading, 0, 1, 0);
+    glRotatef(roll, 0, 0, 1);
+    glColor3f(0.55f, 0.30f, 0.16f);                 /* maple deck */
+    draw_box_solid(0.38f, 0.04f, 1.45f);
+    glColor3f(0.12f, 0.12f, 0.13f);                 /* grip tape */
+    glPushMatrix(); glTranslatef(0, 0.045f, 0); draw_box_solid(0.36f, 0.005f, 1.38f); glPopMatrix();
+    glColor3f(0.92f, 0.90f, 0.82f);                 /* wheels */
+    for (int w = 0; w < 4; w++) {
+        glPushMatrix();
+        glTranslatef((w & 1) ? 0.30f : -0.30f, -0.12f, (w & 2) ? 1.0f : -1.0f);
+        draw_box_solid(0.07f, 0.08f, 0.08f);
+        glPopMatrix();
+    }
+    glPopMatrix();
+}
+
+static void draw_skate_hud(void) {
+    if (app_state != STATE_GAME_LOCAL) return;
+    if (!g_skate.on && g_skate.bail_ticks == 0 && g_skate.text_ticks == 0) return;
+    glDisable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    char line[160];
+    /* a dark strip behind both lines: white trick text vanished against a bright sky */
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f(0.0f, 0.0f, 0.0f, 0.45f);
+    glBegin(GL_QUADS); glVertex2f(300, 596); glVertex2f(980, 596); glVertex2f(980, 662); glVertex2f(300, 662); glEnd();
+    if (g_skate.on || g_skate.bail_ticks > 0) {
+        snprintf(line, sizeof line, "SKATE  SPEED %3d%s   SCORE %d   COMBO x%d   BEST %d", (int)(g_skate.speed * 64.0f + 0.5f),
+                 g_skate.switch_stance ? "  SWITCH" : "", g_skate.score, skate_combo_mult(g_skate.combo + 1), g_skate.best);
+        glColor4f(0.95f, 0.85f, 0.35f, 1.0f);
+        draw_string(line, 640.0f - (float)strlen(line) * 6.0f, 640, 2);   /* top centre, under the world-view hint */
+    }
+    if (g_skate.text_ticks > 0) {
+        if (strncmp(g_skate.text, "BAILED", 6) == 0) glColor4f(1.0f, 0.35f, 0.30f, 1.0f);
+        else glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+        draw_string(g_skate.text, 640.0f - (float)strlen(g_skate.text) * 6.0f, 610, 2);
+    }
+    glMatrixMode(GL_MODELVIEW); glPopMatrix();
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glEnable(GL_DEPTH_TEST);
+}
+
 static void bigo_board_cycle(void) {
     g_board = (g_board + 1) % (board_count() + 1);
     g_board_vx = g_board_vz = 0.0f;
@@ -2992,9 +3100,11 @@ static void bigo_board_tick(PlayerState *p, float fwd, float str, float dt) {
     float wx = b.fwd_x * fwd + b.right_x * str;
     float wz = b.fwd_z * fwd + b.right_z * str;
     hoverboard_tick(g_board, wx, wz, dt, &g_board_vx, &g_board_vz);
+    int grounded = p->on_ground;
     p->x += g_board_vx * dt;
     p->z += g_board_vz * dt;
     resolve_collision(p);
+    if (grounded) p->on_ground = 1;   /* as for the skateboard: keep the jump working on terrain */
 }
 
 static void bigo_party_refresh(unsigned int now_ms) {
@@ -15934,6 +16044,7 @@ void draw_scene(PlayerState *render_p) {
     draw_terrain(&world_lighting);
     draw_voxworld_grass_overlay(&world_lighting, render_p);
     draw_voxworld_bushes();
+    draw_skateboard(&local_state.players[0]);
     draw_map(&world_lighting);
     draw_flashlight_beam(render_p);
     brick_world_frame();
@@ -16037,6 +16148,7 @@ void draw_scene(PlayerState *render_p) {
     draw_zombies_awareness_hud();
     draw_pheromone_hud();
     draw_editmap_hud();
+    draw_skate_hud();
     draw_gear_board();      /* over the rest of the HUD; under the disconnect and pause overlays */
     if (app_state == STATE_GAME_NET && net_diag.server_disconnected) draw_disconnect_overlay();
     if (g_paused) draw_pause_overlay();
@@ -18962,6 +19074,12 @@ int main(int argc, char* argv[]) {
                         }
                         continue;
                     }
+                    /* the skateboard: K on/off, Z kickflip, Shift+Z heelflip (in the air) */
+                    if (app_state == STATE_GAME_LOCAL && !g_chat_open && e.key.keysym.sym == SDLK_k) { lobby_skate_toggle(); continue; }
+                    if (app_state == STATE_GAME_LOCAL && !g_chat_open && g_skate.on && e.key.keysym.sym == SDLK_z) {
+                        skate_flip(&g_skate, (e.key.keysym.mod & KMOD_SHIFT) != 0);
+                        continue;
+                    }
                     /* the gear board (I) owns I, Esc and the page keys while it is open */
                     if (e.key.keysym.sym == SDLK_i && !g_chat_open) { gear_board_toggle(); continue; }
                     if (g_gear_board.open) {
@@ -19461,7 +19579,12 @@ int main(int argc, char* argv[]) {
                                                    : (roll_keys[SDL_SCANCODE_J] || roll_keys[SDL_SCANCODE_LEFT]) ? -1
                                                    : ((roll_keys[SDL_SCANCODE_L] || roll_keys[SDL_SCANCODE_RIGHT]) ? 1 : 0);
                 }
-                local_update(input_fwd, input_str, local_aim_yaw, local_aim_pitch, input_shoot, wpn_req, input_jump, input_crouch, input_reload, input_ability, input_secondary, input_bike, NULL, now_ms);
+                /* on the skateboard the board owns the horizontal motion and Ctrl (the grab); the engine keeps
+                   gravity, the jump (the ollie) and collision */
+                const int skating = g_skate.on && !local_state.players[0].in_vehicle;
+                local_update(skating ? 0 : input_fwd, skating ? 0 : input_str, local_aim_yaw, local_aim_pitch, input_shoot, wpn_req, input_jump,
+                             skating ? 0 : input_crouch, input_reload, input_ability, input_secondary, input_bike, NULL, now_ms);
+                lobby_skate_tick(&local_state.players[0], (float)input_fwd, input_crouch);
     {   /* vehicle salvage loot: walking over a part picks it up -- client-local, the same honest
            contract food_pickup.h and bioslurry.h already state (a networked player's drops are
            their own until a server-authoritative ground-item story exists). */

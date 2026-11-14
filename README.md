@@ -1013,6 +1013,27 @@ changes at a round boundary (`make test-queue-level`); previously a client kept 
 
 if you are crouching when you land a jump you get a speed boost while you slide
 
+### Skateboard (K) -- 2026-11-14
+- `K`: step on / off the board (any local mode; not in a vehicle).
+- `W`: push (up to a little faster than running). `S`: brake. Nothing pressed: it rolls and slowly loses speed.
+- `Mouse`: steer -- the board turns toward where you look, slower the faster it goes; it never slides sideways.
+- Hills: downhill speeds you up past pushing speed (to a cap), uphill slows and stops you (terrain slopes; box ramps not yet).
+- `Space`: ollie. `Z` kickflip, `Shift+Z` heelflip -- in the air, or pressed with Space. Hold `Left Ctrl` in the air to grab.
+  Turning in the air spins the board: every 180 counts.
+- Landing in line is clean; landing backwards rides away switch; sideways, or with the flip still turning, is a bail --
+  you come off, lose the combo, and are back on a moment later. Rolling off a ledge is a drop: no points, no bail.
+- Points per trick, times the combo (tricks landed in a row, up to x5); the HUD shows speed, score, combo and best.
+
+The feel (every number, the landing rule, points, the combo) is PARENA: `PARENA/stdlib/shankpit/skate_rules.prn`, generated
+into `packages/simulation/skate_rules.c` by `scripts/gen_skate_rules.sh`; the board's state and integration are
+`packages/simulation/skate.h` (`make test-skate`, 44 checks, ASan/UBSan, in CI); the lobby draws a deck and four wheels at
+the rider's soles and flips it about its long axis. `SHANKPIT_SKATE_TRACE=1` (2: every airborne tick, 3: every tick)
+prints the board's state -- how it was verified in the real lobby under Xvfb: pushing, an ollie, a heelflip with Space,
+a mid-flip bail, a sideways bail and getting back on. Not done: grinds and rails, manuals, box ramps, other players'
+boards over the network (this is the local player's board), a real board model. Found on the way, and fixed for the
+BIG_O hoverboard too: moving the rider through `resolve_collision` cleared `on_ground` on terrain, so a jump never fired
+while riding the street.
+
 ### Helicopter controls
 - `F`: enter/exit helicopter when in range.
 - `W / S`: helicopter forward/back thrust.
