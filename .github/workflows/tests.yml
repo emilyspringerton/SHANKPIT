@@ -84,6 +84,23 @@ jobs:
           set -euo pipefail
           make test-skate
 
+      - name: Phone games app (the mod, the list, the REAL BRAWLPIT module on the phone's wasm3 host)
+        shell: bash
+        run: |
+          set -euo pipefail
+          make test-phone-arcade
+
+      # The web-game STOPGAP end to end: chromedriver + headless Chrome driven by PARENA's WebDriver client. GitHub's
+      # Ubuntu runners ship a matching Chrome and chromedriver ($CHROMEWEBDRIVER); the test SKIPs without one.
+      - name: Phone web games through Chromium (stopgap)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${CHROMEWEBDRIVER:-}" ] && [ -x "$CHROMEWEBDRIVER/chromedriver" ]; then
+            export SHANKPIT_CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver"
+          fi
+          make test-phone-chromium
+
       - name: Gear board (the plugin forge's board.tsv, read and reloaded)
         shell: bash
         run: |

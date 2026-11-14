@@ -154,9 +154,12 @@ static const char *const BP_PHASE_NAMES[4] = { "DAWN", "DAY", "DUSK", "NIGHT" };
 static const char *const BP_WEATHER_NAMES[4] = { "CLEAR", "OVERCAST", "RAIN", "STORM" };
 #define BP_MSG_THORNE_BRIEF 6   /* client message table id: Dr. Thorne's A1M1 reprimand; unlocks him in Contacts */
 
-static const char *const BP_APP_NAMES[BP_APP_COUNT] = {
-    "MESSAGES", "CONTACTS", "MAP", "CAMERA", "NOTES", "LAB", "CARGO", "SKILLS", "LOADOUT", "WARDROBE", "STATUS", "ORB", "GFD", "IDUNA", "ARPANET", "TECHTREE", "MISSION", "PELLEGRINO", "KITS", "KIT MAP", "KIT BUILD", "EMPIRE"
+/* Every app needs a name: the home grid prints all BP_APP_COUNT of them, so a missing one is a NULL and a crash on P
+   (DEADWEIGHT was added without one, 2026-11-03; found 2026-11-14). The array is unsized so the check below holds. */
+static const char *const BP_APP_NAMES[] = {
+    "MESSAGES", "CONTACTS", "MAP", "CAMERA", "NOTES", "LAB", "CARGO", "SKILLS", "LOADOUT", "WARDROBE", "STATUS", "ORB", "GFD", "IDUNA", "ARPANET", "TECHTREE", "MISSION", "PELLEGRINO", "KITS", "KIT MAP", "KIT BUILD", "EMPIRE", "DEADWEIGHT"
 };
+_Static_assert(sizeof BP_APP_NAMES / sizeof BP_APP_NAMES[0] == BP_APP_COUNT, "BP_APP_NAMES needs one name per BpApp");
 
 static const char *const BP_MISSION_ROW_NAMES[BP_MISSION_ROWS] = {
     "GO: MAINTENANCE HALL", "TAKE LAB SMOCK", "ENTER SECTOR-2", "SHOULDER-SURF PIN", "SUPERVISOR BREAK",

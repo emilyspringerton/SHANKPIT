@@ -75,6 +75,8 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/ui/ui_bridge.h"
 #include "../../../packages/ui/gear_board.h" /* the WoW gear board (I): the plugin forge's board.tsv */
 #include "../../../packages/simulation/skate.h" /* the skateboard (K): rules in PARENA skate_rules.prn */
+#include "../../../packages/simulation/phone_arcade.h"   /* the phone's PELLEGRINO games app: PARENA arcade.prn + the mod */
+#include "../../../packages/chromium_bridge/phone_chromium.h"   /* its web-game STOPGAP */
 #include "../../../packages/ui/ui_bridge.c"
 
 #include "../../../packages/common/protocol.h"
@@ -1741,6 +1743,160 @@ static void phone_iduna_start(void);
 /* Not const: opening the phone syncs the EMPIRE economy into it (lobby_empire_sync writes emp_*,
    including nudging emp_self_cell), so a const parameter was a promise this function cannot keep --
    the Windows build said so with a discarded-qualifier warning at the call site. */
+/* ---- the PELLEGRINO games app on the phone (phone_arcade.h) -- founder, 2026-11-14: "lets build pellegrino on the
+ * phone into a full app that can play the wasm games" ---------------------------------------------------------------- */
+static PhoneArcade g_arcade;
+static int arcade_chromium_available(void);
+static GLuint g_arcade_tex = 0;
+static int g_arcade_tex_w = 0, g_arcade_tex_h = 0;
+static unsigned int g_arcade_last_ms = 0;
+
+static void draw_arcade_list(float col_x, float row_y) {
+    glColor3f(0.85f, 0.92f, 0.97f);
+    draw_string("PELLEGRINO", col_x, row_y, 3.0f);
+    glColor3f(0.55f, 0.66f, 0.78f);
+    draw_string("GAMES", col_x + 260.0f, row_y, 2.0f);
+    int games = arcade_game_count(), rows = arcade_rows(games);
+    int first = arcade_page_first(g_arcade.cursor);
+    float y = row_y - 46.0f;
+    for (int r = first; r < rows && r < first + arcade_per_page(); r++, y -= 52.0f) {
+        int sel = r == g_arcade.cursor;
+        if (sel) {
+            glColor4f(0.25f, 0.45f, 0.65f, 0.55f);
+            glBegin(GL_QUADS);
+            glVertex2f(col_x - 8.0f, y - 30.0f); glVertex2f(PHONE_PANEL_X1 - 20.0f, y - 30.0f);
+            glVertex2f(PHONE_PANEL_X1 - 20.0f, y + 18.0f); glVertex2f(col_x - 8.0f, y + 18.0f);
+            glEnd();
+        }
+        glColor3f(sel ? 1.0f : 0.75f, sel ? 1.0f : 0.82f, sel ? 1.0f : 0.9f);
+        draw_string(arcade_row_name(r), col_x, y, 2.4f);
+        int web = !arcade_row_is_browser(r, games) && arcade_game_kind(r) == 2;
+        glColor3f(0.5f, 0.6f, 0.7f);
+        char blurb[96];
+        snprintf(blurb, sizeof blurb, "%s%s", arcade_row_blurb(r), web ? "  (CHROMIUM)" : "");
+        draw_string(blurb, col_x, y - 20.0f, 1.6f);
+    }
+    if (g_arcade.msg[0]) {
+        glColor3f(1.0f, 0.55f, 0.45f);
+        draw_string(g_arcade.msg, col_x, PHONE_PANEL_Y0 + 44.0f, 1.4f);
+    }
+}
+
+/* A game's picture (RGBA, row 0 at the top; NULL = keep the last one uploaded) aspect-fitted into the phone's screen
+   area, with its name and the BACK key under it. */
+static void draw_arcade_picture(const uint8_t *fb, int w, int h, const char *note) {
+    float bx0 = PHONE_PANEL_X0 + 10.0f, by0 = PHONE_PANEL_Y0 + 36.0f, bx1 = PHONE_PANEL_X1 - 10.0f, by1 = PHONE_PANEL_Y1 - 10.0f;
+    glColor3f(0.55f, 0.66f, 0.78f);
+    draw_string(arcade_game_name(g_arcade.game), bx0, by0 - 18.0f, 1.6f);
+    draw_string("[BKSP] BACK TO THE GAMES", bx1 - 300.0f, by0 - 18.0f, 1.6f);
+    if (note && note[0]) {
+        glColor3f(1.0f, 0.75f, 0.45f);
+        draw_string(note, bx0 + 180.0f, by0 - 18.0f, 1.4f);
+    }
+    if (!fb) { w = g_arcade_tex_w; h = g_arcade_tex_h; if (!g_arcade_tex || w <= 0) return; }
+    int fw = arcade_fit_w(w, h, (int)(bx1 - bx0), (int)(by1 - by0));
+    int fh = arcade_fit_h(w, h, (int)(bx1 - bx0), (int)(by1 - by0));
+    float x0 = bx0 + ((bx1 - bx0) - (float)fw) * 0.5f, y0 = by0 + ((by1 - by0) - (float)fh) * 0.5f;
+    if (!g_arcade_tex) glGenTextures(1, &g_arcade_tex);
+    glBindTexture(GL_TEXTURE_2D, g_arcade_tex);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    if (!fb) {
+        /* nothing new: draw what is already in the texture */
+    } else if (w != g_arcade_tex_w || h != g_arcade_tex_h) {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, fb);
+        g_arcade_tex_w = w; g_arcade_tex_h = h;
+    } else {
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, fb);
+    }
+    glEnable(GL_TEXTURE_2D);
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+    glColor4f(1, 1, 1, 1);
+    glBegin(GL_QUADS);   /* fb row 0 is the top */
+    glTexCoord2f(0, 0); glVertex2f(x0, y0 + fh);
+    glTexCoord2f(1, 0); glVertex2f(x0 + fw, y0 + fh);
+    glTexCoord2f(1, 1); glVertex2f(x0 + fw, y0);
+    glTexCoord2f(0, 1); glVertex2f(x0, y0);
+    glEnd();
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glDisable(GL_TEXTURE_2D);
+}
+
+/* The running wasm game: steps it by the real time since the last draw, then draws its picture. */
+static void draw_arcade_game(const Phone *p) {
+    (void)p;
+    unsigned int now = SDL_GetTicks();
+    int dt_us = g_arcade_last_ms ? (int)(now - g_arcade_last_ms) * 1000 : 16667;
+    if (dt_us > 100000) dt_us = 100000;
+    g_arcade_last_ms = now;
+    arcade_frame(&g_arcade, dt_us);
+    int w = 0, h = 0, dirty = 0;
+    const uint8_t *fb = arcade_fb(&g_arcade, &w, &h, &dirty);
+    if (!fb) {
+        glColor3f(0.75f, 0.82f, 0.9f);
+        draw_string(g_arcade.screen == ARCADE_WASM ? "LOADING..." : g_arcade.msg, PHONE_PANEL_X0 + 30.0f, PHONE_PANEL_Y1 - 50.0f, 2.0f);
+        return;
+    }
+    draw_arcade_picture(fb, w, h, NULL);
+}
+
+/* A web game, through the Chromium STOPGAP (packages/chromium_bridge/phone_chromium.h): the bridge's worker thread
+   screenshots the page; this copies the newest one up and draws it, with what the bridge is doing while it starts.
+   Opened on the list's Enter (arcade_list_key -> ARCADE_DID_CHROMIUM), closed on Backspace. */
+static uint8_t *g_chromium_fb = NULL;
+static int g_chromium_seq = 0, g_chromium_shown = 0;
+static int arcade_chromium_available(void) { return phc_available(); }
+static void arcade_chromium_open(void) {
+    g_chromium_seq = 0; g_chromium_shown = 0;
+    phc_open(arcade_game_path(g_arcade.game));
+}
+static void arcade_chromium_close(void) {
+    phc_close();
+    g_arcade.screen = ARCADE_LIST;
+}
+
+static void draw_arcade_chromium(void) {
+    const int cap = arcade_chromium_w() * arcade_chromium_h() * 4 * 4;   /* room for a 2x-DPI screenshot */
+    if (!g_chromium_fb) g_chromium_fb = (uint8_t *)malloc((size_t)cap);
+    int w = 0, h = 0;
+    int fresh = g_chromium_fb && phc_frame(g_chromium_fb, cap, &w, &h, &g_chromium_seq);
+    if (fresh) g_chromium_shown = 1;
+    char st[192];
+    phc_status(st, sizeof st);
+    if (!g_chromium_shown) {
+        glColor3f(0.75f, 0.82f, 0.9f);
+        draw_string(arcade_game_name(g_arcade.game), PHONE_PANEL_X0 + 30.0f, PHONE_PANEL_Y1 - 60.0f, 2.4f);
+        glColor3f(1.0f, 0.75f, 0.45f);
+        /* the bridge's reason can be long ("... (session not created: This version of ChromeDriver only supports
+           ..."): the headline, then the driver's own words wrapped to the panel */
+        char *why = strstr(st, " (");
+        if (why) *why = 0;
+        draw_string(st[0] ? st : "WAITING FOR THE FIRST PICTURE", PHONE_PANEL_X0 + 30.0f, PHONE_PANEL_Y1 - 100.0f, 1.6f);
+        float wy = PHONE_PANEL_Y1 - 124.0f;
+        if (why) {
+            const char *t = why + 2;
+            const int per = 62;   /* characters per line at this size in the 600 px panel */
+            glColor3f(0.85f, 0.7f, 0.55f);
+            for (int line = 0; *t && line < 4; line++, wy -= 20.0f) {
+                char row[80];
+                int n = (int)strlen(t);
+                if (n > per) { n = per; while (n > 20 && t[n] != ' ') n--; }
+                snprintf(row, sizeof row, "%.*s", n, t);
+                if (row[n - 1] == ')' && !t[n]) row[n - 1] = 0;
+                draw_string(row, PHONE_PANEL_X0 + 30.0f, wy, 1.3f);
+                t += n;
+                while (*t == ' ') t++;
+            }
+        }
+        glColor3f(0.5f, 0.6f, 0.7f);
+        draw_string("WEB GAME IN CHROMIUM (A STOPGAP: A FEW FRAMES A SECOND)", PHONE_PANEL_X0 + 30.0f, wy - 16.0f, 1.4f);
+        draw_string("[BKSP] BACK TO THE GAMES", PHONE_PANEL_X0 + 30.0f, PHONE_PANEL_Y0 + 16.0f, 1.6f);
+        return;
+    }
+    draw_arcade_picture(fresh ? g_chromium_fb : NULL, w, h, st[0] ? st : "CHROMIUM (STOPGAP)");
+}
+
 static void draw_phone_app(Phone *p) {
     draw_phone_panel_bg(BP_APP_NAMES[p->app]);
     float row_y = PHONE_PANEL_Y1 - 90.0f;
@@ -2052,10 +2208,14 @@ static void draw_phone_app(Phone *p) {
         draw_string("EDUVM SCRIPT TERMINAL", col_x, row_y - row_h, 2.4f);
         draw_string("[ENTER] OPEN   (BACKQUOTE ALSO OPENS)", col_x, row_y - 2 * row_h, 2.2f);
     } else if (p->app == BP_APP_PELLEGRINO) {
-        /* SHANKPIT-PELLEGRINO-APP-02: a REAL embedded browser (TLS/HTTP-3 included), not a static
-           mockup -- see packages/pellegrino_browser_embed/phone_browser_gl.h. Pumps+draws one real
-           frame of whatever page is currently loading/loaded every time the phone is open on this app. */
-        pbg_draw(PHONE_PANEL_X0, PHONE_PANEL_Y1);
+        /* PELLEGRINO is a games app now (phone_arcade.h; the games are the PARENA mod arcade_games.prn): a list of
+           games and WEB BROWSER. The browser row is SHANKPIT-PELLEGRINO-APP-02's REAL embedded browser, unchanged --
+           see packages/pellegrino_browser_embed/phone_browser_gl.h. */
+        if (g_arcade.screen == ARCADE_BROWSER) pbg_draw(PHONE_PANEL_X0, PHONE_PANEL_Y1);
+        else if (g_arcade.screen == ARCADE_WASM) draw_arcade_game(p);
+        else if (g_arcade.screen == ARCADE_CHROMIUM) draw_arcade_chromium();
+        else draw_arcade_list(col_x, row_y);
+        if (g_arcade.screen == ARCADE_WASM || g_arcade.screen == ARCADE_CHROMIUM) return;   /* a game has its own key line */
     } else {
         int n = bp_rows(p);
         for (int i = 0; i < n && i < 10; i++) {
@@ -18740,7 +18900,18 @@ int main(int argc, char* argv[]) {
                     continue;
                 }
                 if (g_story_phone.open && g_story_phone.app == BP_APP_PELLEGRINO && e.type == SDL_TEXTINPUT) {
-                    for (const char *c = e.text.text; *c; c++) phone_browser_text(*c);
+                    if (g_arcade.screen == ARCADE_BROWSER) for (const char *c = e.text.text; *c; c++) phone_browser_text(*c);
+                    continue;
+                }
+                /* a game on the phone needs its key releases too (held keys: run, jump) */
+                if (g_story_phone.open && g_story_phone.app == BP_APP_PELLEGRINO && g_arcade.screen == ARCADE_WASM &&
+                    e.type == SDL_KEYUP) {
+                    arcade_game_key(&g_arcade, (int)e.key.keysym.sym, 0);
+                    continue;
+                }
+                if (g_story_phone.open && g_story_phone.app == BP_APP_PELLEGRINO && g_arcade.screen == ARCADE_CHROMIUM &&
+                    e.type == SDL_KEYUP) {
+                    phc_key((int)e.key.keysym.sym, 0);
                     continue;
                 }
                 if (g_orb_open && e.type == SDL_KEYDOWN) { orb_key(e.key.keysym.sym); continue; }
@@ -18803,13 +18974,27 @@ int main(int argc, char* argv[]) {
                        motion gate, so nothing about this needs its own new freeze mechanism. */
                     if (g_story_phone.open) {
                         if (g_story_phone.app == BP_APP_PELLEGRINO) {
-                            /* SHANKPIT-PELLEGRINO-APP-02: the real embedded browser owns every key
-                               entirely (address bar, link tab/select, scroll, form fields) via
-                               PELLEGRINO's own real on-key dispatch -- a "quit" result (Esc/q outside
-                               any text-entry/form-field mode) is the only thing that closes this app
-                               and returns to the phone's home grid, same BACK affordance every other
-                               phone app already has. */
-                            if (phone_browser_key(e.key.keysym.sym)) g_story_phone.app = -1;
+                            /* The games app (phone_arcade.h): the list, a running game (every key but
+                               Backspace is the game's), or the browser. The browser row is
+                               SHANKPIT-PELLEGRINO-APP-02's real embedded browser, which owns every key
+                               via PELLEGRINO's own on-key dispatch; its "quit" result (Esc/q outside a
+                               text field) now returns to the games list instead of the phone's home. */
+                            if (g_arcade.screen == ARCADE_BROWSER) {
+                                if (phone_browser_key(e.key.keysym.sym)) g_arcade.screen = ARCADE_LIST;
+                            } else if (g_arcade.screen == ARCADE_WASM) {
+                                if (arcade_game_key(&g_arcade, (int)e.key.keysym.sym, 1)) g_arcade_last_ms = 0;
+                            } else if (g_arcade.screen == ARCADE_CHROMIUM) {
+                                if (arcade_key((int)e.key.keysym.sym) == 2) arcade_chromium_close();
+                                else if (!e.key.repeat) phc_key((int)e.key.keysym.sym, 1);
+                            } else if (e.key.keysym.sym == SDLK_ESCAPE || e.key.keysym.sym == SDLK_p) {
+                                phone_toggle(&g_story_phone);   /* the list: Esc/P put the phone away, as on home */
+                            } else {
+                                g_arcade.chromium_ok = arcade_chromium_available();
+                                int did = arcade_list_key(&g_arcade, (int)e.key.keysym.sym, (int)(SDL_GetTicks() & 0x7fffffff));
+                                if (did == ARCADE_DID_CLOSE) g_story_phone.app = -1;
+                                if (did == ARCADE_DID_START) g_arcade_last_ms = 0;
+                                if (did == ARCADE_DID_CHROMIUM) arcade_chromium_open();
+                            }
                             continue;
                         }
                         techtree_sync();   /* re-seed points from XP before any phone input */
@@ -19687,6 +19872,7 @@ int main(int argc, char* argv[]) {
     retro_sky_shutdown(&g_retro_sky);
     gl_textured_mesh_destroy(&g_terrain_mesh);
     audio_shutdown();
+    phc_close();   /* the web-game stopgap: end the browser session and stop chromedriver */
     SDL_Quit();
     return 0;
 }

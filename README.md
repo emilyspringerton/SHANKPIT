@@ -144,10 +144,33 @@ and HTTP/3-over-QUIC; no HTTP/2) and is linked into `shank_lobby` by `make lobby
 (mbedTLS fetched via `../PELLEGRINO/scripts/fetch_mbedtls.sh`; needs sibling `../PELLEGRINO`,
 `../PARENA`, `../EDITOR.GAME`, and `libsdl2-ttf-dev`). Regenerate the package with
 `scripts/gen_pellegrino_browser_embed.sh`. Status: verified under Xvfb in `--zombies` — page renders in
-the panel (live `https://example.com/`), typing a URL navigates, Esc returns to the phone home grid.
+the panel (live `https://example.com/`), typing a URL navigates, Esc returns to the games list (below).
 Limits: keyboard-only (no mouse), `h3://` not yet confirmed in-game (a standalone harness did fetch
 `h3://cloudflare-quic.com/`), rendering of the example.com page looks washed out, Windows/`release.yml`
 not wired. Details: `docs2/specs/PELLEGRINO_PHONE_BROWSER_STATUS.md`.
+
+## PELLEGRINO plays games (2026-11-14)
+
+Open the phone (`P`), open `PELLEGRINO`: a list of games, then `WEB BROWSER` (the browser above). Up/Down, Enter;
+Backspace leaves a game; Esc/P put the phone away.
+
+- **The games are a PARENA mod**: `PARENA/stdlib/shankpit/arcade_games.prn` (name, blurb, kind, module or URL,
+  assets). Add a game there and nowhere else; `scripts/gen_arcade_rules.sh` regenerates
+  `packages/simulation/arcade_rules.c` with the app's rules (`arcade.prn`: engine choice, list, BACK key, picture fit,
+  the stopgap's rate/window/key map). State and level-host calls: `packages/simulation/phone_arcade.h`.
+- **Level modules play in the phone**: BRAWLPIT runs on SHANKPIT's own wasm3 level host, its own instance (separate
+  from the Shift+M foreground one), full speed, aspect-fitted in the panel. `make test-phone-arcade` (24 checks with
+  the real module, in CI); seen in the real lobby under Xvfb.
+- **Web games (shankpit-460, DEADWEIGHT 2, REDGARDEN, Bedrock Racers) are a STOPGAP through Chromium**: Pellegrino
+  has no JavaScript, so `packages/chromium_bridge/phone_chromium.c` starts `chromedriver` and drives headless Chromium
+  with PARENA's own WebDriver client (`net/webdriver.prn` + `base64.prn` + `image/png.prn`, generated in by
+  `scripts/gen_chromium_bridge.sh`) on a worker thread: a screenshot every 120 ms in, keys out. A few frames a second
+  -- playable slowly, labelled on screen. Finds `chromedriver` on PATH or `SHANKPIT_CHROMEDRIVER`, the browser via
+  `SHANKPIT_CHROMIUM` or chromedriver's own search; the two must be the same major version. Linux/macOS only (Windows
+  builds a stub that says the game needs Chromium). `make test-phone-chromium` plays a fixture page (picture arrives,
+  `g` and Up reach its script); SKIPs without a chromedriver; CI runs it with the runner's Chrome. **Not yet seen
+  end to end on this box** (its chromedriver 147 does not match its Chrome 153 -- the phone shows that reason).
+  The real answer, Pellegrino running a page's WebAssembly itself, is `EMILY/BACKLOG.md` S635-4.
 
 ## Apps page (2026-09-22, platform pivot)
 

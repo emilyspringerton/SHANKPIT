@@ -1,0 +1,13 @@
+<!doctype html>
+<!-- phc_test_page.html: the fixture phone_chromium_test.c plays. A page whose script owns the whole picture, the way a
+     web game's does: red until it hears a key, then green for 'g', blue for ArrowUp. Keys arrive on document. -->
+<html><head><meta charset="utf-8"><style>html,body{margin:0;overflow:hidden;background:#000}</style></head>
+<body><canvas id="c" width="960" height="540"></canvas><script>
+const c = document.getElementById('c').getContext('2d');
+function fill(col) { c.fillStyle = col; c.fillRect(0, 0, 960, 540); }
+fill('#ff0000');
+document.addEventListener('keydown', e => {
+  if (e.key === 'g') fill('#00ff00');
+  if (e.key === 'ArrowUp') fill('#0000ff');
+});
+</script></body></html>
