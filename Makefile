@@ -404,6 +404,13 @@ test-witness-ai-zombies: | $(BIN_DIR)
 # The player's KIT (packages/common/kit.h): 14 bind slots (1-9, 0, `, -, =, C), three prefab kits,
 # cycling, the builder's draft, and the three HTML+CSS pages the phone renders through PELLEGRINO.
 .PHONY: test-kit
+# The gear board (I in game): parsing the plugin forge's board.tsv, finding it, re-reading it when it changes.
+.PHONY: test-gear-board
+test-gear-board: | $(BIN_DIR)
+	$(CC) -std=c99 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Werror -fsanitize=address,undefined \
+		packages/ui/gear_board_test.c -o $(BIN_DIR)/gear_board_test
+	./$(BIN_DIR)/gear_board_test
+
 test-kit: | $(BIN_DIR)
 	$(CC) -std=c99 -Wall -Wextra -Werror -Ipackages/common packages/common/kit_test.c -o $(BIN_DIR)/kit_test
 	./$(BIN_DIR)/kit_test

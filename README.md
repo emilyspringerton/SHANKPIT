@@ -113,6 +113,28 @@ Status, honestly: verified on Linux under Xvfb with Mesa software GL. **Not yet 
 Windows: `make check-windows` passes (all 155 lobby sources compile under mingw against the SDL2 2.30.10 kit, link symbols clean); not run on Windows. Not forwarded to levels: gamepad, hats.
 Measured on the 2.2 GHz dev box: `level_tick` ~0.01 ms, `level_render` ~7 ms (960x540 software renderer in wasm).
 
+## Gear board: your WoW characters on a big screen (I) (2026-11-14)
+
+Press **I** in game for a full-screen, linen-coloured board of every World of Warcraft character on the account. Its pages
+are, in order:
+
+- **Roster:** each character's class, level, role, gold, bag space (amber at 4 slots free or fewer, red when full,
+  "+BAG SLOT" when a bag slot is empty), item level and zone.
+- **Needs:** what the account needs, most urgent first: full bags, empty bag slots, `/need` requests and big gear
+  upgrades, each with who can fill it.
+- **One page per character:** gear slot by slot, coloured by item quality.
+
+PageUp/PageDown (or the arrows) turn pages; I or Esc closes it.
+
+The data comes from the plugin forge in PARENA (`scripts/forge.sh watch`, which rewrites `board.tsv` every time WoW saves
+on logout or `/reload`). SHANKPIT reads `$SHANKPIT_GEAR_BOARD`, else `$FORGE_DIR/board.tsv`, and re-reads it by itself
+when it changes (it checks once a second), so the board stays current while you play. Without the file the board says
+what to run. Paging is PARENA's linen UI layer (`packages/ui/menu.prn` `menu-page-*`, regenerated with
+`scripts/gen_ui_menu.sh`); parsing is `packages/ui/gear_board.h` (`make test-gear-board`, 25 checks, ASan/UBSan).
+Verified in the real lobby under Xvfb with Mesa (`--no-level`; while BRAWLPIT is in front the level owns the keys, so
+press Shift+M first). Not yet tried on Windows or a real GPU. The board is a screen overlay, not a screen object inside
+a level.
+
 ## In-phone PELLEGRINO browser (2026-10-16)
 
 The in-fiction SHANKPHONE (open with `P` during a match) has a `PELLEGRINO` tile that runs a real,

@@ -73,6 +73,7 @@ static int g_drawing_local_third_person = 0;
 #define UI_BRIDGE_DECL static
 #include "../../../packages/ui/menu_gen.h" /* PARENA stdlib/ui/menu.prn (card #483) */
 #include "../../../packages/ui/ui_bridge.h"
+#include "../../../packages/ui/gear_board.h" /* the WoW gear board (I): the plugin forge's board.tsv */
 #include "../../../packages/ui/ui_bridge.c"
 
 #include "../../../packages/common/protocol.h"
@@ -13249,6 +13250,171 @@ static void draw_team_section_rows(const ScoreRow *rows, int row_count, PlayerSt
     }
 }
 
+/* ---- the gear board (I): every WoW character's gear, bags and gold, and what the account needs ------------------
+ * Founder, 2026-11-14: "shankit needs to start tracking the gear so i can see it on a big screen in game". The data is
+ * the plugin forge's board.tsv (packages/ui/gear_board.h says where it is looked for and how it is re-read); paging is
+ * PARENA's linen UI layer (stdlib/ui/menu.prn menu-page-*), and the panel is linen-coloured with dark ink. Pages:
+ * the roster, then the needs, then one page per character with its gear by slot. I opens and closes it,
+ * PageUp/PageDown (or the left/right arrows) turn pages, Esc closes. */
+static GearBoard g_gear_board;
+
+static int gear_board_page_total(int *roster_pages, int *needs_pages) {
+    const GearBoard *b = &g_gear_board;
+    *roster_pages = menu_page_count(b->nchars, GB_ROSTER_PER_PAGE);
+    *needs_pages = menu_page_count(b->nneeds, GB_NEEDS_PER_PAGE);
+    return *roster_pages + *needs_pages + b->nchars;
+}
+
+static void gear_board_toggle(void) {
+    g_gear_board.open = !g_gear_board.open;
+    if (g_gear_board.open) { g_gear_board.page = 0; g_gear_board.last_check_ms = 0; }
+}
+
+static void gear_board_turn(int delta) {
+    int rp, np;
+    g_gear_board.page = menu_page_turn(g_gear_board.page, delta, gear_board_page_total(&rp, &np));
+}
+
+static void gb_ink(void) { glColor4f(0.17f, 0.14f, 0.11f, 1.0f); }
+static void gb_quality_color(int q) {
+    switch (q) {
+        case 0: glColor4f(0.45f, 0.45f, 0.45f, 1.0f); break;   /* poor */
+        case 2: glColor4f(0.10f, 0.50f, 0.10f, 1.0f); break;   /* uncommon */
+        case 3: glColor4f(0.00f, 0.35f, 0.75f, 1.0f); break;   /* rare */
+        case 4: glColor4f(0.50f, 0.15f, 0.70f, 1.0f); break;   /* epic */
+        case 5: glColor4f(0.85f, 0.45f, 0.00f, 1.0f); break;   /* legendary */
+        default: gb_ink(); break;
+    }
+}
+static void gb_bags_color(const GearBoardChar *c) {
+    if (c->bags_total >= 0 && c->bags_free == 0) glColor4f(0.75f, 0.10f, 0.10f, 1.0f);
+    else if (c->bags_total >= 0 && c->bags_free <= 4) glColor4f(0.80f, 0.45f, 0.00f, 1.0f);
+    else gb_ink();
+}
+static void gb_bags_text(const GearBoardChar *c, char *out, size_t n) {
+    if (c->bags_total < 0) snprintf(out, n, "-");
+    else snprintf(out, n, "%d/%d FREE%s", c->bags_free, c->bags_total,
+                  (c->bag_slots > c->bags_worn) ? " +BAG SLOT" : "");
+}
+
+static void draw_gear_board(void) {
+    GearBoard *b = &g_gear_board;
+    if (!b->open) return;
+    gear_board_poll(b, SDL_GetTicks());
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+
+    /* linen: the panel, a darker band for the title, an ink border */
+    glColor4f(0.98f, 0.94f, 0.90f, 0.97f);
+    glBegin(GL_QUADS); glVertex2f(40, 20); glVertex2f(1240, 20); glVertex2f(1240, 664); glVertex2f(40, 664); glEnd();
+    glColor4f(0.92f, 0.86f, 0.78f, 1.0f);
+    glBegin(GL_QUADS); glVertex2f(40, 606); glVertex2f(1240, 606); glVertex2f(1240, 664); glVertex2f(40, 664); glEnd();
+    glColor4f(0.35f, 0.30f, 0.25f, 1.0f);
+    glLineWidth(2.0f);
+    glBegin(GL_LINE_LOOP); glVertex2f(40, 20); glVertex2f(1240, 20); glVertex2f(1240, 664); glVertex2f(40, 664); glEnd();
+
+    gb_ink();
+    draw_string("GEAR BOARD", 64, 650, 4);
+    int rp = 1, np = 1;
+    int total = gear_board_page_total(&rp, &np);
+    if (b->page >= total) b->page = 0;
+    char line[256];
+    if (b->loaded) {
+        time_t t = (time_t)b->generated;
+        struct tm *tm = localtime(&t);
+        char when[16] = "?";
+        if (tm) strftime(when, sizeof when, "%H:%M", tm);
+        snprintf(line, sizeof line, "UPDATED %s   PAGE %d/%d   PGUP/PGDN TURN   I CLOSE", when, b->page + 1, total);
+    } else {
+        snprintf(line, sizeof line, "I CLOSE");
+    }
+    draw_string(line, 640, 642, 2);
+
+    if (!b->loaded) {
+        draw_string(b->status[0] ? b->status : "NO BOARD", 64, 540, 2);
+        draw_string("THE PLUGIN FORGE (PARENA) WRITES IT FROM YOUR WOW SAVEDVARIABLES; IT RELOADS BY ITSELF.", 64, 500, 2);
+    } else if (b->page < rp) {
+        /* the roster */
+        float y = 572;
+        draw_string("CHARACTER", 64, y, 2); draw_string("CLASS", 330, y, 2); draw_string("LVL", 470, y, 2);
+        draw_string("ROLE", 530, y, 2); draw_string("GOLD", 640, y, 2); draw_string("BAGS", 740, y, 2);
+        draw_string("ILVL", 992, y, 2); draw_string("ZONE", 1056, y, 2);
+        y -= 32;
+        int first = menu_page_first(b->page, GB_ROSTER_PER_PAGE);
+        for (int i = first; i < b->nchars && i < first + GB_ROSTER_PER_PAGE; i++, y -= 31) {
+            const GearBoardChar *c = &b->chars[i];
+            gb_ink();
+            snprintf(line, sizeof line, "%.21s", c->name); draw_string(line, 64, y, 2);
+            snprintf(line, sizeof line, "%.11s", c->class_); draw_string(line, 330, y, 2);
+            snprintf(line, sizeof line, "%d", c->level); draw_string(line, 470, y, 2);
+            snprintf(line, sizeof line, "%.9s", c->role); draw_string(line, 530, y, 2);
+            snprintf(line, sizeof line, "%lldG", c->gold / 10000); draw_string(line, 640, y, 2);
+            gb_bags_color(c); gb_bags_text(c, line, sizeof line); draw_string(line, 740, y, 2);
+            gb_ink();
+            if (c->ilvl > 0) { snprintf(line, sizeof line, "%d", c->ilvl); draw_string(line, 992, y, 2); }
+            snprintf(line, sizeof line, "%.14s", c->zone); draw_string(line, 1056, y, 2);
+        }
+        if (b->nchars == 0) draw_string("NO CHARACTERS ON THE BOARD YET", 64, y, 2);
+    } else if (b->page < rp + np) {
+        /* the needs, most urgent first */
+        float y = 572;
+        draw_string("WHAT THE ACCOUNT NEEDS", 64, y, 3);
+        y -= 44;
+        int first = menu_page_first(b->page - rp, GB_NEEDS_PER_PAGE);
+        for (int i = first; i < b->nneeds && i < first + GB_NEEDS_PER_PAGE; i++, y -= 58) {
+            const GearBoardNeed *n = &b->needs[i];
+            if (n->urgency >= 1000) glColor4f(0.75f, 0.10f, 0.10f, 1.0f);
+            else if (n->urgency >= 700) glColor4f(0.80f, 0.45f, 0.00f, 1.0f);
+            else gb_ink();
+            snprintf(line, sizeof line, "%.18s  %.16s", n->character, n->kind); draw_string(line, 64, y, 2);
+            gb_ink();
+            snprintf(line, sizeof line, "%.34s%s%.26s%s", n->what, n->detail[0] ? "  (" : "", n->detail, n->detail[0] ? ")" : "");
+            draw_string(line, 500, y, 2);
+            glColor4f(0.40f, 0.34f, 0.28f, 1.0f);
+            snprintf(line, sizeof line, "FROM: %.120s", n->from); draw_string(line, 84, y - 22, 1.6f);
+        }
+        if (b->nneeds == 0) draw_string("NOTHING: EVERY BAG HAS ROOM, NOBODY ASKED FOR ANYTHING, NO BIG UPGRADES WAIT", 64, y, 2);
+    } else {
+        /* one character's gear, slot by slot */
+        int ci = b->page - rp - np;
+        const GearBoardChar *c = &b->chars[ci];
+        snprintf(line, sizeof line, "%.30s", c->name); draw_string(line, 64, 576, 3);
+        snprintf(line, sizeof line, "%s %d  %s   %lldG   ILVL %d", c->class_, c->level, c->role, c->gold / 10000, c->ilvl);
+        draw_string(line, 64, 546, 2);
+        gb_bags_color(c); gb_bags_text(c, line, sizeof line);
+        char bags[96]; snprintf(bags, sizeof bags, "BAGS %s", line); draw_string(bags, 700, 546, 2);
+        gb_ink();
+        snprintf(line, sizeof line, "%.40s%s%.30s", c->zone, c->subzone[0] ? " - " : "", c->subzone); draw_string(line, 64, 522, 2);
+        static const char *const SLOT_NAMES[20] = { "", "HEAD", "NECK", "SHOULDER", "SHIRT", "CHEST", "WAIST", "LEGS",
+            "FEET", "WRIST", "HANDS", "FINGER", "FINGER", "TRINKET", "TRINKET", "BACK", "MAIN HAND", "OFF HAND", "RANGED", "TABARD" };
+        float y = 486;
+        for (int slot = 1; slot <= 19; slot++, y -= 24) {
+            const GearBoardItem *g = NULL;
+            for (int k = 0; k < b->ngear; k++) if (b->gear[k].ch == ci && b->gear[k].slot == slot) { g = &b->gear[k]; break; }
+            glColor4f(0.40f, 0.34f, 0.28f, 1.0f);
+            draw_string(SLOT_NAMES[slot], 90, y, 2);
+            if (g) {
+                gb_quality_color(g->quality);
+                snprintf(line, sizeof line, "%.48s", g->item); draw_string(line, 300, y, 2);
+                if (g->ilvl > 0) { gb_ink(); snprintf(line, sizeof line, "ILVL %d", g->ilvl); draw_string(line, 1000, y, 2); }
+            } else {
+                glColor4f(0.60f, 0.55f, 0.50f, 1.0f);
+                draw_string("-", 300, y, 2);
+            }
+        }
+    }
+
+    glMatrixMode(GL_MODELVIEW); glPopMatrix();
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glEnable(GL_DEPTH_TEST);
+}
+
 static void draw_tab_scoreboard(PlayerState *self) {
     const Uint8 *keys = SDL_GetKeyboardState(NULL);
     if (!keys[SDL_SCANCODE_TAB]) return;
@@ -15871,6 +16037,7 @@ void draw_scene(PlayerState *render_p) {
     draw_zombies_awareness_hud();
     draw_pheromone_hud();
     draw_editmap_hud();
+    draw_gear_board();      /* over the rest of the HUD; under the disconnect and pause overlays */
     if (app_state == STATE_GAME_NET && net_diag.server_disconnected) draw_disconnect_overlay();
     if (g_paused) draw_pause_overlay();
 }
@@ -18794,6 +18961,14 @@ int main(int argc, char* argv[]) {
                             SDL_SetRelativeMouseMode(SDL_TRUE);
                         }
                         continue;
+                    }
+                    /* the gear board (I) owns I, Esc and the page keys while it is open */
+                    if (e.key.keysym.sym == SDLK_i && !g_chat_open) { gear_board_toggle(); continue; }
+                    if (g_gear_board.open) {
+                        SDL_Keycode gk = e.key.keysym.sym;
+                        if (gk == SDLK_ESCAPE) { g_gear_board.open = 0; continue; }
+                        if (gk == SDLK_PAGEDOWN || gk == SDLK_RIGHT) { gear_board_turn(1); continue; }
+                        if (gk == SDLK_PAGEUP || gk == SDLK_LEFT) { gear_board_turn(-1); continue; }
                     }
                     if (e.key.keysym.sym == SDLK_t) {
                         // Real, found-live bug (2026-09-14, founder: "when i hit T it started
