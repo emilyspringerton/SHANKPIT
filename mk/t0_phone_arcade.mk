@@ -29,10 +29,10 @@ test-phone-chromium:
 		-Ipackages/world -o $(T0_BIN)/phone_chromium_test -lpthread -lm
 	./$(T0_BIN)/phone_chromium_test
 
-# shankpit-460 as a level module (assets/levels/shankpit460/, committed like BRAWLPIT's): rebuild / stale-check from
-# PARENA's stdlib/shankpit460/level.manifest. Needs ../PARENA and LLVM 18 (LLVM_TOOLCHAIN_ROOT=/ for distro packages).
-.PHONY: shankpit460-level check-shankpit460-level
-shankpit460-level:
-	scripts/build_shankpit460_level.sh
-check-shankpit460-level:
-	scripts/build_shankpit460_level.sh --check
+# The WOTAN games the phone plays natively as level modules (shankpit-460, Bedrock Racers; committed like BRAWLPIT's):
+# rebuild / stale-check from PARENA's level manifests. Needs ../PARENA and LLVM 18 (LLVM_TOOLCHAIN_ROOT=/ for distro packages).
+.PHONY: phone-levels check-phone-levels
+phone-levels:
+	scripts/build_phone_levels.sh
+check-phone-levels:
+	scripts/build_phone_levels.sh --check

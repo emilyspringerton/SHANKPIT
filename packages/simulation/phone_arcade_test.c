@@ -15,15 +15,20 @@ static int fails = 0, passes = 0;
    g-cam-yaw 48 (F32 degrees) -- read straight out of the level's memory to check what the keys did */
 #define SP_G_PHASE_ADDR (135168u + 16u * 4u)
 #define SP_G_CAM_YAW_ADDR (135168u + 48u * 4u)
+/* Bedrock Racers (PARENA stdlib/bedrockracers/web/br_mem.prn, br_fields.prn): g-base 135168, g-phase 16; car 0's record at
+   0x22000, its x / y / z F32 at +20 / +24 / +28 */
+#define BR_G_PHASE_ADDR (135168u + 16u * 4u)
+#define BR_CAR0_POS_ADDR (0x22000u + 20u)
 
 int main(void) {
     static PhoneArcade a;
     arcade_init(&a);
 
     /* the mod */
-    CHECK(arcade_game_count() == 6, "the mod lists six games");
+    CHECK(arcade_game_count() == 7, "the mod lists seven games");
     CHECK(strcmp(arcade_row_name(0), "BRAWLPIT") == 0 && arcade_game_kind(0) == 1, "BRAWLPIT is a level module");
-    CHECK(arcade_game_kind(2) == 2 && strncmp(arcade_game_path(2), "https://", 8) == 0, "the web games are pages");
+    CHECK(arcade_game_kind(3) == 2 && strncmp(arcade_game_path(3), "https://", 8) == 0, "the web games are pages");
+    CHECK(arcade_game_kind(2) == 1 && arcade_game_level(2) == REFLUX_LEVEL_BEDROCKRACERS, "Bedrock Racers is a level module too");
     CHECK(arcade_game_kind(1) == 1 && arcade_game_level(1) == REFLUX_LEVEL_SHANKPIT460, "shankpit-460 is a level module too");
     CHECK(strcmp(arcade_row_name(arcade_game_count()), "WEB BROWSER") == 0, "the last row is the browser");
 
@@ -36,11 +41,11 @@ int main(void) {
     CHECK(arcade_list_key(&a, K_BACK, 1) == ARCADE_DID_CLOSE, "Backspace on the list leaves the app");
 
     /* a web game with no Chromium: said, not started */
-    a.cursor = 2; a.chromium_ok = 0;
+    a.cursor = 3; a.chromium_ok = 0;
     CHECK(arcade_list_key(&a, K_ENTER, 1) == ARCADE_DID_NOTHING && a.screen == ARCADE_LIST, "no Chromium: a web game does not start");
     CHECK(strstr(a.msg, "SHANKPIT-460 ONLINE is a web game") != NULL, "and the app says why");
     a.chromium_ok = 1;
-    CHECK(arcade_list_key(&a, K_ENTER, 1) == ARCADE_DID_CHROMIUM && a.screen == ARCADE_CHROMIUM && a.game == 2,
+    CHECK(arcade_list_key(&a, K_ENTER, 1) == ARCADE_DID_CHROMIUM && a.screen == ARCADE_CHROMIUM && a.game == 3,
           "with Chromium: the web game goes to the Chromium stopgap");
     a.screen = ARCADE_LIST;
 
@@ -96,6 +101,31 @@ int main(void) {
     printf("      (yaw %.1f -> %.1f)\n", yaw0, yaw1);
     CHECK(yaw1 != yaw0, "a held arrow turns the camera (the phone has no mouse)");
     CHECK(arcade_game_key(&a, K_BACK, 1) == 1 && a.screen == ARCADE_LIST, "Backspace leaves shankpit-460 too");
+
+    /* Bedrock Racers, natively: Enter on the title plays the first car of the first team against bots; W drives it */
+    a.cursor = 2;
+    CHECK(arcade_list_key(&a, K_ENTER, 11) == ARCADE_DID_START && a.screen == ARCADE_WASM, "Enter on BEDROCK RACERS starts it");
+    for (int f = 0; f < 10; f++) arcade_frame(&a, 16667);
+    CHECK(a.screen == ARCADE_WASM && level_host_state(&a.lh) == lm_st_fg(), "the Bedrock Racers level loads and runs");
+    fb = arcade_fb(&a, &w, &h, &dirty);
+    CHECK(fb != NULL && w == 640 && h == 360, "it renders its 640x360 picture");
+    arcade_game_key(&a, 13, 1); arcade_frame(&a, 16667); arcade_game_key(&a, 13, 0);
+    for (int f = 0; f < 300; f++) arcade_frame(&a, 16667);     /* past the kickoff countdown */
+    mem = level_host_memory(&a.lh, &msz);
+    phase = 0;
+    if (mem) memcpy(&phase, mem + BR_G_PHASE_ADDR, 4);
+    CHECK(phase == 1, "Enter on its title starts a match (phase 1)");
+    float p0[3] = {0, 0, 0}, p1[3] = {0, 0, 0};
+    if (mem) memcpy(p0, mem + BR_CAR0_POS_ADDR, 12);
+    arcade_game_key(&a, 'w', 1);
+    for (int f = 0; f < 90; f++) arcade_frame(&a, 16667);
+    arcade_game_key(&a, 'w', 0);
+    mem = level_host_memory(&a.lh, &msz);
+    if (mem) memcpy(p1, mem + BR_CAR0_POS_ADDR, 12);
+    float dx = p1[0] - p0[0], dz = p1[2] - p0[2];
+    printf("      (car 0 moved %.1f, %.1f)\n", dx, dz);
+    CHECK(dx * dx + dz * dz > 1.0f, "a held W drives the player's car");
+    CHECK(arcade_game_key(&a, K_BACK, 1) == 1 && a.screen == ARCADE_LIST, "Backspace leaves Bedrock Racers");
 
     /* a module that is not there: back to the list, said */
     arcade_start_wasm(&a, 0, 1);

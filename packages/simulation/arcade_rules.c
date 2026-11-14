@@ -32,31 +32,27 @@ int arcade_chromium_h();
 char * arcade_chromium_args();
 
 int arcade_game_count(void) {
-    return 6;
+    return 7;
 }
 
 char * arcade_game_name(int i __attribute__((unused))) {
-    return ((i == 0) ? "BRAWLPIT" : ((i == 1) ? "SHANKPIT-460" : ((i == 2) ? "SHANKPIT-460 ONLINE" : ((i == 3) ? "DEADWEIGHT 2" : ((i == 4) ? "REDGARDEN" : ((i == 5) ? "BEDROCK RACERS" : ""))))));
+    return ((i == 0) ? "BRAWLPIT" : ((i == 1) ? "SHANKPIT-460" : ((i == 2) ? "BEDROCK RACERS" : ((i == 3) ? "SHANKPIT-460 ONLINE" : ((i == 4) ? "BEDROCK RACERS ONLINE" : ((i == 5) ? "DEADWEIGHT 2" : ((i == 6) ? "REDGARDEN" : "")))))));
 }
 
 char * arcade_game_blurb(int i __attribute__((unused))) {
-    return ((i == 0) ? "platform brawler -- runs right here on the phone" : ((i == 1) ? "arena shooter vs bots -- on the phone. arrows look, F fires" : ((i == 2) ? "the same game with human matchmaking, web build" : ((i == 3) ? "backpack battler, web build" : ((i == 4) ? "10v10 arena, web build" : ((i == 5) ? "kart racing, web build" : ""))))));
+    return ((i == 0) ? "platform brawler -- runs right here on the phone" : ((i == 1) ? "arena shooter vs bots -- on the phone. arrows look, F fires" : ((i == 2) ? "rocket-car quidditch vs bots -- on the phone. F magnet" : ((i == 3) ? "the arena shooter with human matchmaking, web build" : ((i == 4) ? "the racers with human matchmaking, web build" : ((i == 5) ? "backpack battler, web build" : ((i == 6) ? "10v10 arena, web build" : "")))))));
 }
 
 int arcade_game_kind(int i __attribute__((unused))) {
-    if ((i <= 1)) {
-    return 1;
-    } else {
-    return 2;
-    }
+    return ((i == 0) ? 1 : ((i == 1) ? 1 : ((i == 2) ? 1 : ((i == 3) ? 2 : ((i == 4) ? 2 : ((i == 5) ? 2 : ((i == 6) ? 2 : 0)))))));
 }
 
 char * arcade_game_path(int i __attribute__((unused))) {
-    return ((i == 0) ? "assets/levels/brawlpit/brawlpit_level.wasm" : ((i == 1) ? "assets/levels/shankpit460/shankpit460_level.wasm" : ((i == 2) ? "https://wotan.okemily.com/shankpit-460/" : ((i == 3) ? "https://wotan.okemily.com/d2/" : ((i == 4) ? "https://wotan.okemily.com/redgarden/play.html" : ((i == 5) ? "https://wotan.okemily.com/bedrockracers/" : ""))))));
+    return ((i == 0) ? "assets/levels/brawlpit/brawlpit_level.wasm" : ((i == 1) ? "assets/levels/shankpit460/shankpit460_level.wasm" : ((i == 2) ? "assets/levels/bedrockracers/bedrockracers_level.wasm" : ((i == 3) ? "https://wotan.okemily.com/shankpit-460/" : ((i == 4) ? "https://wotan.okemily.com/bedrockracers/" : ((i == 5) ? "https://wotan.okemily.com/d2/" : ((i == 6) ? "https://wotan.okemily.com/redgarden/play.html" : "")))))));
 }
 
 int arcade_game_level(int i __attribute__((unused))) {
-    return ((i == 0) ? 1 : ((i == 1) ? 2 : 0));
+    return ((i == 0) ? 1 : ((i == 1) ? 2 : ((i == 2) ? 3 : ((i == 3) ? 0 : ((i == 4) ? 0 : ((i == 5) ? 0 : ((i == 6) ? 0 : 0)))))));
 }
 
 char * arcade_game_asset(int i __attribute__((unused)), int slot __attribute__((unused))) {
