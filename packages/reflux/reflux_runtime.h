@@ -208,6 +208,7 @@ static inline int reflux_action_is_citizen(int action_type) {
  * no change to the check a relay or the import bridge makes. Lifecycle payload a is always the level
  * id; BRAWLPIT is level 1. A mod polls these exactly like any other row. */
 #define REFLUX_LEVEL_BRAWLPIT 1                  /* level id, lifecycle payload a */
+#define REFLUX_LEVEL_SHANKPIT460 2               /* shankpit-460 as a level (the SHANKPHONE's games app; dispatches nothing) */
 
 #define REFLUX_ACTION_LEVEL_LOADED 1000          /* a = level id, b = level_api(), c = generation (1 = first load) */
 #define REFLUX_ACTION_LEVEL_SHOWN 1001           /* a = level id: the level is in the foreground */

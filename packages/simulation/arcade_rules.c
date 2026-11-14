@@ -32,19 +32,19 @@ int arcade_chromium_h();
 char * arcade_chromium_args();
 
 int arcade_game_count(void) {
-    return 5;
+    return 6;
 }
 
 char * arcade_game_name(int i __attribute__((unused))) {
-    return ((i == 0) ? "BRAWLPIT" : ((i == 1) ? "SHANKPIT-460" : ((i == 2) ? "DEADWEIGHT 2" : ((i == 3) ? "REDGARDEN" : ((i == 4) ? "BEDROCK RACERS" : "")))));
+    return ((i == 0) ? "BRAWLPIT" : ((i == 1) ? "SHANKPIT-460" : ((i == 2) ? "SHANKPIT-460 ONLINE" : ((i == 3) ? "DEADWEIGHT 2" : ((i == 4) ? "REDGARDEN" : ((i == 5) ? "BEDROCK RACERS" : ""))))));
 }
 
 char * arcade_game_blurb(int i __attribute__((unused))) {
-    return ((i == 0) ? "platform brawler -- runs right here on the phone" : ((i == 1) ? "the arena shooter, web build" : ((i == 2) ? "backpack battler, web build" : ((i == 3) ? "10v10 arena, web build" : ((i == 4) ? "kart racing, web build" : "")))));
+    return ((i == 0) ? "platform brawler -- runs right here on the phone" : ((i == 1) ? "arena shooter vs bots -- on the phone. arrows look, F fires" : ((i == 2) ? "the same game with human matchmaking, web build" : ((i == 3) ? "backpack battler, web build" : ((i == 4) ? "10v10 arena, web build" : ((i == 5) ? "kart racing, web build" : ""))))));
 }
 
 int arcade_game_kind(int i __attribute__((unused))) {
-    if ((i == 0)) {
+    if ((i <= 1)) {
     return 1;
     } else {
     return 2;
@@ -52,15 +52,11 @@ int arcade_game_kind(int i __attribute__((unused))) {
 }
 
 char * arcade_game_path(int i __attribute__((unused))) {
-    return ((i == 0) ? "assets/levels/brawlpit/brawlpit_level.wasm" : ((i == 1) ? "https://wotan.okemily.com/shankpit-460/" : ((i == 2) ? "https://wotan.okemily.com/d2/" : ((i == 3) ? "https://wotan.okemily.com/redgarden/play.html" : ((i == 4) ? "https://wotan.okemily.com/bedrockracers/" : "")))));
+    return ((i == 0) ? "assets/levels/brawlpit/brawlpit_level.wasm" : ((i == 1) ? "assets/levels/shankpit460/shankpit460_level.wasm" : ((i == 2) ? "https://wotan.okemily.com/shankpit-460/" : ((i == 3) ? "https://wotan.okemily.com/d2/" : ((i == 4) ? "https://wotan.okemily.com/redgarden/play.html" : ((i == 5) ? "https://wotan.okemily.com/bedrockracers/" : ""))))));
 }
 
 int arcade_game_level(int i __attribute__((unused))) {
-    if ((i == 0)) {
-    return 1;
-    } else {
-    return 0;
-    }
+    return ((i == 0) ? 1 : ((i == 1) ? 2 : 0));
 }
 
 char * arcade_game_asset(int i __attribute__((unused)), int slot __attribute__((unused))) {

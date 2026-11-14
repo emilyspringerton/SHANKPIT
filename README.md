@@ -158,10 +158,15 @@ Backspace leaves a game; Esc/P put the phone away.
   assets). Add a game there and nowhere else; `scripts/gen_arcade_rules.sh` regenerates
   `packages/simulation/arcade_rules.c` with the app's rules (`arcade.prn`: engine choice, list, BACK key, picture fit,
   the stopgap's rate/window/key map). State and level-host calls: `packages/simulation/phone_arcade.h`.
-- **Level modules play in the phone**: BRAWLPIT runs on SHANKPIT's own wasm3 level host, its own instance (separate
-  from the Shift+M foreground one), full speed, aspect-fitted in the panel. `make test-phone-arcade` (24 checks with
-  the real module, in CI); seen in the real lobby under Xvfb.
-- **Web games (shankpit-460, DEADWEIGHT 2, REDGARDEN, Bedrock Racers) are a STOPGAP through Chromium**: Pellegrino
+- **Level modules play in the phone**: BRAWLPIT and **shankpit-460** run on SHANKPIT's own wasm3 level host, each its
+  own instance (separate from the Shift+M foreground one), full speed, aspect-fitted in the panel. shankpit-460 is the
+  WOTAN engine unchanged behind PARENA's `stdlib/shankpit460/sp_level.prn` (committed as
+  `assets/levels/shankpit460/shankpit460_level.wasm`; `make shankpit460-level` / `make check-shankpit460-level`): bot
+  matches only (a level has no network), and since the phone has no mouse, arrows look, F fires, Q zooms the sniper.
+  `make test-phone-arcade` (32 checks with the real modules: both load and draw; shankpit-460 goes title -> playing
+  and a held arrow turns the camera; in CI); both played in the real lobby under Xvfb.
+- **Web games (SHANKPIT-460 ONLINE for human matchmaking, DEADWEIGHT 2, REDGARDEN, Bedrock Racers) are a STOPGAP through
+  Chromium**: Pellegrino
   has no JavaScript, so `packages/chromium_bridge/phone_chromium.c` starts `chromedriver` and drives headless Chromium
   with PARENA's own WebDriver client (`net/webdriver.prn` + `base64.prn` + `image/png.prn`, generated in by
   `scripts/gen_chromium_bridge.sh`) on a worker thread: a screenshot every 120 ms in, keys out. A few frames a second

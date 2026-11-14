@@ -11,14 +11,20 @@ static int fails = 0, passes = 0;
 #define K_ENTER 13
 #define K_BACK 8
 
+/* shankpit-460's G region (PARENA stdlib/shankpit460/sp_mem.prn: g-base 135168, 4 bytes a word): g-phase 16,
+   g-cam-yaw 48 (F32 degrees) -- read straight out of the level's memory to check what the keys did */
+#define SP_G_PHASE_ADDR (135168u + 16u * 4u)
+#define SP_G_CAM_YAW_ADDR (135168u + 48u * 4u)
+
 int main(void) {
     static PhoneArcade a;
     arcade_init(&a);
 
     /* the mod */
-    CHECK(arcade_game_count() == 5, "the mod lists five games");
+    CHECK(arcade_game_count() == 6, "the mod lists six games");
     CHECK(strcmp(arcade_row_name(0), "BRAWLPIT") == 0 && arcade_game_kind(0) == 1, "BRAWLPIT is a level module");
-    CHECK(arcade_game_kind(1) == 2 && strncmp(arcade_game_path(1), "https://", 8) == 0, "the web games are pages");
+    CHECK(arcade_game_kind(2) == 2 && strncmp(arcade_game_path(2), "https://", 8) == 0, "the web games are pages");
+    CHECK(arcade_game_kind(1) == 1 && arcade_game_level(1) == REFLUX_LEVEL_SHANKPIT460, "shankpit-460 is a level module too");
     CHECK(strcmp(arcade_row_name(arcade_game_count()), "WEB BROWSER") == 0, "the last row is the browser");
 
     /* the list */
@@ -30,11 +36,11 @@ int main(void) {
     CHECK(arcade_list_key(&a, K_BACK, 1) == ARCADE_DID_CLOSE, "Backspace on the list leaves the app");
 
     /* a web game with no Chromium: said, not started */
-    a.cursor = 1; a.chromium_ok = 0;
+    a.cursor = 2; a.chromium_ok = 0;
     CHECK(arcade_list_key(&a, K_ENTER, 1) == ARCADE_DID_NOTHING && a.screen == ARCADE_LIST, "no Chromium: a web game does not start");
-    CHECK(strstr(a.msg, "SHANKPIT-460 is a web game") != NULL, "and the app says why");
+    CHECK(strstr(a.msg, "SHANKPIT-460 ONLINE is a web game") != NULL, "and the app says why");
     a.chromium_ok = 1;
-    CHECK(arcade_list_key(&a, K_ENTER, 1) == ARCADE_DID_CHROMIUM && a.screen == ARCADE_CHROMIUM && a.game == 1,
+    CHECK(arcade_list_key(&a, K_ENTER, 1) == ARCADE_DID_CHROMIUM && a.screen == ARCADE_CHROMIUM && a.game == 2,
           "with Chromium: the web game goes to the Chromium stopgap");
     a.screen = ARCADE_LIST;
 
@@ -58,6 +64,38 @@ int main(void) {
     CHECK(arcade_game_key(&a, K_BACK, 0) == 0 && a.screen == ARCADE_WASM, "a Backspace release alone does not leave");
     CHECK(arcade_game_key(&a, K_BACK, 1) == 1 && a.screen == ARCADE_LIST && !a.lh_live, "Backspace leaves the game, shut down");
     CHECK(arcade_fb(&a, &w, &h, &dirty) == NULL, "no picture once it is closed");
+
+    /* shankpit-460, natively: the title screen, then Enter starts a bot match; the arrows turn the camera */
+    a.cursor = 1;
+    CHECK(arcade_list_key(&a, K_ENTER, 9) == ARCADE_DID_START && a.screen == ARCADE_WASM, "Enter on SHANKPIT-460 starts it");
+    for (int f = 0; f < 10; f++) arcade_frame(&a, 16667);
+    CHECK(a.screen == ARCADE_WASM && level_host_state(&a.lh) == lm_st_fg(), "the shankpit-460 level loads and runs");
+    fb = arcade_fb(&a, &w, &h, &dirty);
+    CHECK(fb != NULL && w == 640 && h == 360, "it renders its 640x360 picture");
+    uint32_t title_sum = 0;
+    for (int i = 0; fb && i < w * h; i += 13) title_sum += fb[i * 4] + fb[i * 4 + 1] * 3u + fb[i * 4 + 2] * 7u;
+    arcade_game_key(&a, 13, 1); arcade_frame(&a, 16667); arcade_game_key(&a, 13, 0);
+    for (int f = 0; f < 60; f++) arcade_frame(&a, 16667);
+    uint32_t msz = 0;
+    uint8_t *mem = level_host_memory(&a.lh, &msz);
+    int phase = 0;
+    if (mem && msz > SP_G_PHASE_ADDR + 4) memcpy(&phase, mem + SP_G_PHASE_ADDR, 4);
+    CHECK(phase == 1, "Enter on its title starts a bot match (phase 1: playing)");
+    fb = arcade_fb(&a, &w, &h, &dirty);
+    uint32_t play_sum = 0;
+    for (int i = 0; fb && i < w * h; i += 13) play_sum += fb[i * 4] + fb[i * 4 + 1] * 3u + fb[i * 4 + 2] * 7u;
+    CHECK(play_sum != title_sum, "and the picture is the arena now, not the title");
+    float yaw0 = 0, yaw1 = 0;
+    mem = level_host_memory(&a.lh, &msz);
+    if (mem) memcpy(&yaw0, mem + SP_G_CAM_YAW_ADDR, 4);
+    arcade_game_key(&a, 1073741903, 1);   /* Right arrow, held */
+    for (int f = 0; f < 20; f++) arcade_frame(&a, 16667);
+    arcade_game_key(&a, 1073741903, 0);
+    mem = level_host_memory(&a.lh, &msz);
+    if (mem) memcpy(&yaw1, mem + SP_G_CAM_YAW_ADDR, 4);
+    printf("      (yaw %.1f -> %.1f)\n", yaw0, yaw1);
+    CHECK(yaw1 != yaw0, "a held arrow turns the camera (the phone has no mouse)");
+    CHECK(arcade_game_key(&a, K_BACK, 1) == 1 && a.screen == ARCADE_LIST, "Backspace leaves shankpit-460 too");
 
     /* a module that is not there: back to the list, said */
     arcade_start_wasm(&a, 0, 1);

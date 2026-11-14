@@ -28,3 +28,11 @@ test-phone-chromium:
 		packages/chromium_bridge/phone_chromium.c packages/simulation/arcade_rules.c packages/world/parena_runtime.c \
 		-Ipackages/world -o $(T0_BIN)/phone_chromium_test -lpthread -lm
 	./$(T0_BIN)/phone_chromium_test
+
+# shankpit-460 as a level module (assets/levels/shankpit460/, committed like BRAWLPIT's): rebuild / stale-check from
+# PARENA's stdlib/shankpit460/level.manifest. Needs ../PARENA and LLVM 18 (LLVM_TOOLCHAIN_ROOT=/ for distro packages).
+.PHONY: shankpit460-level check-shankpit460-level
+shankpit460-level:
+	scripts/build_shankpit460_level.sh
+check-shankpit460-level:
+	scripts/build_shankpit460_level.sh --check
