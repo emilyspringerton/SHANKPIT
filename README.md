@@ -151,6 +151,12 @@ not wired. Details: `docs2/specs/PELLEGRINO_PHONE_BROWSER_STATUS.md`.
 
 ## PELLEGRINO plays games (2026-11-14)
 
+**Play the WOTAN games in a browser right now:** [WOTAN Arcade](https://claude.ai/artifact/HBVghHzwcoq4Rmu77Hkvni)
+(BRAWLPIT, shankpit-460 and Bedrock Racers; the same wasm files WOTAN ships, bots only, no sign-in). Restored there on
+2026-11-15 while wotan.okemily.com's own deploy waits on credentials; `WOTAN/scripts/deploy-cloudflare-pages.ps1` puts the
+real site on Cloudflare Pages from the founder's machine.
+
+
 Open the phone (`P`), open `PELLEGRINO`: a list of games, then `WEB BROWSER` (the browser above). Up/Down, Enter;
 Backspace leaves a game; Esc/P put the phone away.
 

@@ -1,3 +1,7 @@
+## 2026-11-15
+
+- **docs: link the WOTAN Arcade** (https://claude.ai/artifact/HBVghHzwcoq4Rmu77Hkvni) from the README's PELLEGRINO section: the three WOTAN wasm games playable in a browser (bots only) while wotan.okemily.com's deploy waits on credentials.
+
 ## 2026-11-14
 
 - **feat(phone): Bedrock Racers plays natively in the phone too.** PARENA's `stdlib/bedrockracers/web/br_level.prn` (the WOTAN engine unchanged behind the T0 level surface; vs bots) -> `assets/levels/bedrockracers/bedrockracers_level.wasm` (147 KB). `scripts/build_shankpit460_level.sh` became `scripts/build_phone_levels.sh`, which builds both WOTAN levels (`make phone-levels`, `make check-phone-levels`, reproducible). `REFLUX_LEVEL_BEDROCKRACERS` = 3. The games mod now has seven: BRAWLPIT, SHANKPIT-460, BEDROCK RACERS (native); SHANKPIT-460 ONLINE, BEDROCK RACERS ONLINE, DEADWEIGHT 2, REDGARDEN (Chromium stopgap). `make test-phone-arcade` 39/39 (a held W drives car 0); played in the lobby under Xvfb (kickoff GO, speed 55). Building it found a PARENA compiler regression (`tr` swallowing the typed binding `(tr : F32)`, which had broken the Bedrock Racers web build) -- fixed there.
