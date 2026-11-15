@@ -473,6 +473,22 @@ jobs:
           cp -r levels/. bundled/levels/
           cp tools/nock_editor.html bundled/tools/
 
+          # PELLEGRINO (the PARENA browser) as an OS app: the lobby's APPS tile launches
+          # bundled/pellegrino.exe. Built by PELLEGRINO's own CI (Bazel + mingw), so this ships its
+          # pinned release instead of rebuilding it here; the sha256 below is that zip's, checked
+          # before anything is unpacked. cacert.pem must sit next to the exe (its only trust store on
+          # Windows). SDL2.dll comes from the copy below. Soft-fail like the other apps.
+          echo "== PELLEGRINO pellegrino.exe (release v0.19.0) =="
+          PG_URL=https://github.com/emilyspringerton/PELLEGRINO/releases/download/v0.19.0/pellegrino_windows.zip
+          PG_SHA=806aa65addcf7c3ecb1e3ad74a8e69cdb7ad1c703b0a331de0462d8c5d69404f
+          if curl -fsSL --proto =https --proto-redir =https --retry 3 -o /tmp/pellegrino_windows.zip "$PG_URL" \
+             && echo "$PG_SHA  /tmp/pellegrino_windows.zip" | sha256sum -c - \
+             && unzip -o -j /tmp/pellegrino_windows.zip pellegrino.exe cacert.pem -d bundled/; then
+            echo "   pellegrino.exe + cacert.pem bundled"
+          else
+            echo "!! pellegrino.exe not bundled -- the PELLEGRINO tile will report it missing in this release"
+          fi
+
           # DLL dependencies confirmed via objdump against a real local build of all five --
           # SDL2.dll for all five, SDL2_ttf.dll for PITVIPER/IDUNA.GAME/EDITOR.GAME specifically
           # (dw_gui/red_garden_arena don't link it). Copied into bundled/ itself (not just the
