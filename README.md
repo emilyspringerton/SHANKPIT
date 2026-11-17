@@ -619,6 +619,34 @@ Two world-reacts-to-your-weapon systems, both in the lobby/server build and both
   none of an earlier fall); not yet confirmed visually in a live match (headless tests only); the Windows build compiles the
   same code but is CI-only.
 
+## The Collection overlay: Self Found on the stream (2026-11-17)
+
+Founder: *"ship all of this into the SHANKPIT stream overlay ..."* and *"PARENA FIRST MODS FIRST REFLUX ALL THE
+THINGS"*. The Collection of Value's **Self Found** WoW addon tracks every character's transactions. Each character
+stays self-found until it buys or posts on the auction house, trades with a player, takes mail from any player, or
+withdraws from a guild bank. It also maps every vendor it visits. This mod brings that data into SHANKPIT.
+
+- **How it gets here:** WoW SavedVariables → PARENA's `scripts/collection-sf-feed.sh` (outside the game) → a
+  feed file of REFLUX rows (3072-3075) → `CollectionBridge` dispatches them into this client's REFLUX log →
+  `CollectionOverlay`, a REFLUX mod, polls them.
+- **Where the decisions are:** in PARENA, `stdlib/shankpit/collection_overlay_rules.prn` →
+  `packages/collection/collection_overlay_rules.c` (`scripts/gen_collection_overlay_rules.sh`). That covers which
+  rows are the Collection's, the colour and order of each status, when a banner shows, lines per surface, and
+  timing. The C is plumbing.
+- **Turning it on:** set `COLLECTION_FEED` to the file the PARENA script writes. There is no default; while it's
+  unset the overlay says so. The feed file is re-read every 5 s when it changes.
+- **Ctrl+Shift+C** in broadcast mode (F3) toggles the overlay. It shows "SELF FOUND n/m", the characters in
+  colour (green: since level 1; amber: since tracking began; red: broken), and a red banner when a character has
+  just broken. It is drawn into the program view **before** the native stream reads the frame, so stream viewers
+  see it.
+- **Also built, not wired into a screen yet:** `collection_terminal` (`sf`, `sf vendors`, `sf help`) for a terminal,
+  and `collection_apps_html`, a full page for the OS APPS grid (which PELLEGRINO draws).
+- **Test:** `make test-collection-overlay` (headless, 51 checks). It covers the real feed PARENA's test writes, a
+  character newly breaking, 300 characters through the 256-row REFLUX ring with none lost, reload-on-change, the
+  "off" states and HTML escaping.
+- **Not verified:** the lobby itself was not built or run with this; its CI build is the check. Not built yet: the
+  social meeting terminal and 3D telepresence surfaces.
+
 ## Broadcast cameras, director and native stream (2026-10-02)
 
 For esports: **F3** (or pause menu -> BROADCAST CAMERAS) puts you behind a camera rig. The *program* camera fills the

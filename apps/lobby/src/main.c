@@ -154,6 +154,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/simulation/chat_say.h"     /* ... say length/range rules for the GFD terminal */
 #include "../../../packages/simulation/hoverboard.h"   /* ... hoverboards (H) */
 #include "../../../packages/simulation/world_alert_bridge.h"
+#include "../../../packages/collection/collection_overlay.h" /* the Collection of Value: Self Found on the stream */
 #include "../../../packages/simulation/food_pickup.h"
 #include "../../../packages/simulation/lab_station_host.h"
 #include "../../../packages/simulation/gun_items.h"
@@ -15228,6 +15229,37 @@ static void broadcast_keep_out_of_walls(const CamDef *c, CamView *v) {
     v->eye[0] = hx - dx / len * 0.35f; v->eye[1] = hy - dy / len * 0.35f; v->eye[2] = hz - dz / len * 0.35f;
 }
 
+/* The Collection overlay (packages/collection/collection_overlay.h): Self Found's characters and vendors, fed
+ * from COLLECTION_FEED through REFLUX. Ctrl+Shift+C toggles it; it is drawn onto the program view BEFORE the
+ * native stream reads the frame back, so viewers see it too. Every decision is PARENA
+ * (collection_overlay_rules.c); this only draws the lines it is given. */
+static CollectionOverlay g_collection;
+static CollectionBridge g_collection_bridge;
+static int g_collection_on = 0;
+
+static void collection_overlay_draw(unsigned int now) {
+    static char lines[16][COLLECTION_LINE_LEN];
+    int tones[16];
+    collection_bridge_tick(&g_collection_bridge, &g_collection, now);
+    int n = collection_stream_lines(&g_collection, &g_collection_bridge, now, lines, tones, 16);
+    glDisable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, VIRTUAL_W, 0, VIRTUAL_H);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    float x = VIRTUAL_W - 560.0f, y = VIRTUAL_H - 130.0f;
+    for (int i = 0; i < n; i++, y -= 24.0f) {
+        switch (tones[i]) {
+        case 1: glColor3f(0.37f, 0.83f, 0.42f); break;   /* self-found since level 1 */
+        case 2: glColor3f(0.91f, 0.70f, 0.23f); break;   /* self-found since tracking */
+        case 3: glColor3f(1.0f, 0.42f, 0.42f); break;    /* broken / banner */
+        default: glColor3f(1, 1, 1); break;
+        }
+        draw_string(lines[i], x, y, 3);
+    }
+    glEnable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glMatrixMode(GL_MODELVIEW); glPopMatrix();
+}
+
 /* The whole broadcast frame: program view, multiview tiles, labels. Replaces draw_scene for this frame. */
 static void broadcast_frame(PlayerState *render_p) {
     unsigned int now = SDL_GetTicks();
@@ -15242,6 +15274,8 @@ static void broadcast_frame(PlayerState *render_p) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     CamView v;
     if (camrig_view(&g_camrig, g_camrig.program, now, &v)) { broadcast_keep_out_of_walls(&g_camrig.cam[g_camrig.program], &v); broadcast_render_view(render_p, &v, 0, 0, VIRTUAL_W, VIRTUAL_H); }
+    /* the Collection overlay goes INTO the program feed (before the read-back below), unlike the operator labels */
+    if (g_collection_on) collection_overlay_draw(now);
     /* native stream: the CLEAN program feed -- read back before the multiview tiles and overlay are drawn over it */
     if (g_stream_on && stream_out_due(&g_stream, now)) {
         if (g_vp_w < g_stream.w || g_vp_h < g_stream.h) {
@@ -18079,6 +18113,8 @@ int main(int argc, char* argv[]) {
     day_night_clock_init(&local_state.story_clock, (unsigned int)time(NULL), 8);
     phone_init(&g_story_phone);
     world_alert_bridge_init(&g_story_alert_bridge);
+    collection_overlay_init(&g_collection);
+    collection_bridge_init(&g_collection_bridge, NULL);   /* COLLECTION_FEED, or off */
     net_init();
 
     local_init_match(1, 0);
@@ -18844,6 +18880,8 @@ int main(int argc, char* argv[]) {
                         broadcast_cycle_subject(1);
                     } else if (g_broadcast_on && e.key.keysym.sym == SDLK_TAB) {
                         broadcast_cycle_subject((e.key.keysym.mod & KMOD_SHIFT) ? -1 : 1);
+                    } else if (e.key.keysym.sym == SDLK_c && (e.key.keysym.mod & KMOD_CTRL) && (e.key.keysym.mod & KMOD_SHIFT)) {
+                        g_collection_on = !g_collection_on;   /* the Collection overlay (Self Found) */
                     } else if (macro_key_run(e.key.keysym.sym, e.key.keysym.mod)) {
                         /* a player bind claimed this key -- checked before the built-in shortcuts */
                     } else if (e.key.keysym.sym == SDLK_F1) {
