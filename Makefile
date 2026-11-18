@@ -36,6 +36,16 @@ test-collection-overlay:
 	  packages/collection/collection_overlay_rules.c packages/reflux/reflux_runtime.c -o /tmp/collection_overlay_test
 	cd /tmp && ./collection_overlay_test
 
+# /ascend: your WoW guilds' Discords from the Collection's GuildHerald feed (packages/collection/ascend.h). Client only.
+# Rules: PARENA/stdlib/shankpit/ascend_rules.prn via scripts/gen_ascend_rules.sh.
+LOBBY_SRC    += packages/collection/ascend.c packages/collection/ascend_rules.c
+.PHONY: test-ascend
+test-ascend:
+	$(CC) -std=c99 -O2 -Wall -Wextra -pedantic -Wno-unused-parameter -Ipackages/reflux -Ipackages/world \
+	  packages/collection/ascend_test.c packages/collection/ascend.c packages/collection/ascend_rules.c \
+	  packages/reflux/reflux_runtime.c -o /tmp/ascend_test
+	cd /tmp && ./ascend_test
+
 # WoW-style chat channels (SHANKPIT as the telepresence app; PACKET_CHAT, packages/chat/). The client half goes in the
 # lobby, the server half in the server; both link the PARENA rules (scripts/gen_chat_channel_rules.sh).
 LOBBY_SRC    += packages/chat/chat_client.c packages/chat/chat_channel_rules.c

@@ -156,6 +156,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/simulation/world_alert_bridge.h"
 #include "../../../packages/collection/collection_overlay.h" /* the Collection of Value: Self Found on the stream */
 #include "../../../packages/chat/chat_client.h"              /* WoW-style chat channels (PACKET_CHAT, PARENA rules) */
+#include "../../../packages/collection/ascend.h"             /* /ascend: your WoW guilds' Discords (GuildHerald feed) */
 #include "../../../packages/simulation/food_pickup.h"
 #include "../../../packages/simulation/lab_station_host.h"
 #include "../../../packages/simulation/gun_items.h"
@@ -16120,6 +16121,21 @@ static void lobby_chat_prompt(char *buf, int cap) {
     chat_client_prompt(&g_chatc, buf, cap);
 }
 
+/* "/ascend [join]" in the chat box: your WoW guilds' Discords, from the Collection's GuildHerald feed
+ * (packages/collection/ascend.h; COLLECTION_GUILD_FEED). "join" opens the next invite links in the browser. Returns 1
+ * when the line was /ascend. */
+static Ascend g_ascend;
+static int g_ascend_ready = 0;
+static int lobby_ascend(const char *line) {
+    if (strncmp(line, "/ascend", 7) != 0 || (line[7] != '\0' && line[7] != ' ')) return 0;
+    if (!g_ascend_ready) { ascend_init(&g_ascend, NULL); g_ascend_ready = 1; }
+    static char out[24][ASCEND_LINE];
+    int tones[24];
+    int n = ascend_command(&g_ascend, line + 7, out, tones, 24, iduna__open_browser);
+    for (int i = 0; i < n; i++) chat_pane_push_tone(out[i], tones[i]);
+    return 1;
+}
+
 static void lobby_iduna_login_btn_rect(float *x, float *y, float *w, float *h) {
     *x = 1040.0f; *y = 128.0f; *w = 200.0f; *h = 44.0f;
 }
@@ -18900,7 +18916,9 @@ int main(int argc, char* argv[]) {
                                 /* WoW-style chat first (text, /1, /join, /w, /r, /s, /y ...); any other /command is
                                    the same command language the macro file uses: test a macro by typing it first */
                                 lobby_chat_init_once();
-                                if (!chat_client_submit(&g_chatc, g_chat.input, lobby_chat_connected(), lobby_chat_send, NULL) &&
+                                if (lobby_ascend(g_chat.input)) {
+                                    /* /ascend: the Discords of your WoW guilds */
+                                } else if (!chat_client_submit(&g_chatc, g_chat.input, lobby_chat_connected(), lobby_chat_send, NULL) &&
                                     g_chat.input[0] == '/') {
                                     char line[CHAT_INPUT_MAX];
                                     snprintf(line, sizeof(line), "%.*s", (int)sizeof line - 1, g_chat.input + 1);

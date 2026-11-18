@@ -662,6 +662,28 @@ peach, whispers pink, notices yellow. Long messages wrap (up to 200 characters).
   - While BRAWLPIT is in front it keeps Enter; press Shift+M to the world to chat.
   - UDP can drop a line (only the hello is retried).
 
+## /ascend: your WoW guilds' Discords (2026-11-17)
+
+Founder: *"im in these guilds and the message of the day has the discord info but i dont want to type it in on my
+wotan account ... i should be able to type /ascend in the shankpit terminal to sync my discord from the wow data"*.
+
+- **Where the data comes from:** the Collection's **GuildHerald** WoW addon logs every guild Message of the Day and
+  guild info text, and the Discord invites in them. PARENA's `scripts/collection-guild-feed.sh` turns that into
+  `COLLECTION_GUILD_FEED` (REFLUX rows + names) and an NDJSON log stream (`COLLECTION_GUILDS_LOG`) for community
+  work.
+- **In SHANKPIT's chat box:**
+  - **`/ascend`** lists each guild and its `discord.gg/...` links.
+  - **`/ascend join`** opens the next 5 in your browser, so Discord can take you in; the rest wait for the next
+    `/ascend join`, and nothing opens twice in a session.
+- **Why it doesn't join for you:** Discord doesn't let an app put a person into a server (that needs a bot already in
+  each server), so joining stays one click in Discord, which also shows the servers you're already in.
+- **Rules:** PARENA `stdlib/shankpit/ascend_rules.prn` → `packages/collection/ascend_rules.c`
+  (`scripts/gen_ascend_rules.sh`). It decides which feed rows count, 5 links per join, and the invite-code check
+  (applied again before any URL is built). The feed's rows go through REFLUX; opening links dispatches 3085.
+- **Test:** `make test-ascend` (31 checks).
+- **Not yet:** linking your Discord account. It would need Discord sign-in on IDUNA (the way HSRIP signs in to Twitch)
+  and a Discord app from the founder.
+
 ## The global chat bridge (2026-11-17)
 
 Founder: *"WE NEED THE CHAT BRIDGE TO WORK GLOBALY"*. A world's **General** channel joins IDUNA's cross-game chat
