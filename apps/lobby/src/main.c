@@ -155,6 +155,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/simulation/hoverboard.h"   /* ... hoverboards (H) */
 #include "../../../packages/simulation/world_alert_bridge.h"
 #include "../../../packages/collection/collection_overlay.h" /* the Collection of Value: Self Found on the stream */
+#include "../../../packages/chat/chat_client.h"              /* WoW-style chat channels (PACKET_CHAT, PARENA rules) */
 #include "../../../packages/simulation/food_pickup.h"
 #include "../../../packages/simulation/lab_station_host.h"
 #include "../../../packages/simulation/gun_items.h"
@@ -2947,23 +2948,48 @@ typedef struct OverlaySystem {
 static OverlaySystem g_overlay = { OVERLAY_OFF, {{0}}, 0, 0, 0, 1.0f };
 
 /* ── Chat / log pane ─────────────────────────────────────────────────── */
-#define CHAT_CAPACITY 12
+#define CHAT_CAPACITY 24
 #define CHAT_LINE_MAX 72
 #define CHAT_VISIBLE  8
+#define CHAT_INPUT_MAX 201   /* a whole chat message: chat_channel_rules.prn chan-msg-max + NUL */
 typedef struct {
     char lines[CHAT_CAPACITY][CHAT_LINE_MAX];
+    unsigned char tone[CHAT_CAPACITY];   /* 0 a log line; 1-5 a chat line's colour (chan-color) */
     int  head;
-    char input[CHAT_LINE_MAX];
+    char input[CHAT_INPUT_MAX];
     int  input_len;
 } ChatPane;
 static ChatPane g_chat;
 static int      g_chat_open = 0;
+static int      g_chat_swallow_slash = 0;   /* opened with '/': drop the '/' text event that may follow */
+/* WoW-style chat channels (packages/chat/chat_client.h), defined after g_iduna_name further down */
+static void lobby_chat_frame(unsigned int now_ms);
+static void lobby_chat_prompt(char *buf, int cap);
 
 static void chat_pane_push(const char *msg) {
     if (!msg) return;
-    /* a chat line is one fixed slot: a longer message is clamped, deliberately, not silently */
+    /* a log line is one fixed slot: a longer message is clamped, deliberately, not silently */
     snprintf(g_chat.lines[g_chat.head], CHAT_LINE_MAX, "%.*s", CHAT_LINE_MAX - 1, msg);
+    g_chat.tone[g_chat.head] = 0;
     g_chat.head = (g_chat.head + 1) % CHAT_CAPACITY;
+}
+
+/* A chat line wraps across slots (at a space when it can) instead of being clamped: nothing said is lost. */
+static void chat_pane_push_tone(const char *msg, int tone) {
+    if (!msg) return;
+    const char *p = msg;
+    do {
+        int len = (int)strlen(p), take = len;
+        if (take > CHAT_LINE_MAX - 1) {
+            take = CHAT_LINE_MAX - 1;
+            for (int k = take; k > CHAT_LINE_MAX / 2; k--) if (p[k] == ' ') { take = k; break; }
+        }
+        snprintf(g_chat.lines[g_chat.head], CHAT_LINE_MAX, "%.*s", take, p);
+        g_chat.tone[g_chat.head] = (unsigned char)tone;
+        g_chat.head = (g_chat.head + 1) % CHAT_CAPACITY;
+        p += take;
+        while (*p == ' ') p++;
+    } while (*p);
 }
 
 /* ---- BIG_O unification wiring (EMILY/BACKLOG.md SHANKPIT-BIGO-UNIFY-01, founder: "wire it all into the
@@ -12132,6 +12158,7 @@ static void draw_lab_hud(unsigned int now_ms) {
 }
 
 static void draw_chat_pane(unsigned int now_ms) {
+    lobby_chat_frame(now_ms);   /* chat channels: the hello, then any new lines from REFLUX */
     const float SZ  = 3.5f;
     const float LH  = 18.0f;
     const float BX0 = 6.0f,  BX1 = 308.0f;
@@ -12148,14 +12175,24 @@ static void draw_chat_pane(unsigned int now_ms) {
         int idx = (g_chat.head - CHAT_VISIBLE + i + CHAT_CAPACITY) % CHAT_CAPACITY;
         if (g_chat.lines[idx][0] == '\0') continue;
         float y = BY0 + 4.0f + (float)i * LH;
-        glColor3f(0.84f, 0.92f, 0.84f);
+        switch (g_chat.tone[idx]) {              /* WoW's chat colours, by chat_channel_rules.prn chan-color */
+        case 1: glColor3f(1.0f, 1.0f, 1.0f); break;      /* say */
+        case 2: glColor3f(1.0f, 0.25f, 0.25f); break;    /* yell */
+        case 3: glColor3f(1.0f, 0.75f, 0.75f); break;    /* channel */
+        case 4: glColor3f(1.0f, 0.5f, 1.0f); break;      /* whisper */
+        case 5: glColor3f(1.0f, 1.0f, 0.0f); break;      /* system */
+        default: glColor3f(0.84f, 0.92f, 0.84f); break;  /* the log, as before */
+        }
         draw_string(g_chat.lines[idx], 12.0f, y, SZ);
     }
 
     if (g_chat_open) {
         int blink = (int)(now_ms / 500) % 2;
-        char buf[CHAT_LINE_MAX + 4];
-        snprintf(buf, sizeof(buf), "> %s%s", g_chat.input, blink ? "_" : "");
+        char prompt[64];
+        lobby_chat_prompt(prompt, (int)sizeof(prompt));   /* "Say: ", "[2. Backroom]: ", "To [Bjorn]: " */
+        const char *tail = g_chat.input_len > 48 ? g_chat.input + g_chat.input_len - 48 : g_chat.input;
+        char buf[CHAT_LINE_MAX + 64];
+        snprintf(buf, sizeof(buf), "%s%s%s", prompt, tail, blink ? "_" : "");
         glColor3f(0.48f, 0.88f, 0.48f);
         draw_string(buf, 12.0f, BY0 - LH + 4.0f, SZ);
     }
@@ -16042,6 +16079,47 @@ static int g_iduna_login_active = 0;      // a login attempt is pending
 static char g_iduna_token[IDUNA_LOGIN_TOKEN_MAX]; // non-empty = signed in (bearer for IDUNA APIs)
 static char g_iduna_name[128];
 static char g_iduna_status[96];
+
+/* ---- WoW-style chat channels: SHANKPIT as the telepresence app (packages/chat/chat_client.h) ----
+ * Enter opens the chat box, '/' opens it with the slash typed; /1 General, /join, /w, /r, /s, /y and the rest are
+ * chat_client_submit's (any other /command is still the macro language). Lines arrive as REFLUX rows (1200-1203)
+ * that lobby_chat_frame's poll -- the chat mod -- turns into coloured pane lines. Every decision is PARENA
+ * (chat_channel_rules.c). The name claimed is the IDUNA display name, else SHANKPIT_CHAT_NAME, else the server's
+ * P<slot>. */
+static ChatClient g_chatc;
+static int g_chatc_ready = 0;
+
+static void lobby_chat_init_once(void) {
+    if (!g_chatc_ready) { chat_client_init(&g_chatc); g_chatc_ready = 1; }
+}
+
+static int lobby_chat_connected(void) {
+    return app_state == STATE_GAME_NET && sock >= 0 && my_client_id > 0;
+}
+
+static void lobby_chat_send(void *ctx, const NetChat *pkt) {
+    (void)ctx;
+    if (!lobby_chat_connected()) return;
+    NetChat o = *pkt;
+    o.hdr.client_id = (unsigned char)my_client_id;
+    sendto(sock, (const char *)&o, sizeof(o), 0, (struct sockaddr*)&server_addr, sizeof(server_addr));
+}
+
+static void lobby_chat_frame(unsigned int now_ms) {
+    lobby_chat_init_once();
+    const char *want = g_iduna_name[0] ? g_iduna_name : getenv("SHANKPIT_CHAT_NAME");
+    chat_client_tick(&g_chatc, lobby_chat_connected(), want, now_ms, lobby_chat_send, NULL);
+    char out[8][CHAT_CLIENT_LINE];
+    int colors[8], n;
+    while ((n = chat_client_poll(&g_chatc, out, colors, 8)) > 0)
+        for (int i = 0; i < n; i++) chat_pane_push_tone(out[i], colors[i]);
+}
+
+static void lobby_chat_prompt(char *buf, int cap) {
+    lobby_chat_init_once();
+    chat_client_prompt(&g_chatc, buf, cap);
+}
+
 static void lobby_iduna_login_btn_rect(float *x, float *y, float *w, float *h) {
     *x = 1040.0f; *y = 128.0f; *w = 200.0f; *h = 44.0f;
 }
@@ -17575,6 +17653,13 @@ void net_tick() {
             for (int k = 0; ok && k < 6; k++)
                 if (!(sv[k] == sv[k]) || sv[k] > 100000.0f || sv[k] < -100000.0f) ok = 0;
             if (ok) spray_decal_push(sd.x, sd.y, sd.z, sd.nx, sd.ny, sd.nz, sd.hdr.scene_id, sd.spray_id);
+        } else if (head->type == PACKET_CHAT && len >= (int)sizeof(NetChat)) {
+            /* WoW-style chat channels: untrusted -- chat_client_receive clips every string and checks every
+               op and kind, then dispatches REFLUX rows the chat mod draws */
+            NetChat cm;
+            memcpy(&cm, buffer, sizeof(cm));
+            lobby_chat_init_once();
+            chat_client_receive(&g_chatc, &cm);
         } else if (head->type == PACKET_ZONE_STATE && len >= (int)sizeof(NetZoneState)) {
             ZoneSync in;
             if (zone_sync_decode(&in, head, len) && zone_sync_should_reload(&g_client_zone, &in))
@@ -18527,8 +18612,12 @@ int main(int argc, char* argv[]) {
                 }
                 /* chat pane: capture text input when open */
                 if (g_chat_open && e.type == SDL_TEXTINPUT) {
+                    if (g_chat_swallow_slash) {   /* the '/' that opened the box is already typed */
+                        g_chat_swallow_slash = 0;
+                        if (strcmp(e.text.text, "/") == 0) continue;
+                    }
                     size_t tlen = strlen(e.text.text);
-                    if (g_chat.input_len + (int)tlen < CHAT_LINE_MAX - 1) {
+                    if (g_chat.input_len + (int)tlen < CHAT_INPUT_MAX - 1) {
                         memcpy(g_chat.input + g_chat.input_len, e.text.text, tlen);
                         g_chat.input_len += (int)tlen;
                         g_chat.input[g_chat.input_len] = '\0';
@@ -18807,18 +18896,19 @@ int main(int argc, char* argv[]) {
                         if (e.key.keysym.sym == SDLK_BACKSPACE && g_chat.input_len > 0) {
                             g_chat.input[--g_chat.input_len] = '\0';
                         } else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) {
-                            if (g_chat.input_len > 0 && g_chat.input[0] == '/') {
-                                /* the same command language the macro file uses: test a macro by typing it first */
-                                char line[CHAT_LINE_MAX];
-                                snprintf(line, sizeof(line), "%.*s", (int)sizeof line - 1, g_chat.input + 1);
-                                macro_run(line);
-                            } else if (g_chat.input_len > 0) {
-                                char out[CHAT_LINE_MAX];
-                                snprintf(out, sizeof(out), "[me] %s", g_chat.input);
-                                chat_pane_push(out);
-                                g_chat.input[0] = '\0';
-                                g_chat.input_len = 0;
+                            if (g_chat.input_len > 0) {
+                                /* WoW-style chat first (text, /1, /join, /w, /r, /s, /y ...); any other /command is
+                                   the same command language the macro file uses: test a macro by typing it first */
+                                lobby_chat_init_once();
+                                if (!chat_client_submit(&g_chatc, g_chat.input, lobby_chat_connected(), lobby_chat_send, NULL) &&
+                                    g_chat.input[0] == '/') {
+                                    char line[CHAT_INPUT_MAX];
+                                    snprintf(line, sizeof(line), "%.*s", (int)sizeof line - 1, g_chat.input + 1);
+                                    macro_run(line);
+                                }
                             }
+                            g_chat.input[0] = '\0';
+                            g_chat.input_len = 0;
                             g_chat_open = 0;
                             SDL_StopTextInput();
                             SDL_SetRelativeMouseMode(SDL_TRUE);
@@ -18829,6 +18919,23 @@ int main(int argc, char* argv[]) {
                             SDL_StopTextInput();
                             SDL_SetRelativeMouseMode(SDL_TRUE);
                         }
+                        continue;
+                    }
+                    if (!g_paused && !g_story_phone.open && !g_orb_open &&
+                        ((e.key.keysym.sym == SDLK_RETURN && !(e.key.keysym.mod & KMOD_ALT)) ||
+                         e.key.keysym.sym == SDLK_KP_ENTER || e.key.keysym.sym == SDLK_SLASH)) {
+                        /* WoW: Enter opens the chat box; '/' opens it with the slash already typed. (A level in
+                           front, like BRAWLPIT, has already taken its keys above: Shift+M to the world to chat.) */
+                        g_chat_open = 1;
+                        g_chat.input[0] = '\0';
+                        g_chat.input_len = 0;
+                        g_chat_swallow_slash = 0;
+                        if (e.key.keysym.sym == SDLK_SLASH) {
+                            g_chat.input[0] = '/'; g_chat.input[1] = '\0'; g_chat.input_len = 1;
+                            g_chat_swallow_slash = 1;
+                        }
+                        SDL_StartTextInput();
+                        SDL_SetRelativeMouseMode(SDL_FALSE);
                         continue;
                     }
                     if (e.key.keysym.sym == SDLK_t) {

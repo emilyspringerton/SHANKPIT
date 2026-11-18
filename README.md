@@ -619,6 +619,49 @@ Two world-reacts-to-your-weapon systems, both in the lobby/server build and both
   none of an earlier fall); not yet confirmed visually in a live match (headless tests only); the Windows build compiles the
   same code but is CI-only.
 
+## Chat channels: SHANKPIT as the telepresence app (2026-11-17)
+
+Founder: *"the telepresence app is shankpit itself the engine has all the features we just need to bundle in the
+affordances it will start with world of warcraft style chat channels for back channeling"*. Everyone in a
+networked session can talk across the whole world, in side channels, or one to one, the way WoW players do.
+
+| You type | What happens |
+| --- | --- |
+| **Enter** / **/** | opens the chat box (`/` with the slash typed). The prompt shows where Enter sends: `Say:`, `[2. backroom]:`, `To [Bjorn]:` |
+| text | the sticky type: Say until you pick another. Say, a channel and a whisper are sticky; yell is not |
+| `/s` `/say` | nearby: 40 m, same scene |
+| `/y` `/yell` `/sh` | far: 300 m, same scene |
+| `/1` ... `/10` | a numbered channel. Everyone starts in **General** as `/1` |
+| `/join name` | joins or creates a channel, which takes your lowest free number (WoW numbering, each player's own) |
+| `/leave n` | leaves a channel |
+| `/w name text` (`/t`, `/tell`, `/msg`) | whispers one person, anywhere. `/r text` replies to your last whisper |
+| `/chatwho n` | lists a channel's members |
+| `/name newname` | claims a display name. By default it's your IDUNA display name, else `SHANKPIT_CHAT_NAME`, else the server's `P<slot>` |
+| `/chathelp` | the short version of this table |
+
+Any other `/command` is still the macro language. Lines are coloured the WoW way: say white, yell red, channels
+peach, whispers pink, notices yellow. Long messages wrap (up to 200 characters).
+
+**How it's built (PARENA first, REFLUX everything):**
+- **Rules:** every decision is `PARENA/stdlib/shankpit/chat_channel_rules.prn` → `packages/chat/chat_channel_rules.c`
+  (`scripts/gen_chat_channel_rules.sh`). That covers the ops, kinds and notices; channel numbering; name and
+  channel-name rules; who hears what (range, scene, membership, target); flood control (6 messages per 5 s);
+  colours; sticky types; and the REFLUX family. The C is plumbing.
+- **Wire:** `PACKET_CHAT` (27, `protocol.h`). The server binds a display name to each slot, so nobody can speak as
+  someone else, keeps the channel table, and routes by its own view of every slot (`packages/chat/chat_server.c`).
+  It also dispatches `CHAT_ROUTED` (1204) for server-side mods.
+- **Client:** `packages/chat/chat_client.c` turns server packets into REFLUX rows: `CHAT_MESSAGE`/`JOINED`/`LEFT`/
+  `NOTICE` (1200-1203). The chat mod polls REFLUX for the pane's lines, so any other mod (a level, the stream
+  overlay, a notifier) can react to chat the same way.
+- **Test:** `make test-chat-channels` (headless, 79 checks). It runs one server and five clients over a packet
+  queue: names, General, numbered channels, range and scene, whispers and `/r`, sticky types, flood control, limits,
+  offline, a lost hello, a dropped slot and hostile packets.
+- **Not verified:**
+  - The lobby wasn't built or run with this; SDL2 isn't on the dev box, so CI's lobby build is the check. The
+    server's `main.c` was syntax-checked with the chat wiring.
+  - While BRAWLPIT is in front it keeps Enter; press Shift+M to the world to chat.
+  - UDP can drop a line (only the hello is retried).
+
 ## The Collection overlay: Self Found on the stream (2026-11-17)
 
 Founder: *"ship all of this into the SHANKPIT stream overlay ..."* and *"PARENA FIRST MODS FIRST REFLUX ALL THE

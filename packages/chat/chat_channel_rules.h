@@ -1,0 +1,65 @@
+#ifndef CHAT_CHANNEL_RULES_H
+#define CHAT_CHANNEL_RULES_H
+/* chat_channel_rules.h -- prototypes for chat_channel_rules.c, generated from PARENA/stdlib/shankpit/chat_channel_rules.prn
+ * (scripts/gen_chat_channel_rules.sh). The generated file is the source of truth; refresh this list with it. */
+int chk_say(void);
+int chk_yell(void);
+int chk_channel(void);
+int chk_whisper(void);
+int chk_system(void);
+int chk_whisper_to(void);
+int op_say(void);
+int op_yell(void);
+int op_channel(void);
+int op_whisper(void);
+int op_join(void);
+int op_leave(void);
+int op_who(void);
+int op_name(void);
+int op_msg(void);
+int op_notice(void);
+int op_who_list(void);
+int note_joined(void);
+int note_left(void);
+int note_named(void);
+int note_err_no_channel(void);
+int note_err_not_member(void);
+int note_err_too_many(void);
+int note_err_name_bad(void);
+int note_err_name_taken(void);
+int note_err_no_player(void);
+int note_err_rate(void);
+int note_err_len(void);
+int note_err_channel_bad(void);
+int note_err_server_full(void);
+int note_err_offline(void);
+int chan_max_joined(void);
+int chan_server_max(void);
+int chan_name_max(void);
+int chan_msg_max(void);
+int chan_name_char_ok(int);
+int chan_name_len_ok(int);
+int chan_msg_len_ok(int);
+int chan_number_ok(int);
+int chan_pow2(int);
+int chan_bit(int, int);
+int chan_first_free_from(int, int);
+int chan_first_free(int);
+int chan_say_radius_cm(void);
+int chan_yell_radius_cm(void);
+int chan_delivers(int, int, int, int, int);
+int chan_rate_window_ms(void);
+int chan_rate_max(void);
+int chan_rate_ok(int, int);
+int chan_color(int);
+int chan_sticky(int);
+int chan_hello_ms(void);
+int chan_ring(void);
+int rx_chat_first(void);
+int rx_chat_message(void);
+int rx_chat_joined(void);
+int rx_chat_left(void);
+int rx_chat_notice(void);
+int rx_chat_routed(void);
+int rx_chat_last(void);
+#endif

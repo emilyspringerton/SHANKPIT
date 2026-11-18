@@ -225,6 +225,18 @@
  * accepts its type, so this packet can never fake another family. */
 #define PACKET_CITIZEN_EVENTS 26
 
+/* PACKET_CHAT -- World of Warcraft style chat channels (founder, 2026-11-17: "the telepresence app is shankpit
+ * itself ... it will start with world of warcraft style chat channels for back channeling"). Both ways, one NetChat
+ * per datagram. Client -> server: an op (say, yell, channel, whisper, join, leave, who, name) with its strings.
+ * Server -> client: a message, a notice or a who list. The server never trusts `from`: it binds a display name to
+ * the sender's slot and fills `from` itself. Ops, kinds, notice codes, numbering, routing and flood control are
+ * PARENA (stdlib/shankpit/chat_channel_rules.prn -> packages/chat/chat_channel_rules.c); packages/chat/ is the
+ * plumbing on both sides. Like PACKET_SPRAY_DECAL, a dropped datagram costs that one line; the client's hello
+ * (op name) repeats until the server answers, so joining always completes. */
+#define PACKET_CHAT 27
+#define NET_CHAT_NAME 24   /* 23 characters + NUL: chan-name-max */
+#define NET_CHAT_TEXT 201  /* 200 characters + NUL: chan-msg-max */
+
 #define NET_EMPIRE_MAX_NODES 16 /* must match EU_MAX_NODES (empire_units.h) */
 #define NET_EMPIRE_MAX_CELLS 32 /* must match EU_MAX_CLAIM_CELLS (empire_units.h) */
 #define NET_ZONE_ID_MAX 32
@@ -558,6 +570,21 @@ typedef struct {
     unsigned char goal;    /* HORSE_GOAL_* for SET_GOAL; 0 otherwise */
     unsigned char pad;
 } NetHorseInteract;
+
+/* NetChat -- see PACKET_CHAT's own doc comment above. Every string is NUL-terminated by the receiver before use
+ * (never trusted to be), and `from` on a client -> server packet is ignored: the server fills it from the name
+ * it bound to the sender's slot. */
+typedef struct {
+    NetHeader hdr;
+    unsigned char op;      /* chat_channel_rules.prn op-* */
+    unsigned char kind;    /* chk-* on a message */
+    unsigned char code;    /* note-* on a notice */
+    unsigned char number;  /* unused on the wire today: channel numbers are each client's own (WoW-style) */
+    char channel[NET_CHAT_NAME];
+    char from[NET_CHAT_NAME];
+    char to[NET_CHAT_NAME];
+    char text[NET_CHAT_TEXT];
+} NetChat;
 
 /* NetHorsePiles -- see PACKET_HORSE_PILES' own doc comment above. `horse` is the slot that dropped
  * it, or -1 when the sender does not know -- the same short-with--1 convention NetHorseEntry.occupant

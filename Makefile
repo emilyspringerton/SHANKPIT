@@ -36,6 +36,21 @@ test-collection-overlay:
 	  packages/collection/collection_overlay_rules.c packages/reflux/reflux_runtime.c -o /tmp/collection_overlay_test
 	cd /tmp && ./collection_overlay_test
 
+# WoW-style chat channels (SHANKPIT as the telepresence app; PACKET_CHAT, packages/chat/). The client half goes in the
+# lobby, the server half in the server; both link the PARENA rules (scripts/gen_chat_channel_rules.sh).
+LOBBY_SRC    += packages/chat/chat_client.c packages/chat/chat_channel_rules.c
+SERVER_SRC   += packages/chat/chat_server.c packages/chat/chat_channel_rules.c
+
+# Chat channels, headless: one server and five clients in one process over a packet queue, every line read back
+# through the REFLUX chat mod -- names, General, numbered channels, say/yell range and scene, whispers and /r, sticky
+# types, flood control, limits, offline, a lost hello, a dropped slot, hostile packets.
+.PHONY: test-chat-channels
+test-chat-channels:
+	$(CC) -std=c99 -O2 -Wall -Wextra -pedantic -Wno-unused-parameter -Ipackages/reflux -Ipackages/world \
+	  packages/chat/chat_test.c packages/chat/chat_client.c packages/chat/chat_server.c \
+	  packages/chat/chat_channel_rules.c packages/reflux/reflux_runtime.c -o /tmp/chat_channels_test -lm
+	cd /tmp && ./chat_channels_test
+
 # ---- Source-list export for CI ----
 # CI (.github/workflows/{tests,release}.yml) compiles the Windows lobby and the Linux server with
 # raw gcc/mingw lines instead of `make` (different libs/flags). Those lines used to carry a
