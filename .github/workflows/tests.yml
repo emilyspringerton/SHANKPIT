@@ -70,6 +70,14 @@ jobs:
           # settle, stay inside its joint limits, and rerun bit-identically.
           make test-physics
 
+      # Groove combat + beat sync: PARENA-generated rules (stdlib/shankpit/groove_*_rules.prn) through their hosts,
+      # plain gcc + libm. Its own step, ahead of the long brick end-to-end, so its result always shows.
+      - name: Groove combat and beat sync (moves, ranks, sync device, BPM detection)
+        shell: bash
+        run: |
+          set -euo pipefail
+          make test-groove-combat
+
       # NOCK filter chains in the engine: C runner over PARENA-generated DSP must match IDUNA
       # NOCK's TypeScript render bit-for-bit (plain gcc, no SDL).
       - name: Audio chain parity (PARENA stdlib/audio)
@@ -125,7 +133,6 @@ jobs:
           make check-wow-wire-rules
           make test-wow-wire
           make test-aim
-          make test-groove-combat
           make test-hmac
           make test-wow-ticket
           make test-wow-client
