@@ -24,6 +24,54 @@ LEVEL_LOBBY_SRC := $(WASM3_SRC) $(T0_HOST_SRC) apps/lobby/src/level_shell.c
 LOBBY_SRC    := apps/lobby/src/main.c packages/common/units_rules.c packages/protocol/wow_wire_rules.c apps/lobby/src/editor_widget_bridge.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/cutscene.c packages/simulation/typing_lesson.c packages/simulation/tyler_coldopen.c packages/simulation/tyler_e03_coldopen.c packages/simulation/tyler_fb01_coldopen.c packages/simulation/tyler_vh02_coldopen.c packages/simulation/tyler_vh03_coldopen.c packages/simulation/tyler_vh04_coldopen.c packages/simulation/tyler_voice_mod.c packages/simulation/day_night_clock.c packages/simulation/world_rules.c packages/simulation/witness_ai.c packages/simulation/zombie_brain.c packages/simulation/zombie_brain_rules.c packages/simulation/witness_sim.c packages/simulation/witness_rules.c packages/simulation/npc_archetype.c packages/simulation/zombie_values.c packages/simulation/avian_values.c packages/simulation/ai_brain_rules.c packages/simulation/world_alerts_mod.c packages/simulation/world_alert_bridge.c packages/simulation/zombies_awareness_rules.c packages/simulation/zombies_hud_bridge.c packages/simulation/zombies_pheromone_rules.c packages/simulation/hammer_tower.c packages/simulation/zombie_taxonomy.c packages/simulation/bioslurry.c packages/simulation/citizen_life.c packages/simulation/citizen_avatar.c packages/simulation/citizen_avatar_rules.c packages/simulation/dw_play.c packages/simulation/dw_engine.c packages/simulation/dw_match.c packages/simulation/dw_ladder.c packages/simulation/dw_stage.c packages/simulation/dw_stage_rules.c packages/simulation/dw_net.c packages/simulation/dw_rules.c packages/simulation/dw_citizen_rules.c packages/simulation/dw_rating.c packages/simulation/food_pickup.c packages/simulation/lab_station_host.c packages/simulation/lab_station_rules.c packages/simulation/shadow_war_host.c packages/simulation/shadow_war_rules.c packages/simulation/gun_items.c packages/simulation/chests.c packages/simulation/chest_rules.c packages/simulation/shield_packs.c packages/simulation/shield_regen_rules.c packages/simulation/combat_text_rules.c packages/simulation/giant_bug_values.c packages/simulation/giant_bug_brain.c packages/render/proc_tex.c packages/render/retro_material.c packages/render/retro_sky.c packages/render/sky_weather.c packages/render/retro_lighting.c packages/render/env_matrix.c packages/render/gl_shader.c packages/render/bloom.c packages/world/terrain.c packages/world/parena_runtime.c packages/world/png_decode_gen.c packages/ui/menu_gen.c packages/pellegrino_embed/os_menu_embed.c packages/audio/audio.c packages/audio/audio_wav.c packages/audio/wind_audio_rules.c packages/simulation/siren_rules.c packages/simulation/icecream_rules.c packages/audio/audio_chain.c packages/audio/audio_dsp_gen.c packages/goldenband/gband.c packages/goldenband/gskel.c packages/goldenband/gmesh.c packages/goldenband/gband_mesh_rig.c packages/goldenband/gseq.c packages/goldenband/gpose.c packages/goldenband/gsync.c packages/goldenband/gband_skel_npc.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c packages/simulation/brick_mod.c packages/simulation/brick_bodies.c packages/simulation/ambient_rules.c packages/simulation/lighting_rules.c packages/simulation/material_rules.c packages/simulation/structure_rules.c packages/simulation/garage_rules.c packages/simulation/buggy_rules.c packages/simulation/horse_rules.c packages/simulation/horse_goals.c packages/simulation/horse_poop_rules.c packages/simulation/citizen_actor_rules.c packages/simulation/citizen_actor.c packages/simulation/heli_rules.c packages/simulation/rocket_car_rules.c packages/simulation/drone_rules.c packages/simulation/airplane_rules.c packages/simulation/vehicle_salvage_rules.c packages/simulation/vehicle_burn_rules.c packages/simulation/br_stadium.c packages/simulation/anim_rules.c packages/simulation/groove_combat_rules.c packages/simulation/groove_sync_rules.c packages/simulation/slide_rules.c packages/simulation/empire_rules.c packages/simulation/empire_units_rules.c packages/render/camera_rules.c packages/render/filter_rules.c packages/simulation/ragdoll_pool.c packages/simulation/rigid_ragdoll.c packages/simulation/ragdoll_rules.c packages/goldenband/grb.c packages/simulation/mission.c packages/simulation/party_rules.c packages/simulation/chat_rules.c packages/simulation/hoverboard_rules.c packages/simulation/widget_rules.c packages/simulation/zone_rules.c packages/simulation/coop_host.c packages/simulation/zone_beacon.c $(EDU_LOBBY_SRC) $(LEVEL_LOBBY_SRC)
 SERVER_SRC   := apps/server/src/main.c packages/protocol/wow_wire_rules.c packages/common/units_rules.c packages/simulation/shield_packs.c packages/simulation/shield_regen_rules.c packages/simulation/combat_text_rules.c packages/simulation/story_ai.c packages/simulation/ai_nav.c packages/simulation/humanness.c packages/simulation/tyler_coldopen.c packages/simulation/tyler_e03_coldopen.c packages/simulation/tyler_fb01_coldopen.c packages/simulation/tyler_vh02_coldopen.c packages/simulation/tyler_vh03_coldopen.c packages/simulation/tyler_vh04_coldopen.c packages/simulation/tyler_voice_mod.c packages/simulation/day_night_clock.c packages/simulation/world_rules.c packages/simulation/witness_ai.c packages/simulation/zombie_brain.c packages/simulation/zombie_brain_rules.c packages/simulation/witness_sim.c packages/simulation/witness_rules.c packages/simulation/npc_archetype.c packages/simulation/zombie_values.c packages/simulation/avian_values.c packages/simulation/ai_brain_rules.c packages/simulation/giant_bug_values.c packages/simulation/giant_bug_brain.c packages/simulation/zombies_awareness_rules.c packages/simulation/zombies_hud_bridge.c packages/simulation/zombies_pheromone_rules.c packages/simulation/hammer_tower.c packages/simulation/zombie_taxonomy.c packages/simulation/bioslurry.c packages/simulation/citizen_life.c packages/simulation/citizen_avatar.c packages/simulation/citizen_avatar_rules.c packages/simulation/dw_engine.c packages/simulation/dw_match.c packages/simulation/dw_ladder.c packages/simulation/dw_stage.c packages/simulation/dw_stage_rules.c packages/simulation/dw_net.c packages/simulation/dw_rules.c packages/simulation/dw_citizen_rules.c packages/simulation/dw_rating.c packages/world/terrain.c packages/reflux/reflux_runtime.c packages/reflux/reflux_mod.c packages/simulation/brick_mod.c packages/simulation/brick_bodies.c packages/simulation/structure_rules.c packages/world/parena_runtime.c packages/goldenband/grb.c packages/simulation/vehicle_salvage_rules.c packages/simulation/garage_rules.c packages/simulation/buggy_rules.c packages/simulation/horse_rules.c packages/simulation/horse_goals.c packages/simulation/horse_poop_rules.c packages/simulation/citizen_actor_rules.c packages/simulation/citizen_actor.c packages/simulation/heli_rules.c packages/simulation/rocket_car_rules.c packages/simulation/drone_rules.c packages/simulation/airplane_rules.c packages/simulation/br_stadium.c packages/simulation/zone_rules.c packages/simulation/widget_rules.c packages/simulation/empire_units_rules.c packages/simulation/zone_beacon.c packages/simulation/coop_host.c packages/simulation/icecream_rules.c
 SERVERCTL_SRC:= apps/server/serverctl.c
+# The Collection overlay mod (Self Found on the stream; packages/collection/collection_overlay.h). Client only.
+LOBBY_SRC    += packages/collection/collection_overlay.c packages/collection/collection_overlay_rules.c
+
+# The Collection overlay, headless: feed -> REFLUX -> model -> stream lines, terminal, APPS page. Rules are PARENA:
+# regenerate with scripts/gen_collection_overlay_rules.sh after editing PARENA/stdlib/shankpit/collection_overlay_rules.prn.
+.PHONY: test-collection-overlay
+test-collection-overlay:
+	$(CC) -std=c99 -O2 -Wall -Wextra -pedantic -Wno-unused-parameter -Ipackages/reflux -Ipackages/world \
+	  packages/collection/collection_overlay_test.c packages/collection/collection_overlay.c \
+	  packages/collection/collection_overlay_rules.c packages/reflux/reflux_runtime.c -o /tmp/collection_overlay_test
+	cd /tmp && ./collection_overlay_test
+
+# /ascend: your WoW guilds' Discords from the Collection's GuildHerald feed (packages/collection/ascend.h). Client only.
+# Rules: PARENA/stdlib/shankpit/ascend_rules.prn via scripts/gen_ascend_rules.sh.
+LOBBY_SRC    += packages/collection/ascend.c packages/collection/ascend_rules.c
+.PHONY: test-ascend
+test-ascend:
+	$(CC) -std=c99 -O2 -Wall -Wextra -pedantic -Wno-unused-parameter -Ipackages/reflux -Ipackages/world \
+	  packages/collection/ascend_test.c packages/collection/ascend.c packages/collection/ascend_rules.c \
+	  packages/reflux/reflux_runtime.c -o /tmp/ascend_test
+	cd /tmp && ./ascend_test
+
+# WoW-style chat channels (SHANKPIT as the telepresence app; PACKET_CHAT, packages/chat/). The client half goes in the
+# lobby, the server half in the server; both link the PARENA rules (scripts/gen_chat_channel_rules.sh).
+LOBBY_SRC    += packages/chat/chat_client.c packages/chat/chat_channel_rules.c
+SERVER_SRC   += packages/chat/chat_server.c packages/chat/chat_channel_rules.c
+# The global chat bridge (General <-> IDUNA's cross-game chat bus; packages/chat/chat_bridge.h). Server only; its
+# worker thread is POSIX (curl), and it is off unless SHANKPIT_IDUNA_URL/_AGENT/_SECRET_FILE are set.
+SERVER_SRC   += packages/chat/chat_bridge.c packages/chat/chat_bridge_rules.c
+
+# The bridge's core, headless: what goes out, what comes in, tags, loop guards, pacing, the server hook and inject.
+.PHONY: test-chat-bridge
+test-chat-bridge:
+	$(CC) -std=c99 -O2 -Wall -Wextra -pedantic -Wno-unused-parameter -Ipackages/reflux -Ipackages/world \
+	  packages/chat/chat_bridge_test.c packages/chat/chat_bridge.c packages/chat/chat_server.c \
+	  packages/chat/chat_bridge_rules.c packages/chat/chat_channel_rules.c packages/reflux/reflux_runtime.c \
+	  -o /tmp/chat_bridge_test -lm -pthread
+	cd /tmp && ./chat_bridge_test
+
+# Chat channels, headless: one server and five clients in one process over a packet queue, every line read back
+# through the REFLUX chat mod -- names, General, numbered channels, say/yell range and scene, whispers and /r, sticky
+# types, flood control, limits, offline, a lost hello, a dropped slot, hostile packets.
+.PHONY: test-chat-channels
+test-chat-channels:
+	$(CC) -std=c99 -O2 -Wall -Wextra -pedantic -Wno-unused-parameter -Ipackages/reflux -Ipackages/world \
+	  packages/chat/chat_test.c packages/chat/chat_client.c packages/chat/chat_server.c \
+	  packages/chat/chat_channel_rules.c packages/reflux/reflux_runtime.c -o /tmp/chat_channels_test -lm
+	cd /tmp && ./chat_channels_test
 
 # ---- Source-list export for CI ----
 # CI (.github/workflows/{tests,release}.yml) compiles the Windows lobby and the Linux server with
@@ -215,7 +263,7 @@ server: $(SERVER_BIN)
 
 $(SERVER_BIN): $(SERVER_SRC) | $(BIN_DIR)
 	@echo "🔨 Building Game Server..."
-	$(CC) $(CFLAGS) $(INCLUDES) $(SERVER_SRC) -o $@ $(LIBS_M)
+	$(CC) $(CFLAGS) $(INCLUDES) $(SERVER_SRC) -o $@ $(LIBS_M) -pthread
 
 # ---- RIGID BODY PHYSICS (GOLDEN BAND grb, vendored in packages/goldenband) ----
 # Founder real-time 2026-09-27: "upgrade shankpit ... to formal rigid body physics".

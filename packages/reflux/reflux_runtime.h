@@ -273,6 +273,34 @@ static inline int reflux_action_is_collection(int action_type) {
     return action_type >= REFLUX_ACTION_COLLECTION_FIRST && action_type <= REFLUX_ACTION_COLLECTION_LAST;
 }
 
+/* 3070-3079: Self Found (the Collection's transaction tracker, PARENA/stdlib/collection/selffound.prn). 3070/3071
+ * are dispatched inside WoW; 3072-3075 are the Collection feed, which packages/collection/ (the stream overlay)
+ * dispatches into THIS host. Outside 2000-2999 because Self Found has no spec addon number (BOARD.md "Extra REFLUX
+ * ranges"). */
+#define REFLUX_ACTION_SELFFOUND_FIRST 3070
+#define REFLUX_ACTION_SELFFOUND_LAST  3079
+
+static inline int reflux_action_is_selffound(int action_type) {
+    return action_type >= REFLUX_ACTION_SELFFOUND_FIRST && action_type <= REFLUX_ACTION_SELFFOUND_LAST;
+}
+
+/* 1200-1219: chat channels (WoW-style; SHANKPIT as the telepresence app, packages/chat/). 1200 message, 1201 joined,
+ * 1202 left, 1203 notice (client), 1204 routed (server), 1205 a General line queued for the global bridge, 1206 lines
+ * shown from another world (server; PARENA/stdlib/shankpit/chat_bridge_rules.prn). Payloads are in
+ * PARENA/stdlib/shankpit/chat_channel_rules.prn (rx-chat-*). Text never rides REFLUX: a row's c is the seq of a
+ * text the chat client holds. */
+#define REFLUX_ACTION_CHAT_FIRST   1200
+#define REFLUX_ACTION_CHAT_MESSAGE 1200
+#define REFLUX_ACTION_CHAT_JOINED  1201
+#define REFLUX_ACTION_CHAT_LEFT    1202
+#define REFLUX_ACTION_CHAT_NOTICE  1203
+#define REFLUX_ACTION_CHAT_ROUTED  1204
+#define REFLUX_ACTION_CHAT_LAST    1219
+
+static inline int reflux_action_is_chat(int action_type) {
+    return action_type >= REFLUX_ACTION_CHAT_FIRST && action_type <= REFLUX_ACTION_CHAT_LAST;
+}
+
 #define REFLUX_LOG_CAPACITY 256
 
 typedef struct {

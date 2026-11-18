@@ -619,6 +619,129 @@ Two world-reacts-to-your-weapon systems, both in the lobby/server build and both
   none of an earlier fall); not yet confirmed visually in a live match (headless tests only); the Windows build compiles the
   same code but is CI-only.
 
+## Chat channels: SHANKPIT as the telepresence app (2026-11-17)
+
+Founder: *"the telepresence app is shankpit itself the engine has all the features we just need to bundle in the
+affordances it will start with world of warcraft style chat channels for back channeling"*. Everyone in a
+networked session can talk across the whole world, in side channels, or one to one, the way WoW players do.
+
+| You type | What happens |
+| --- | --- |
+| **Enter** / **/** | opens the chat box (`/` with the slash typed). The prompt shows where Enter sends: `Say:`, `[2. backroom]:`, `To [Bjorn]:` |
+| text | the sticky type: Say until you pick another. Say, a channel and a whisper are sticky; yell is not |
+| `/s` `/say` | nearby: 40 m, same scene |
+| `/y` `/yell` `/sh` | far: 300 m, same scene |
+| `/1` ... `/10` | a numbered channel. Everyone starts in **General** as `/1` |
+| `/join name` | joins or creates a channel, which takes your lowest free number (WoW numbering, each player's own) |
+| `/leave n` | leaves a channel |
+| `/w name text` (`/t`, `/tell`, `/msg`) | whispers one person, anywhere. `/r text` replies to your last whisper |
+| `/chatwho n` | lists a channel's members |
+| `/name newname` | claims a display name. By default it's your IDUNA display name, else `SHANKPIT_CHAT_NAME`, else the server's `P<slot>` |
+| `/chathelp` | the short version of this table |
+
+Any other `/command` is still the macro language. Lines are coloured the WoW way: say white, yell red, channels
+peach, whispers pink, notices yellow. Long messages wrap (up to 200 characters).
+
+**How it's built (PARENA first, REFLUX everything):**
+- **Rules:** every decision is `PARENA/stdlib/shankpit/chat_channel_rules.prn` → `packages/chat/chat_channel_rules.c`
+  (`scripts/gen_chat_channel_rules.sh`). That covers the ops, kinds and notices; channel numbering; name and
+  channel-name rules; who hears what (range, scene, membership, target); flood control (6 messages per 5 s);
+  colours; sticky types; and the REFLUX family. The C is plumbing.
+- **Wire:** `PACKET_CHAT` (27, `protocol.h`). The server binds a display name to each slot, so nobody can speak as
+  someone else, keeps the channel table, and routes by its own view of every slot (`packages/chat/chat_server.c`).
+  It also dispatches `CHAT_ROUTED` (1204) for server-side mods.
+- **Client:** `packages/chat/chat_client.c` turns server packets into REFLUX rows: `CHAT_MESSAGE`/`JOINED`/`LEFT`/
+  `NOTICE` (1200-1203). The chat mod polls REFLUX for the pane's lines, so any other mod (a level, the stream
+  overlay, a notifier) can react to chat the same way.
+- **Test:** `make test-chat-channels` (headless, 79 checks). It runs one server and five clients over a packet
+  queue: names, General, numbered channels, range and scene, whispers and `/r`, sticky types, flood control, limits,
+  offline, a lost hello, a dropped slot and hostile packets.
+- **Not verified:**
+  - The lobby wasn't built or run with this; SDL2 isn't on the dev box, so CI's lobby build is the check. The
+    server's `main.c` was syntax-checked with the chat wiring.
+  - While BRAWLPIT is in front it keeps Enter; press Shift+M to the world to chat.
+  - UDP can drop a line (only the hello is retried).
+
+## /ascend: your WoW guilds' Discords (2026-11-17)
+
+Founder: *"im in these guilds and the message of the day has the discord info but i dont want to type it in on my
+wotan account ... i should be able to type /ascend in the shankpit terminal to sync my discord from the wow data"*.
+
+- **Where the data comes from:** the Collection's **GuildHerald** WoW addon logs every guild Message of the Day and
+  guild info text, and the Discord invites in them. PARENA's `scripts/collection-guild-feed.sh` turns that into
+  `COLLECTION_GUILD_FEED` (REFLUX rows + names) and an NDJSON log stream (`COLLECTION_GUILDS_LOG`) for community
+  work.
+- **In SHANKPIT's chat box:**
+  - **`/ascend`** lists each guild and its `discord.gg/...` links.
+  - **`/ascend join`** opens the next 5 in your browser, so Discord can take you in; the rest wait for the next
+    `/ascend join`, and nothing opens twice in a session.
+- **Why it doesn't join for you:** Discord doesn't let an app put a person into a server (that needs a bot already in
+  each server), so joining stays one click in Discord, which also shows the servers you're already in.
+- **Rules:** PARENA `stdlib/shankpit/ascend_rules.prn` → `packages/collection/ascend_rules.c`
+  (`scripts/gen_ascend_rules.sh`). It decides which feed rows count, 5 links per join, and the invite-code check
+  (applied again before any URL is built). The feed's rows go through REFLUX; opening links dispatches 3085.
+- **Test:** `make test-ascend` (31 checks).
+- **Not yet:** linking your Discord account. It would need Discord sign-in on IDUNA (the way HSRIP signs in to Twitch)
+  and a Discord app from the founder.
+
+## The global chat bridge (2026-11-17)
+
+Founder: *"WE NEED THE CHAT BRIDGE TO WORK GLOBALY"*. A world's **General** channel joins IDUNA's cross-game chat
+bus (`POST/GET /api/v1/chat/messages`). The same bus already carries GFD's MUD and server, REDGARDEN's Battlegrounds
+client, BIG_O, GTA7 on EINHORN_SURVIVAL and SHANKPIT's phone app. Lines from other worlds appear in General tagged
+with where they came from: `[1. General] [MC:Steve]: hi`, `[GFD:Goblin]`, `[SHANKPIT:Freya]` (another SHANKPIT
+world), `[SP:Pip]` (a phone). Only General crosses; say, yell, whispers and custom channels stay in the world as
+its back channels.
+
+- **Rules:** PARENA's `stdlib/shankpit/chat_bridge_rules.prn` → `packages/chat/chat_bridge_rules.c`
+  (`scripts/gen_chat_bridge_rules.sh`). It decides the sources, who shows what, what goes out, tags, the loop
+  guards, and pacing (every 2 s; 25 lines a poll; 64 queued while the bus is away, oldest dropped first). The
+  same rulebook compiles to Java for GTA7.
+- **Loops:**
+  - A world never shows its own lines.
+  - Every SHANKPIT server posts as `shankpit_server`, so each remembers the ids of its own posts and skips only
+    those; two SHANKPIT worlds still hear each other.
+  - A line that came in over the bridge never goes back out.
+  - A world joining doesn't replay history: its first reply only sets the cursor.
+- **Turning it on (server):** set all three, with no defaults:
+  - `SHANKPIT_IDUNA_URL`
+  - `SHANKPIT_IDUNA_AGENT` (an IDUNA agent for this server, like GTA7's `GTA7-SERVER`)
+  - `SHANKPIT_IDUNA_SECRET_FILE`
+
+  The worker thread speaks HTTPS through `curl`. The secret and the bearer token only ever live in 0600 files in a
+  private temp folder, never on a command line or in a log.
+- **IDUNA needs** `shankpit_server` accepted as a `sender_source`, and the agent created (IDUNA PR).
+- **Test:** `make test-chat-bridge` (40 checks). The worker itself isn't unit-tested (it's network code).
+- **REFLUX:** 1205 a General line queued for the bus, 1206 lines shown from another world.
+
+## The Collection overlay: Self Found on the stream (2026-11-17)
+
+Founder: *"ship all of this into the SHANKPIT stream overlay ..."* and *"PARENA FIRST MODS FIRST REFLUX ALL THE
+THINGS"*. The Collection of Value's **Self Found** WoW addon tracks every character's transactions. Each character
+stays self-found until it buys or posts on the auction house, trades with a player, takes mail from any player, or
+withdraws from a guild bank. It also maps every vendor it visits. This mod brings that data into SHANKPIT.
+
+- **How it gets here:** WoW SavedVariables → PARENA's `scripts/collection-sf-feed.sh` (outside the game) → a
+  feed file of REFLUX rows (3072-3075) → `CollectionBridge` dispatches them into this client's REFLUX log →
+  `CollectionOverlay`, a REFLUX mod, polls them.
+- **Where the decisions are:** in PARENA, `stdlib/shankpit/collection_overlay_rules.prn` →
+  `packages/collection/collection_overlay_rules.c` (`scripts/gen_collection_overlay_rules.sh`). That covers which
+  rows are the Collection's, the colour and order of each status, when a banner shows, lines per surface, and
+  timing. The C is plumbing.
+- **Turning it on:** set `COLLECTION_FEED` to the file the PARENA script writes. There is no default; while it's
+  unset the overlay says so. The feed file is re-read every 5 s when it changes.
+- **Ctrl+Shift+C** in broadcast mode (F3) toggles the overlay. It shows "SELF FOUND n/m", the characters in
+  colour (green: since level 1; amber: since tracking began; red: broken), and a red banner when a character has
+  just broken. It is drawn into the program view **before** the native stream reads the frame, so stream viewers
+  see it.
+- **Also built, not wired into a screen yet:** `collection_terminal` (`sf`, `sf vendors`, `sf help`) for a terminal,
+  and `collection_apps_html`, a full page for the OS APPS grid (which PELLEGRINO draws).
+- **Test:** `make test-collection-overlay` (headless, 51 checks). It covers the real feed PARENA's test writes, a
+  character newly breaking, 300 characters through the 256-row REFLUX ring with none lost, reload-on-change, the
+  "off" states and HTML escaping.
+- **Not verified:** the lobby itself was not built or run with this; its CI build is the check. Not built yet: the
+  social meeting terminal and 3D telepresence surfaces.
+
 ## Broadcast cameras, director and native stream (2026-10-02)
 
 For esports: **F3** (or pause menu -> BROADCAST CAMERAS) puts you behind a camera rig. The *program* camera fills the
