@@ -155,7 +155,7 @@ static int is_own(const ChatBridge *b, long long id) {
 int chat_bridge_ingest(ChatBridge *b, const char *json, size_t len, ChatBridgeShown *out, int max) {
     if (!b || !json) return 0;
     size_t pos = 0, s, e;
-    int n = 0;
+    int n = 0, objects = 0;
     int lim = br_max_per_poll();
     if (max > lim) max = lim;
     while (next_object(json, len, &pos, &s, &e)) {
@@ -163,6 +163,7 @@ int chat_bridge_ingest(ChatBridge *b, const char *json, size_t len, ChatBridgeSh
         size_t on = e - s;
         long long id = int_field(o, on, "id");
         if (id <= 0) continue;
+        objects++;
         if (!b->primed) { if (id > b->last_id) b->last_id = id; continue; }
         if (id <= b->last_id) continue;
         char source[32], name[64], body[NET_CHAT_TEXT];
@@ -180,7 +181,9 @@ int chat_bridge_ingest(ChatBridge *b, const char *json, size_t len, ChatBridgeSh
         b->last_id = id;
         b->shown++;
     }
-    b->primed = 1;
+    /* The bus lists oldest first (id ASC, br-max-per-poll at a time), so priming pages forward until a reply comes
+       back short: only then is last_id the newest line, and nothing older is ever shown. */
+    if (!b->primed && objects < lim) b->primed = 1;
     return n;
 }
 

@@ -32,7 +32,8 @@ typedef struct {
     ChatBridgeLine q[CHAT_BRIDGE_QUEUE];
     int q_head, q_count;
     long long last_id;            /* highest bus id seen */
-    int primed;                   /* the first reply only sets last_id: a world joining doesn't replay history */
+    int primed;                   /* replies only move last_id until one comes back short (the bus is oldest-first):
+                                     a world joining never replays history */
     long long own[CHAT_BRIDGE_OWN];
     int own_next;
     unsigned long queued, dropped, shown;

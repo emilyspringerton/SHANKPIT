@@ -53,6 +53,26 @@ int main(void) {
     for (int i = 0; i < reflux_host_log_size(); i++) if (reflux_host_action_type_at(i) == rx_bridge_out()) out_rows++;
     EQI(out_rows, 2 + br_post_queue() + 5, "every offered General line is a CHAT_BRIDGE_OUT REFLUX row");
 
+    /* ---- in: priming pages through the oldest-first bus without showing history ---------------------------- */
+    {
+        ChatBridge pb;
+        chat_bridge_init(&pb);
+        char page[16384];
+        size_t pl = (size_t)snprintf(page, sizeof(page), "[");
+        for (int i = 0; i < br_max_per_poll(); i++)
+            pl += (size_t)snprintf(page + pl, sizeof(page) - pl, "%s{\"id\":%d,\"sender_name\":\"Old\",\"sender_source\":\"gfd_server\",\"body\":\"history\"}", i ? "," : "", i + 1);
+        snprintf(page + pl, sizeof(page) - pl, "]");
+        ChatBridgeShown sh[64];
+        EQI(chat_bridge_ingest(&pb, page, strlen(page), sh, 64), 0, "a full first page shows nothing");
+        EQI(pb.primed, 0, "and is not the end of the bus yet (oldest first)");
+        EQI(chat_bridge_since(&pb), br_max_per_poll(), "the cursor pages forward");
+        const char *tail = "[{\"id\":26,\"sender_name\":\"Old\",\"sender_source\":\"gfd_server\",\"body\":\"still history\"}]";
+        EQI(chat_bridge_ingest(&pb, tail, strlen(tail), sh, 64), 0, "a short page shows nothing either");
+        EQI(pb.primed, 1, "but ends priming at the newest line");
+        const char *fresh = "[{\"id\":27,\"sender_name\":\"New\",\"sender_source\":\"gfd_server\",\"body\":\"now\"}]";
+        EQI(chat_bridge_ingest(&pb, fresh, strlen(fresh), sh, 64), 1, "after priming, new lines show");
+    }
+
     /* ---- in: the first reply primes, then other worlds show tagged ----------------------------------------- */
     const char *first = "[{\"id\":40,\"channel\":\"gta7\",\"sender_name\":\"Steve\",\"sender_source\":\"einhorn_survival\",\"body\":\"old news\"},"
                         "{\"id\":41,\"channel\":\"yell\",\"sender_name\":\"Goblin\",\"sender_source\":\"gfd_server\",\"body\":\"older\"}]";
