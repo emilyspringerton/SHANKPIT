@@ -660,6 +660,19 @@ static PhysPlayerStatsHook g_phys_stats_rof_hook = NULL;
 static inline void phys_set_player_stats_hooks(PhysPlayerStatsHook health, PhysPlayerStatsHook rof) {
     g_phys_stats_health_hook = health; g_phys_stats_rof_hook = rof;
 }
+/* Groove combat hooks (packages/simulation/groove_host.h; rules in PARENA stdlib/shankpit/groove_*_rules.prn).
+   g_phys_groove_hook runs at the top of every update_weapons tick and returns 1 when it took the tick over (the
+   knife's dance-fighting moves and the E beat-sync device); g_phys_weapon_hit_hook sees every hitscan gun hit and
+   returns the damage to deal (the synced AR and the style-rank bonus), noting the hit for the style meter. Both
+   NULL by default: a build that never installs them is the engine exactly as it was. */
+typedef int (*PhysGrooveHook)(PlayerState *p, PlayerState *targets, int weapon, int shoot, int ability_press,
+                              int ability2_press, unsigned int now_ms, unsigned int respawn_delay_ms);
+typedef int (*PhysWeaponHitHook)(PlayerState *p, PlayerState *target, int weapon, int damage, unsigned int now_ms);
+static PhysGrooveHook g_phys_groove_hook = NULL;
+static PhysWeaponHitHook g_phys_weapon_hit_hook = NULL;
+static inline void phys_set_groove_hooks(PhysGrooveHook groove, PhysWeaponHitHook hit) {
+    g_phys_groove_hook = groove; g_phys_weapon_hit_hook = hit;
+}
 /* g_local_match_reset_hook -- called at the top of every local_init_match (packages/simulation/
    local_game.h) so world state that lives outside ServerState (destructible brick,
    packages/simulation/brick_world.h) is reset with the match instead of leaking a previous round's
@@ -4645,6 +4658,9 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
     }
 
     int w = p->current_weapon;
+    /* Groove combat (see g_phys_groove_hook): ticks the fighter, and takes over the knife when enabled. */
+    if (g_phys_groove_hook &&
+        g_phys_groove_hook(p, targets, w, shoot, ability_press, ability2_press, now_ms, respawn_delay_ms)) return;
     if (w == WPN_SPRAYCAN) {
         /* Spray can: colour cycle on the rising edge of [ / ] (ammo[WPN_SPRAYCAN] = colour index
            0..SPRAY_COLOR_COUNT-1), is_shooting held while the trigger is down so every client
@@ -4813,7 +4829,8 @@ void update_weapons(PlayerState *p, PlayerState *targets, Projectile *projectile
 #endif
                     int damage = WPN_STATS[w].dmg;
                     if (hit_type == 2 && targets[i].shield <= 0) { damage *= 3; p->hit_feedback = 20;
-                    } else { p->hit_feedback = 10; } 
+                    } else { p->hit_feedback = 10; }
+                    if (g_phys_weapon_hit_hook) damage = g_phys_weapon_hit_hook(p, &targets[i], w, damage, now_ms);
                     katana_apply_damage(p, &targets[i], damage, p->hit_feedback, now_ms, respawn_delay_ms);
                     combat_text_note_damage(p, damage, now_ms);
                     if (damage > 0) combat_text_note_damage(p, damage, now_ms);

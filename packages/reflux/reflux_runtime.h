@@ -241,6 +241,27 @@ static inline int reflux_action_is_brawlpit(int action_type) {
     return action_type >= REFLUX_ACTION_BP_FIRST && action_type <= REFLUX_ACTION_BP_LAST;
 }
 
+/* 1200-1299: groove combat (founder 2026-11-18: "smooth criminal style fighting ... all reflux powered"). The rules
+ * are PARENA (stdlib/shankpit/groove_combat_rules.prn); packages/simulation/groove_combat.h dispatches these. Every
+ * move a fighter starts, every hit, every combo step and every freeze is on the log, so a HUD, a crowd, a scorer or
+ * a level script reacts to the fight without touching the combat code. Move ids are GC_MOVE_*, grades GC_GRADE_*. */
+#define REFLUX_ACTION_COMBAT_FIRST 1200
+#define REFLUX_ACTION_COMBAT_MOVE_STARTED 1200   /* a = player_id, b = GC_MOVE_*, c = GC_GRADE_* (0 off, 1 good, 2 perfect) */
+#define REFLUX_ACTION_COMBAT_HIT 1201            /* a = attacker player_id, b = victim player_id, c = damage dealt */
+#define REFLUX_ACTION_COMBAT_COMBO 1202          /* a = player_id, b = combo count (>= 2), c = style after */
+#define REFLUX_ACTION_COMBAT_FREEZE 1203         /* a = player_id, b = fighters staggered, c = style spent */
+#define REFLUX_ACTION_COMBAT_EVADED 1204         /* a = evader player_id, b = attacker player_id, c = GC_MOVE_* evading */
+#define REFLUX_ACTION_COMBAT_KNOCKDOWN 1205      /* a = attacker player_id, b = victim player_id, c = GC_MOVE_* */
+#define REFLUX_ACTION_COMBAT_RANK_CHANGED 1206   /* a = player_id, b = rank (0 D .. 6 SSS), c = style */
+#define REFLUX_ACTION_COMBAT_SYNC_LOCKED 1207    /* a = player_id, b = BPM x10, c = tap confidence x1000 (the knife sync device) */
+#define REFLUX_ACTION_COMBAT_SYNC_EXPIRED 1208   /* a = player_id, b = BPM x10 that lapsed, c unused */
+#define REFLUX_ACTION_COMBAT_BPM_DETECTED 1209   /* a = source id (a deck), b = BPM x10, c = confidence x1000 */
+#define REFLUX_ACTION_COMBAT_LAST 1299
+
+static inline int reflux_action_is_combat(int action_type) {
+    return action_type >= REFLUX_ACTION_COMBAT_FIRST && action_type <= REFLUX_ACTION_COMBAT_LAST;
+}
+
 /* 2000-2999: RESERVED for the Collection of Value (founder's WoW Forever addons, 2026-11-13). Not dispatched
  * by this host; reserved here so no SHANKPIT family is ever numbered into it and a relay between hosts never
  * sees two meanings for one type. Ten types per addon number 1..100 (addon n: 2000 + (n-1)*10 .. +9); the
