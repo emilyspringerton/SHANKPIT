@@ -47,6 +47,7 @@
 #include "../../../packages/simulation/horse_interact.h"    /* the request channel's own policy */
 #include "../../../packages/reflux/reflux_runtime.h"         /* the horse tick dispatches its family here */
 #include "../../../packages/chat/chat_server.h"              /* PACKET_CHAT: WoW-style chat channels (PARENA rules) */
+#include "../../../packages/chat/chat_bridge.h"              /* the global chat bridge over IDUNA's chat bus */
 #include "../../../packages/simulation/vehicle_salvage_rules_host.h" /* PARENA car components */
 #include "../../../packages/simulation/garage_rules_host.h" /* PARENA garage rules */
 #include "../../../packages/simulation/heli_rules_host.h"
@@ -1133,20 +1134,54 @@ static void server_chat_send(void *ctx, int to, const NetChat *pkt) {
 /* server_handle_chat -- one PACKET_CHAT. The datagram is untrusted: chat_server_handle clips every string, ignores
  * the claimed sender name and routes by the server's own view of the slots (welcomed, live, scene, position). Only
  * the op and the count are logged, never what was said. */
-static void server_handle_chat(int from, const char *buffer, int size) {
-    if (size < (int)sizeof(NetChat)) return;
-    if (!g_chat_server_ready) { chat_server_init(&g_chat_server); g_chat_server_ready = 1; }
-    static ChatPeer peers[MAX_CLIENTS];
+static void server_chat_peers(ChatPeer *peers) {
     for (int i = 0; i < MAX_CLIENTS; i++) {
         const PlayerState *p = &local_state.players[i];
         peers[i].active = slots[i].active && slots[i].welcomed && p->active && !p->is_bot;
         peers[i].scene = p->scene_id;
         peers[i].x = p->x; peers[i].y = p->y; peers[i].z = p->z;
     }
+}
+
+/* The global chat bridge (packages/chat/chat_bridge.h): General <-> IDUNA's cross-game chat bus. Off unless
+ * SHANKPIT_IDUNA_URL, SHANKPIT_IDUNA_AGENT and SHANKPIT_IDUNA_SECRET_FILE are set. */
+static ChatBridge g_chat_bridge;
+static ChatBridgeNet *g_chat_bridge_net = NULL;
+
+static void server_chat_bridge_hook(void *ctx, int slot, const char *channel, const char *name, const char *text) {
+    (void)ctx;
+    chat_bridge_offer(&g_chat_bridge, slot, channel, name, text);
+}
+
+/* Once per server loop: start the bridge the first time, then trade lines with the worker. */
+static void server_chat_bridge_tick(void) {
+    static int started = 0;
+    if (!started) {
+        started = 1;
+        if (!g_chat_server_ready) { chat_server_init(&g_chat_server); g_chat_server_ready = 1; }
+        chat_bridge_init(&g_chat_bridge);
+        g_chat_bridge_net = chat_bridge_net_start();
+        if (g_chat_bridge_net) {
+            g_chat_server.on_channel = server_chat_bridge_hook;
+            g_chat_server.on_channel_ctx = NULL;
+        }
+    }
+    if (!g_chat_bridge_net) return;
+    static ChatPeer peers[MAX_CLIENTS];
+    server_chat_peers(peers);
+    chat_bridge_net_tick(g_chat_bridge_net, &g_chat_bridge, &g_chat_server, peers, get_server_time(), server_chat_send, NULL);
+}
+
+static void server_handle_chat(int from, const char *buffer, int size) {
+    if (size < (int)sizeof(NetChat)) return;
+    if (!g_chat_server_ready) { chat_server_init(&g_chat_server); g_chat_server_ready = 1; }
+    static ChatPeer peers[MAX_CLIENTS];
+    server_chat_peers(peers);
     NetChat in;
     memcpy(&in, buffer, sizeof(in));
     int sent = chat_server_handle(&g_chat_server, from, &in, peers, get_server_time(), server_chat_send, NULL);
     NET_SERVER_LOG("CHAT op=%d from=%d sent=%d", (int)in.op, from, sent);
+    (void)sent;   /* only the log reads it, and the log can compile away */
 }
 
 static int ensure_slot_for_sender(const struct sockaddr_in *sender, int allow_alloc) {
@@ -2987,6 +3022,7 @@ int main(int argc, char *argv[]) {
             }
         }
         server_shield_packs_tick();
+        server_chat_bridge_tick();   /* the global chat bridge: General <-> IDUNA's chat bus (off unless configured) */
         recorder_write_frame(tick, now);
         if ((tick % SERVER_SNAPSHOT_INTERVAL_TICKS) == 0) {
             server_broadcast();

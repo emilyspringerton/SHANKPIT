@@ -264,7 +264,8 @@ static inline int reflux_action_is_selffound(int action_type) {
 }
 
 /* 1200-1219: chat channels (WoW-style; SHANKPIT as the telepresence app, packages/chat/). 1200 message, 1201 joined,
- * 1202 left, 1203 notice (client), 1204 routed (server). Payloads are in
+ * 1202 left, 1203 notice (client), 1204 routed (server), 1205 a General line queued for the global bridge, 1206 lines
+ * shown from another world (server; PARENA/stdlib/shankpit/chat_bridge_rules.prn). Payloads are in
  * PARENA/stdlib/shankpit/chat_channel_rules.prn (rx-chat-*). Text never rides REFLUX: a row's c is the seq of a
  * text the chat client holds. */
 #define REFLUX_ACTION_CHAT_FIRST   1200

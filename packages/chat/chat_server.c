@@ -40,6 +40,29 @@ static int reserved_default(const char *s) {
 
 void chat_server_init(ChatServer *s) { memset(s, 0, sizeof(*s)); }
 
+static ChatServerChannel *find_channel(ChatServer *s, const char *name);
+
+int chat_server_inject(ChatServer *s, const char *channel, const char *from, const char *text, const ChatPeer *peers,
+                       unsigned int now_ms, ChatServerSend send, void *ctx) {
+    if (!s || !channel || !from || !text || !peers || !send) return 0;
+    if (!chan_msg_len_ok((int)strlen(text))) return 0;
+    ChatServerChannel *ch = find_channel(s, channel);
+    if (!ch) return 0;
+    NetChat o;
+    memset(&o, 0, sizeof(o));
+    o.hdr.type = PACKET_CHAT;
+    o.hdr.timestamp = now_ms;
+    o.op = (unsigned char)op_msg();
+    o.kind = (unsigned char)chk_channel();
+    field(o.channel, sizeof(o.channel), ch->name, sizeof(ch->name));
+    field(o.from, sizeof(o.from), from, strlen(from) + 1);
+    field(o.text, sizeof(o.text), text, strlen(text) + 1);
+    int got = 0;
+    for (int i = 1; i < MAX_CLIENTS; i++)
+        if (peers[i].active && ch->member[i]) { send(ctx, i, &o); got++; }
+    return got;
+}
+
 const char *chat_server_name(const ChatServer *s, int slot) {
     return (slot >= 0 && slot < MAX_CLIENTS) ? s->names[slot] : "";
 }
@@ -200,6 +223,7 @@ int chat_server_handle(ChatServer *s, int from, const NetChat *in, const ChatPee
             field(o.channel, sizeof(o.channel), ch->name, sizeof(ch->name));
             for (int i = 1; i < MAX_CLIENTS; i++)
                 if (peers[i].active && chan_delivers(kind, 0, 0, ch->member[i] ? 1 : 0, 0)) { send(ctx, i, &o); got++; }
+            if (s->on_channel) s->on_channel(s->on_channel_ctx, from, ch->name, s->names[from], text);
         } else {
             kind = (op == op_say()) ? chk_say() : chk_yell();
             o.kind = (unsigned char)kind;

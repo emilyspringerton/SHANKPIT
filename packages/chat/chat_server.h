@@ -28,6 +28,8 @@ typedef struct {
 } ChatPeer;
 
 typedef void (*ChatServerSend)(void *ctx, int to_slot, const NetChat *pkt);
+/* Sees every channel line the server routes (the global chat bridge listens here for General). */
+typedef void (*ChatServerChannelHook)(void *ctx, int slot, const char *channel, const char *name, const char *text);
 
 typedef struct {
     char name[NET_CHAT_NAME];
@@ -43,6 +45,8 @@ typedef struct {
     unsigned char rate_told[MAX_CLIENTS];
     ChatServerChannel ch[CHAT_SERVER_CHANNELS];
     unsigned long routed, refused;
+    ChatServerChannelHook on_channel;   /* optional; NULL = nobody listening */
+    void *on_channel_ctx;
 } ChatServer;
 
 void chat_server_init(ChatServer *s);
@@ -53,5 +57,9 @@ int chat_server_handle(ChatServer *s, int from, const NetChat *in, const ChatPee
                        ChatServerSend send, void *ctx);
 /* The slot's bound name ("" before it has chatted). */
 const char *chat_server_name(const ChatServer *s, int slot);
+/* A line from outside this world (the global chat bridge) into a channel, shown as `from` (already tagged, e.g.
+ * "MC:Steve"). Goes to every live member, never to the channel hook (so it can't loop back out). Returns sent. */
+int chat_server_inject(ChatServer *s, const char *channel, const char *from, const char *text, const ChatPeer *peers,
+                       unsigned int now_ms, ChatServerSend send, void *ctx);
 
 #endif

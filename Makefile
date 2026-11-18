@@ -40,6 +40,18 @@ test-collection-overlay:
 # lobby, the server half in the server; both link the PARENA rules (scripts/gen_chat_channel_rules.sh).
 LOBBY_SRC    += packages/chat/chat_client.c packages/chat/chat_channel_rules.c
 SERVER_SRC   += packages/chat/chat_server.c packages/chat/chat_channel_rules.c
+# The global chat bridge (General <-> IDUNA's cross-game chat bus; packages/chat/chat_bridge.h). Server only; its
+# worker thread is POSIX (curl), and it is off unless SHANKPIT_IDUNA_URL/_AGENT/_SECRET_FILE are set.
+SERVER_SRC   += packages/chat/chat_bridge.c packages/chat/chat_bridge_rules.c
+
+# The bridge's core, headless: what goes out, what comes in, tags, loop guards, pacing, the server hook and inject.
+.PHONY: test-chat-bridge
+test-chat-bridge:
+	$(CC) -std=c99 -O2 -Wall -Wextra -pedantic -Wno-unused-parameter -Ipackages/reflux -Ipackages/world \
+	  packages/chat/chat_bridge_test.c packages/chat/chat_bridge.c packages/chat/chat_server.c \
+	  packages/chat/chat_bridge_rules.c packages/chat/chat_channel_rules.c packages/reflux/reflux_runtime.c \
+	  -o /tmp/chat_bridge_test -lm -pthread
+	cd /tmp && ./chat_bridge_test
 
 # Chat channels, headless: one server and five clients in one process over a packet queue, every line read back
 # through the REFLUX chat mod -- names, General, numbered channels, say/yell range and scene, whispers and /r, sticky
@@ -241,7 +253,7 @@ server: $(SERVER_BIN)
 
 $(SERVER_BIN): $(SERVER_SRC) | $(BIN_DIR)
 	@echo "🔨 Building Game Server..."
-	$(CC) $(CFLAGS) $(INCLUDES) $(SERVER_SRC) -o $@ $(LIBS_M)
+	$(CC) $(CFLAGS) $(INCLUDES) $(SERVER_SRC) -o $@ $(LIBS_M) -pthread
 
 # ---- RIGID BODY PHYSICS (GOLDEN BAND grb, vendored in packages/goldenband) ----
 # Founder real-time 2026-09-27: "upgrade shankpit ... to formal rigid body physics".

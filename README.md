@@ -662,6 +662,36 @@ peach, whispers pink, notices yellow. Long messages wrap (up to 200 characters).
   - While BRAWLPIT is in front it keeps Enter; press Shift+M to the world to chat.
   - UDP can drop a line (only the hello is retried).
 
+## The global chat bridge (2026-11-17)
+
+Founder: *"WE NEED THE CHAT BRIDGE TO WORK GLOBALY"*. A world's **General** channel joins IDUNA's cross-game chat
+bus (`POST/GET /api/v1/chat/messages`). The same bus already carries GFD's MUD and server, REDGARDEN's Battlegrounds
+client, BIG_O, GTA7 on EINHORN_SURVIVAL and SHANKPIT's phone app. Lines from other worlds appear in General tagged
+with where they came from: `[1. General] [MC:Steve]: hi`, `[GFD:Goblin]`, `[SHANKPIT:Freya]` (another SHANKPIT
+world), `[SP:Pip]` (a phone). Only General crosses; say, yell, whispers and custom channels stay in the world as
+its back channels.
+
+- **Rules:** PARENA's `stdlib/shankpit/chat_bridge_rules.prn` → `packages/chat/chat_bridge_rules.c`
+  (`scripts/gen_chat_bridge_rules.sh`). It decides the sources, who shows what, what goes out, tags, the loop
+  guards, and pacing (every 2 s; 25 lines a poll; 64 queued while the bus is away, oldest dropped first). The
+  same rulebook compiles to Java for GTA7.
+- **Loops:**
+  - A world never shows its own lines.
+  - Every SHANKPIT server posts as `shankpit_server`, so each remembers the ids of its own posts and skips only
+    those; two SHANKPIT worlds still hear each other.
+  - A line that came in over the bridge never goes back out.
+  - A world joining doesn't replay history: its first reply only sets the cursor.
+- **Turning it on (server):** set all three, with no defaults:
+  - `SHANKPIT_IDUNA_URL`
+  - `SHANKPIT_IDUNA_AGENT` (an IDUNA agent for this server, like GTA7's `GTA7-SERVER`)
+  - `SHANKPIT_IDUNA_SECRET_FILE`
+
+  The worker thread speaks HTTPS through `curl`. The secret and the bearer token only ever live in 0600 files in a
+  private temp folder, never on a command line or in a log.
+- **IDUNA needs** `shankpit_server` accepted as a `sender_source`, and the agent created (IDUNA PR).
+- **Test:** `make test-chat-bridge` (40 checks). The worker itself isn't unit-tested (it's network code).
+- **REFLUX:** 1205 a General line queued for the bus, 1206 lines shown from another world.
+
 ## The Collection overlay: Self Found on the stream (2026-11-17)
 
 Founder: *"ship all of this into the SHANKPIT stream overlay ..."* and *"PARENA FIRST MODS FIRST REFLUX ALL THE
