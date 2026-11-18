@@ -36,6 +36,7 @@ int gc_style_gain(int, int, int); int gc_style_decay(void); int gc_style_max(voi
 int gc_freeze_cost(void); int gc_freeze_radius_milli(void); int gc_freeze_stagger_ticks(void);
 int gc_move_for_input(int, int, int, int, int, int, int);
 int gc_anim_clip(int); int gc_move_name_id(int);
+int gs_variety_pct(int); int gs_rank(int);
 
 /* REFLUX: the engine's own dispatcher (reflux_runtime.c); a test may define its own. */
 void reflux_dispatch(int action_type, int a, int b, int c);
@@ -65,6 +66,9 @@ typedef struct {
     int stagger;         /* ticks left staggered (cannot start a move) */
     int down;            /* ticks left knocked down (cannot start a move) */
     int last_hits;       /* victims hit by the current move */
+    int rank;            /* style rank, 0 D .. 6 SSS (groove_sync.h groove_rank_update) */
+    int last_kind;       /* the last style source: a GC_MOVE_*, or 100 + WPN_* for a gun hit */
+    int repeats;         /* how many times in a row that source repeated (variety: groove_sync_rules gs-variety-pct) */
     unsigned char hit[GROOVE_MAX_FIGHTERS];  /* victims already hit by the current move (one hit per move each) */
 } GrooveFighter;
 
@@ -101,7 +105,9 @@ static inline int groove_start(GrooveFighter *f, int player_id, int move, int be
         f->style -= gc_freeze_cost();
         if (f->style < 0) f->style = 0;
     } else {
-        f->style += gc_style_gain(move, grade, f->combo);
+        f->repeats = (move == f->last_kind) ? f->repeats + 1 : 0;
+        f->last_kind = move;
+        f->style += gc_style_gain(move, grade, f->combo) * gs_variety_pct(f->repeats) / 100;
         if (f->style > gc_style_max()) f->style = gc_style_max();
     }
     f->move = move;
@@ -112,6 +118,10 @@ static inline int groove_start(GrooveFighter *f, int player_id, int move, int be
     memset(f->hit, 0, sizeof f->hit);
     reflux_dispatch(REFLUX_ACTION_COMBAT_MOVE_STARTED, player_id, move, grade);
     if (f->combo >= 2) reflux_dispatch(REFLUX_ACTION_COMBAT_COMBO, player_id, f->combo, f->style);
+    if (gs_rank(f->style) != f->rank) {
+        f->rank = gs_rank(f->style);
+        reflux_dispatch(REFLUX_ACTION_COMBAT_RANK_CHANGED, player_id, f->rank, f->style);
+    }
     return 1;
 }
 

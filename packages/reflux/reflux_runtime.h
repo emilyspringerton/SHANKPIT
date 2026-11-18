@@ -252,6 +252,10 @@ static inline int reflux_action_is_brawlpit(int action_type) {
 #define REFLUX_ACTION_COMBAT_FREEZE 1203         /* a = player_id, b = fighters staggered, c = style spent */
 #define REFLUX_ACTION_COMBAT_EVADED 1204         /* a = evader player_id, b = attacker player_id, c = GC_MOVE_* evading */
 #define REFLUX_ACTION_COMBAT_KNOCKDOWN 1205      /* a = attacker player_id, b = victim player_id, c = GC_MOVE_* */
+#define REFLUX_ACTION_COMBAT_RANK_CHANGED 1206   /* a = player_id, b = rank (0 D .. 6 SSS), c = style */
+#define REFLUX_ACTION_COMBAT_SYNC_LOCKED 1207    /* a = player_id, b = BPM x10, c = tap confidence x1000 (the knife sync device) */
+#define REFLUX_ACTION_COMBAT_SYNC_EXPIRED 1208   /* a = player_id, b = BPM x10 that lapsed, c unused */
+#define REFLUX_ACTION_COMBAT_BPM_DETECTED 1209   /* a = source id (a deck), b = BPM x10, c = confidence x1000 */
 #define REFLUX_ACTION_COMBAT_LAST 1299
 
 static inline int reflux_action_is_combat(int action_type) {
