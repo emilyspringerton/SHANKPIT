@@ -27,3 +27,8 @@ test-groove-combat: | $(BIN_DIR)
 	./$(BIN_DIR)/groove_combat_test
 	$(CC) $(GROOVE_CFLAGS) packages/simulation/groove_sync_test.c $(GROOVE_RULES) -o $(BIN_DIR)/groove_sync_test $(LIBS_M)
 	./$(BIN_DIR)/groove_sync_test
+	@# ...and inside the engine: the real update_weapons (physics.h) with groove_host.h's hooks installed --
+	@# disabled is the plain knife, the jab lands, E locks the sync, the AR follows it, a job's ROF still applies.
+	$(CC) -std=gnu99 -Wall -g -DPARENA_NO_GRAPHICS $(INCLUDES) packages/simulation/groove_host_test.c packages/world/terrain.c \
+		$(GROOVE_RULES) -o $(BIN_DIR)/groove_host_test $(LIBS_M)
+	./$(BIN_DIR)/groove_host_test
