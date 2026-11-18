@@ -83,6 +83,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/simulation/cutscene.h"
 #include "../../../packages/simulation/typing_lesson.h"
 #include "../../../packages/simulation/stats_apply.h" /* a GFD job -> live health + weapon cooldown */
+#include "../../../packages/simulation/groove_host.h" /* groove combat: knife dance-fighting, E beat sync, synced AR, ranks */
 #include "../../../packages/simulation/local_game.h"
 #include "../../../packages/simulation/vehicle_call.h"   /* kit's BUGGY / ROCKET CAR / HELICOPTER calls */
 #include "../../../packages/simulation/kit_call.h"      /* ...and their PACKET_KIT_CALL on the net path */
@@ -12705,6 +12706,69 @@ static void draw_shield_regen_tags(const PlayerState *viewer, unsigned int now_m
     }
 }
 
+/* Groove combat's HUD (packages/simulation/groove_host.h): the style rank D..SSS, the combo, the move just played and
+ * its beat grade, a beat pulse, the style meter, and the knife's sync device / the synced AR. Bottom right, only while
+ * groove combat is on (the zombie sandbox and the CONSTRUCT hub). Text is the 5x7 turtle font: 6*size px a glyph. */
+static void draw_groove_hud(PlayerState *p, unsigned int now_ms) {
+    static const float RANK_RGB[7][3] = { {0.55f,0.55f,0.55f}, {0.40f,0.80f,1.00f}, {0.40f,1.00f,0.55f},
+                                          {1.00f,0.90f,0.30f}, {1.00f,0.55f,0.20f}, {1.00f,0.30f,0.30f},
+                                          {1.00f,0.35f,1.00f} };
+    const GrooveFighter *f;
+    const GrooveSync *s;
+    char line[64];
+    int phase, pulse, rank, beats;
+    float x = 1000.0f, y = 210.0f, w;
+    if (!groove_host_enabled() || !p) return;
+    f = groove_host_fighter(p->id);
+    s = groove_host_sync(p->id);
+    if (!f || !s) return;
+    rank = f->rank < 0 ? 0 : (f->rank > 6 ? 6 : f->rank);
+    phase = groove_host_phase(p->id, now_ms);
+    pulse = (phase < 90 || phase > 910);
+
+    /* the rank letter, big, and the combo under it */
+    glColor3f(RANK_RGB[rank][0], RANK_RGB[rank][1], RANK_RGB[rank][2]);
+    draw_string(GROOVE_RANK_NAMES[rank], x, y + 120.0f, pulse ? 9.0f : 8.0f);
+    if (f->combo >= 2) {
+        snprintf(line, sizeof line, "COMBO X%d", f->combo);
+        glColor3f(1.0f, 1.0f, 1.0f);
+        draw_string(line, x, y + 52.0f, 3.0f);
+    }
+    /* the move just played, with its grade */
+    if (f->move != GC_MOVE_NONE) {
+        snprintf(line, sizeof line, "%s %s", GROOVE_MOVE_NAMES[f->move], GROOVE_GRADE_NAMES[f->grade]);
+        if (f->grade == GC_GRADE_PERFECT) glColor3f(1.0f, 0.9f, 0.3f); else glColor3f(0.8f, 0.8f, 0.8f);
+        draw_string(line, x, y + 28.0f, 2.0f);
+    }
+    /* the style meter, with the beat pulse at its end */
+    w = 200.0f * (float)f->style / 1000.0f;
+    glDisable(GL_TEXTURE_2D);
+    glColor3f(0.2f, 0.2f, 0.2f);
+    glBegin(GL_QUADS); glVertex2f(x, y); glVertex2f(x + 200.0f, y); glVertex2f(x + 200.0f, y + 10.0f); glVertex2f(x, y + 10.0f); glEnd();
+    glColor3f(RANK_RGB[rank][0], RANK_RGB[rank][1], RANK_RGB[rank][2]);
+    glBegin(GL_QUADS); glVertex2f(x, y); glVertex2f(x + w, y); glVertex2f(x + w, y + 10.0f); glVertex2f(x, y + 10.0f); glEnd();
+    if (pulse) glColor3f(1.0f, 1.0f, 1.0f); else glColor3f(0.35f, 0.35f, 0.35f);
+    draw_circle(x + 230.0f, y + 5.0f, pulse ? 12.0f : 8.0f, 16);
+
+    /* the sync device (knife) and the synced AR */
+    beats = groove_sync_beats_left(s, (int)now_ms);
+    if (s->locked) {
+        snprintf(line, sizeof line, "SYNC %d.%d BPM  %d BEATS", s->bpm_x10 / 10, s->bpm_x10 % 10, beats);
+        glColor3f(0.4f, 1.0f, 0.6f);
+        draw_string(line, x, y - 24.0f, 2.0f);
+        if (p->current_weapon == WPN_AR) { glColor3f(1.0f, 0.9f, 0.3f); draw_string("AR ON THE BEAT", x, y - 46.0f, 2.0f); }
+        else if (p->current_weapon == WPN_KNIFE) { glColor3f(0.8f, 0.8f, 0.8f); draw_string("3: TAKE IT TO THE AR", x, y - 46.0f, 2.0f); }
+    } else if (p->current_weapon == WPN_KNIFE) {
+        snprintf(line, sizeof line, "E: TAP THE BEAT  %d/4", s->ntaps > 4 ? 4 : s->ntaps);
+        glColor3f(0.8f, 0.8f, 0.8f);
+        draw_string(line, x, y - 24.0f, 2.0f);
+    }
+    if (p->current_weapon == WPN_KNIFE) {
+        glColor3f(0.6f, 0.6f, 0.6f);
+        draw_string("LMB STRIKE  RMB STYLE  BOTH FREEZE", x - 120.0f, y - 70.0f, 1.5f);
+    }
+}
+
 void draw_hud(PlayerState *p) {
     /* Pre-existing broken build, found live (S170-110): the MODE_STORY branch below calls
        draw_tyler_cutscene()/cutscene_tick() with a `now_ms` that was never declared anywhere in
@@ -12720,7 +12784,8 @@ void draw_hud(PlayerState *p) {
     else glColor3f(0, 1, 0);
     if (current_fov < 50.0f) { glBegin(GL_LINES); glVertex2f(0, 360); glVertex2f(1280, 360); glVertex2f(640, 0); glVertex2f(640, 720); glEnd(); } 
     else { glLineWidth(vs0_art_direction_enabled ? 1.4f : 2.0f); glBegin(GL_LINES); glVertex2f(632, 360); glVertex2f(648, 360); glVertex2f(640, 352); glVertex2f(640, 368); glEnd(); }
-    
+    draw_groove_hud(p, now_ms);
+
     draw_shield_hud_flash(now_ms);
     // --- HIT INDICATORS ---
     if (p->current_weapon == WPN_SPRAYCAN) {
@@ -19013,6 +19078,14 @@ int main(int argc, char* argv[]) {
             }
             input_fwd = fwd; input_str = str;
             input_jump = jump; input_crouch = crouch; input_shoot = shoot; input_reload = reload; input_use = use; input_ability = ability; input_secondary = secondary; input_bike = bike; input_pheromone = pheromone;
+            /* Groove combat (packages/simulation/groove_host.h): installed once, after any --job (its ROF hook
+               chains to the job's), and on only in the zombie sandbox and the CONSTRUCT hub, playing locally. */
+            {
+                static int groove_installed = 0;
+                if (!groove_installed) { groove_host_install(local_state.players, NULL); groove_installed = 1; }
+                groove_host_set_enabled(app_state == STATE_GAME_LOCAL &&
+                                        (local_state.game_mode == MODE_ZOMBIES || g_tyler_scene == TYLER_SCENE_CONSTRUCT));
+            }
             if (!g_paused && level_shell_world_input()) {
                 if(k[SDL_SCANCODE_1]) wpn_req=0;
                 if(k[SDL_SCANCODE_2]) wpn_req=1;
