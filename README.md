@@ -340,6 +340,32 @@ build environment. Honest limits: password SSH only, one cipher/kex set (a serve
 100×34 terminal (a tablet, not a phone), scanner = TCP-connect sweep ≤ /22; the founder's packet capture, pager, stream deck and AR/Quest parts
 are not started.
 
+### Netkit status and next steps (2026-11-24)
+
+The founder's spec ("Custom VNC Client: Affordances and Network Map", 2026-11-23) defines **VS0** as three deliverables. Where each stands:
+
+| VS0 deliverable | Status |
+| --- | --- |
+| **0. The app** (scan, device list, SSH, view-only VNC, clear errors) | Every VS0 bullet is present (audited against the code, 2026-11-24). **Never run on a real device, and never against a real TightVNC** (tests used libvncserver). Handshake read-through says it should work with TightVNC 2.x (RFB 3.8, picks VNC auth over Tight, advertises only Raw/CopyRect/Hextile). |
+| **1. Windows `setup.bat`** (TightVNC service, firewall, password, `vnc-log.txt`, run from `D:\`) | **Written and reviewed** (`ops/netkit/windows/`): self-elevates, installs the TightVNC MSI as a service, port-5900 rule scoped to the local subnet, sets the password, keeps the PC awake, verifies service + listener, writes `vnc-log.txt` (incl. the iMac's Wi-Fi MAC for the Pi). 9 defects fixed in review; passes its own linter (`lint_bat.py`). **Never executed on Windows**; TightVNC MSI property names are from memory, so the real check is a wrong-password test from the tablet. |
+| **2. Router Pi** (Pi 3 B on 64-bit Ubuntu: Wi-Fi AP with the phone hotspot's SSID/password on 2.4 GHz, DHCP, NAT over USB tethering, fixed iMac address, one idempotent script) | **Written and reviewed** (`ops/netkit/router-pi/`): netplan + hostapd + dnsmasq + nftables, `--dry-run`/`--check`, SSH-lockout guard, no restarts on re-run, plus SD-card cloud-init snippets. 11 defects fixed in review. Verified only by `bash -n` and dry-run rendering; **never run on a Pi** (hostapd/dnsmasq/nft/netplan aren't installed in the build environment). |
+
+**Real gaps the audit found against "one tap on the iMac shows its desktop"** (ranked):
+1. **Screen-size cap:** a Boot Camp iMac at 5120x2880 (14.7 Mpx) exceeds the client's ~9.4 Mpx framebuffer cap and fails with "Remote screen is larger than this app can show". Fix: raise the cap/wasm memory, or request a smaller pixel format, or lower the iMac's resolution for VNC.
+2. The "Screen" button only appears if port 5900/5901 answered during the scan, so an asleep iMac shows no VNC button at all. Fix: always offer VNC on pinned devices.
+3. Pinning is manual (and keyed by IP when ARP is blocked on Android 10+); auto-pin the first Windows+VNC device.
+4. No handshake timeout after TCP connect (a server that accepts and never sends RFB hangs).
+5. A Tight-only server is refused (TightVNC's default offers VNC auth, so this is unlikely).
+
+**Next, in build order** (spec "Build order"; IDs are `EMILY/BACKLOG.md` section 635):
+1. **NETKIT-3**: install the APK on the tablet and SSH into any reachable server; fix what the real device finds (soft keyboard, Back, rotation, Keystore, scanning on Android 10+ where ARP is blocked).
+2. Write the Ubuntu image to the Pi's SD card with the Wi-Fi/login preset (cloud-init snippets are in the router-Pi docs), boot it, find it on the phone hotspot, SSH in from the tablet.
+3. **NETKIT-2**: run the router script on the Pi; done when the iMac joins its network on its own and reaches the internet through the phone.
+4. **NETKIT-1**: run `setup.bat` on the iMac (phone hotspot first, then the Pi's network); done when `vnc-log.txt` shows the service running.
+5. VNC from the tablet against the iMac. If TightVNC insists on Tight/ZRLE this is where it shows; **NETKIT-4** adds those encodings (needs inflate + JPEG in PARENA first).
+
+**Still needed from the founder:** is the iMac's Wi-Fi 2.4 GHz capable and does the phone hotspot use that band; the Wi-Fi name/password (or copy the hotspot's exactly); the tablet's Android version. Later stages (packet capture + Tap Pi, pager, stream deck, AR/Quest, and the module interface) are NETKIT-6 and stay out of VS0.
+
 ## Lighting: one environment matrix, resolved in PARENA (2026-10-30)
 
 Founder real-time: "we have cool weather effects but it doesnt work with the ambient lighting like it

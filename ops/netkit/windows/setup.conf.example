@@ -1,0 +1,57 @@
+# NETKIT Windows VNC setup - copy this file to setup.conf (same folder as
+# setup.bat) and edit. setup.conf is git-ignored: never commit a real one.
+#
+# Format: KEY=VALUE, one per line, no spaces around "=", no quotes.
+# Lines starting with # are comments. Every key is optional except that a
+# password must come from somewhere (here, vnc-password.txt, or a prompt).
+#
+# Do not put a double quote in a password and do not end one with a backslash.
+
+# VNC password. VNC authentication (RFB security type 2, single DES) only uses
+# the FIRST 8 CHARACTERS; the script truncates to 8 and warns. Leave this
+# line out to use vnc-password.txt (one line, on the drive) or to be prompted.
+#VNC_PASSWORD=change-me!
+
+# Optional second password that only grants view-only access. The NetKit app
+# is view-only anyway; this exists so you can hand the tablet a password that
+# can never be abused for control. Max 8 characters used.
+#VNC_VIEWONLY_PASSWORD=
+
+# Optional password for the local tvnserver control interface. Defaults to the
+# main password.
+#VNC_CONTROL_PASSWORD=
+
+# File holding the password on its first line (relative to the drive folder).
+#VNC_PASSWORD_FILE=vnc-password.txt
+
+# TCP port the VNC server listens on (display :0 = 5900).
+#VNC_PORT=5900
+
+# Which installer to use. By default the script looks next to itself for
+# tightvnc-*-gpl-setup-64bit.msi (or -32bit.msi on 32-bit Windows).
+#MSI_FILE=tightvnc-2.8.85-gpl-setup-64bit.msi
+
+# Download fallback if no MSI is on the drive. Default is the 2.8.85 URL for
+# the machine's architecture. Set to "none" to forbid downloading.
+#MSI_URL=https://www.tightvnc.com/download/2.8.85/tightvnc-2.8.85-gpl-setup-64bit.msi
+
+# Optional pin: refuse to install unless the MSI SHA-256 matches. The script
+# always prints the hash in vnc-log.txt, so run once, then pin it here.
+#MSI_SHA256=
+
+# Firewall rule scope. Profile: any, or a comma list of domain,private,public.
+# Remote scope: localsubnet (default), any, or an address/CIDR such as 192.168.50.0/24.
+#FW_PROFILE=any
+#FW_REMOTEIP=localsubnet
+
+# 1 = switch Windows network connections currently marked Public to Private.
+# Default 0 (log them only).
+#NETWORK_PRIVATE=0
+
+# 1 (default) = never sleep or hibernate on AC power, so the tablet can always connect.
+#KEEP_AWAKE=1
+
+# 1 (default) = delete TightVNC's saved server settings on re-run so the
+# result is exactly what this script configures. 0 keeps manual tweaks that
+# live in the registry (the password is still rewritten by the installer).
+#RESET_SETTINGS=1
