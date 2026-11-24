@@ -529,9 +529,11 @@ jobs:
           set -euo pipefail
           test -f apps/server/serverctl.c
 
+          # gnu99, not c99: under strict c99 glibc hides POSIX kill(), and GCC 14+ makes the implicit declaration an
+          # error (ubuntu-latest is Ubuntu 26.04 / GCC 15 now). This step failed on every run from 2026-11-08 on.
           gcc apps/server/serverctl.c \
             -o shankpit_worldctl \
-            -std=c99 \
+            -std=gnu99 \
             -O2 \
             -lncurses
 
