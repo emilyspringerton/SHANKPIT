@@ -88,6 +88,16 @@ view and pauses BRAWLPIT."* The same BRAWLPIT WOTAN serves on the web, compiled 
 | **Ctrl+Shift+J** (Cmd+Option+J on macOS) | BRAWLPIT's PARENA source (`bp_level.prn`) in the editor overlay; Escape goes back into the game. Dev boxes only: needs `../PARENA` |
 | (save the source) | the game rebuilds BRAWLPIT in the background (save in the overlay with F2, or in any editor); the new build swaps in on your next entry (Escape from the source, or Shift+M) -- LEVEL_SWAPPED. A save that does not compile shows the error at `file:line` and the running build is kept. Dev boxes: `../PARENA` + LLVM 18 (MONOREPO `BOOTSTRAP.md`); builds go to `var/levels/` |
 
+**The arcade cabinet.** The **CONSTRUCT** tile on the main menu (and **ARCADE** under APPS; neither is under SURVIVAL)
+enters the CONSTRUCT hub with the world in front. Beside the spawn stands a physical arcade cabinet: lit screen in
+attract mode, a BRAWLPIT / WOTAN marquee, a status light (green ready, amber loading or paused, red failed). Walk up
+(within ~3 m), **F: PLAY BRAWLPIT** loads the WASM level in front; **Shift+M** brings you back to the hub with the game
+paused (F resumes it), **Shift+X** closes it. If the module can't load the cabinet's screen and light go red and say so
+with the host's reason; F retries. The decisions are PARENA (`lm-arcade-*` in `level_manager_rules.prn`), the object and
+the glue are `apps/lobby/src/arcade_cabinet.c`. Status: logic tested (`make test-level-manager`, 61 checks); the drawn
+cabinet and the F flow are verified only as far as noted in the CHANGELOG -- not run on Windows or a real GPU. Open (not
+built): WOTAN-side score/stat upload from the cabinet.
+
 While BRAWLPIT is in front the world keeps simulating but gets no keys, mouse or pad (so in ZOMBIES an idle player
 can still be attacked -- the contract's choice, flagged for review). How it fits together (contract:
 `docs/T0_LEVEL_WASM_CONTRACT.md`):
@@ -314,6 +324,10 @@ Honest limits: the arena is deathmatch-only (no zombies), there is no map editin
 (NOCK is desktop-only), and there are no accounts. `node
 android/tools/verify-web-bundle.mjs` is the check — it boots the real wasm through
 the real touch layer and proves the offline path.
+
+## Action bars: keys 1..9,0 and Shift/Ctrl/Alt banks (2026-11-24)
+
+The weapon keys are now a WoW/Minecraft-style action bar whose rules are a PARENA mod (`PARENA/stdlib/actionbar/`, generated to `packages/simulation/action_bar_rules.c`; host glue in `apps/lobby/src/actionbar_host.c`). `1`-`9` and `0` pick slots 1-10; Shift/Ctrl/Alt + a digit pick banks 2/3/4; Alt+mouse-wheel cycles bank 1. Bank 1 is today's arsenal (1-6 weapons, 7 flashlight, 8 hammer, 9 spray can, 0 empty), banks 2-4 start empty and are filled by plugins (other mods registering `abh_register_plugin`); precedence is player bind (macro) > plugin > default. The on-screen bar is optional: `actionbar on|off` (it persists), and the hotkeys work whether it is shown or not. Status: logic tested (`make test-action-bar`, `make test-action-bar-host`); the lobby links and its `main.c` compiles, but the bar has **not been looked at on a real display yet**; no plugin ships registered, and ability/item slots are not wired.
 
 ## Android client #2: Netkit — scan, SSH, view-only VNC, written in PARENA (2026-11-24)
 

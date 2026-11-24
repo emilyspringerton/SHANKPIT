@@ -22,6 +22,8 @@ int lm_cmd_load_fail(void);      /* 5 */
 int lm_cmd_trap(void);           /* 6 */
 int lm_cmd_overlay_closed(void); /* 7 */
 int lm_cmd_suspend(void);        /* 8: the game leaves the world for its menu: FG/SOURCE -> BG, SOURCE_NONE -> NONE */
+int lm_cmd_arcade_play(void);    /* 9: F at the CONSTRUCT arcade cabinet: NONE -> LOADING, BG -> FG */
+int lm_cmd_arcade_enter(void);   /* 10: the hub entered from the menu, world first: LOADING -> NONE, FG -> BG */
 
 /* the command a key-down is, 0 none. sym = SDL keycode; the flags are 0/1; mac = running on macOS;
  * text_focus = chat, orb, a phone text app, a lobby text field or the editor overlay has the keyboard;
@@ -51,5 +53,15 @@ int lm_dom_key(int sym);
 /* save -> compile -> swap (T0 step 6, dev boxes): build now? / does this transition swap in a new build? */
 int lm_compile_now(int changed, int compiling, int can_build);
 int lm_swap_on(int old_state, int new_state);
+
+/* the arcade cabinet (SECTION 638): distances in integer cm, times in integer ms; in_hub/near/failed are 0/1 */
+int lm_arcade_range_cm(void);           /* 320: the use radius */
+int lm_arcade_near(int dx_cm, int dy_cm, int dz_cm);
+int lm_arcade_prompt(int in_hub, int near, int state, int failed); /* 0 none, 1 play, 2 loading, 3 failed (F retries), 4 resume */
+int lm_arcade_use_cmd(int in_hub, int near, int state, int failed); /* lm_cmd_arcade_play or 0 */
+int lm_arcade_screen(int state, int failed); /* 0 attract, 1 loading, 2 failed, 3 paused, 4 running */
+int lm_arcade_light(int state, int failed);  /* 0 green, 1 amber, 2 red */
+int lm_arcade_pulse(int t_ms);               /* 0..255 triangle, 1.6 s */
+int lm_arcade_attract_phase(int t_ms);       /* 0..7, a step per 450 ms */
 
 #endif /* SHANKPIT_LEVEL_MANAGER_RULES_H */

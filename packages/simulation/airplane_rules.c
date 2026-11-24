@@ -13,6 +13,23 @@ int airplane_thrust_milli(int);
 int airplane_drag_milli(int, int);
 int airplane_lift_permille(int, int, int);
 int airplane_hull();
+int airplane_abs(int);
+int airplane_pitch_authority_permille(int, int);
+int airplane_pitch_rate_raw(int, int, int);
+int airplane_pitch_cmd_milli(int, int, int, int, int);
+int airplane_roll_authority_permille(int);
+int airplane_roll_cmd_raw(int, int, int);
+int airplane_roll_cmd_milli(int, int, int, int);
+int airplane_turn_rate_milli(int, int);
+int airplane_rudder_yaw_milli(int);
+int airplane_ground_steer_milli(int, int);
+int airplane_vspeed_target_milli(int, int, int);
+int airplane_pitch_accel_milli(int);
+int airplane_stall_warn_permille(int, int);
+int airplane_brake_permille(int);
+int airplane_rotate_speed_milli(int);
+int airplane_unstick(int, int, int);
+int airplane_ground_pitch_target_milli(int, int, int, int);
 
 int airplane_top_speed_milli(void) {
     return 12000;
@@ -60,5 +77,125 @@ int airplane_lift_permille(int speed_milli __attribute__((unused)), int flaps __
 
 int airplane_hull(void) {
     return 600;
+}
+
+int airplane_abs(int x __attribute__((unused))) {
+    if ((x < 0)) {
+    return (0 - x);
+    } else {
+    return x;
+    }
+}
+
+int airplane_pitch_authority_permille(int speed_milli __attribute__((unused)), int stall_milli __attribute__((unused))) {
+    if ((speed_milli >= ((stall_milli * 11) / 10))) {
+    return 1000;
+    } else {
+    if ((speed_milli <= (stall_milli / 2))) {
+    return 300;
+    } else {
+    return (300 + (((speed_milli - (stall_milli / 2)) * 700) / (((stall_milli * 11) / 10) - (stall_milli / 2))));
+    }
+    }
+}
+
+int airplane_pitch_rate_raw(int stick __attribute__((unused)), int pitch_mdeg __attribute__((unused)), int assist __attribute__((unused))) {
+    if ((assist == 1)) {
+    return airplane_clamp(-1100, 1100, ((((stick * 25) - pitch_mdeg) * 50) / 1000));
+    } else {
+    return ((stick * 1200) / 1000);
+    }
+}
+
+int airplane_pitch_cmd_milli(int stick __attribute__((unused)), int speed_milli __attribute__((unused)), int stall_milli __attribute__((unused)), int pitch_mdeg __attribute__((unused)), int assist __attribute__((unused))) {
+    if ((speed_milli < stall_milli)) {
+    return airplane_clamp(-2200, 0, (((airplane_pitch_rate_raw(stick, pitch_mdeg, assist) > 0) ? 0 : ((airplane_pitch_rate_raw(stick, pitch_mdeg, assist) * airplane_pitch_authority_permille(speed_milli, stall_milli)) / 1000)) + ((pitch_mdeg > -15000) ? -700 : 0)));
+    } else {
+    return ((airplane_pitch_rate_raw(stick, pitch_mdeg, assist) * airplane_pitch_authority_permille(speed_milli, stall_milli)) / 1000);
+    }
+}
+
+int airplane_roll_authority_permille(int speed_milli __attribute__((unused))) {
+    return airplane_clamp(400, 1000, (400 + (((speed_milli - 2000) * 600) / 2500)));
+}
+
+int airplane_roll_cmd_raw(int stick __attribute__((unused)), int roll_mdeg __attribute__((unused)), int assist __attribute__((unused))) {
+    if ((assist == 1)) {
+    return airplane_clamp(-2500, 2500, ((((stick * 45) - roll_mdeg) * 60) / 1000));
+    } else {
+    return (((stick * 2000) / 1000) + ((airplane_abs(stick) < 80) ? (0 - ((roll_mdeg * 4) / 1000)) : 0));
+    }
+}
+
+int airplane_roll_cmd_milli(int stick __attribute__((unused)), int speed_milli __attribute__((unused)), int roll_mdeg __attribute__((unused)), int assist __attribute__((unused))) {
+    if (((roll_mdeg >= 70000) && (airplane_roll_cmd_raw(stick, roll_mdeg, assist) > 0))) {
+    return 0;
+    } else {
+    if (((roll_mdeg <= -70000) && (airplane_roll_cmd_raw(stick, roll_mdeg, assist) < 0))) {
+    return 0;
+    } else {
+    return ((airplane_roll_cmd_raw(stick, roll_mdeg, assist) * airplane_roll_authority_permille(speed_milli)) / 1000);
+    }
+    }
+}
+
+int airplane_turn_rate_milli(int roll_mdeg __attribute__((unused)), int speed_milli __attribute__((unused))) {
+    return airplane_clamp(-2200, 2200, ((roll_mdeg * 140) / airplane_clamp(4000, 16000, speed_milli)));
+}
+
+int airplane_rudder_yaw_milli(int rudder __attribute__((unused))) {
+    return ((rudder * 250) / 1000);
+}
+
+int airplane_ground_steer_milli(int steer __attribute__((unused)), int speed_milli __attribute__((unused))) {
+    return ((((steer * ((speed_milli < 2000) ? ((speed_milli * 1000) / 2000) : ((speed_milli > 6000) ? 500 : 1000))) / 1000) * 1600) / 1000);
+}
+
+int airplane_vspeed_target_milli(int speed_milli __attribute__((unused)), int pitch_mdeg __attribute__((unused)), int flaps __attribute__((unused))) {
+    return airplane_clamp(-3000, 1500, (((speed_milli * pitch_mdeg) / 57296) - ((((airplane_lift_permille(speed_milli, flaps, 1000) < 1000) ? (1000 - airplane_lift_permille(speed_milli, flaps, 1000)) : 0) * 350) / 1000)));
+}
+
+int airplane_pitch_accel_milli(int pitch_mdeg __attribute__((unused))) {
+    return (0 - ((pitch_mdeg * 12) / 57296));
+}
+
+int airplane_stall_warn_permille(int speed_milli __attribute__((unused)), int stall_milli __attribute__((unused))) {
+    if ((speed_milli >= ((stall_milli * 13) / 10))) {
+    return 0;
+    } else {
+    if ((speed_milli <= stall_milli)) {
+    return 1000;
+    } else {
+    return (((((stall_milli * 13) / 10) - speed_milli) * 1000) / (((stall_milli * 13) / 10) - stall_milli));
+    }
+    }
+}
+
+int airplane_brake_permille(int brake __attribute__((unused))) {
+    return ((airplane_clamp(0, 1000, brake) * 40) / 1000);
+}
+
+int airplane_rotate_speed_milli(int flaps __attribute__((unused))) {
+    return ((airplane_liftoff_milli() * airplane_stall_milli(flaps)) / airplane_stall_milli(0));
+}
+
+int airplane_unstick(int speed_milli __attribute__((unused)), int pitch_mdeg __attribute__((unused)), int flaps __attribute__((unused))) {
+    if (((speed_milli >= airplane_rotate_speed_milli(flaps)) && (pitch_mdeg >= 2500))) {
+    return 1;
+    } else {
+    return 0;
+    }
+}
+
+int airplane_ground_pitch_target_milli(int stick __attribute__((unused)), int speed_milli __attribute__((unused)), int flaps __attribute__((unused)), int assist __attribute__((unused))) {
+    if (((speed_milli * 100) < (airplane_rotate_speed_milli(flaps) * 95))) {
+    return 0;
+    } else {
+    if ((assist == 1)) {
+    return (6000 + (airplane_clamp(0, 1000, stick) * 6));
+    } else {
+    return (airplane_clamp(0, 1000, stick) * 12);
+    }
+    }
 }
 

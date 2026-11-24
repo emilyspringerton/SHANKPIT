@@ -45,4 +45,13 @@ int level_shell_world_input(void);
 int level_shell_rejected_dispatches(void);  /* the level's dispatches the REFLUX bridge refused */
 void level_shell_shutdown(void);
 
+/* the CONSTRUCT hub's arcade cabinet (arcade_cabinet.c, PARENA lm-arcade-*; BACKLOG SECTION 638): the manager state
+ * (lm_st_*; NONE before init), whether the level is down because its load (or its run) failed -- the
+ * LEVEL_LOAD_FAILED path: state NONE and the host holds a reason -- that reason, and a command from the machine
+ * (lm_cmd_arcade_play / lm_cmd_arcade_enter) run through the same transition path as the chords. */
+int level_shell_state(void);
+int level_shell_load_failed(void);
+const char *level_shell_message(void);
+void level_shell_arcade_command(int cmd);
+
 #endif /* SHANKPIT_LEVEL_SHELL_H */
