@@ -731,6 +731,41 @@ jobs:
           gradle -p android assembleRelease --no-daemon --stacktrace
           ls -l android/app/build/outputs/apk/release/
 
+      # ---- Android app #2: SHANKPIT Netkit (scan / SSH / view-only VNC) --------------------------------------------------
+      # The logic is PARENA compiled to wasm (PARENA/stdlib/netkit, vendored build in apps/netkit); the Java is a socket pipe.
+      # The bundle check boots no browser: it proves every wasm imports nothing, has fixed memory, exports everything the generated
+      # page calls, and that index.html has every id the page uses and no inline script. The shell's 16 JVM tests run against real
+      # loopback sockets. Same signing secrets as the shankpit-460 APK; same continue-on-error rationale as above.
+      - name: Verify Netkit web bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          node android-netkit/tools/verify-web-bundle.mjs apps/netkit
+
+      - name: Build Android APK (Netkit)
+        shell: bash
+        continue-on-error: true
+        env:
+          SHANKPIT_NETKIT_VERSION_CODE: ${{ github.run_number }}
+          SHANKPIT_NETKIT_VERSION_NAME: ${{ github.run_number }}
+          KEYSTORE_B64: ${{ secrets.SHANKPIT_ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PW: ${{ secrets.SHANKPIT_ANDROID_KEYSTORE_PASSWORD }}
+          KEYSTORE_ALIAS: ${{ secrets.SHANKPIT_ANDROID_KEY_ALIAS }}
+          KEY_PW: ${{ secrets.SHANKPIT_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -n "${KEYSTORE_B64:-}" ]; then
+            printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/shankpit-netkit-release.keystore"
+            export SHANKPIT_NETKIT_KEYSTORE="$RUNNER_TEMP/shankpit-netkit-release.keystore"
+            export SHANKPIT_NETKIT_KEYSTORE_PASSWORD="$KEYSTORE_PW"
+            export SHANKPIT_NETKIT_KEY_ALIAS="$KEYSTORE_ALIAS"
+            export SHANKPIT_NETKIT_KEY_PASSWORD="$KEY_PW"
+          else
+            echo "::notice::SHANKPIT_ANDROID_KEYSTORE_BASE64 is unset; Netkit is signed with the debug key (sideload only)."
+          fi
+          gradle -p android-netkit :shell:test :app:assembleRelease --no-daemon --stacktrace
+          ls -l android-netkit/app/build/outputs/apk/release/
+
       - name: Bundle Artifacts
         shell: bash
         run: |
@@ -848,6 +883,15 @@ jobs:
             echo "::warning::Android APK was not built this run; this release ships the desktop artifacts without one."
           fi
 
+          # Android APK #2 (SHANKPIT Netkit), same BUILD stamp.
+          NKAPK="android-netkit/app/build/outputs/apk/release/app-release.apk"
+          if [ -f "$NKAPK" ]; then
+            cp "$NKAPK" "ShankPit_Netkit_${BUILD}.apk"
+            ls -l "ShankPit_Netkit_${BUILD}.apk"
+          else
+            echo "::warning::Netkit APK was not built this run."
+          fi
+
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -858,6 +902,7 @@ jobs:
             ShankPit_Bots_*.zip
             ShankPit_SlimClient_*.zip
             ShankPit_Android_*.apk
+            ShankPit_Netkit_*.apk
             SHANKPIT_CONSTRUCT.txt
 
   # Founder real-time: "ensure all our core repos have auto release non pre release" -- same
@@ -926,6 +971,9 @@ jobs:
           )
           if ls dist/ShankPit_Android_*.apk >/dev/null 2>&1; then
             files+=(dist/ShankPit_Android_*.apk)
+          fi
+          if ls dist/ShankPit_Netkit_*.apk >/dev/null 2>&1; then
+            files+=(dist/ShankPit_Netkit_*.apk)
           fi
           gh release create "$NEXT_VERSION" \
             "${files[@]}" \

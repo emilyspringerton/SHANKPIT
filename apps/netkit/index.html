@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="color-scheme" content="dark">
+<title>SHANKPIT Netkit</title>
+<link rel="stylesheet" href="netkit.css">
+</head>
+<body>
+<!-- The markup and styling of SHANKPIT Netkit. There is no logic here and no hand-written JavaScript: nk-host.js (and the three
+     .wasm files) are generated from PARENA by PARENA/scripts/build_netkit_web.sh. The ids below are the contract with that host. -->
+<header id="bar">
+  <div id="brand"><span class="logo" aria-hidden="true"></span>SHANKPIT <b>Netkit</b></div>
+  <div id="net-pill" class="pill">starting&hellip;</div>
+</header>
+
+<nav id="tabs">
+  <button id="tab-devices" data-tab="devices" class="on">Devices</button>
+  <button id="tab-ssh" data-tab="ssh" hidden>Terminal</button>
+  <button id="tab-vnc" data-tab="vnc" hidden>Screen</button>
+</nav>
+
+<div id="banner" class="banner" hidden role="alert">
+  <span id="banner-text"></span>
+  <button id="banner-close" aria-label="Dismiss">Dismiss</button>
+</div>
+
+<main>
+  <!-- ======================= devices ======================= -->
+  <section id="view-devices">
+    <div class="toolbar">
+      <button id="btn-scan" class="primary">Scan</button>
+      <input id="scan-cidr" placeholder="auto: this network" inputmode="decimal" autocapitalize="off" autocomplete="off" spellcheck="false" aria-label="Network range to scan">
+    </div>
+    <div id="scan-status" class="muted">Not scanned yet</div>
+    <progress id="scan-bar" value="0" max="1" hidden></progress>
+    <p id="empty-hint" class="hint">No devices yet. Tap <b>Scan</b> to look for devices on this network.</p>
+    <ul id="device-list" class="list"></ul>
+
+    <section id="saved-box" hidden>
+      <h2>Saved</h2>
+      <ul id="saved-list" class="list"></ul>
+    </section>
+
+    <details id="manual">
+      <summary>Connect to something else</summary>
+      <div class="form">
+        <label>What
+          <select id="m-proto">
+            <option value="ssh">SSH (a terminal)</option>
+            <option value="vnc">Screen (VNC, view only)</option>
+          </select>
+        </label>
+        <label>Host <input id="m-host" placeholder="192.168.4.1 or a name" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false"></label>
+        <label>Port <input id="m-port" value="22" inputmode="numeric" autocomplete="off"></label>
+        <div class="row">
+          <button id="btn-m-connect" class="primary">Connect</button>
+          <button id="btn-m-ping">Ping</button>
+          <button id="btn-m-check">Port check</button>
+        </div>
+        <div id="tool-out" class="tool" hidden></div>
+      </div>
+    </details>
+  </section>
+
+  <!-- ======================= terminal ======================= -->
+  <section id="view-ssh" hidden>
+    <div class="viewbar">
+      <span id="ssh-title" class="title">Terminal</span>
+      <span class="grow"></span>
+      <button id="btn-copy">Copy</button>
+      <button id="btn-paste">Paste</button>
+      <button id="btn-ssh-close" class="danger">Disconnect</button>
+    </div>
+    <div id="term-wrap">
+      <canvas id="term-canvas" width="800" height="544" aria-label="Terminal"></canvas>
+      <textarea id="term-ime" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Keyboard input"></textarea>
+    </div>
+    <div id="keybar" role="toolbar" aria-label="Extra keys">
+      <button data-key="esc">Esc</button>
+      <button data-key="tab">Tab</button>
+      <button id="key-ctrl" data-key="ctrl">Ctrl</button>
+      <button id="key-alt" data-key="alt">Alt</button>
+      <button data-key="up">Up</button>
+      <button data-key="down">Down</button>
+      <button data-key="left">Left</button>
+      <button data-key="right">Right</button>
+      <button data-key="home">Home</button>
+      <button data-key="end">End</button>
+      <button data-key="pgup">PgUp</button>
+      <button data-key="pgdn">PgDn</button>
+      <button data-key="del">Del</button>
+      <button data-key="pipe">|</button>
+      <button data-key="tilde">~</button>
+      <button data-key="slash">/</button>
+      <button data-key="dash">-</button>
+      <button data-key="under">_</button>
+      <button data-key="histup" title="Scroll the screen history up">Hist up</button>
+      <button data-key="histdn" title="Scroll the screen history down">Hist down</button>
+    </div>
+  </section>
+
+  <!-- ======================= screen (VNC, view only) ======================= -->
+  <section id="view-vnc" hidden>
+    <div class="viewbar">
+      <span id="vnc-title" class="title">Screen</span>
+      <span class="badge" title="This app only watches: it never sends a key or a mouse movement">view only</span>
+      <span class="grow"></span>
+      <button id="btn-fit">Fit</button>
+      <button id="btn-1to1">1:1</button>
+      <button id="btn-vnc-close" class="danger">Close</button>
+    </div>
+    <div id="vnc-wrap"><canvas id="vnc-canvas" width="16" height="16" aria-label="Remote screen"></canvas></div>
+  </section>
+</main>
+
+<!-- ======================= connect ======================= -->
+<div id="dlg-connect" class="dlg" hidden role="dialog" aria-modal="true" aria-labelledby="c-title">
+  <div class="card">
+    <h2 id="c-title">Connect</h2>
+    <label>Host <input id="c-host" autocapitalize="off" autocomplete="off" spellcheck="false"></label>
+    <label>Port <input id="c-port" inputmode="numeric" autocomplete="off"></label>
+    <label id="c-user-row">User <input id="c-user" autocapitalize="off" autocomplete="username" spellcheck="false"></label>
+    <label>Password <input id="c-pass" type="password" autocomplete="current-password"></label>
+    <label class="check"><input id="c-save" type="checkbox"> Remember on this device (stored encrypted)</label>
+    <div id="c-error" class="error"></div>
+    <div class="row">
+      <button id="c-go" class="primary">Connect</button>
+      <button id="c-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ======================= trust this device? ======================= -->
+<div id="dlg-hostkey" class="dlg" hidden role="dialog" aria-modal="true" aria-labelledby="hk-title">
+  <div class="card">
+    <h2 id="hk-title">Trust this device?</h2>
+    <p class="muted">You are connecting to <b id="hk-host"></b> for the first time.</p>
+    <p>Its fingerprint:</p>
+    <code id="hk-fp" class="fp"></code>
+    <p id="hk-note" class="muted"></p>
+    <div class="row">
+      <button id="hk-trust" class="primary">Trust and log in</button>
+      <button id="hk-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="nk-host.js"></script>
+</body>
+</html>

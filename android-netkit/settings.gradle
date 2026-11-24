@@ -5,4 +5,4 @@ dependencyResolutionManagement {
     repositories { google(); mavenCentral() }
 }
 rootProject.name = 'ShankPitNetkit'
-include ':core', ':app'
+include ':shell', ':app'

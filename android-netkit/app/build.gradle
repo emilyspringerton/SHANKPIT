@@ -1,0 +1,67 @@
+plugins {
+    id 'com.android.application'
+}
+
+// --- release identity -------------------------------------------------------
+// versionCode must increase for sideload updates; CI passes the run number. Locally it is date-derived.
+def buildNumber = System.getenv('SHANKPIT_NETKIT_VERSION_CODE')
+def defaultCode = new Date().format('yyMMdd').toInteger()
+def versionCodeValue = (buildNumber ? buildNumber.toInteger() : defaultCode)
+def versionNameValue = System.getenv('SHANKPIT_NETKIT_VERSION_NAME') ?: '0.1.0'
+
+// Optional release signing; without it the APK is signed with the local debug key (sideload only, not a Play upload).
+def keystorePath = System.getenv('SHANKPIT_NETKIT_KEYSTORE')
+
+android {
+    namespace 'industrial.einhorn.shankpit.netkit'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'industrial.einhorn.shankpit.netkit'
+        minSdk 24
+        targetSdk 34
+        versionCode versionCodeValue
+        versionName versionNameValue
+    }
+
+    buildFeatures { buildConfig true }
+
+    // The page (index.html, netkit.css, nk-host.js and the three .wasm files) lives in apps/netkit and is packaged verbatim into the
+    // APK's assets -- one source of truth, no copies. The generated .ts and the notes are not part of the app.
+    sourceSets { main { assets.srcDirs += [file('../../apps/netkit')] } }
+    androidResources { ignoreAssetsPattern '!*.ts:!*.md:!.git:!.svn' }
+
+    signingConfigs {
+        if (keystorePath) {
+            release {
+                storeFile file(keystorePath)
+                storePassword System.getenv('SHANKPIT_NETKIT_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('SHANKPIT_NETKIT_KEY_ALIAS')
+                keyPassword System.getenv('SHANKPIT_NETKIT_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix '.debug'
+            versionNameSuffix '-debug'
+        }
+        release {
+            minifyEnabled false
+            shrinkResources false
+            signingConfig keystorePath ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint { abortOnError false }
+}
+
+dependencies {
+    implementation project(':shell')
+}

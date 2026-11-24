@@ -315,6 +315,31 @@ Honest limits: the arena is deathmatch-only (no zombies), there is no map editin
 android/tools/verify-web-bundle.mjs` is the check — it boots the real wasm through
 the real touch layer and proves the offline path.
 
+## Android client #2: Netkit — scan, SSH, view-only VNC, written in PARENA (2026-11-24)
+
+A second Android app, separate from shankpit-460: **SHANKPIT Netkit** (`android-netkit/`, page in `apps/netkit/`). It finds devices on the
+network, opens an **SSH terminal**, and **watches a remote screen over VNC** (view only) — the tablet end of the founder's router-Pi / iMac
+setup (`docs/NETKIT_NORTHSTAR.md`).
+
+Founder real-time: *"ensure its all parena based mods first dev."* So the logic is **not Java**. The scanner's brain, the **VNC client**, an
+**SSH client** (curve25519 + ed25519 + chacha20-poly1305, with its SHA-256/512, ChaCha20, Poly1305, X25519, Ed25519 and DES all written in
+PARENA) and an xterm-style **terminal** are PARENA modules (`PARENA/stdlib/netkit/`) compiled to WebAssembly — no malloc, zero imports;
+the page host is PARENA → TypeScript → the one generated `nk-host.js`; the Java is a socket pipe (`TcpHub`, `Prober`, `NetInfo`, a Keystore-encrypted
+store) that never interprets a byte. No libssh2, no JSch, no hand-written JavaScript.
+
+- **Credentials never go to an unaccepted host.** First contact stops at "Trust this device?" with the SHA-256 fingerprint, after the server's
+  Ed25519 signature has been verified; a remembered fingerprint that changes fails before anything is sent (asserted on the wire).
+- **View only by construction**: nothing emits a key, pointer or clipboard message to a VNC server.
+- **Ships in every release** as `ShankPit_Netkit_<build>.apk` (`release.yml`; `node android-netkit/tools/verify-web-bundle.mjs apps/netkit` is the
+  bundle check).
+
+Verified headlessly against things this repo did not write — a real **OpenSSH 9.6 `sshd`**, **asyncssh**, **libvncserver** (TightVNC's lineage)
+and headless Chromium (488 checks in PARENA's `make test-netkit`: 402 on the modules, 65 running the generated page in Node, 21 in a real browser under
+the app's CSP including pixel-exact canvas comparisons; plus 16 JVM tests for the shell). **Not yet run on a real tablet, the router Pi or the iMac** — there is no Android device or emulator in the
+build environment. Honest limits: password SSH only, one cipher/kex set (a server without them is refused plainly), no Tight/ZRLE VNC, a fixed
+100×34 terminal (a tablet, not a phone), scanner = TCP-connect sweep ≤ /22; the founder's packet capture, pager, stream deck and AR/Quest parts
+are not started.
+
 ## Lighting: one environment matrix, resolved in PARENA (2026-10-30)
 
 Founder real-time: "we have cool weather effects but it doesnt work with the ambient lighting like it
