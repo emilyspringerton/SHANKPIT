@@ -44,29 +44,30 @@ static void test_chords(void) {
 }
 
 static void test_state_machine(void) {
-    /* expect[state][cmd], cmd 0 = none .. 7 = OVERLAY_CLOSED, 8 = SUSPEND */
-    static const int expect[6][9] = {
-        /* NONE        */ {0, 1, 5, 0, 0, 0, 0, 0, 0},
-        /* LOADING     */ {1, 1, 1, 1, 2, 0, 1, 1, 1},
-        /* FG          */ {2, 3, 4, 2, 2, 2, 0, 2, 3},
-        /* BG          */ {3, 2, 4, 0, 3, 3, 0, 3, 3},
-        /* SOURCE      */ {4, 4, 4, 4, 4, 4, 0, 2, 3},
-        /* SOURCE_NONE */ {5, 5, 5, 5, 5, 5, 5, 0, 0},
+    /* expect[state][cmd], cmd 0 = none .. 7 = OVERLAY_CLOSED, 8 = SUSPEND, 9 = ARCADE_PLAY, 10 = ARCADE_ENTER */
+    static const int expect[6][11] = {
+        /* NONE        */ {0, 1, 5, 0, 0, 0, 0, 0, 0, 1, 0},
+        /* LOADING     */ {1, 1, 1, 1, 2, 0, 1, 1, 1, 1, 0},
+        /* FG          */ {2, 3, 4, 2, 2, 2, 0, 2, 3, 2, 3},
+        /* BG          */ {3, 2, 4, 0, 3, 3, 0, 3, 3, 2, 3},
+        /* SOURCE      */ {4, 4, 4, 4, 4, 4, 0, 2, 3, 4, 4},
+        /* SOURCE_NONE */ {5, 5, 5, 5, 5, 5, 5, 0, 0, 5, 5},
     };
     int s, c, bad = 0;
     CHECK(lm_st_none() == 0 && lm_st_loading() == 1 && lm_st_fg() == 2 && lm_st_bg() == 3 && lm_st_source() == 4 &&
               lm_st_source_none() == 5,
           "state numbering is the contract's");
     CHECK(lm_cmd_toggle() == 1 && lm_cmd_source() == 2 && lm_cmd_close() == 3 && lm_cmd_load_ok() == 4 &&
-              lm_cmd_load_fail() == 5 && lm_cmd_trap() == 6 && lm_cmd_overlay_closed() == 7 && lm_cmd_suspend() == 8,
+              lm_cmd_load_fail() == 5 && lm_cmd_trap() == 6 && lm_cmd_overlay_closed() == 7 && lm_cmd_suspend() == 8 &&
+              lm_cmd_arcade_play() == 9 && lm_cmd_arcade_enter() == 10,
           "command numbering is the contract's");
     for (s = 0; s < 6; s++)
-        for (c = 0; c < 9; c++)
+        for (c = 0; c < 11; c++)
             if (lm_next(s, c) != expect[s][c]) {
                 printf("  lm_next(%d, %d) = %d, expected %d\n", s, c, lm_next(s, c), expect[s][c]);
                 bad++;
             }
-    CHECK(bad == 0, "lm_next matches the contract's table in all 54 cases");
+    CHECK(bad == 0, "lm_next matches the contract's table in all 66 cases (incl. the arcade commands)");
     CHECK(lm_announce(lm_st_fg(), lm_next(lm_st_fg(), lm_cmd_suspend())) == 1002 &&
               lm_announce(lm_st_source(), lm_next(lm_st_source(), lm_cmd_suspend())) == 0,
           "SUSPEND from the foreground announces HIDDEN; from the overlay (already hidden) nothing");
@@ -207,6 +208,73 @@ static void test_compile_swap(void) {
     CHECK(bad == 0, "a new build swaps in exactly on SOURCE -> FG and BG -> FG (never LOADING -> FG, never in FG)");
 }
 
+/* ARCADE-0..2 (SECTION 638): the cabinet in the CONSTRUCT hub */
+static void test_arcade(void) {
+    int st, f, bad = 0, near, in_hub;
+    CHECK(lm_arcade_range_cm() == 320, "the cabinet's use radius is 3.2 m");
+    CHECK(lm_arcade_near(0, 0, 0) == 1 && lm_arcade_near(320, 0, 0) == 1 && lm_arcade_near(0, 0, -320) == 1 &&
+              lm_arcade_near(321, 0, 0) == 0 && lm_arcade_near(230, 0, 230) == 0 && lm_arcade_near(220, 0, 220) == 1,
+          "near: inside the circle only (3.2 m, edge inclusive)");
+    CHECK(lm_arcade_near(0, 201, 0) == 0 && lm_arcade_near(0, -201, 0) == 0 && lm_arcade_near(0, 200, 0) == 1,
+          "near: on the cabinet's floor (|dy| <= 2 m)");
+    CHECK(lm_arcade_near(2000000000, 0, 0) == 0 && lm_arcade_near(0, 0, -2000000000) == 0 &&
+              lm_arcade_near(-2147483647, 0, 1000) == 0,
+          "near: absurd distances are far, never an overflow wrap");
+    /* prompt table, in_hub = 1, near = 1: [state][failed] */
+    {
+        static const int want[6][2] = {{1, 3}, {2, 2}, {0, 0}, {4, 4}, {0, 0}, {0, 0}}; /* NONE LOADING FG BG SOURCE SRC_NONE */
+        for (st = 0; st < 6; st++)
+            for (f = 0; f < 2; f++)
+                if (lm_arcade_prompt(1, 1, st, f) != want[st][f]) {
+                    printf("  lm_arcade_prompt(1,1,%d,%d) = %d, expected %d\n", st, f, lm_arcade_prompt(1, 1, st, f), want[st][f]);
+                    bad++;
+                }
+        CHECK(bad == 0, "prompt: PLAY (none), LOADING, FAILED (none + failed), RESUME (BG), nothing in FG or the overlay");
+    }
+    for (st = 0, bad = 0; st < 6; st++)
+        for (f = 0; f < 2; f++)
+            for (in_hub = 0; in_hub < 2; in_hub++)
+                for (near = 0; near < 2; near++)
+                    if (!(in_hub && near) && (lm_arcade_prompt(in_hub, near, st, f) != 0 || lm_arcade_use_cmd(in_hub, near, st, f) != 0)) bad++;
+    CHECK(bad == 0, "no prompt and no use anywhere but at the machine in the hub (outside the hub the cabinet does not exist)");
+    CHECK(lm_arcade_use_cmd(1, 1, 0, 0) == 9 && lm_arcade_use_cmd(1, 1, 0, 1) == 9 && lm_arcade_use_cmd(1, 1, 3, 0) == 9 &&
+              lm_arcade_use_cmd(1, 1, 1, 0) == 0 && lm_arcade_use_cmd(1, 1, 2, 0) == 0 && lm_arcade_use_cmd(1, 1, 4, 0) == 0 &&
+              lm_arcade_use_cmd(1, 1, 5, 0) == 0,
+          "F = ARCADE_PLAY from NONE, NONE-after-failure (retry) and BG; passes on while LOADING, in FG or in the overlay");
+    CHECK(lm_next(lm_st_none(), lm_arcade_use_cmd(1, 1, 0, 0)) == lm_st_loading() &&
+              lm_next(lm_st_bg(), lm_arcade_use_cmd(1, 1, 3, 0)) == lm_st_fg(),
+          "F from NONE loads BRAWLPIT, F from a paused BRAWLPIT resumes it");
+    CHECK(lm_next(lm_next(lm_st_loading(), lm_cmd_arcade_enter()), lm_arcade_use_cmd(1, 1, 0, 0)) == lm_st_loading() &&
+              lm_next(lm_st_fg(), lm_cmd_arcade_enter()) == lm_st_bg() &&
+              lm_next(lm_next(lm_st_loading(), lm_cmd_arcade_enter()), lm_cmd_arcade_enter()) == lm_st_none(),
+          "entering the hub: the boot load is cancelled and a level in front steps back; the machine then plays it");
+    CHECK(lm_next(lm_next(lm_next(lm_st_none(), lm_cmd_arcade_play()), lm_cmd_load_fail()), lm_cmd_arcade_play()) == lm_st_loading(),
+          "a failed load lands in NONE (LEVEL_LOAD_FAILED path) and F retries; no wedge");
+    CHECK(lm_next(lm_next(lm_next(lm_st_none(), lm_cmd_arcade_play()), lm_cmd_load_ok()), lm_cmd_toggle()) == lm_st_bg() &&
+              lm_next(lm_st_fg(), lm_cmd_suspend()) == lm_st_bg(),
+          "from the machine's BRAWLPIT, Shift+M (and the menu suspend) go back to the hub, level paused, F resumes");
+    CHECK(lm_announce(lm_st_none(), lm_next(lm_st_none(), lm_cmd_arcade_play())) == 0 &&
+              lm_announce(lm_st_bg(), lm_next(lm_st_bg(), lm_cmd_arcade_play())) == 1001 &&
+              lm_announce(lm_st_fg(), lm_next(lm_st_fg(), lm_cmd_arcade_enter())) == 1002,
+          "REFLUX rows: F on a paused level announces SHOWN, entering the hub with a level in front announces HIDDEN");
+    CHECK(lm_arcade_screen(0, 0) == 0 && lm_arcade_screen(1, 0) == 1 && lm_arcade_screen(0, 1) == 2 && lm_arcade_screen(3, 0) == 3 &&
+              lm_arcade_screen(2, 0) == 4 && lm_arcade_screen(5, 0) == 0,
+          "screen: attract / loading / failed / paused / running");
+    CHECK(lm_arcade_light(0, 0) == 0 && lm_arcade_light(1, 0) == 1 && lm_arcade_light(3, 0) == 1 && lm_arcade_light(0, 1) == 2 &&
+              lm_arcade_light(2, 0) == 0,
+          "status light: green ready, amber loading or paused, red failed");
+    CHECK(lm_arcade_pulse(0) == 0 && lm_arcade_pulse(800) == 255 && lm_arcade_pulse(1600) == 0 && lm_arcade_pulse(400) == 127 &&
+              lm_arcade_pulse(-400) == 127 && lm_arcade_pulse(1200) == 127,
+          "the glow is a 0..255 triangle over 1.6 s");
+    for (st = 0, bad = 0; st < 100000; st += 37) {
+        int p = lm_arcade_pulse(st), a = lm_arcade_attract_phase(st);
+        if (p < 0 || p > 255 || a < 0 || a > 7) bad++;
+    }
+    CHECK(bad == 0 && lm_arcade_attract_phase(0) == 0 && lm_arcade_attract_phase(449) == 0 && lm_arcade_attract_phase(450) == 1 &&
+              lm_arcade_attract_phase(3600) == 0 && lm_arcade_attract_phase(-450) == 1,
+          "attract phase 0..7, one step per 450 ms, pulse in range over 100 s");
+}
+
 int main(void) {
     test_compile_swap();
     test_chords();
@@ -214,6 +282,7 @@ int main(void) {
     test_announce();
     test_fixed_step();
     test_keys();
+    test_arcade();
     if (failures) { printf("level_manager_test: %d of %d FAILED\n", failures, checks); return 1; }
     printf("level_manager_test: ALL PASS (%d checks)\n", checks);
     return 0;

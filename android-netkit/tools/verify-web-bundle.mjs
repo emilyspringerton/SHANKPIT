@@ -12,7 +12,7 @@ let bad = 0;
 const fail = m => { console.error('FAIL: ' + m); bad++; };
 const ok = m => console.log('ok:   ' + m);
 
-const MODULES = { 'netkit.wasm': 64, 'netkit-lite.wasm': 8, 'nkterm.wasm': 8 };       // MB, fixed
+const MODULES = { 'netkit.wasm': 64, 'netkit-lite.wasm': 8, 'nkterm.wasm': 8, 'brawlpit.wasm': 8 };       // MB, fixed (brawlpit.wasm: WOTAN's web build, the arcade cabinet's game)
 const exportsOf = {};
 for (const [name, mb] of Object.entries(MODULES)) {
   const f = path.join(dir, name);
@@ -33,19 +33,39 @@ const js = fs.readFileSync(path.join(dir, 'nk-host.js'), 'utf8');
 const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');
 
 // every wasm export the page calls: the generated JS calls them as <exports>.nk_name(...) / <exports>.term_name(...)
-const called = new Set([...js.matchAll(/\.((?:nk|term)_[a-z0-9_]+)\(/g)].map(m => m[1]));
+// (the arcade host calls BRAWLPIT's own bp_* exports on its own instance; it also reaches nk_garage_* through the scanning instance)
+const called = new Set([...js.matchAll(/\.((?:nk|term|bp)_[a-z0-9_]+)\(/g)].map(m => m[1]));
 for (const fn of called) {
-  const where = fn.startsWith('term_') ? ['nkterm.wasm'] : ['netkit.wasm', 'netkit-lite.wasm'];
+  const where = fn.startsWith('term_') ? ['nkterm.wasm'] : fn.startsWith('bp_') ? ['brawlpit.wasm'] : ['netkit.wasm', 'netkit-lite.wasm'];
   for (const w of where) if (exportsOf[w] && !exportsOf[w].has(fn)) fail(`${fn} is called by the page but ${w} does not export it`);
 }
 ok(`the page calls ${called.size} wasm exports, all present`);
+// the garage's word getters are called by name through a helper (scanX[fn](..)), so check the names the page passes to it
+const garageWords = new Set([...js.matchAll(/"(nk_garage_[a-z0-9_]+)"/g)].map(m => m[1]));
+for (const fn of garageWords) for (const w of ['netkit.wasm', 'netkit-lite.wasm']) if (exportsOf[w] && !exportsOf[w].has(fn)) fail(`${fn} is named by the page but ${w} does not export it`);
+if (![...called].some(f => f.startsWith('nk_garage_'))) fail('the page never calls nk_garage_*: nk-host.js is stale (regenerate the bundle with PARENA/scripts/build_netkit_web.sh)');
+else ok(`the garage: ${[...called].filter(f => f.startsWith('nk_garage_')).length} nk_garage_* exports called, ${garageWords.size} more named`);
+// BRAWLPIT's own contract: the exports the arcade host needs (a rebuilt brawlpit.wasm must still have them)
+for (const fn of ['bp_init', 'bp_frame', 'bp_fb_addr', 'bp_fb_w', 'bp_fb_h', 'bp_key', 'bp_blur', 'bp_pointer', 'bp_pad', 'bp_pad_gone', 'bp_sprite_addr', 'bp_sprite_set', 'bp_duck_addr', 'bp_duck_set'])
+  if (exportsOf['brawlpit.wasm'] && !exportsOf['brawlpit.wasm'].has(fn)) fail(`brawlpit.wasm does not export ${fn}, which the arcade host calls`);
+// the art the arcade loads: PNG signature + the exact sizes the host copies into wasm memory (512x256 portraits, 640x340 duck)
+for (const [f, w, h] of [['sprites.png', 512, 256], ['duck.png', 640, 340]]) {
+  const p = path.join(dir, f);
+  if (!fs.existsSync(p)) { fail(`${f} is missing`); continue; }
+  const b = fs.readFileSync(p);
+  const sig = b.subarray(0, 8).toString('hex') === '89504e470d0a1a0a';
+  sig && b.readUInt32BE(16) === w && b.readUInt32BE(20) === h ? ok(`${f}: a ${w}x${h} PNG, ${b.length} bytes`) : fail(`${f} is not a ${w}x${h} PNG`);
+}
 
 const ids = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]));
 const used = new Set();
 for (const re of [/\bel\("([^"]+)"\)/g, /\b(?:setTextBang|setHtmlBang|setHiddenBang|setValBang|val|checkedP|onBang)\("([^"]+)"/g]) for (const m of js.matchAll(re)) used.add(m[1]);
 for (const id of used) if (!ids.has(id)) fail(`the page uses element id "${id}" but index.html has none`);
-for (const n of ['devices', 'ssh', 'vnc']) { used.add('tab-' + n); if (!ids.has('tab-' + n)) fail(`index.html has no tab-${n}`); }
+for (const n of ['garage', 'devices', 'ssh', 'vnc', 'arcade']) { used.add('tab-' + n); if (!ids.has('tab-' + n)) fail(`index.html has no tab-${n}`); }
 ok(`the page uses ${used.size} element ids, all present in index.html`);
+
+const pad = [...html.matchAll(/data-bp="(\d+)"/g)].map(m => +m[1]).sort((a, b) => a - b);
+pad.join() === '1,2,3,4,5,6,7,8,9,10,11' ? ok('the arcade has all 11 touch buttons (codes 1..11, each mapped to a key by nk_garage_touch_key)') : fail(`touch buttons are ${pad}, expected 1..11`);
 
 if (!/<script type="module" src="nk-host\.js">/.test(html)) fail('index.html does not load nk-host.js as a module');
 if (/<script(?![^>]*src=)[^>]*>[^<]/i.test(html)) fail('index.html contains an inline script (the page has no hand-written JavaScript)');

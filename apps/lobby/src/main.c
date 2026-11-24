@@ -38,6 +38,11 @@
    rather than beside its first big user further down, because the skin-selection state (below) and
    the SKINS menu both live above that point. */
 #include "../../../packages/simulation/skin_registry.h"
+#include "../../../packages/simulation/action_bar_rules.h"
+#include "../../../packages/simulation/world_items.h" /* SECTION 643: desk items (notebook, pencil, sharpener...) -- PARENA item_rules */
+#include "../../../packages/simulation/item_rules.h"
+#include "../../../packages/simulation/keybind_host.h" /* KEY BINDINGS: WoW-style, 3 slots/op, PARENA keybind_rules */
+#include "actionbar_host.h" /* ACTION BARS: keys 1..9,0 + Shift/Ctrl/Alt banks, driven by the PARENA action_bar_rules mod */
 #include "../../../packages/simulation/dw_play.h" /* the player's end of the citizens' DEADWEIGHT ladder */
 #include "../../../packages/simulation/dw_engine.h" /* card_kind/card_tier/card_power: how a card ID reads as a card */
 /* EMPIRE, both halves, from PARENA: the influence economy + district sphere (empire_rules.c, declared by
@@ -68,6 +73,7 @@ static int g_drawing_local_third_person = 0;
 
 
 #include "editor_widget_bridge.h"
+#include "arcade_cabinet.h" /* ARCADE-0..2 (SECTION 638): the CONSTRUCT hub's arcade cabinet; decisions are PARENA lm-arcade-* */
 #include "level_shell.h" /* T0: BRAWLPIT as a WASM level inside the world (docs/T0_LEVEL_WASM_CONTRACT.md) */
 #include "../../../packages/ui/turtle_text.h"
 #define UI_BRIDGE_DECL static
@@ -78,6 +84,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/common/protocol.h"
 #include "../../../packages/common/physics.h"
 #include "../../../packages/common/third_person.h"
+#include "../../../packages/render/camera_view.h"    /* UNIFY-2: wheel zoom / click-to-move / follow options -- glue over the PARENA camera mods */
 #include "../../../packages/common/shared_movement.h"
 #include "../../../packages/common/net_sim.h"
 #include "../../../packages/simulation/cutscene.h"
@@ -132,6 +139,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/simulation/drone_rules_host.h"
 #include "../../../packages/simulation/airplane_flight.h"   /* the C-110 fixed-wing transport */
 #include "../../../packages/simulation/airplane_rules_host.h"
+#include "../../../packages/simulation/airplane_input.h"   /* FLIGHT-0/1: keys/pad -> AirplaneControls */
 #include "../../../packages/render/ground_fog.h"   /* weather fog that pools on the ground */
 #include "../../../packages/render/verdict_fx.h"   /* the civic boss's mote/scorch pools -- GL-free, tested headless */
 #include "../../../packages/simulation/slide_rules_host.h"
@@ -1094,8 +1102,14 @@ static int g_pause_sel = 0;
 #define PAUSE_FULLSCREEN 6
 #define PAUSE_SNAPSHOT   7
 #define PAUSE_GRADE      8
-#define PAUSE_QUIT       9
-#define PAUSE_ITEMS      10
+#define PAUSE_KEYBINDS   9
+#define PAUSE_CAM_FOLLOW   10
+#define PAUSE_CAM_RECENTER 11
+#define PAUSE_CAM_TERRAIN  12
+#define PAUSE_CAM_SMOOTH   13
+#define PAUSE_CLICK_MOVE   14
+#define PAUSE_QUIT       15
+#define PAUSE_ITEMS      16
 /* g_opt_bullet_holes -- founder real-time, 2026-10-01: "always ensure all features have menu items".
    The per-gun bullet-hole decals (draw_bullet_holes) are a real, always-on rendering feature; this
    is their pause-menu toggle (default ON), persisted in shankpit_display.cfg line 2. Tracking
@@ -3434,6 +3448,7 @@ typedef enum {
     LOBBY_TYLER,
     LOBBY_LAB,       /* SECTION 592 (card #508): the BIG_O lab level */
     LOBBY_EDITMAP,   /* kanban #517/#530: EDIT MAP mode */
+    LOBBY_CONSTRUCT, /* SECTION 638 ARCADE-0: the CONSTRUCT hub (the arcade cabinet), a top-level tile outside SURVIVAL */
     LOBBY_COUNT
 } LobbyAction;
 
@@ -3441,8 +3456,8 @@ char lobby_labels_mutable[LOBBY_COUNT][64];
 
 // Local GAMES page shows only these (card #496 follow-up): ZOMBIES/QUEUE/LEVELS/TYLER live under the
 // SURVIVAL -> MODES submenu now, so their top-level tiles were duplicates. Menu index -> LobbyAction.
-#define GAMES_VIS_COUNT 5
-static const int GAMES_MAP[GAMES_VIS_COUNT] = { LOBBY_SURVIVAL, LOBBY_STORY, LOBBY_STORY_CAVE, LOBBY_SOLO, LOBBY_BATTLE };
+#define GAMES_VIS_COUNT 6
+static const int GAMES_MAP[GAMES_VIS_COUNT] = { LOBBY_SURVIVAL, LOBBY_STORY, LOBBY_STORY_CAVE, LOBBY_SOLO, LOBBY_BATTLE, LOBBY_CONSTRUCT };
 
 static const char *LOBBY_LABELS[LOBBY_COUNT] = {
     "LEVELS",
@@ -3455,7 +3470,8 @@ static const char *LOBBY_LABELS[LOBBY_COUNT] = {
     "QUEUE",
     "TYLER",
     "LAB",
-    "EDIT MAP"
+    "EDIT MAP",
+    "CONSTRUCT"
 };
 
 // APPS page -- founder real-time, 2026-09-22 (SHANKPIT_OS_NORTHSTAR.md): "we need the games
@@ -3477,6 +3493,7 @@ typedef enum {
     APP_ZOMBIES,
     APP_PELLEGRINO,
     APP_NOCK, /* local NOCK map tools: starts the PARENA server and opens the editor page */
+    APP_ARCADE, /* SECTION 638: enters the CONSTRUCT hub (the arcade cabinet); not a child binary */
     APP_COUNT
 } AppsAction;
 
@@ -3489,6 +3506,7 @@ static const char *APPS_LABELS[APP_COUNT] = {
     "ZOMBIES",
     "PELLEGRINO",
     "NOCK",
+    "ARCADE",
 };
 
 // lobby_page -- 0 = GAMES (the original single page, untouched), 1 = APPS (new), 2 = CUSTOMIZE
@@ -3504,7 +3522,9 @@ static const char *CUSTOMIZE_LABELS[CUSTOMIZE_COUNT] = { "SKINS", "SPRAYS" };
 // in-game pause menu keeps its own copies of the shared ones (bullet holes, brick debris, fullscreen).
 #define LOBBY_PAGE_SETTINGS 3
 typedef enum { SETTINGS_LIVE_LEVELS = 0, SETTINGS_BULLET_HOLES, SETTINGS_BRICK_DEBRIS, SETTINGS_FULLSCREEN,
-               SETTINGS_STREAM_GRADE, SETTINGS_STREAM_DETAIL, SETTINGS_COUNT } SettingsAction;
+               SETTINGS_STREAM_GRADE, SETTINGS_STREAM_DETAIL,
+               SETTINGS_CAM_FOLLOW, SETTINGS_CAM_RECENTER, SETTINGS_CAM_TERRAIN, SETTINGS_CAM_SMOOTH, SETTINGS_CLICK_MOVE,
+               SETTINGS_COUNT } SettingsAction;
 // lobby_page 4 = MODES (card #496, "ensure survival mode has a menu -- nest zombies and queue and
 // survival and levels ... and tyler too sub menu"). Opened from the SURVIVAL tile on the GAMES page;
 // each entry maps to the same LobbyAction the GAMES page already launches, so nothing about how a
@@ -4051,6 +4071,27 @@ static void lobby_check_story_level_exits(unsigned int now_ms) {
 // VOXWORLD's own default entirely (real skip of the intro cutscene, via lobby_apply_story_level's
 // own STORY_PHASE_PLAYING set); with no such level authored yet, this is a real, honest no-op and
 // the existing VOXWORLD intro-cutscene path runs exactly as before.
+/* ---- SECTION 643: desk items you can pick up and use (notebook, pencil, pencil sharpener, eraser, pen, ruler, scissors) ----
+ * Decisions are PARENA (item_rules.prn); pool/pockets are packages/simulation/world_items.c. Here: the desk, the draw, the HUD
+ * and the keys (F pick up, U use held on whatever is in reach / in your pockets, O cycle held, G drop). Client-local. */
+static int g_items_on = 0, g_items_mode = -1, g_items_scene = -1;
+static float g_desk_x = 0, g_desk_z = 0, g_desk_top = 0;
+static char g_item_msg[96];
+static unsigned int g_item_msg_ms = 0;
+
+static void lobby_items_seed_desk(float hx, float hy, float hz) {
+    world_items_reset();
+    world_items_seed_desk(hx - 5.0f, hy, hz - 5.0f, &g_desk_x, &g_desk_top);
+    g_desk_z = hz - 5.0f;
+    g_items_on = 1; g_items_mode = local_state.game_mode; g_items_scene = local_state.players[0].scene_id;
+    g_item_msg[0] = 0;
+}
+/* the desk (and its items) only exist in the mode/scene they were laid in */
+static int lobby_items_live(void) {
+    return g_items_on && app_state == STATE_GAME_LOCAL && local_state.game_mode == g_items_mode &&
+           local_state.players[0].scene_id == g_items_scene;
+}
+
 static void lobby_start_story_mode(void) {
     local_init_match(1, MODE_STORY);
     food_pickup_reset();
@@ -4305,6 +4346,21 @@ static int lobby_start_tyler_mode(void) {
         SDL_Log("TYLER: could not load %s (run from the SHANKPIT repo root)", TYLER_ICELAND_PATH);
         return 0;
     }
+    return 1;
+}
+
+/* ARCADE-0 (BACKLOG SECTION 638): the menu tile that enters the CONSTRUCT hub directly -- local, offline MODE_TYLER on
+ * the CONSTRUCT level (the Duck, third person), no cold-open. The hub holds the arcade cabinet (arcade_cabinet.c):
+ * F at the machine plays BRAWLPIT (the T0 WASM level). Entered world-first: the boot-time BRAWLPIT load is held back
+ * so the player meets the machine, not the game (PARENA lm-cmd-arcade-enter). */
+static int lobby_start_construct_mode(void) {
+    local_init_match(1, MODE_TYLER);
+    if (!lobby_tyler_load_scene(TYLER_SCENE_CONSTRUCT, SDL_GetTicks())) {
+        SDL_Log("CONSTRUCT: could not load %s (run from the SHANKPIT repo root)", TYLER_CONSTRUCT_PATH);
+        return 0;
+    }
+    arcade_cabinet_hub_entered();
+    { const PlayerState *ih = &local_state.players[0]; lobby_items_seed_desk(ih->x, ih->y, ih->z); }   /* SECTION 643 */
     return 1;
 }
 
@@ -4793,6 +4849,7 @@ static int lobby_start_zombies_mode(void) {
     g_snap_zombies = 1;
     food_pickup_reset();   /* SECTION 591: BIG_O food (CARGO app) lies around the spawn */
     food_pickup_seed_ring(SCENE_CUSTOM_LEVEL, hero->x, hero->y, hero->z);
+    lobby_items_seed_desk(hero->x, hero->y, hero->z);   /* SECTION 643: the desk with notebook/pencil/sharpener... */
     SDL_Log("ZOMBIES: loaded '%s' (source id %d, %d boxes, %d damaged cells)", lvl->name, lvl->source_id, lvl->count, lvl->brick_damage_count);
     free(lvl);
     return 1;
@@ -4863,6 +4920,7 @@ static int lobby_start_proc_dungeon(const char *zone) {
     g_snap_zombies = 1;
     food_pickup_reset();
     food_pickup_seed_ring(SCENE_CUSTOM_LEVEL, hero->x, hero->y, hero->z);
+    lobby_items_seed_desk(hero->x, hero->y, hero->z);   /* SECTION 643 */
     SDL_Log("DUNGEON: '%s' loaded, difficulty %d, %d spawners",
             zone, g_zone_rules.difficulty((int)seed), lvl.spawner_count);
     return 1;
@@ -4879,27 +4937,90 @@ static int lobby_descend_dungeon(void) {
     return 1;
 }
 
-#define THIRD_PERSON_CAM_DIST 6.0f
-/* lobby_third_person_arm -- the orbit camera's offset from the player (cx/cz are SUBTRACTED from
- * the player position, cam_y is added to it, the same convention draw_scene's cx/cz/cam_y use),
- * pulled in so it never sits inside a wall (third_person.h). Shared by the renderer and the aim
- * bridge so the two can never disagree about where the camera is. */
+/* ---- UNIFY-2: the third-person camera is driven by the PARENA camera mods (stdlib/camera/*.prn, generated into
+   packages/simulation/camera_unify_mod.c), sequenced by packages/render/camera_view.c. Everything below is thin glue:
+   the arm length is the mouse-wheel zoom (WoW-style: all the way in = first person), the four follow options and
+   the click-to-move destination live in g_cv, and this file only feeds floats/inputs in and applies the results. */
+static CamView g_cv;
+static int g_cv_ready = 0;               /* camview_init has run */
+static int g_cv_manual = 0;              /* the user orbited (mouse/stick) since the last frame update */
+static int g_cv_pitch_off_mdeg = 0;      /* terrain pitch offset, positive = look further down (already wall-damped) */
+static int g_cv_focus_dy_milli = 0;      /* eased focus height minus the player's height */
+static int g_cv_cam_pid = 0;             /* whose view g_cv describes */
+static int g_cv_smooth_valid = 0;        /* g_cv_smooth_world holds last frame's smoothed camera position (milli) */
+static int g_cv_smooth_world[3];
+static float g_cv_aim_yaw = 0.0f;        /* command yaw while click-to-move steers (the body heading) */
+static float g_cv_dest_x = 0.0f, g_cv_dest_z = 0.0f;   /* click-to-move marker, world units */
+
+static void lobby_cv_ensure(void) { if (!g_cv_ready) { camview_init(&g_cv); g_cv_ready = 1; } }
+
+/* The view player: the local player, or this client's own slot in a net match. */
+static int lobby_cv_pid(void) {
+    return (app_state == STATE_GAME_NET && my_client_id > 0 && my_client_id < MAX_CLIENTS) ? my_client_id : 0;
+}
+/* Eligible for the free wheel zoom (first person <-> third person): a live on-foot player outside MODE_TYLER, whose
+   third_person flag is owned by the level/server. Anything else keeps whatever third_person says (zoom still works
+   in third person, floored at 4 units, and never goes first person). */
+static int lobby_cv_eligible(void) {
+    if (app_state != STATE_GAME_LOCAL && app_state != STATE_GAME_NET) return 0;
+    const PlayerState *p = &local_state.players[lobby_cv_pid()];
+    return local_state.game_mode != MODE_TYLER && p->state == STATE_ALIVE && !p->in_vehicle && !g_cam_override.active;
+}
+/* Net snapshots overwrite PlayerState.third_person with the server's value (0 for an ordinary player): keep the
+   client-local zoom authoritative for the local view player, so the body does not flicker per snapshot. No wire change. */
+static int lobby_cv_flag_override(int id, int server_flag) {
+    if (!g_cv_ready || id != lobby_cv_pid() || !g_cv.synced || !lobby_cv_eligible()) return server_flag;
+    return g_cv.fp ? 0 : 1;
+}
+static int lobby_cv_is_view(const PlayerState *p) {
+    return g_cv_ready && p->third_person && p == &local_state.players[g_cv_cam_pid];
+}
+/* The pitch the camera really uses: mouse pitch eased by the terrain-slope offset (SHANKPIT: positive pitch looks up,
+   the mod's positive offset looks down). Identity for anything but the view player in third person. */
+static float lobby_cam_view_pitch(const PlayerState *p, float pitch) {
+    if (!lobby_cv_is_view(p) || g_cv_pitch_off_mdeg == 0) return pitch;
+    float v = pitch - (float)g_cv_pitch_off_mdeg * 0.001f;
+    return v > 89.0f ? 89.0f : (v < -89.0f ? -89.0f : v);
+}
+
+/* The wall-clipped orbit arm from the player's pivot (third_person.h), at the zoomed distance. Writes the fraction of
+   the wanted arm that survived the wall for the terrain-damp mod. */
+static void lobby_tp_arm_raw(const PlayerState *p, float yaw, float pitch, float *ax, float *ay, float *az, int *fraction_permille) {
+    float arm = lobby_cv_is_view(p) ? (float)g_cv.arm_milli * 0.001f : 6.0f;
+    if (arm < 1.0f) arm = 1.0f;   /* flag set by the level/server before the zoom state synced: never a zero arm */
+    float pr = lobby_cam_view_pitch(p, pitch);
+    float rad = -yaw * 0.01745f;
+    float prad = pr * 0.01745f;
+    /* arm = camera position - pivot (pivot is the player at y + 1). The camera sits BEHIND the player. With rad = -yaw
+       the player faces (sin(rad), ., -cos(rad)) (physics.h: yaw 0 faces -Z), so behind is (-sin(rad), ., +cos(rad)).
+       (card T62892945: the old orbit used cz = +cos and put the camera IN FRONT of the player; only the z sign was wrong.) */
+    *ax = -sinf(rad) * arm * cosf(prad);
+    *ay = arm * sinf(prad);
+    *az = cosf(rad) * arm * cosf(prad);
+    float scale = tp_camera_offset_clipped(p->x, p->y + 1.0f, p->z, ax, ay, az);
+    if (fraction_permille) *fraction_permille = (int)(scale * 1000.0f);
+}
+
+/* lobby_third_person_arm -- the orbit camera's offset from the player (cx/cz are SUBTRACTED from the player position,
+   cam_y is added to it, the same convention draw_scene's cx/cz/cam_y use), pulled in so it never sits inside a wall
+   (third_person.h) at ANY zoom distance. Shared by the renderer and the aim bridge so the two can never disagree about
+   where the camera is. With camera smoothing on, the view player's camera lags last frame's smoothed position (then is
+   wall-clipped again, so the lag never puts it inside a wall); the focus height eases on stairs (Terrain: Slope). */
 static void lobby_third_person_arm(const PlayerState *p, float yaw, float pitch,
                                    float *cx, float *cz, float *cam_y) {
-    float rad = -yaw * 0.01745f;
-    float prad = pitch * 0.01745f;
-    /* arm = camera position - pivot (pivot is the player at y + 1). The camera sits BEHIND the
-       player. With rad = -yaw the player faces (sin(rad), ., -cos(rad)) (physics.h: yaw 0 faces
-       -Z), so behind is (-sin(rad), ., +cos(rad)).
-       REAL BUG FIXED (card T62892945, "fix our 3rd person"): the previous orbit camera used
-       cz = +cos(rad)*D, which -- since the camera sits at z - cz -- put it 6 units IN FRONT of the
-       player looking away, so the character was behind the lens and never visible. The x term was
-       already correct; only z was flipped. */
-    float ax = -sinf(rad) * THIRD_PERSON_CAM_DIST * cosf(prad);
-    float ay = THIRD_PERSON_CAM_DIST * sinf(prad);
-    float az = cosf(rad) * THIRD_PERSON_CAM_DIST * cosf(prad);
-    tp_camera_offset_clipped(p->x, p->y + 1.0f, p->z, &ax, &ay, &az);
-    *cx = -ax; *cz = -az; *cam_y = 1.0f + ay;
+    float ax, ay, az;
+    lobby_tp_arm_raw(p, yaw, pitch, &ax, &ay, &az, NULL);
+    float dy = 0.0f;
+    if (lobby_cv_is_view(p)) {
+        if (g_cv_smooth_valid && g_cv.opt_smooth) {
+            ax = (float)g_cv_smooth_world[0] * 0.001f - p->x;
+            ay = (float)g_cv_smooth_world[1] * 0.001f - (p->y + 1.0f);
+            az = (float)g_cv_smooth_world[2] * 0.001f - p->z;
+            tp_camera_offset_clipped(p->x, p->y + 1.0f, p->z, &ax, &ay, &az);
+        }
+        dy = (float)g_cv_focus_dy_milli * 0.001f;
+    }
+    *cx = -ax; *cz = -az; *cam_y = 1.0f + ay + dy;
 }
 
 /* lobby_third_person_aim -- aim bridging for a player in third person: yaw/pitch that send a shot
@@ -4907,8 +5028,44 @@ static void lobby_third_person_arm(const PlayerState *p, float yaw, float pitch,
 static void lobby_third_person_aim(const PlayerState *p, float yaw, float pitch, float *out_yaw, float *out_pitch) {
     float cx, cz, cam_y;
     lobby_third_person_arm(p, yaw, pitch, &cx, &cz, &cam_y);
-    tp_aim_yaw_pitch(p->x - cx, p->y + cam_y, p->z - cz, yaw, pitch,
+    tp_aim_yaw_pitch(p->x - cx, p->y + cam_y, p->z - cz, yaw, lobby_cam_view_pitch(p, pitch),
                      p->x, p->y + EYE_HEIGHT, p->z, out_yaw, out_pitch);
+}
+
+/* The yaw/pitch a command carries: the camera's (bridged to the crosshair in third person), or -- while click-to-move
+   steers -- the body heading, so the WASD-style movement input is in the frame the steering mod computed it in. */
+static void lobby_cam_aim(const PlayerState *p, float *yaw, float *pitch) {
+    *yaw = cam_yaw; *pitch = cam_pitch;
+    if (g_cv_ready && g_cv.steering && p == &local_state.players[g_cv_cam_pid]) { *yaw = g_cv_aim_yaw; *pitch = 0.0f; return; }
+    if (p->third_person) lobby_third_person_aim(p, cam_yaw, cam_pitch, yaw, pitch);
+}
+
+/* Cursor is free (left-click goes to click-to-move, RMB-drag orbits) only with the option on, zoomed out, in play. */
+static int lobby_cv_cursor_free(void) {
+    return g_cv_ready && g_cv.opt_click_move && !g_cv.fp && !g_paused && !g_chat_open && lobby_cv_eligible() &&
+           local_state.players[lobby_cv_pid()].third_person;
+}
+
+/* The click-to-move destination marker: a ring on the ground, pulsing. Drawn in the 3D pass; attribute-scoped. */
+static float g_cv_dest_y = 0.0f;
+static void lobby_cv_marker_draw(const PlayerState *render_p) {
+    if (!g_cv_ready || !g_cv.dest_active || !lobby_cv_is_view(render_p)) return;
+    float t = (float)SDL_GetTicks() * 0.006f;
+    float r = 0.55f + 0.12f * sinf(t);
+    glPushAttrib(GL_ENABLE_BIT | GL_LINE_BIT | GL_CURRENT_BIT);
+    glDisable(GL_TEXTURE_2D); glDisable(GL_LIGHTING); glDisable(GL_FOG);
+    glLineWidth(2.5f);
+    glColor3f(1.0f, 0.85f, 0.1f);
+    glBegin(GL_LINE_LOOP);
+    for (int i = 0; i < 24; i++) {
+        float a2 = (float)i * (6.2831853f / 24.0f);
+        glVertex3f(g_cv_dest_x + cosf(a2) * r, g_cv_dest_y + 0.06f, g_cv_dest_z + sinf(a2) * r);
+    }
+    glEnd();
+    glBegin(GL_LINES);
+    glVertex3f(g_cv_dest_x, g_cv_dest_y + 0.06f, g_cv_dest_z); glVertex3f(g_cv_dest_x, g_cv_dest_y + 1.1f, g_cv_dest_z);
+    glEnd();
+    glPopAttrib();
 }
 
 /* lobby_start_city -- local deathmatch on the built-in procedural SCENE_CITY (card T62892945).
@@ -5496,13 +5653,44 @@ static void recalc_viewport(void) {
     }
 }
 
+/* UNIFY-4: the four third-person camera options (+ the click-to-move toggle). Values and decisions are the PARENA
+   camera_follow / click_move mods; these are only the labels and the cycle. First person ignores all of them. */
+static const char *cam_opt_label(int which, char *buf, size_t n) {
+    static const char *FOLLOW[] = { "FREE", "BEHIND WHEN MOVING", "ALWAYS BEHIND" };
+    static const char *SPEED[]  = { "SLOW", "NORMAL", "FAST" };
+    static const char *TERRAIN[] = { "OFF", "SLOPE" };
+    static const char *SMOOTH[] = { "OFF", "LOW", "HIGH" };
+    lobby_cv_ensure();
+    switch (which) {
+        case 0: snprintf(buf, n, "CAMERA FOLLOW: %s", FOLLOW[g_cv.opt_follow % 3]); break;
+        case 1: snprintf(buf, n, "CAMERA RECENTER: %s", SPEED[g_cv.opt_recenter % 3]); break;
+        case 2: snprintf(buf, n, "CAMERA TERRAIN: %s", TERRAIN[g_cv.opt_terrain % 2]); break;
+        case 3: snprintf(buf, n, "CAMERA SMOOTHING: %s", SMOOTH[g_cv.opt_smooth % 3]); break;
+        default: snprintf(buf, n, "CLICK TO MOVE: %s", g_cv.opt_click_move ? "ON" : "OFF"); break;
+    }
+    return buf;
+}
+static void save_display_config(void);
+static void cam_opt_cycle(int which, int dir) {
+    lobby_cv_ensure();
+    int *v = which == 0 ? &g_cv.opt_follow : which == 1 ? &g_cv.opt_recenter : which == 2 ? &g_cv.opt_terrain
+           : which == 3 ? &g_cv.opt_smooth : &g_cv.opt_click_move;
+    int n = (which == 0 || which == 1 || which == 3) ? 3 : 2;
+    *v = ((*v + dir) % n + n) % n;
+    if (which == 4 && !*v) camview_cancel_dest(&g_cv);
+    save_display_config();
+}
+
 static const char *DISPLAY_CONFIG_PATH = "shankpit_display.cfg";
 
 static void save_display_config(void) {
     FILE *f = fopen(DISPLAY_CONFIG_PATH, "w");
     if (!f) return;
-    fprintf(f, "%d\n%d\n%d\n%d\n%d\n%d\n%d\n", g_fullscreen, g_opt_bullet_holes, g_opt_brick_debris,
-            g_opt_ambient_level, level_boxes_live_download, g_stream_grade, g_stream_skip_kernel);
+    lobby_cv_ensure();
+    fprintf(f, "%d\n%d\n%d\n%d\n%d\n%d\n%d\n%d\n", g_fullscreen, g_opt_bullet_holes, g_opt_brick_debris,
+            g_opt_ambient_level, level_boxes_live_download, g_stream_grade, g_stream_skip_kernel, abh_visible());
+    /* lines 9-13 (UNIFY-4): camera follow / recenter speed / terrain / smoothing, click-to-move */
+    fprintf(f, "%d\n%d\n%d\n%d\n%d\n", g_cv.opt_follow, g_cv.opt_recenter, g_cv.opt_terrain, g_cv.opt_smooth, g_cv.opt_click_move);
     fclose(f);
 }
 
@@ -5527,6 +5715,21 @@ static void load_display_config(void) {
             g_stream_grade = (grade >= 0 && grade < n) ? grade : 0;
         }
         if (fscanf(f, "%d", &skip) == 1) g_stream_skip_kernel = skip ? 1 : 0;
+    }
+    {   /* the action bar's visible/hidden setting; an older cfg without it keeps the default (visible) */
+        int bar = -1;
+        if (fscanf(f, "%d", &bar) == 1 && bar >= 0) abh_set_visible(bar);
+    }
+    {   /* the third-person camera options; an older cfg without them keeps the defaults (1/1/1/1, click-to-move off) */
+        int fo = -1, rc = -1, tr = -1, sm = -1, cm = -1;
+        lobby_cv_ensure();
+        if (fscanf(f, "%d %d %d %d %d", &fo, &rc, &tr, &sm, &cm) == 5) {
+            if (fo >= 0 && fo <= 2) g_cv.opt_follow = fo;
+            if (rc >= 0 && rc <= 2) g_cv.opt_recenter = rc;
+            if (tr >= 0 && tr <= 1) g_cv.opt_terrain = tr;
+            if (sm >= 0 && sm <= 2) g_cv.opt_smooth = sm;
+            g_cv.opt_click_move = cm ? 1 : 0;
+        }
     }
     fclose(f);
     apply_ambient_level();
@@ -5599,6 +5802,11 @@ static const char *lobby_menu_label(int idx) {
             }
             case SETTINGS_STREAM_DETAIL:
                 return g_stream_skip_kernel ? "STREAM DETAIL: LIGHT" : "STREAM DETAIL: FULL";
+            case SETTINGS_CAM_FOLLOW: case SETTINGS_CAM_RECENTER: case SETTINGS_CAM_TERRAIN: case SETTINGS_CAM_SMOOTH: case SETTINGS_CLICK_MOVE: {
+                static char cam_label[5][48];
+                int w = idx - SETTINGS_CAM_FOLLOW;
+                return cam_opt_label(w, cam_label[w], sizeof cam_label[w]);
+            }
         }
         return "";
     }
@@ -6239,6 +6447,24 @@ static void lobby_start_action(int action) {
             lobby_selection = 0;
             return;
         }
+        if (action == APP_ARCADE) {   /* SECTION 638: not a child binary, the CONSTRUCT hub */
+            app_state = STATE_GAME_LOCAL;
+            g_lab_active = 0;
+            g_edit_active = 0; es_stop();
+            lobby_page = 0;
+            lobby_selection = 0;
+            if (!lobby_start_construct_mode()) app_state = STATE_LOBBY;
+            else {
+                death_cam_blend = 0.0f;
+                SDL_SetRelativeMouseMode(SDL_TRUE);
+                glMatrixMode(GL_PROJECTION);
+                glLoadIdentity();
+                gluPerspective(75.0, (float)VIRTUAL_W/(float)VIRTUAL_H, 0.1, Z_FAR);
+                glMatrixMode(GL_MODELVIEW);
+                glEnable(GL_DEPTH_TEST);
+            }
+            return;
+        }
         if (action >= 0 && action < APP_COUNT) {
             lobby_launch_app((AppsAction)action);
         }
@@ -6267,6 +6493,8 @@ static void lobby_start_action(int action) {
             g_stream_skip_kernel = !g_stream_skip_kernel;
             stream_grade_apply();
             save_display_config();
+        } else if (action >= SETTINGS_CAM_FOLLOW && action <= SETTINGS_CLICK_MOVE) {
+            cam_opt_cycle(action - SETTINGS_CAM_FOLLOW, 1);
         }
         return;
     }
@@ -6365,6 +6593,9 @@ static void lobby_start_action(int action) {
                 break;
             case LOBBY_TYLER:
                 if (!lobby_start_tyler_mode()) app_state = STATE_LOBBY;
+                break;
+            case LOBBY_CONSTRUCT:
+                if (!lobby_start_construct_mode()) app_state = STATE_LOBBY;
                 break;
             default:
                 break;
@@ -13234,6 +13465,13 @@ void draw_hud(PlayerState *p) {
     
     draw_ammo_bars(p);
 
+    {   /* the optional ACTION BAR (bottom centre; `actionbar off` hides it, the hotkeys work either way) */
+        int bar_ammo[10], w;
+        SDL_Keymod km = SDL_GetModState();
+        for (w = 0; w < 10; w++) bar_ammo[w] = (w < MAX_WEAPONS && WPN_STATS[w].ammo_max > 0) ? (int)p->ammo[w] : -1;
+        abh_draw((km & KMOD_SHIFT) != 0, (km & KMOD_CTRL) != 0, (km & KMOD_ALT) != 0, p->current_weapon, bar_ammo, p->reload_timer > 0);
+    }
+
     {
         char overlay_buf[96];
         snprintf(overlay_buf, sizeof(overlay_buf), "M OVERLAY: %s", overlay_mode_name(g_overlay.mode));
@@ -14008,6 +14246,64 @@ static void draw_chests(void) {
     }
 }
 
+/* draw_world_items -- SECTION 643: the desk and every item lying on it (or dropped), each a small coloured box model sized by the
+ * PARENA item-dim-mm, plus a pencil tip / paper edge detail so they read as objects. Flat colour, no textures. */
+static void draw_world_items(unsigned int now_ms) {
+    (void)now_ms;
+    if (!lobby_items_live()) return;
+    glDisable(GL_TEXTURE_2D);
+    glColor3f(0.42f, 0.29f, 0.18f);   /* the desk: a slab on four legs under the row */
+    glPushMatrix(); glTranslatef(g_desk_x, g_desk_top - 0.04f, g_desk_z); draw_box(1.1f, 0.08f, 5.0f); glPopMatrix();
+    for (int lz = -1; lz <= 1; lz += 2) for (int lx = -1; lx <= 1; lx += 2) {
+        glPushMatrix(); glTranslatef(g_desk_x + 0.48f * lx, (g_desk_top - 0.08f) * 0.5f + 0.0f, g_desk_z + 2.35f * lz);
+        draw_box(0.08f, g_desk_top - 0.08f, 0.08f); glPopMatrix();
+    }
+    for (int i = 0; i < WORLD_ITEM_MAX; i++) {
+        const WorldItem *w = world_items_get(i);
+        if (!w || !w->active) continue;
+        float sx = (float)item_dim_mm(w->s.id, 0) * 0.001f, sy = (float)item_dim_mm(w->s.id, 1) * 0.001f, sz = (float)item_dim_mm(w->s.id, 2) * 0.001f;
+        int c = item_color(w->s.id);
+        glColor3f(((c >> 16) & 255) / 255.0f, ((c >> 8) & 255) / 255.0f, (c & 255) / 255.0f);
+        glPushMatrix(); glTranslatef(w->x, w->y + sy * 0.5f, w->z);
+        draw_box(sx * 3.0f, sy * 3.0f, sz * 1.0f);   /* x3 on the thin axes so a pencil is visible from a few metres away */
+        glPopMatrix();
+        if (w->s.id == 2) { glColor3f(0.75f, 0.68f, 0.55f); glPushMatrix(); glTranslatef(w->x, w->y + 0.015f, w->z - sz * 0.5f - 0.02f); draw_box(0.03f, 0.03f, 0.04f); glPopMatrix(); }
+        if (w->s.id == 1) { glColor3f(0.95f, 0.95f, 0.9f); glPushMatrix(); glTranslatef(w->x + 0.02f, w->y + sy * 1.5f + 0.005f, w->z); draw_box(sx * 2.6f, 0.01f, sz * 0.9f); glPopMatrix(); }
+    }
+}
+
+/* draw_world_items_hud -- the pick-up prompt, the pockets (held item marked) and the last use result, bottom-centre. */
+static void draw_world_items_hud(void) {
+    if (!lobby_items_live()) return;
+    const PlayerState *p = &local_state.players[0];
+    int slot = -1, pr = world_items_prompt(p->x, p->y, p->z, &slot);
+    int n = world_items_carried_count(), show_msg = g_item_msg[0] && SDL_GetTicks() - g_item_msg_ms < 3500;
+    if (!pr && n == 0 && !show_msg) return;
+    glDisable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    char line[160];
+    if (pr && slot >= 0) {
+        const WorldItem *w = world_items_get(slot);
+        char d[80]; world_item_describe(&w->s, d, sizeof d);
+        snprintf(line, sizeof line, pr == 1 ? "F  PICK UP  %s" : "POCKETS FULL  %s", d);
+        glColor3f(1.0f, 0.9f, 0.4f); draw_string(line, 440, 150, 3);
+    }
+    if (show_msg) { glColor3f(0.6f, 1.0f, 0.7f); draw_string(g_item_msg, 440, 124, 3); }
+    if (n > 0) {
+        glColor3f(0.7f, 0.75f, 0.8f); draw_string("POCKETS   U USE   O NEXT   G DROP", 20, 330, 2.2f);
+        for (int i = 0; i < n; i++) {
+            char d[80]; world_item_describe(world_items_carried(i), d, sizeof d);
+            snprintf(line, sizeof line, "%s%s", i == world_items_held() ? "> " : "  ", d);
+            if (i == world_items_held()) glColor3f(1.0f, 0.85f, 0.3f); else glColor3f(0.8f, 0.8f, 0.8f);
+            draw_string(line, 20, 308.0f - 20.0f * (float)i, 2.4f);
+        }
+    }
+    glMatrixMode(GL_MODELVIEW); glPopMatrix();
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glEnable(GL_DEPTH_TEST);
+}
+
 /* draw_gun_items -- card #487: guns lying on the ground in survival, a spinning bobbing box in a colour per weapon
  * plus a thin light beam so they can be spotted across the city. */
 static void draw_gun_items(unsigned int now_ms) {
@@ -14589,6 +14885,7 @@ static int macro_cmd(const char *text) {
     if (macro_ci_eq(word, "help")) {
         chat_pane_push("MACROS: stream.grade off|crisp|cinematic|gritty|retro|+|-   stream.detail full|light|toggle");
         chat_pane_push("MACROS: ambient 0..10|+|-   stream on|off   broadcast off|auto|manual   fullscreen on|off");
+        chat_pane_push("MACROS: actionbar on|off|toggle   (Shift/Ctrl/Alt+1..0 = banks 2/3/4, Alt+wheel cycles)");
         chat_pane_push("MACROS: bullet.holes   brick.debris   say <text>   bind <KEY> <cmds>   macro <KEY>");
         chat_pane_push("WOW: cast <weapon> [@token] [harm|help|dead|nodead|combat|noexists]   target/focus/cleartarget/clearfocus/startattack   use <1-9>");
         return 1;
@@ -14642,6 +14939,12 @@ static int macro_cmd(const char *text) {
         apply_ambient_level();
         save_display_config();
         { char m[48]; snprintf(m, sizeof m, "AMBIENT LIGHT: %d", g_opt_ambient_level); chat_pane_push(m); }
+        return 1;
+    }
+    if (macro_ci_eq(word, "actionbar")) {   /* the optional on-screen bar; hotkeys 1..9,0 work either way */
+        abh_set_visible(macro_onoff(arg, abh_visible()));
+        save_display_config();
+        chat_pane_push(abh_visible() ? "ACTION BAR: ON (keys 1-0, Shift/Ctrl/Alt banks, Alt+wheel)" : "ACTION BAR: OFF (hotkeys still work)");
         return 1;
     }
     if (macro_ci_eq(word, "bullet.holes")) {
@@ -15109,10 +15412,30 @@ static int macro_key_run(SDL_Keycode sym, Uint16 mod) {
     return 0;
 }
 
+/* ACTION BARS: does a player bind (a macro) claim (bank,slot)? Bind > plugin > default, so a claimed slot
+   is forced to a "MACRO" mod-action (kind 4, id 65535): the bar shows MACRO, no weapon request is made, and
+   the macro itself runs from the keydown path (macro_key_run). Banks: 1 none, 2 Shift, 3 Ctrl, 4 Alt. */
+static int abh_macro_bind_cb(int bank, int slot) {
+    int i, digit = ab_digit_for_slot(slot);
+    SDL_Keycode sym;
+    if (digit < 0 || bank < 1 || bank > 4) return 0;
+    sym = (SDL_Keycode)(SDLK_0 + digit);
+    for (i = 0; i < g_macros.count; i++) {
+        int alt, shift, ctrl;
+        SDL_Keycode want;
+        if (!macro_parse_spec(g_macros.m[i].spec, &alt, &shift, &ctrl, &want)) continue;
+        if (want != sym) continue;
+        if ((alt ? 1 : 0) != (bank == 4) || (shift ? 1 : 0) != (bank == 2) || (ctrl ? 1 : 0) != (bank == 3)) continue;
+        return ab_pack(AB_KIND_MOD, 65535);
+    }
+    return 0;
+}
+
 static void macro_load_startup(void) {
     static char text[8192];
     FILE *f;
     int bad = 0, stored;
+    abh_set_bind_fn(abh_macro_bind_cb);
     macro_book_clear(&g_macros);
     f = fopen(MACRO_FILE_PATH, "rb");
     if (!f) {   /* first run: a file the player can edit, plus two live binds on keys nothing else uses */
@@ -15133,7 +15456,234 @@ static void macro_load_startup(void) {
     }
 }
 
+/* ---- KEY BINDINGS (founder real-time 2026-11-24: "full wow like key binding mode with up to 3 key binds per
+   operation"). Decisions are PARENA (keybind_rules.prn); the table/steal loop/persistence are
+   packages/simulation/keybind_host.c. This is only the screen: category tabs, one row per operation, three
+   slot columns, click or Enter on a slot then press a key (Esc cancels), Backspace/right-click unbinds. --- */
+static int g_kb_ui_open = 0, g_kb_cat = 1, g_kb_row = 0, g_kb_col = 0, g_kb_capture = 0, g_kb_reset_armed = 0;
+static int g_kb_pending_mod = 0;   /* a modifier pressed during capture: binds alone only if released with no key between */
+static char g_kb_msg[160];
+static char g_kb_path_buf[600];
+
+static const char *kb_config_path(void) {
+    const char *xdg = getenv("XDG_CONFIG_HOME"), *home = getenv("HOME");
+    char dir[560];
+    if (xdg && *xdg) snprintf(dir, sizeof dir, "%s/shankpit", xdg);
+    else if (home && *home) snprintf(dir, sizeof dir, "%s/.config/shankpit", home);
+    else { snprintf(g_kb_path_buf, sizeof g_kb_path_buf, "shankpit_keybinds.cfg"); return g_kb_path_buf; }
+    {   /* best effort mkdir -p of the two levels; on failure fall back to the working directory */
+        char parent[560];
+        char *slash;
+        snprintf(parent, sizeof parent, "%s", dir);
+        slash = strrchr(parent, '/');
+#ifdef _WIN32
+        if (slash && slash != parent) { *slash = 0; _mkdir(parent); }
+        _mkdir(dir);
+#else
+        if (slash && slash != parent) { *slash = 0; mkdir(parent, 0755); }
+        mkdir(dir, 0755);
+#endif
+    }
+    snprintf(g_kb_path_buf, sizeof g_kb_path_buf, "%s/keybinds.cfg", dir);
+    return g_kb_path_buf;
+}
+
+static void kb_save(void) {
+    static char buf[8192];
+    int n = kb_host_serialize(buf, sizeof buf);
+    FILE *f;
+    if (n < 0) return;
+    f = fopen(kb_config_path(), "wb");
+    if (!f) f = fopen("shankpit_keybinds.cfg", "wb");
+    if (!f) return;
+    fwrite(buf, 1, (size_t)n, f);
+    fclose(f);
+}
+
+static void kb_load_startup(void) {
+    static char buf[8192];
+    FILE *f;
+    size_t n;
+    kb_host_init();
+    f = fopen(kb_config_path(), "rb");
+    if (!f) f = fopen("shankpit_keybinds.cfg", "rb");
+    if (!f) return;
+    n = fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    buf[n] = 0;
+    if (kb_host_deserialize(buf) < 0) { kb_host_init(); SDL_Log("keybinds: bad file, using defaults"); }
+}
+
+static int kb_mods_from_sdl(int m) {
+    return ((m & KMOD_SHIFT) ? 1 : 0) | ((m & KMOD_CTRL) ? 2 : 0) | ((m & KMOD_ALT) ? 4 : 0);
+}
+static int kb_ctx_for_player(const PlayerState *p) {
+    return kb_ctx_for(p->in_vehicle ? 1 : 0, (p->in_vehicle && p->vehicle_type == VEH_HELICOPTER) ? 1 : 0,
+                      (p->in_vehicle && p->vehicle_type == VEH_AIRPLANE) ? 1 : 0);
+}
+
+static void kb_key_label(int key, char *out, int cap) {
+    int scan = kb_key_scan(key), mods = kb_key_mods(key), n = 0, i;
+    const char *nm;
+    out[0] = 0;
+    if (!key) { snprintf(out, (size_t)cap, "-"); return; }
+    if (mods & 2) n += snprintf(out + n, (size_t)(cap - n), "CTRL+");
+    if (mods & 1) n += snprintf(out + n, (size_t)(cap - n), "SHIFT+");
+    if (mods & 4) n += snprintf(out + n, (size_t)(cap - n), "ALT+");
+    nm = SDL_GetScancodeName((SDL_Scancode)scan);
+    snprintf(out + n, (size_t)(cap - n), "%s", (nm && *nm) ? nm : "?");
+    for (i = 0; out[i]; i++) if (out[i] >= 'a' && out[i] <= 'z') out[i] = (char)(out[i] - 32);
+    if (strlen(out) > 15) out[15] = 0;
+}
+
+static int kb_cat_ops(int cat, int *ops) {
+    int n = 0, op;
+    for (op = 1; op <= kb_op_count(); op++) if (kb_op_category(op) == cat) ops[n++] = op;
+    return n;
+}
+
+#define KB_ROW_Y(r) (548.0f - (float)(r) * 29.0f)
+#define KB_COL_X(c) (700.0f + (float)(c) * 150.0f)
+
+static void kb_ui_open(void) {
+    g_kb_ui_open = 1; g_kb_row = 0; g_kb_col = 0; g_kb_capture = 0; g_kb_reset_armed = 0; g_kb_pending_mod = 0;
+    snprintf(g_kb_msg, sizeof g_kb_msg, "SELECT A SLOT, PRESS ENTER (OR CLICK), THEN PRESS A KEY");
+}
+
+static void kb_ui_draw(void) {
+    int ops[40], n = kb_cat_ops(g_kb_cat, ops), r, c, t;
+    char lab[40];
+    glDisable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f(0.0f, 0.0f, 0.0f, 0.86f);
+    glBegin(GL_QUADS); glVertex2f(100, 40); glVertex2f(1180, 40); glVertex2f(1180, 690); glVertex2f(100, 690); glEnd();
+    glDisable(GL_BLEND);
+    glColor3f(0.0f, 1.0f, 1.0f);
+    draw_string("KEY BINDINGS", 120, 650, 4);
+    for (t = 1; t <= 6; t++) {
+        glColor3f(t == g_kb_cat ? 1.0f : 0.55f, t == g_kb_cat ? 1.0f : 0.55f, t == g_kb_cat ? 0.0f : 0.55f);
+        draw_string(kb_host_category_label(t), 120.0f + (float)(t - 1) * 170.0f, 606, 2.4f);
+    }
+    glColor3f(0.5f, 0.5f, 0.5f);
+    draw_string("OPERATION", 130, 572, 2); draw_string("KEY 1", KB_COL_X(0), 572, 2);
+    draw_string("KEY 2", KB_COL_X(1), 572, 2); draw_string("KEY 3", KB_COL_X(2), 572, 2);
+    for (r = 0; r <= n; r++) {
+        float y = KB_ROW_Y(r);
+        if (r == n) {
+            glColor3f((g_kb_row == r) ? 1.0f : 0.65f, (g_kb_row == r) ? 0.5f : 0.65f, (g_kb_row == r) ? 0.2f : 0.65f);
+            draw_string(g_kb_reset_armed ? "PRESS ENTER AGAIN TO RESET ALL KEYS" : "RESET ALL TO DEFAULTS", 130, y - 14, 2.3f);
+            break;
+        }
+        glColor3f((g_kb_row == r) ? 1.0f : 0.78f, (g_kb_row == r) ? 1.0f : 0.78f, (g_kb_row == r) ? 0.0f : 0.78f);
+        {   char opl[64]; int i;
+            snprintf(opl, sizeof opl, "%s", kb_host_op_label(ops[r]));
+            for (i = 0; opl[i]; i++) if (opl[i] >= 'a' && opl[i] <= 'z') opl[i] = (char)(opl[i] - 32);
+            draw_string(opl, 130, y, 2.1f);
+        }
+        for (c = 0; c < 3; c++) {
+            int sel = (g_kb_row == r && g_kb_col == c);
+            if (sel) { glColor3f(1.0f, 0.4f, 0.1f); draw_string(g_kb_capture ? "PRESS KEY..." : ">", KB_COL_X(c) - (g_kb_capture ? 0.0f : 14.0f), y, 2.1f); if (g_kb_capture) continue; }
+            kb_key_label(kb_host_get(ops[r], c + 1), lab, sizeof lab);
+            if (sel) glColor3f(1.0f, 1.0f, 0.0f); else glColor3f(0.6f, 0.9f, 0.9f);
+            draw_string(lab, KB_COL_X(c), y, 2.1f);
+        }
+    }
+    glColor3f(1.0f, 0.7f, 0.2f);
+    draw_string(g_kb_msg, 120, 96, 2.1f);
+    glColor3f(0.4f, 0.4f, 0.4f);
+    draw_string("ARROWS: MOVE  ENTER/CLICK: REBIND  BKSP/RIGHT-CLICK: CLEAR  HOME: RESET ROW  TAB/PGUP/PGDN: TAB  ESC: BACK", 120, 62, 1.6f);
+    glEnable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glMatrixMode(GL_MODELVIEW); glPopMatrix();
+}
+
+static void kb_do_bind(int op, int slot, int key) {
+    KbBindResult res = kb_host_bind(op, slot, key);
+    char a[40], b[80];
+    if (!res.ok) { snprintf(g_kb_msg, sizeof g_kb_msg, "THAT KEY CANNOT BE BOUND"); return; }
+    kb_key_label(key, a, sizeof a);
+    if (res.stole) {
+        int i;
+        snprintf(b, sizeof b, "%s", kb_host_op_label(res.prev_op));
+        for (i = 0; b[i]; i++) if (b[i] >= 'a' && b[i] <= 'z') b[i] = (char)(b[i] - 32);
+        snprintf(g_kb_msg, sizeof g_kb_msg, "%s WAS BOUND TO %s - REASSIGNED", a, b);
+    } else snprintf(g_kb_msg, sizeof g_kb_msg, "BOUND %s", a);
+    kb_save();
+}
+
+static void kb_ui_event(const SDL_Event *e) {
+    int ops[40], n = kb_cat_ops(g_kb_cat, ops);
+    if (g_kb_row > n) g_kb_row = n;
+    if (e->type == SDL_MOUSEBUTTONDOWN) {
+        int vx, vy, t, r, c;
+        remap_mouse(e->button.x, e->button.y, &vx, &vy);
+        for (t = 1; t <= 6; t++) {
+            float x0 = 120.0f + (float)(t - 1) * 170.0f;
+            if (vy > 596 && vy < 632 && vx >= x0 && vx < x0 + 165) { g_kb_cat = t; g_kb_row = 0; g_kb_capture = 0; return; }
+        }
+        for (r = 0; r <= n; r++) {
+            float y = KB_ROW_Y(r);
+            if (vy < y - 8 || vy > y + 22) continue;
+            if (r == n) { g_kb_row = r; return; }
+            for (c = 0; c < 3; c++) {
+                if (vx >= KB_COL_X(c) - 14 && vx < KB_COL_X(c) + 136) {
+                    g_kb_row = r; g_kb_col = c; g_kb_reset_armed = 0;
+                    if (e->button.button == SDL_BUTTON_RIGHT) { kb_host_unbind(ops[r], c + 1); kb_save(); snprintf(g_kb_msg, sizeof g_kb_msg, "CLEARED"); }
+                    else { g_kb_capture = 1; g_kb_pending_mod = 0; snprintf(g_kb_msg, sizeof g_kb_msg, "PRESS A KEY (ESC CANCELS)"); }
+                    return;
+                }
+            }
+        }
+        return;
+    }
+    if (e->type == SDL_KEYUP) {
+        if (g_kb_capture && g_kb_pending_mod && (int)e->key.keysym.scancode == g_kb_pending_mod && g_kb_row < n) {
+            g_kb_capture = 0;
+            kb_do_bind(ops[g_kb_row], g_kb_col + 1, kb_key_make(g_kb_pending_mod, 0));
+            g_kb_pending_mod = 0;
+        }
+        return;
+    }
+    if (e->type != SDL_KEYDOWN) return;
+    {
+        SDL_Keycode sym = e->key.keysym.sym;
+        int scan = (int)e->key.keysym.scancode;
+        if (g_kb_capture) {
+            int is_mod = (scan >= 224 && scan <= 231);
+            if (sym == SDLK_ESCAPE) { g_kb_capture = 0; g_kb_pending_mod = 0; snprintf(g_kb_msg, sizeof g_kb_msg, "CANCELLED"); return; }
+            if (is_mod) { g_kb_pending_mod = scan; return; }
+            g_kb_pending_mod = 0;
+            g_kb_capture = 0;
+            if (g_kb_row < n) kb_do_bind(ops[g_kb_row], g_kb_col + 1, kb_key_make(scan, kb_mods_from_sdl(e->key.keysym.mod)));
+            return;
+        }
+        g_kb_reset_armed = (g_kb_reset_armed && g_kb_row == n && (sym == SDLK_RETURN || sym == SDLK_KP_ENTER)) ? 1 : 0;
+        if (sym == SDLK_ESCAPE) { g_kb_ui_open = 0; return; }
+        if (sym == SDLK_UP) g_kb_row = (g_kb_row + n) % (n + 1);
+        else if (sym == SDLK_DOWN) g_kb_row = (g_kb_row + 1) % (n + 1);
+        else if (sym == SDLK_LEFT) g_kb_col = (g_kb_col + 2) % 3;
+        else if (sym == SDLK_RIGHT) g_kb_col = (g_kb_col + 1) % 3;
+        else if (sym == SDLK_TAB || sym == SDLK_PAGEDOWN || sym == SDLK_PAGEUP) {
+            int back = (sym == SDLK_PAGEUP) || (sym == SDLK_TAB && (e->key.keysym.mod & KMOD_SHIFT));
+            g_kb_cat = back ? (g_kb_cat == 1 ? 6 : g_kb_cat - 1) : (g_kb_cat == 6 ? 1 : g_kb_cat + 1);
+            g_kb_row = 0;
+        } else if (sym == SDLK_HOME && g_kb_row < n) {
+            kb_host_reset_op(ops[g_kb_row]); kb_save(); snprintf(g_kb_msg, sizeof g_kb_msg, "ROW RESET TO DEFAULTS");
+        } else if ((sym == SDLK_BACKSPACE || sym == SDLK_DELETE) && g_kb_row < n) {
+            kb_host_unbind(ops[g_kb_row], g_kb_col + 1); kb_save(); snprintf(g_kb_msg, sizeof g_kb_msg, "CLEARED");
+        } else if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) {
+            if (g_kb_row == n) {
+                if (g_kb_reset_armed) { kb_host_init(); kb_save(); g_kb_reset_armed = 0; snprintf(g_kb_msg, sizeof g_kb_msg, "ALL KEYS RESET TO DEFAULTS"); }
+                else { g_kb_reset_armed = 1; snprintf(g_kb_msg, sizeof g_kb_msg, "PRESS ENTER AGAIN TO CONFIRM"); }
+            } else { g_kb_capture = 1; g_kb_pending_mod = 0; snprintf(g_kb_msg, sizeof g_kb_msg, "PRESS A KEY (ESC CANCELS)"); }
+        }
+    }
+}
+
 static void draw_pause_overlay(void) {
+    if (g_kb_ui_open) { kb_ui_draw(); return; }
     glDisable(GL_DEPTH_TEST);
     glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
     glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
@@ -15155,6 +15705,7 @@ static void draw_pause_overlay(void) {
     char grade_label[64];
     snprintf(grade_label, sizeof grade_label, "STREAM GRADE: %s%s", stream_grade_label(),
              g_stream_skip_kernel ? " (LIGHT)" : "");
+    char cam_l[5][48];
     const char *items[PAUSE_ITEMS] = {
         "RESUME",
         g_opt_bullet_holes ? "BULLET HOLES: ON" : "BULLET HOLES: OFF",
@@ -15165,17 +15716,21 @@ static void draw_pause_overlay(void) {
         g_fullscreen ? "FULLSCREEN: ON" : "FULLSCREEN: OFF",
         lobby_snapshot_label(),
         grade_label,
+        "KEY BINDINGS",
+        cam_opt_label(0, cam_l[0], sizeof cam_l[0]), cam_opt_label(1, cam_l[1], sizeof cam_l[1]),
+        cam_opt_label(2, cam_l[2], sizeof cam_l[2]), cam_opt_label(3, cam_l[3], sizeof cam_l[3]),
+        cam_opt_label(4, cam_l[4], sizeof cam_l[4]),
         "QUIT TO LOBBY"
     };
     for (int i = 0; i < PAUSE_ITEMS; i++) {
-        float y = 400.0f - (float)i * 30.0f;   /* ten items, size 3 (was 392/32 with nine) */
+        float y = 442.0f - (float)i * 20.0f;   /* sixteen items at 2.4 (UNIFY-4 added the five camera rows) */ //   /* eleven items, size 3 (was 392/32 with nine, 400/30 with ten) */
         if (i == g_pause_sel) {
             glColor3f(1.0f, 1.0f, 0.0f);
             draw_string(">", 296, y, 3);
         } else {
             glColor3f(0.65f, 0.65f, 0.65f);
         }
-        draw_string(items[i], 330, y, 3);
+        draw_string(items[i], 330, y, 2.4f);
     }
     glColor3f(0.38f, 0.38f, 0.38f);
     draw_string("ESC: RESUME   ENTER: SELECT   LEFT/RIGHT: ADJUST", 300, 92, 2.3f);
@@ -15579,7 +16134,7 @@ void draw_scene(PlayerState *render_p) {
         float cam_z = boss->z + 190.0f;
         gluLookAt(cam_x, cam_y, cam_z, look_x, look_y, look_z, 0.0f, 1.0f, 0.0f);
     } else if (!(render_p->in_vehicle && render_p->vehicle_type == VEH_HELICOPTER)) {
-        float draw_cam_pitch = buggy_cam_active ? buggy_cam_pitch : lerpf(cam_pitch, -14.0f, death_cam_blend);
+        float draw_cam_pitch = buggy_cam_active ? buggy_cam_pitch : lerpf(lobby_cam_view_pitch(render_p, cam_pitch), -14.0f, death_cam_blend);
         glRotatef(-draw_cam_pitch, 1, 0, 0); glRotatef(-cam_yaw, 0, 1, 0);
         glTranslatef(-((render_p->x + reconcile_x) - cx), -((render_p->y + reconcile_y) + cam_y), -((render_p->z + reconcile_z) - cz));
     }
@@ -15912,6 +16467,7 @@ void draw_scene(PlayerState *render_p) {
     spray_paint_observe(render_p->scene_id, SDL_GetTicks());
     draw_spray_decals(render_p->scene_id);
     draw_spray_paint(render_p->scene_id);
+    lobby_cv_marker_draw(render_p);
     if (!render_p->third_person) draw_spray_cone(render_p, 1);
     draw_bullet_holes(render_p->scene_id);
     draw_brick_debris();
@@ -15967,7 +16523,14 @@ void draw_scene(PlayerState *render_p) {
     draw_projectiles();
     draw_explosions();
     if (local_state.game_mode == MODE_SURVIVAL) { draw_gun_items(SDL_GetTicks()); draw_chests(); }
+    draw_world_items(SDL_GetTicks());   /* SECTION 643 */
     draw_orb_world(SDL_GetTicks());
+    { /* SECTION 638 ARCADE-1: the cabinet exists only in the CONSTRUCT hub (offline MODE_TYLER on CONSTRUCT) */
+        const PlayerState *ah = &local_state.players[0];
+        arcade_cabinet_draw_world(SDL_GetTicks(),
+            app_state == STATE_GAME_LOCAL && local_state.game_mode == MODE_TYLER && g_tyler_scene == TYLER_SCENE_CONSTRUCT,
+            ah->x, ah->y, ah->z);
+    }
     draw_edu_widgets(SDL_GetTicks());
     draw_lab_world(SDL_GetTicks());
     /* The one draw_player_3rd call for "me" -- the imported-skin choice is per-client, so the skin
@@ -16006,6 +16569,7 @@ void draw_scene(PlayerState *render_p) {
     draw_tdmb_match_over_overlay();
     draw_survival_hud();
     draw_zombies_awareness_hud();
+    draw_world_items_hud();   /* SECTION 643 */
     draw_pheromone_hud();
     draw_editmap_hud();
     if (app_state == STATE_GAME_NET && net_diag.server_disconnected) draw_disconnect_overlay();
@@ -17341,7 +17905,7 @@ void net_process_snapshot(char *buffer, int len) {
         p->hit_feedback = np->hit_feedback;
         p->anim_override = np->anim_override;
         p->forced_kit = np->forced_kit;
-        p->third_person = np->third_person;
+        p->third_person = lobby_cv_flag_override(id, np->third_person);   /* UNIFY-2: the local zoom owns the local view */
         if (net_prev_kills[id] >= 0 && (int)np->kills > net_prev_kills[id]) {
             char kill_msg[CHAT_LINE_MAX];
             const char *tag = (id == my_client_id) ? "[you]" : "[bot]";
@@ -18016,6 +18580,105 @@ static int lobby_coop_find_and_join(int beacon_port) {
     return 1;
 }
 
+/* ---- UNIFY-2 per-frame / per-event glue for the PARENA camera mods (see the block above lobby_third_person_arm) ---- */
+
+/* Once per frame, after input is read and before the sim ticks. Syncs/drives the local third_person flag from the zoom,
+   runs the camera mods, applies the auto-recenter / terrain / smoothing results, and -- while a click-to-move
+   destination is active -- replaces the movement input with the steering mod's. */
+static void lobby_cv_frame(double frame_time, float *fwd, float *str, int wasd) {
+    lobby_cv_ensure();
+    int pid = lobby_cv_pid();
+    PlayerState *lp = &local_state.players[pid];
+    if (pid != g_cv_cam_pid) { g_cv_cam_pid = pid; g_cv.synced = 0; camview_cancel_dest(&g_cv); g_cv_smooth_valid = 0; }
+    int elig = lobby_cv_eligible();
+    int flag = lp->third_person ? 1 : 0;
+    if (!g_cv.synced || flag != g_cv.written_flag) camview_sync_flag(&g_cv, flag);
+
+    int dt_ms = (int)(frame_time * 1000.0 + 0.5);
+    if (dt_ms < 1) dt_ms = 1;
+    if (dt_ms > 250) dt_ms = 250;
+    if (g_paused) camview_cancel_dest(&g_cv);
+
+    float yr = cam_yaw * 0.01745329f;
+    int slope = 0;
+    if (g_cv.opt_terrain && !g_cv.fp && (elig || flag)) {   /* rise/run of the ground 4 units ahead along the view direction */
+        int src = 0;
+        float h0 = phys_sample_ground_height(lp->x, lp->z, &src);
+        float h1 = phys_sample_ground_height(lp->x - sinf(yr) * 4.0f, lp->z - cosf(yr) * 4.0f, &src);
+        slope = (int)((h1 - h0) * 250.0f);   /* /4 units run, x1000 */
+    }
+    CamViewIn in;
+    in.dt_ms = dt_ms;
+    in.third = elig ? 1 : flag;
+    in.allow_fp = elig;
+    in.px_milli = (int)lroundf(lp->x * 1000.0f); in.py_milli = (int)lroundf(lp->y * 1000.0f); in.pz_milli = (int)lroundf(lp->z * 1000.0f);
+    in.yaw_mdeg = (int)lroundf(cam_yaw * 1000.0f) % 360000; if (in.yaw_mdeg < 0) in.yaw_mdeg += 360000;
+    in.manual = g_cv_manual; g_cv_manual = 0;
+    in.wasd = wasd;
+    in.slope_permille = slope;
+    CamViewOut out;
+    camview_update(&g_cv, &in, &out);
+
+    if (elig) lp->third_person = out.first_person ? 0 : 1;
+    g_cv.written_flag = lp->third_person ? 1 : 0;
+    if (out.yaw_mdeg != in.yaw_mdeg) cam_yaw = (float)out.yaw_mdeg * 0.001f;
+    g_cv_pitch_off_mdeg = out.pitch_off_mdeg;
+    g_cv_focus_dy_milli = out.focus_dy_milli;
+    if (out.steering) {
+        *fwd = (float)out.fwd_permille * 0.001f; *str = (float)out.str_permille * 0.001f;
+        g_cv_aim_yaw = (float)out.aim_yaw_mdeg * 0.001f;
+    }
+    /* camera position lag: smooth last frame's wall-clipped camera position toward this frame's target */
+    if (lp->third_person && !out.first_person && (elig || flag)) {
+        float ax, ay, az; int frac = 1000;
+        lobby_tp_arm_raw(lp, cam_yaw, cam_pitch, &ax, &ay, &az, &frac);
+        g_cv.arm_fraction_permille = frac;
+        int tgt[3] = { (int)lroundf((lp->x + ax) * 1000.0f), (int)lroundf((lp->y + 1.0f + ay) * 1000.0f), (int)lroundf((lp->z + az) * 1000.0f) };
+        float gx = (float)(tgt[0] - g_cv_smooth_world[0]), gy = (float)(tgt[1] - g_cv_smooth_world[1]), gz = (float)(tgt[2] - g_cv_smooth_world[2]);
+        if (!g_cv_smooth_valid || sqrtf(gx * gx + gy * gy + gz * gz) > 40000.0f) {   /* first frame / teleport: snap */
+            for (int i = 0; i < 3; i++) g_cv_smooth_world[i] = tgt[i];
+        } else {
+            int res[3]; camview_smooth_pos(&g_cv, dt_ms, g_cv_smooth_world, tgt, res);
+            for (int i = 0; i < 3; i++) g_cv_smooth_world[i] = res[i];
+        }
+        g_cv_smooth_valid = 1;
+    } else {
+        g_cv_smooth_valid = 0;
+        g_cv.arm_fraction_permille = 1000;
+    }
+}
+
+/* A left click while the cursor is free: ray from the camera through the cursor to the ground (map trace). The mod
+   accepts or rejects the hit (option on, zoomed out, not a wall/cliff). */
+static int lobby_cv_click_ground(int win_x, int win_y) {
+    if (!lobby_cv_cursor_free()) return 0;
+    const PlayerState *p = &local_state.players[lobby_cv_pid()];
+    int vx, vy; remap_mouse(win_x, win_y, &vx, &vy);
+    float nx = ((float)vx / (float)VIRTUAL_W) * 2.0f - 1.0f, ny = ((float)vy / (float)VIRTUAL_H) * 2.0f - 1.0f;   /* ny up */
+    float cx, cz, cam_y;
+    lobby_third_person_arm(p, cam_yaw, cam_pitch, &cx, &cz, &cam_y);
+    float ox = p->x - cx, oy = p->y + cam_y, oz = p->z - cz;
+    float vp = lobby_cam_view_pitch(p, cam_pitch);
+    float fx, fy, fz; tp_dir_from_yaw_pitch(cam_yaw, vp, &fx, &fy, &fz);
+    float yr = cam_yaw * 0.01745329f;
+    float rx = cosf(yr), rz = -sinf(yr);                                   /* right (planar, unit) */
+    float ux = -rz * fy, uy = rz * fx - rx * fz, uz = rx * fy;           /* up = right x forward */
+    float th = tanf(current_fov * 0.5f * 0.01745329f);
+    float asp = (float)VIRTUAL_W / (float)VIRTUAL_H;
+    float dx = fx + rx * nx * th * asp + ux * ny * th;
+    float dy = fy + uy * ny * th;
+    float dz = fz + rz * nx * th * asp + uz * ny * th;
+    float dl = sqrtf(dx * dx + dy * dy + dz * dz);
+    if (dl < 0.0001f) return 0;
+    dx /= dl; dy /= dl; dz /= dl;
+    float hx, hy, hz, hnx, hny, hnz;
+    int hit = trace_map(ox, oy, oz, ox + dx * 300.0f, oy + dy * 300.0f, oz + dz * 300.0f, &hx, &hy, &hz, &hnx, &hny, &hnz);
+    int ok = camview_click_dest(&g_cv, lobby_cv_eligible(), hit, (int)lroundf(hx * 1000.0f), (int)lroundf(hz * 1000.0f),
+                                (int)lroundf(hny * 1000.0f));
+    if (ok) { g_cv_dest_x = hx; g_cv_dest_y = hy; g_cv_dest_z = hz; }
+    return 1;   /* the click was a click-to-move click either way: it must not also fire the weapon */
+}
+
 int main(int argc, char* argv[]) {
     buggy_rules_install(); /* PARENA buggy handling (#468) */
     horse_rules_install(); /* PARENA tölt mount handling (stamina, jump, carrot) */
@@ -18054,6 +18717,7 @@ int main(int argc, char* argv[]) {
     int cli_start_editmap = 0;
     char cli_edit_session[40] = "";
     int cli_start_survival = 0;
+    int cli_start_construct = 0; /* SECTION 638: --construct = the CONSTRUCT tile (the hub with the arcade cabinet) */
     int cli_start_city = 0;
     int cli_coop_host = 0;
     char cli_coop_host_zone[COOP_HOST_ZONE_MAX] = "";
@@ -18069,6 +18733,8 @@ int main(int argc, char* argv[]) {
             cli_start_city = 1; /* straight into the built-in cityscape */
         } else if(strcmp(argv[i], "--survival") == 0) {
             cli_start_survival = 1; /* straight into SURVIVAL (menu tile equivalent) */
+        } else if(strcmp(argv[i], "--construct") == 0) {
+            cli_start_construct = 1; /* straight into the CONSTRUCT hub, world first (menu tile equivalent) */
         } else if(strcmp(argv[i], "--edit-map") == 0) {
             cli_start_editmap = 1; /* straight into EDIT MAP; optional next arg = registry name or .json path */
             if (i+1<argc && argv[i+1][0] != '-') snprintf(g_edit_pick, sizeof g_edit_pick, "%s", argv[++i]);
@@ -18287,6 +18953,7 @@ int main(int argc, char* argv[]) {
     load_skin_selection();
     load_display_config();
     macro_load_startup();
+    kb_load_startup();
     recalc_viewport();
     lobby_init_labels();
     ui_bridge_init("127.0.0.1", 17777);
@@ -18300,7 +18967,7 @@ int main(int argc, char* argv[]) {
     double accumulator = 0.0;
     /* No title screen / main menu: with no explicit mode flag, drop straight into ZOMBIES.
        Esc leaves the match for the legacy menu (see the SDLK_ESCAPE branch in the game keydown). */
-    if (!cli_legacy_menu && !cli_start_zombies && !cli_start_lab && !cli_start_editmap &&
+    if (!cli_legacy_menu && !cli_start_zombies && !cli_start_lab && !cli_start_editmap && !cli_start_construct &&
         !cli_start_survival && !cli_start_city && !cli_start_dungeon && !cli_coop_host &&
         !cli_coop_find) cli_start_zombies = 1;
     if (cli_start_dungeon) {
@@ -18338,6 +19005,7 @@ int main(int argc, char* argv[]) {
     if (cli_start_zombies) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_ZOMBIES); lobby_modes_bypass = 0; }
     if (cli_start_editmap) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_EDITMAP); lobby_modes_bypass = 0; if (cli_edit_session[0]) es_start(strcmp(cli_edit_session, "new") ? cli_edit_session : NULL); }
     if (cli_start_lab) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_LAB); lobby_modes_bypass = 0; }
+    if (cli_start_construct) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_CONSTRUCT); lobby_modes_bypass = 0; }
     if (cli_start_survival) { lobby_modes_bypass = 1; lobby_start_action(LOBBY_SURVIVAL); lobby_modes_bypass = 0; }
     if (cli_start_city) {
         lobby_start_city();
@@ -18403,7 +19071,41 @@ int main(int argc, char* argv[]) {
                 recalc_viewport();
             }
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED && app_state != STATE_LOBBY && level_shell_world_input()) SDL_SetRelativeMouseMode(SDL_TRUE);
-            if (e.type == SDL_MOUSEBUTTONDOWN && app_state != STATE_LOBBY && level_shell_world_input()) SDL_SetRelativeMouseMode(SDL_TRUE);
+            /* ACTION BARS (in a game, not the lobby): a click on a bar slot while the cursor is free activates it
+               and is consumed (it must not also re-capture the mouse or fire); Alt+wheel is Minecraft-style slot
+               cycling over bank 1 (the plain wheel stays the zoom camera's). */
+            if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT && app_state != STATE_LOBBY &&
+                level_shell_world_input() && !SDL_GetRelativeMouseMode() && abh_visible()) {
+                int _bx, _by;
+                SDL_Keymod _km = SDL_GetModState();
+                remap_mouse(e.button.x, e.button.y, &_bx, &_by);
+                if (abh_click((float)_bx, (float)_by, (_km & KMOD_SHIFT) != 0, (_km & KMOD_CTRL) != 0, (_km & KMOD_ALT) != 0, &wpn_req)) continue;
+            }
+            if (e.type == SDL_MOUSEWHEEL && e.wheel.y != 0 && app_state != STATE_LOBBY && level_shell_world_input() &&
+                (SDL_GetModState() & KMOD_ALT)) {
+                int _lp = (app_state == STATE_GAME_NET && net_local_pid > 0 && net_local_pid < MAX_CLIENTS) ? net_local_pid : 0;
+                int _cw = local_state.players[_lp].current_weapon;
+                abh_scroll(e.wheel.y > 0 ? -1 : 1, _cw, &wpn_req);
+                continue;
+            }
+            /* UNIFY-2: the mouse wheel zooms the camera, World of Warcraft style -- scroll up zooms in, all the way in is
+               first person, out is the third-person orbit. The zoom/step/first-person decisions are the PARENA zoom_cam mod. */
+            if (e.type == SDL_MOUSEWHEEL && e.wheel.y != 0 && (app_state == STATE_GAME_LOCAL || app_state == STATE_GAME_NET) &&
+                level_shell_world_input() && !g_paused && !g_chat_open && !g_story_phone.open && !g_orb_open) {
+                lobby_cv_ensure();
+                if (lobby_cv_eligible() || local_state.players[lobby_cv_pid()].third_person) {
+                    camview_wheel(&g_cv, e.wheel.y, lobby_cv_eligible());
+                    continue;
+                }
+            }
+            /* UNIFY-2: click-to-move (option, default OFF): the cursor is free while zoomed out, and a plain left click on the
+               ground sets the destination. Shift+left click still fires. */
+            if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT && lobby_cv_cursor_free() &&
+                !(SDL_GetModState() & KMOD_SHIFT)) {
+                lobby_cv_click_ground(e.button.x, e.button.y);
+                continue;
+            }
+            if (e.type == SDL_MOUSEBUTTONDOWN && app_state != STATE_LOBBY && level_shell_world_input() && !lobby_cv_cursor_free()) SDL_SetRelativeMouseMode(SDL_TRUE);
 
             /* Editor widget panel -- checked FIRST, before any of lobby's own STATE_LOBBY
              * event handling below, same real "modal overlay gets first refusal on every
@@ -18656,6 +19358,8 @@ int main(int argc, char* argv[]) {
                     level_shell_view lv_view = { g_vp_x, g_vp_y, g_vp_w, g_vp_h, g_win_w, g_win_h };
                     if (level_shell_event(&e, lv_text_focus, &lv_view)) continue;
                 }
+                /* KEY BINDINGS screen (opened from the pause menu) owns keys + clicks while it is up */
+                if (g_kb_ui_open && (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP || e.type == SDL_MOUSEBUTTONDOWN)) { kb_ui_event(&e); continue; }
                 /* Architect's Orb (#494): owns text + keys while open */
                 if (g_orb_open && e.type == SDL_TEXTINPUT) { orb_text(e.text.text); continue; }
                 if (g_story_phone.open && g_story_phone.app == BP_APP_GFD && e.type == SDL_TEXTINPUT) {
@@ -18913,6 +19617,40 @@ int main(int argc, char* argv[]) {
                         e.key.keysym.sym == SDLK_e && orb_available() && lobby_edu_nearest_widget()) {
                         orb_toggle();   /* E at a programmable widget opens the Orb on its script slot */
                     }
+                    /* SECTION 643: desk items. F picks up the nearest item in reach; U uses the held item on what is in reach / in
+                       your pockets (PARENA item_rules decides); O cycles the held item; G drops it. Not in the keybind table yet. */
+                    if (app_state == STATE_GAME_LOCAL && !g_paused && !g_story_phone.open && !g_orb_open && !g_chat_open &&
+                        !e.key.repeat && lobby_items_live() && !local_state.players[0].in_vehicle) {
+                        const PlayerState *ip = &local_state.players[0];
+                        int ik = e.key.keysym.sym;
+                        if (ik == SDLK_f) {
+                            int r = world_items_pickup(ip->x, ip->y, ip->z);
+                            if (r >= 0) {
+                                char d[80]; world_item_describe(world_items_carried(r), d, sizeof d);
+                                snprintf(g_item_msg, sizeof g_item_msg, "PICKED UP %s", d); g_item_msg_ms = SDL_GetTicks();
+                                continue;
+                            } else if (r == -2) { snprintf(g_item_msg, sizeof g_item_msg, "POCKETS FULL"); g_item_msg_ms = SDL_GetTicks(); continue; }
+                        } else if (ik == SDLK_u) {
+                            world_items_use_held(ip->x, ip->y, ip->z, g_item_msg, (int)sizeof g_item_msg); g_item_msg_ms = SDL_GetTicks(); continue;
+                        } else if (ik == SDLK_o) {
+                            world_items_cycle_held();
+                            const ItemState *hs = world_items_carried(world_items_held());
+                            if (hs) { char d[80]; world_item_describe(hs, d, sizeof d); snprintf(g_item_msg, sizeof g_item_msg, "HOLDING %s", d); g_item_msg_ms = SDL_GetTicks(); }
+                            continue;
+                        } else if (ik == SDLK_g) {
+                            if (world_items_drop_held(ip->x, ip->y, ip->z) >= 0) snprintf(g_item_msg, sizeof g_item_msg, "DROPPED");
+                            else snprintf(g_item_msg, sizeof g_item_msg, "NOTHING IN HAND");
+                            g_item_msg_ms = SDL_GetTicks(); continue;
+                        }
+                    }
+                    /* SECTION 638 ARCADE-2: F at the arcade cabinet (CONSTRUCT hub) plays BRAWLPIT -- the PARENA level
+                       manager decides (lm-arcade-use-cmd); the key passes on when not at the machine */
+                    if (app_state == STATE_GAME_LOCAL && !g_paused && !g_story_phone.open && !g_orb_open && !g_chat_open &&
+                        !e.key.repeat && e.key.keysym.sym == SDLK_f &&
+                        arcade_cabinet_use(local_state.game_mode == MODE_TYLER && g_tyler_scene == TYLER_SCENE_CONSTRUCT,
+                                           local_state.players[0].x, local_state.players[0].y, local_state.players[0].z)) {
+                        continue;
+                    }
                     if (g_paused) {
                         if (e.key.keysym.sym == SDLK_ESCAPE) {
                             g_paused = 0;
@@ -18925,6 +19663,9 @@ int main(int argc, char* argv[]) {
                             g_opt_ambient_level = ambient_step(g_opt_ambient_level, e.key.keysym.sym == SDLK_RIGHT ? 1 : -1);
                             apply_ambient_level();
                             save_display_config();
+                        } else if ((e.key.keysym.sym == SDLK_LEFT || e.key.keysym.sym == SDLK_RIGHT) &&
+                                   g_pause_sel >= PAUSE_CAM_FOLLOW && g_pause_sel <= PAUSE_CLICK_MOVE) {
+                            cam_opt_cycle(g_pause_sel - PAUSE_CAM_FOLLOW, e.key.keysym.sym == SDLK_RIGHT ? 1 : -1);
                         } else if ((e.key.keysym.sym == SDLK_LEFT || e.key.keysym.sym == SDLK_RIGHT) && g_pause_sel == PAUSE_GRADE) {
                             stream_grade_cycle(e.key.keysym.sym == SDLK_RIGHT ? 1 : -1);   /* OFF is one step away */
                             save_display_config();
@@ -18959,8 +19700,12 @@ int main(int argc, char* argv[]) {
                             } else if (g_pause_sel == PAUSE_GRADE) {
                                 stream_grade_cycle(1);
                                 save_display_config();
+                            } else if (g_pause_sel >= PAUSE_CAM_FOLLOW && g_pause_sel <= PAUSE_CLICK_MOVE) {
+                                cam_opt_cycle(g_pause_sel - PAUSE_CAM_FOLLOW, 1);
                             } else if (g_pause_sel == PAUSE_SNAPSHOT) {
                                 lobby_level_snapshot(1);
+                            } else if (g_pause_sel == PAUSE_KEYBINDS) {
+                                kb_ui_open();
                             } else if (g_pause_sel == PAUSE_QUIT) {
                                 g_paused = 0;
                                 lobby_level_snapshot(0);   // autosave carved geometry to NOCK cloud on exit
@@ -19032,12 +19777,14 @@ int main(int argc, char* argv[]) {
                     }
                     if ((local_state.game_mode == MODE_TDMB || local_state.game_mode == MODE_TDMO || local_state.game_mode == MODE_CTFB) && local_state.match_over && e.key.keysym.sym == SDLK_r) {
                         local_init_match(12, local_state.game_mode);
-                    } else if (e.key.keysym.sym == SDLK_v && app_state == STATE_GAME_LOCAL &&
+                    } else if (kb_host_event((int)e.key.keysym.scancode, kb_mods_from_sdl(e.key.keysym.mod), kb_ctx_for_player(&local_state.players[0]), KB_CAMERA_TOGGLE) && app_state == STATE_GAME_LOCAL &&
                                local_state.game_mode != MODE_TYLER && local_state.players[0].state == STATE_ALIVE) {
-                        /* V: toggle first/third person in a local match (card T62892945). MODE_TYLER
+                        /* V: snap between first person and the last third-person zoom distance (card T62892945;
+                           UNIFY-2: the same state the mouse wheel drives, so the two always agree). MODE_TYLER
                            owns its own third_person flag and is left alone. */
-                        local_state.players[0].third_person = !local_state.players[0].third_person;
-                    } else if (e.key.keysym.sym == SDLK_m && !(e.key.keysym.mod & KMOD_SHIFT)) { /* Shift+M is the level shell's */
+                        lobby_cv_ensure();
+                        camview_snap(&g_cv, lobby_cv_eligible());
+                    } else if (kb_host_event((int)e.key.keysym.scancode, kb_mods_from_sdl(e.key.keysym.mod), kb_ctx_for_player(&local_state.players[0]), KB_OVERLAY_MODE) && !(e.key.keysym.mod & KMOD_SHIFT)) { /* Shift+M is the level shell's */
                         overlay_cycle_mode(&g_overlay);
                         printf("[OVERLAY] mode=%s\n", overlay_mode_name(g_overlay.mode));
                     } else if (e.key.keysym.sym == SDLK_ESCAPE && app_state == STATE_GAME_LOCAL &&
@@ -19108,6 +19855,9 @@ int main(int argc, char* argv[]) {
                     }
                     if (app_state == STATE_GAME_LOCAL && PHONE_SANDBOX() && g_story_phone.open) continue;
                     float sens = (current_fov < 50.0f) ? 0.05f : 0.15f; 
+                    /* UNIFY-2: with the cursor free (click-to-move) the camera orbits only while the right button is held */
+                    if (lobby_cv_cursor_free() && !(e.motion.state & SDL_BUTTON_RMASK)) continue;
+                    g_cv_manual = 1;
                     cam_yaw -= e.motion.xrel * sens;
                     if(cam_yaw > 360) cam_yaw -= 360;
                     if(cam_yaw < 0) cam_yaw += 360;
@@ -19118,7 +19868,7 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
-        if (app_state != STATE_LOBBY && !g_paused && level_shell_world_input()) SDL_SetRelativeMouseMode(SDL_TRUE);
+        if (app_state != STATE_LOBBY && !g_paused && level_shell_world_input()) SDL_SetRelativeMouseMode(lobby_cv_cursor_free() ? SDL_FALSE : SDL_TRUE);
         if (app_state == STATE_LOBBY) {
              unsigned int now = SDL_GetTicks();
              if (ui_use_server && (now - ui_last_poll) > 1000) {
@@ -19175,36 +19925,42 @@ int main(int argc, char* argv[]) {
             const Uint8 *k = level_shell_world_input() ? SDL_GetKeyboardState(NULL) : lv_no_keys;
             int control_pid = (app_state == STATE_GAME_NET && my_client_id > 0 && my_client_id < MAX_CLIENTS) ? my_client_id : 0;
             int in_heli = local_state.players[control_pid].in_vehicle && local_state.players[control_pid].vehicle_type == VEH_HELICOPTER;
+            /* KEY BINDINGS: every key below resolves through the PARENA keybind_rules table (defaults == the old
+               hard-coded W/S/A/D/Space/Ctrl/Shift/R/E/F/G/Q/J/L), per context (foot / vehicle / aircraft / heli). */
+            const int kb_m = kb_mods_from_sdl((int)SDL_GetModState());
+            const int kb_c = kb_ctx_for_player(&local_state.players[control_pid]);
             float fwd=0, str=0;
-            if(k[SDL_SCANCODE_W]) fwd+=1;
-            if(k[SDL_SCANCODE_S]) fwd-=1;
+            if(kb_host_down(k, kb_m, kb_c, KB_FWD)) fwd+=1;
+            if(kb_host_down(k, kb_m, kb_c, KB_BACK)) fwd-=1;
             if (in_heli) {
-                if(k[SDL_SCANCODE_A]) str-=1;
-                if(k[SDL_SCANCODE_D]) str+=1;
+                if(kb_host_down(k, kb_m, kb_c, KB_LEFT)) str-=1;
+                if(kb_host_down(k, kb_m, kb_c, KB_RIGHT)) str+=1;
             } else {
-                if(k[SDL_SCANCODE_D]) str+=1;
-                if(k[SDL_SCANCODE_A]) str-=1;
+                if(kb_host_down(k, kb_m, kb_c, KB_RIGHT)) str+=1;
+                if(kb_host_down(k, kb_m, kb_c, KB_LEFT)) str-=1;
             }
             float move_len = sqrtf(fwd * fwd + str * str);
             if (move_len > 1.0f) {
                 fwd /= move_len;
                 str /= move_len;
             }
-            int jump = k[SDL_SCANCODE_SPACE]; int crouch = k[SDL_SCANCODE_LCTRL];
+            int jump = kb_host_down(k, kb_m, kb_c, KB_JUMP) || kb_host_down(k, kb_m, kb_c, KB_THROTTLE_UP);
+            int crouch = kb_host_down(k, kb_m, kb_c, KB_CROUCH) || kb_host_down(k, kb_m, kb_c, KB_THROTTLE_DOWN);
             /* The rocket car's two nozzle keys, sampled here on the same frame-keyboard this block
                already reads. PlayerState.in_lift / in_boost are LOCAL, exactly like in_roll: what
                replicates is the attitude and the air the car ends up with, not the keypress. Written
                to the player being controlled so the HUD (which draws the render player) matches the
                car that is actually being flown in a networked match too. */
-            local_state.players[control_pid].in_lift = k[SDL_SCANCODE_SPACE] ? 1 : 0;
+            local_state.players[control_pid].in_lift = kb_host_down(k, kb_m, kb_c, KB_JUMP) ? 1 : 0;
             local_state.players[control_pid].in_boost =
-                (k[SDL_SCANCODE_LSHIFT] || k[SDL_SCANCODE_RSHIFT]) ? 1 : 0;
+                kb_host_down(k, kb_m, kb_c, KB_BOOST) ? 1 : 0;
             int shoot = (SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_LEFT));
+            if (shoot && lobby_cv_cursor_free() && !(SDL_GetModState() & KMOD_SHIFT)) shoot = 0;   /* UNIFY-2: that click is click-to-move; Shift+click fires */
             if (g_wow_fire_ticks > 0) { shoot = 1; g_wow_fire_ticks--; }   /* /cast pull, same trigger */
-            int reload = in_heli ? 0 : k[SDL_SCANCODE_R];
-            int bike = in_heli ? (k[SDL_SCANCODE_Q] || k[SDL_SCANCODE_J]) : 0;   /* heli bank left: Q or J */
-            int use = k[SDL_SCANCODE_F];
-            int ability = in_heli ? (k[SDL_SCANCODE_E] || k[SDL_SCANCODE_L]) : k[SDL_SCANCODE_E];   /* heli bank right: E or L */
+            int reload = in_heli ? 0 : kb_host_down(k, kb_m, kb_c, KB_RELOAD);
+            int bike = in_heli ? kb_host_down(k, kb_m, kb_c, KB_HELI_LEFT) : 0;   /* heli bank left: Q or J */
+            int use = kb_host_down(k, kb_m, kb_c, KB_INTERACT);   /* interact + every vehicle enter/exit */
+            int ability = in_heli ? kb_host_down(k, kb_m, kb_c, KB_HELI_RIGHT) : kb_host_down(k, kb_m, kb_c, KB_ABILITY);   /* heli bank right: E or L */
             /* Secondary fire (BTN_ABILITY_2): the right mouse button, the traditional "attach a
                grenade launcher to the M4" control, plus the controller's LEFT trigger below.
                Separate from `ability` on purpose -- RMB is also the sniper's zoom, and E must not be
@@ -19212,7 +19968,7 @@ int main(int argc, char* argv[]) {
             int secondary = (SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_RIGHT)) ? 1 : 0;
             g_input_paint_next = k[SDL_SCANCODE_RIGHTBRACKET] ? 1 : 0;
             g_input_paint_prev = k[SDL_SCANCODE_LEFTBRACKET] ? 1 : 0;
-            int pheromone = k[SDL_SCANCODE_G]; /* MODE_ZOMBIES/MODE_SURVIVAL pheromone throw, BIG_O/
+            int pheromone = kb_host_down(k, kb_m, kb_c, KB_PHEROMONE); /* MODE_ZOMBIES/MODE_SURVIVAL pheromone throw, BIG_O/
                 NORTHSTAR.md section 10's own G-key convention */
             if (g_shank_pad && level_shell_world_input()) { /* T0: no pad for the world under a level or the source overlay */
                 const float SHANK_STICK_DEADZONE = 0.2f;
@@ -19222,8 +19978,12 @@ int main(int argc, char* argv[]) {
                 if (fabsf(ly) > SHANK_STICK_DEADZONE) fwd -= ly;
                 float rx = (float)SDL_GameControllerGetAxis(g_shank_pad, SDL_CONTROLLER_AXIS_RIGHTX) / 32767.0f;
                 float ry = (float)SDL_GameControllerGetAxis(g_shank_pad, SDL_CONTROLLER_AXIS_RIGHTY) / 32767.0f;
+                int pad_in_plane = local_state.players[control_pid].in_vehicle && local_state.players[control_pid].vehicle_type == VEH_AIRPLANE;
+                if (!pad_in_plane) {   /* FLIGHT-0/1: in the C-110 the right stick is the rudder, not the camera */
+                if (fabsf(rx) > SHANK_STICK_DEADZONE || fabsf(ry) > SHANK_STICK_DEADZONE) g_cv_manual = 1;
                 if (fabsf(rx) > SHANK_STICK_DEADZONE) { cam_yaw -= rx * 3.0f; if(cam_yaw > 360) cam_yaw -= 360; if(cam_yaw < 0) cam_yaw += 360; }
                 if (fabsf(ry) > SHANK_STICK_DEADZONE) cam_pitch -= ry * 3.0f;
+                }
                 Sint16 rt = SDL_GameControllerGetAxis(g_shank_pad, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
                 shoot = shoot || (rt > 8000);
                 jump = jump || SDL_GameControllerGetButton(g_shank_pad, SDL_CONTROLLER_BUTTON_A);
@@ -19236,9 +19996,70 @@ int main(int argc, char* argv[]) {
                 float move_len2 = sqrtf(fwd * fwd + str * str);
                 if (move_len2 > 1.0f) { fwd /= move_len2; str /= move_len2; }
             }
+            {   /* FLIGHT-0/1: the C-110's own control path. Keyboard (3 binds per action, ramped) and gamepad
+                   (deadzone/expo/invert from AirplaneInputConfig) both become one AirplaneControls, handed to
+                   local_game.h's airplane tick. See packages/simulation/airplane_input.h for the layout. */
+                static AirplaneBinds air_binds; static AirplaneInputConfig air_cfg; static AirplaneInputState air_st;
+                static int air_init = 0, air_pad_fl_prev = 0, air_pad_as_prev = 0;
+                if (!air_init) {
+                    air_init = 1;
+                    airplane_binds_clear(&air_binds);
+                    airplane_input_config_default(&air_cfg);
+                    airplane_input_state_init(&air_st, &air_cfg);
+                    /* defaults; the future keybinding screen only has to call airplane_binds_set */
+                    airplane_binds_set(&air_binds, AIR_ACT_PITCH_DOWN, 0, SDL_SCANCODE_W);       /* push forward: nose down + taxi power */
+                    airplane_binds_set(&air_binds, AIR_ACT_PITCH_UP, 0, SDL_SCANCODE_S);         /* pull back: nose up */
+                    airplane_binds_set(&air_binds, AIR_ACT_ROLL_LEFT, 0, SDL_SCANCODE_A);
+                    airplane_binds_set(&air_binds, AIR_ACT_ROLL_RIGHT, 0, SDL_SCANCODE_D);
+                    airplane_binds_set(&air_binds, AIR_ACT_RUDDER_LEFT, 0, SDL_SCANCODE_Q);
+                    airplane_binds_set(&air_binds, AIR_ACT_RUDDER_RIGHT, 0, SDL_SCANCODE_E);
+                    airplane_binds_set(&air_binds, AIR_ACT_THROTTLE_UP, 0, SDL_SCANCODE_SPACE);
+                    airplane_binds_set(&air_binds, AIR_ACT_THROTTLE_UP, 1, SDL_SCANCODE_LSHIFT);
+                    airplane_binds_set(&air_binds, AIR_ACT_THROTTLE_DOWN, 0, SDL_SCANCODE_LCTRL);
+                    airplane_binds_set(&air_binds, AIR_ACT_BRAKE, 0, SDL_SCANCODE_B);
+                    airplane_binds_set(&air_binds, AIR_ACT_FLAPS, 0, SDL_SCANCODE_V);
+                    airplane_binds_set(&air_binds, AIR_ACT_BARREL_LEFT, 0, SDL_SCANCODE_J);
+                    airplane_binds_set(&air_binds, AIR_ACT_BARREL_LEFT, 1, SDL_SCANCODE_LEFT);
+                    airplane_binds_set(&air_binds, AIR_ACT_BARREL_RIGHT, 0, SDL_SCANCODE_L);
+                    airplane_binds_set(&air_binds, AIR_ACT_BARREL_RIGHT, 1, SDL_SCANCODE_RIGHT);
+                    airplane_binds_set(&air_binds, AIR_ACT_ASSIST, 0, SDL_SCANCODE_T);
+                }
+                PlayerState *air_p = &local_state.players[control_pid];
+                if (air_p->in_vehicle && air_p->vehicle_type == VEH_AIRPLANE) {
+                    AirplaneControls ac; int flaps_edge = 0;
+                    airplane_keys_to_controls(&air_st, &air_binds, k, SDL_NUM_SCANCODES, &air_cfg, &ac, &flaps_edge);
+                    if (g_shank_pad && level_shell_world_input()) {
+                        AirplanePad ap; memset(&ap, 0, sizeof(ap)); ap.connected = 1;
+                        ap.lx = (float)SDL_GameControllerGetAxis(g_shank_pad, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0f;
+                        ap.ly = (float)SDL_GameControllerGetAxis(g_shank_pad, SDL_CONTROLLER_AXIS_LEFTY) / 32767.0f;
+                        ap.rx = (float)SDL_GameControllerGetAxis(g_shank_pad, SDL_CONTROLLER_AXIS_RIGHTX) / 32767.0f;
+                        ap.lt = (float)SDL_GameControllerGetAxis(g_shank_pad, SDL_CONTROLLER_AXIS_TRIGGERLEFT) / 32767.0f;
+                        ap.rt = (float)SDL_GameControllerGetAxis(g_shank_pad, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) / 32767.0f;
+                        ap.dpad_up = SDL_GameControllerGetButton(g_shank_pad, SDL_CONTROLLER_BUTTON_DPAD_UP);
+                        ap.dpad_down = SDL_GameControllerGetButton(g_shank_pad, SDL_CONTROLLER_BUTTON_DPAD_DOWN);
+                        ap.btn_a = SDL_GameControllerGetButton(g_shank_pad, SDL_CONTROLLER_BUTTON_A);
+                        ap.btn_b = SDL_GameControllerGetButton(g_shank_pad, SDL_CONTROLLER_BUTTON_B);
+                        ap.btn_lb = SDL_GameControllerGetButton(g_shank_pad, SDL_CONTROLLER_BUTTON_LEFTSHOULDER);
+                        ap.btn_rb = SDL_GameControllerGetButton(g_shank_pad, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER);
+                        ap.btn_x = SDL_GameControllerGetButton(g_shank_pad, SDL_CONTROLLER_BUTTON_X);
+                        airplane_pad_merge(&air_st, &ap, &air_cfg, &ac, &flaps_edge, &air_pad_fl_prev, &air_pad_as_prev);
+                    }
+                    if (g_paused || !level_shell_world_input()) airplane_controls_neutral(&ac);
+                    else if (flaps_edge) {
+                        for (int ai2 = 0; ai2 < MAX_AIRPLANES; ai2++)
+                            if (local_state.airplanes[ai2].active && local_state.airplanes[ai2].occupant_player_id == control_pid)
+                                airplane_toggle_flaps(&local_state.airplanes[ai2]);
+                    }
+                    airplane_pilot_set(control_pid, &ac);
+                } else {
+                    airplane_pilot_set(-1, NULL);
+                    air_st.pitch = air_st.roll = air_st.rudder = 0.0f;
+                }
+            }
             if (g_paused || !level_shell_world_input()) {
                 fwd = 0.0f; str = 0.0f; jump = 0; crouch = 0; shoot = 0; reload = 0; use = 0; ability = 0; secondary = 0; bike = 0; pheromone = 0;
             }
+            if (app_state == STATE_GAME_LOCAL || app_state == STATE_GAME_NET) lobby_cv_frame(frame_time, &fwd, &str, fwd != 0.0f || str != 0.0f);   /* UNIFY-2: zoom, follow, terrain, click-to-move steering */
             input_fwd = fwd; input_str = str;
             input_jump = jump; input_crouch = crouch; input_shoot = shoot; input_reload = reload; input_use = use; input_ability = ability; input_secondary = secondary; input_bike = bike; input_pheromone = pheromone;
             /* Groove combat (packages/simulation/groove_host.h): installed once, after any --job (its ROF hook
@@ -19250,15 +20071,19 @@ int main(int argc, char* argv[]) {
                                         (local_state.game_mode == MODE_ZOMBIES || g_tyler_scene == TYLER_SCENE_CONSTRUCT));
             }
             if (!g_paused && level_shell_world_input()) {
-                if(k[SDL_SCANCODE_1]) wpn_req=0;
-                if(k[SDL_SCANCODE_2]) wpn_req=1;
-                if(k[SDL_SCANCODE_3]) wpn_req=2;
-                if(k[SDL_SCANCODE_4]) wpn_req=3;
-                if(k[SDL_SCANCODE_5]) wpn_req=4;
-                if(k[SDL_SCANCODE_6]) wpn_req=5;
-                if(k[SDL_SCANCODE_7]) wpn_req=WPN_FLASHLIGHT;
-                if(k[SDL_SCANCODE_8]) wpn_req=WPN_HAMMER;
-                if(k[SDL_SCANCODE_9]) wpn_req=WPN_SPRAYCAN;
+                {   /* ACTION BARS: keys 1..9,0 -> bank (Shift/Ctrl/Alt) + slot -> action, resolved by the PARENA
+                       action_bar_rules mod (player bind > plugin > default). Bank 1 default == the classic
+                       1-6 weapons, 7 flashlight, 8 hammer, 9 spray can, so the plain keys behave exactly as before. */
+                    /* KEY BINDINGS: the bar's digit keys and its Shift/Ctrl/Alt page keys are the player's binds
+                       (defaults 1..9,0 and L/R Shift, Ctrl, Alt); abh_poll still sees plain digit scancodes. */
+                    unsigned char abk[KB_NUM_SCANCODES];
+                    int abn;
+                    memset(abk, 0, sizeof abk);
+                    for (abn = 1; abn <= 10; abn++)
+                        if (kb_host_down(k, kb_m, kb_c, KB_AB(abn))) abk[abn == 10 ? 39 : 29 + abn] = 1;
+                    abh_poll(abk, kb_host_down(k, kb_m, kb_c, KB_AB_SHIFT), kb_host_down(k, kb_m, kb_c, KB_AB_CTRL),
+                             kb_host_down(k, kb_m, kb_c, KB_AB_ALT), &wpn_req);
+                }
                 if (g_wow_weapon_req >= 0) { wpn_req = g_wow_weapon_req; g_wow_weapon_req = -1; }   /* /cast magnum */
             }
 
@@ -19294,9 +20119,8 @@ int main(int argc, char* argv[]) {
                                            my_client_id, net_local_pid,
                                            net_diag.connect_started ? (now_ms - net_diag.connect_start_ms) : 0);
                         }
-                        float net_aim_yaw = cam_yaw, net_aim_pitch = cam_pitch;
-                        if (local_state.players[net_local_pid].third_person)
-                            lobby_third_person_aim(&local_state.players[net_local_pid], cam_yaw, cam_pitch, &net_aim_yaw, &net_aim_pitch);
+                        float net_aim_yaw, net_aim_pitch;
+                        lobby_cam_aim(&local_state.players[net_local_pid], &net_aim_yaw, &net_aim_pitch);
                         /* Kit gadget keys feed the very same inputs the keyboard already drives, so a
                            kit is a key->real-action map and not a parallel universe of fake gadgets. */
                         input_pheromone |= kit_pulse_take(KIT_ITEM_PHEROMONE, now_ms);
@@ -19508,9 +20332,8 @@ int main(int argc, char* argv[]) {
                     local_state.story_phase_start_ms == 0) {
                     local_state.story_phase_start_ms = now_ms;
                 }
-                float local_aim_yaw = cam_yaw, local_aim_pitch = cam_pitch;
-                if (local_state.players[0].third_person)
-                    lobby_third_person_aim(&local_state.players[0], cam_yaw, cam_pitch, &local_aim_yaw, &local_aim_pitch);
+                float local_aim_yaw, local_aim_pitch;
+                lobby_cam_aim(&local_state.players[0], &local_aim_yaw, &local_aim_pitch);
                 /* C-110 barrel roll: J / left-arrow rolls left, L / right-arrow rolls right. Read from the
                    keyboard state here rather than through the networked UserCmd, because a barrel roll is
                    an attitude the pilot commands, not a button the server has to arbitrate -- see

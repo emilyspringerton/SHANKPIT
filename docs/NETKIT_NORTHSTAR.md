@@ -92,7 +92,39 @@ All of it runs headlessly, and every piece is checked against something this rep
 * Terminal: fixed 100×34 grid, ASCII + box drawing + blocks only (other characters show a placeholder), no mouse reporting, no wide characters.
   Tablet-sized; unreadably small on a phone.
 * Scanner: TCP-connect sweep of 8 ports, ≤ /22; names via reverse DNS only (no NetBIOS/mDNS); `/proc/net/arp` is blocked on Android 10+.
-* Not built from the founder's doc: packet capture + Tap Pi, pager/Pi Zero W alerts, stream deck, AR/Quest, the garage doctrine, stages 2–6.
+* Not built from the founder's doc: packet capture + Tap Pi, pager/Pi Zero W alerts, stream deck, AR/Quest, stages 2–6. (The garage doctrine's flat mode IS built since 2026-11-24, see §6a; the physical/AR side is not.)
+
+## 6a. The garage: CONSTRUCT affordances in the Netkit page (flat mode) — built 2026-11-24, source complete, bundle regeneration pending
+
+Founder real-time (BACKLOG SECTION 639): *"ensure CONSTRUCT affordances are available in the SHANKPIT android build (not the shankpit-460 build) -- all wasm based, all parena mods based."* CONSTRUCT is the SHANKPIT hub scene (`TYLER_SCENE_CONSTRUCT`, `apps/lobby/src/main.c`). Its doctrine (Osaka Garage): **every affordance is an object; flat mode on a tablet means you tap the same objects; status is a light on the object; a cable means a connection.** The Netkit page now opens on a **garage** built exactly that way:
+
+| object | does | light | cable |
+|---|---|---|---|
+| scanner bench | opens the device list (the scanner already runs on boot) | off never scanned / amber scanning / green devices found / red scanned, nothing found | — |
+| terminal | the SSH view; with no session it opens the device list with a hint to start one | off / amber connecting / green live | bench–terminal, drawn only while the SSH session is live |
+| monitor | the VNC view, same rule | same | bench–monitor, only while the VNC session is live |
+| arcade cabinet | **BRAWLPIT inside the page** (canvas + touch pad + a clear *Back to garage*) | off not loaded / amber loading / green ready / red could not load | — |
+
+Everything that decides is PARENA wasm (`PARENA/stdlib/netkit/nk_garage.prn`: pure scalar functions, no memory state — layout in permille of the floor, 4-in-a-row landscape / 2×2 portrait, hit test, lights, words, cables, tap → view, the back-button ladder, touch button → BRAWLPIT key code). The page host (`nk_host_garage.prn`, `nk_host_arcade.prn`, generated to `nk-host.js`) creates the button objects, positions them from the wasm's numbers, draws cables, and moves bytes. **BRAWLPIT** is WOTAN's web build (`WOTAN/BRAWLPIT/brawlpit.wasm`, from `PARENA/stdlib/brawlpit/bp_*.prn`): zero imports, 8 MB fixed memory, no allocator — so it obeys the Netkit CSP (`script-src 'self' 'wasm-unsafe-eval'`, `connect-src 'self'`) unchanged and needs no host-provided imports. It is instantiated lazily (first time you open the cabinet) with an empty import object, as a second module beside the netkit ones; its frame loop runs only while the arcade is on screen; held keys are released on leaving, blur and visibility change. **Not used:** `assets/levels/brawlpit/brawlpit_level.wasm` (the lobby's level build) imports eight `env.reflux_host_*` functions — it would need a PARENA-generated REFLUX host and breaks the zero-import rule here. **Deliberately dropped from BRAWLPIT's own host:** the Hat Store flow (needs IDUNA, which the Android shell has no session for, and `connect-src 'self'` forbids it; the game runs with no hat) and fullscreen. No audio exists in the web build. Gamepad polling is ported behind a feature check; untested.
+
+### CONSTRUCT port table — no silent omissions
+
+| CONSTRUCT affordance (where) | here | why |
+|---|---|---|
+| Netkit's own functions: scanner, terminal, monitor | **ported** as the three objects above | they ARE Netkit's functions; nothing to port from the 3D hub |
+| Arcade cabinet (SECTION 638, ARCADE-0..2, in the desktop lobby) | **ported** as the cabinet object | same BRAWLPIT game; hosted in-page instead of through the level manager |
+| The 3D CONSTRUCT level, the Duck hero, groove combat | not ported | GL/C engine content; Netkit is a 2D WebView page |
+| Architect's Orb (EduVM scripting terminal, `draw_orb_*`) and the machine bay (crate rail, gate, bridge, portal ring) | not ported | EduVM is a C package (`packages/education`) plus a NOCK-snippet fetch from okemily.com, which `connect-src 'self'` forbids; not a network tool. A PARENA port of EduVM is separate future work |
+| Programmable NOCK widgets (`lobby_edu_widgets_init`) | not ported | same dependency on EduVM and on loading custom levels |
+| Phone (23 `BP_APP_*` apps: messages, map, camera, notes, lab, cargo, skills, GFD, IDUNA device-auth, ARPANET, PELLEGRINO browser, DEADWEIGHT, ...) | not ported | game UI for the 3D lobby, not network tools; GFD / IDUNA / PELLEGRINO need network and credentials the shell does not offer |
+| LAB stations (splice bench, centrifuge, PCR, clone vat, sample fridge, console, war terminal) | not ported | scene-bound BIG_O game systems |
+| Garage-scene portals (vox, tanker, dust, poo-poo, Telecrystal ring / `portal_resolve_destination`) | not ported | scene-bound; they switch 3D scenes, which do not exist here |
+| EMPIRE troop placement, kits, food/CARGO | not ported | game systems |
+| Lobby APPS page (DEADWEIGHT, PITVIPER, IDUNA.GAME, REDGARDEN, EDITOR.GAME, ZOMBIES, PELLEGRINO, NOCK) | not ported | each spawns a native binary; an Android WebView cannot launch them |
+
+No greyed-out placeholder objects were added for the unported rows: a light that does not mean something true would break the doctrine, so the omissions are recorded here instead.
+
+**Verification state (honest):** the PARENA garage logic is verified (45 checks run on the compiler's own LLVM IR here; the same checks are written for the linked wasm). The wasm/JS bundle (`nk-host.js`, `netkit*.wasm`) was **not regenerated** in the environment that wrote this — no LLVM 18 toolchain and no `node` there — so the vendored bundle is stale against the new `index.html` until `PARENA/scripts/build_netkit_web.sh` is run; `verify-web-bundle.mjs` fails on a stale bundle on purpose. The Node/Chromium end-to-end legs, the APK build (no Android SDK) and any real-device run are unrun.
 
 ## 7. Roadmap (the founder's stages, as PARENA modules)
 

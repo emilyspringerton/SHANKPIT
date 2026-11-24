@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "arcade_cabinet.h"
 #include "editor_widget_bridge.h"
 #include "../../../packages/reflux/reflux_runtime.h"
 #include "../../../packages/simulation/level_manager_rules.h"
@@ -171,6 +172,29 @@ static int source_entry(char *out, size_t n) {
     if (!out[0] || !(f = fopen(out, "r"))) return 0;
     fclose(f);
     return 1;
+}
+
+int level_shell_state(void) { return g_inited ? level_host_state(&g_lh) : lm_st_none(); }
+
+const char *level_shell_message(void) { return g_inited ? level_host_message(&g_lh) : ""; }
+
+int level_shell_load_failed(void) {
+    return g_inited && level_host_state(&g_lh) == lm_st_none() && level_host_message(&g_lh)[0] ? 1 : 0;
+}
+
+static void after_transition(int old); /* defined below */
+
+/* the arcade cabinet's commands (F at the machine, the hub entered from the menu): the same transition path as a
+ * chord -- REFLUX rows, mouse release, one log line */
+void level_shell_arcade_command(int cmd) {
+    int old;
+    if (!g_inited || !cmd) return;
+    old = level_host_state(&g_lh);
+    if (level_host_command(&g_lh, cmd)) {
+        after_transition(old);
+        note();
+    }
+    g_buttons = 0;
 }
 
 int level_shell_rejected_dispatches(void) { return g_inited ? level_host_rejected(&g_lh) : 0; }
@@ -598,7 +622,7 @@ void level_shell_draw(const level_shell_view *v) {
     }
     g_have_frame = 0;
     banner = level_host_banner(&g_lh);
-    if (!banner && !level_host_message(&g_lh)[0] && !notice_live()) return;
+    if (!banner && !level_host_message(&g_lh)[0] && !notice_live() && !arcade_cabinet_prompt()) return;
     begin_2d();
     if (v) glViewport(v->vp_x, v->vp_y, v->vp_w, v->vp_h);
     glDisable(GL_TEXTURE_2D);
@@ -607,6 +631,7 @@ void level_shell_draw(const level_shell_view *v) {
     else if (banner == 2) draw_text_centered("SHIFT+M PLAY BRAWLPIT", LS_BANNER_Y, 2.5f, 0.6f, 0.9f, 1.0f);
     if (level_host_message(&g_lh)[0]) draw_text_centered(level_host_message(&g_lh), LS_BANNER_Y - 28.0f, 2.0f, 1.0f, 0.45f, 0.4f);
     draw_notice();
+    arcade_cabinet_hud(); /* "F: PLAY BRAWLPIT" at the machine in the CONSTRUCT hub (nothing elsewhere) */
     end_2d();
 }
 

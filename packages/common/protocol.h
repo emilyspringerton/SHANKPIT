@@ -1111,6 +1111,11 @@ typedef struct {
     int occupant_player_id;
     int flaps;
     int grounded;
+    /* FLIGHT-0/1 (airplane_flight.h): aileron roll rate (deg/tick), wheel-brake state and the stall
+       warning (permille). Local simulation state, appended so existing field offsets are unchanged. */
+    float roll_rate;
+    int brake_on;
+    int stall_warn;
 } AirplaneState;
 
 /* Icelandic horse — Toledo mount. Tölt gait: 4-beat amble, smooth at speed.

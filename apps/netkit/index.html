@@ -16,9 +16,11 @@
 </header>
 
 <nav id="tabs">
-  <button id="tab-devices" data-tab="devices" class="on">Devices</button>
+  <button id="tab-garage" data-tab="garage" class="on">Garage</button>
+  <button id="tab-devices" data-tab="devices">Devices</button>
   <button id="tab-ssh" data-tab="ssh" hidden>Terminal</button>
   <button id="tab-vnc" data-tab="vnc" hidden>Screen</button>
+  <button id="tab-arcade" data-tab="arcade">Arcade</button>
 </nav>
 
 <div id="banner" class="banner" hidden role="alert">
@@ -27,8 +29,17 @@
 </div>
 
 <main>
+  <!-- ======================= garage (the flat-mode hub: every function is an object you tap) ======================= -->
+  <section id="view-garage">
+    <div id="garage-floor">
+      <canvas id="garage-cables" aria-hidden="true"></canvas>
+      <div id="garage-objects"></div>
+    </div>
+  </section>
+
   <!-- ======================= devices ======================= -->
-  <section id="view-devices">
+  <section id="view-devices" hidden>
+    <p id="devices-hint" class="hint accent" hidden></p>
     <div class="toolbar">
       <button id="btn-scan" class="primary">Scan</button>
       <input id="scan-cidr" placeholder="auto: this network" inputmode="decimal" autocapitalize="off" autocomplete="off" spellcheck="false" aria-label="Network range to scan">
@@ -112,6 +123,39 @@
       <button id="btn-vnc-close" class="danger">Close</button>
     </div>
     <div id="vnc-wrap"><canvas id="vnc-canvas" width="16" height="16" aria-label="Remote screen"></canvas></div>
+  </section>
+
+  <!-- ======================= arcade (BRAWLPIT, WebAssembly, inside this page) ======================= -->
+  <section id="view-arcade" hidden>
+    <div class="viewbar">
+      <button id="btn-arcade-exit">Back to garage</button>
+      <span class="title">BRAWLPIT</span>
+      <span class="grow"></span>
+      <span class="badge" title="BRAWLPIT runs as WebAssembly, loaded from this app">WebAssembly</span>
+    </div>
+    <div id="arc-stage">
+      <canvas id="bp-canvas" width="960" height="540" tabindex="0" aria-label="BRAWLPIT"></canvas>
+      <p id="arcade-msg" class="hint" hidden></p>
+    </div>
+    <div id="arc-pad" role="group" aria-label="Touch controls">
+      <div class="pad-cluster pad-move">
+        <button data-bp="3" class="pb pb-up" aria-label="Up">&#9650;</button>
+        <button data-bp="1" class="pb pb-left" aria-label="Left">&#9664;</button>
+        <button data-bp="2" class="pb pb-right" aria-label="Right">&#9654;</button>
+        <button data-bp="4" class="pb pb-down" aria-label="Down">&#9660;</button>
+      </div>
+      <div class="pad-cluster pad-menu">
+        <button data-bp="11" class="pb pb-small">Back</button>
+        <button data-bp="9" class="pb pb-small">Pause</button>
+        <button data-bp="10" class="pb pb-small">OK</button>
+      </div>
+      <div class="pad-cluster pad-act">
+        <button data-bp="5" class="pb pb-jump">Jump</button>
+        <button data-bp="6" class="pb pb-attack">Attack</button>
+        <button data-bp="7" class="pb pb-shield">Shield</button>
+        <button data-bp="8" class="pb pb-special">Special</button>
+      </div>
+    </div>
   </section>
 </main>
 

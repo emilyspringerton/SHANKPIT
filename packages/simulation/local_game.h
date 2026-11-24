@@ -2684,7 +2684,11 @@ void local_update(float fwd, float str, float yaw, float pitch, int shoot, int w
             throttle_up = occ->in_jump;
             throttle_down = occ->crouching;
         }
-        airplane_simulate_step(a, elevator, rudder, roll_dir, tiller_yaw, throttle_up, throttle_down, SHANKPIT_NET_FIXED_DT);
+        {   /* FLIGHT-0/1: the local pilot's shaped stick/pedal/lever axes when the host provides them */
+            const AirplaneControls *pc = airplane_pilot_for(a->occupant_player_id);
+            if (pc) airplane_step(a, pc, SHANKPIT_NET_FIXED_DT);
+            else airplane_simulate_step(a, elevator, rudder, roll_dir, tiller_yaw, throttle_up, throttle_down, SHANKPIT_NET_FIXED_DT);
+        }
         if (a->occupant_player_id >= 0 && a->occupant_player_id < MAX_CLIENTS) {
             PlayerState *occ = &local_state.players[a->occupant_player_id];
             occ->x = a->x; occ->y = a->y; occ->z = a->z;

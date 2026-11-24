@@ -1,9 +1,16 @@
 # The vendored build in this directory was generated from PARENA commit 81d1abf7e8b85e61fd403b26c26a60271ced4c36
 # (github.com/emilyspringerton/PARENA, scripts/build_netkit_web.sh). Regenerate and compare: see README.md.
+# UPDATE 2026-11-24 (garage + arcade): index.html, netkit.css, brawlpit.wasm, duck.png, sprites.png are current.
+# nk-host.js, netkit.wasm, netkit-lite.wasm are STALE (still the 81d1abf build, no nk_garage): they could not be regenerated here (no LLVM 18 / node).
+# Regenerate with PARENA/scripts/build_netkit_web.sh, copy, and replace those three hashes. nkterm.wasm is unchanged.
+# brawlpit.wasm / duck.png / sprites.png are byte copies of WOTAN/BRAWLPIT (WOTAN last commit touching brawlpit.wasm: 1068920).
 # sha256  file
-78e4f7dd1ea282c182b4350987e28ec5a36fa297e49764c196327cd2ecb3972e  index.html
-9331d783459a0b529f3c787b252fd1a679bae48a14e30e5a5e5c473754e189f1  netkit.css
-5a6a291a67720609bd4dd5630f9c0072ca9c3782f90fbeb6d32908b993b5814a  nk-host.js
-5927bdb3ddd756d0014dc9d57fdc9d97ac3a98335562ea0ddae6830ead4e99de  netkit.wasm
-bb4f3a52732f8da780aecb442d168a8cab96e7335ec05ea0706f8d37f0615de1  netkit-lite.wasm
+2443c881231535661381d06b0d1de11dca45f10ff28644adec2bb115f0655f76  index.html
+2e72bd5abf5ef401f87b2f6bfd554387bf64c8a2776ce295a1e5c84d24cf36f5  netkit.css
+5a6a291a67720609bd4dd5630f9c0072ca9c3782f90fbeb6d32908b993b5814a  nk-host.js  (STALE)
+5927bdb3ddd756d0014dc9d57fdc9d97ac3a98335562ea0ddae6830ead4e99de  netkit.wasm  (STALE)
+bb4f3a52732f8da780aecb442d168a8cab96e7335ec05ea0706f8d37f0615de1  netkit-lite.wasm  (STALE)
 d89b2f86e35c5e67d33588226a2cf80171543900930185ab26f6bd9006ba5385  nkterm.wasm
+4e97ba74e6cc18a96016c977c26386ff913858c294482b5073825e38fc7720b7  brawlpit.wasm
+de9c4c6a7d91195216c56ba7002be6bafaf91dfdb9e205d1f8f8a32e9eebde7a  duck.png
+6326f18fd5fe4c4990cc54e3812880fd54dd149efe08b43a8a0dddf7292b8f98  sprites.png

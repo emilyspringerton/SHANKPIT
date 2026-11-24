@@ -63,9 +63,13 @@ CI builds it in `release.yml` and ships it as `ShankPit_Netkit_<build>.apk` next
   `curve25519-sha256` + `ssh-ed25519` + `chacha20-poly1305@openssh.com` (a server without them is refused with a plain message, never
   downgraded); no SSH public-key auth yet; no Tight/ZRLE VNC encodings; the terminal is a fixed 100×34 grid (good on a tablet, tiny on a phone).
 
+## The garage and the arcade (2026-11-24)
+
+The page opens on a flat-mode **garage** (the SHANKPIT CONSTRUCT hub's doctrine: every function is an object, status is a lamp on it, a cable means a live connection): scanner bench -> Devices, terminal -> SSH, monitor -> VNC, and an **arcade cabinet** that plays **BRAWLPIT** (WOTAN's WebAssembly fighter, `apps/netkit/brawlpit.wasm`, zero imports) inside the page with a multi-touch pad. All decisions are PARENA wasm (`nk_garage.prn`); the Java shell is unchanged (assets are packaged verbatim from `apps/netkit`). BRAWLPIT has no audio and no hat (no IDUNA session in the shell). Expect the APK to grow from ~117 KB to roughly 0.4-0.45 MB (the PNG art is ~250 KB of it; **an estimate, not measured: the Android SDK is absent where this was written, so no APK was built**). Back button: arcade/devices -> garage -> app closes. See `docs/NETKIT_NORTHSTAR.md` §6a for the CONSTRUCT port table. Untested on a device: 60 fps on a tablet WebView, multi-touch pointer capture, the extra 8 MB of memory, portrait layout.
+
 ## Status (see `docs/NETKIT_NORTHSTAR.md`)
 
 Verified headlessly (488 checks in PARENA's `make test-netkit`: 402 on the modules, 65 running the generated page in Node, 21 in a real
 browser; plus 16 JVM tests here): the whole stack against a real OpenSSH 9.6 `sshd`,
-asyncssh and libvncserver. **Not yet run on a real tablet, the router Pi or the iMac** — the APK builds and its assets are byte-identical
+asyncssh and libvncserver. **Not yet run on a real tablet, the router Pi or the iMac** (the 488 figure predates the garage/arcade; those new checks, and a regenerated bundle, are described in the northstar §6a) — the APK builds and its assets are byte-identical
 to the vendored bundle, but there is no Android device or emulator in the build environment.

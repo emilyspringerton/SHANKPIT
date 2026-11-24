@@ -19,6 +19,8 @@ int lm_cmd_load_fail();
 int lm_cmd_trap();
 int lm_cmd_overlay_closed();
 int lm_cmd_suspend();
+int lm_cmd_arcade_play();
+int lm_cmd_arcade_enter();
 int lm_act_shown();
 int lm_act_hidden();
 int lm_act_closed();
@@ -54,6 +56,15 @@ int lm_dom_scan(int);
 int lm_dom_key(int);
 int lm_compile_now(int, int, int);
 int lm_swap_on(int, int);
+int lm_arcade_range_cm();
+int lm_arcade_abs(int);
+int lm_arcade_near(int, int, int);
+int lm_arcade_prompt(int, int, int, int);
+int lm_arcade_use_cmd(int, int, int, int);
+int lm_arcade_screen(int, int);
+int lm_arcade_light(int, int);
+int lm_arcade_pulse(int);
+int lm_arcade_attract_phase(int);
 
 int lm_st_none(void) {
     return 0;
@@ -111,6 +122,14 @@ int lm_cmd_suspend(void) {
     return 8;
 }
 
+int lm_cmd_arcade_play(void) {
+    return 9;
+}
+
+int lm_cmd_arcade_enter(void) {
+    return 10;
+}
+
 int lm_act_shown(void) {
     return 1001;
 }
@@ -160,19 +179,19 @@ int lm_loaded(int s __attribute__((unused))) {
 }
 
 int lm_next_none(int cmd __attribute__((unused))) {
-    return ((cmd == lm_cmd_toggle()) ? lm_st_loading() : ((cmd == lm_cmd_source()) ? lm_st_source_none() : lm_st_none()));
+    return (((cmd == lm_cmd_toggle()) || (cmd == lm_cmd_arcade_play())) ? lm_st_loading() : ((cmd == lm_cmd_source()) ? lm_st_source_none() : lm_st_none()));
 }
 
 int lm_next_loading(int cmd __attribute__((unused))) {
-    return ((cmd == lm_cmd_load_ok()) ? lm_st_fg() : ((cmd == lm_cmd_load_fail()) ? lm_st_none() : lm_st_loading()));
+    return ((cmd == lm_cmd_load_ok()) ? lm_st_fg() : ((cmd == lm_cmd_load_fail()) ? lm_st_none() : ((cmd == lm_cmd_arcade_enter()) ? lm_st_none() : lm_st_loading())));
 }
 
 int lm_next_fg(int cmd __attribute__((unused))) {
-    return (((cmd == lm_cmd_toggle()) || (cmd == lm_cmd_suspend())) ? lm_st_bg() : ((cmd == lm_cmd_source()) ? lm_st_source() : lm_st_fg()));
+    return (((cmd == lm_cmd_toggle()) || ((cmd == lm_cmd_suspend()) || (cmd == lm_cmd_arcade_enter()))) ? lm_st_bg() : ((cmd == lm_cmd_source()) ? lm_st_source() : lm_st_fg()));
 }
 
 int lm_next_bg(int cmd __attribute__((unused))) {
-    return ((cmd == lm_cmd_toggle()) ? lm_st_fg() : ((cmd == lm_cmd_close()) ? lm_st_none() : ((cmd == lm_cmd_source()) ? lm_st_source() : lm_st_bg())));
+    return (((cmd == lm_cmd_toggle()) || (cmd == lm_cmd_arcade_play())) ? lm_st_fg() : ((cmd == lm_cmd_close()) ? lm_st_none() : ((cmd == lm_cmd_source()) ? lm_st_source() : lm_st_bg())));
 }
 
 int lm_next(int s __attribute__((unused)), int cmd __attribute__((unused))) {
@@ -289,5 +308,56 @@ int lm_swap_on(int old __attribute__((unused)), int new __attribute__((unused)))
     } else {
     return 0;
     }
+}
+
+int lm_arcade_range_cm(void) {
+    return 320;
+}
+
+int lm_arcade_abs(int v __attribute__((unused))) {
+    if ((v < 0)) {
+    return (0 - v);
+    } else {
+    return v;
+    }
+}
+
+int lm_arcade_near(int dx_cm __attribute__((unused)), int dy_cm __attribute__((unused)), int dz_cm __attribute__((unused))) {
+    return ((lm_arcade_abs(dx_cm) > 1000) ? 0 : ((lm_arcade_abs(dz_cm) > 1000) ? 0 : ((lm_arcade_abs(dy_cm) > 200) ? 0 : ((((dx_cm * dx_cm) + (dz_cm * dz_cm)) <= (lm_arcade_range_cm() * lm_arcade_range_cm())) ? 1 : 0))));
+}
+
+int lm_arcade_prompt(int in_hub __attribute__((unused)), int near __attribute__((unused)), int state __attribute__((unused)), int failed __attribute__((unused))) {
+    return (((in_hub == 0) || (near == 0)) ? 0 : ((state == lm_st_loading()) ? 2 : ((state == lm_st_bg()) ? 4 : (((state == lm_st_none()) && (failed != 0)) ? 3 : ((state == lm_st_none()) ? 1 : 0)))));
+}
+
+int lm_arcade_use_cmd(int in_hub __attribute__((unused)), int near __attribute__((unused)), int state __attribute__((unused)), int failed __attribute__((unused))) {
+    int p __attribute__((unused)) = lm_arcade_prompt(in_hub, near, state, failed);
+    if (((p == 1) || ((p == 3) || (p == 4)))) {
+    return lm_cmd_arcade_play();
+    } else {
+    return 0;
+    }
+}
+
+int lm_arcade_screen(int state __attribute__((unused)), int failed __attribute__((unused))) {
+    return ((state == lm_st_loading()) ? 1 : ((state == lm_st_bg()) ? 3 : ((state == lm_st_fg()) ? 4 : (((state == lm_st_none()) && (failed != 0)) ? 2 : 0))));
+}
+
+int lm_arcade_light(int state __attribute__((unused)), int failed __attribute__((unused))) {
+    int s __attribute__((unused)) = lm_arcade_screen(state, failed);
+    return ((s == 2) ? 2 : (((s == 1) || (s == 3)) ? 1 : 0));
+}
+
+int lm_arcade_pulse(int t_ms __attribute__((unused))) {
+    int ph __attribute__((unused)) = (lm_arcade_abs(t_ms) % 1600);
+    if ((ph < 800)) {
+    return ((ph * 255) / 800);
+    } else {
+    return (((1600 - ph) * 255) / 800);
+    }
+}
+
+int lm_arcade_attract_phase(int t_ms __attribute__((unused))) {
+    return ((lm_arcade_abs(t_ms) / 450) % 8);
 }
 
