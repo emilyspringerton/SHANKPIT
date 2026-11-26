@@ -34,6 +34,9 @@ let vtx         = 0.0;
 let vty         = 0.0;
 let ptrs      = null;
 let files      = null;
+let drv      = null;
+let edLh         = 20;
+let edShift          = false;
 let arcState         = 0;
 let arcX      = null;
 let arcMem      = null;
@@ -1980,6 +1983,848 @@ export function filesOpenBang(host        , port        , user        , pw      
     }
 }
 
+export function dx()      {
+    return drv.x;
+}
+
+export function du8()      {
+    return drv.u8;
+}
+
+export function dcall(name        )         {
+    return dx()[name].call(null);
+}
+
+export function dtext(a        )         {
+    return cstr(du8(), a);
+}
+
+export function nativeDriveP()          {
+    return (haveNativeP() && (!(((typeof nat.driveOpen) === "undefined"))));
+}
+
+export function driveInitBang()       {
+    if ((drv == null)) {
+        {
+            let x      = exportsOf(instantiate(modLite));
+            drv = {"x": x, "u8": u8Of(x), "path": "", "doc": "", "open": false, "name": "", "items": [], "kit": 0, "warned": false, "busy": false, "drag": false, "comp": ""};
+            x.nk_ed_new(0);
+        }
+    }
+}
+
+export function b64Chunk(u8     , a        , n        , i        )         {
+    return String.fromCharCode.apply(null, u8.subarray((a + i), (a + Math.min(n, (i + 32768)))));
+}
+
+export function bytesB64(u8     , a        , n        )         {
+    {
+        let i         = 0;
+        let acc         = "";
+        while (true) {
+            if ((i >= n)) {
+                return btoa(acc);
+            } else {
+                const _t0 = (i + 32768);
+                const _t1 = ("" + acc + b64Chunk(u8, a, n, i));
+                i = _t0;
+                acc = _t1;
+                continue;
+            }
+            break;
+        }
+    }
+}
+
+export function utf8(a        , b        )         {
+    return new TextDecoder().decode(du8().subarray(a, b));
+}
+
+export function driveSayBang(t     )       {
+    setTextBang("drive-where", t);
+}
+
+export function driveTitleBang()       {
+    setTextBang("drive-title", ((!(drv.open)) ? "USB drive" : ((drv.name === "") ? "USB drive" : drv.name)));
+}
+
+export function driveListBang(path        )       {
+    drv.path = path;
+    driveSayBang(("" + "Reading " + ((path === "") ? "the drive" : path) + "..."));
+    nat.driveList(path);
+}
+
+export function sizeText(s     )         {
+    return ((s < 0) ? "" : ((s < 1024) ? ("" + s + " bytes") : ((s < 1048576) ? ("" + Math.round((s / 1024.0)) + " KB") : ("" + (Math.round((s / 104857.6)) / 10.0) + " MB"))));
+}
+
+export function itemCmp(a     , b     )         {
+    return ((a.d !== b.d) ? (b.d - a.d) : a.n.toLowerCase().localeCompare(b.n.toLowerCase()));
+}
+
+export function itemHtml(it     )         {
+    {
+        let dirP          = (it.d === 1);
+        let n      = it.n;
+        return ("" + "<li class=\"dev\" data-name=\"" + esc(n) + "\" data-dir=\"" + (dirP ? "1" : "0") + "\"><div class=\"dev-main\"><div class=\"dev-name\">" + esc(n) + (dirP ? "/" : "") + "</div><div class=\"dev-sub\">" + (dirP ? "folder" : sizeText(it.s)) + "</div></div>" + "<div class=\"dev-actions\"><button data-act=\"" + (dirP ? "open" : "edit") + "\">" + (dirP ? "Open" : "Edit") + "</button></div></li>");
+    }
+}
+
+export function itemsHtml(items     )         {
+    {
+        let n      = items.length;
+        {
+            let k         = 0;
+            let acc         = "";
+            while (true) {
+                if ((k >= n)) {
+                    return acc;
+                } else {
+                    const _t0 = (k + 1);
+                    const _t1 = ("" + acc + itemHtml(items[k]));
+                    k = _t0;
+                    acc = _t1;
+                    continue;
+                }
+                break;
+            }
+        }
+    }
+}
+
+export function driveRenderListBang()       {
+    {
+        let items      = drv.items;
+        let p      = drv.path;
+        items.sort(itemCmp);
+        setHiddenBang("btn-drive-up", (p === ""));
+        driveSayBang(("" + ((p === "") ? "Top of the drive" : p) + "  -  " + items.length + " items"));
+        setHtmlBang("drive-list", ((items.length === 0) ? "<li class=\"hint\">Empty. Tap New file, or VNC kit.</li>" : itemsHtml(items)));
+    }
+}
+
+export function driveShowBoxBang(which        )       {
+    setHiddenBang("drive-files", (which !== "files"));
+    setHiddenBang("drive-kit", (which !== "kit"));
+    setHiddenBang("ed", (which !== "ed"));
+    setHiddenBang("drive-bar", (which === "ed"));
+}
+
+export function driveEnterBang()       {
+    driveInitBang();
+    if ((!(nativeDriveP()))) {
+        driveSayBang("The USB drive is reached through the Netkit app on Android (its folder picker). In a browser, Save downloads the file instead.");
+        setHiddenBang("btn-drive-pick", true);
+    } else {
+        {
+            let st      = JSON.parse(nat.driveState());
+            drv.open = (st.open === 1);
+            drv.name = st.name;
+            driveTitleBang();
+            setTextBang("btn-drive-pick", (drv.open ? "Change drive" : "Choose USB drive"));
+            if ((drv.open && el("ed").hidden)) {
+                driveListBang(drv.path);
+            }
+            if ((!(drv.open))) {
+                driveSayBang("Plug the USB drive into the tablet, tap Choose USB drive, pick the drive, then Use this folder and Allow.");
+            }
+        }
+    }
+}
+
+export function onDrivePick(e     )       {
+    if (nativeDriveP()) {
+        nat.driveOpen();
+    }
+}
+
+export function onDriveUp(e     )       {
+    driveListBang(parentPath(drv.path));
+}
+
+export function onDriveClick(e     )       {
+    {
+        let b      = e.target.closest("[data-act]");
+        if ((!((b == null)))) {
+            {
+                let li      = b.closest("li");
+                let d      = li.dataset;
+                let p         = joinPath(drv.path, d.name);
+                if ((b.dataset.act === "open")) {
+                    driveListBang(p);
+                } else {
+                    driveReadBang(p);
+                }
+            }
+        }
+    }
+}
+
+export function onDriveNew(e     )       {
+    setHiddenBang("drive-newrow", false);
+    setValBang("drive-newname", "");
+    el("drive-newname").focus();
+}
+
+export function onDriveNewGo(e     )       {
+    {
+        let name      = ("" + val("drive-newname")).trim();
+        if (((name === "") || (name.search("[\\\\/:*?\"<>|]") >= 0))) {
+            bannerBang("Give the file a name (no \\ / : * ? \" < > |), for example notes.txt or run.bat");
+        } else {
+            {
+                let n         = putTextBang(du8(), dcall("nk_txt_addr"), name);
+                setHiddenBang("drive-newrow", true);
+                dx().nk_ed_new(dx().nk_ed_eol_for_name(n));
+                edOpenBang(joinPath(drv.path, name));
+            }
+        }
+    }
+}
+
+export function driveReadBang(path        )       {
+    drv.busy = true;
+    driveSayBang(("" + "Opening " + path + "..."));
+    nat.driveRead(path);
+}
+
+export function edName()         {
+    {
+        let p      = drv.doc;
+        let i      = p.lastIndexOf("/");
+        return ((i < 0) ? p : p.slice((i + 1)));
+    }
+}
+
+export function edCharW()         {
+    {
+        let m      = el("ed-measure");
+        return ((m == null) ? 9.0 : (m.getBoundingClientRect().width / 20.0));
+    }
+}
+
+export function edOpenBang(path        )       {
+    drv.doc = path;
+    drv.warned = false;
+    driveShowBoxBang("ed");
+    setTextBang("ed-name", edName());
+    el("ed-view").scrollTop = 0;
+    el("ed-view").scrollLeft = 0;
+    {
+        let m      = dx().nk_ed_msg();
+        setTextBang("ed-msg", dtext(dx().nk_ed_msg_text_addr(m)));
+    }
+    edDrawBang(true);
+    if ((dx().nk_ed_binary() === 0)) {
+        el("ed-ime").focus();
+    }
+}
+
+export function edSeg(a        , b        )         {
+    return ((a >= b) ? "" : esc(utf8((dx().nk_ed_buf_addr() + a), (dx().nk_ed_buf_addr() + b))));
+}
+
+export function edLineHtml(r        , s0        , s1        , cur        )         {
+    {
+        let x      = dx();
+        let ls      = x.nk_ed_line_start(r);
+        let le      = x.nk_ed_line_end(r);
+        let a         = Math.max(ls, Math.min(s0, le));
+        let b         = Math.max(ls, Math.min(s1, le));
+        let onP          = ((cur >= ls) && (cur <= le));
+        let caret         = (onP ? "<span class=\"caret\"></span>" : "");
+        let sel         = ((a < b) ? ("" + "<span class=\"sel\">" + edSeg(a, b) + "</span>") : "");
+        return ("" + edSeg(ls, a) + ((onP && (cur === a)) ? caret : "") + sel + ((onP && ((cur === b) && (a < b))) ? caret : "") + edSeg(b, le) + ((onP && (cur > b)) ? caret : "") + (((s0 < s1) && ((s1 >= (le + 1)) && (s0 <= le))) ? "<span class=\"sel\"> </span>" : "") + "\n");
+    }
+}
+
+export function edLinesHtml(first        , last        )         {
+    {
+        let x      = dx();
+        let s0      = x.nk_ed_sel_start();
+        let s1      = x.nk_ed_sel_end();
+        let cur      = x.nk_ed_cursor();
+        {
+            let r         = first;
+            let acc         = "";
+            while (true) {
+                if ((r > last)) {
+                    return acc;
+                } else {
+                    const _t0 = (r + 1);
+                    const _t1 = ("" + acc + edLineHtml(r, s0, s1, cur));
+                    r = _t0;
+                    acc = _t1;
+                    continue;
+                }
+                break;
+            }
+        }
+    }
+}
+
+export function edFollowBang()       {
+    {
+        let v      = el("ed-view");
+        let x      = dx();
+        let top      = (x.nk_ed_row() * edLh);
+        let h      = v.clientHeight;
+        let left      = (x.nk_ed_vcol() * edCharW());
+        let w      = v.clientWidth;
+        if ((top < v.scrollTop)) {
+            v.scrollTop = top;
+        }
+        if (((top + (edLh + 8)) > (v.scrollTop + h))) {
+            v.scrollTop = ((top + (edLh + 8)) - h);
+        }
+        if ((left < v.scrollLeft)) {
+            v.scrollLeft = Math.max(0, (left - 40));
+        }
+        if (((left + 60) > (v.scrollLeft + w))) {
+            v.scrollLeft = ((left + 60) - w);
+        }
+    }
+}
+
+export function edDrawBang(follow         )       {
+    {
+        let x      = dx();
+        let v      = el("ed-view");
+        let n      = x.nk_ed_lines();
+        el("ed-sizer").style.height = ("" + ((n * edLh) + 16) + "px");
+        x.nk_ed_set_page(Math.max(1, (Math.floor((v.clientHeight / edLh)) - 1)));
+        if (follow) {
+            edFollowBang();
+        }
+        {
+            let first         = Math.max(0, (Math.floor((v.scrollTop / edLh)) - 2));
+            let last         = Math.min((n - 1), (first + ((1 + Math.floor((v.clientHeight / edLh))) + 4)));
+            el("ed-text").style.top = ("" + (8 + (first * edLh)) + "px");
+            setHtmlBang("ed-text", edLinesHtml(first, last));
+        }
+        edStatusBang();
+    }
+}
+
+export function edStatusBang()       {
+    {
+        let x      = dx();
+        let ro          = (x.nk_ed_binary() === 1);
+        setTextBang("ed-pos", ("" + "Line " + (1 + x.nk_ed_row()) + ", column " + (1 + x.nk_ed_vcol()) + "  -  " + x.nk_ed_lines() + " lines" + ((drv.comp === "") ? "" : ("" + "  -  typing: " + drv.comp))));
+        setTextBang("ed-state", (ro ? "read only" : ((x.nk_ed_dirty() === 1) ? "not saved" : "saved")));
+        setTextBang("btn-ed-eol", dtext(x.nk_ed_eol_text_addr()));
+        el("btn-ed-save").disabled = ro;
+        el("btn-ed-undo").disabled = (x.nk_ed_can_undo() === 0);
+    }
+}
+
+export function onEdScroll(e     )       {
+    if ((!((drv == null)))) {
+        edDrawBang(false);
+    }
+}
+
+export function edMsgBang()       {
+    {
+        let m      = dx().nk_ed_msg();
+        setTextBang("ed-msg", dtext(dx().nk_ed_msg_text_addr(m)));
+    }
+}
+
+export function edKeyBang(code        , mods        )       {
+    dx().nk_ed_key(code, mods);
+    edMsgBang();
+    edDrawBang(true);
+}
+
+export function edTypeBang(s        )       {
+    if (((s !== "") && (dx().nk_ed_binary() === 0))) {
+        {
+            let n         = putTextBang(du8(), dcall("nk_txt_addr"), s);
+            dx().nk_ed_insert(n);
+            edMsgBang();
+            edDrawBang(true);
+        }
+    }
+}
+
+export function edPasteBang(s     )       {
+    {
+        let t         = ("" + s);
+        {
+            let i         = 0;
+            while (true) {
+                if ((i < t.length)) {
+                    edTypeBang(t.slice(i, (i + 16000)));
+                    i = (i + 16000);
+                    continue;
+                }
+                break;
+            }
+        }
+    }
+}
+
+export function editorKeysP()          {
+    return ((!((drv == null))) && ((!(el("view-drive").hidden)) && (!(el("ed").hidden))));
+}
+
+export function edCodeOf(k        , ctrl         )         {
+    return ((k === "ArrowLeft") ? 1 : ((k === "ArrowRight") ? 2 : ((k === "ArrowUp") ? 3 : ((k === "ArrowDown") ? 4 : ((k === "Home") ? 5 : ((k === "End") ? 6 : ((k === "Backspace") ? 7 : ((k === "Delete") ? 8 : ((k === "Enter") ? 9 : ((k === "Tab") ? 10 : ((k === "PageUp") ? 11 : ((k === "PageDown") ? 12 : ((ctrl && ((k === "a") || (k === "A"))) ? 13 : ((ctrl && ((k === "z") || (k === "Z"))) ? 14 : 0))))))))))))));
+}
+
+export function onEdKeydown(e     )       {
+    if ((editorKeysP() && (e.target.id === "ed-ime"))) {
+        {
+            let k      = e.key;
+            let ctrl          = (e.ctrlKey || e.metaKey);
+            let code         = edCodeOf(k, ctrl);
+            if (e.isComposing) {
+            } else {
+                if ((ctrl && ((k === "s") || (k === "S")))) {
+                    e.preventDefault();
+                    edSaveBang();
+                } else {
+                    if ((ctrl && ((k === "f") || (k === "F")))) {
+                        e.preventDefault();
+                        onEdFindOpen(null);
+                    } else {
+                        if ((ctrl && ((k === "c") || (k === "C")))) {
+                            e.preventDefault();
+                            edCopyBang();
+                        } else {
+                            if ((code > 0)) {
+                                e.preventDefault();
+                                edKeyBang(code, ((e.shiftKey ? 1 : 0) | (ctrl ? 2 : 0)));
+                            } else {
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export function edImeResetBang()       {
+    {
+        let t      = el("ed-ime");
+        t.value = " ";
+        t.setSelectionRange(1, 1);
+    }
+}
+
+export function edImeTakeBang()       {
+    {
+        let v         = ("" + val("ed-ime"));
+        drv.comp = "";
+        edTypeBang((v.startsWith(" ") ? v.slice(1) : v));
+        edImeResetBang();
+    }
+}
+
+export function onEdInput(e     )       {
+    if (editorKeysP()) {
+        {
+            let it      = e.inputType;
+            if (e.isComposing) {
+                drv.comp = ("" + val("ed-ime")).trim();
+                edStatusBang();
+            } else {
+                if ((it === "deleteContentBackward")) {
+                    edImeResetBang();
+                    edKeyBang(7, 0);
+                } else {
+                    if ((it === "deleteContentForward")) {
+                        edImeResetBang();
+                        edKeyBang(8, 0);
+                    } else {
+                        if (((it === "insertLineBreak") || (it === "insertParagraph"))) {
+                            edImeResetBang();
+                            edKeyBang(9, 0);
+                        } else {
+                            if ((val("ed-ime") === "")) {
+                                edImeResetBang();
+                                edKeyBang(7, 0);
+                            } else {
+                                edImeTakeBang();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export function onEdCompend(e     )       {
+    if (editorKeysP()) {
+        edImeTakeBang();
+    }
+}
+
+export function onEdPaste(e     )       {
+    if (editorKeysP()) {
+        e.preventDefault();
+        e.stopPropagation();
+        edPasteBang(e.clipboardData.getData("text"));
+    }
+}
+
+export function edCopyBang()       {
+    {
+        let x      = dx();
+        let a      = x.nk_ed_sel_start();
+        let b      = x.nk_ed_sel_end();
+        let base      = x.nk_ed_buf_addr();
+        if (((a < b) && haveNativeP())) {
+            nat.clipboardSet(utf8((base + a), (base + b)));
+        }
+    }
+}
+
+export function edHitBang(e     , extend        )       {
+    {
+        let v      = el("ed-view");
+        let r      = v.getBoundingClientRect();
+        let y      = ((e.clientY - r.top) + (v.scrollTop - 8));
+        let xx      = ((e.clientX - r.left) + (v.scrollLeft - 10));
+        dx().nk_ed_click(Math.floor((y / edLh)), Math.round((xx / edCharW())), extend);
+        edDrawBang(false);
+    }
+}
+
+export function onEdDown(e     )       {
+    drv.drag = true;
+    edHitBang(e, (e.shiftKey ? 1 : 0));
+    e.preventDefault();
+    if ((dx().nk_ed_binary() === 0)) {
+        el("ed-ime").focus({"preventScroll": true});
+    }
+}
+
+export function onEdMove(e     )       {
+    if (((!((drv == null))) && drv.drag)) {
+        edHitBang(e, 1);
+    }
+}
+
+export function onEdUp(e     )       {
+    if ((!((drv == null)))) {
+        drv.drag = false;
+    }
+}
+
+export function onEdKeybar(e     )       {
+    {
+        let b      = e.target.closest("button");
+        if (((!((b == null))) && editorKeysP())) {
+            e.preventDefault();
+            {
+                let k      = b.dataset.ek;
+                if ((k === "shift")) {
+                    edShift = (!(edShift));
+                    b.classList.toggle("on", edShift);
+                } else {
+                    edKeyBang(Number(k), (edShift ? 1 : 0));
+                }
+            }
+        }
+    }
+}
+
+export function onKeybarDown(e     )       {
+    e.preventDefault();
+}
+
+export function onEdFindOpen(e     )       {
+    setHiddenBang("ed-findbar", false);
+    el("ed-find").focus();
+}
+
+export function onEdFindNext(e     )       {
+    {
+        let n         = putTextBang(du8(), dcall("nk_txt_addr"), val("ed-find"));
+        dx().nk_ed_find(n);
+        edMsgBang();
+        edDrawBang(true);
+    }
+}
+
+export function onEdFindKey(e     )       {
+    if ((e.key === "Enter")) {
+        e.preventDefault();
+        onEdFindNext(e);
+    }
+}
+
+export function onEdEol(e     )       {
+    dx().nk_ed_set_eol((1 - dx().nk_ed_eol()));
+    edDrawBang(false);
+}
+
+export function onEdUndo(e     )       {
+    edKeyBang(14, 0);
+}
+
+export function edSaveBang()       {
+    if ((dx().nk_ed_binary() === 0)) {
+        {
+            let n      = dx().nk_ed_export();
+            let a      = dx().nk_ed_exp_addr();
+            if (nativeDriveP()) {
+                setTextBang("ed-msg", ("" + "Saving " + edName() + "..."));
+                nat.driveWrite(drv.doc, bytesB64(du8(), a, n));
+            } else {
+                browserDownloadBang(edName(), du8().slice(a, (a + n)));
+            }
+        }
+    }
+}
+
+export function onEdSave(e     )       {
+    edSaveBang();
+}
+
+export function browserDownloadBang(name        , bytes     )       {
+    {
+        let url      = URL.createObjectURL(new Blob([bytes], {"type": "application/octet-stream"}));
+        let a      = doc().createElement("a");
+        a.href = url;
+        a.download = name;
+        a.click();
+        dx().nk_ed_saved();
+        setTextBang("ed-msg", ("" + "Downloaded " + name));
+        edStatusBang();
+    }
+}
+
+export function edCloseBang()          {
+    if (((dx().nk_ed_dirty() === 1) && (!(drv.warned)))) {
+        drv.warned = true;
+        setTextBang("ed-msg", "Not saved. Tap Files (or Back) again to close without saving, or tap Save.");
+        return false;
+    } else {
+        el("ed-ime").blur();
+        driveFilesBang();
+        return true;
+    }
+}
+
+export function onEdClose(e     )       {
+    edCloseBang();
+}
+
+export function onDriveKit(e     )       {
+    driveShowBoxBang("kit");
+    setTextBang("kit-run", dtext(dcall("nk_kit_run_line_addr")));
+    setTextBang("kit-out", "");
+    el("kit-pass").focus();
+}
+
+export function driveFilesBang()       {
+    driveShowBoxBang("files");
+    if (drv.open) {
+        driveListBang(drv.path);
+    }
+}
+
+export function onKitClose(e     )       {
+    driveFilesBang();
+}
+
+export function kitPwCode()         {
+    return dx().nk_kit_pw_check(putTextBang(du8(), dcall("nk_txt_addr"), val("kit-pass")));
+}
+
+export function onKitPass(e     )       {
+    setTextBang("kit-pw-note", dtext(dx().nk_kit_pw_text_addr(kitPwCode())));
+}
+
+export function kitWriteBang(path        , n        )       {
+    nat.driveWrite(path, bytesB64(du8(), dx().nk_ed_exp_addr(), n));
+}
+
+export function kitBatBang(buf     )       {
+    {
+        let u      = new Uint8Array(buf);
+        nat.driveWrite("setup.bat", bytesB64(u, 0, u.length));
+    }
+}
+
+export function kitBatMissing(err     )       {
+    drv.kit = 0;
+    bannerBang(("" + "This build has no setup.bat inside it (" + err + ")"));
+}
+
+export function onKitWrite(e     )       {
+    {
+        let code         = kitPwCode();
+        if ((!(nativeDriveP()))) {
+            bannerBang("Writing to a USB drive needs the Netkit app on Android");
+        } else {
+            if ((!(drv.open))) {
+                bannerBang("Choose the USB drive first");
+            } else {
+                if (((code !== 0) && (code !== 6))) {
+                    bannerBang(dtext(dx().nk_kit_pw_text_addr(code)));
+                } else {
+                    {
+                        let n         = putTextBang(du8(), dcall("nk_txt_addr"), val("kit-pass"));
+                        drv.kit = 3;
+                        setTextBang("kit-out", "Writing setup.bat, setup.conf and NETKIT.TXT...");
+                        kitWriteBang("setup.conf", dx().nk_kit_conf(n, (checkedP("kit-private") ? 1 : 0)));
+                        kitWriteBang("NETKIT.TXT", dcall("nk_kit_readme"));
+                        fetch("kit/setup.bat").then(fetchBytes).then(kitBatBang).catch(kitBatMissing);
+                    }
+                }
+            }
+        }
+    }
+}
+
+export function kitWroteBang()       {
+    drv.kit = (drv.kit - 1);
+    if ((drv.kit === 0)) {
+        setValBang("kit-pass", "");
+        setTextBang("kit-pw-note", "");
+        setTextBang("kit-out", ("" + "Done: setup.bat, setup.conf and NETKIT.TXT are on " + ((drv.name === "") ? "the drive" : drv.name) + ". Eject the drive (Android's notification, or Settings, Storage) before pulling it out, then plug it into the PC."));
+    }
+}
+
+export function driveOnEventBang(ev     )       {
+    if ((!((drv == null)))) {
+        {
+            let e      = ev.e;
+            if ((e === "open")) {
+                drv.open = true;
+                drv.name = ev.name;
+                driveTitleBang();
+                setTextBang("btn-drive-pick", "Change drive");
+                driveListBang("");
+            } else {
+                if ((e === "cancel")) {
+                    driveSayBang((drv.open ? "Kept the same drive." : "No drive chosen. Plug it in, then Choose USB drive."));
+                } else {
+                    if ((e === "list")) {
+                        if ((ev.path === drv.path)) {
+                            drv.items = ev.items;
+                            driveRenderListBang();
+                        }
+                    } else {
+                        if ((e === "read")) {
+                            {
+                                let b      = ev.b;
+                                let a         = dcall("nk_ed_buf_addr");
+                                let cap         = dcall("nk_ed_cap");
+                                let bin      = atob(b);
+                                let n         = Math.min(bin.length, (cap + 1));
+                                {
+                                    let i         = 0;
+                                    while (true) {
+                                        if ((i < n)) {
+                                            du8()[(a + i)] = bin.charCodeAt(i);
+                                            i = (i + 1);
+                                            continue;
+                                        }
+                                        break;
+                                    }
+                                }
+                                dx().nk_ed_load(((bin.length > cap) ? bin.length : n));
+                                drv.busy = false;
+                                edOpenBang(ev.path);
+                                if ((ev.path.toLowerCase().indexOf("log") >= 0)) {
+                                    edKeyBang(16, 0);
+                                }
+                            }
+                        } else {
+                            if ((e === "wrote")) {
+                                if ((drv.kit > 0)) {
+                                    kitWroteBang();
+                                } else {
+                                    if ((ev.path === drv.doc)) {
+                                        dx().nk_ed_saved();
+                                        drv.warned = false;
+                                        setTextBang("ed-msg", ("" + "Saved to " + ((drv.name === "") ? "the drive" : drv.name) + " (" + ev.n + " bytes). Eject the drive before pulling it out."));
+                                        edStatusBang();
+                                    }
+                                }
+                            } else {
+                                if ((e === "error")) {
+                                    drv.busy = false;
+                                    if ((drv.kit > 0)) {
+                                        drv.kit = 0;
+                                        setTextBang("kit-out", "");
+                                    }
+                                    bannerBang(("" + ev.msg + ((ev.path === "") ? "" : ("" + " (" + ev.path + ")"))));
+                                } else {
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export function driveBackBang()          {
+    if ((drv == null)) {
+        return false;
+    } else {
+        if ((!(el("ed").hidden))) {
+            edCloseBang();
+            return true;
+        } else {
+            if ((!(el("drive-kit").hidden))) {
+                driveFilesBang();
+                return true;
+            } else {
+                if ((drv.path !== "")) {
+                    driveListBang(parentPath(drv.path));
+                    return true;
+                } else {
+                    return false;
+                }
+            }
+        }
+    }
+}
+
+export function onDriveUpClick(e     )       {
+    onDriveUp(e);
+}
+
+export function wireDriveBang()       {
+    onBang("btn-drive-pick", "click", onDrivePick);
+    onBang("btn-drive-up", "click", onDriveUpClick);
+    onBang("btn-drive-new", "click", onDriveNew);
+    onBang("drive-newgo", "click", onDriveNewGo);
+    onBang("btn-drive-kit", "click", onDriveKit);
+    onBang("drive-list", "click", onDriveClick);
+    onBang("btn-kit-close", "click", onKitClose);
+    onBang("btn-kit-write", "click", onKitWrite);
+    onBang("kit-pass", "input", onKitPass);
+    onBang("btn-ed-close", "click", onEdClose);
+    onBang("btn-ed-save", "click", onEdSave);
+    onBang("btn-ed-undo", "click", onEdUndo);
+    onBang("btn-ed-eol", "click", onEdEol);
+    onBang("btn-ed-find", "click", onEdFindOpen);
+    onBang("ed-find-next", "click", onEdFindNext);
+    onBang("ed-find", "keydown", onEdFindKey);
+    onBang("ed-view", "pointerdown", onEdDown);
+    onBang("ed-view", "pointermove", onEdMove);
+    onBang("ed-view", "pointerup", onEdUp);
+    onBang("ed-view", "pointercancel", onEdUp);
+    onBang("ed-view", "scroll", onEdScroll);
+    onBang("ed-ime", "input", onEdInput);
+    onBang("ed-ime", "compositionend", onEdCompend);
+    onBang("ed-ime", "paste", onEdPaste);
+    onBang("ed-ime", "keydown", onEdKeydown);
+    onBang("ed-keys", "pointerdown", onKeybarDown);
+    onBang("ed-keys", "click", onEdKeybar);
+}
+
 export function arcSayBang(text     )       {
     setTextBang("arcade-msg", text);
     setHiddenBang("arcade-msg", (text === ""));
@@ -2604,6 +3449,13 @@ export function showViewBang(name        )       {
     setHiddenBang("view-vnc", (name !== "vnc"));
     setHiddenBang("view-arcade", (name !== "arcade"));
     setHiddenBang("view-files", (name !== "files"));
+    setHiddenBang("view-drive", (name !== "drive"));
+    {
+        let db      = el("tab-drive");
+        if ((!((db == null)))) {
+            db.classList.toggle("on", (name === "drive"));
+        }
+    }
     {
         let fb      = el("tab-files");
         if ((!((fb == null)))) {
@@ -2643,6 +3495,9 @@ export function showViewBang(name        )       {
     }
     if ((name === "vnc")) {
         vncFitBang();
+    }
+    if ((name === "drive")) {
+        driveEnterBang();
     }
 }
 
@@ -2899,7 +3754,7 @@ export function onNative(json        )       {
                     ((job >= 1000000) ? onToolResultBang(job, ev.code, ev.ms) : onScanResultBang(job, ev.code, ev.ms));
                 }
             } else {
-                ((t === "name") ? onNameBang(ev) : ((t === "udp") ? onUdpBang(ev) : undefined));
+                ((t === "name") ? onNameBang(ev) : ((t === "udp") ? onUdpBang(ev) : ((t === "drive") ? driveOnEventBang(ev) : undefined)));
             }
         }
     }
@@ -2936,13 +3791,20 @@ export function nkBack()          {
                             }
                             return true;
                         } else {
-                            {
-                                let t      = scanX.nk_garage_back(curView());
-                                if ((t < 0)) {
-                                    return false;
-                                } else {
-                                    showViewBang(viewName(t));
-                                    return true;
+                            if ((!(el("view-drive").hidden))) {
+                                if ((!(driveBackBang()))) {
+                                    showViewBang("garage");
+                                }
+                                return true;
+                            } else {
+                                {
+                                    let t      = scanX.nk_garage_back(curView());
+                                    if ((t < 0)) {
+                                        return false;
+                                    } else {
+                                        showViewBang(viewName(t));
+                                        return true;
+                                    }
                                 }
                             }
                         }
@@ -3004,6 +3866,7 @@ export function wireUiBang()       {
     onBang("btn-files-close", "click", onFilesCloseClick);
     onBang("btn-files-up", "click", onFilesUpClick);
     onBang("files-list", "click", onFilesClick);
+    wireDriveBang();
     onBang("btn-fit", "click", onFitClick);
     onBang("btn-1to1", "click", onActualClick);
     onBang("btn-copy", "click", onCopyClick);

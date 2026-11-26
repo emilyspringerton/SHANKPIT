@@ -14,14 +14,19 @@
 # UPDATE 2026-11-26 (KIT-SMB, PARENA 15fa404): Files -- Windows file sharing, read only. nk-host.js, netkit.wasm, netkit-lite.wasm regenerated;
 #   index.html and netkit.css edited by hand (the Files view, its tab, the smb option, the dialog note). nkterm.wasm, oui.bin and both PNGs
 #   reproduced byte for byte; brawlpit.wasm left as WOTAN's copy (a rebuild differs: it would carry the lexer fix's whole font).
+# UPDATE 2026-11-26 (KIT-USB, PARENA 4cf885e): the USB tab -- a text editor that saves to a USB drive, and the VNC kit. nk-host.js, netkit.wasm,
+#   netkit-lite.wasm regenerated (rebuilt from 4cf885e byte for byte); kit/setup.bat added (a copy of ops/netkit/windows/setup.bat, which
+#   build_netkit_web.sh now ships); index.html and netkit.css edited by hand (the USB view and tab). nkterm.wasm and oui.bin reproduced
+#   byte for byte; brawlpit.wasm left as WOTAN's copy.
 # sha256  file
-ea3ba86bfcdc4166e5c66b06a3a586ccda4fa3cf3f7e38c9ea3607b5e950a8f2  index.html
-9c3b7d875e521a61fdb7dd7c7180bb49d8b0493980eb56cd394c519817b8d967  netkit.css
-5f862a681788958f1cf905823f40323c0d158d7695af7b0a6619b6b5a8b100ac  nk-host.js
-36575ea5f59556f87cc0e4df5537f1aace1d4f88f6768009be5da10dd537fb68  netkit.wasm
-dc17b060b440493becf608fa036c52ed7de91ce3bcae639238f798255f29329d  netkit-lite.wasm
+8e6af6d846da5ab629b648879c516888d880dea71f0e57cc2f02341824bde221  index.html
+30617742cfd8cddb50b3876b3343fec9a998903434b5d7dfd26ca5200c970fd6  netkit.css
+2022a890c47458aa4f8c6741c9b9753d33b1d671d80939d28bcb3971ecfcf6fd  nk-host.js
+8b51330c6ff95979489dfa7592f2d43653e811e8c70e7f0b984dd593d48745f9  netkit.wasm
+51f48960a820ebfdd2fd16023645fa4cd8ddca8386f6835af17a989370144fc0  netkit-lite.wasm
 71670ff4ea38a4b15a536bbb69d6ec743cff1109c1c3c66d6b1837e9d6b6051b  nkterm.wasm
 4e97ba74e6cc18a96016c977c26386ff913858c294482b5073825e38fc7720b7  brawlpit.wasm
 3c9330282ebd317bf2b8da01b9cce145802cd0fbf40c51f1156ba168e18eab82  oui.bin
 de9c4c6a7d91195216c56ba7002be6bafaf91dfdb9e205d1f8f8a32e9eebde7a  duck.png
 6326f18fd5fe4c4990cc54e3812880fd54dd149efe08b43a8a0dddf7292b8f98  sprites.png
+dd5d3cb819720b092de844b18fa59c84389b94e4d18615e031a8c313664036d4  kit/setup.bat

@@ -173,6 +173,25 @@ The user name is upper-cased as ASCII only. The share list could not be checked 
 unprivileged; impacket served that part. **Not yet run against a real Windows PC.** Starting VNC remotely over SMB (svcctl) is not built:
 Windows 10 Home blocks admin sign-ins over the network (UAC remote restrictions), so `setup.bat` is still run once at the iMac.
 
+## 6d. USB: a text editor that saves to a USB drive, and the VNC kit (2026-11-26, EMILY KIT-USB)
+
+Founder: *"we need some kind of way to run the skrip to download our vnc server ... and open up the firewall assume i am administrator and i
+have access to the keyboard but no screen ... we have no way to write to the SD card so we need to build a text editor into netkit ... that
+allows us to save to the usb drive connected over usb c"*. The **USB** tab: choose the drive once in Android's folder picker, browse it, open
+and edit text files, save them back; and **VNC kit** writes `setup.bat` + `setup.conf` + `NETKIT.TXT` so the iMac can be set up blind
+(`ops/netkit/windows/README.md`, "Running it with no screen").
+
+| piece | where | verified |
+|---|---|---|
+| the document: insert/delete, moves, Shift-selection, undo, goal column, auto-indent, find, CRLF/LF + BOM round-trip, binary / over-1-MB detection | `PARENA/stdlib/netkit/nk_edit.prn` (buffer.prn's model over linear memory) | `edit_spec.prn`, 7 deliberate breakages caught (one survivor is an unreachable guard) |
+| password rules, setup.conf, NETKIT.TXT, the Win+R launcher line | `PARENA/stdlib/netkit/nk_kit.prn` | `edit_spec.prn` |
+| the USB tab: file list, editor (only visible rows drawn), soft-keyboard input, key bar, kit form | `PARENA/stdlib/netkit/host/nk_host_drive.prn`, `apps/netkit/index.html` | headless Chromium against an in-memory drive, 34 checks (one-off, like Files) |
+| the drive itself: folder picker, persisted grant, list/read/write (creates folders, truncates, fsyncs before "wrote") | `android-netkit/app/.../DriveStore.java`, path checks in `shell/DrivePath.java` | `DrivePath` JVM test; the APK builds and lint passes; **not run on a device** |
+| speaking setup.bat (SPEAK, NOPAUSE in setup.conf) | `ops/netkit/windows/setup.bat` v2 | `lint_bat.py` only; **not run on Windows** |
+
+Named limits: no real tablet + USB stick run yet, and the kit has not been run on the iMac. Taps assume one column per character (wide CJK
+or emoji characters misplace the cursor). Documents up to 1 MB. A file with zero bytes in it opens read only.
+
 ## 7. Roadmap (the founder's stages, as PARENA modules)
 
 1. **VS0 toolkit** — this. Remaining: the two scripts (iMac `setup.bat`, router-Pi setup), a real-device pass, VNC Tight/ZRLE.

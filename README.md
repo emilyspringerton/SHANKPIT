@@ -363,6 +363,10 @@ store) that never interprets a byte. No libssh2, no JSch, no hand-written JavaSc
 - **Files is read only by construction**: the PARENA SMB client signs in with NTLMv2 (SMB 2.1, every request signed, server signatures
   checked) and has no code that writes, renames or deletes. It is checked against recorded real Samba and impacket sessions and in headless
   Chromium; it has **not been run against a real Windows PC yet** (`docs/NETKIT_NORTHSTAR.md` §6c).
+- **USB tab: a text editor that saves to a USB drive** plugged into the tablet (Android's folder picker), and a **VNC kit** that writes
+  `setup.bat` + `setup.conf` + `NETKIT.TXT` so a Windows PC with only a keyboard can be set up blind: one Win+R line, and the script
+  says each step out loud. The editor is PARENA (`nk_edit.prn`); tested by specs and headless Chromium, **not yet on a real tablet and
+  stick** (`docs/NETKIT_NORTHSTAR.md` §6d).
 - **Ships in every release** as `ShankPit_Netkit_<build>.apk` (`release.yml`; `node android-netkit/tools/verify-web-bundle.mjs apps/netkit` is the
   bundle check).
 

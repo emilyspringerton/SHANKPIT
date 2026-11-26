@@ -21,6 +21,7 @@
   <button id="tab-ssh" data-tab="ssh" hidden>Terminal</button>
   <button id="tab-vnc" data-tab="vnc" hidden>Screen</button>
   <button id="tab-files" data-tab="files" hidden>Files</button>
+  <button id="tab-drive" data-tab="drive">USB</button>
   <button id="tab-arcade" data-tab="arcade">Arcade</button>
 </nav>
 
@@ -139,6 +140,91 @@
     <div id="files-where" class="muted"></div>
     <pre id="files-preview" class="preview" hidden></pre>
     <ul id="files-list" class="list"></ul>
+  </section>
+
+  <!-- ======================= drive (a USB drive plugged into the tablet: files, a text editor, the VNC kit) ======================= -->
+  <section id="view-drive" hidden>
+    <div id="drive-bar" class="viewbar">
+      <button id="btn-drive-up" hidden>Up</button>
+      <span id="drive-title" class="title">USB drive</span>
+      <span class="grow"></span>
+      <button id="btn-drive-pick" class="primary">Choose USB drive</button>
+    </div>
+    <div id="drive-files">
+      <div id="drive-where" class="muted"></div>
+      <div class="toolbar">
+        <button id="btn-drive-new">New file</button>
+        <button id="btn-drive-kit">VNC kit for a PC with no screen</button>
+      </div>
+      <div id="drive-newrow" class="toolbar" hidden>
+        <input id="drive-newname" placeholder="name, e.g. notes.txt or run.bat" autocapitalize="off" autocomplete="off" spellcheck="false" aria-label="New file name">
+        <button id="drive-newgo" class="primary">Create</button>
+      </div>
+      <ul id="drive-list" class="list"></ul>
+    </div>
+
+    <div id="drive-kit" hidden>
+      <div class="viewbar"><span class="title">VNC kit</span><span class="grow"></span><button id="btn-kit-close">Back</button></div>
+      <p class="muted">Writes <b>setup.bat</b>, <b>setup.conf</b> and <b>NETKIT.TXT</b> onto the drive. On the Windows PC, setup.bat installs
+        the TightVNC server, opens the firewall for the local network and says each step out loud, so you can run it with only a keyboard.</p>
+      <div class="form">
+        <label>VNC password (up to 8 characters; the tablet uses it to watch the screen)
+          <input id="kit-pass" type="password" autocomplete="new-password" autocapitalize="off" spellcheck="false"></label>
+        <p id="kit-pw-note" class="muted"></p>
+        <label class="check"><input id="kit-private" type="checkbox"> Switch the PC's network from Public to Private</label>
+        <button id="btn-kit-write" class="primary">Write the kit to the drive</button>
+        <p id="kit-out" class="accent"></p>
+      </div>
+      <h2>On the PC (no screen needed)</h2>
+      <ol class="steps">
+        <li>Plug the drive in. Wait 10 seconds.</li>
+        <li>Press <kbd>Windows</kbd>+<kbd>R</kbd> (Apple keyboard: <kbd>Command</kbd>+<kbd>R</kbd>). Wait 2 seconds.</li>
+        <li>Type this line exactly:<pre id="kit-run" class="runline"></pre></li>
+        <li>Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> (runs it as administrator). Wait 3 seconds.</li>
+        <li>Press <kbd>Alt</kbd>+<kbd>Y</kbd> (Yes to the permission prompt).</li>
+        <li>Listen: "Netkit setup started", each step, then "VNC is ready" and the address, or "Setup failed". Turn the volume up first.</li>
+        <li>Afterwards: Devices, Scan (the PC shows port 5900), or plug the drive back in here and open <b>vnc-log.txt</b>.</li>
+      </ol>
+      <p class="muted">The PC needs the internet once, to download TightVNC, unless its installer is on the drive. The password is written into
+        setup.conf: delete that file when you are done.</p>
+    </div>
+
+    <div id="ed" hidden>
+      <div class="viewbar">
+        <button id="btn-ed-close">Files</button>
+        <span id="ed-name" class="title"></span>
+        <span id="ed-state" class="badge"></span>
+        <span class="grow"></span>
+        <button id="btn-ed-eol" title="Line ends the file is saved with"></button>
+        <button id="btn-ed-find">Find</button>
+        <button id="btn-ed-undo">Undo</button>
+        <button id="btn-ed-save" class="primary">Save</button>
+      </div>
+      <div id="ed-findbar" class="toolbar" hidden>
+        <input id="ed-find" placeholder="find" autocapitalize="off" autocomplete="off" spellcheck="false" aria-label="Find">
+        <button id="ed-find-next">Next</button>
+      </div>
+      <div id="ed-msg" class="muted"></div>
+      <div id="ed-view" aria-label="Text"><div id="ed-sizer"></div><pre id="ed-text"></pre><span id="ed-measure" aria-hidden="true">00000000000000000000</span></div>
+      <textarea id="ed-ime" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Keyboard input"></textarea>
+      <div id="ed-keys" role="toolbar" aria-label="Editing keys">
+        <button data-ek="shift">Select</button>
+        <button data-ek="1">Left</button>
+        <button data-ek="2">Right</button>
+        <button data-ek="3">Up</button>
+        <button data-ek="4">Down</button>
+        <button data-ek="5">Home</button>
+        <button data-ek="6">End</button>
+        <button data-ek="11">PgUp</button>
+        <button data-ek="12">PgDn</button>
+        <button data-ek="10">Tab</button>
+        <button data-ek="8">Del</button>
+        <button data-ek="13">All</button>
+        <button data-ek="15">Top</button>
+        <button data-ek="16">Bottom</button>
+      </div>
+      <div id="ed-pos" class="muted"></div>
+    </div>
   </section>
 
   <!-- ======================= arcade (BRAWLPIT, WebAssembly, inside this page) ======================= -->

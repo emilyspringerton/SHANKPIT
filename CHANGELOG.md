@@ -1,5 +1,16 @@
 ## 2026-11-26
 
+- **feat(netkit): USB tab -- a text editor that saves to a USB drive, and a VNC kit for a PC with no screen** (founder: "assume i am
+  administrator and i have access to the keyboard but no screen ... build a text editor into netkit ... save to the usb drive connected over
+  usb c"; EMILY KIT-USB).
+  - `android-netkit`: `DriveStore.java` (Android's folder picker, persisted grant, list/read/write with fsync), `DrivePath.java` + test,
+    `NativeBridge` drive* calls, `MainActivity.onActivityResult`. APK builds, lint clean, 20 JVM tests.
+  - `apps/netkit`: bundle regenerated (nk-host.js, netkit.wasm, netkit-lite.wasm; PARENA nk_edit/nk_kit/nk_host_drive), `kit/setup.bat`
+    added, the USB view in `index.html` / `netkit.css`.
+  - `ops/netkit/windows/setup.bat` v2: says each step out loud (SPEAK=1), ending with the address or "Setup failed"; SPEAK and NOPAUSE
+    in setup.conf. README: "Running it with no screen". Lint only; not run on Windows.
+  - `docs/NETKIT_NORTHSTAR.md` §6d, README.
+
 - **feat(netkit): Files, browsing Windows file sharing, read only** (founder: "can we get that working so we can explore what files are
   being shared? parena mods based").
   - A device answering on 445 gets a **Files** button: sign in with a Windows account, see its shares, open folders, preview text files.

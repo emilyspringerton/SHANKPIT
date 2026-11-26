@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * window.NetkitNative -- the whole of what the page needs that a browser sandbox cannot do: raw TCP, probes, the local network, the ARP
- * cache, encrypted storage, the clipboard. Nothing here interprets a byte: SSH, VNC, the scanner's decisions and the terminal are PARENA
+ * cache, encrypted storage, the clipboard, a USB drive. Nothing here interprets a byte: SSH, VNC, the scanner's decisions and the terminal are PARENA
  * compiled to WebAssembly (PARENA/stdlib/netkit). The contract is documented where the page uses it:
  * PARENA/stdlib/netkit/host/nk_host_core.prn. Every method returns at once; results come back as window.netkitEvent(json).
  *
@@ -37,6 +37,7 @@ final class NativeBridge implements Sink {
     private final Resolver resolver;
     private final Udp udp;
     private final SecureStore store;
+    private final DriveStore drive;
     private volatile boolean destroyed;
 
     NativeBridge(Activity activity, WebView web) {
@@ -47,6 +48,7 @@ final class NativeBridge implements Sink {
         this.resolver = new Resolver(this);
         this.udp = new Udp(this);
         this.store = new SecureStore(activity);
+        this.drive = new DriveStore(activity, this);
     }
 
     /** Events from the shell threads -> the page, on the UI thread. */
@@ -62,7 +64,11 @@ final class NativeBridge implements Sink {
         prober.shutdown();
         resolver.shutdown();
         udp.shutdown();
+        drive.shutdown();
     }
+
+    /** MainActivity hands the folder picker's answer here (null = cancelled). */
+    void drivePicked(android.net.Uri uri) { drive.picked(uri); }
 
     // ---- sockets ---------------------------------------------------------------------------------------------------------------------------
     @JavascriptInterface public void tcpOpen(int id, String host, int port, int timeoutMs) { hub.open(id, host, port, timeoutMs); }
@@ -82,6 +88,14 @@ final class NativeBridge implements Sink {
     @JavascriptInterface public String storeGet(String key) { return store.get(key); }
     @JavascriptInterface public void storeSet(String key, String value) { store.set(key, value); }
     @JavascriptInterface public void storeDel(String key) { store.delete(key); }
+
+    // ---- the USB drive (Android's folder picker + storage framework; paths are "" or "folder/name") -------------------------------------
+    @JavascriptInterface public String driveState() { return drive.state(); }
+    @JavascriptInterface public void driveOpen() { drive.open(); }
+    @JavascriptInterface public void driveForget() { drive.forget(); }
+    @JavascriptInterface public void driveList(String path) { drive.list(path); }
+    @JavascriptInterface public void driveRead(String path) { drive.read(path); }
+    @JavascriptInterface public void driveWrite(String path, String base64) { drive.write(path, base64); }
 
     // ---- clipboard (UI thread) --------------------------------------------------------------------------------------------------------------------
     @JavascriptInterface public void clipboardSet(final String text) {

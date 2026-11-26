@@ -13,6 +13,8 @@ rem   5. opens a Windows Firewall rule for the VNC TCP port
 rem   6. makes the tvnserver service auto-start and verifies it is running
 rem   7. writes vnc-log.txt next to this file (timestamps, versions, service
 rem      state, listening port, IPv4 addresses, MAC addresses)
+rem   8. says each step out loud (SPEAK=1, the default) so it can be run on a
+rem      PC with no screen; the last thing it says is the address or FAILED
 rem
 rem Honest status: STOPGAP. This is a shell script around a third-party binary
 rem (TightVNC) because the VNC server is an OS service. The VNC client is
@@ -24,7 +26,7 @@ rem a password, and do not end it with a backslash.
 rem ============================================================================
 setlocal EnableExtensions DisableDelayedExpansion
 
-set "SCRIPT_VERSION=1"
+set "SCRIPT_VERSION=2"
 set "HERE=%~dp0"
 set "SELF=%~f0"
 set "ARGS=_ %*"
@@ -33,6 +35,8 @@ set "FAILS=0"
 set "WARNS=0"
 set "NOPAUSE="
 set "ELEVATED="
+set "SPEAK=1"
+set "FIRSTIP="
 if not "%ARGS:/nopause=%"=="%ARGS%" set "NOPAUSE=1"
 if not "%ARGS:elevated=%"=="%ARGS%" set "ELEVATED=1"
 
@@ -54,6 +58,7 @@ if defined ELEVATED goto :elev_failed
 call :log "Not administrator. Asking Windows for elevation (UAC prompt)."
 echo.
 echo A Windows permission prompt will appear. Click Yes to continue.
+call :say "Windows is asking for permission. Press Alt Y."
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%SELF%' -ArgumentList 'elevated %ARGS:_ =%' -Verb RunAs"
 if errorlevel 1 goto :elev_failed
 call :log "Elevated copy launched in a new window; this window can be closed."
@@ -67,6 +72,7 @@ goto :finish
 
 :admin_ok
 call :log "Running as administrator."
+call :say "Netkit setup started."
 cd /d "%HERE%" 2>nul
 
 rem ---- system info
@@ -112,6 +118,8 @@ if defined CFG_FW_REMOTEIP set "FW_REMOTEIP=%CFG_FW_REMOTEIP%"
 if defined CFG_NETWORK_PRIVATE set "NETWORK_PRIVATE=%CFG_NETWORK_PRIVATE%"
 if defined CFG_KEEP_AWAKE set "KEEP_AWAKE=%CFG_KEEP_AWAKE%"
 if defined CFG_RESET_SETTINGS set "RESET_SETTINGS=%CFG_RESET_SETTINGS%"
+if defined CFG_SPEAK set "SPEAK=%CFG_SPEAK%"
+if "%CFG_NOPAUSE%"=="1" set "NOPAUSE=1"
 if defined VNC_PASSWORD set "PW_SOURCE=setup.conf"
 
 rem ---- password: conf, else one-line file on the drive, else prompt
@@ -153,6 +161,7 @@ if defined MSI goto :msi_found
 if /i "%MSI_URL%"=="none" goto :msi_missing
 if not defined MSI_URL set "MSI_URL=https://www.tightvnc.com/download/2.8.85/tightvnc-2.8.85-gpl-setup-%ARCH%.msi"
 call :log "No MSI next to the script. Trying download: %MSI_URL%"
+call :say "Downloading the VNC server."
 set "DLDEST=%HERE%tightvnc-dl-gpl-setup-%ARCH%.msi"
 if /i "%LOG%"=="%TEMP%\vnc-log.txt" set "DLDEST=%TEMP%\tightvnc-dl-gpl-setup-%ARCH%.msi"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try{[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;(New-Object Net.WebClient).DownloadFile($env:MSI_URL,$env:DLDEST);exit 0}catch{Write-Output ('download error: '+$_.Exception.Message);exit 1}" >>"%LOG%" 2>&1
@@ -204,6 +213,7 @@ set "INST_TRY=0"
 set /a INST_TRY+=1
 del "%MSILOG%" >nul 2>&1
 call :log "Installing TightVNC server (attempt %INST_TRY%)."
+if "%INST_TRY%"=="1" call :say "Installing the VNC server."
 if defined VNC_VIEWONLY_PASSWORD goto :install_vo
 start "" /wait msiexec /i "%MSI%" /qn /norestart /L*v "%MSILOG%" ADDLOCAL=Server SERVER_REGISTER_AS_SERVICE=1 SERVER_ADD_FIREWALL_EXCEPTION=0 SET_USEVNCAUTHENTICATION=1 VALUE_OF_USEVNCAUTHENTICATION=1 SET_PASSWORD=1 VALUE_OF_PASSWORD="%VNC_PASSWORD%" SET_USECONTROLAUTHENTICATION=1 VALUE_OF_USECONTROLAUTHENTICATION=1 SET_CONTROLPASSWORD=1 VALUE_OF_CONTROLPASSWORD="%VNC_CONTROL_PASSWORD%" SET_RFBPORT=1 VALUE_OF_RFBPORT=%VNC_PORT% SET_ACCEPTRFBCONNECTIONS=1 VALUE_OF_ACCEPTRFBCONNECTIONS=1
 set "RC=%errorlevel%"
@@ -231,6 +241,7 @@ call :log "TightVNC installed."
 
 rem ---- 5. firewall
 call :log "Configuring Windows Firewall rule for TCP %VNC_PORT%."
+call :say "Opening the firewall."
 netsh advfirewall firewall delete rule name="NetKit VNC TCP %VNC_PORT%" >nul 2>&1
 netsh advfirewall firewall add rule name="NetKit VNC TCP %VNC_PORT%" dir=in action=allow protocol=TCP localport=%VNC_PORT% profile=%FW_PROFILE% remoteip=%FW_REMOTEIP% >>"%LOG%" 2>&1
 if errorlevel 1 goto :fw_bad
@@ -321,15 +332,21 @@ ipconfig /all >>"%LOG%" 2>&1
 call :log "MAC addresses (give the iMac WLAN MAC to the router Pi config):"
 getmac /v >>"%LOG%" 2>&1
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.IPAddress -notlike '127.*'} | ForEach-Object { $_.IPAddress + ' (' + $_.InterfaceAlias + ')' }"`) do call :log "IPv4 address: %%I  - tablet connects to this address, port %VNC_PORT%"
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "(Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*'} | Select-Object -First 1).IPAddress"`) do set "FIRSTIP=%%I"
 
 :finish
 call :log "--------------------------------------------------------------"
 if not "%FAILS%"=="0" goto :result_bad
 call :log "RESULT: OK (warnings: %WARNS%). Service running, port listening."
 call :log "On the tablet open NetKit, VNC, enter an IPv4 address from above and port %VNC_PORT%."
+set "SAYIP=no network address yet"
+if defined FIRSTIP set "SAYIP=%FIRSTIP:.= dot %"
+call :say "VNC is ready. Address %SAYIP%. Port %VNC_PORT%."
+call :say "Again. Address %SAYIP%."
 goto :result_end
 :result_bad
 call :log "RESULT: FAILED (%FAILS% problem(s)). See the lines above and the MSI notes in README.md."
+call :say "Setup failed. Plug the drive into the tablet and read the v n c log."
 :result_end
 echo.
 echo Log written to: %LOG%
@@ -347,6 +364,13 @@ exit /b 0
 :fail
 set /a FAILS+=1
 call :log "PROBLEM: %~1"
+exit /b 0
+
+rem say a sentence out loud (Windows speech; a beep if speech is unavailable), for a PC with no screen
+:say
+if not "%SPEAK%"=="1" exit /b 0
+set "NK_SAY=%~1"
+powershell -NoProfile -Command "try{Add-Type -AssemblyName System.Speech;$v=New-Object System.Speech.Synthesis.SpeechSynthesizer;$v.Volume=100;$v.Speak($env:NK_SAY)}catch{[console]::beep(880,400)}" >nul 2>&1
 exit /b 0
 
 :uninstall_guid

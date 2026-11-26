@@ -55,3 +55,10 @@
 # result is exactly what this script configures. 0 keeps manual tweaks that
 # live in the registry (the password is still rewritten by the installer).
 #RESET_SETTINGS=1
+
+# 1 (default) = say each step out loud with Windows speech (a beep if speech is
+# missing), ending with the address or "Setup failed". For a PC with no screen.
+#SPEAK=1
+
+# 1 = never wait for a key at the end (same as running setup.bat /nopause).
+#NOPAUSE=0

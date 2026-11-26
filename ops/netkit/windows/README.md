@@ -29,6 +29,35 @@ D:\
 Copy `setup.bat` (and `setup.conf.example` as `setup.conf`) onto the drive root.
 The drive letter does not matter; everything is relative to the script.
 
+## Running it with no screen (keyboard only) - the tablet writes the drive
+
+The iMac has a keyboard but no working screen, and nothing else here can write a drive. The Netkit tablet app does it:
+plug the USB drive into the tablet (USB-C), open the **USB** tab, **Choose USB drive**, then **VNC kit for a PC with no
+screen**. Type the VNC password and tap **Write the kit to the drive**. It writes three files onto the drive:
+
+- `setup.bat` - this script, byte for byte (the app ships a copy);
+- `setup.conf` - `VNC_PASSWORD=...`, `SPEAK=1`, `NOPAUSE=1`, `KEEP_AWAKE=1`, and `NETWORK_PRIVATE` as you chose;
+- `NETKIT.TXT` - the steps below, and the marker the launcher line looks for.
+
+Eject the drive on the tablet, plug it into the iMac, then, signed in as an administrator:
+
+1. Wait 10 seconds. Press Windows+R (Apple keyboard: Command+R). Wait 2 seconds.
+2. Type this line exactly (it finds whichever drive letter holds `NETKIT.TXT`):
+
+   ```
+   powershell -ep bypass -c "Get-PSDrive -PSProvider FileSystem|%{if(Test-Path($_.Root+'NETKIT.TXT')){& ($_.Root+'setup.bat') /nopause}}"
+   ```
+3. Press Ctrl+Shift+Enter (runs it as administrator), wait 3 seconds, press Alt+Y (Yes to the UAC prompt).
+4. Listen. With `SPEAK=1` the script talks through Windows speech (a beep if speech is missing):
+   "Netkit setup started", "Downloading the VNC server", "Installing the VNC server", "Opening the firewall", then
+   **"VNC is ready. Address 192 dot 168 dot ... Port 5900"** (said twice), or **"Setup failed. Plug the drive into the
+   tablet and read the v n c log."** If you only pressed Enter, it asks for elevation itself and says "Press Alt Y".
+5. Check from the tablet: Devices, Scan (the iMac shows 5900 open), or plug the drive back in and open `vnc-log.txt` in
+   the USB tab (a log opens at its last line).
+
+The tablet editor also edits any text file on the drive (`setup.conf`, your own `.bat`), keeping each file's own line
+ends (a `.bat` stays CRLF). Delete `setup.conf` when you are done: it holds the password.
+
 ## Getting the installer (offline vs download)
 
 Offline (preferred): download once from <https://www.tightvnc.com/download.php> the
@@ -228,5 +257,7 @@ Nothing here has been executed on Windows. Specifically unverified:
     depends on the word `LISTENING`.
 11. `SERVER_ADD_FIREWALL_EXCEPTION`, like the other property names, is from memory; if it
     is wrong the MSI's own exception may still exist (the log lists rules mentioning VNC).
-12. `set CFG_` / `%%B` handling of empty `KEY=` lines in setup.conf is based on documented
+12. The spoken steps (System.Speech under Windows PowerShell 5.1), the Win+R launcher line, Ctrl+Shift+Enter
+    elevation from the Run box and Alt+Y on the UAC prompt: all believed right for Windows 10, none run here.
+13. `set CFG_` / `%%B` handling of empty `KEY=` lines in setup.conf is based on documented
     `for /f` behaviour, not run.

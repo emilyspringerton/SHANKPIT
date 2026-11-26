@@ -2,6 +2,7 @@ package industrial.einhorn.netkit;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -80,6 +81,13 @@ public class MainActivity extends Activity {
     @Override
     public void onBackPressed() { askPageBack(); }
 
+    /** The folder picker DriveStore opened (the USB drive the editor saves to). */
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == DriveStore.PICK && bridge != null) bridge.drivePicked(resultCode == RESULT_OK && data != null ? data.getData() : null);
+    }
+
     @Override protected void onPause() { if (web != null) web.onPause(); super.onPause(); }
     @Override protected void onResume() { super.onResume(); if (web != null) web.onResume(); }
 
@@ -133,6 +141,7 @@ public class MainActivity extends Activity {
             if (p.endsWith(".json")) return "application/json";
             if (p.endsWith(".png")) return "image/png";
             if (p.endsWith(".svg")) return "image/svg+xml";
+            if (p.endsWith(".bat") || p.endsWith(".txt") || p.endsWith(".example")) return "text/plain";
             return "application/octet-stream";
         }
     }

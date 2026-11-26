@@ -19,6 +19,21 @@ import org.junit.Test;
 /** The shell moves bytes and classifies connects; these tests run against real loopback sockets. */
 public class ShellTest {
 
+    // ---- DrivePath ---------------------------------------------------------------------------------------------------------------------
+    @Test public void drivePathsAreCheckedPartByPart() {
+        assertEquals(0, DrivePath.split("").size());
+        assertEquals(java.util.Arrays.asList("kit", "setup.bat"), DrivePath.split("kit/setup.bat"));
+        assertEquals(java.util.Arrays.asList("vnc-log.txt"), DrivePath.split("vnc-log.txt"));
+        for (String bad : new String[] {"..", "a/../b", "./x", "/x", "x/", "a//b", "a\\b", "c:x", "what?", "q\"x", "a<b", "p|q", "tab\tx", "dot.", "sp "}) {
+            assertNull(bad, DrivePath.split(bad));
+        }
+        assertNull(DrivePath.split(null));
+        StringBuilder longName = new StringBuilder(); for (int i = 0; i < 256; i++) longName.append('a');
+        assertNull(DrivePath.split(longName.toString()));
+        assertTrue(DrivePath.nameOk("NETKIT.TXT"));
+        assertTrue(DrivePath.nameOk("my notes (1).txt"));
+    }
+
     // ---- B64 / Json --------------------------------------------------------------------------------------------------------------------
     @Test public void base64MatchesTheJdkForEveryLength() {
         Random r = new Random(1);

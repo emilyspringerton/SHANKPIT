@@ -25,15 +25,15 @@ h2 { margin: 18px 0 8px; font-size: 14px; letter-spacing: .06em; text-transform:
 .logo { display: inline-block; width: 12px; height: 12px; margin-right: 10px; background: var(--accent); transform: rotate(45deg); border-radius: 2px; }
 .pill { font-size: 13px; padding: 4px 10px; border-radius: 99px; background: var(--panel2); color: var(--muted); border: 1px solid var(--line); max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #tabs { display: flex; gap: 6px; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
-#tabs button { flex: 1; min-height: 40px; border-radius: 8px; }
+#tabs button { flex: 1; min-width: 0; min-height: 40px; padding: 0 6px; border-radius: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; background: #3a1f1f; color: #ffd9d9; border-bottom: 1px solid #6a2f2f; }
 .banner button { min-height: 36px; background: transparent; border: 1px solid #6a2f2f; color: inherit; flex-shrink: 0; }
 
 main { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px calc(14px + var(--safe-b)); }
 main > section { max-width: 920px; margin: 0 auto; }
-#view-ssh, #view-vnc { max-width: none; height: 100%; display: flex; flex-direction: column; }
-main:has(#view-ssh:not([hidden])), main:has(#view-vnc:not([hidden])) { overflow: hidden; padding: 8px 8px calc(8px + var(--safe-b)); }
+#view-ssh, #view-vnc, #view-drive:has(#ed:not([hidden])) { max-width: none; height: 100%; display: flex; flex-direction: column; }
+main:has(#view-ssh:not([hidden])), main:has(#view-vnc:not([hidden])), main:has(#view-drive:not([hidden]) #ed:not([hidden])) { overflow: hidden; padding: 8px 8px calc(8px + var(--safe-b)); }
 
 .toolbar { display: flex; gap: 10px; align-items: center; } .toolbar input { flex: 1; }
 .muted { color: var(--muted); } .hint { color: var(--muted); text-align: center; padding: 28px 0; }
@@ -125,3 +125,21 @@ main:has(#view-arcade:not([hidden])) { overflow: hidden; padding: 8px 8px calc(8
 .list li.dim { opacity: 0.55; }
 .preview { margin: 0; padding: 12px; max-height: 55vh; overflow: auto; white-space: pre-wrap; word-break: break-word;
   background: rgba(0, 0, 0, 0.35); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 8px; font: 13px/1.4 ui-monospace, monospace; }
+
+/* drive: the USB drive, its editor and the VNC kit */
+#ed { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+#ed-view { position: relative; flex: 1; min-height: 160px; overflow: auto; background: #0a0f14; border: 1px solid var(--line); border-radius: 8px; touch-action: pan-x pan-y; cursor: text; }
+#ed-sizer { width: 1px; }
+#ed-text, #ed-measure { font: 15px/20px ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace; tab-size: 4; }
+#ed-text { position: absolute; left: 0; top: 8px; margin: 0; padding: 0 10px; white-space: pre; user-select: none; }
+#ed-measure { position: absolute; visibility: hidden; white-space: pre; left: 0; top: 0; }
+#ed-text .sel { background: #24577a; }
+#ed-text .caret { display: inline-block; width: 0; height: 20px; margin-right: -2px; border-left: 2px solid var(--accent); vertical-align: top; }
+#ed-ime { position: absolute; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; resize: none; }
+#ed-keys { display: flex; gap: 6px; overflow-x: auto; flex-shrink: 0; scrollbar-width: none; }
+#ed-keys button { min-width: 52px; flex-shrink: 0; padding: 0 10px; }
+#ed-msg:empty, #kit-out:empty, #kit-pw-note:empty { display: none; }
+.runline { margin: 8px 0; padding: 10px; background: #0a0f14; border: 1px solid var(--line); border-radius: 8px; white-space: pre-wrap; word-break: break-all; font: 14px/1.5 ui-monospace, Menlo, Consolas, monospace; user-select: all; }
+.steps li { margin: 6px 0; } kbd { padding: 1px 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel2); font: 13px ui-monospace, monospace; }
+.accent { color: var(--accent); }
+#ed > .viewbar { flex-wrap: wrap; row-gap: 6px; }
