@@ -23,12 +23,14 @@
 #   Survival view, tab and object art). nkterm.wasm, oui.bin and both PNGs reproduced byte for byte; brawlpit.wasm left as WOTAN's copy.
 # UPDATE 2026-11-26 (trees + wood, PARENA eeddc43): nk-host.js, netkit.wasm, netkit-lite.wasm, survival.wasm regenerated (SURVIVAL trees,
 #   chopping, barricades; nk_garage touch button 7 "Build"); index.html edited by hand (the Build button). Others unchanged.
+# UPDATE 2026-11-26 (GoblinFoxDragon, PARENA 97f4bc0): nk-host.js, netkit.wasm, netkit-lite.wasm regenerated (nk_gfd.prn, nk_host_gfd.prn,
+#   garage object 6); index.html and netkit.css edited by hand (the GFD view and tab). Others unchanged.
 # sha256  file
-1942d45a31e66db5bda81af20cbff63572701acdb701b88e777f11b9f80b4cbe  index.html
-c7bf3b4396ede5940de5d9198bfbaa6e23462f1f40f7a33fc33dde0ad609869d  netkit.css
-295c18f444037eeda784e56041b8e8af180824ebf5ec9463d38e4c0578af19b3  nk-host.js
-0a65f82cfbcb715a4e2d1698aa0c42c905594a62f36fbbcc0633d9f51eae2b08  netkit.wasm
-0d6e90348b0e27ff2f89ef01e72900ac7726d9b1e627209207eb14a0e1bc91af  netkit-lite.wasm
+1cf3f69fe419f4d8f2c6b12ad8da3c6721596414bd84ac8544a61068c1ca5f80  index.html
+6a9099481ea96808f0623352cf324cd66caca67dc6a58ee9f6d8b3b21f002b9c  netkit.css
+af34502632acee8e325c054bf9f6f115fcd1a4646c1dc099357c491f8afd05e7  nk-host.js
+a018fa15d9b7a4e6097e3997a186a99ba38e695dfc3e81fce07582ab47ba7d42  netkit.wasm
+6655923dd62b45f299970e45bb76a7021a122af8a649b1add3cb5daac9987e67  netkit-lite.wasm
 71670ff4ea38a4b15a536bbb69d6ec743cff1109c1c3c66d6b1837e9d6b6051b  nkterm.wasm
 4e97ba74e6cc18a96016c977c26386ff913858c294482b5073825e38fc7720b7  brawlpit.wasm
 3c9330282ebd317bf2b8da01b9cce145802cd0fbf40c51f1156ba168e18eab82  oui.bin

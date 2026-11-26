@@ -144,6 +144,41 @@ main:has(#view-survival:not([hidden])) { overflow: hidden; padding: 8px 8px calc
   #sv-stick { width: 112px; height: 112px; bottom: 64px; }
   #sv-pad { grid-template-columns: repeat(2, 64px); bottom: 64px; } #sv-pad .pb { min-height: 40px; } #sv-pad .pb-fire { min-height: 60px; }
 }
+/* ---- GoblinFoxDragon: the MUD with a GUI (room + vitals on top, the log, who is here, a compass and actions, a command line) ---- */
+#view-gfd { height: 100%; display: flex; flex-direction: column; max-width: none; }
+main:has(#view-gfd:not([hidden])) { overflow: hidden; padding: 8px 8px calc(8px + var(--safe-b)); }
+#gfd-connect { overflow: auto; }
+.gfd-card { max-width: 34rem; margin: 0 auto; padding: 8px 4px; }
+.gfd-card .row { display: flex; gap: 8px; flex-wrap: wrap; } .gfd-card input { flex: 1 1 12rem; width: auto; }
+#gfd-play { display: flex; flex-direction: column; gap: 6px; height: 100%; min-height: 0; }
+#gfd-play[hidden] { display: none; }
+#gfd-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.gfd-title { display: flex; flex-direction: column; min-width: 8rem; } .gfd-title b { font-size: 17px; color: var(--accent); }
+.gfd-bars { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; min-width: 14rem; }
+.gbar { position: relative; height: 20px; border-radius: 6px; background: var(--panel2); overflow: hidden; border: 1px solid var(--line); }
+.gbar i { position: absolute; inset: 0 auto 0 0; width: 0; transition: width .25s; }
+.gbar.hp i { background: #b94a4a; } .gbar.mp i { background: #3d6fb6; } .gbar.tp i { background: #c49a2c; }
+.gbar span { position: relative; font-size: 12px; padding: 0 6px; line-height: 20px; }
+#gfd-log { flex: 1; min-height: 6rem; overflow-y: auto; background: #070a0e; border-radius: 8px; padding: 8px 10px; font: 13px/1.45 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+.gl.s2 { color: var(--accent); font-weight: 700; margin-top: 6px; } .gl.s3 { color: #8fb3d9; } .gl.s4 { color: #d7c58c; }
+.gl.s5 { color: var(--good); } .gl.s6 { color: var(--bad); } .gl.s7 { color: var(--muted); font-weight: 700; } .gl.s8 { color: var(--warn); }
+.gl.s9 { color: #6f8a9e; }
+#gfd-here { display: flex; gap: 6px; overflow-x: auto; min-height: 40px; align-items: center; }
+.gc { position: relative; min-height: 38px; padding: 0 10px 4px; flex: 0 0 auto; font-size: 13px; overflow: hidden; }
+.gc i { position: absolute; left: 0; bottom: 0; height: 3px; background: #b94a4a; }
+.gc.on { border-color: var(--bad); box-shadow: 0 0 0 2px var(--bad) inset; } .gc.hid { opacity: .6; font-style: italic; }
+#gfd-controls { display: flex; gap: 8px; align-items: stretch; flex-wrap: wrap; }
+#gfd-compass { display: grid; grid-template-columns: repeat(3, 52px); grid-template-rows: repeat(3, 44px); gap: 4px; grid-template-areas: "up n dn" "w c e" ". s ."; }
+#gfd-compass button { min-height: 44px; padding: 0; font-weight: 700; }
+.gk-n { grid-area: n; } .gk-s { grid-area: s; } .gk-e { grid-area: e; } .gk-w { grid-area: w; } .gk-up { grid-area: up; font-size: 12px; } .gk-dn { grid-area: dn; font-size: 12px; }
+.gk-c { grid-area: c; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+#gfd-actions { flex: 1; display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 4px; align-content: start; }
+#gfd-actions button { min-height: 40px; padding: 0 4px; font-size: 13px; }
+#gfd-play button:disabled { opacity: .35; }
+.gb-hot { background: #5a2323; border-color: var(--bad); }
+#gfd-form { display: flex; gap: 6px; } #gfd-form input { flex: 1; width: auto; }
+@media (max-height: 520px) { #gfd-compass { grid-template-rows: repeat(3, 36px); } #gfd-compass button { min-height: 36px; } #gfd-actions button { min-height: 34px; } }
+
 /* ---- Files (Windows file sharing, read only) ---- */
 #view-files { display: flex; flex-direction: column; gap: 8px; padding-bottom: 16px; }
 #view-files[hidden] { display: none; }

@@ -34,6 +34,13 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- IDUNA sign-in coming back (wotan.okemily.com/shankphone/sso.html forwards #sso_token=... here); see shell/SsoLink -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="shankphone" android:host="sso" />
+            </intent-filter>
         </activity>
     </application>
 </manifest>

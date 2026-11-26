@@ -89,6 +89,32 @@ At heights of 520 px or less, the header and tabs hide and the game fills the sc
 no CSP error). **Untested on a device**: frame rate on a phone WebView, real multi-finger play. **No sound yet**: the engine's sound ring is
 not played.
 
+## GoblinFoxDragon (2026-11-26)
+
+Garage object 6 opens the MUD with a GUI. On top: the room and the HP/MP/TP bars. Below: the log, coloured by kind; the creatures here
+(tap one to target it); a compass (N S E W Up Down, enabled from the room's exits); and actions (Attack, Stop, Weapon skill, Look,
+Status, Bag, Map, Who, Mobs, Loot, Mine, Fish, Party, Home); plus a command line. The PARENA wasm (`nk_gfd.prn`) reads the MUD's text
+and decides all of it.
+
+Two ways in:
+- **Guest:** raw TCP to `play.okemily.com:2323` through `tcpOpen`.
+- **Sign in with IDUNA:** `NativeBridge.ssoOpen` opens IDUNA's own sign-in page in the system browser. The URL is fixed in
+  `shell/SsoLink.java`, so the page cannot choose it. IDUNA redirects to `wotan.okemily.com/shankphone/sso.html`, which forwards
+  `#sso_token=...` to `shankphone://sso` (an intent filter on `MainActivity`). `SsoLink.parse` accepts only a JWT-shaped token; the shell
+  keeps it Keystore-encrypted (`gfd_sso`), and the page then opens `wss://wotan.okemily.com/GFD/ws`.
+
+The CSP now allows exactly that one extra origin (`connect-src 'self' wss://wotan.okemily.com`), and the MUD's `GFD_WS_ORIGINS` allows
+`https://netkit.local`.
+
+Verified:
+- `SsoLinkTest` (5 tests);
+- the browser test with a guest on the live MUD;
+- `PARENA/tests/netkit/test_gfd_ws_live.py`: a real token from the app's origin reaches the MUD.
+
+**Not verified on a device.** Two weaknesses are named: a custom-scheme link could be claimed by another app (verified App Links,
+with assetlinks.json on wotan, would close that), and the token is not refreshed (when it expires, close code 4401 asks you to sign in
+again).
+
 ## Clean builds (2026-11-26)
 
 Founder: *"CLEAN BUILDS FIRST"* before every drop. The build enforces it: `javac -Xlint:all -Werror` in both modules, and Android lint with

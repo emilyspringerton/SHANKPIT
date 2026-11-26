@@ -24,6 +24,7 @@
   <button id="tab-drive" data-tab="drive">USB</button>
   <button id="tab-arcade" data-tab="arcade">Arcade</button>
   <button id="tab-survival" data-tab="survival">Survival</button>
+  <button id="tab-gfd" data-tab="gfd">GFD</button>
 </nav>
 
 <div id="banner" class="banner" hidden role="alert">
@@ -282,6 +283,56 @@
         <button data-sv="1" class="pb">Jump</button>
         <button data-sv="6" class="pb pb-fire">Fire</button>
       </div>
+    </div>
+  </section>
+
+  <!-- ======================= GoblinFoxDragon (the MUD with a GUI; nk_gfd.prn decides, nk_host_gfd.prn paints) ======================= -->
+  <section id="view-gfd" hidden>
+    <div id="gfd-connect">
+      <div class="gfd-card">
+        <h2>GoblinFoxDragon</h2>
+        <p class="muted">A persistent-world MUD. Sign in with IDUNA to keep your character, or try it as a guest.</p>
+        <p id="gfd-who" class="muted"></p>
+        <div class="row">
+          <button id="btn-gfd-sso" class="primary">Sign in with IDUNA</button>
+          <button id="btn-gfd-resume" class="primary" hidden>Play</button>
+          <button id="btn-gfd-signout" hidden>Sign out</button>
+        </div>
+        <h2>Or as a guest</h2>
+        <p class="muted">No login, nothing is kept: a fresh level 1 each time. Guests cannot chat or trade.</p>
+        <div class="row">
+          <input id="gfd-name" placeholder="a name, 2-20 letters or digits" maxlength="20" autocapitalize="off" autocomplete="off" spellcheck="false" aria-label="Guest name">
+          <button id="btn-gfd-guest">Play as guest</button>
+        </div>
+        <p id="gfd-note" class="accent"></p>
+      </div>
+    </div>
+    <div id="gfd-play" hidden>
+      <div id="gfd-top">
+        <div class="gfd-title"><b id="gfd-room">GoblinFoxDragon</b><span id="gfd-zone" class="muted"></span></div>
+        <div class="gfd-bars">
+          <div class="gbar hp"><i id="gfd-hp"></i><span id="gfd-hp-t"></span></div>
+          <div class="gbar mp"><i id="gfd-mp"></i><span id="gfd-mp-t"></span></div>
+          <div class="gbar tp"><i id="gfd-tp"></i><span id="gfd-tp-t"></span></div>
+        </div>
+        <button id="btn-gfd-leave" class="danger">Leave</button>
+      </div>
+      <div id="gfd-log" aria-live="polite"></div>
+      <div id="gfd-here" role="group" aria-label="Who is here (tap to target)"></div>
+      <div id="gfd-controls">
+        <div id="gfd-compass" role="group" aria-label="Move">
+          <button data-gb="5" id="gb-5" class="gk-up">Up</button><button data-gb="1" id="gb-1" class="gk-n">N</button><button data-gb="6" id="gb-6" class="gk-dn">Down</button>
+          <button data-gb="4" id="gb-4" class="gk-w">W</button><span class="gk-c" aria-hidden="true">&#9673;</span><button data-gb="3" id="gb-3" class="gk-e">E</button>
+          <button data-gb="2" id="gb-2" class="gk-s">S</button>
+        </div>
+        <div id="gfd-actions" role="group" aria-label="Actions">
+          <button data-gb="12" id="gb-12" class="gb-hot">Attack</button><button data-gb="13" id="gb-13">Stop</button><button data-gb="14" id="gb-14">WS</button><button data-gb="7" id="gb-7">Look</button><button data-gb="8" id="gb-8">Status</button><button data-gb="9" id="gb-9">Bag</button><button data-gb="10" id="gb-10">Map</button><button data-gb="11" id="gb-11">Who</button><button data-gb="19" id="gb-19">Mobs</button><button data-gb="16" id="gb-16">Loot</button><button data-gb="17" id="gb-17">Mine</button><button data-gb="18" id="gb-18">Fish</button><button data-gb="20" id="gb-20">Party</button><button data-gb="15" id="gb-15">Home</button>
+        </div>
+      </div>
+      <form id="gfd-form" autocomplete="off">
+        <input id="gfd-input" placeholder="type a command (say hello, equip, shop...)" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Command">
+        <button class="primary">Send</button>
+      </form>
     </div>
   </section>
 </main>

@@ -84,6 +84,27 @@ final class NativeBridge implements Sink {
     @JavascriptInterface public String arpText() { return ArpTable.read(); }
     @JavascriptInterface public String localNets() { return NetInfo.json(); }
 
+    // ---- IDUNA sign-in (GoblinFoxDragon) ---------------------------------------------------------------------------------------------------
+    /** Opens IDUNA's sign-in page in the system browser (the URL is fixed in SsoLink); the answer comes back as a {t:"sso"} event. */
+    @JavascriptInterface public void ssoOpen() {
+        activity.runOnUiThread(new Runnable() {
+            @Override public void run() {
+                try {
+                    activity.startActivity(new android.content.Intent(android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse(industrial.einhorn.netkit.shell.SsoLink.SIGN_IN_URL)));
+                } catch (android.content.ActivityNotFoundException e) {
+                    event(Json.obj("t", "sso", "e", "nobrowser"));
+                }
+            }
+        });
+    }
+    /** MainActivity hands a shankphone://sso link here: kept (encrypted) for the next launch, and told to the page. */
+    void ssoReturned(String token, String player) {
+        store.set("gfd_sso", Json.obj("token", token, "player", player));
+        event(Json.obj("t", "sso", "e", "ok", "player", player));
+    }
+    @JavascriptInterface public void ssoForget() { store.delete("gfd_sso"); }
+
     // ---- storage ---------------------------------------------------------------------------------------------------------------------------------
     @JavascriptInterface public String storeGet(String key) { return store.get(key); }
     @JavascriptInterface public void storeSet(String key, String value) { store.set(key, value); }

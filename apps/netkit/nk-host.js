@@ -64,6 +64,9 @@ let survLookId         = -1;
 let survLookX         = 0.0;
 let survLookY         = 0.0;
 let survMenuDown          = false;
+let gfd      = null;
+let gfdReady          = false;
+let gfdLines         = 0;
 let garBuilt          = false;
 let garVw         = 1280;
 let garVh         = 800;
@@ -3569,6 +3572,460 @@ export function survInstallBang()       {
     }
 }
 
+export function gfdState()         {
+    return ((gfd == null) ? 0 : (gfd.up ? 2 : 1));
+}
+
+export function gfdSso()      {
+    return storeJson("gfd_sso", null);
+}
+
+export function gfdSsoPlayer()         {
+    {
+        let s      = gfdSso();
+        return ((s == null) ? "" : ("" + s.player));
+    }
+}
+
+export function gfdRenderConnectBang()       {
+    {
+        let signed          = (!((gfdSso() == null)));
+        setHiddenBang("gfd-connect", (!((gfd == null))));
+        setHiddenBang("gfd-play", (gfd == null));
+        setHiddenBang("btn-gfd-sso", signed);
+        setHiddenBang("btn-gfd-resume", (!(signed)));
+        setHiddenBang("btn-gfd-signout", (!(signed)));
+        setTextBang("gfd-who", (signed ? ("" + "Signed in with IDUNA" + ((gfdSsoPlayer() === "") ? "" : ("" + " (player " + gfdSsoPlayer() + ")"))) : "Not signed in"));
+    }
+}
+
+export function gfdFeedU8Bang(bytes     )       {
+    {
+        let x      = gfd.x;
+        let u8      = gfd.u8;
+        let total      = bytes.length;
+        {
+            let off         = 0;
+            while (true) {
+                if ((off < total)) {
+                    {
+                        let k         = Math.min(16000, (total - off));
+                        u8.set(bytes.subarray(off, (off + k)), x.nk_gfd_in_addr());
+                        x.nk_gfd_feed(k);
+                        off = (off + k);
+                        continue;
+                    }
+                }
+                break;
+            }
+        }
+        gfdDrainLogBang();
+        gfdPaintBang();
+        if (((x.nk_gfd_state() === 2) && (!(gfd.named)))) {
+            gfd.named = true;
+            if ((gfd.kind === "tcp")) {
+                gfdSendTextBang(gfd.name);
+            } else {
+                el("gfd-input").placeholder = "choose your permanent character name";
+                el("gfd-input").focus();
+            }
+        }
+    }
+}
+
+export function gfdB64U8(b64     )      {
+    {
+        let bin      = atob(b64);
+        let n      = bin.length;
+        let out      = new Uint8Array(n);
+        {
+            let i         = 0;
+            while (true) {
+                if ((i < n)) {
+                    out[i] = bin.charCodeAt(i);
+                    i = (i + 1);
+                    continue;
+                }
+                break;
+            }
+        }
+        return out;
+    }
+}
+
+export function gfdDrainLogBang()       {
+    {
+        let x      = gfd.x;
+        let u8      = gfd.u8;
+        let a      = x.nk_gfd_log_addr();
+        let n      = x.nk_gfd_log_len();
+        if ((n > 0)) {
+            {
+                let text      = new TextDecoder().decode(u8.subarray(a, (a + n)));
+                let lines      = text.split("\n");
+                let box      = el("gfd-log");
+                let frag      = doc().createDocumentFragment();
+                {
+                    let __dn5      = lines.length;
+                    {
+                        let i         = 0;
+                        while (true) {
+                            if ((i < __dn5)) {
+                                {
+                                    let ln      = lines[i];
+                                    if ((ln.length > 0)) {
+                                        {
+                                            let kind      = (ln.charCodeAt(0) - 48);
+                                            let style      = x.nk_gfd_kind_style(kind);
+                                            if ((style > 0)) {
+                                                {
+                                                    let d      = doc().createElement("div");
+                                                    d.className = ("" + "gl s" + style);
+                                                    d.textContent = ln.slice(1);
+                                                    frag.appendChild(d);
+                                                    gfdLines = (gfdLines + 1);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                i = (i + 1);
+                                continue;
+                            }
+                            break;
+                        }
+                    }
+                }
+                box.appendChild(frag);
+                {
+                    while (true) {
+                        if ((gfdLines > 400)) {
+                            box.removeChild(box.firstChild);
+                            gfdLines = (gfdLines - 1);
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                box.scrollTop = box.scrollHeight;
+                x.nk_gfd_log_clear();
+            }
+        }
+    }
+}
+
+export function gfdEchoBang(text        )       {
+    {
+        let d      = doc().createElement("div");
+        let box      = el("gfd-log");
+        d.className = "gl s9";
+        d.textContent = ("" + "> " + text);
+        box.appendChild(d);
+        gfdLines = (gfdLines + 1);
+        box.scrollTop = box.scrollHeight;
+    }
+}
+
+export function gfdWord(fn        , a        )         {
+    return cstr(gfd.u8, gfd.x[fn](a));
+}
+
+export function gfdWord0(fn        )         {
+    return cstr(gfd.u8, gfd.x[fn]());
+}
+
+export function gfdBarBang(id        , permille        , label        )       {
+    {
+        let b      = el(id);
+        if ((!((b == null)))) {
+            b.style.width = ("" + (permille / 10.0) + "%");
+        }
+    }
+    setTextBang(("" + id + "-t"), label);
+}
+
+export function gfdPaintBang()       {
+    if ((!((gfd == null)))) {
+        {
+            let x      = gfd.x;
+            let room         = gfdWord0("nk_gfd_room_addr");
+            let zone         = gfdWord0("nk_gfd_zone_addr");
+            setTextBang("gfd-room", ((room === "") ? "GoblinFoxDragon" : room));
+            setTextBang("gfd-zone", ((zone === "") ? "" : ("" + "Lv " + x.nk_gfd_vital(0) + " - " + zone)));
+            gfdBarBang("gfd-hp", x.nk_gfd_bar(0), ("" + "HP " + x.nk_gfd_vital(1) + "/" + x.nk_gfd_vital(2)));
+            gfdBarBang("gfd-mp", x.nk_gfd_bar(1), ("" + "MP " + x.nk_gfd_vital(3) + "/" + x.nk_gfd_vital(4)));
+            gfdBarBang("gfd-tp", x.nk_gfd_bar(2), ("" + "TP " + x.nk_gfd_vital(5)));
+            {
+                let __dn6      = x.nk_gfd_buttons();
+                {
+                    let i         = 0;
+                    while (true) {
+                        if ((i < __dn6)) {
+                            {
+                                let b      = el(("" + "gb-" + (i + 1)));
+                                if ((!((b == null)))) {
+                                    b.disabled = (x.nk_gfd_btn_enabled((i + 1)) === 0);
+                                }
+                            }
+                            i = (i + 1);
+                            continue;
+                        }
+                        break;
+                    }
+                }
+            }
+            gfdPaintHereBang();
+        }
+    }
+}
+
+export function gfdPaintHereBang()       {
+    {
+        let x      = gfd.x;
+        let n      = x.nk_gfd_creatures();
+        let sel      = x.nk_gfd_selected();
+        let box      = el("gfd-here");
+        box.textContent = "";
+        if ((n === 0)) {
+            {
+                let d      = doc().createElement("span");
+                d.className = "muted";
+                d.textContent = "Nobody here";
+                box.appendChild(d);
+            }
+        }
+        {
+            let i         = 0;
+            while (true) {
+                if ((i < n)) {
+                    {
+                        let b      = doc().createElement("button");
+                        let bar      = doc().createElement("i");
+                        b.className = ("" + "gc" + ((i === sel) ? " on" : "") + ((x.nk_gfd_cr_burrowed(i) === 1) ? " hid" : ""));
+                        b.dataset["cr"] = ("" + i);
+                        b.textContent = gfdWord("nk_gfd_cr_name_addr", i);
+                        bar.style.width = ("" + (x.nk_gfd_cr_bar(i) / 10.0) + "%");
+                        b.appendChild(bar);
+                        box.appendChild(b);
+                    }
+                    i = (i + 1);
+                    continue;
+                }
+                break;
+            }
+        }
+    }
+}
+
+export function gfdSendTextBang(text        )       {
+    if (((!((gfd == null))) && gfd.up)) {
+        {
+            let b      = new TextEncoder().encode(("" + text + "\r\n"));
+            if ((gfd.kind === "ws")) {
+                gfd.ws.send(b);
+            } else {
+                tcpWriteBang(gfd.id, btoa(String.fromCharCode.apply(null, b)));
+            }
+        }
+    }
+}
+
+export function gfdCommandBang(text        )       {
+    if ((text.length > 0)) {
+        gfdEchoBang(text);
+        gfdSendTextBang(text);
+    }
+}
+
+export function onGfdButton(e     )       {
+    {
+        let b      = e.target.closest("[data-gb]");
+        if (((!((b == null))) && (!((gfd == null))))) {
+            {
+                let x      = gfd.x;
+                let n      = x.nk_gfd_cmd(parseInt(b.dataset.gb, 10));
+                if ((n > 0)) {
+                    gfdCommandBang(cstr(gfd.u8, x.nk_gfd_cmd_addr()));
+                }
+            }
+        }
+    }
+}
+
+export function onGfdHere(e     )       {
+    {
+        let b      = e.target.closest("[data-cr]");
+        if (((!((b == null))) && (!((gfd == null))))) {
+            {
+                let x      = gfd.x;
+                let i      = parseInt(b.dataset.cr, 10);
+                x.nk_gfd_select(((x.nk_gfd_selected() === i) ? -1 : i));
+                gfdPaintBang();
+            }
+        }
+    }
+}
+
+export function onGfdSend(e     )       {
+    e.preventDefault();
+    {
+        let t      = val("gfd-input");
+        gfdCommandBang(("" + t));
+        setValBang("gfd-input", "");
+    }
+}
+
+export function gfdNewSessionBang(kind        , name        )      {
+    {
+        let x      = exportsOf(instantiate(modLite));
+        x.nk_gfd_reset();
+        gfd = {"x": x, "u8": u8Of(x), "kind": kind, "id": newIdBang(), "up": false, "named": false, "name": name, "ws": null};
+        gfdLines = 0;
+        el("gfd-log").textContent = "";
+        gfdRenderConnectBang();
+        gfdPaintBang();
+        return gfd;
+    }
+}
+
+export function onGfdGuest(e     )       {
+    {
+        let name         = ("" + val("gfd-name"));
+        if ((!(new RegExp("^[A-Za-z][A-Za-z0-9]{1,19}$").test(name)))) {
+            setTextBang("gfd-note", "A guest name is 2 to 20 letters or digits, starting with a letter.");
+        } else {
+            if ((!(haveNativeP()))) {
+                setTextBang("gfd-note", "Guest play needs the SHANKPHONE app (a raw connection to the MUD).");
+            } else {
+                {
+                    let s      = gfdNewSessionBang("tcp", name);
+                    setTextBang("gfd-note", "");
+                    tcpOpenBang(s.id, "play.okemily.com", 2323);
+                }
+            }
+        }
+    }
+}
+
+export function gfdOnTcpBang(ev     )       {
+    {
+        let e      = ev.e;
+        if ((e === "open")) {
+            gfd.up = true;
+            gfdPaintBang();
+        } else {
+            ((e === "data") ? gfdFeedU8Bang(gfdB64U8(ev.b)) : gfdEndedBang(((e === "closed") ? "The MUD closed the connection." : "Could not reach the MUD (play.okemily.com:2323).")));
+        }
+    }
+}
+
+export function gfdWsOpen(e     )       {
+    {
+        let s      = gfdSso();
+        gfd.up = true;
+        gfd.ws.send(JSON.stringify({"token": s.token}));
+        gfdPaintBang();
+    }
+}
+
+export function gfdWsMessage(e     )       {
+    {
+        let d      = e.data;
+        gfdFeedU8Bang((((typeof d) === "string") ? new TextEncoder().encode(d) : new Uint8Array(d)));
+    }
+}
+
+export function gfdWsClose(e     )       {
+    if ((!((gfd == null)))) {
+        if ((e.code === 4401)) {
+            if (haveNativeP()) {
+                nat.ssoForget();
+            }
+            gfdEndedBang("Your IDUNA sign-in was refused or has expired. Sign in again.");
+        } else {
+            gfdEndedBang("The MUD closed the connection.");
+        }
+    }
+}
+
+export function onGfdResume(e     )       {
+    {
+        let s      = gfdSso();
+        if ((!((s == null)))) {
+            {
+                let g      = gfdNewSessionBang("ws", "");
+                let ws      = new WebSocket("wss://wotan.okemily.com/GFD/ws");
+                ws.binaryType = "arraybuffer";
+                ws.onopen = gfdWsOpen;
+                ws.onmessage = gfdWsMessage;
+                ws.onclose = gfdWsClose;
+                g.ws = ws;
+            }
+        }
+    }
+}
+
+export function onGfdSso(e     )       {
+    if (haveNativeP()) {
+        setTextBang("gfd-note", "IDUNA's sign-in page is open in your browser. Come back here when it is done.");
+        nat.ssoOpen();
+    } else {
+        setTextBang("gfd-note", "Sign-in needs the SHANKPHONE app.");
+    }
+}
+
+export function onGfdSignout(e     )       {
+    if (haveNativeP()) {
+        nat.ssoForget();
+    }
+    gfdRenderConnectBang();
+}
+
+export function gfdOnSsoBang(ev     )       {
+    if ((ev.e === "ok")) {
+        setTextBang("gfd-note", "Signed in. Tap Play to enter the world.");
+    } else {
+        setTextBang("gfd-note", "No browser to sign in with.");
+    }
+    gfdRenderConnectBang();
+    showViewBang("gfd");
+}
+
+export function gfdEndedBang(why        )       {
+    if ((!((gfd == null)))) {
+        gfd.x.nk_gfd_closed();
+        if ((gfd.kind === "tcp")) {
+            tcpCloseBang(gfd.id);
+        }
+        if (((gfd.kind === "ws") && (!((gfd.ws == null))))) {
+            gfd.ws.close();
+        }
+    }
+    gfd = null;
+    setTextBang("gfd-note", why);
+    gfdRenderConnectBang();
+}
+
+export function onGfdLeave(e     )       {
+    gfdEndedBang("You left the world.");
+}
+
+export function gfdEnterBang()       {
+    if ((!(gfdReady))) {
+        gfdReady = true;
+        onBang("gfd-actions", "click", onGfdButton);
+        onBang("gfd-compass", "click", onGfdButton);
+        onBang("gfd-here", "click", onGfdHere);
+        onBang("gfd-form", "submit", onGfdSend);
+        onBang("btn-gfd-guest", "click", onGfdGuest);
+        onBang("btn-gfd-sso", "click", onGfdSso);
+        onBang("btn-gfd-resume", "click", onGfdResume);
+        onBang("btn-gfd-signout", "click", onGfdSignout);
+        onBang("btn-gfd-leave", "click", onGfdLeave);
+    }
+    gfdRenderConnectBang();
+}
+
 export function garSshState()         {
     return ((ssh == null) ? 0 : (ssh.up ? 2 : 1));
 }
@@ -3582,7 +4039,7 @@ export function garScanState()         {
 }
 
 export function garFactA(id        )         {
-    return ((id === 1) ? garScanState() : ((id === 2) ? garSshState() : ((id === 3) ? garVncState() : ((id === 4) ? arcState : ((id === 5) ? survState : 0)))));
+    return ((id === 1) ? garScanState() : ((id === 2) ? garSshState() : ((id === 3) ? garVncState() : ((id === 4) ? arcState : ((id === 5) ? survState : ((id === 6) ? gfdState() : 0))))));
 }
 
 export function garFactB(id        )         {
@@ -3704,11 +4161,11 @@ export function garCablesBang()       {
                     g.lineWidth = 4;
                     g.lineCap = "round";
                     {
-                        let __dn5      = scanX.nk_garage_cable_count();
+                        let __dn7      = scanX.nk_garage_cable_count();
                         {
                             let i         = 0;
                             while (true) {
-                                if ((i < __dn5)) {
+                                if ((i < __dn7)) {
                                     garCableBang(g, i, w, h);
                                     i = (i + 1);
                                     continue;
@@ -3729,11 +4186,11 @@ export function garRefreshBang()       {
         garVh = win().innerHeight;
         garBuildBang();
         {
-            let __dn6      = scanX.nk_garage_count();
+            let __dn8      = scanX.nk_garage_count();
             {
                 let i         = 0;
                 while (true) {
-                    if ((i < __dn6)) {
+                    if ((i < __dn8)) {
                         garPlaceBang((i + 1));
                         garLightBang((i + 1));
                         i = (i + 1);
@@ -3762,7 +4219,7 @@ export function onResize(e     )       {
 }
 
 export function viewName(i        )         {
-    return ["garage", "devices", "ssh", "vnc", "arcade", "survival"][i];
+    return ["garage", "devices", "ssh", "vnc", "arcade", "survival", "gfd"][i];
 }
 
 export function garageActBang(id        )       {
@@ -3806,6 +4263,7 @@ export function showViewBang(name        )       {
     setHiddenBang("view-vnc", (name !== "vnc"));
     setHiddenBang("view-arcade", (name !== "arcade"));
     setHiddenBang("view-survival", (name !== "survival"));
+    setHiddenBang("view-gfd", (name !== "gfd"));
     setHiddenBang("view-files", (name !== "files"));
     setHiddenBang("view-drive", (name !== "drive"));
     {
@@ -3823,7 +4281,7 @@ export function showViewBang(name        )       {
     {
         let i         = 0;
         while (true) {
-            if ((i < 6)) {
+            if ((i < 7)) {
                 {
                     let n         = viewName(i);
                     let b      = el(("" + "tab-" + n));
@@ -3849,6 +4307,9 @@ export function showViewBang(name        )       {
         survivalEnterBang();
     } else {
         survivalLeaveBang();
+    }
+    if ((name === "gfd")) {
+        gfdEnterBang();
     }
     if ((name === "garage")) {
         garRefreshBang();
@@ -4112,7 +4573,7 @@ export function onNative(json        )       {
         if ((t === "tcp")) {
             {
                 let id      = ev.id;
-                (((!((ssh == null))) && (id === ssh.id)) ? sshOnTcpBang(ev) : (((!((vnc == null))) && (id === vnc.id)) ? vncOnTcpBang(ev) : (((!((files == null))) && (id === files.id)) ? filesOnTcpBang(ev) : undefined)));
+                (((!((ssh == null))) && (id === ssh.id)) ? sshOnTcpBang(ev) : (((!((vnc == null))) && (id === vnc.id)) ? vncOnTcpBang(ev) : (((!((files == null))) && (id === files.id)) ? filesOnTcpBang(ev) : (((!((gfd == null))) && (id === gfd.id)) ? gfdOnTcpBang(ev) : undefined))));
             }
         } else {
             if ((t === "probe")) {
@@ -4121,14 +4582,14 @@ export function onNative(json        )       {
                     ((job >= 1000000) ? onToolResultBang(job, ev.code, ev.ms) : onScanResultBang(job, ev.code, ev.ms));
                 }
             } else {
-                ((t === "name") ? onNameBang(ev) : ((t === "udp") ? onUdpBang(ev) : ((t === "drive") ? driveOnEventBang(ev) : undefined)));
+                ((t === "name") ? onNameBang(ev) : ((t === "udp") ? onUdpBang(ev) : ((t === "drive") ? driveOnEventBang(ev) : ((t === "sso") ? gfdOnSsoBang(ev) : undefined))));
             }
         }
     }
 }
 
 export function curView()         {
-    return ((!(el("view-garage").hidden)) ? 0 : ((!(el("view-devices").hidden)) ? 1 : ((!(el("view-ssh").hidden)) ? 2 : ((!(el("view-vnc").hidden)) ? 3 : ((!(el("view-survival").hidden)) ? 5 : 4)))));
+    return ((!(el("view-garage").hidden)) ? 0 : ((!(el("view-devices").hidden)) ? 1 : ((!(el("view-ssh").hidden)) ? 2 : ((!(el("view-vnc").hidden)) ? 3 : ((!(el("view-survival").hidden)) ? 5 : ((!(el("view-gfd").hidden)) ? 6 : 4))))));
 }
 
 export function nkBack()          {

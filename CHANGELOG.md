@@ -1,5 +1,14 @@
 ## 2026-11-26
 
+- **feat(netkit): GoblinFoxDragon in the SHANKPHONE.** Garage object 6 is the MUD with a GUI: room, HP/MP/TP bars, a coloured log,
+  creature chips to target, a compass and 14 actions, and a command line. A guest plays over raw TCP to `play.okemily.com:2323`; a
+  signed-in player uses IDUNA SSO (system browser -> `wotan.okemily.com/shankphone/sso.html` -> `shankphone://sso`) over
+  `wss://wotan.okemily.com/GFD/ws`.
+  - Android: `SsoLink` + its test, `ssoOpen`/`ssoForget`, an intent filter, and the CSP.
+  - The bundle is regenerated (PARENA 97f4bc0); the release APK builds (671 KB), lint clean.
+  - The browser test passes 45/45, including a guest playing the live MUD.
+  - Also: the live MUD crashed whenever anyone typed `map` (GoblinFoxDragon 32d88ec). Fixed and deployed. (sess-20261126-1643-452c2f1a)
+
 - **feat(zombie modes): trees and wood in the OG engine and the SHANKPHONE** (founder: "Add trees to zombie survival modes for shankpit
   og engine and shankpit wasm zombies ultra low poly models like our skins add resource collection mod parena based mods based dev").
   - **OG client:**

@@ -61,11 +61,25 @@ public class MainActivity extends Activity {
 
         Log.i(TAG, "loading " + ORIGIN + "/index.html");
         web.loadUrl(ORIGIN + "/index.html");
+        handleSsoLink(getIntent());
 
         // Android 13+: predictive back (enableOnBackInvokedCallback in the manifest); older releases call onBackPressed below.
         if (Build.VERSION.SDK_INT >= 33) {
             getOnBackInvokedDispatcher().registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, this::askPageBack);
         }
+    }
+
+    /** A shankphone://sso#sso_token=... link (IDUNA sign-in coming back through wotan.okemily.com/shankphone/sso.html). */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        handleSsoLink(intent);
+    }
+
+    private void handleSsoLink(Intent intent) {
+        if (intent == null || intent.getData() == null || bridge == null) return;
+        String[] tp = industrial.einhorn.netkit.shell.SsoLink.parse(intent.getData().toString());
+        if (tp != null) bridge.ssoReturned(tp[0], tp[1]);
     }
 
     /** The page decides what Back does (close a dialog, close a session); if it does nothing, the app finishes. */
@@ -119,7 +133,7 @@ public class MainActivity extends Activity {
                 HashMap<String, String> headers = new HashMap<>();
                 headers.put("Cache-Control", "no-store");
                 headers.put("Content-Security-Policy",
-                        "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'");
+                        "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' wss://wotan.okemily.com; base-uri 'none'; form-action 'none'");
                 return new WebResourceResponse(type, type.startsWith("text/") ? "utf-8" : null, 200, "OK", headers, in);
             } catch (IOException e) {
                 Log.w(TAG, "missing asset: " + path);
