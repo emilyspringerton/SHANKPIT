@@ -329,6 +329,21 @@ the real touch layer and proves the offline path.
 
 The weapon keys are now a WoW/Minecraft-style action bar whose rules are a PARENA mod (`PARENA/stdlib/actionbar/`, generated to `packages/simulation/action_bar_rules.c`; host glue in `apps/lobby/src/actionbar_host.c`). `1`-`9` and `0` pick slots 1-10; Shift/Ctrl/Alt + a digit pick banks 2/3/4; Alt+mouse-wheel cycles bank 1. Bank 1 is today's arsenal (1-6 weapons, 7 flashlight, 8 hammer, 9 spray can, 0 empty), banks 2-4 start empty and are filled by plugins (other mods registering `abh_register_plugin`); precedence is player bind (macro) > plugin > default. The on-screen bar is optional: `actionbar on|off` (it persists), and the hotkeys work whether it is shown or not. Status: logic tested (`make test-action-bar`, `make test-action-bar-host`); the lobby links and its `main.c` compiles, but the bar has **not been looked at on a real display yet**; no plugin ships registered, and ability/item slots are not wired.
 
+## Flight, key bindings and desk items (2026-11-24, verified headless 2026-11-26)
+
+- **C-110 flight.** The prop plane now flies like a (light) sim: ailerons bank it into turns, the flight path follows the nose,
+  climbing costs speed, wheel brakes and a real takeoff rotation, flaps, a stall warning and a recoverable stall, and an assist
+  toggle. A gamepad flies it through SDL GameController (sticks + triggers; deadzone, response curve, invert-Y). Laws are the
+  PARENA mod `airplane_rules.prn`; `make test-airplane-flight` checks damping, trim and stall headless.
+- **Key bindings.** Pause menu -> KEY BINDINGS: WoW-style, up to 3 keys per operation, conflicts steal the key, saved to
+  `keybinds.cfg`. Decisions in PARENA `keybind_rules.prn`; `make test-keybind` (69 checks).
+- **Desk items.** A desk with a notebook, pencil, pencil sharpener, eraser, pen, ruler and scissors. Walk up to pick one up;
+  U uses the held item (on another for combos, e.g. pencil + sharpener), O cycles, G drops. Rules in PARENA `item_rules.prn`;
+  `make test-world-items`. Client-local (other players don't see them) and not in the key-binding table yet.
+
+Status: all of this builds and passes its headless tests; the lobby was smoke-run under Xvfb. Nobody has flown it with a real
+pad or played it on a real GPU yet.
+
 ## Android client #2: Netkit — scan, SSH, view-only VNC, written in PARENA (2026-11-24)
 
 A second Android app, separate from shankpit-460: **SHANKPIT Netkit** (`android-netkit/`, page in `apps/netkit/`). It finds devices on the

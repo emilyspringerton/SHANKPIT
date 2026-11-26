@@ -30,7 +30,7 @@ node ../SHANKPIT/android-netkit/tools/verify-web-bundle.mjs ../SHANKPIT/apps/net
 
 Provenance of the committed build: PARENA `main` at the commit named in `PROVENANCE`.
 
-**STATUS: `nk-host.js`, `netkit.wasm` and `netkit-lite.wasm` here are STALE.** The garage/arcade source (PARENA `nk_garage.prn`, `nk_host_garage.prn`, `nk_host_arcade.prn`) and this directory's `index.html`/`netkit.css`/`brawlpit.wasm`/PNGs landed on a box with no LLVM 18 and no `node`, so the generated files could not be rebuilt. Until `scripts/build_netkit_web.sh` is run and the files copied, the page's markup and its host disagree; `verify-web-bundle.mjs` fails ("nk-host.js is stale") on purpose. Never run on a real device.
+**STATUS (2026-11-26): the bundle is current.** `nk-host.js`, `netkit.wasm` and `netkit-lite.wasm` were regenerated from the garage/arcade source (PARENA `nk_garage.prn`, `nk_host_garage.prn`, `nk_host_arcade.prn`) with LLVM 18.1.3 + node 24; the same build reproduced `brawlpit.wasm`, `nkterm.wasm` and the PNGs byte for byte. `verify-web-bundle.mjs` passes. Run headless: PARENA `scripts/test_netkit.sh` legs (garage IR 45, garage wasm 45, rfb 97, scan 62, ssh interop 61, term 82, x25519 31, crypto 14, des 12, ed25519 16, rfb vs libvncserver 13, the generated page in Node vs a real SSH + VNC server 94). Not run: the two headless-Chromium legs (no playwright here), the OpenSSH leg (no libnss_wrapper), the APK build (no Android SDK) and any real device.
 
 ## Try it in a desktop browser
 

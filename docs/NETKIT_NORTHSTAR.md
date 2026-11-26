@@ -124,7 +124,7 @@ Everything that decides is PARENA wasm (`PARENA/stdlib/netkit/nk_garage.prn`: pu
 
 No greyed-out placeholder objects were added for the unported rows: a light that does not mean something true would break the doctrine, so the omissions are recorded here instead.
 
-**Verification state (honest):** the PARENA garage logic is verified (45 checks run on the compiler's own LLVM IR here; the same checks are written for the linked wasm). The wasm/JS bundle (`nk-host.js`, `netkit*.wasm`) was **not regenerated** in the environment that wrote this — no LLVM 18 toolchain and no `node` there — so the vendored bundle is stale against the new `index.html` until `PARENA/scripts/build_netkit_web.sh` is run; `verify-web-bundle.mjs` fails on a stale bundle on purpose. The Node/Chromium end-to-end legs, the APK build (no Android SDK) and any real-device run are unrun.
+**Verification state (honest, 2026-11-26):** the PARENA garage logic is verified on the compiler's LLVM IR (45 checks) and on the linked wasm (45). The wasm/JS bundle was regenerated and vendored (`nk-host.js`, `netkit*.wasm`; `verify-web-bundle.mjs` passes), and the generated page passes its Node end-to-end leg against a real SSH server and libvncserver, garage and in-page BRAWLPIT included (94 checks). Still unrun: the headless-Chromium legs (`test_browser_e2e.py`, `test_browser_garage.py`), the APK build (no Android SDK) and any real-device run (NETKIT-3).
 
 ## 7. Roadmap (the founder's stages, as PARENA modules)
 

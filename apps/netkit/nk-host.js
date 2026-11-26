@@ -29,6 +29,19 @@ let vz         = 1.0;
 let vtx         = 0.0;
 let vty         = 0.0;
 let ptrs      = null;
+let arcState         = 0;
+let arcX      = null;
+let arcMem      = null;
+let arcCanvas      = null;
+let arcCtx      = null;
+let arcImg      = null;
+let arcRun          = false;
+let arcLooping          = false;
+let arcHeld      = null;
+let arcListening          = false;
+let garBuilt          = false;
+let garVw         = 1280;
+let garVh         = 800;
 let connProto         = "ssh";
 let sameProto         = "";
 let sameHost         = "";
@@ -1487,16 +1500,635 @@ export function vncOpenBang(host        , port        , pw        , save        
     }
 }
 
+export function arcSayBang(text     )       {
+    setTextBang("arcade-msg", text);
+    setHiddenBang("arcade-msg", (text === ""));
+}
+
+export function arcOnResponse(r     )      {
+    return (r.ok ? r.arrayBuffer() : Promise.reject(("" + "brawlpit.wasm: HTTP " + r.status)));
+}
+
+export function arcOnBytes(bytes     )      {
+    return WebAssembly.instantiate(bytes, {});
+}
+
+export function arcFailBang(err     )       {
+    arcState = 3;
+    arcSayBang(("" + "BRAWLPIT could not load: " + err));
+    console.error.call(console, err);
+}
+
+export function arcadeLoadBang()       {
+    arcState = 1;
+    arcSayBang("Loading BRAWLPIT...");
+    arcHeld = {};
+    arcCanvas = el("bp-canvas");
+    arcCtx = arcCanvas.getContext("2d");
+    fetch("brawlpit.wasm").then(arcOnResponse).then(arcOnBytes).then(arcOnInstance).catch(arcFailBang);
+}
+
+export function arcOnInstance(result     )       {
+    arcX = result.instance.exports;
+    arcMem = arcX.memory;
+    arcX.bp_init();
+    arcImg = new ImageData(new Uint8ClampedArray(arcMem.buffer, arcX.bp_fb_addr(), ((arcX.bp_fb_w() * arcX.bp_fb_h()) * 4)), arcX.bp_fb_w(), arcX.bp_fb_h());
+    arcInstallBang();
+    arcState = 2;
+    arcSayBang("");
+    arcLoadSpritesBang();
+    arcLoadDuckBang();
+    if (arcRun) {
+        arcStartLoopBang();
+    }
+}
+
+export function arcTick(t        )       {
+    arcLooping = false;
+    if ((arcRun && (arcState === 2))) {
+        arcPollPadsBang();
+        arcX.bp_frame(t);
+        arcCtx.putImageData(arcImg, 0, 0);
+        arcStartLoopBang();
+    }
+}
+
+export function arcStartLoopBang()       {
+    if ((!(arcLooping))) {
+        arcLooping = true;
+        win().requestAnimationFrame(arcTick);
+    }
+}
+
+export function arcadeEnterBang()       {
+    arcRun = true;
+    if (((arcState === 0) || (arcState === 3))) {
+        arcadeLoadBang();
+    }
+    if ((arcState === 2)) {
+        arcStartLoopBang();
+    }
+}
+
+export function arcadeLeaveBang()       {
+    if (arcRun) {
+        arcRun = false;
+        arcReleaseAllBang();
+    }
+}
+
+export function arcReleaseAllBang()       {
+    if ((!((arcHeld == null)))) {
+        {
+            let ids      = Object.keys(arcHeld);
+            {
+                let __dn2      = ids.length;
+                {
+                    let i         = 0;
+                    while (true) {
+                        if ((i < __dn2)) {
+                            {
+                                let k      = ids[i];
+                                arcKeyUpBang(arcHeld[k]);
+                            }
+                            i = (i + 1);
+                            continue;
+                        }
+                        break;
+                    }
+                }
+            }
+            arcHeld = {};
+            doc().querySelectorAll("#arc-pad .down").forEach(arcUnpressBang);
+            if ((!((arcX == null)))) {
+                arcX.bp_blur();
+            }
+        }
+    }
+}
+
+export function arcUnpressBang(b     )       {
+    b.classList.remove("down");
+}
+
+export function arcKeyDownBang(code        )       {
+    if (((!((arcX == null))) && (code > 0))) {
+        arcX.bp_key(code, 1);
+    }
+}
+
+export function arcKeyUpBang(code        )       {
+    if (((!((arcX == null))) && (code > 0))) {
+        arcX.bp_key(code, 0);
+    }
+}
+
+export function arcPadDown(e     )       {
+    {
+        let b      = e.target.closest("[data-bp]");
+        if (((!((b == null))) && arcRun)) {
+            {
+                let code      = scanX.nk_garage_touch_key(parseInt(b.dataset.bp, 10));
+                let pid      = e.pointerId;
+                e.preventDefault();
+                b.setPointerCapture(pid);
+                b.classList.add("down");
+                arcHeld[("" + pid)] = code;
+                arcKeyDownBang(code);
+            }
+        }
+    }
+}
+
+export function arcPadUp(e     )       {
+    {
+        let pid         = ("" + e.pointerId);
+        if ((!((arcHeld == null)))) {
+            {
+                let code      = arcHeld[pid];
+                if (((typeof code) === "number")) {
+                    arcKeyUpBang(code);
+                    arcHeld[pid] = 0;
+                    {
+                        let b      = e.target.closest("[data-bp]");
+                        if ((!((b == null)))) {
+                            b.classList.remove("down");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export function arcKeyId(e     )         {
+    return (e.keyCode + ((e.location === 2) ? 256 : 0));
+}
+
+export function arcGameKeyP(e     )          {
+    {
+        let k      = e.keyCode;
+        return (((k >= 37) && (k <= 40)) || ((k === 32) || (k === 9)));
+    }
+}
+
+export function arcTypingP()          {
+    {
+        let a      = doc().activeElement;
+        return ((!((a == null))) && ((a.tagName === "INPUT") || ((a.tagName === "TEXTAREA") || (a.tagName === "SELECT"))));
+    }
+}
+
+export function arcOnKeydown(e     )       {
+    if ((arcRun && (!(arcTypingP())))) {
+        arcKeyDownBang(arcKeyId(e));
+        if (arcGameKeyP(e)) {
+            e.preventDefault();
+        }
+    }
+}
+
+export function arcOnKeyup(e     )       {
+    if ((arcRun && (!(arcTypingP())))) {
+        arcKeyUpBang(arcKeyId(e));
+    }
+}
+
+export function arcOnPointer(e     )       {
+    if ((arcState === 2)) {
+        {
+            let rect      = arcCanvas.getBoundingClientRect();
+            let x      = (((e.clientX - rect.left) * arcX.bp_fb_w()) / rect.width);
+            let y      = (((e.clientY - rect.top) * arcX.bp_fb_h()) / rect.height);
+            arcX.bp_pointer(Math.floor(x), Math.floor(y), (e.buttons & 1));
+        }
+    }
+}
+
+export function arcOnBlur(e     )       {
+    arcReleaseAllBang();
+}
+
+export function arcOnVisibility(e     )       {
+    if (doc().hidden) {
+        arcReleaseAllBang();
+    }
+}
+
+export function arcInstallBang()       {
+    if ((!(arcListening))) {
+        arcListening = true;
+        {
+            let w      = win();
+            w.addEventListener("keydown", arcOnKeydown);
+            w.addEventListener("keyup", arcOnKeyup);
+            w.addEventListener("blur", arcOnBlur);
+            doc().addEventListener("visibilitychange", arcOnVisibility);
+        }
+        arcCanvas.addEventListener("pointerdown", arcOnPointer);
+        arcCanvas.addEventListener("pointermove", arcOnPointer);
+        arcCanvas.addEventListener("pointerup", arcOnPointer);
+        arcCanvas.addEventListener("contextmenu", arcNoMenu);
+    }
+}
+
+export function arcNoMenu(e     )       {
+    e.preventDefault();
+}
+
+export function arcPadApiP()          {
+    return ((typeof navigator !== "undefined") && ((typeof navigator.getGamepads) === "function"));
+}
+
+export function arcPadMask(gp     )         {
+    {
+        let buttons      = gp.buttons;
+        let n         = Math.min(16, buttons.length);
+        {
+            let i         = 0;
+            let m         = 0;
+            while (true) {
+                if ((i < n)) {
+                    const _t0 = (i + 1);
+                    const _t1 = (buttons[i].pressed ? (m | (1 << i)) : m);
+                    i = _t0;
+                    m = _t1;
+                    continue;
+                } else {
+                    return m;
+                }
+                break;
+            }
+        }
+    }
+}
+
+export function arcPadValue(gp     , i        )         {
+    {
+        let b      = gp.buttons[i];
+        return ((b == null) ? 0.0 : b.value);
+    }
+}
+
+export function arcPollPadsBang()       {
+    if (arcPadApiP()) {
+        {
+            let pads      = navigator.getGamepads();
+            {
+                let i         = 0;
+                while (true) {
+                    if ((i < 4)) {
+                        {
+                            let gp      = pads[i];
+                            if ((gp == null)) {
+                                arcX.bp_pad_gone(i);
+                            } else {
+                                {
+                                    let axes      = gp.axes;
+                                    arcX.bp_pad(i, axes[0], axes[1], axes[2], axes[3], arcPadValue(gp, 6), arcPadValue(gp, 7), arcPadMask(gp));
+                                }
+                            }
+                        }
+                        i = (i + 1);
+                        continue;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+}
+
+export function arcBlobOf(r     )      {
+    return (r.ok ? r.blob() : Promise.reject(("" + "HTTP " + r.status)));
+}
+
+export function arcDecode(blob     )      {
+    return createImageBitmap(blob);
+}
+
+export function arcPixels(bmp     , w        , h        )      {
+    {
+        let c2      = doc().createElement("canvas");
+        c2.width = w;
+        c2.height = h;
+        {
+            let g      = c2.getContext("2d");
+            g.imageSmoothingEnabled = false;
+            g.drawImage(bmp, 0, 0);
+            return g.getImageData(0, 0, w, h).data;
+        }
+    }
+}
+
+export function arcLoadSpritesBang()       {
+    fetch("sprites.png").then(arcBlobOf).then(arcDecode).then(arcOnSprites).catch(ignoreBang);
+}
+
+export function arcCopyTileBang(data     , t        )       {
+    {
+        let tx         = ((t % 4) * 128);
+        let ty         = (Math.trunc(t / 4) * 128);
+        let base      = arcX.bp_sprite_addr((t + 2));
+        {
+            let row         = 0;
+            while (true) {
+                if ((row < 128)) {
+                    {
+                        let src         = ((((ty + row) * 512) + tx) * 4);
+                        new Uint8Array(arcMem.buffer, (base + (row * 512)), 512).set(data.subarray(src, (src + 512)));
+                    }
+                    row = (row + 1);
+                    continue;
+                }
+                break;
+            }
+        }
+    }
+}
+
+export function arcOnSprites(bmp     )       {
+    {
+        let data      = arcPixels(bmp, 512, 256);
+        {
+            let t         = 0;
+            while (true) {
+                if ((t < 8)) {
+                    arcCopyTileBang(data, t);
+                    t = (t + 1);
+                    continue;
+                }
+                break;
+            }
+        }
+        {
+            let t         = 0;
+            while (true) {
+                if ((t < 8)) {
+                    arcX.bp_sprite_set((t + 2), 1);
+                    t = (t + 1);
+                    continue;
+                }
+                break;
+            }
+        }
+    }
+}
+
+export function arcLoadDuckBang()       {
+    fetch("duck.png").then(arcBlobOf).then(arcDecode).then(arcOnDuck).catch(ignoreBang);
+}
+
+export function arcOnDuck(bmp     )       {
+    {
+        let data      = arcPixels(bmp, 640, 340);
+        new Uint8Array(arcMem.buffer, arcX.bp_duck_addr(), 870400).set(data);
+        arcX.bp_duck_set(1);
+    }
+}
+
+export function garSshState()         {
+    return ((ssh == null) ? 0 : (ssh.up ? 2 : 1));
+}
+
+export function garVncState()         {
+    return ((vnc == null) ? 0 : (vnc.up ? 2 : 1));
+}
+
+export function garScanState()         {
+    return (scanActive ? 1 : ((scanX.nk_scan_done() > 0) ? 2 : 0));
+}
+
+export function garFactA(id        )         {
+    return ((id === 1) ? garScanState() : ((id === 2) ? garSshState() : ((id === 3) ? garVncState() : ((id === 4) ? arcState : 0))));
+}
+
+export function garFactB(id        )         {
+    return ((id === 1) ? scanX.nk_dev_count() : 0);
+}
+
+export function garWord(fn        , a        , b        )         {
+    return cstr(scanU8, scanX[fn](a, b));
+}
+
+export function garWord1(fn        , a        )         {
+    return cstr(scanU8, scanX[fn](a));
+}
+
+export function garPct(v        )         {
+    return ("" + (v / 10.0) + "%");
+}
+
+export function garObjectHtml(id        )         {
+    return ("" + "<button class=\"obj obj-" + id + "\" data-id=\"" + id + "\" id=\"obj-" + id + "\">" + "<span class=\"art\" aria-hidden=\"true\"></span>" + "<span class=\"obj-name\">" + esc(garWord1("nk_garage_label_addr", id)) + "</span>" + "<span class=\"obj-sub\">" + esc(garWord1("nk_garage_sub_addr", id)) + "</span>" + "<span class=\"obj-status\"><i class=\"lamp l0\" id=\"lamp-" + id + "\"></i><span id=\"status-" + id + "\"></span></span>" + "</button>");
+}
+
+export function garObjectsHtml(n        )         {
+    {
+        let i         = 1;
+        let acc         = "";
+        while (true) {
+            if ((i <= n)) {
+                const _t0 = (i + 1);
+                const _t1 = ("" + acc + garObjectHtml(i));
+                i = _t0;
+                acc = _t1;
+                continue;
+            } else {
+                return acc;
+            }
+            break;
+        }
+    }
+}
+
+export function garBuildBang()       {
+    if ((!(garBuilt))) {
+        {
+            let n      = scanX.nk_garage_count();
+            garBuilt = true;
+            setHtmlBang("garage-objects", garObjectsHtml(n));
+        }
+    }
+}
+
+export function garPlaceBang(id        )       {
+    {
+        let b      = el(("" + "obj-" + id));
+        if ((!((b == null)))) {
+            {
+                let st      = b.style;
+                st.left = garPct(scanX.nk_garage_obj_x(id, garVw, garVh));
+                st.top = garPct(scanX.nk_garage_obj_y(id, garVw, garVh));
+                st.width = garPct(scanX.nk_garage_obj_w(id, garVw, garVh));
+                st.height = garPct(scanX.nk_garage_obj_h(id, garVw, garVh));
+            }
+        }
+    }
+}
+
+export function garLightBang(id        )       {
+    {
+        let l      = scanX.nk_garage_light(id, garFactA(id), garFactB(id), 0);
+        let lamp      = el(("" + "lamp-" + id));
+        if ((!((lamp == null)))) {
+            lamp.className = ("" + "lamp l" + l);
+        }
+        setTextBang(("" + "status-" + id), (((id === 1) && (l === 1)) ? ("" + garWord("nk_garage_status_addr", id, l) + ": " + garFactB(1)) : garWord("nk_garage_status_addr", id, l)));
+        {
+            let b      = el(("" + "obj-" + id));
+            if ((!((b == null)))) {
+                b.setAttribute("aria-label", ("" + garWord1("nk_garage_label_addr", id) + ". " + garWord("nk_garage_status_addr", id, l)));
+            }
+        }
+    }
+}
+
+export function garCableBang(g     , i        , w        , h        )       {
+    if ((scanX.nk_garage_cable_live(i, garSshState(), garVncState()) === 1)) {
+        {
+            let a      = scanX.nk_garage_cable_from(i);
+            let b      = scanX.nk_garage_cable_to(i);
+            let ax      = ((scanX.nk_garage_anchor_x(a, garVw, garVh) / 1000.0) * w);
+            let ay      = ((scanX.nk_garage_anchor_y(a, garVw, garVh) / 1000.0) * h);
+            let bx      = ((scanX.nk_garage_anchor_x(b, garVw, garVh) / 1000.0) * w);
+            let by      = ((scanX.nk_garage_anchor_y(b, garVw, garVh) / 1000.0) * h);
+            g.beginPath();
+            g.moveTo(ax, ay);
+            g.quadraticCurveTo(((ax + bx) / 2.0), (((ay + by) / 2.0) + (h * 0.12)), bx, by);
+            g.stroke();
+        }
+    }
+}
+
+export function garCablesBang()       {
+    {
+        let floor      = el("garage-floor");
+        let c      = el("garage-cables");
+        if (((!((floor == null))) && (!((c == null))))) {
+            {
+                let w      = floor.clientWidth;
+                let h      = floor.clientHeight;
+                if ((c.width !== w)) {
+                    c.width = w;
+                }
+                if ((c.height !== h)) {
+                    c.height = h;
+                }
+                {
+                    let g      = c.getContext("2d");
+                    g.clearRect(0, 0, w, h);
+                    g.strokeStyle = "#5fd38d";
+                    g.lineWidth = 4;
+                    g.lineCap = "round";
+                    {
+                        let __dn3      = scanX.nk_garage_cable_count();
+                        {
+                            let i         = 0;
+                            while (true) {
+                                if ((i < __dn3)) {
+                                    garCableBang(g, i, w, h);
+                                    i = (i + 1);
+                                    continue;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export function garRefreshBang()       {
+    if ((!((scanX == null)))) {
+        garVw = win().innerWidth;
+        garVh = win().innerHeight;
+        garBuildBang();
+        {
+            let __dn4      = scanX.nk_garage_count();
+            {
+                let i         = 0;
+                while (true) {
+                    if ((i < __dn4)) {
+                        garPlaceBang((i + 1));
+                        garLightBang((i + 1));
+                        i = (i + 1);
+                        continue;
+                    }
+                    break;
+                }
+            }
+        }
+        garCablesBang();
+    }
+}
+
+export function garVisibleP()          {
+    return (!(el("view-garage").hidden));
+}
+
+export function garTick()       {
+    if (garVisibleP()) {
+        garRefreshBang();
+    }
+}
+
+export function onResize(e     )       {
+    garTick();
+}
+
+export function viewName(i        )         {
+    return ["garage", "devices", "ssh", "vnc", "arcade"][i];
+}
+
+export function garageActBang(id        )       {
+    {
+        let action      = scanX.nk_garage_action(id, garSshState(), garVncState());
+        let v      = scanX.nk_garage_action_view(action);
+        if ((action > 0)) {
+            showViewBang(viewName(v));
+            {
+                let hint         = garWord1("nk_garage_hint_addr", action);
+                setTextBang("devices-hint", hint);
+                setHiddenBang("devices-hint", (hint === ""));
+            }
+        }
+    }
+}
+
+export function onGarageClick(e     )       {
+    {
+        let b      = e.target.closest("[data-id]");
+        if ((b == null)) {
+            {
+                let r      = el("garage-floor").getBoundingClientRect();
+                let px         = Math.floor((((e.clientX - r.left) * 1000.0) / r.width));
+                let py         = Math.floor((((e.clientY - r.top) * 1000.0) / r.height));
+                let id      = scanX.nk_garage_hit(px, py, garVw, garVh);
+                if ((id > 0)) {
+                    garageActBang(id);
+                }
+            }
+        } else {
+            garageActBang(parseInt(b.dataset.id, 10));
+        }
+    }
+}
+
 export function showViewBang(name        )       {
+    setHiddenBang("view-garage", (name !== "garage"));
     setHiddenBang("view-devices", (name !== "devices"));
     setHiddenBang("view-ssh", (name !== "ssh"));
     setHiddenBang("view-vnc", (name !== "vnc"));
+    setHiddenBang("view-arcade", (name !== "arcade"));
     {
         let i         = 0;
         while (true) {
-            if ((i < 3)) {
+            if ((i < 5)) {
                 {
-                    let n      = ["devices", "ssh", "vnc"][i];
+                    let n         = viewName(i);
                     let b      = el(("" + "tab-" + n));
                     if ((!((b == null)))) {
                         b.classList.toggle("on", (n === name));
@@ -1508,12 +2140,27 @@ export function showViewBang(name        )       {
             break;
         }
     }
+    if ((name !== "devices")) {
+        setHiddenBang("devices-hint", true);
+    }
+    if ((name === "arcade")) {
+        arcadeEnterBang();
+    } else {
+        arcadeLeaveBang();
+    }
+    if ((name === "garage")) {
+        garRefreshBang();
+    }
     if ((name === "ssh")) {
         el("term-ime").focus();
     }
     if ((name === "vnc")) {
         vncFitBang();
     }
+}
+
+export function onArcadeExit(e     )       {
+    showViewBang("garage");
 }
 
 export function onTabClick(e     )       {
@@ -1746,6 +2393,10 @@ export function onNative(json        )       {
     }
 }
 
+export function curView()         {
+    return ((!(el("view-garage").hidden)) ? 0 : ((!(el("view-devices").hidden)) ? 1 : ((!(el("view-ssh").hidden)) ? 2 : ((!(el("view-vnc").hidden)) ? 3 : 4))));
+}
+
 export function nkBack()          {
     if ((!(el("dlg-hostkey").hidden))) {
         onHkCancel(null);
@@ -1763,7 +2414,15 @@ export function nkBack()          {
                     vncCloseBang();
                     return true;
                 } else {
-                    return false;
+                    {
+                        let t      = scanX.nk_garage_back(curView());
+                        if ((t < 0)) {
+                            return false;
+                        } else {
+                            showViewBang(viewName(t));
+                            return true;
+                        }
+                    }
                 }
             }
         }
@@ -1793,6 +2452,13 @@ export function failBootBang(err     )       {
 
 export function wireUiBang()       {
     onBang("tabs", "click", onTabClick);
+    onBang("garage-floor", "click", onGarageClick);
+    onBang("btn-arcade-exit", "click", onArcadeExit);
+    onBang("arc-pad", "pointerdown", arcPadDown);
+    onBang("arc-pad", "pointerup", arcPadUp);
+    onBang("arc-pad", "pointercancel", arcPadUp);
+    onBang("arc-pad", "lostpointercapture", arcPadUp);
+    onBang("arc-pad", "contextmenu", arcNoMenu);
     onBang("btn-scan", "click", onScanClick);
     onBang("device-list", "click", onDeviceClick);
     onBang("saved-list", "click", onSavedClick);
@@ -1823,6 +2489,8 @@ export function wireUiBang()       {
     onBang("vnc-wrap", "pointerup", onVncUp);
     onBang("vnc-wrap", "pointercancel", onVncUp);
     onBang("vnc-wrap", "wheel", onVncWheel);
+    win().addEventListener("resize", onResize);
+    win().addEventListener("orientationchange", onResize);
     win().addEventListener("keydown", onKeydown);
     doc().addEventListener("paste", onPasteEvent);
 }
@@ -1841,12 +2509,13 @@ export function onModules(mods     )       {
     wireUiBang();
     renderSavedBang();
     renderDevicesBang();
-    showViewBang("devices");
+    showViewBang("garage");
     ready = true;
     statusBang(netLabel(pickCidr(localInfo())));
     win().requestAnimationFrame(termFrame);
     win().requestAnimationFrame(vncFrame);
     setInterval(blinkBang, 530);
+    setInterval(garTick, 500);
     if (haveNativeP()) {
         startScanBang();
     }
