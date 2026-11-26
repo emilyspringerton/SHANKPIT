@@ -12,7 +12,7 @@ let bad = 0;
 const fail = m => { console.error('FAIL: ' + m); bad++; };
 const ok = m => console.log('ok:   ' + m);
 
-const MODULES = { 'netkit.wasm': 64, 'netkit-lite.wasm': 8, 'nkterm.wasm': 8, 'brawlpit.wasm': 8 };       // MB, fixed (brawlpit.wasm: WOTAN's web build, the arcade cabinet's game)
+const MODULES = { 'netkit.wasm': 64, 'netkit-lite.wasm': 8, 'nkterm.wasm': 8, 'brawlpit.wasm': 8, 'survival.wasm': 8 };  // survival.wasm: the SHANKPHONE's SURVIVAL button (shankpit-460 engine + CITY + survival mods)       // MB, fixed (brawlpit.wasm: WOTAN's web build, the arcade cabinet's game)
 const exportsOf = {};
 for (const [name, mb] of Object.entries(MODULES)) {
   const f = path.join(dir, name);
@@ -35,13 +35,17 @@ const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');
 // every wasm export the page calls: the generated JS calls them as <exports>.nk_name(...) / <exports>.term_name(...)
 // (the arcade host calls BRAWLPIT's own bp_* exports on its own instance; it also reaches nk_garage_* through the scanning instance)
 const called = new Set([...js.matchAll(/\.((?:nk|term|bp)_[a-z0-9_]+)\(/g)].map(m => m[1]));
+// SURVIVAL's host calls the shankpit-460 page contract (sp_*) on its own instance
+const spCalled = new Set([...js.matchAll(/survX\.(sp_[a-z0-9_]+)\(/g)].map(m => m[1]));
+for (const fn of spCalled) if (exportsOf['survival.wasm'] && !exportsOf['survival.wasm'].has(fn)) fail(`survival.wasm does not export ${fn}, which the survival host calls`);
+if (spCalled.size < 10) fail(`the page calls only ${spCalled.size} sp_* exports: nk-host.js is stale (no SURVIVAL host)`); else ok(`SURVIVAL: the page calls ${spCalled.size} sp_* exports, all present in survival.wasm`);
 for (const fn of called) {
   const where = fn.startsWith('term_') ? ['nkterm.wasm'] : fn.startsWith('bp_') ? ['brawlpit.wasm'] : ['netkit.wasm', 'netkit-lite.wasm'];
   for (const w of where) if (exportsOf[w] && !exportsOf[w].has(fn)) fail(`${fn} is called by the page but ${w} does not export it`);
 }
 ok(`the page calls ${called.size} wasm exports, all present`);
 // the garage's word getters are called by name through a helper (scanX[fn](..)), so check the names the page passes to it
-const garageWords = new Set([...js.matchAll(/"(nk_garage_[a-z0-9_]+)"/g)].map(m => m[1]));
+const garageWords = new Set([...js.matchAll(/"(nk_(?:garage|survival)_[a-z0-9_]+)"/g)].map(m => m[1]));
 for (const fn of garageWords) for (const w of ['netkit.wasm', 'netkit-lite.wasm']) if (exportsOf[w] && !exportsOf[w].has(fn)) fail(`${fn} is named by the page but ${w} does not export it`);
 if (![...called].some(f => f.startsWith('nk_garage_'))) fail('the page never calls nk_garage_*: nk-host.js is stale (regenerate the bundle with PARENA/scripts/build_netkit_web.sh)');
 else ok(`the garage: ${[...called].filter(f => f.startsWith('nk_garage_')).length} nk_garage_* exports called, ${garageWords.size} more named`);

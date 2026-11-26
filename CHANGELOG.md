@@ -1,5 +1,16 @@
 ## 2026-11-26
 
+- **feat(netkit): the SHANKPHONE, with a Survival button that plays SHANKPIT SURVIVAL** (founder: "the shankpit net kit can be the
+  shankphone and the shankphone itself can have a button for survival that launches OG shankpit as a level and collection of mods";
+  PARENA rewrite chosen over porting the C client's GL to GLES).
+  - The app label and page brand are now SHANKPHONE; the package id is unchanged. Garage object 5 "Survival" and the Survival view: a 640x360
+    canvas, move stick, drag-look, Fire/Jump/Crouch/Reload/Ability/Weapon; full screen on a sideways phone (`index.html`, `netkit.css`).
+  - `apps/netkit`: bundle regenerated from PARENA ee07efe (nk-host.js, netkit.wasm, netkit-lite.wasm) + `survival.wasm` (232 KB, 0 imports);
+    PROVENANCE refreshed. `verify-web-bundle.mjs` checks survival.wasm (imports, fixed memory, the 15 sp_* exports the host calls).
+  - The release APK builds here (650 KB); lint and JVM tests pass. Verified in headless Chromium at tablet and phone sizes; not on a device, no sound.
+  - README, `android-netkit/README.md`, `apps/netkit/README.md`.
+  (sess-20261126-1643-452c2f1a)
+
 - **feat(netkit): USB tab -- a text editor that saves to a USB drive, and a VNC kit for a PC with no screen** (founder: "assume i am
   administrator and i have access to the keyboard but no screen ... build a text editor into netkit ... save to the usb drive connected over
   usb c"; EMILY KIT-USB).

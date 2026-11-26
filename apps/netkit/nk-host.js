@@ -47,6 +47,23 @@ let arcRun          = false;
 let arcLooping          = false;
 let arcHeld      = null;
 let arcListening          = false;
+let survState         = 0;
+let survX      = null;
+let survMem      = null;
+let survCanvas      = null;
+let survCtx      = null;
+let survImg      = null;
+let survRun          = false;
+let survLooping          = false;
+let survHeld      = null;
+let survListening          = false;
+let survStickId         = -1;
+let survLx         = 0.0;
+let survLy         = 0.0;
+let survLookId         = -1;
+let survLookX         = 0.0;
+let survLookY         = 0.0;
+let survMenuDown          = false;
 let garBuilt          = false;
 let garVw         = 1280;
 let garVh         = 800;
@@ -3212,6 +3229,346 @@ export function arcOnDuck(bmp     )       {
     }
 }
 
+export function survSayBang(text     )       {
+    setTextBang("survival-msg", text);
+    setHiddenBang("survival-msg", (text === ""));
+}
+
+export function survOnResponse(r     )      {
+    return (r.ok ? r.arrayBuffer() : Promise.reject(("" + "survival.wasm: HTTP " + r.status)));
+}
+
+export function survOnBytes(bytes     )      {
+    return WebAssembly.instantiate(bytes, {});
+}
+
+export function survFailBang(err     )       {
+    survState = 3;
+    survSayBang(("" + "SURVIVAL could not load: " + err));
+    console.error.call(console, err);
+}
+
+export function survivalLoadBang()       {
+    survState = 1;
+    survSayBang("Loading SURVIVAL...");
+    survHeld = {};
+    survCanvas = el("sv-canvas");
+    survCtx = survCanvas.getContext("2d");
+    fetch("survival.wasm").then(survOnResponse).then(survOnBytes).then(survOnInstance).catch(survFailBang);
+}
+
+export function survOnInstance(result     )       {
+    survX = result.instance.exports;
+    survMem = survX.memory;
+    survX.sp_init();
+    survImg = new ImageData(new Uint8ClampedArray(survMem.buffer, survX.sp_fb_addr(), ((survX.sp_fb_w() * survX.sp_fb_h()) * 4)), survX.sp_fb_w(), survX.sp_fb_h());
+    survInstallBang();
+    survState = 2;
+    survSayBang("");
+    if (survRun) {
+        survX.sp_lock(1);
+        survStartLoopBang();
+    }
+}
+
+export function survTick(t        )       {
+    survLooping = false;
+    if ((survRun && (survState === 2))) {
+        survX.sp_pad(0, survLx, survLy, 0.0, 0.0, 0.0, 0.0, 0);
+        survX.sp_frame(t);
+        survCtx.putImageData(survImg, 0, 0);
+        survStartLoopBang();
+    }
+}
+
+export function survStartLoopBang()       {
+    if ((!(survLooping))) {
+        survLooping = true;
+        win().requestAnimationFrame(survTick);
+    }
+}
+
+export function survivalEnterBang()       {
+    survRun = true;
+    if (((survState === 0) || (survState === 3))) {
+        survivalLoadBang();
+    }
+    if ((survState === 2)) {
+        survX.sp_lock(1);
+        survStartLoopBang();
+    }
+}
+
+export function survivalLeaveBang()       {
+    if (survRun) {
+        survRun = false;
+        survReleaseAllBang();
+        if ((!((survX == null)))) {
+            survX.sp_lock(0);
+        }
+    }
+}
+
+export function survUnpressBang(b     )       {
+    b.classList.remove("down");
+}
+
+export function survReleaseAllBang()       {
+    if ((!((survHeld == null)))) {
+        {
+            let ids      = Object.keys(survHeld);
+            {
+                let __dn4      = ids.length;
+                {
+                    let i         = 0;
+                    while (true) {
+                        if ((i < __dn4)) {
+                            survCodeUpBang(survHeld[ids[i]]);
+                            i = (i + 1);
+                            continue;
+                        }
+                        break;
+                    }
+                }
+            }
+            survHeld = {};
+            doc().querySelectorAll("#sv-pad .down").forEach(survUnpressBang);
+            survStickId = -1;
+            survLx = 0.0;
+            survLy = 0.0;
+            survKnobBang(0.0, 0.0);
+            survLookId = -1;
+            if ((!((survX == null)))) {
+                if (survMenuDown) {
+                    survX.sp_button(0, 0);
+                }
+                survMenuDown = false;
+                survX.sp_pad_gone(0);
+                survX.sp_blur();
+            }
+        }
+    }
+}
+
+export function survCodeDownBang(code        )       {
+    if (((!((survX == null))) && (code > 0))) {
+        if ((code === 1000)) {
+            survX.sp_wheel(1);
+        } else {
+            if ((code === 1001)) {
+                survX.sp_button(0, 1);
+            } else {
+                survX.sp_key(code, 1);
+            }
+        }
+    }
+}
+
+export function survCodeUpBang(code        )       {
+    if (((!((survX == null))) && (code > 0))) {
+        if ((code === 1000)) {
+        } else {
+            if ((code === 1001)) {
+                survX.sp_button(0, 0);
+            } else {
+                survX.sp_key(code, 0);
+            }
+        }
+    }
+}
+
+export function survPadDown(e     )       {
+    {
+        let b      = e.target.closest("[data-sv]");
+        if (((!((b == null))) && (survRun && (survState === 2)))) {
+            {
+                let code      = scanX.nk_survival_touch_key(parseInt(b.dataset.sv, 10));
+                let pid      = e.pointerId;
+                e.preventDefault();
+                b.setPointerCapture(pid);
+                b.classList.add("down");
+                survHeld[("" + pid)] = code;
+                survCodeDownBang(code);
+            }
+        }
+    }
+}
+
+export function survPadUp(e     )       {
+    {
+        let pid         = ("" + e.pointerId);
+        if ((!((survHeld == null)))) {
+            {
+                let code      = survHeld[pid];
+                if (((typeof code) === "number")) {
+                    survCodeUpBang(code);
+                    survHeld[pid] = 0;
+                    {
+                        let b      = e.target.closest("[data-sv]");
+                        if ((!((b == null)))) {
+                            b.classList.remove("down");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export function survKnobBang(lx        , ly        )       {
+    {
+        let k      = el("sv-knob");
+        let r      = scanX.nk_survival_stick_radius();
+        if ((!((k == null)))) {
+            k.style.transform = ("" + "translate(" + (lx * r) + "px," + (ly * r) + "px)");
+        }
+    }
+}
+
+export function survStickSetBang(e     )       {
+    {
+        let s      = el("sv-stick");
+        let rect      = s.getBoundingClientRect();
+        let r      = scanX.nk_survival_stick_radius();
+        let dx      = ((e.clientX - (rect.left + (rect.width / 2.0))) / r);
+        let dy      = ((e.clientY - (rect.top + (rect.height / 2.0))) / r);
+        let len         = Math.sqrt(((dx * dx) + (dy * dy)));
+        let k         = ((len > 1.0) ? (1.0 / len) : 1.0);
+        survLx = (dx * k);
+        survLy = (dy * k);
+        survKnobBang(survLx, survLy);
+    }
+}
+
+export function survStickDown(e     )       {
+    if ((survRun && (survState === 2))) {
+        e.preventDefault();
+        survStickId = e.pointerId;
+        el("sv-stick").setPointerCapture(survStickId);
+        survStickSetBang(e);
+    }
+}
+
+export function survStickMove(e     )       {
+    if ((e.pointerId === survStickId)) {
+        survStickSetBang(e);
+    }
+}
+
+export function survStickUp(e     )       {
+    if ((e.pointerId === survStickId)) {
+        survStickId = -1;
+        survLx = 0.0;
+        survLy = 0.0;
+        survKnobBang(0.0, 0.0);
+    }
+}
+
+export function survFbX(e     )         {
+    {
+        let rect      = survCanvas.getBoundingClientRect();
+        return Math.floor((((e.clientX - rect.left) * survX.sp_fb_w()) / rect.width));
+    }
+}
+
+export function survFbY(e     )         {
+    {
+        let rect      = survCanvas.getBoundingClientRect();
+        return Math.floor((((e.clientY - rect.top) * survX.sp_fb_h()) / rect.height));
+    }
+}
+
+export function survCanvasDown(e     )       {
+    if ((survState === 2)) {
+        e.preventDefault();
+        if ((survX.sp_phase() === 1)) {
+            if ((survLookId < 0)) {
+                survLookId = e.pointerId;
+                survLookX = e.clientX;
+                survLookY = e.clientY;
+                survCanvas.setPointerCapture(survLookId);
+            }
+        } else {
+            survX.sp_pointer(survFbX(e), survFbY(e));
+            survMenuDown = true;
+            survX.sp_button(0, 1);
+        }
+    }
+}
+
+export function survCanvasMove(e     )       {
+    if ((survState === 2)) {
+        if ((e.pointerId === survLookId)) {
+            {
+                let per      = (scanX.nk_survival_look_per_100px() / 15.0);
+                let dx      = ((e.clientX - survLookX) * per);
+                let dy      = ((e.clientY - survLookY) * per);
+                survLookX = e.clientX;
+                survLookY = e.clientY;
+                survX.sp_mouse(dx, dy);
+            }
+        } else {
+            survX.sp_pointer(survFbX(e), survFbY(e));
+        }
+    }
+}
+
+export function survCanvasUp(e     )       {
+    if ((survState === 2)) {
+        if ((e.pointerId === survLookId)) {
+            survLookId = -1;
+        }
+        if (survMenuDown) {
+            survMenuDown = false;
+            survX.sp_button(0, 0);
+            survX.sp_lock(1);
+        }
+    }
+}
+
+export function survOnKeydown(e     )       {
+    if ((survRun && ((survState === 2) && (!(arcTypingP()))))) {
+        survX.sp_key(e.keyCode, 1);
+        if (arcGameKeyP(e)) {
+            e.preventDefault();
+        }
+    }
+}
+
+export function survOnKeyup(e     )       {
+    if ((survRun && (survState === 2))) {
+        survX.sp_key(e.keyCode, 0);
+    }
+}
+
+export function survOnBlur(e     )       {
+    survReleaseAllBang();
+}
+
+export function survOnVisibility(e     )       {
+    if (doc().hidden) {
+        survReleaseAllBang();
+    }
+}
+
+export function survInstallBang()       {
+    if ((!(survListening))) {
+        survListening = true;
+        {
+            let w      = win();
+            w.addEventListener("keydown", survOnKeydown);
+            w.addEventListener("keyup", survOnKeyup);
+            w.addEventListener("blur", survOnBlur);
+            doc().addEventListener("visibilitychange", survOnVisibility);
+        }
+        survCanvas.addEventListener("pointerdown", survCanvasDown);
+        survCanvas.addEventListener("pointermove", survCanvasMove);
+        survCanvas.addEventListener("pointerup", survCanvasUp);
+        survCanvas.addEventListener("pointercancel", survCanvasUp);
+        survCanvas.addEventListener("contextmenu", arcNoMenu);
+    }
+}
+
 export function garSshState()         {
     return ((ssh == null) ? 0 : (ssh.up ? 2 : 1));
 }
@@ -3225,7 +3582,7 @@ export function garScanState()         {
 }
 
 export function garFactA(id        )         {
-    return ((id === 1) ? garScanState() : ((id === 2) ? garSshState() : ((id === 3) ? garVncState() : ((id === 4) ? arcState : 0))));
+    return ((id === 1) ? garScanState() : ((id === 2) ? garSshState() : ((id === 3) ? garVncState() : ((id === 4) ? arcState : ((id === 5) ? survState : 0)))));
 }
 
 export function garFactB(id        )         {
@@ -3347,11 +3704,11 @@ export function garCablesBang()       {
                     g.lineWidth = 4;
                     g.lineCap = "round";
                     {
-                        let __dn4      = scanX.nk_garage_cable_count();
+                        let __dn5      = scanX.nk_garage_cable_count();
                         {
                             let i         = 0;
                             while (true) {
-                                if ((i < __dn4)) {
+                                if ((i < __dn5)) {
                                     garCableBang(g, i, w, h);
                                     i = (i + 1);
                                     continue;
@@ -3372,11 +3729,11 @@ export function garRefreshBang()       {
         garVh = win().innerHeight;
         garBuildBang();
         {
-            let __dn5      = scanX.nk_garage_count();
+            let __dn6      = scanX.nk_garage_count();
             {
                 let i         = 0;
                 while (true) {
-                    if ((i < __dn5)) {
+                    if ((i < __dn6)) {
                         garPlaceBang((i + 1));
                         garLightBang((i + 1));
                         i = (i + 1);
@@ -3405,7 +3762,7 @@ export function onResize(e     )       {
 }
 
 export function viewName(i        )         {
-    return ["garage", "devices", "ssh", "vnc", "arcade"][i];
+    return ["garage", "devices", "ssh", "vnc", "arcade", "survival"][i];
 }
 
 export function garageActBang(id        )       {
@@ -3448,6 +3805,7 @@ export function showViewBang(name        )       {
     setHiddenBang("view-ssh", (name !== "ssh"));
     setHiddenBang("view-vnc", (name !== "vnc"));
     setHiddenBang("view-arcade", (name !== "arcade"));
+    setHiddenBang("view-survival", (name !== "survival"));
     setHiddenBang("view-files", (name !== "files"));
     setHiddenBang("view-drive", (name !== "drive"));
     {
@@ -3465,7 +3823,7 @@ export function showViewBang(name        )       {
     {
         let i         = 0;
         while (true) {
-            if ((i < 5)) {
+            if ((i < 6)) {
                 {
                     let n         = viewName(i);
                     let b      = el(("" + "tab-" + n));
@@ -3487,6 +3845,11 @@ export function showViewBang(name        )       {
     } else {
         arcadeLeaveBang();
     }
+    if ((name === "survival")) {
+        survivalEnterBang();
+    } else {
+        survivalLeaveBang();
+    }
     if ((name === "garage")) {
         garRefreshBang();
     }
@@ -3502,6 +3865,10 @@ export function showViewBang(name        )       {
 }
 
 export function onArcadeExit(e     )       {
+    showViewBang("garage");
+}
+
+export function onSurvivalExit(e     )       {
     showViewBang("garage");
 }
 
@@ -3761,7 +4128,7 @@ export function onNative(json        )       {
 }
 
 export function curView()         {
-    return ((!(el("view-garage").hidden)) ? 0 : ((!(el("view-devices").hidden)) ? 1 : ((!(el("view-ssh").hidden)) ? 2 : ((!(el("view-vnc").hidden)) ? 3 : 4))));
+    return ((!(el("view-garage").hidden)) ? 0 : ((!(el("view-devices").hidden)) ? 1 : ((!(el("view-ssh").hidden)) ? 2 : ((!(el("view-vnc").hidden)) ? 3 : ((!(el("view-survival").hidden)) ? 5 : 4)))));
 }
 
 export function nkBack()          {
@@ -3840,6 +4207,17 @@ export function wireUiBang()       {
     onBang("tabs", "click", onTabClick);
     onBang("garage-floor", "click", onGarageClick);
     onBang("btn-arcade-exit", "click", onArcadeExit);
+    onBang("btn-survival-exit", "click", onSurvivalExit);
+    onBang("sv-pad", "pointerdown", survPadDown);
+    onBang("sv-pad", "pointerup", survPadUp);
+    onBang("sv-pad", "pointercancel", survPadUp);
+    onBang("sv-pad", "lostpointercapture", survPadUp);
+    onBang("sv-pad", "contextmenu", arcNoMenu);
+    onBang("sv-stick", "pointerdown", survStickDown);
+    onBang("sv-stick", "pointermove", survStickMove);
+    onBang("sv-stick", "pointerup", survStickUp);
+    onBang("sv-stick", "pointercancel", survStickUp);
+    onBang("sv-stick", "contextmenu", arcNoMenu);
     onBang("arc-pad", "pointerdown", arcPadDown);
     onBang("arc-pad", "pointerup", arcPadUp);
     onBang("arc-pad", "pointercancel", arcPadUp);

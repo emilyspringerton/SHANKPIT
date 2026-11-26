@@ -367,6 +367,14 @@ store) that never interprets a byte. No libssh2, no JSch, no hand-written JavaSc
   `setup.bat` + `setup.conf` + `NETKIT.TXT` so a Windows PC with only a keyboard can be set up blind: one Win+R line, and the script
   says each step out loud. The editor is PARENA (`nk_edit.prn`); tested by specs and headless Chromium, **not yet on a real tablet and
   stick** (`docs/NETKIT_NORTHSTAR.md` §6d).
+- **It is the SHANKPHONE (2026-11-26)** (founder: *"the shankpit net kit can be the shankphone and the shankphone itself can have a button for
+  survival that launches OG shankpit as a level and collection of mods"*). The app is now called SHANKPHONE, and the garage is its home
+  screen. A fifth object, **Survival**, plays the OG client's SURVIVAL mode inside the page. It is a **PARENA rewrite**, not the C
+  client's OpenGL: shankpit-460's PARENA engine plus the CITY level and the survival mods (`PARENA/stdlib/shankpit_survival/`): waves,
+  zombies, a knife start, guns on the roads, loot chests, and death ends the run. That is one 232 KB wasm with no imports, and it runs
+  offline. Touch controls: a move stick, drag the picture to look, and Fire / Jump / Crouch / Reload / Ability / Weapon buttons. On a
+  phone held sideways it goes full screen. Tested headlessly (31 game checks; Chromium at tablet and phone sizes). **Not yet played on a
+  real phone, and no sound yet.** The package id is still `industrial.einhorn.netkit`, so installs update in place.
 - **Ships in every release** as `ShankPit_Netkit_<build>.apk` (`release.yml`; `node android-netkit/tools/verify-web-bundle.mjs apps/netkit` is the
   bundle check).
 

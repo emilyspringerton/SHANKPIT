@@ -18,15 +18,19 @@
 #   netkit-lite.wasm regenerated (rebuilt from 4cf885e byte for byte); kit/setup.bat added (a copy of ops/netkit/windows/setup.bat, which
 #   build_netkit_web.sh now ships); index.html and netkit.css edited by hand (the USB view and tab). nkterm.wasm and oui.bin reproduced
 #   byte for byte; brawlpit.wasm left as WOTAN's copy.
+# UPDATE 2026-11-26 (SHANKPHONE + Survival, PARENA ee07efe): nk-host.js, netkit.wasm, netkit-lite.wasm regenerated and survival.wasm added
+#   (scripts/build_netkit_web.sh at ee07efe; LLVM 18.1.3, node 22.18); index.html and netkit.css edited by hand (SHANKPHONE brand, the
+#   Survival view, tab and object art). nkterm.wasm, oui.bin and both PNGs reproduced byte for byte; brawlpit.wasm left as WOTAN's copy.
 # sha256  file
-8e6af6d846da5ab629b648879c516888d880dea71f0e57cc2f02341824bde221  index.html
-30617742cfd8cddb50b3876b3343fec9a998903434b5d7dfd26ca5200c970fd6  netkit.css
-2022a890c47458aa4f8c6741c9b9753d33b1d671d80939d28bcb3971ecfcf6fd  nk-host.js
-8b51330c6ff95979489dfa7592f2d43653e811e8c70e7f0b984dd593d48745f9  netkit.wasm
-51f48960a820ebfdd2fd16023645fa4cd8ddca8386f6835af17a989370144fc0  netkit-lite.wasm
+0aa75eb317fe9cd3b0bb78e9edc85183d4ef27716d7b25d76e54b27af08d24a4  index.html
+c7bf3b4396ede5940de5d9198bfbaa6e23462f1f40f7a33fc33dde0ad609869d  netkit.css
+295c18f444037eeda784e56041b8e8af180824ebf5ec9463d38e4c0578af19b3  nk-host.js
+160d183803a8f5d089e16bf3947df49eb3d59bd550bf35e1536fe36e217728dc  netkit.wasm
+8ab96e76bbb0861e96fe72f4e2635e646653e02fd0a7fd9b2d73d6d118f31742  netkit-lite.wasm
 71670ff4ea38a4b15a536bbb69d6ec743cff1109c1c3c66d6b1837e9d6b6051b  nkterm.wasm
 4e97ba74e6cc18a96016c977c26386ff913858c294482b5073825e38fc7720b7  brawlpit.wasm
 3c9330282ebd317bf2b8da01b9cce145802cd0fbf40c51f1156ba168e18eab82  oui.bin
 de9c4c6a7d91195216c56ba7002be6bafaf91dfdb9e205d1f8f8a32e9eebde7a  duck.png
 6326f18fd5fe4c4990cc54e3812880fd54dd149efe08b43a8a0dddf7292b8f98  sprites.png
 dd5d3cb819720b092de844b18fa59c84389b94e4d18615e031a8c313664036d4  kit/setup.bat
+7358f0ed3798fc46250e3e50fa17f3937a76fe76ee630d31418d75cc6970b783  survival.wasm

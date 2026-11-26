@@ -1,4 +1,4 @@
-/* SHANKPIT Netkit -- styling only. Dark, touch-first: every control is at least 44px tall. */
+/* the SHANKPHONE (SHANKPIT Netkit) -- styling only. Dark, touch-first: every control is at least 44px tall. */
 :root {
   --bg: #0e1319; --panel: #161d26; --panel2: #1d2631; --line: #2a3644; --text: #e6edf3; --muted: #8b9bab;
   --accent: #3fb6a8; --accent-ink: #04201c; --warn: #f0b429; --bad: #ff6b6b; --good: #5fd38d;
@@ -92,6 +92,8 @@ main:has(#view-garage:not([hidden])) { overflow: hidden; padding: 12px 12px calc
 .obj-2 .art::after { content: ">_"; position: absolute; left: 6px; top: 6px; font: 700 14px ui-monospace, monospace; color: var(--good); }
 .obj-3 .art { border-radius: 4px; box-shadow: 0 6px 0 -3px var(--muted); }
 .obj-4 .art { border-color: var(--warn); border-radius: 10px 10px 4px 4px; width: 40px; height: 52px; }
+.obj-5 .art { border-color: var(--bad); border-radius: 50%; width: 46px; height: 46px; }
+.obj-5 .art::after { content: ""; position: absolute; left: 50%; top: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; border: 3px solid var(--bad); border-radius: 50%; }
 .obj-4 .art::after { content: ""; position: absolute; left: 8px; right: 8px; top: 6px; height: 14px; background: var(--warn); opacity: .6; border-radius: 2px; }
 .obj-name { font-weight: 600; font-size: 15px; } .obj-sub { color: var(--muted); font-size: 12px; }
 .obj-status { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 12px; color: var(--text); }
@@ -118,6 +120,30 @@ main:has(#view-arcade:not([hidden])) { overflow: hidden; padding: 8px 8px calc(8
 .pb.down { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 @media (max-height: 520px) { #arc-pad { position: absolute; inset: auto 0 0 0; padding: 0 12px 8px; pointer-events: none; } #arc-pad button { pointer-events: auto; opacity: .85; } #view-arcade { position: relative; } }
 
+/* ---- survival: the 640x360 picture fills the view; the stick and the buttons float over its bottom corners ---- */
+#view-survival { height: 100%; display: flex; flex-direction: column; max-width: none; }
+main:has(#view-survival:not([hidden])) { overflow: hidden; padding: 8px 8px calc(8px + var(--safe-b)); }
+#sv-stage { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; background: #000; border-radius: 8px; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; container-type: size; }
+#sv-canvas { width: min(100cqw, calc(100cqh * 16 / 9)); height: auto; aspect-ratio: 16 / 9; image-rendering: pixelated; touch-action: none; outline: none; }
+
+#survival-msg { position: absolute; margin: 0; padding: 0 16px; }
+#sv-stick { position: absolute; left: calc(16px + var(--safe-l)); bottom: 16px; width: 132px; height: 132px; border-radius: 50%; background: rgba(230, 237, 243, .10); border: 2px solid rgba(230, 237, 243, .28); display: flex; align-items: center; justify-content: center; touch-action: none; }
+#sv-knob { width: 56px; height: 56px; border-radius: 50%; background: rgba(230, 237, 243, .45); pointer-events: none; }
+#sv-pad { position: absolute; right: calc(12px + var(--safe-r)); bottom: 12px; display: grid; grid-template-columns: repeat(2, 76px); gap: 6px; touch-action: none; }
+#sv-pad .pb { opacity: .85; }
+#sv-pad .pb-fire { min-height: 76px; background: var(--bad); color: #2a0b0b; border-color: var(--bad); }
+/* a phone held sideways: the game takes the whole screen (Back is the system back gesture, or the button that stays) */
+@media (max-height: 520px) {
+  body:has(#view-survival:not([hidden])) #bar, body:has(#view-survival:not([hidden])) #tabs { display: none; }
+  main:has(#view-survival:not([hidden])) { padding: 0; }
+  #view-survival .viewbar { position: absolute; top: 4px; left: 4px; z-index: 2; background: none; border: 0; padding: 0; }
+  #view-survival .viewbar .title, #view-survival .viewbar .badge { display: none; }
+  #view-survival { position: relative; }
+  #sv-stage { border-radius: 0; }
+  /* raised above the engine's health and ammo panels (the bottom ~15% of the picture) so neither is covered */
+  #sv-stick { width: 112px; height: 112px; bottom: 64px; }
+  #sv-pad { grid-template-columns: repeat(2, 64px); bottom: 64px; } #sv-pad .pb { min-height: 40px; } #sv-pad .pb-fire { min-height: 60px; }
+}
 /* ---- Files (Windows file sharing, read only) ---- */
 #view-files { display: flex; flex-direction: column; gap: 8px; padding-bottom: 16px; }
 #view-files[hidden] { display: none; }

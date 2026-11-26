@@ -1,4 +1,4 @@
-# SHANKPIT Netkit (Android)
+# SHANKPIT Netkit (Android) -- the SHANKPHONE
 
 A network toolkit for a tablet: **scan** the LAN, open an **SSH** terminal, **watch** a remote screen over **VNC** (view only). A second
 Android app in this repo, separate from the shankpit-460 APK (`android/`). Source of intent: the founder's "Custom VNC Client:
@@ -68,6 +68,26 @@ CI builds it in `release.yml` and ships it as `ShankPit_Netkit_<build>.apk` next
 ## The garage and the arcade (2026-11-24)
 
 The page opens on a flat-mode **garage** (the SHANKPIT CONSTRUCT hub's doctrine: every function is an object, status is a lamp on it, a cable means a live connection): scanner bench -> Devices, terminal -> SSH, monitor -> VNC, and an **arcade cabinet** that plays **BRAWLPIT** (WOTAN's WebAssembly fighter, `apps/netkit/brawlpit.wasm`, zero imports) inside the page with a multi-touch pad. All decisions are PARENA wasm (`nk_garage.prn`); the Java shell is unchanged (assets are packaged verbatim from `apps/netkit`). BRAWLPIT has no audio and no hat (no IDUNA session in the shell). Measured 2026-11-26: the release APK is 487 KB (the PNG art is ~250 KB of it). Back button: arcade/devices -> garage -> app closes. See `docs/NETKIT_NORTHSTAR.md` §6a for the CONSTRUCT port table. Untested on a device: 60 fps on a tablet WebView, multi-touch pointer capture, the extra 8 MB of memory, portrait layout.
+
+## The SHANKPHONE and its Survival button (2026-11-26)
+
+Founder: *"the shankpit net kit can be the shankphone and the shankphone itself can have a button for survival that launches OG shankpit as
+a level and collection of mods"*. The app label is now **SHANKPHONE**, and so is the page brand. The package id is unchanged
+(`industrial.einhorn.netkit`), so an installed Netkit updates in place. Garage object 5, **Survival**, opens a view that lazily loads
+`survival.wasm`: the shankpit-460 PARENA engine with the CITY level and the survival mods (`PARENA/stdlib/shankpit_survival/README.md`).
+It is fetched from the app's own origin and instantiated with no imports, so the CSP and the Java are untouched.
+
+The host is `PARENA/stdlib/netkit/host/nk_host_survival.prn`. The button map, look speed and stick radius come from `nk_garage.prn`:
+- the stick drives gamepad slot 0;
+- dragging the picture is mouse look;
+- Fire is the left mouse button, and Weapon is the wheel (owned weapons only);
+- Jump, Crouch, Reload and Ability are their keys;
+- a tap on the picture in a menu is a click.
+
+At heights of 520 px or less, the header and tabs hide and the game fills the screen. Measured: release APK 650 KB. Verified:
+`test_browser_garage.py` (survival leg: load, PLAY, the stick moves the view, drag-look, Fire pressed and released, Back, lamp, loop stops,
+no CSP error). **Untested on a device**: frame rate on a phone WebView, real multi-finger play. **No sound yet**: the engine's sound ring is
+not played.
 
 ## Clean builds (2026-11-26)
 

@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="color-scheme" content="dark">
-<title>SHANKPIT Netkit</title>
+<title>SHANKPHONE</title>
 <link rel="stylesheet" href="netkit.css">
 </head>
 <body>
-<!-- The markup and styling of SHANKPIT Netkit. There is no logic here and no hand-written JavaScript: nk-host.js (and the three
+<!-- The markup and styling of the SHANKPHONE (SHANKPIT Netkit; founder 2026-11-26: "the shankpit net kit can be the shankphone"). There is no logic here and no hand-written JavaScript: nk-host.js (and the three
      .wasm files) are generated from PARENA by PARENA/scripts/build_netkit_web.sh. The ids below are the contract with that host. -->
 <header id="bar">
-  <div id="brand"><span class="logo" aria-hidden="true"></span>SHANKPIT <b>Netkit</b></div>
+  <div id="brand"><span class="logo" aria-hidden="true"></span>SHANK<b>PHONE</b></div>
   <div id="net-pill" class="pill">starting&hellip;</div>
 </header>
 
@@ -23,6 +23,7 @@
   <button id="tab-files" data-tab="files" hidden>Files</button>
   <button id="tab-drive" data-tab="drive">USB</button>
   <button id="tab-arcade" data-tab="arcade">Arcade</button>
+  <button id="tab-survival" data-tab="survival">Survival</button>
 </nav>
 
 <div id="banner" class="banner" hidden role="alert">
@@ -256,6 +257,29 @@
         <button data-bp="6" class="pb pb-attack">Attack</button>
         <button data-bp="7" class="pb pb-shield">Shield</button>
         <button data-bp="8" class="pb pb-special">Special</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= survival (SHANKPIT SURVIVAL: the shankpit-460 PARENA engine + the CITY level + the survival mods) ======================= -->
+  <section id="view-survival" hidden>
+    <div class="viewbar">
+      <button id="btn-survival-exit">Back to garage</button>
+      <span class="title">SURVIVAL</span>
+      <span class="grow"></span>
+      <span class="badge" title="SURVIVAL runs as WebAssembly built from PARENA, loaded from this app; it needs no network">offline</span>
+    </div>
+    <div id="sv-stage">
+      <canvas id="sv-canvas" width="640" height="360" tabindex="0" aria-label="SHANKPIT SURVIVAL: drag to look"></canvas>
+      <p id="survival-msg" class="hint" hidden></p>
+      <div id="sv-stick" role="group" aria-label="Move"><span id="sv-knob"></span></div>
+      <div id="sv-pad" role="group" aria-label="Touch controls">
+        <button data-sv="5" class="pb pb-small" aria-label="Next weapon">Weapon</button>
+        <button data-sv="3" class="pb pb-small">Reload</button>
+        <button data-sv="4" class="pb pb-small" aria-label="Ability">Ability</button>
+        <button data-sv="2" class="pb pb-small">Crouch</button>
+        <button data-sv="1" class="pb">Jump</button>
+        <button data-sv="6" class="pb pb-fire">Fire</button>
       </div>
     </div>
   </section>
