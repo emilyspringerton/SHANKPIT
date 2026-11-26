@@ -8,13 +8,16 @@
 #   oui.bin packed from stdlib/netkit/data/oui_brands.tsv); nkterm.wasm, brawlpit.wasm and both PNGs reproduced byte for byte.
 # UPDATE 2026-11-26 (PARENA e74853f): oui.bin is now packed by PARENA (stdlib/netkit/nk_oui_gen.prn); the whole bundle rebuilt
 #   byte-identical, so no file below changed.
+# UPDATE 2026-11-26 (PARENA 3fa643e, the lexer fix): nkterm.wasm rebuilt. The compiler used to cut string literals at 4095 bytes, so the
+#   terminal's 8160-byte font lost glyphs 128..254 (box drawing, blocks), which rendered as garbage; the rebuilt module carries the whole
+#   font. brawlpit.wasm has the same bug but is a byte copy of WOTAN's build, so it is left as it is until WOTAN rebuilds it.
 # sha256  file
 e7cc01053c41a80ba776268054b76bd410dc5dd5ec6b970db74ade9ed0a82cd7  index.html
 6d8611b178bc3ad831f66a0c69246ea946a32e3d5e0a5df97abb6d5a841ee03b  netkit.css
 ae0b9587c51d7ede5c8015ad52e663fdae7f47b0bf049a097389aeeba5496960  nk-host.js
 fae50655e949bd1c3c598cc47093a998f240fc55f0641ae94c5ffec850ea02a9  netkit.wasm
 0dfb3ba7c0eb470ec2cbca3618ca935deffca3fc17dd555b6380fbe8bf5b97a5  netkit-lite.wasm
-d89b2f86e35c5e67d33588226a2cf80171543900930185ab26f6bd9006ba5385  nkterm.wasm
+71670ff4ea38a4b15a536bbb69d6ec743cff1109c1c3c66d6b1837e9d6b6051b  nkterm.wasm
 4e97ba74e6cc18a96016c977c26386ff913858c294482b5073825e38fc7720b7  brawlpit.wasm
 3c9330282ebd317bf2b8da01b9cce145802cd0fbf40c51f1156ba168e18eab82  oui.bin
 de9c4c6a7d91195216c56ba7002be6bafaf91dfdb9e205d1f8f8a32e9eebde7a  duck.png

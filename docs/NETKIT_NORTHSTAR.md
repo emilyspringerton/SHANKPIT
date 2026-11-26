@@ -134,12 +134,12 @@ scan, and see the Pi labeled by name."* Preceded by "CLEAN BUILDS FIRST": the AP
 
 | piece | where | verified |
 |---|---|---|
-| maker table: 14,052 IEEE MA-L prefixes → 84 makers, binary-searched in wasm | `PARENA/stdlib/netkit/nk_oui_gen.prn` (curate + pack, PARENA wasm), `stdlib/netkit/data/oui_brands.tsv`, `apps/netkit/oui.bin` | every prefix round-trips (test_names.py) |
-| private (randomized) MAC detection | `nk_names.prn` | test_names.py |
+| maker table: 14,052 IEEE MA-L prefixes → 84 makers, binary-searched in wasm | `PARENA/stdlib/netkit/nk_oui_gen.prn` (curate + pack, PARENA wasm), `stdlib/netkit/data/oui_brands.tsv`, `apps/netkit/oui.bin` | every prefix round-trips (`PARENA/tests/netkit/names_spec.prn`, SCARAB) |
+| private (randomized) MAC detection | `nk_names.prn` | names_spec.prn |
 | mDNS reverse lookup (unicast legacy query to :5353) — build + parse, compression, hostile packets | `nk_names.prn` | RFC-built replies in Python + a real Node UDP responder in the page e2e; **not** against real avahi (it could not run in this sandbox) |
 | NetBIOS node status (:137) — name + MAC → maker without ARP | `nk_names.prn` | RFC 1002-built replies; real Node UDP responder in the page e2e |
-| name ranks (label > mDNS > NetBIOS > reverse DNS), `.local`/`.lan`/… suffixes dropped | `nk_names.prn` | test_names.py |
-| the Pi: all nine Raspberry Pi blocks (three were missing) or the name `raspberrypi`; badge + first in the list | `nk_scan.prn`, `nk_host_scan.prn`, `netkit.css` | test_names.py, page e2e |
+| name ranks (label > mDNS > NetBIOS > reverse DNS), `.local`/`.lan`/… suffixes dropped | `nk_names.prn` | names_spec.prn |
+| the Pi: all nine Raspberry Pi blocks (three were missing) or the name `raspberrypi`; badge + first in the list | `nk_scan.prn`, `nk_host_scan.prn`, `netkit.css` | names_spec.prn, page e2e |
 | user labels: Name dialog, kept in the Keystore-encrypted store, survive rescans, follow a device from IP key to MAC key | `nk_host_scan.prn`, `index.html` | page e2e (108 checks) |
 | one UDP question / one answer from that address | `android-netkit/shell/Udp.java`, `NativeBridge.udpQuery` | 3 JVM tests on real loopback sockets |
 
