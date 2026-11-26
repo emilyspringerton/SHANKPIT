@@ -140,6 +140,28 @@ on first real run (not verified): the server accepts security type 2 from this
 client, the client picks it over TightVNC's own "Tight" type 16, and the desktop
 appears (see unverified list).
 
+## Can Windows file sharing (port 445) do this from the tablet instead?
+
+Not on its own. File sharing only moves files. To start the VNC server or open the firewall remotely, a client must also sign in
+as an **administrator** and use Windows' service-control interface over the same port. That is how PsExec works.
+
+Windows 10 Home blocks that by default for every administrator account except the built-in `Administrator`. It strips admin
+rights from network sign-ins by local accounts ("UAC remote restrictions"; the `LocalAccountTokenFilterPolicy` registry value).
+Turning that off needs someone at the iMac anyway.
+
+So the plan stays: run `setup.bat` once at the iMac. After that, VNC needs nothing on the iMac.
+
+What port 445 *does* give without any password is the PC's own description of itself. The Netkit SMB probe (PARENA
+`stdlib/netkit/nk_smb.prn`; from a Linux box, `PARENA/scripts/netkit_smb_probe.sh <imac-ip>`) shows:
+- the computer name and workgroup;
+- the Windows release and build;
+- the SMB version and the signing and encryption settings;
+- the PC's clock.
+
+That confirms you have the right machine before you walk over to it. Signed-in share browsing and file copy (for example, putting
+`setup.bat` on a share) is planned as EMILY KIT-SMB S2. Remote start (S3) only works under the conditions above, and needs a
+decision first.
+
 ## Re-running, repairing, uninstalling
 
 Just run it again; every step is reset-and-redo (the VNC connection drops for

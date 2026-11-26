@@ -1,5 +1,9 @@
 ## 2026-11-26
 
+- **docs(netkit): what Windows file sharing can and cannot do for the iMac setup** (`ops/netkit/windows/README.md`). Remote VNC
+  start over SMB needs an administrator sign-in, which Windows 10 Home's UAC remote restrictions block, so `setup.bat` is still run once
+  at the iMac. Port 445 without a password tells you which machine it is: see the new PARENA SMB probe (`stdlib/netkit/nk_smb.prn`,
+  `scripts/netkit_smb_probe.sh`).
 - **fix(netkit): the SSH terminal draws box-drawing and block characters correctly.** PARENA's lexer cut string literals at 4095 bytes,
   so the terminal's 8160-byte font lost glyphs 128..254 and drew them from stray memory (PARENA 3fa643e fixes the lexer). `apps/netkit/nkterm.wasm`
   is rebuilt with the whole font; `PROVENANCE` updated, `verify-web-bundle.mjs` passes. `brawlpit.wasm` has the same bug but is a copy of
