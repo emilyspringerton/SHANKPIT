@@ -1,5 +1,9 @@
 ## 2026-11-26
 
+- **fix(release): releases were down since v0.300.0.** Every release.yml run since 99092d2 failed at "Build SHANKPIT OS Apps (Windows)". The cause was
+  REDGARDEN's 2026-11-24 camera work (UNIFY): its arena now calls `packages/simulation/camera_unify_mod.c`, which REDGARDEN's own
+  `scripts/build_arena.sh` lists but this hand-copied recipe did not, so `red_garden_arena.exe` failed to link on 16 undefined `cam_*`/`zoom_cam_*`/
+  `click_move_*` symbols. Added it. Reproduced and verified with a native link of a fresh REDGARDEN checkout (the mingw link is CI's).
 - **docs(netkit): what Windows file sharing can and cannot do for the iMac setup** (`ops/netkit/windows/README.md`). Remote VNC
   start over SMB needs an administrator sign-in, which Windows 10 Home's UAC remote restrictions block, so `setup.bat` is still run once
   at the iMac. Port 445 without a password tells you which machine it is: see the new PARENA SMB probe (`stdlib/netkit/nk_smb.prn`,
