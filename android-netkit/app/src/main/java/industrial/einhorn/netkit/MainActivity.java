@@ -1,7 +1,9 @@
 package industrial.einhorn.netkit;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import android.webkit.ValueCallback;
@@ -10,6 +12,7 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.window.OnBackInvokedDispatcher;
 
 import industrial.einhorn.shankpit.netkit.BuildConfig;
 
@@ -17,6 +20,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashMap;
+import java.util.Locale;
 
 /**
  * SHANKPIT Netkit's only Activity: a WebView that runs the page from the APK's own assets (index.html + nk-host.js + three .wasm files,
@@ -30,6 +34,8 @@ public class MainActivity extends Activity {
     private WebView web;
     private NativeBridge bridge;
 
+    // JavaScript is the product: the page's logic is PARENA compiled to wasm + generated JS, and only the packaged origin is ever loaded.
+    @SuppressLint("SetJavaScriptEnabled")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -54,15 +60,25 @@ public class MainActivity extends Activity {
 
         Log.i(TAG, "loading " + ORIGIN + "/index.html");
         web.loadUrl(ORIGIN + "/index.html");
+
+        // Android 13+: predictive back (enableOnBackInvokedCallback in the manifest); older releases call onBackPressed below.
+        if (Build.VERSION.SDK_INT >= 33) {
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, this::askPageBack);
+        }
     }
 
     /** The page decides what Back does (close a dialog, close a session); if it does nothing, the app finishes. */
-    @Override
-    public void onBackPressed() {
+    private void askPageBack() {
+        if (web == null) { finish(); return; }
         web.evaluateJavascript("(window.netkitBack && window.netkitBack())", new ValueCallback<String>() {
-            @Override public void onReceiveValue(String handled) { if (!"true".equals(handled)) MainActivity.super.onBackPressed(); }
+            @Override public void onReceiveValue(String handled) { if (!"true".equals(handled)) finish(); }
         });
     }
+
+    /** Android 12 and older. */
+    @Deprecated
+    @Override
+    public void onBackPressed() { askPageBack(); }
 
     @Override protected void onPause() { if (web != null) web.onPause(); super.onPause(); }
     @Override protected void onResume() { super.onResume(); if (web != null) web.onResume(); }
@@ -109,7 +125,7 @@ public class MainActivity extends Activity {
         }
 
         private static String mimeFor(String path) {
-            String p = path.toLowerCase();
+            String p = path.toLowerCase(Locale.ROOT);
             if (p.endsWith(".html")) return "text/html";
             if (p.endsWith(".js") || p.endsWith(".mjs")) return "text/javascript";
             if (p.endsWith(".wasm")) return "application/wasm";

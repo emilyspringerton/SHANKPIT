@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Raw TCP for SSH, VNC and the scanner; reading the Wi-Fi state to know which network to scan. -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -17,7 +18,11 @@
         android:theme="@style/AppTheme"
         android:hardwareAccelerated="true"
         android:usesCleartextTraffic="false"
-        android:allowBackup="false">
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:enableOnBackInvokedCallback="true"
+        tools:targetApi="33">
 
         <activity
             android:name="industrial.einhorn.netkit.MainActivity"

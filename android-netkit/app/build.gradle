@@ -59,9 +59,17 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 
-    lint { abortOnError false }
+    // Clean builds are the gate (founder, 2026-11-26: "CLEAN BUILDS FIRST"): any lint warning fails the build.
+    lint {
+        abortOnError true
+        warningsAsErrors true
+        checkReleaseBuilds true
+    }
 }
 
 dependencies {
     implementation project(':shell')
 }
+
+// ...and so does any javac warning, in the app and the shell alike.
+tasks.withType(JavaCompile).configureEach { options.compilerArgs += ['-Xlint:all', '-Werror'] }

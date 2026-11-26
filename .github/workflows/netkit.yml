@@ -74,7 +74,7 @@ jobs:
           unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/gradle-8.7/bin" >> "$GITHUB_PATH"
 
-      # the shell's 16 JVM tests run against real loopback sockets, then the release APK is assembled
+      # the shell's JVM tests run against real loopback sockets, lint must find nothing (warnings are errors), then the release APK is assembled
       - name: Test the shell and build the APK
         shell: bash
         env:
@@ -95,7 +95,7 @@ jobs:
           else
             echo "::notice::SHANKPIT_ANDROID_KEYSTORE_BASE64 is unset; Netkit is signed with the debug key (sideload only)."
           fi
-          gradle -p android-netkit :shell:test :app:assembleRelease --no-daemon --stacktrace
+          gradle -p android-netkit :shell:test :app:lintRelease :app:assembleRelease --no-daemon --stacktrace
           ls -l android-netkit/app/build/outputs/apk/release/
           cp android-netkit/app/build/outputs/apk/release/app-release.apk "ShankPit_Netkit_${{ github.run_number }}.apk"
           {
