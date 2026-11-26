@@ -5,7 +5,9 @@
 # (the nk_garage commit; LLVM 18.1.3 + node 24). The same build reproduced brawlpit.wasm, nkterm.wasm and both PNGs byte for byte.
 # brawlpit.wasm / duck.png / sprites.png are byte copies of WOTAN/BRAWLPIT (WOTAN last commit touching brawlpit.wasm: 1068920).
 # UPDATE 2026-11-26 (Drop One, names + makers; PARENA d261ff3): nk-host.js, netkit.wasm, netkit-lite.wasm regenerated and oui.bin added (PARENA nk_names.prn,
-#   tools/netkit_oui_gen.py from stdlib/netkit/data/oui_brands.tsv); nkterm.wasm, brawlpit.wasm and both PNGs reproduced byte for byte.
+#   oui.bin packed from stdlib/netkit/data/oui_brands.tsv); nkterm.wasm, brawlpit.wasm and both PNGs reproduced byte for byte.
+# UPDATE 2026-11-26 (PARENA e74853f): oui.bin is now packed by PARENA (stdlib/netkit/nk_oui_gen.prn); the whole bundle rebuilt
+#   byte-identical, so no file below changed.
 # sha256  file
 e7cc01053c41a80ba776268054b76bd410dc5dd5ec6b970db74ade9ed0a82cd7  index.html
 6d8611b178bc3ad831f66a0c69246ea946a32e3d5e0a5df97abb6d5a841ee03b  netkit.css

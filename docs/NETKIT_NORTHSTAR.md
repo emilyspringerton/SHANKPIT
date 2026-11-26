@@ -134,7 +134,7 @@ scan, and see the Pi labeled by name."* Preceded by "CLEAN BUILDS FIRST": the AP
 
 | piece | where | verified |
 |---|---|---|
-| maker table: 14,052 IEEE MA-L prefixes → 84 makers, binary-searched in wasm | `PARENA/tools/netkit_oui_gen.py`, `stdlib/netkit/data/oui_brands.tsv`, `apps/netkit/oui.bin` | every prefix round-trips (test_names.py) |
+| maker table: 14,052 IEEE MA-L prefixes → 84 makers, binary-searched in wasm | `PARENA/stdlib/netkit/nk_oui_gen.prn` (curate + pack, PARENA wasm), `stdlib/netkit/data/oui_brands.tsv`, `apps/netkit/oui.bin` | every prefix round-trips (test_names.py) |
 | private (randomized) MAC detection | `nk_names.prn` | test_names.py |
 | mDNS reverse lookup (unicast legacy query to :5353) — build + parse, compression, hostile packets | `nk_names.prn` | RFC-built replies in Python + a real Node UDP responder in the page e2e; **not** against real avahi (it could not run in this sandbox) |
 | NetBIOS node status (:137) — name + MAC → maker without ARP | `nk_names.prn` | RFC 1002-built replies; real Node UDP responder in the page e2e |
@@ -142,6 +142,11 @@ scan, and see the Pi labeled by name."* Preceded by "CLEAN BUILDS FIRST": the AP
 | the Pi: all nine Raspberry Pi blocks (three were missing) or the name `raspberrypi`; badge + first in the list | `nk_scan.prn`, `nk_host_scan.prn`, `netkit.css` | test_names.py, page e2e |
 | user labels: Name dialog, kept in the Keystore-encrypted store, survive rescans, follow a device from IP key to MAC key | `nk_host_scan.prn`, `index.html` | page e2e (108 checks) |
 | one UDP question / one answer from that address | `android-netkit/shell/Udp.java`, `NativeBridge.udpQuery` | 3 JVM tests on real loopback sockets |
+
+Founder, same day: *"ALL PARENA BASED MODS BASED DEVELOPMENT".* Audit of Drop One: the only logic outside PARENA was the first maker-table
+generator (Python). It is now `nk_oui_gen.prn` (wasm) with a PARENA->TS node host, proven byte-identical and the Python deleted (PARENA
+e74853f). What remains outside PARENA is platform only: `index.html`/`netkit.css` (markup, no logic) and the Java shell (sockets, UDP,
+storage, clipboard; `Udp.java` sends one datagram and returns the first reply from that address). Tests stay in Python/Node, as before.
 
 Still unproven: a real tablet on the real network (the "done when"), avahi and Windows as real responders, and how many devices on the
 founder's network answer neither protocol (those keep no maker on Android 10+).

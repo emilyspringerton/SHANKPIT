@@ -17,6 +17,9 @@
   (`nk_names.prn`, PARENA d261ff3); bundle regenerated and vendored; `verify-web-bundle.mjs` now checks `oui.bin`. Page e2e 108/108 in Node;
   both Chromium legs pass for the first time (18 + 25). README, `android-netkit/README.md` and `docs/NETKIT_NORTHSTAR.md` §6b updated.
   Not yet run on the real tablet / real avahi / a real Windows PC.
+- **docs(netkit): the maker table is built by PARENA** (founder: "ALL PARENA BASED MODS BASED DEVELOPMENT"; PARENA e74853f replaced the
+  Python generator with `nk_oui_gen.prn`). The rebuilt bundle is byte-identical, so no vendored file changed; README, northstar §6b,
+  PROVENANCE and the verifier's comment now name the PARENA tool.
 
 ## 2026-11-24
 - **feat(netkit): the CONSTRUCT affordances in the Netkit Android page: a flat-mode garage + BRAWLPIT arcade (BACKLOG SECTION 639) -- source done, bundle NOT yet regenerated.** The page opens on a garage (scanner bench -> devices, terminal -> SSH, monitor -> VNC, arcade cabinet -> BRAWLPIT in-page with a multi-touch pad; lamps on the objects, cables only for live sessions). All layout/decision logic is PARENA wasm (`PARENA/stdlib/netkit/nk_garage.prn`); host JS stays generated. BRAWLPIT is WOTAN's zero-import web build (`brawlpit.wasm`, `duck.png`, `sprites.png` vendored, hashes in `PROVENANCE`), loaded lazily as a second module under the unchanged CSP. `docs/NETKIT_NORTHSTAR.md` §6a lists every other CONSTRUCT hub affordance and whether it was ported (most deliberately not, with reasons). `verify-web-bundle.mjs` now checks brawlpit.wasm, the art and the garage exports (and fails on the stale bundle). Not done here: no LLVM/node in the writing environment, so `nk-host.js`/`netkit*.wasm` are stale until `build_netkit_web.sh` is run; the APK was not built (no Android SDK; size estimate ~0.4-0.45 MB vs ~117 KB); nothing run on a device.

@@ -57,7 +57,7 @@ for (const [f, w, h] of [['sprites.png', 512, 256], ['duck.png', 640, 340]]) {
   sig && b.readUInt32BE(16) === w && b.readUInt32BE(20) === h ? ok(`${f}: a ${w}x${h} PNG, ${b.length} bytes`) : fail(`${f} is not a ${w}x${h} PNG`);
 }
 
-// the maker table the scanner searches (PARENA tools/netkit_oui_gen.py): "NKOU", sorted 24-bit prefixes, fits the wasm's 64 KB region
+// the maker table the scanner searches (packed by PARENA stdlib/netkit/nk_oui_gen.prn): "NKOU", sorted 24-bit prefixes, fits the wasm's 64 KB region
 {
   const p = path.join(dir, 'oui.bin');
   if (!fs.existsSync(p)) fail('oui.bin is missing (the device list would show no makers)');
