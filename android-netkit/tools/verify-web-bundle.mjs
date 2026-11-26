@@ -57,6 +57,21 @@ for (const [f, w, h] of [['sprites.png', 512, 256], ['duck.png', 640, 340]]) {
   sig && b.readUInt32BE(16) === w && b.readUInt32BE(20) === h ? ok(`${f}: a ${w}x${h} PNG, ${b.length} bytes`) : fail(`${f} is not a ${w}x${h} PNG`);
 }
 
+// the maker table the scanner searches (PARENA tools/netkit_oui_gen.py): "NKOU", sorted 24-bit prefixes, fits the wasm's 64 KB region
+{
+  const p = path.join(dir, 'oui.bin');
+  if (!fs.existsSync(p)) fail('oui.bin is missing (the device list would show no makers)');
+  else {
+    const b = fs.readFileSync(p), n = b.readUInt32LE(4), m = b.readUInt32LE(8), off = b.readUInt32LE(12);
+    let sorted = true, prev = -1, pi = false;
+    for (let i = 0; i < n; i++) { const e = b.readUInt32LE(16 + 4 * i), k = e & 0xFFFFFF; if (k <= prev) sorted = false; prev = k; if (k === 0xB827EB) pi = b.subarray(off + 24 * (e >>> 24), off + 24 * (e >>> 24) + 12).toString() === 'Raspberry Pi'; }
+    b.subarray(0, 4).toString() === 'NKOU' && b.length <= 65536 && off === 16 + 4 * n && off + 24 * m <= b.length && sorted && pi
+      ? ok(`oui.bin: ${n} prefixes, ${m - 1} makers, ${b.length} bytes, sorted, b8:27:eb -> Raspberry Pi`)
+      : fail('oui.bin is malformed (magic, size, order or the Raspberry Pi entry)');
+    if (!js.includes('nk_oui_load')) fail('the page never loads oui.bin (nk-host.js is stale)');
+  }
+}
+
 const ids = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]));
 const used = new Set();
 for (const re of [/\bel\("([^"]+)"\)/g, /\b(?:setTextBang|setHtmlBang|setHiddenBang|setValBang|val|checkedP|onBang)\("([^"]+)"/g]) for (const m of js.matchAll(re)) used.add(m[1]);

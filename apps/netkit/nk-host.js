@@ -17,6 +17,10 @@ let renderQueued          = false;
 let named      = null;
 let pins      = null;
 let toolLabels      = null;
+let labels      = null;
+let udpJobs      = null;
+let namingKey         = "";
+let namingIp         = "";
 let scanCidrText         = "";
 let stickyCtrl          = false;
 let stickyAlt          = false;
@@ -300,6 +304,93 @@ export function togglePinBang(key        )       {
     storeJsonBang("pins", pins);
 }
 
+export function labelFor(i        )         {
+    {
+        let k         = devKey(i);
+        let ipk         = ("" + "ip:" + ipStr(scanX.nk_dev_ip(i)));
+        return (labels.hasOwnProperty(k) ? ("" + labels[k]) : (labels.hasOwnProperty(ipk) ? ("" + labels[ipk]) : ""));
+    }
+}
+
+export function applyLabelsBang()       {
+    {
+        let __dn0      = scanX.nk_dev_count();
+        {
+            let i         = 0;
+            while (true) {
+                if ((i < __dn0)) {
+                    {
+                        let l         = labelFor(i);
+                        scanX.nk_dev_set_label(i, ((l === "") ? 0 : putTextBang(scanU8, scanX.nk_txt_addr(), l.slice(0, 31))));
+                    }
+                    i = (i + 1);
+                    continue;
+                }
+                break;
+            }
+        }
+    }
+}
+
+export function namerWhat(ip        , i        )         {
+    {
+        let found         = cstr(scanU8, scanX.nk_dev_name_addr(i));
+        let mk         = cstr(scanU8, scanX.nk_dev_maker_text_addr(i));
+        return ("" + ip + ((found === "") ? "" : ("" + "  -  " + found)) + ((mk === "") ? "" : ("" + "  -  " + mk)));
+    }
+}
+
+export function openNamerBang(key        , ip        )       {
+    {
+        let i         = findDev(ipNum(ip));
+        namingKey = key;
+        namingIp = ip;
+        setTextBang("n-what", ((i < 0) ? ip : namerWhat(ip, i)));
+        setValBang("n-label", ((i < 0) ? "" : labelFor(i)));
+        setHiddenBang("dlg-name", false);
+        el("n-label").focus();
+    }
+}
+
+export function closeNamerBang()       {
+    setHiddenBang("dlg-name", true);
+}
+
+export function saveLabelBang(text        )       {
+    {
+        let ipk         = ("" + "ip:" + namingIp);
+        if ((ipk !== namingKey)) {
+            Reflect.deleteProperty(labels, ipk);
+        }
+    }
+    if ((text === "")) {
+        Reflect.deleteProperty(labels, namingKey);
+    } else {
+        labels[namingKey] = text;
+    }
+    storeJsonBang("labels", labels);
+    closeNamerBang();
+    renderDevicesBang();
+}
+
+export function onNameSave(e     )       {
+    saveLabelBang(("" + val("n-label")).trim().slice(0, 31));
+}
+
+export function onNameClear(e     )       {
+    saveLabelBang("");
+}
+
+export function onNameCancel(e     )       {
+    closeNamerBang();
+}
+
+export function onNameKey(e     )       {
+    if ((e.key === "Enter")) {
+        onNameSave(e);
+    }
+}
+
 export function portChip(i        , port        )         {
     return ((scanX.nk_dev_has_port(i, port) === 1) ? ("" + "<span class=\"chip\">" + esc(cstr(scanU8, scanX.nk_service_name_addr(port))) + " " + port + "</span>") : "");
 }
@@ -307,23 +398,27 @@ export function portChip(i        , port        )         {
 export function devHtml(i        )         {
     {
         let ip         = ipStr(scanX.nk_dev_ip(i));
-        let name         = cstr(scanU8, scanX.nk_dev_name_addr(i));
+        let name         = cstr(scanU8, scanX.nk_dev_title_addr(i));
+        let found         = cstr(scanU8, scanX.nk_dev_name_addr(i));
+        let labelledP          = (scanX.nk_dev_has_label(i) === 1);
+        let maker         = cstr(scanU8, scanX.nk_dev_maker_text_addr(i));
+        let piP          = (scanX.nk_dev_is_pi(i) === 1);
         let guess         = cstr(scanU8, scanX.nk_guess_label_addr(scanX.nk_dev_guess(i)));
         let sshP          = (scanX.nk_dev_has_port(i, 22) === 1);
         let vncPort         = ((scanX.nk_dev_has_port(i, 5900) === 1) ? 5900 : ((scanX.nk_dev_has_port(i, 5901) === 1) ? 5901 : 0));
         let pinP          = (scanX.nk_dev_pinned(i) === 1);
         let mac         = ((scanX.nk_dev_has_mac(i) === 1) ? ("" + "  -  " + repAll(devKey(i), "mac:", "")) : "");
-        return ("" + "<li class=\"dev" + (pinP ? " pinned" : "") + "\" data-ip=\"" + ip + "\" data-key=\"" + esc(devKey(i)) + "\">" + "<div class=\"dev-main\"><div class=\"dev-name\">" + esc(((name === "") ? ip : name)) + "</div>" + "<div class=\"dev-sub\">" + ((name === "") ? "" : ("" + ip + "  -  ")) + esc(guess) + esc(mac) + "</div>" + "<div class=\"chips\">" + portChip(i, 22) + portChip(i, 5900) + portChip(i, 5901) + portChip(i, 3389) + portChip(i, 445) + portChip(i, 80) + portChip(i, 443) + portChip(i, 8080) + "</div></div><div class=\"dev-actions\">" + (sshP ? ("" + "<button data-act=\"ssh\" data-port=\"22\">SSH</button>") : "") + ((vncPort > 0) ? ("" + "<button data-act=\"vnc\" data-port=\"" + vncPort + "\">Screen</button>") : "") + "<button data-act=\"pin\" title=\"Keep this device at the top\">" + (pinP ? "Unpin" : "Pin") + "</button>" + "</div></li>");
+        return ("" + "<li class=\"dev" + (pinP ? " pinned" : "") + (piP ? " pi" : "") + "\" data-ip=\"" + ip + "\" data-key=\"" + esc(devKey(i)) + "\">" + "<div class=\"dev-main\"><div class=\"dev-name\">" + (piP ? "<span class=\"pi-badge\">Pi</span> " : "") + esc(((name === "") ? ip : name)) + "</div>" + "<div class=\"dev-sub\">" + ((name === "") ? "" : ("" + ip + "  -  ")) + esc(guess) + ((labelledP && ((found !== "") && (found !== name))) ? ("" + "  -  " + esc(found)) : "") + "</div>" + ((maker === "") ? "" : ("" + "<div class=\"dev-maker\">" + esc(maker) + esc(mac) + "</div>")) + "<div class=\"chips\">" + portChip(i, 22) + portChip(i, 5900) + portChip(i, 5901) + portChip(i, 3389) + portChip(i, 445) + portChip(i, 80) + portChip(i, 443) + portChip(i, 8080) + "</div></div><div class=\"dev-actions\">" + (sshP ? ("" + "<button data-act=\"ssh\" data-port=\"22\">SSH</button>") : "") + ((vncPort > 0) ? ("" + "<button data-act=\"vnc\" data-port=\"" + vncPort + "\">Screen</button>") : "") + "<button data-act=\"name\" title=\"Give this device your own name\">Name</button>" + "<button data-act=\"pin\" title=\"Keep this device at the top\">" + (pinP ? "Unpin" : "Pin") + "</button>" + "</div></li>");
     }
 }
 
 export function applyPinsBang()       {
     {
-        let __dn0      = scanX.nk_dev_count();
+        let __dn1      = scanX.nk_dev_count();
         {
             let i         = 0;
             while (true) {
-                if ((i < __dn0)) {
+                if ((i < __dn1)) {
                     scanX.nk_dev_set_pinned(i, (pinnedP(devKey(i)) ? 1 : 0));
                     i = (i + 1);
                     continue;
@@ -357,6 +452,7 @@ export function renderDevicesBang()       {
     {
         let n      = scanX.nk_dev_count();
         applyPinsBang();
+        applyLabelsBang();
         scanX.nk_dev_sort();
         setHtmlBang("device-list", devicesHtml(n));
         setHiddenBang("empty-hint", (n > 0));
@@ -530,14 +626,68 @@ export function findDev(ip        )         {
     }
 }
 
+export function udpAskBang(ip        , kind        , port        , n        )       {
+    {
+        let id         = newIdBang();
+        udpJobs[("" + id)] = {"ip": ip, "kind": kind};
+        nat.udpQuery(id, ip, port, getB64(scanU8, scanX.nk_pkt_addr(), n), 1500);
+    }
+}
+
 export function askNameBang(i        )       {
     {
-        let ip         = ipStr(scanX.nk_dev_ip(i));
+        let ipn      = scanX.nk_dev_ip(i);
+        let ip         = ipStr(ipn);
         if ((haveNativeP() && ((typeof named[ip]) === "undefined"))) {
             named[ip] = true;
             nat.resolve(ip);
+            if (((typeof nat.udpQuery) === "function")) {
+                udpAskBang(ip, "mdns", 5353, scanX.nk_mdns_query(ipn));
+                udpAskBang(ip, "nbns", 137, scanX.nk_nbns_query(ipn));
+            }
         }
     }
+}
+
+export function onUdpBang(ev     )       {
+    {
+        let k         = ("" + ev.id);
+        let job      = udpJobs[k];
+        if ((!(((typeof job) === "undefined")))) {
+            Reflect.deleteProperty(udpJobs, k);
+            if ((ev.e === "data")) {
+                {
+                    let i         = findDev(ipNum(job.ip));
+                    let b64      = ev.b;
+                    if (((i >= 0) && ((3 * (b64.length / 4)) <= scanX.nk_pkt_cap()))) {
+                        {
+                            let n         = putB64Bang(scanU8, scanX.nk_pkt_addr(), b64);
+                            let got      = ((job.kind === "mdns") ? scanX.nk_mdns_reply(i, n) : scanX.nk_nbns_reply(i, n));
+                            if ((got === 1)) {
+                                scheduleRenderBang();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export function loadOuiBang(buf     )       {
+    {
+        let b      = new Uint8Array(buf);
+        let n      = b.length;
+        if ((n <= scanX.nk_oui_cap())) {
+            scanU8.set(b, scanX.nk_oui_addr());
+            scanX.nk_oui_load(n);
+            scheduleRenderBang();
+        }
+    }
+}
+
+export function ouiMissing(err     )       {
+    console.warn.call(console, ("" + "maker table not loaded: " + err));
 }
 
 export function onScanResultBang(job        , code        , ms        )       {
@@ -716,11 +866,11 @@ export function sshTextBang(txt     )       {
     {
         let cps      = Array.from(repAll(repAll(("" + txt), "\r\n", "\n"), "\r", "\n"));
         {
-            let __dn1      = cps.length;
+            let __dn2      = cps.length;
             {
                 let i         = 0;
                 while (true) {
-                    if ((i < __dn1)) {
+                    if ((i < __dn2)) {
                         {
                             let ch      = cps[i];
                             if ((ch === "\n")) {
@@ -1582,11 +1732,11 @@ export function arcReleaseAllBang()       {
         {
             let ids      = Object.keys(arcHeld);
             {
-                let __dn2      = ids.length;
+                let __dn3      = ids.length;
                 {
                     let i         = 0;
                     while (true) {
-                        if ((i < __dn2)) {
+                        if ((i < __dn3)) {
                             {
                                 let k      = ids[i];
                                 arcKeyUpBang(arcHeld[k]);
@@ -2022,11 +2172,11 @@ export function garCablesBang()       {
                     g.lineWidth = 4;
                     g.lineCap = "round";
                     {
-                        let __dn3      = scanX.nk_garage_cable_count();
+                        let __dn4      = scanX.nk_garage_cable_count();
                         {
                             let i         = 0;
                             while (true) {
-                                if ((i < __dn3)) {
+                                if ((i < __dn4)) {
                                     garCableBang(g, i, w, h);
                                     i = (i + 1);
                                     continue;
@@ -2047,11 +2197,11 @@ export function garRefreshBang()       {
         garVh = win().innerHeight;
         garBuildBang();
         {
-            let __dn4      = scanX.nk_garage_count();
+            let __dn5      = scanX.nk_garage_count();
             {
                 let i         = 0;
                 while (true) {
-                    if ((i < __dn4)) {
+                    if ((i < __dn5)) {
                         garPlaceBang((i + 1));
                         garLightBang((i + 1));
                         i = (i + 1);
@@ -2349,6 +2499,10 @@ export function onDeviceClick(e     )       {
                             togglePinBang(li.dataset.key);
                             renderDevicesBang();
                         } else {
+                            if ((act === "name")) {
+                                openNamerBang(li.dataset.key, ip);
+                            } else {
+                            }
                         }
                     }
                 }
@@ -2387,7 +2541,7 @@ export function onNative(json        )       {
                     ((job >= 1000000) ? onToolResultBang(job, ev.code, ev.ms) : onScanResultBang(job, ev.code, ev.ms));
                 }
             } else {
-                ((t === "name") ? onNameBang(ev) : undefined);
+                ((t === "name") ? onNameBang(ev) : ((t === "udp") ? onUdpBang(ev) : undefined));
             }
         }
     }
@@ -2406,21 +2560,26 @@ export function nkBack()          {
             setHiddenBang("dlg-connect", true);
             return true;
         } else {
-            if (((!((ssh == null))) && (!(el("view-ssh").hidden)))) {
-                sshCloseBang();
+            if ((!(el("dlg-name").hidden))) {
+                closeNamerBang();
                 return true;
             } else {
-                if (((!((vnc == null))) && (!(el("view-vnc").hidden)))) {
-                    vncCloseBang();
+                if (((!((ssh == null))) && (!(el("view-ssh").hidden)))) {
+                    sshCloseBang();
                     return true;
                 } else {
-                    {
-                        let t      = scanX.nk_garage_back(curView());
-                        if ((t < 0)) {
-                            return false;
-                        } else {
-                            showViewBang(viewName(t));
-                            return true;
+                    if (((!((vnc == null))) && (!(el("view-vnc").hidden)))) {
+                        vncCloseBang();
+                        return true;
+                    } else {
+                        {
+                            let t      = scanX.nk_garage_back(curView());
+                            if ((t < 0)) {
+                                return false;
+                            } else {
+                                showViewBang(viewName(t));
+                                return true;
+                            }
                         }
                     }
                 }
@@ -2466,6 +2625,10 @@ export function wireUiBang()       {
     onBang("btn-m-check", "click", onCheckClick);
     onBang("btn-m-ping", "click", onPingClick);
     onBang("m-proto", "change", onProtoChange);
+    onBang("n-save", "click", onNameSave);
+    onBang("n-clear", "click", onNameClear);
+    onBang("n-cancel", "click", onNameCancel);
+    onBang("n-label", "keydown", onNameKey);
     onBang("c-go", "click", onConnectGo);
     onBang("c-cancel", "click", onConnectCancel);
     onBang("hk-trust", "click", onHkTrust);
@@ -2506,12 +2669,15 @@ export function onModules(mods     )       {
     toolLabels = {};
     ptrs = {};
     pins = storeJson("pins", []);
+    labels = storeJson("labels", {});
+    udpJobs = {};
     wireUiBang();
     renderSavedBang();
     renderDevicesBang();
     showViewBang("garage");
     ready = true;
     statusBang(netLabel(pickCidr(localInfo())));
+    fetch("oui.bin").then(fetchBytes).then(loadOuiBang).catch(ouiMissing);
     win().requestAnimationFrame(termFrame);
     win().requestAnimationFrame(vncFrame);
     setInterval(blinkBang, 530);

@@ -31,6 +31,7 @@ Raw/CopyRect/Hextile decoding) are **written in PARENA** — no libssh2, no JSch
 
 `tcpOpen(id, host, port, timeoutMs)` · `tcpWrite(id, base64)` · `tcpClose(id)` → `{t:"tcp", id, e:"open"|"data"|"closed"|"error", b?, code?}`  
 `probe(job, ip, port, timeoutMs)` · `ping(job, host, timeoutMs)` → `{t:"probe", job, code, ms}` · `resolve(ip)` → `{t:"name", ip, name}`  
+`udpQuery(id, host, port, base64, timeoutMs)` → `{t:"udp", id, e:"data", b}` or `{t:"udp", id, e:"none"}` — one unicast UDP question to one device (the scanner's mDNS/NetBIOS name lookups; the packet is built and parsed in the wasm)  
 `arpText()` · `localNets()` → JSON · `storeGet/storeSet/storeDel` (Keystore-encrypted) · `clipboardSet/clipboardGet`  
 Codes: `0` connected · `1` refused (the host is up) · `2` timeout · `3` unreachable · `4` other. The page's back-button hook is `window.netkitBack()`.
 The contract is documented where the page uses it: `PARENA/stdlib/netkit/host/nk_host_core.prn`.
@@ -41,7 +42,8 @@ The contract is documented where the page uses it: `PARENA/stdlib/netkit/host/nk
 # JDK 17+, Android SDK (platform 34, build-tools 34.0.0), Gradle 8.7
 export ANDROID_HOME=~/tools/sdk
 cd android-netkit
-gradle :shell:test               # 16 JVM tests against real loopback sockets
+gradle :shell:test               # 19 JVM tests against real loopback sockets (TCP and UDP)
+gradle :app:lintDebug :app:lintRelease   # must say "No issues found": lint warnings fail the build
 gradle :app:assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
 gradle :app:assembleRelease      # signed with the debug key unless SHANKPIT_NETKIT_KEYSTORE* are set
 node tools/verify-web-bundle.mjs ../apps/netkit
@@ -65,7 +67,34 @@ CI builds it in `release.yml` and ships it as `ShankPit_Netkit_<build>.apk` next
 
 ## The garage and the arcade (2026-11-24)
 
-The page opens on a flat-mode **garage** (the SHANKPIT CONSTRUCT hub's doctrine: every function is an object, status is a lamp on it, a cable means a live connection): scanner bench -> Devices, terminal -> SSH, monitor -> VNC, and an **arcade cabinet** that plays **BRAWLPIT** (WOTAN's WebAssembly fighter, `apps/netkit/brawlpit.wasm`, zero imports) inside the page with a multi-touch pad. All decisions are PARENA wasm (`nk_garage.prn`); the Java shell is unchanged (assets are packaged verbatim from `apps/netkit`). BRAWLPIT has no audio and no hat (no IDUNA session in the shell). Expect the APK to grow from ~117 KB to roughly 0.4-0.45 MB (the PNG art is ~250 KB of it; **an estimate, not measured: the Android SDK is absent where this was written, so no APK was built**). Back button: arcade/devices -> garage -> app closes. See `docs/NETKIT_NORTHSTAR.md` §6a for the CONSTRUCT port table. Untested on a device: 60 fps on a tablet WebView, multi-touch pointer capture, the extra 8 MB of memory, portrait layout.
+The page opens on a flat-mode **garage** (the SHANKPIT CONSTRUCT hub's doctrine: every function is an object, status is a lamp on it, a cable means a live connection): scanner bench -> Devices, terminal -> SSH, monitor -> VNC, and an **arcade cabinet** that plays **BRAWLPIT** (WOTAN's WebAssembly fighter, `apps/netkit/brawlpit.wasm`, zero imports) inside the page with a multi-touch pad. All decisions are PARENA wasm (`nk_garage.prn`); the Java shell is unchanged (assets are packaged verbatim from `apps/netkit`). BRAWLPIT has no audio and no hat (no IDUNA session in the shell). Measured 2026-11-26: the release APK is 487 KB (the PNG art is ~250 KB of it). Back button: arcade/devices -> garage -> app closes. See `docs/NETKIT_NORTHSTAR.md` §6a for the CONSTRUCT port table. Untested on a device: 60 fps on a tablet WebView, multi-touch pointer capture, the extra 8 MB of memory, portrait layout.
+
+## Clean builds (2026-11-26)
+
+Founder: *"CLEAN BUILDS FIRST"* before every drop. The build enforces it: `javac -Xlint:all -Werror` in both modules, and Android lint with
+`warningsAsErrors` + `abortOnError`. Back is handled with `OnBackInvokedCallback` on Android 13+ (predictive back), `onBackPressed` below;
+cloud backup and device transfer exclude everything (`res/xml/data_extraction_rules.xml`). First built on this box 2026-11-26: JDK 21,
+SDK platform 34 / build-tools 34.0.0, Gradle 8.7, AGP 8.5.2.
+
+## Devices: names, makers, the Pi (Drop One, 2026-11-26)
+
+The device list shows, per device: **your own name** for it (tap **Name**; kept in the encrypted store, so it survives rescans and restarts),
+else the name the device or the router gives; the address; what it looks like (from its open ports); the **maker** of its network card
+(from the MAC prefix: `apps/netkit/oui.bin`, 14,052 IEEE prefixes for 84 home-network makers); and chips for open SSH/VNC/RDP/SMB/web ports.
+A **Raspberry Pi** gets a green **Pi** badge and goes to the top of the list (after anything you pinned) — recognised by its MAC prefix
+(all nine Raspberry Pi IEEE blocks) or by the name `raspberrypi`.
+
+Where names and MACs come from, because Android 10+ hides the ARP table from apps: reverse DNS (the router's DHCP names), **mDNS** (a
+unicast reverse lookup to the device's port 5353 — Raspberry Pi OS, macOS, iOS, printers answer), and **NetBIOS** node status (port 137 —
+Windows PCs and Samba also report their MAC, which is how the maker shows on a modern tablet). Priority: your label > mDNS > NetBIOS >
+reverse DNS. All of it is PARENA (`PARENA/stdlib/netkit/nk_names.prn`); Java only sends one datagram and returns the first reply from
+that address (`shell/Udp.java`).
+
+Honest limits: on Android 10+ a device that answers neither mDNS nor NetBIOS has no MAC, so **no maker** (shown as nothing, never guessed);
+phones and tablets use private (randomized) MACs, shown as "Private Wi-Fi address"; the maker table is curated (an unlisted maker shows as
+nothing); a renamed Pi with no mDNS/NetBIOS answer and no ARP is only recognised once you name it. mDNS parsing is tested against replies
+built byte-for-byte to RFC 1035/6762 and NetBIOS against RFC 1002 (Python and Node responders), **not yet against a real avahi or Windows
+machine** — that is the tablet test.
 
 ## Status (see `docs/NETKIT_NORTHSTAR.md`)
 

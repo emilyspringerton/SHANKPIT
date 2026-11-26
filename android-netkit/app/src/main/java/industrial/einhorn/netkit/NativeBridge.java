@@ -14,6 +14,7 @@ import industrial.einhorn.netkit.shell.Prober;
 import industrial.einhorn.netkit.shell.Resolver;
 import industrial.einhorn.netkit.shell.Sink;
 import industrial.einhorn.netkit.shell.TcpHub;
+import industrial.einhorn.netkit.shell.Udp;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -34,6 +35,7 @@ final class NativeBridge implements Sink {
     private final TcpHub hub;
     private final Prober prober;
     private final Resolver resolver;
+    private final Udp udp;
     private final SecureStore store;
     private volatile boolean destroyed;
 
@@ -43,6 +45,7 @@ final class NativeBridge implements Sink {
         this.hub = new TcpHub(this);
         this.prober = new Prober(this);
         this.resolver = new Resolver(this);
+        this.udp = new Udp(this);
         this.store = new SecureStore(activity);
     }
 
@@ -58,6 +61,7 @@ final class NativeBridge implements Sink {
         hub.closeAll();
         prober.shutdown();
         resolver.shutdown();
+        udp.shutdown();
     }
 
     // ---- sockets ---------------------------------------------------------------------------------------------------------------------------
@@ -69,6 +73,8 @@ final class NativeBridge implements Sink {
     @JavascriptInterface public void probe(int job, String ip, int port, int timeoutMs) { prober.probe(job, ip, port, timeoutMs); }
     @JavascriptInterface public void ping(int job, String host, int timeoutMs) { prober.ping(job, host, timeoutMs); }
     @JavascriptInterface public void resolve(String ip) { resolver.resolve(ip); }
+    /** One UDP question to one device (the scanner's mDNS / NetBIOS name lookups); the packet is built and parsed in the wasm. */
+    @JavascriptInterface public void udpQuery(int id, String host, int port, String base64, int timeoutMs) { udp.query(id, host, port, base64, timeoutMs); }
     @JavascriptInterface public String arpText() { return ArpTable.read(); }
     @JavascriptInterface public String localNets() { return NetInfo.json(); }
 

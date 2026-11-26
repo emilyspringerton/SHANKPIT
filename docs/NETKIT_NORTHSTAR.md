@@ -124,7 +124,27 @@ Everything that decides is PARENA wasm (`PARENA/stdlib/netkit/nk_garage.prn`: pu
 
 No greyed-out placeholder objects were added for the unported rows: a light that does not mean something true would break the doctrine, so the omissions are recorded here instead.
 
-**Verification state (honest, 2026-11-26):** the PARENA garage logic is verified on the compiler's LLVM IR (45 checks) and on the linked wasm (45). The wasm/JS bundle was regenerated and vendored (`nk-host.js`, `netkit*.wasm`; `verify-web-bundle.mjs` passes), and the generated page passes its Node end-to-end leg against a real SSH server and libvncserver, garage and in-page BRAWLPIT included (94 checks). Still unrun: the headless-Chromium legs (`test_browser_e2e.py`, `test_browser_garage.py`), the APK build (no Android SDK) and any real-device run (NETKIT-3).
+**Verification state (honest, 2026-11-26, after Drop One):** the PARENA garage logic is verified on the compiler's LLVM IR (45 checks) and on the linked wasm (45). The bundle is regenerated and vendored (`verify-web-bundle.mjs` passes, now including `oui.bin`). The generated page passes its Node end-to-end leg against a real SSH server, libvncserver and real UDP name responders (108 checks), and — first time — both headless-Chromium legs under the app's CSP: garage + in-page BRAWLPIT 18, devices/SSH/VNC 25. The APK builds here (javac + lint warnings are errors). Still unrun: any real-device run (NETKIT-3).
+
+## 6b. Drop One: names, makers, the Pi (2026-11-26, EMILY SECTION 646)
+
+Founder's tablet-kit plan, Drop One: *"Look up each device's hardware address prefix to show the manufacturer ... Show IP address, hostname
+when available, and which common ports are open ... Highlight the Pi ... Allow saving and naming devices. Done when: you can open the app,
+scan, and see the Pi labeled by name."* Preceded by "CLEAN BUILDS FIRST": the APK now builds with javac and lint warnings as errors.
+
+| piece | where | verified |
+|---|---|---|
+| maker table: 14,052 IEEE MA-L prefixes → 84 makers, binary-searched in wasm | `PARENA/tools/netkit_oui_gen.py`, `stdlib/netkit/data/oui_brands.tsv`, `apps/netkit/oui.bin` | every prefix round-trips (test_names.py) |
+| private (randomized) MAC detection | `nk_names.prn` | test_names.py |
+| mDNS reverse lookup (unicast legacy query to :5353) — build + parse, compression, hostile packets | `nk_names.prn` | RFC-built replies in Python + a real Node UDP responder in the page e2e; **not** against real avahi (it could not run in this sandbox) |
+| NetBIOS node status (:137) — name + MAC → maker without ARP | `nk_names.prn` | RFC 1002-built replies; real Node UDP responder in the page e2e |
+| name ranks (label > mDNS > NetBIOS > reverse DNS), `.local`/`.lan`/… suffixes dropped | `nk_names.prn` | test_names.py |
+| the Pi: all nine Raspberry Pi blocks (three were missing) or the name `raspberrypi`; badge + first in the list | `nk_scan.prn`, `nk_host_scan.prn`, `netkit.css` | test_names.py, page e2e |
+| user labels: Name dialog, kept in the Keystore-encrypted store, survive rescans, follow a device from IP key to MAC key | `nk_host_scan.prn`, `index.html` | page e2e (108 checks) |
+| one UDP question / one answer from that address | `android-netkit/shell/Udp.java`, `NativeBridge.udpQuery` | 3 JVM tests on real loopback sockets |
+
+Still unproven: a real tablet on the real network (the "done when"), avahi and Windows as real responders, and how many devices on the
+founder's network answer neither protocol (those keep no maker on Android 10+).
 
 ## 7. Roadmap (the founder's stages, as PARENA modules)
 
@@ -139,5 +159,5 @@ No greyed-out placeholder objects were added for the unported rows: a light that
   model? What goes on the first stream-deck page? Is the iMac's Wi-Fi 2.4 GHz, and is the phone hotspot name/password chosen? Which Android
   version is the tablet on? What is the module interface (what may a PARENA module ask the app core to do)?
 * New: should the per-session instances stay (simple, isolated) or share one? What is the right terminal size for a phone (scroll vs scale)?
-  Should the shell grow NetBIOS/mDNS name lookup so Windows PCs show their real names? Does the iMac run TightVNC with a password set (this
+  ~~Should the shell grow NetBIOS/mDNS name lookup so Windows PCs show their real names?~~ Done (§6b). Does the iMac run TightVNC with a password set (this
   app refuses a password-less *required* server and tells the user)?

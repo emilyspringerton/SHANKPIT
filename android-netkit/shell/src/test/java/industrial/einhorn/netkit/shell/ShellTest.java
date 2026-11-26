@@ -206,4 +206,62 @@ public class ShellTest {
         assertNotNull(e);
         r.shutdown();
     }
+
+    // ---- Udp (the scanner's name lookups) -----------------------------------------------------------------------------------------------
+    @Test public void udpReturnsTheFirstReplyFromTheAddressAsked() throws Exception {
+        try (java.net.DatagramSocket srv = new java.net.DatagramSocket(0, InetAddress.getByName("127.0.0.1"))) {
+            Thread t = new Thread(() -> {
+                try {
+                    byte[] b = new byte[64];
+                    java.net.DatagramPacket q = new java.net.DatagramPacket(b, b.length);
+                    srv.receive(q);
+                    byte[] r = new byte[q.getLength() + 1];
+                    System.arraycopy(b, 0, r, 1, q.getLength()); r[0] = 42;      // echo, marked
+                    srv.send(new java.net.DatagramPacket(r, r.length, q.getSocketAddress()));
+                } catch (Exception ignored) { }
+            });
+            t.start();
+            Events ev = new Events(); Udp u = new Udp(ev);
+            u.query(7, "127.0.0.1", srv.getLocalPort(), B64.encode(new byte[] {1, 2, 3}, 0, 3), 3000);
+            String e = ev.await(4000, "\"t\":\"udp\"", "\"id\":7");
+            assertNotNull(e);
+            assertTrue(e, e.contains("\"e\":\"data\"") && e.contains("\"b\":\"" + B64.encode(new byte[] {42, 1, 2, 3}, 0, 4) + "\""));
+            u.shutdown(); t.join(2000);
+        }
+    }
+
+    @Test public void udpSaysNoneWhenNobodyAnswers() throws Exception {
+        int quiet;
+        try (java.net.DatagramSocket s = new java.net.DatagramSocket(0, InetAddress.getByName("127.0.0.1"))) {
+            quiet = s.getLocalPort();
+            Events ev = new Events(); Udp u = new Udp(ev);
+            long t0 = System.currentTimeMillis();
+            u.query(8, "127.0.0.1", quiet, B64.encode(new byte[] {9}, 0, 1), 400);   // socket open, never replies
+            assertNotNull(ev.await(3000, "\"id\":8", "\"e\":\"none\""));
+            assertTrue("the timeout is honoured", System.currentTimeMillis() - t0 >= 380);
+            u.query(9, "no-such-host.invalid", 5353, B64.encode(new byte[] {9}, 0, 1), 400);
+            assertNotNull(ev.await(3000, "\"id\":9", "\"e\":\"none\""));
+            u.shutdown();
+        }
+    }
+
+    @Test public void udpIgnoresDatagramsFromSomeoneElse() throws Exception {
+        try (java.net.DatagramSocket srv = new java.net.DatagramSocket(0, InetAddress.getByName("127.0.0.1"));
+             java.net.DatagramSocket other = new java.net.DatagramSocket(0, InetAddress.getByName("127.0.0.2"))) {
+            Thread t = new Thread(() -> {
+                try {
+                    byte[] b = new byte[64];
+                    java.net.DatagramPacket q = new java.net.DatagramPacket(b, b.length);
+                    srv.receive(q);
+                    other.send(new java.net.DatagramPacket(new byte[] {66}, 1, q.getSocketAddress()));   // a stranger answers first
+                    Thread.sleep(100);
+                    srv.send(new java.net.DatagramPacket(new byte[] {77}, 1, q.getSocketAddress()));
+                } catch (Exception ignored) { }
+            });
+            t.start();
+            byte[] r = Udp.ask("127.0.0.1", srv.getLocalPort(), new byte[] {1}, 3000);
+            assertArrayEquals(new byte[] {77}, r);
+            t.join(2000);
+        }
+    }
 }

@@ -176,6 +176,21 @@
   </div>
 </div>
 
+<!-- ======================= name a device ======================= -->
+<div id="dlg-name" class="dlg" hidden role="dialog" aria-modal="true" aria-labelledby="n-title">
+  <div class="card">
+    <h2 id="n-title">Name this device</h2>
+    <p id="n-what" class="muted"></p>
+    <label>Name <input id="n-label" maxlength="31" placeholder="e.g. Garage Pi" autocapitalize="words" autocomplete="off" spellcheck="false"></label>
+    <p class="muted">Kept on this tablet and shown every time this device turns up in a scan.</p>
+    <div class="row">
+      <button id="n-save" class="primary">Save</button>
+      <button id="n-clear">Remove name</button>
+      <button id="n-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- ======================= trust this device? ======================= -->
 <div id="dlg-hostkey" class="dlg" hidden role="dialog" aria-modal="true" aria-labelledby="hk-title">
   <div class="card">

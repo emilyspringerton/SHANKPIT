@@ -4,13 +4,16 @@
 # UPDATE 2026-11-26: nk-host.js, netkit.wasm, netkit-lite.wasm regenerated with PARENA/scripts/build_netkit_web.sh at PARENA wip2
 # (the nk_garage commit; LLVM 18.1.3 + node 24). The same build reproduced brawlpit.wasm, nkterm.wasm and both PNGs byte for byte.
 # brawlpit.wasm / duck.png / sprites.png are byte copies of WOTAN/BRAWLPIT (WOTAN last commit touching brawlpit.wasm: 1068920).
+# UPDATE 2026-11-26 (Drop One, names + makers; PARENA d261ff3): nk-host.js, netkit.wasm, netkit-lite.wasm regenerated and oui.bin added (PARENA nk_names.prn,
+#   tools/netkit_oui_gen.py from stdlib/netkit/data/oui_brands.tsv); nkterm.wasm, brawlpit.wasm and both PNGs reproduced byte for byte.
 # sha256  file
-2443c881231535661381d06b0d1de11dca45f10ff28644adec2bb115f0655f76  index.html
-2e72bd5abf5ef401f87b2f6bfd554387bf64c8a2776ce295a1e5c84d24cf36f5  netkit.css
-410140322ccf2c123dfc35d0e996ae3f73584894af94549a9abb57d865727462  nk-host.js
-5fcb6b0da4d3e257ffc18a7b449de74235e5c3e831f3375238215454f7a957df  netkit.wasm
-2fa0076ec6524580f86d0d1cc801e054640085faf6989f41a79b69f0ae0d147f  netkit-lite.wasm
+e7cc01053c41a80ba776268054b76bd410dc5dd5ec6b970db74ade9ed0a82cd7  index.html
+6d8611b178bc3ad831f66a0c69246ea946a32e3d5e0a5df97abb6d5a841ee03b  netkit.css
+ae0b9587c51d7ede5c8015ad52e663fdae7f47b0bf049a097389aeeba5496960  nk-host.js
+fae50655e949bd1c3c598cc47093a998f240fc55f0641ae94c5ffec850ea02a9  netkit.wasm
+0dfb3ba7c0eb470ec2cbca3618ca935deffca3fc17dd555b6380fbe8bf5b97a5  netkit-lite.wasm
 d89b2f86e35c5e67d33588226a2cf80171543900930185ab26f6bd9006ba5385  nkterm.wasm
 4e97ba74e6cc18a96016c977c26386ff913858c294482b5073825e38fc7720b7  brawlpit.wasm
+3c9330282ebd317bf2b8da01b9cce145802cd0fbf40c51f1156ba168e18eab82  oui.bin
 de9c4c6a7d91195216c56ba7002be6bafaf91dfdb9e205d1f8f8a32e9eebde7a  duck.png
 6326f18fd5fe4c4990cc54e3812880fd54dd149efe08b43a8a0dddf7292b8f98  sprites.png
