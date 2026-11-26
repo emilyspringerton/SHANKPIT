@@ -21,16 +21,18 @@
 # UPDATE 2026-11-26 (SHANKPHONE + Survival, PARENA ee07efe): nk-host.js, netkit.wasm, netkit-lite.wasm regenerated and survival.wasm added
 #   (scripts/build_netkit_web.sh at ee07efe; LLVM 18.1.3, node 22.18); index.html and netkit.css edited by hand (SHANKPHONE brand, the
 #   Survival view, tab and object art). nkterm.wasm, oui.bin and both PNGs reproduced byte for byte; brawlpit.wasm left as WOTAN's copy.
+# UPDATE 2026-11-26 (trees + wood, PARENA eeddc43): nk-host.js, netkit.wasm, netkit-lite.wasm, survival.wasm regenerated (SURVIVAL trees,
+#   chopping, barricades; nk_garage touch button 7 "Build"); index.html edited by hand (the Build button). Others unchanged.
 # sha256  file
-0aa75eb317fe9cd3b0bb78e9edc85183d4ef27716d7b25d76e54b27af08d24a4  index.html
+1942d45a31e66db5bda81af20cbff63572701acdb701b88e777f11b9f80b4cbe  index.html
 c7bf3b4396ede5940de5d9198bfbaa6e23462f1f40f7a33fc33dde0ad609869d  netkit.css
 295c18f444037eeda784e56041b8e8af180824ebf5ec9463d38e4c0578af19b3  nk-host.js
-160d183803a8f5d089e16bf3947df49eb3d59bd550bf35e1536fe36e217728dc  netkit.wasm
-8ab96e76bbb0861e96fe72f4e2635e646653e02fd0a7fd9b2d73d6d118f31742  netkit-lite.wasm
+0a65f82cfbcb715a4e2d1698aa0c42c905594a62f36fbbcc0633d9f51eae2b08  netkit.wasm
+0d6e90348b0e27ff2f89ef01e72900ac7726d9b1e627209207eb14a0e1bc91af  netkit-lite.wasm
 71670ff4ea38a4b15a536bbb69d6ec743cff1109c1c3c66d6b1837e9d6b6051b  nkterm.wasm
 4e97ba74e6cc18a96016c977c26386ff913858c294482b5073825e38fc7720b7  brawlpit.wasm
 3c9330282ebd317bf2b8da01b9cce145802cd0fbf40c51f1156ba168e18eab82  oui.bin
 de9c4c6a7d91195216c56ba7002be6bafaf91dfdb9e205d1f8f8a32e9eebde7a  duck.png
 6326f18fd5fe4c4990cc54e3812880fd54dd149efe08b43a8a0dddf7292b8f98  sprites.png
 dd5d3cb819720b092de844b18fa59c84389b94e4d18615e031a8c313664036d4  kit/setup.bat
-7358f0ed3798fc46250e3e50fa17f3937a76fe76ee630d31418d75cc6970b783  survival.wasm
+21061bbe5651ae5b50f418fc70f6ba67dac576707ca41728f065ff7bb67cba6e  survival.wasm

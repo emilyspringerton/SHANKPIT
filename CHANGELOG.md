@@ -1,5 +1,19 @@
 ## 2026-11-26
 
+- **feat(zombie modes): trees and wood in the OG engine and the SHANKPHONE** (founder: "Add trees to zombie survival modes for shankpit
+  og engine and shankpit wasm zombies ultra low poly models like our skins add resource collection mod parena based mods based dev").
+  - **OG client:**
+    - `packages/simulation/trees.{c,h}`: the pool, the chop ray, regrowth and the wood count.
+    - `tree_rules.c`: generated from `PARENA/stdlib/shankpit/tree_rules.prn` (`scripts/gen_tree_rules.sh`), shared with the wasm engine.
+    - `main.c`: trees grow at the start of SURVIVAL (city, radius 420, off the roads) and ZOMBIES (radius 160, ground traced); low-poly
+      box drawing (at most 4 boxes, like the skins), a shake on a hit, stumps; chopping through the shot hook; a WOOD HUD.
+    - `make test-trees` 13/13.
+    - `make lobby` builds here (with the in-phone browser stubbed for this box). Run headless under Xvfb (`--survival --no-level`):
+      64 trees grow and render around the hero.
+    - Not yet: trunk collision and barricades in this engine (the wasm engine has both).
+  - **SHANKPHONE:** the bundle is regenerated with SURVIVAL's trees, wood and barricades, plus a touch "Build" button. The browser test
+    passes 30/30. (sess-20261126-1643-452c2f1a)
+
 - **feat(netkit): the SHANKPHONE, with a Survival button that plays SHANKPIT SURVIVAL** (founder: "the shankpit net kit can be the
   shankphone and the shankphone itself can have a button for survival that launches OG shankpit as a level and collection of mods";
   PARENA rewrite chosen over porting the C client's GL to GLES).

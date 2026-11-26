@@ -170,6 +170,7 @@ static int g_drawing_local_third_person = 0;
 #include "../../../packages/simulation/lab_station_host.h"
 #include "../../../packages/simulation/gun_items.h"
 #include "../../../packages/simulation/chests.h"
+#include "../../../packages/simulation/trees.h"   /* trees + wood in the zombie modes (PARENA tree_rules.prn) */
 #include "../../../packages/simulation/shield_packs.h"
 #include "../../../packages/simulation/shield_regen.h" /* the 4 s shield countdown and the regen tick */
 #include "../../../packages/audio/audio.h"
@@ -4477,6 +4478,78 @@ static void chest_install_hooks(void) {
     g_phys_map_hitscan_hook = chest_on_hitscan; g_phys_map_blast_hook = chest_on_blast;
 }
 
+/* ---- trees + wood (founder 2026-11-26: "Add trees to zombie survival modes ... ultra low poly models like our skins add resource
+ * collection mod parena based mods"). What a tree IS comes from PARENA tree_rules.prn (tree_rules.c); trees.c is the pool and the chop;
+ * this block is the host: where a tree may stand, the chop through the shot hook, the drawing, the wood counter. Trunks do not collide
+ * in this engine yet (named follow-up); the wasm survival mode has collision and barricades. */
+static PhysMapHitscanHook g_tree_prev_hitscan = NULL;
+static void tree_on_hitscan(int scene_id, float ox, float oy, float oz, float dx, float dy, float dz, int weapon) {
+    if (g_tree_prev_hitscan) g_tree_prev_hitscan(scene_id, ox, oy, oz, dx, dy, dz, weapon);
+    if (trees_count() == 0 || weapon < 0 || weapon >= MAX_WEAPONS) return;
+    float range = (weapon == WPN_KNIFE) ? 3.5f : (weapon == WPN_KATANA ? 4.0f : 400.0f);
+    float hr = range, hx, hy, hz, nx, ny, nz;
+    if (trace_map(ox, oy, oz, ox + dx * range, oy + dy * range, oz + dz * range, &hx, &hy, &hz, &nx, &ny, &nz))
+        hr = sqrtf((hx - ox) * (hx - ox) + (hy - oy) * (hy - oy) + (hz - oz) * (hz - oz));
+    int felled = 0;
+    int slot = trees_hit_ray(ox, oy, oz, dx, dy, dz, hr, weapon, SDL_GetTicks(), &felled);
+    if (slot >= 0 && felled) SDL_Log("TREES: tree %d felled, wood now %d", slot, trees_wood());
+}
+static void trees_install_hooks(void) {
+    if (g_phys_map_hitscan_hook == tree_on_hitscan) return;
+    g_tree_prev_hitscan = g_phys_map_hitscan_hook;
+    g_phys_map_hitscan_hook = tree_on_hitscan;
+}
+/* a tree may stand where no low box stands and (in the city) off the roads; the ground height is traced */
+static int tree_site(float x, float z, float *gy) {
+    for (int i = 1; i < map_count; i++) {
+        const Box *b = &map_geo[i];
+        if (b->y - b->h * 0.5f > 8.0f) continue;
+        if (fabsf(x - b->x) < b->w * 0.5f + 3.0f && fabsf(z - b->z) < b->d * 0.5f + 3.0f) {
+            if (b->w > 150.0f && b->d > 150.0f && b->y + b->h * 0.5f < 1.0f) continue;   /* a ground slab is ground, not an obstacle */
+            return 0;
+        }
+    }
+    if (local_state.players[0].scene_id == SCENE_CITY) {
+        const float pitch = CITY_BLOCK_SIZE + CITY_ROAD_SIZE;
+        float rx = (floorf(x / pitch) + 0.5f) * pitch, rz = (floorf(z / pitch) + 0.5f) * pitch;
+        if (fabsf(x - rx) < CITY_ROAD_SIZE * 0.5f + 4.0f || fabsf(z - rz) < CITY_ROAD_SIZE * 0.5f + 4.0f) return 0;
+        *gy = 0.0f;
+        return 1;
+    }
+    float hx, hy, hz, nx, ny, nz;
+    *gy = trace_map(x, 300.0f, z, x, -200.0f, z, &hx, &hy, &hz, &nx, &ny, &nz) ? hy : 0.0f;
+    return 1;
+}
+static void lobby_trees_start(float cx, float cz, float radius) {
+    trees_reset();
+    trees_install_hooks();
+    int n = trees_grow(cx, cz, radius, 1337, tree_site);
+    SDL_Log("TREES: %d trees around (%.0f, %.0f)", n, cx, cz);
+}
+static void draw_trees(unsigned int now_ms) {
+    glDisable(GL_TEXTURE_2D);
+    for (int i = 0; i < TREE_MAX; i++) {
+        const Tree *t = trees_get(i);
+        if (!t) continue;
+        float shake = (now_ms - t->hurt_ms < 180u) ? 0.08f * sinf((float)now_ms * 0.09f) : 0.0f;
+        int parts = t->alive ? trees_parts(t) : 1;
+        for (int p = 0; p < parts; p++) {
+            unsigned int c = trees_part_color(t, p);
+            float k = t->alive ? 1.0f : 0.75f;
+            glColor3f(((c >> 16) & 255) / 255.0f * k, ((c >> 8) & 255) / 255.0f * k, (c & 255) / 255.0f * k);
+            glPushMatrix();
+            if (t->alive) {
+                glTranslatef(t->x + trees_part(t, p, 0) + shake, t->y + trees_part(t, p, 1), t->z + trees_part(t, p, 2));
+                draw_box(trees_part(t, p, 3), trees_part(t, p, 4), trees_part(t, p, 5));
+            } else {   /* a stump */
+                glTranslatef(t->x, t->y + 0.25f, t->z);
+                draw_box(trees_part(t, 0, 3), 0.5f, trees_part(t, 0, 5));
+            }
+            glPopMatrix();
+        }
+    }
+}
+
 // lobby_start_survival_mode -- cards #482/#488: SURVIVAL, wave defence on the built-in SCENE_CITY
 // (founder: "survival map should use shankpit CITY map"). Local and offline like ZOMBIES; the
 // waves are witness_ai_survival_tick's job (packages/simulation/witness_ai.c).
@@ -4501,6 +4574,7 @@ static int lobby_start_survival_mode(void) {
     chest_install_hooks();
     int chests = chests_seed_roads(hero->x, 0.0f, hero->z, 10, 140.0f, 120.0f, CITY_BLOCK_SIZE + CITY_ROAD_SIZE);
     SDL_Log("SURVIVAL: wave defence on SCENE_CITY, %d guns + %d chests on the ground", guns, chests);
+    lobby_trees_start(hero->x, hero->z, 420.0f);
     return 1;
 }
 
@@ -4850,6 +4924,7 @@ static int lobby_start_zombies_mode(void) {
     food_pickup_reset();   /* SECTION 591: BIG_O food (CARGO app) lies around the spawn */
     food_pickup_seed_ring(SCENE_CUSTOM_LEVEL, hero->x, hero->y, hero->z);
     lobby_items_seed_desk(hero->x, hero->y, hero->z);   /* SECTION 643: the desk with notebook/pencil/sharpener... */
+    lobby_trees_start(hero->x, hero->z, 160.0f);
     SDL_Log("ZOMBIES: loaded '%s' (source id %d, %d boxes, %d damaged cells)", lvl->name, lvl->source_id, lvl->count, lvl->brick_damage_count);
     free(lvl);
     return 1;
@@ -14511,7 +14586,23 @@ static void draw_editmap_hud(void) {
 
 // draw_survival_hud -- card #482: wave number and zombies left (alive + still to spawn), top centre;
 // "NEXT WAVE" between waves; "YOU SURVIVED TO WAVE n" once the hero is down.
+static void draw_wood_hud(void) {
+    if (local_state.game_mode != MODE_SURVIVAL && local_state.game_mode != MODE_ZOMBIES) return;
+    if (trees_count() == 0) return;
+    char line[32];
+    snprintf(line, sizeof line, "WOOD %d", trees_wood());
+    glDisable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, 1280, 0, 720);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    glColor3f(0.0f, 0.0f, 0.0f); draw_string(line, 40.0f + 2.0f, 670.0f - 2.0f, 3);
+    glColor3f(0.85f, 0.65f, 0.40f); draw_string(line, 40.0f, 670.0f, 3);
+    glEnable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glMatrixMode(GL_MODELVIEW); glPopMatrix();
+}
+
 static void draw_survival_hud(void) {
+    draw_wood_hud();
     if (local_state.game_mode != MODE_SURVIVAL) return;
     int wave = witness_ai_survival_wave();
     int left = witness_ai_survival_remaining(&local_state);
@@ -16523,6 +16614,7 @@ void draw_scene(PlayerState *render_p) {
     draw_projectiles();
     draw_explosions();
     if (local_state.game_mode == MODE_SURVIVAL) { draw_gun_items(SDL_GetTicks()); draw_chests(); }
+    if (local_state.game_mode == MODE_SURVIVAL || local_state.game_mode == MODE_ZOMBIES) draw_trees(SDL_GetTicks());
     draw_world_items(SDL_GetTicks());   /* SECTION 643 */
     draw_orb_world(SDL_GetTicks());
     { /* SECTION 638 ARCADE-1: the cabinet exists only in the CONSTRUCT hub (offline MODE_TYLER on CONSTRUCT) */
@@ -20364,6 +20456,7 @@ int main(int argc, char* argv[]) {
                 bigo_wiring_tick(now_ms);
                 lobby_check_story_level_exits(now_ms);
                 if (local_state.game_mode == MODE_SURVIVAL) lobby_survival_guns_tick();
+                if (local_state.game_mode == MODE_SURVIVAL || local_state.game_mode == MODE_ZOMBIES) trees_tick(now_ms);
                 if (local_state.game_mode == MODE_TYLER) {
                     lobby_tyler_scene_tick(now_ms);
                 }
