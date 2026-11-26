@@ -4937,11 +4937,11 @@ static int lobby_descend_dungeon(void) {
     return 1;
 }
 
-/* ---- UNIFY-2: the third-person camera is driven by the PARENA camera mods (stdlib/camera/*.prn, generated into
+/* ---- UNIFY-2: the third-person camera is driven by the PARENA camera mods (stdlib/camera/ *.prn, generated into
    packages/simulation/camera_unify_mod.c), sequenced by packages/render/camera_view.c. Everything below is thin glue:
    the arm length is the mouse-wheel zoom (WoW-style: all the way in = first person), the four follow options and
    the click-to-move destination live in g_cv, and this file only feeds floats/inputs in and applies the results. */
-static CamView g_cv;
+static CamViewState g_cv;
 static int g_cv_ready = 0;               /* camview_init has run */
 static int g_cv_manual = 0;              /* the user orbited (mouse/stick) since the last frame update */
 static int g_cv_pitch_off_mdeg = 0;      /* terrain pitch offset, positive = look further down (already wall-damped) */

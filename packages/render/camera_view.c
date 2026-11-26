@@ -5,7 +5,7 @@
 
 #define CV_PI 3.14159265358979f
 
-void camview_init(CamView *cv) {
+void camview_init(CamViewState *cv) {
     cv->arm_milli = 0; cv->target_milli = 0; cv->last_out_milli = CAMVIEW_DEFAULT_ARM_MILLI; cv->fp = 1;
     cv->synced = 0; cv->written_flag = 0;
     cv->opt_follow = 1; cv->opt_recenter = 1; cv->opt_terrain = 1; cv->opt_smooth = 1; cv->opt_click_move = 0;
@@ -15,29 +15,29 @@ void camview_init(CamView *cv) {
     cv->body_yaw_mdeg = 0; cv->steering = 0;
 }
 
-void camview_sync_flag(CamView *cv, int third) {
+void camview_sync_flag(CamViewState *cv, int third) {
     if (third) { cv->arm_milli = cv->target_milli = cv->last_out_milli; cv->fp = 0; }
     else { cv->arm_milli = cv->target_milli = 0; cv->fp = 1; }
     cv->synced = 1;
 }
 
-static void note_out(CamView *cv) { if (cv->target_milli >= zoom_cam_out_floor_milli()) cv->last_out_milli = cv->target_milli; }
+static void note_out(CamViewState *cv) { if (cv->target_milli >= zoom_cam_out_floor_milli()) cv->last_out_milli = cv->target_milli; }
 
-void camview_wheel(CamView *cv, int clicks, int allow_fp) {
+void camview_wheel(CamViewState *cv, int clicks, int allow_fp) {
     int mn = allow_fp ? 0 : CAMVIEW_LOCKED_MIN_MILLI;
     cv->target_milli = zoom_cam_wheel_target_milli(cv->target_milli, clicks, 0, mn, CAMVIEW_MAX_ARM_MILLI);
     note_out(cv);
 }
 
-void camview_snap(CamView *cv, int allow_fp) {
+void camview_snap(CamViewState *cv, int allow_fp) {
     if (!allow_fp) return;
     if (cv->fp || cv->target_milli < zoom_cam_snap_milli()) cv->target_milli = cv->last_out_milli;
     else { note_out(cv); cv->target_milli = 0; }
 }
 
-void camview_cancel_dest(CamView *cv) { cv->dest_active = 0; cv->stuck_ms = 0; cv->steering = 0; }
+void camview_cancel_dest(CamViewState *cv) { cv->dest_active = 0; cv->stuck_ms = 0; cv->steering = 0; }
 
-int camview_click_dest(CamView *cv, int allow_fp, int hit_valid, int hx, int hz, int ny) {
+int camview_click_dest(CamViewState *cv, int allow_fp, int hit_valid, int hx, int hz, int ny) {
     if (!click_move_accept(cv->opt_click_move && allow_fp, cv->fp, 0, hit_valid, ny)) return 0;
     cv->dest_active = 1; cv->dest_x_milli = hx; cv->dest_z_milli = hz; cv->stuck_ms = 0;
     return 1;
@@ -48,7 +48,7 @@ static int heading_mdeg(int dx, int dz) {   /* yaw whose forward (-sin y, -cos y
     return cam_ease_wrap_mdeg((int)lroundf(deg * 1000.0f));
 }
 
-void camview_update(CamView *cv, const CamViewIn *in, CamViewOut *out) {
+void camview_update(CamViewState *cv, const CamViewIn *in, CamViewOut *out) {
     int dt = in->dt_ms;
     out->first_person = cv->fp; out->yaw_mdeg = in->yaw_mdeg; out->pitch_off_mdeg = 0; out->focus_dy_milli = 0;
     out->steering = 0; out->fwd_permille = out->str_permille = 0; out->aim_yaw_mdeg = in->yaw_mdeg;
@@ -121,6 +121,6 @@ void camview_update(CamView *cv, const CamViewIn *in, CamViewOut *out) {
     }
 }
 
-void camview_smooth_pos(const CamView *cv, int dt_ms, const int cur[3], const int tgt[3], int out[3]) {
+void camview_smooth_pos(const CamViewState *cv, int dt_ms, const int cur[3], const int tgt[3], int out[3]) {
     for (int i = 0; i < 3; i++) out[i] = cam_follow_smooth_step_milli(cv->opt_smooth, cur[i], tgt[i], dt_ms);
 }

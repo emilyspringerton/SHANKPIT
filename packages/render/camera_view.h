@@ -16,7 +16,7 @@
 #define CAMVIEW_MAX_ARM_MILLI     20000
 #define CAMVIEW_LOCKED_MIN_MILLI  4000   /* a view that may not go first person (e.g. server-forced third) */
 
-typedef struct CamView {
+typedef struct CamViewState {
     /* zoom */
     int arm_milli, target_milli, last_out_milli, fp;
     int synced, written_flag;
@@ -33,7 +33,7 @@ typedef struct CamView {
     /* click-to-move */
     int dest_active, dest_x_milli, dest_z_milli, stuck_ms;
     int body_yaw_mdeg, steering;
-} CamView;
+} CamViewState;
 
 typedef struct CamViewIn {
     int dt_ms;
@@ -57,19 +57,19 @@ typedef struct CamViewOut {
 } CamViewOut;
 
 /* Defaults: SHANKPIT = Behind when moving + Slope + normal recenter + low smoothing, click-to-move OFF. */
-void camview_init(CamView *cv);
+void camview_init(CamViewState *cv);
 /* Re-seed zoom from the host's third_person flag (first use, or after an external change). */
-void camview_sync_flag(CamView *cv, int third);
+void camview_sync_flag(CamViewState *cv, int third);
 /* SDL wheel.y (positive = scroll up = zoom in). */
-void camview_wheel(CamView *cv, int clicks, int allow_fp);
+void camview_wheel(CamViewState *cv, int clicks, int allow_fp);
 /* The V key: snap between first person and the last third-person distance. */
-void camview_snap(CamView *cv, int allow_fp);
+void camview_snap(CamViewState *cv, int allow_fp);
 /* Click-to-move: ground hit (world x/z in milli, normal.y permille) from a left click. Returns 1 if accepted. */
-int camview_click_dest(CamView *cv, int allow_fp, int hit_valid, int hx_milli, int hz_milli, int normal_y_permille);
-void camview_cancel_dest(CamView *cv);
+int camview_click_dest(CamViewState *cv, int allow_fp, int hit_valid, int hx_milli, int hz_milli, int normal_y_permille);
+void camview_cancel_dest(CamViewState *cv);
 /* Once per frame, after input and before the sim ticks. */
-void camview_update(CamView *cv, const CamViewIn *in, CamViewOut *out);
+void camview_update(CamViewState *cv, const CamViewIn *in, CamViewOut *out);
 /* Per-axis camera position lag (smoothing option), once per frame. Off returns the target exactly. */
-void camview_smooth_pos(const CamView *cv, int dt_ms, const int cur_milli[3], const int target_milli[3], int out_milli[3]);
+void camview_smooth_pos(const CamViewState *cv, int dt_ms, const int cur_milli[3], const int target_milli[3], int out_milli[3]);
 
 #endif
