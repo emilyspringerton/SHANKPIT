@@ -158,9 +158,9 @@ What port 445 *does* give without any password is the PC's own description of it
 - the SMB version and the signing and encryption settings;
 - the PC's clock.
 
-That confirms you have the right machine before you walk over to it. Signed-in share browsing and file copy (for example, putting
-`setup.bat` on a share) is planned as EMILY KIT-SMB S2. Remote start (S3) only works under the conditions above, and needs a
-decision first.
+That confirms you have the right machine before you walk over to it. With a Windows account on the iMac, the tablet's **Files** button
+(or `PARENA/scripts/netkit_smb_browse.sh`) lists its shares and folders and previews text files, read only. Copying files onto a share and
+remote start (EMILY KIT-SMB S3) are not built: remote start only works under the conditions above, and needs a decision first.
 
 ## Re-running, repairing, uninstalling
 

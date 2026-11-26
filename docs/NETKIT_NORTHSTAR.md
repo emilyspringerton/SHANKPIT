@@ -151,6 +151,28 @@ storage, clipboard; `Udp.java` sends one datagram and returns the first reply fr
 Still unproven: a real tablet on the real network (the "done when"), avahi and Windows as real responders, and how many devices on the
 founder's network answer neither protocol (those keep no maker on Android 10+).
 
+## 6c. Windows file sharing: Files (2026-11-26, EMILY KIT-SMB)
+
+Founder: *"windows file sharing is open on 445 can we add tools to the netkit for exploring those capabilities? parena first mods first"*,
+then *"ok the netkit doesnt do anything per the windows file sharing yet can we get that working so we can explore what files are being
+shared? parena mods based"*. A device answering on 445 gets a **Files** button. You sign in with a Windows account (`DOMAIN\user` works,
+and empty fields try without an account), then see its shares, open folders, and preview text files. It is **read only by construction**:
+the wasm has no code that writes, renames or deletes, and every request the specs see is parsed to prove it.
+
+| piece | where | verified |
+|---|---|---|
+| credential-free probe: SMB2 NEGOTIATE (2.0.2..3.1.1) + the NTLM challenge: names, workgroup/domain, Windows build, dialect, signing, cipher, clock | `PARENA/stdlib/netkit/nk_smb.prn`, CLI `scripts/netkit_smb_probe.sh` | `smb_spec.prn` 59 specs incl. a recorded Samba 4.19 reply; live Samba |
+| MD4, MD5, HMAC-MD5, HMAC-SHA256 | `nk_md.prn` | `md_spec.prn` 23 specs, RFC 1320/1321/2202/4231 + MS-NLMP vectors |
+| sign-in: NTLMv2 + MIC in SPNEGO with mechListMIC; SMB 2.1 HMAC-SHA256 signing of every request, server signatures checked; anonymous | `nk_smb_files.prn` | MS-NLMP 4.2.4 literals; replays of signed sessions recorded from **real Samba 4.19 and impacket**; a changed reply byte ends the session |
+| shares (IPC$, srvsvc DCE/RPC NetrShareEnumAll, multi-fragment), folders (QUERY_DIRECTORY, all pages, 2048-entry cap), text preview (60 KB) | `nk_smb_files.prn` | `smb_files_spec.prn` 49 specs; live Samba (folder, preview, wrong password) and impacket (shares) |
+| the Files screen, sign-in dialog, saved connections, Back/Up | `PARENA/stdlib/netkit/host/nk_host_files.prn`, `apps/netkit/index.html` | headless Chromium against impacket on port 445 (17 checks, one-off: page legs move to PARENA drivers in KIT-T T4) |
+
+Named limits: the browse session speaks SMB **2.1**, because 3.x signing needs AES-CMAC and an SP800-108 KDF that PARENA does not have yet.
+Every current Windows still accepts 2.1, including Windows 11 24H2, which requires signing. A share set to "encrypt data" will refuse.
+The user name is upper-cased as ASCII only. The share list could not be checked against Samba here, because its RPC helper would not run
+unprivileged; impacket served that part. **Not yet run against a real Windows PC.** Starting VNC remotely over SMB (svcctl) is not built:
+Windows 10 Home blocks admin sign-ins over the network (UAC remote restrictions), so `setup.bat` is still run once at the iMac.
+
 ## 7. Roadmap (the founder's stages, as PARENA modules)
 
 1. **VS0 toolkit** — this. Remaining: the two scripts (iMac `setup.bat`, router-Pi setup), a real-device pass, VNC Tight/ZRLE.

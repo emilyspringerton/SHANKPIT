@@ -33,6 +33,7 @@ let vz         = 1.0;
 let vtx         = 0.0;
 let vty         = 0.0;
 let ptrs      = null;
+let files      = null;
 let arcState         = 0;
 let arcX      = null;
 let arcMem      = null;
@@ -408,7 +409,7 @@ export function devHtml(i        )         {
         let vncPort         = ((scanX.nk_dev_has_port(i, 5900) === 1) ? 5900 : ((scanX.nk_dev_has_port(i, 5901) === 1) ? 5901 : 0));
         let pinP          = (scanX.nk_dev_pinned(i) === 1);
         let mac         = ((scanX.nk_dev_has_mac(i) === 1) ? ("" + "  -  " + repAll(devKey(i), "mac:", "")) : "");
-        return ("" + "<li class=\"dev" + (pinP ? " pinned" : "") + (piP ? " pi" : "") + "\" data-ip=\"" + ip + "\" data-key=\"" + esc(devKey(i)) + "\">" + "<div class=\"dev-main\"><div class=\"dev-name\">" + (piP ? "<span class=\"pi-badge\">Pi</span> " : "") + esc(((name === "") ? ip : name)) + "</div>" + "<div class=\"dev-sub\">" + ((name === "") ? "" : ("" + ip + "  -  ")) + esc(guess) + ((labelledP && ((found !== "") && (found !== name))) ? ("" + "  -  " + esc(found)) : "") + "</div>" + ((maker === "") ? "" : ("" + "<div class=\"dev-maker\">" + esc(maker) + esc(mac) + "</div>")) + "<div class=\"chips\">" + portChip(i, 22) + portChip(i, 5900) + portChip(i, 5901) + portChip(i, 3389) + portChip(i, 445) + portChip(i, 80) + portChip(i, 443) + portChip(i, 8080) + "</div></div><div class=\"dev-actions\">" + (sshP ? ("" + "<button data-act=\"ssh\" data-port=\"22\">SSH</button>") : "") + ((vncPort > 0) ? ("" + "<button data-act=\"vnc\" data-port=\"" + vncPort + "\">Screen</button>") : "") + "<button data-act=\"name\" title=\"Give this device your own name\">Name</button>" + "<button data-act=\"pin\" title=\"Keep this device at the top\">" + (pinP ? "Unpin" : "Pin") + "</button>" + "</div></li>");
+        return ("" + "<li class=\"dev" + (pinP ? " pinned" : "") + (piP ? " pi" : "") + "\" data-ip=\"" + ip + "\" data-key=\"" + esc(devKey(i)) + "\">" + "<div class=\"dev-main\"><div class=\"dev-name\">" + (piP ? "<span class=\"pi-badge\">Pi</span> " : "") + esc(((name === "") ? ip : name)) + "</div>" + "<div class=\"dev-sub\">" + ((name === "") ? "" : ("" + ip + "  -  ")) + esc(guess) + ((labelledP && ((found !== "") && (found !== name))) ? ("" + "  -  " + esc(found)) : "") + "</div>" + ((maker === "") ? "" : ("" + "<div class=\"dev-maker\">" + esc(maker) + esc(mac) + "</div>")) + "<div class=\"chips\">" + portChip(i, 22) + portChip(i, 5900) + portChip(i, 5901) + portChip(i, 3389) + portChip(i, 445) + portChip(i, 80) + portChip(i, 443) + portChip(i, 8080) + "</div></div><div class=\"dev-actions\">" + (sshP ? ("" + "<button data-act=\"ssh\" data-port=\"22\">SSH</button>") : "") + ((vncPort > 0) ? ("" + "<button data-act=\"vnc\" data-port=\"" + vncPort + "\">Screen</button>") : "") + ((scanX.nk_dev_has_port(i, 445) === 1) ? "<button data-act=\"files\" title=\"Windows file sharing\">Files</button>" : "") + "<button data-act=\"name\" title=\"Give this device your own name\">Name</button>" + "<button data-act=\"pin\" title=\"Keep this device at the top\">" + (pinP ? "Unpin" : "Pin") + "</button>" + "</div></li>");
     }
 }
 
@@ -739,7 +740,7 @@ export function toolHost()         {
 export function toolPort()         {
     {
         let p      = parseInt(val("m-port"), 10);
-        return (((p > 0) && (p < 65536)) ? p : ((val("m-proto") === "vnc") ? 5900 : 22));
+        return (((p > 0) && (p < 65536)) ? p : protoPort(val("m-proto")));
     }
 }
 
@@ -1650,6 +1651,335 @@ export function vncOpenBang(host        , port        , pw        , save        
     }
 }
 
+export function fx()      {
+    return files.x;
+}
+
+export function fu8()      {
+    return files.u8;
+}
+
+export function fcstr(a        )         {
+    return cstr(fu8(), a);
+}
+
+export function filesDrainBang()       {
+    if ((!((files == null)))) {
+        {
+            let x      = fx();
+            let a      = x.nk_out_addr();
+            let n      = x.nk_out_len();
+            if ((n > 0)) {
+                tcpWriteBang(files.id, getB64(fu8(), a, n));
+                x.nk_out_clear();
+            }
+        }
+    }
+}
+
+export function filesArgsBang(share        , path        )       {
+    {
+        let x      = fx();
+        let t      = x.nk_txt_addr();
+        let n         = putTextBang(fu8(), t, share);
+        fu8()[(t + n)] = 0;
+        {
+            let m         = putTextBang(fu8(), (t + (n + 1)), path);
+            fu8()[(t + (n + (m + 1)))] = 0;
+        }
+    }
+}
+
+export function filesSharesBang()       {
+    files.op = "shares";
+    files.share = "";
+    files.path = "";
+    setTextBang("files-where", "Loading shares...");
+    fx().nk_smb_shares();
+    filesDrainBang();
+}
+
+export function filesListBang(share        , path        )       {
+    files.op = "list";
+    files.share = share;
+    files.path = path;
+    setTextBang("files-where", ("" + "\\\\" + files.host + "\\" + share + ((path === "") ? "" : ("" + "\\" + repAll(path, "/", "\\")))));
+    setHiddenBang("files-preview", true);
+    filesArgsBang(share, path);
+    fx().nk_smb_list();
+    filesDrainBang();
+}
+
+export function filesReadBang(path        )       {
+    files.op = "read";
+    filesArgsBang(files.share, path);
+    fx().nk_smb_read();
+    filesDrainBang();
+}
+
+export function joinPath(a        , b        )         {
+    return ((a === "") ? b : ("" + a + "/" + b));
+}
+
+export function parentPath(p        )         {
+    {
+        let i      = p.lastIndexOf("/");
+        return ((i < 0) ? "" : p.slice(0, i));
+    }
+}
+
+export function sharesHtml()         {
+    {
+        let x      = fx();
+        let n      = x.nk_smb_share_count();
+        {
+            let k         = 0;
+            let acc         = "";
+            while (true) {
+                if ((k >= n)) {
+                    return acc;
+                } else {
+                    {
+                        let name         = fcstr(x.nk_smb_share_name_addr(k));
+                        let remark         = fcstr(x.nk_smb_share_remark_addr(k));
+                        let openP          = (x.nk_smb_share_browsable(k) === 1);
+                        const _t0 = (k + 1);
+                        const _t1 = ("" + acc + "<li class=\"dev" + (openP ? "" : " dim") + "\" data-share=\"" + esc(name) + "\"><div class=\"dev-main\"><div class=\"dev-name\">" + esc(name) + "</div><div class=\"dev-sub\">" + esc(fcstr(x.nk_smb_share_kind_addr(k))) + ((remark === "") ? "" : ("" + "  -  " + esc(remark))) + "</div></div>" + (openP ? "<div class=\"dev-actions\"><button data-act=\"open\">Open</button></div>" : "") + "</li>");
+                        k = _t0;
+                        acc = _t1;
+                        continue;
+                    }
+                }
+                break;
+            }
+        }
+    }
+}
+
+export function entriesHtml()         {
+    {
+        let x      = fx();
+        let n      = x.nk_smb_entry_count();
+        {
+            let k         = 0;
+            let acc         = "";
+            while (true) {
+                if ((k >= n)) {
+                    if ((x.nk_smb_entry_truncated() === 1)) {
+                        return ("" + acc + "<li class=\"hint\">" + (x.nk_smb_entry_total() - n) + " more not shown</li>");
+                    } else {
+                        return acc;
+                    }
+                } else {
+                    {
+                        let name         = fcstr(x.nk_smb_entry_name_addr(k));
+                        let dirP          = (x.nk_smb_entry_is_dir(k) === 1);
+                        const _t0 = (k + 1);
+                        const _t1 = ("" + acc + "<li class=\"dev\" data-name=\"" + esc(name) + "\" data-dir=\"" + (dirP ? "1" : "0") + "\"><div class=\"dev-main\"><div class=\"dev-name\">" + esc(name) + "</div><div class=\"dev-sub\">" + esc(fcstr(x.nk_smb_entry_size_text_addr(k))) + "  -  " + esc(fcstr(x.nk_smb_entry_date_text_addr(k))) + "</div></div><div class=\"dev-actions\"><button data-act=\"" + (dirP ? "open" : "peek") + "\">" + (dirP ? "Open" : "Preview") + "</button></div></li>");
+                        k = _t0;
+                        acc = _t1;
+                        continue;
+                    }
+                }
+                break;
+            }
+        }
+    }
+}
+
+export function filesShowPreviewBang()       {
+    {
+        let x      = fx();
+        let a      = x.nk_smb_preview_addr();
+        let n      = x.nk_smb_preview_len();
+        setTextBang("files-preview", ((x.nk_smb_preview_is_text() === 1) ? new TextDecoder().decode(fu8().subarray(a, (a + n))) : ("" + "Not a text file (" + n + " bytes read). Netkit only previews text.")));
+        setHiddenBang("files-preview", false);
+    }
+}
+
+export function filesOpDoneBang()       {
+    {
+        let x      = fx();
+        let st      = x.nk_smb_op_status();
+        let op      = files.op;
+        if ((st !== 0)) {
+            bannerBang(fcstr(x.nk_smb_status_text_addr(st)));
+        } else {
+            if ((op === "shares")) {
+                setTextBang("files-where", ("" + "Shares on " + files.host));
+                setHtmlBang("files-list", sharesHtml());
+            } else {
+                ((op === "list") ? setHtmlBang("files-list", entriesHtml()) : filesShowPreviewBang());
+            }
+        }
+    }
+}
+
+export function filesAfterBang()       {
+    if ((!((files == null)))) {
+        filesDrainBang();
+        {
+            let x      = fx();
+            let ph      = x.nk_smb_files_phase();
+            if ((ph === 9)) {
+                if ((!(files.ended))) {
+                    files.ended = true;
+                    bannerBang(("" + failureText(x, fu8()) + ((x.nk_err_kind() === 4) ? ("" + " (" + fcstr(x.nk_smb_status_text_addr(x.nk_smb_status())) + ")") : "")));
+                    filesCloseBang();
+                }
+            } else {
+                if (((ph === 2) && (!(files.up)))) {
+                    files.up = true;
+                    if (files.save) {
+                        saveConnectionBang("smb", files.host, files.port, files.user, files.pw);
+                    }
+                    files.pw = "";
+                    setTextBang("files-title", ("" + files.host + ((x.nk_smb_guest() === 2) ? "  (no account)" : ((x.nk_smb_guest() === 1) ? "  (guest)" : ("" + "  (" + files.user + ")")))));
+                    showViewBang("files");
+                    filesSharesBang();
+                } else {
+                    if (((ph === 2) && (files.op !== ""))) {
+                        filesOpDoneBang();
+                        files.op = "";
+                    } else {
+                    }
+                }
+            }
+        }
+    }
+}
+
+export function filesOnTcpBang(ev     )       {
+    {
+        let e      = ev.e;
+        let x      = fx();
+        if ((e === "open")) {
+            filesDrainBang();
+        } else {
+            if ((e === "data")) {
+                {
+                    let a      = x.nk_in_reserve();
+                    let n         = putB64Bang(fu8(), a, ev.b);
+                    x.nk_smb_files_feed(n);
+                    filesAfterBang();
+                }
+            } else {
+                if ((e === "closed")) {
+                    x.nk_smb_files_closed();
+                    filesAfterBang();
+                } else {
+                    if ((e === "error")) {
+                        files.ended = true;
+                        bannerBang(("" + cstr(scanU8, scanX.nk_err_text_addr(scanX.nk_conn_kind(ev.code))) + " (" + files.host + ":" + files.port + ")"));
+                        filesCloseBang();
+                    } else {
+                    }
+                }
+            }
+        }
+    }
+}
+
+export function filesCloseBang()       {
+    if ((!((files == null)))) {
+        tcpCloseBang(files.id);
+        files = null;
+        setHtmlBang("files-list", "");
+        setHiddenBang("files-preview", true);
+        setHiddenBang("tab-files", true);
+        showViewBang("devices");
+    }
+}
+
+export function onFilesCloseClick(e     )       {
+    filesCloseBang();
+}
+
+export function filesUpBang()          {
+    if ((files == null)) {
+        return false;
+    } else {
+        if ((!(el("files-preview").hidden))) {
+            setHiddenBang("files-preview", true);
+            return true;
+        } else {
+            if ((files.op !== "")) {
+                return true;
+            } else {
+                if ((files.path !== "")) {
+                    filesListBang(files.share, parentPath(files.path));
+                    return true;
+                } else {
+                    if ((files.share !== "")) {
+                        filesSharesBang();
+                        return true;
+                    } else {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+}
+
+export function onFilesUpClick(e     )       {
+    filesUpBang();
+}
+
+export function onFilesClick(e     )       {
+    {
+        let b      = e.target.closest("[data-act]");
+        if (((!((b == null))) && ((!((files == null))) && (files.op === "")))) {
+            {
+                let li      = b.closest("li");
+                let d      = li.dataset;
+                let act      = b.dataset.act;
+                if ((!(((typeof d.share) === "undefined")))) {
+                    filesListBang(d.share, "");
+                } else {
+                    if ((act === "open")) {
+                        filesListBang(files.share, joinPath(files.path, d.name));
+                    } else {
+                        if ((act === "peek")) {
+                            filesReadBang(joinPath(files.path, d.name));
+                        } else {
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export function filesOpenBang(host        , port        , user        , pw        , save         )       {
+    if ((!((files == null)))) {
+        filesCloseBang();
+    }
+    {
+        let x      = exportsOf(instantiate(modLite));
+        let u8      = u8Of(x);
+        let id         = newIdBang();
+        let t      = x.nk_txt_addr();
+        crypto.getRandomValues(u8.subarray(t, (t + 24)));
+        new DataView(x.memory.buffer).setUint32((t + 24), Math.floor((Date.now() / 1000.0)), true);
+        {
+            let p1      = ((t + 64) + putTextBang(u8, (t + 64), user));
+            u8[p1] = 0;
+            u8[(p1 + 1)] = 0;
+            {
+                let p3      = ((p1 + 2) + putTextBang(u8, (p1 + 2), pw));
+                u8[p3] = 0;
+                u8[((p3 + 1) + putTextBang(u8, (p3 + 1), host))] = 0;
+            }
+        }
+        x.nk_smb_login();
+        files = {"id": id, "x": x, "u8": u8, "host": host, "port": port, "user": user, "pw": pw, "save": save, "up": false, "ended": false, "op": "", "share": "", "path": ""};
+        setHiddenBang("tab-files", false);
+        setTextBang("files-title", ("" + "Signing in to " + host + "..."));
+        tcpOpenBang(id, host, port);
+    }
+}
+
 export function arcSayBang(text     )       {
     setTextBang("arcade-msg", text);
     setHiddenBang("arcade-msg", (text === ""));
@@ -2273,6 +2603,13 @@ export function showViewBang(name        )       {
     setHiddenBang("view-ssh", (name !== "ssh"));
     setHiddenBang("view-vnc", (name !== "vnc"));
     setHiddenBang("view-arcade", (name !== "arcade"));
+    setHiddenBang("view-files", (name !== "files"));
+    {
+        let fb      = el("tab-files");
+        if ((!((fb == null)))) {
+            fb.classList.toggle("on", (name === "files"));
+        }
+    }
     {
         let i         = 0;
         while (true) {
@@ -2358,7 +2695,7 @@ export function savedHtml(all     , n        )         {
                 {
                     let c      = all[i];
                     const _t0 = (i + 1);
-                    const _t1 = ("" + acc + "<li class=\"saved\" data-i=\"" + i + "\"><div class=\"dev-main\"><div class=\"dev-name\">" + esc(((c.proto === "ssh") ? ("" + c.user + "@" + c.host) : c.host)) + "</div><div class=\"dev-sub\">" + ((c.proto === "ssh") ? "SSH" : "Screen") + " - port " + c.port + ((c.pw === "") ? "" : " - password saved") + "</div></div><div class=\"dev-actions\">" + "<button data-act=\"go\">Connect</button><button data-act=\"del\" title=\"Remove this saved connection\">Forget</button></div></li>");
+                    const _t1 = ("" + acc + "<li class=\"saved\" data-i=\"" + i + "\"><div class=\"dev-main\"><div class=\"dev-name\">" + esc((((c.proto !== "vnc") && (c.user !== "")) ? ("" + c.user + "@" + c.host) : c.host)) + "</div><div class=\"dev-sub\">" + protoLabel(c.proto) + " - port " + c.port + ((c.pw === "") ? "" : " - password saved") + "</div></div><div class=\"dev-actions\">" + "<button data-act=\"go\">Connect</button><button data-act=\"del\" title=\"Remove this saved connection\">Forget</button></div></li>");
                     i = _t0;
                     acc = _t1;
                     continue;
@@ -2396,7 +2733,11 @@ export function onSavedClick(e     )       {
                         if ((c.proto === "ssh")) {
                             sshOpenBang(c.host, c.port, c.user, c.pw, false);
                         } else {
-                            vncOpenBang(c.host, c.port, c.pw, false);
+                            if ((c.proto === "smb")) {
+                                filesOpenBang(c.host, c.port, c.user, c.pw, false);
+                            } else {
+                                vncOpenBang(c.host, c.port, c.pw, false);
+                            }
                         }
                     } else {
                     }
@@ -2436,7 +2777,8 @@ export function openConnectBang(proto        , host        , port        )      
     {
         let saved      = findSaved(proto, host, port);
         connProto = proto;
-        setTextBang("c-title", ((proto === "ssh") ? ("" + "SSH to " + host) : ("" + "Screen of " + host)));
+        setTextBang("c-title", ((proto === "ssh") ? ("" + "SSH to " + host) : ((proto === "smb") ? ("" + "Shared files on " + host) : ("" + "Screen of " + host))));
+        setTextBang("c-note", ((proto === "smb") ? "A Windows account on that PC (DOMAIN\\user works too). Leave both empty to try without an account. Read only: nothing on the PC is changed." : ""));
         setValBang("c-host", host);
         setValBang("c-port", port);
         setHiddenBang("c-user-row", (proto === "vnc"));
@@ -2465,12 +2807,16 @@ export function onConnectGo(e     )       {
                 if (((connProto === "ssh") && (user === ""))) {
                     setTextBang("c-error", "Enter the user name to log in as.");
                 } else {
-                    setHiddenBang("dlg-connect", true);
-                    sameProto = connProto;
-                    sameHost = host;
-                    samePort = port;
-                    sameUser = ((connProto === "ssh") ? user : "");
-                    ((connProto === "ssh") ? sshOpenBang(host, port, user, pw, save) : vncOpenBang(host, port, pw, save));
+                    if (((connProto === "smb") && ((user === "") && (pw !== "")))) {
+                        setTextBang("c-error", "Enter the user name that goes with this password.");
+                    } else {
+                        setHiddenBang("dlg-connect", true);
+                        sameProto = connProto;
+                        sameHost = host;
+                        samePort = port;
+                        sameUser = ((connProto === "vnc") ? "" : user);
+                        ((connProto === "ssh") ? sshOpenBang(host, port, user, pw, save) : ((connProto === "smb") ? filesOpenBang(host, port, user, pw, save) : vncOpenBang(host, port, pw, save)));
+                    }
                 }
             }
         }
@@ -2492,16 +2838,20 @@ export function onDeviceClick(e     )       {
                 if ((act === "ssh")) {
                     openConnectBang("ssh", ip, 22);
                 } else {
-                    if ((act === "vnc")) {
-                        openConnectBang("vnc", ip, parseInt(b.dataset.port, 10));
+                    if ((act === "files")) {
+                        openConnectBang("smb", ip, 445);
                     } else {
-                        if ((act === "pin")) {
-                            togglePinBang(li.dataset.key);
-                            renderDevicesBang();
+                        if ((act === "vnc")) {
+                            openConnectBang("vnc", ip, parseInt(b.dataset.port, 10));
                         } else {
-                            if ((act === "name")) {
-                                openNamerBang(li.dataset.key, ip);
+                            if ((act === "pin")) {
+                                togglePinBang(li.dataset.key);
+                                renderDevicesBang();
                             } else {
+                                if ((act === "name")) {
+                                    openNamerBang(li.dataset.key, ip);
+                                } else {
+                                }
                             }
                         }
                     }
@@ -2518,9 +2868,17 @@ export function onManualConnect(e     )       {
     }
 }
 
+export function protoLabel(p     )         {
+    return ((p === "ssh") ? "SSH" : ((p === "smb") ? "Files" : "Screen"));
+}
+
+export function protoPort(p     )         {
+    return ((p === "vnc") ? 5900 : ((p === "smb") ? 445 : 22));
+}
+
 export function onProtoChange(e     )       {
     {
-        let dflt         = ((val("m-proto") === "vnc") ? 5900 : 22);
+        let dflt         = protoPort(val("m-proto"));
         setValBang("m-port", dflt);
     }
 }
@@ -2532,7 +2890,7 @@ export function onNative(json        )       {
         if ((t === "tcp")) {
             {
                 let id      = ev.id;
-                (((!((ssh == null))) && (id === ssh.id)) ? sshOnTcpBang(ev) : (((!((vnc == null))) && (id === vnc.id)) ? vncOnTcpBang(ev) : undefined));
+                (((!((ssh == null))) && (id === ssh.id)) ? sshOnTcpBang(ev) : (((!((vnc == null))) && (id === vnc.id)) ? vncOnTcpBang(ev) : (((!((files == null))) && (id === files.id)) ? filesOnTcpBang(ev) : undefined)));
             }
         } else {
             if ((t === "probe")) {
@@ -2572,13 +2930,20 @@ export function nkBack()          {
                         vncCloseBang();
                         return true;
                     } else {
-                        {
-                            let t      = scanX.nk_garage_back(curView());
-                            if ((t < 0)) {
-                                return false;
-                            } else {
-                                showViewBang(viewName(t));
-                                return true;
+                        if (((!((files == null))) && (!(el("view-files").hidden)))) {
+                            if ((!(filesUpBang()))) {
+                                filesCloseBang();
+                            }
+                            return true;
+                        } else {
+                            {
+                                let t      = scanX.nk_garage_back(curView());
+                                if ((t < 0)) {
+                                    return false;
+                                } else {
+                                    showViewBang(viewName(t));
+                                    return true;
+                                }
                             }
                         }
                     }
@@ -2636,6 +3001,9 @@ export function wireUiBang()       {
     onBang("banner-close", "click", hideBannerBang);
     onBang("btn-ssh-close", "click", onSshCloseClick);
     onBang("btn-vnc-close", "click", onVncCloseClick);
+    onBang("btn-files-close", "click", onFilesCloseClick);
+    onBang("btn-files-up", "click", onFilesUpClick);
+    onBang("files-list", "click", onFilesClick);
     onBang("btn-fit", "click", onFitClick);
     onBang("btn-1to1", "click", onActualClick);
     onBang("btn-copy", "click", onCopyClick);

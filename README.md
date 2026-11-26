@@ -347,7 +347,8 @@ pad or played it on a real GPU yet.
 ## Android client #2: Netkit — scan, SSH, view-only VNC, written in PARENA (2026-11-24)
 
 A second Android app, separate from shankpit-460: **SHANKPIT Netkit** (`android-netkit/`, page in `apps/netkit/`). It finds devices on the
-network, opens an **SSH terminal**, and **watches a remote screen over VNC** (view only) — the tablet end of the founder's router-Pi / iMac
+network, opens an **SSH terminal**, **watches a remote screen over VNC** (view only) and **browses Windows file sharing** (SMB, read only:
+shares, folders, text preview) — the tablet end of the founder's router-Pi / iMac
 setup (`docs/NETKIT_NORTHSTAR.md`).
 
 Founder real-time: *"ensure its all parena based mods first dev."* So the logic is **not Java**. The scanner's brain, the **VNC client**, an
@@ -359,6 +360,9 @@ store) that never interprets a byte. No libssh2, no JSch, no hand-written JavaSc
 - **Credentials never go to an unaccepted host.** First contact stops at "Trust this device?" with the SHA-256 fingerprint, after the server's
   Ed25519 signature has been verified; a remembered fingerprint that changes fails before anything is sent (asserted on the wire).
 - **View only by construction**: nothing emits a key, pointer or clipboard message to a VNC server.
+- **Files is read only by construction**: the PARENA SMB client signs in with NTLMv2 (SMB 2.1, every request signed, server signatures
+  checked) and has no code that writes, renames or deletes. It is checked against recorded real Samba and impacket sessions and in headless
+  Chromium; it has **not been run against a real Windows PC yet** (`docs/NETKIT_NORTHSTAR.md` §6c).
 - **Ships in every release** as `ShankPit_Netkit_<build>.apk` (`release.yml`; `node android-netkit/tools/verify-web-bundle.mjs apps/netkit` is the
   bundle check).
 

@@ -1,5 +1,13 @@
 ## 2026-11-26
 
+- **feat(netkit): Files, browsing Windows file sharing, read only** (founder: "can we get that working so we can explore what files are
+  being shared? parena mods based").
+  - A device answering on 445 gets a **Files** button: sign in with a Windows account, see its shares, open folders, preview text files.
+  - All logic is PARENA (PARENA 15fa404: `nk_smb_files.prn`, `nk_md.prn`, `nk_host_files.prn`). `apps/netkit` bundle regenerated
+    (nk-host.js and both netkit wasm files), plus the Files view, tab, dialog note and styles in `index.html` / `netkit.css`.
+  - Checked in headless Chromium against impacket on port 445 (17 checks), and through PARENA's specs against recorded real Samba 4.19
+    and impacket sessions.
+  - Not yet run against a real Windows PC. `docs/NETKIT_NORTHSTAR.md` §6c, README and the Windows ops README updated.
 - **fix(release): releases were down since v0.300.0.** Every release.yml run since 99092d2 failed at "Build SHANKPIT OS Apps (Windows)". The cause was
   REDGARDEN's 2026-11-24 camera work (UNIFY): its arena now calls `packages/simulation/camera_unify_mod.c`, which REDGARDEN's own
   `scripts/build_arena.sh` lists but this hand-copied recipe did not, so `red_garden_arena.exe` failed to link on 16 undefined `cam_*`/`zoom_cam_*`/

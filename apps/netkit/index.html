@@ -20,6 +20,7 @@
   <button id="tab-devices" data-tab="devices">Devices</button>
   <button id="tab-ssh" data-tab="ssh" hidden>Terminal</button>
   <button id="tab-vnc" data-tab="vnc" hidden>Screen</button>
+  <button id="tab-files" data-tab="files" hidden>Files</button>
   <button id="tab-arcade" data-tab="arcade">Arcade</button>
 </nav>
 
@@ -61,6 +62,7 @@
           <select id="m-proto">
             <option value="ssh">SSH (a terminal)</option>
             <option value="vnc">Screen (VNC, view only)</option>
+            <option value="smb">Files (Windows sharing, read only)</option>
           </select>
         </label>
         <label>Host <input id="m-host" placeholder="192.168.4.1 or a name" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false"></label>
@@ -125,6 +127,20 @@
     <div id="vnc-wrap"><canvas id="vnc-canvas" width="16" height="16" aria-label="Remote screen"></canvas></div>
   </section>
 
+  <!-- ======================= files (Windows file sharing, SMB, read only) ======================= -->
+  <section id="view-files" hidden>
+    <div class="viewbar">
+      <button id="btn-files-up">Up</button>
+      <span id="files-title" class="title">Files</span>
+      <span class="badge" title="This app only reads: it never changes, adds or deletes a file">read only</span>
+      <span class="grow"></span>
+      <button id="btn-files-close" class="danger">Close</button>
+    </div>
+    <div id="files-where" class="muted"></div>
+    <pre id="files-preview" class="preview" hidden></pre>
+    <ul id="files-list" class="list"></ul>
+  </section>
+
   <!-- ======================= arcade (BRAWLPIT, WebAssembly, inside this page) ======================= -->
   <section id="view-arcade" hidden>
     <div class="viewbar">
@@ -167,6 +183,7 @@
     <label>Port <input id="c-port" inputmode="numeric" autocomplete="off"></label>
     <label id="c-user-row">User <input id="c-user" autocapitalize="off" autocomplete="username" spellcheck="false"></label>
     <label>Password <input id="c-pass" type="password" autocomplete="current-password"></label>
+    <p id="c-note" class="muted"></p>
     <label class="check"><input id="c-save" type="checkbox"> Remember on this device (stored encrypted)</label>
     <div id="c-error" class="error"></div>
     <div class="row">
