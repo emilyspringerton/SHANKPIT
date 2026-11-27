@@ -27,8 +27,12 @@ let stickyAlt          = false;
 let cursorOn          = true;
 let downX         = 0.0;
 let downY         = 0.0;
+let downT         = 0.0;
+let lastY         = 0.0;
 let dragging          = false;
 let moved          = false;
+let touchP          = false;
+let touchMode         = 0;
 let vz         = 1.0;
 let vtx         = 0.0;
 let vty         = 0.0;
@@ -1044,6 +1048,10 @@ export function onKeybarClick(e     )       {
                                                                                             if ((k === "under")) {
                                                                                                 sshKeyBang(95, 0);
                                                                                             } else {
+                                                                                                if ((k === "bash")) {
+                                                                                                    sshTextBang("C:\\PROGRA~1\\Git\\bin\\bash.exe --login -i\n");
+                                                                                                } else {
+                                                                                                }
                                                                                             }
                                                                                         }
                                                                                     }
@@ -1091,38 +1099,79 @@ export function onPasteClick(e     )       {
     }
 }
 
-export function termColOf(e     )         {
+export function termColAt(x        )         {
     {
         let r      = el("term-canvas").getBoundingClientRect();
-        return Math.floor((((e.clientX - r.left) * 100.0) / r.width));
+        return Math.floor((((x - r.left) * 100.0) / r.width));
     }
 }
 
-export function termRowOf(e     )         {
+export function termRowAt(y        )         {
     {
         let r      = el("term-canvas").getBoundingClientRect();
-        return Math.floor((((e.clientY - r.top) * 34.0) / r.height));
+        return Math.floor((((y - r.top) * 34.0) / r.height));
     }
+}
+
+export function termColOf(e     )         {
+    return termColAt(e.clientX);
+}
+
+export function termRowOf(e     )         {
+    return termRowAt(e.clientY);
+}
+
+export function termRowPx()         {
+    return (el("term-canvas").getBoundingClientRect().height / 34.0);
 }
 
 export function onTermDown(e     )       {
     if (((!((ssh == null))) && ssh.up)) {
         downX = e.clientX;
         downY = e.clientY;
+        lastY = downY;
+        downT = e.timeStamp;
         dragging = true;
         moved = false;
+        touchP = (e.pointerType === "touch");
+        touchMode = 0;
         el("term-canvas").setPointerCapture(e.pointerId);
-        ssh.t.term_mouse(0, termColOf(e), termRowOf(e));
+        if ((!(touchP))) {
+            ssh.t.term_mouse(0, termColOf(e), termRowOf(e));
+        }
+    }
+}
+
+export function touchScrollBang(y        )       {
+    {
+        let h         = termRowPx();
+        let n         = ((y > lastY) ? Math.floor(((y - lastY) / h)) : (0 - Math.floor(((lastY - y) / h))));
+        if ((n !== 0)) {
+            ssh.t.term_scroll(n);
+            lastY = (lastY + (n * h));
+        }
     }
 }
 
 export function onTermMove(e     )       {
     if ((dragging && (!((ssh == null))))) {
-        if (((Math.abs((e.clientX - downX)) > 6.0) || (Math.abs((e.clientY - downY)) > 6.0))) {
+        if (((!(moved)) && ((Math.abs((e.clientX - downX)) > 6.0) || (Math.abs((e.clientY - downY)) > 6.0)))) {
             moved = true;
+            if (touchP) {
+                if (((e.timeStamp - downT) >= 450.0)) {
+                    touchMode = 2;
+                    ssh.t.term_mouse(0, termColAt(downX), termRowAt(downY));
+                } else {
+                    touchMode = 1;
+                }
+            }
         }
         if (moved) {
-            ssh.t.term_mouse(1, termColOf(e), termRowOf(e));
+            if ((touchMode === 1)) {
+                touchScrollBang(e.clientY);
+            } else {
+                ssh.t.term_mouse(1, termColOf(e), termRowOf(e));
+            }
         }
     }
 }
@@ -1130,12 +1179,18 @@ export function onTermMove(e     )       {
 export function onTermUp(e     )       {
     if ((dragging && (!((ssh == null))))) {
         dragging = false;
-        ssh.t.term_mouse(2, termColOf(e), termRowOf(e));
+        if ((touchMode !== 1)) {
+            ssh.t.term_mouse(2, termColOf(e), termRowOf(e));
+        }
         if ((!(moved))) {
             ssh.t.term_mouse(4, 0, 0);
             el("term-ime").focus();
         }
     }
+}
+
+export function onTermCancel(e     )       {
+    dragging = false;
 }
 
 export function onTermDbl(e     )       {
@@ -1151,12 +1206,27 @@ export function onTermWheel(e     )       {
     }
 }
 
+export function onTermLive(e     )       {
+    if (((!((ssh == null))) && ssh.up)) {
+        ssh.t.term_scroll(-100000);
+        el("term-ime").focus();
+    }
+}
+
 export function termFrame(t        )       {
     if (((!((ssh == null))) && ssh.up)) {
         {
             let tt      = ssh.t;
             if ((tt.term_render() === 1)) {
                 ssh.ctx.putImageData(ssh.img, 0, 0);
+                {
+                    let v      = tt.term_view();
+                    let b      = el("btn-term-live");
+                    b.hidden = (v === 0);
+                    if ((v > 0)) {
+                        b.textContent = ("" + "↓ Live (" + v + " lines back)");
+                    }
+                }
             }
         }
     }
@@ -4717,6 +4787,8 @@ export function wireUiBang()       {
     onBang("term-canvas", "pointerup", onTermUp);
     onBang("term-canvas", "dblclick", onTermDbl);
     onBang("term-canvas", "wheel", onTermWheel);
+    onBang("term-canvas", "pointercancel", onTermCancel);
+    onBang("btn-term-live", "click", onTermLive);
     onBang("vnc-wrap", "pointerdown", onVncDown);
     onBang("vnc-wrap", "pointermove", onVncMove);
     onBang("vnc-wrap", "pointerup", onVncUp);

@@ -25,10 +25,12 @@
 #   chopping, barricades; nk_garage touch button 7 "Build"); index.html edited by hand (the Build button). Others unchanged.
 # UPDATE 2026-11-26 (GoblinFoxDragon, PARENA 97f4bc0): nk-host.js, netkit.wasm, netkit-lite.wasm regenerated (nk_gfd.prn, nk_host_gfd.prn,
 #   garage object 6); index.html and netkit.css edited by hand (the GFD view and tab). Others unchanged.
+# UPDATE 2026-11-27 (terminal scrollback on touch + Git Bash key, PARENA 97f4bc0): nk-host.js regenerated (host only,
+#   every .wasm unchanged); index.html (Live and Bash buttons) and netkit.css (the terminal canvas always fits its box) edited by hand.
 # sha256  file
-1cf3f69fe419f4d8f2c6b12ad8da3c6721596414bd84ac8544a61068c1ca5f80  index.html
-6a9099481ea96808f0623352cf324cd66caca67dc6a58ee9f6d8b3b21f002b9c  netkit.css
-af34502632acee8e325c054bf9f6f115fcd1a4646c1dc099357c491f8afd05e7  nk-host.js
+8a74f6e328c0c1abfc059a5014ba4d4c498c3e05021a4ef1a958be51c30899b3  index.html
+c3d9fca22cc8f92d1d5076c848b09a3b293f4f9abdd409ebbf30fdcb12259579  netkit.css
+29c80d02158f119bb173e60801ae5de2ea3fa76260d75cd3e823cb6154f98663  nk-host.js
 a018fa15d9b7a4e6097e3997a186a99ba38e695dfc3e81fce07582ab47ba7d42  netkit.wasm
 6655923dd62b45f299970e45bb76a7021a122af8a649b1add3cb5daac9987e67  netkit-lite.wasm
 71670ff4ea38a4b15a536bbb69d6ec743cff1109c1c3c66d6b1837e9d6b6051b  nkterm.wasm

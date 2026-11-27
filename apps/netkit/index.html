@@ -92,8 +92,10 @@
     <div id="term-wrap">
       <canvas id="term-canvas" width="800" height="544" aria-label="Terminal"></canvas>
       <textarea id="term-ime" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Keyboard input"></textarea>
+      <button id="btn-term-live" class="primary" hidden title="Back to the newest output">&darr; Live</button>
     </div>
     <div id="keybar" role="toolbar" aria-label="Extra keys">
+      <button data-key="bash" title="Start Git Bash (C:\Program Files\Git) in this session">Bash</button>
       <button data-key="esc">Esc</button>
       <button data-key="tab">Tab</button>
       <button id="key-ctrl" data-key="ctrl">Ctrl</button>

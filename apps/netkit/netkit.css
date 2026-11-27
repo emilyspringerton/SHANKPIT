@@ -64,8 +64,11 @@ label.check { flex-direction: row; align-items: center; gap: 10px; font-size: 14
 .viewbar { display: flex; align-items: center; gap: 8px; padding: 0 0 8px; flex-shrink: 0; }
 .viewbar .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .grow { flex: 1; }
 .badge { font-size: 12px; padding: 2px 8px; border-radius: 99px; background: var(--panel2); border: 1px solid var(--line); color: var(--warn); }
-#term-wrap { position: relative; flex: 1; min-height: 0; display: flex; align-items: flex-start; justify-content: center; overflow: auto; background: #000; border-radius: 8px; }
-#term-canvas { width: 100%; max-width: 1200px; height: auto; image-rendering: pixelated; touch-action: none; user-select: none; }
+/* The whole 100x34 grid always fits inside the box (container units keep the 800:544 ratio), so the cursor row is never
+   below the fold -- landscape, or with the soft keyboard up -- and the canvas rect is exactly the grid for tap mapping. */
+#term-wrap { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #000; border-radius: 8px; container-type: size; }
+#term-canvas { width: min(100cqw, 100cqh * 800 / 544, 1200px); height: auto; image-rendering: pixelated; touch-action: none; user-select: none; }
+#btn-term-live { position: absolute; right: 10px; bottom: 10px; box-shadow: 0 2px 10px rgba(0,0,0,.6); }
 #term-ime { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; resize: none; }
 #keybar { display: flex; gap: 6px; overflow-x: auto; padding: 8px 0 0; flex-shrink: 0; scrollbar-width: none; }
 #keybar button { min-width: 48px; flex-shrink: 0; padding: 0 12px; }
