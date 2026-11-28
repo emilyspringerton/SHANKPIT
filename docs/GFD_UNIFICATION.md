@@ -112,6 +112,13 @@ means either authoring it as a NOCK level or teaching `proc_dungeon.h` a second 
 cells with heightfield sampling). Do that only when a scene needs it — inventing a conversion now would be
 a fake import.
 
+**Phase 6 -- SURVIVAL plays the contract (2026-11-28).** SURVIVAL is DragonsNShit's code name and the SHANKPHONE's shipping client, so the shared
+WORLDMAP contract (`PARENA/stdlib/worldmap`, GFD's Go reader, `docs/DEVLOG.md` in GoblinFoxDragon) lands there first: four telecrystals authored in
+`PARENA/stdlib/shankpit_survival/survival_city.wmap`, cast by `sv_crystal.prn` under `wm_rules.prn` -- the same ring / commit / interrupt rules and the same
+travel-from-combat gate the GFD server enforces (GFD's `wmap` package parses that very file). Bundle regenerated into `apps/netkit` with a Teleport
+button. Not done, named: the cast does not ask the GFD server (the wasm imports nothing; the host would carry the request), mesh skins and the GFD
+town geometry are not in SURVIVAL, GFD jobs are not applied to its hero, and the C client's `--survival` has no crystals yet (needs SDL2 to build).
+
 ## Honest state of "multiplayer"
 
 A LAN client of a `--dungeon` server learns the zone and rebuilds the same dungeon, and reloads when the
