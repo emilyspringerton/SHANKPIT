@@ -450,6 +450,11 @@ test-telecrystal:
 	$(CC) -std=gnu99 -O2 -Wall -Wextra -Werror -Ipackages/common -o /tmp/telecrystal_test packages/common/telecrystal_test.c
 	/tmp/telecrystal_test
 
+.PHONY: test-level-mesh
+test-level-mesh:
+	$(CC) -std=gnu99 -O2 -Wall -Wextra -Werror -Ipackages/world -o /tmp/level_mesh_schema_test packages/world/level_mesh_schema_test.c -lm
+	/tmp/level_mesh_schema_test
+
 .PHONY: test-wmap
 test-wmap:
 	$(CC) -std=gnu99 -O2 -Wall -Wextra -Werror -Ipackages/world -o /tmp/wmap_level_test packages/world/wmap_level_test.c -lm

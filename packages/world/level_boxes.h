@@ -48,6 +48,7 @@
                                 already-enforced cap on the editor side, so a level saved there
                                 can never exceed what this loader is willing to read back */
 #define LEVEL_BOXES_MAX_NAME 64
+#define LEVEL_BOXES_ASSET_ID_LEN 40 /* a mesh / normal-map asset id: [A-Za-z0-9_.-], e.g. a 32-hex content hash or a NOCK name */
 
 /* S459-16, founder real-time: "i think it makes sense to abstract into material first so it
    cleanly translates into papercraft ... we will need the ability to add new materials and set
@@ -123,6 +124,14 @@ typedef struct {
                              when a wall's own material name isn't in the level's materials array */
     float rot_x, rot_y, rot_z; /* Euler degrees (three.js XYZ order, matches NOCK rot_x/y/z); 0 = axis-aligned */
     int ramp;            /* 1 = rendered/collided as a wedge ramp (NOCK "ramp" checkbox); the data stays a cube */
+    /* MESH OVERRIDE (founder 2026-11-28: "override the mesh of a cube with the normal map baking and LOD ... add meshes
+     * and normal maps via NOCK tools"). The box stays the COLLISION authority; these only say what to DRAW in its place.
+     * mesh / normal_map are asset ids (see packages/world/mesh_asset.h: a glTF baked to an LOD chain, and its baked normal
+     * map). "" = draw the plain box, exactly as before. lod_bias shifts the LOD pick: +1 one level coarser, -1 finer, 0 =
+     * by distance. The mesh is scaled to the box's extents, so moving/scaling the box in NOCK moves/scales the model. */
+    char mesh[LEVEL_BOXES_ASSET_ID_LEN];
+    char normal_map[LEVEL_BOXES_ASSET_ID_LEN];
+    int lod_bias;
 } LevelBox;
 
 /* S459-58, founder real-time: "add spawners to nock so we can add spawners for ffa" / "actual
@@ -643,6 +652,19 @@ static inline int level_boxes_parse_string(const char *p, char *out, size_t outs
     return *p == '"';
 }
 
+/* An asset id is a bare token, not free text: it ends up in a URL and a filename, so anything outside [A-Za-z0-9_.-] (or a
+ * '..') is refused and the field reads as "" -- the box is then drawn plain, never an error and never a path escape. */
+static inline int level_boxes_parse_asset_id(const char *p, char *out, size_t outsize) {
+    char tmp[LEVEL_BOXES_ASSET_ID_LEN];
+    out[0] = '\0';
+    if (!level_boxes_parse_string(p, tmp, sizeof tmp) || !tmp[0]) return 0;
+    for (const char *c = tmp; *c; c++)
+        if (!((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') || (*c >= '0' && *c <= '9') || *c == '_' || *c == '-' || *c == '.')) return 0;
+    if (strstr(tmp, "..") || tmp[0] == '.') return 0;
+    snprintf(out, outsize, "%s", tmp);
+    return 1;
+}
+
 // level_boxes_find_array_end returns the position of the closing ']' matching open_bracket (which
 // must point AT a '[') via real bracket-depth counting -- NOT the previous "find the last ']' in
 // the rest of the buffer" trick (only ever correct by coincidence when the array being bounded
@@ -783,7 +805,7 @@ static inline int level_boxes_apply_subtract(CustomLevelData *lvl) {
             LevelBox *b = &lvl->boxes[i];
             if (removed[i]) continue;
             /* a ramp or a rotated box is not axis-aligned; its pieces would not be either */
-            if (b->ramp || b->rot_x != 0.0f || b->rot_y != 0.0f || b->rot_z != 0.0f) continue;
+            if (b->ramp || b->mesh[0] || b->rot_x != 0.0f || b->rot_y != 0.0f || b->rot_z != 0.0f) continue;
             if (!(b->w > eps && b->h > eps && b->d > eps)) continue;
             LevelBox pieces[6];
             int np = level_boxes_subtract_one(b, cut, pieces, 6);
@@ -1088,6 +1110,13 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
         if ((v = level_boxes_find_key(obj_start, obj_end, "rot_y"))) level_boxes_parse_number(v, &box->rot_y);
         if ((v = level_boxes_find_key(obj_start, obj_end, "rot_z"))) level_boxes_parse_number(v, &box->rot_z);
         if ((v = level_boxes_find_key(obj_start, obj_end, "ramp"))) level_boxes_parse_bool(v, &box->ramp);
+        box->mesh[0] = box->normal_map[0] = '\0';
+        box->lod_bias = 0;
+        if ((v = level_boxes_find_key(obj_start, obj_end, "mesh"))) level_boxes_parse_asset_id(v, box->mesh, sizeof box->mesh);
+        if ((v = level_boxes_find_key(obj_start, obj_end, "normal_map"))) level_boxes_parse_asset_id(v, box->normal_map, sizeof box->normal_map);
+        if ((v = level_boxes_find_key(obj_start, obj_end, "lod_bias"))) {
+            float lb = 0; if (level_boxes_parse_number(v, &lb)) box->lod_bias = lb < -3 ? -3 : lb > 3 ? 3 : (int)lb;
+        }
         box->material_idx = level_boxes_resolve_material(out, material_name);
         count++;
         cursor = obj_end + 1;
@@ -1802,6 +1831,9 @@ static inline void level_boxes_write_json(FILE *f, const CustomLevelData *lvl) {
         if (b->rot_y != 0.0f) fprintf(f, ", \"rot_y\": %.4g", (double)b->rot_y);
         if (b->rot_z != 0.0f) fprintf(f, ", \"rot_z\": %.4g", (double)b->rot_z);
         if (b->ramp) fprintf(f, ", \"ramp\": true");
+        if (b->mesh[0]) { fprintf(f, ", \"mesh\": "); level_boxes_put_json_string(f, b->mesh); }
+        if (b->normal_map[0]) { fprintf(f, ", \"normal_map\": "); level_boxes_put_json_string(f, b->normal_map); }
+        if (b->lod_bias) fprintf(f, ", \"lod_bias\": %d", b->lod_bias);
         fprintf(f, " }");
     }
     fprintf(f, "\n ]");
