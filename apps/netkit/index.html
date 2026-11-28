@@ -270,11 +270,19 @@
       <button id="btn-survival-exit">Back to garage</button>
       <span class="title">SURVIVAL</span>
       <span class="grow"></span>
-      <span class="badge" title="SURVIVAL runs as WebAssembly built from PARENA, loaded from this app; it needs no network">offline</span>
+      <button id="btn-sv-chat" aria-controls="sv-chat" aria-expanded="false" title="The chat log: type any GoblinFoxDragon command">Chat</button>
+      <span id="sv-badge" class="badge" title="SURVIVAL runs as WebAssembly built from PARENA, loaded from this app. Offline it needs no network; with a live GoblinFoxDragon connection its telecrystals are decided by the server">offline</span>
     </div>
     <div id="sv-stage">
       <canvas id="sv-canvas" width="640" height="360" tabindex="0" aria-label="SHANKPIT SURVIVAL: drag to look"></canvas>
       <p id="survival-msg" class="hint" hidden></p>
+      <div id="sv-chat" hidden>
+        <div id="sv-log" aria-live="polite" aria-label="GoblinFoxDragon chat log"></div>
+        <form id="sv-chat-form" autocomplete="off">
+          <input id="sv-chat-input" type="text" enterkeyhint="send" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="a GFD command: look, who, crystals, say hi ..." aria-label="GoblinFoxDragon command">
+          <button type="submit">Send</button>
+        </form>
+      </div>
       <div id="sv-stick" role="group" aria-label="Move"><span id="sv-knob"></span></div>
       <div id="sv-pad" role="group" aria-label="Touch controls">
         <button data-sv="5" class="pb pb-small" aria-label="Next weapon">Weapon</button>

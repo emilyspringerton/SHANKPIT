@@ -68,6 +68,9 @@ let survLookId         = -1;
 let survLookX         = 0.0;
 let survLookY         = 0.0;
 let survMenuDown          = false;
+let survSeen         = 0;
+let survChatLines         = 0;
+let survLive          = false;
 let gfd      = null;
 let gfdReady          = false;
 let gfdLines         = 0;
@@ -3344,10 +3347,134 @@ export function survOnInstance(result     )       {
     }
 }
 
+export function survMb()         {
+    return 536576;
+}
+
+export function survView()      {
+    return new DataView(survMem.buffer);
+}
+
+export function survChatAddBang(cls        , text        )       {
+    {
+        let box      = el("sv-log");
+        if ((!((box == null)))) {
+            {
+                let d      = doc().createElement("div");
+                d.className = ("" + "gl " + cls);
+                d.textContent = text;
+                box.appendChild(d);
+                survChatLines = (survChatLines + 1);
+                {
+                    while (true) {
+                        if ((survChatLines > 120)) {
+                            box.removeChild(box.firstChild);
+                            survChatLines = (survChatLines - 1);
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                box.scrollTop = box.scrollHeight;
+            }
+        }
+    }
+}
+
+export function survGfdLiveP()          {
+    return ((gfd == null) ? false : (gfd.up ? (gfd.x.nk_gfd_state() === 3) : false));
+}
+
+export function survBadgeBang(live         )       {
+    if ((live !== survLive)) {
+        survLive = live;
+        setTextBang("sv-badge", (live ? "GFD live" : "offline"));
+    }
+}
+
+export function survOnSvtravelBang(text        )       {
+    if ((!((survMem == null)))) {
+        {
+            let p      = text.split(" ");
+            let v      = p[1];
+            let dv      = survView();
+            let b         = survMb();
+            if ((v === "OK")) {
+                dv.setInt32((b + 36), 1, true);
+                dv.setFloat32((b + 44), parseFloat(p[3]), true);
+                dv.setFloat32((b + 48), parseFloat(p[4]), true);
+                dv.setFloat32((b + 52), parseFloat(p[5]), true);
+                dv.setInt32((b + 56), parseInt(p[6], 10), true);
+            } else {
+                if ((v === "FIZZLE")) {
+                    dv.setInt32((b + 36), 2, true);
+                } else {
+                    {
+                        let why      = p[3];
+                        dv.setInt32((b + 36), 3, true);
+                        dv.setInt32((b + 40), ((why === "unknown") ? 1 : ((why === "out-of-ring") ? 2 : ((why === "guard") ? 3 : ((why === "flow") ? 4 : ((why === "pending") ? 5 : ((why === "ko") ? 6 : 7)))))), true);
+                    }
+                }
+            }
+            dv.setInt32((b + 32), dv.getInt32(b, true), true);
+        }
+    }
+}
+
+export function survRelayBang()       {
+    {
+        let dv      = survView();
+        let b         = survMb();
+        let live          = survGfdLiveP();
+        dv.setInt32((b + 64), (live ? 1 : 0), true);
+        survBadgeBang(live);
+        {
+            let seq      = dv.getInt32(b, true);
+            if ((seq !== survSeen)) {
+                survSeen = seq;
+                if (live) {
+                    {
+                        let id         = cstr(new Uint8Array(survMem.buffer), (b + 128));
+                        gfdCommandBang(("" + "svtravel " + id + " " + dv.getFloat32((b + 8), true).toFixed(2) + " " + dv.getFloat32((b + 12), true).toFixed(2) + " " + dv.getInt32((b + 16), true)));
+                    }
+                }
+            }
+        }
+    }
+}
+
+export function onSvChatSend(e     )       {
+    e.preventDefault();
+    {
+        let t         = ("" + val("sv-chat-input"));
+        if ((t.length > 0)) {
+            setValBang("sv-chat-input", "");
+            if (survGfdLiveP()) {
+                gfdCommandBang(t);
+            } else {
+                survChatAddBang("s8", "Not connected to GoblinFoxDragon. Open the GFD tab, sign in or play as a guest, and tap Play; this log then reaches the whole MUD.");
+            }
+        }
+    }
+}
+
+export function onSvChatToggle(e     )       {
+    {
+        let box      = el("sv-chat");
+        let open      = box.hidden;
+        setHiddenBang("sv-chat", (!(open)));
+        el("btn-sv-chat").setAttribute("aria-expanded", (open ? "true" : "false"));
+        if (open) {
+            el("sv-chat-input").focus();
+        }
+    }
+}
+
 export function survTick(t        )       {
     survLooping = false;
     if ((survRun && (survState === 2))) {
         survX.sp_pad(0, survLx, survLy, 0.0, 0.0, 0.0, 0.0, 0);
+        survRelayBang();
         survX.sp_frame(t);
         survCtx.putImageData(survImg, 0, 0);
         survStartLoopBang();
@@ -3363,6 +3490,9 @@ export function survStartLoopBang()       {
 
 export function survivalEnterBang()       {
     survRun = true;
+    if (((gfd == null) && (!((gfdSso() == null))))) {
+        onGfdResume(null);
+    }
     if (((survState === 0) || (survState === 3))) {
         survivalLoadBang();
     }
@@ -3639,6 +3769,8 @@ export function survInstallBang()       {
         survCanvas.addEventListener("pointerup", survCanvasUp);
         survCanvas.addEventListener("pointercancel", survCanvasUp);
         survCanvas.addEventListener("contextmenu", arcNoMenu);
+        onBang("sv-chat-form", "submit", onSvChatSend);
+        onBang("btn-sv-chat", "click", onSvChatToggle);
     }
 }
 
@@ -3752,6 +3884,10 @@ export function gfdDrainLogBang()       {
                                                     let d      = doc().createElement("div");
                                                     d.className = ("" + "gl s" + style);
                                                     d.textContent = ln.slice(1);
+                                                    survChatAddBang(("" + "s" + style), ln.slice(1));
+                                                    if ((ln.slice(1).startsWith("SVTRAVEL ") === true)) {
+                                                        survOnSvtravelBang(ln.slice(1));
+                                                    }
                                                     frag.appendChild(d);
                                                     gfdLines = (gfdLines + 1);
                                                 }
@@ -3790,6 +3926,7 @@ export function gfdEchoBang(text        )       {
         let box      = el("gfd-log");
         d.className = "gl s9";
         d.textContent = ("" + "> " + text);
+        survChatAddBang("s9", ("" + "> " + text));
         box.appendChild(d);
         gfdLines = (gfdLines + 1);
         box.scrollTop = box.scrollHeight;
@@ -4072,6 +4209,7 @@ export function gfdEndedBang(why        )       {
         }
     }
     gfd = null;
+    survChatAddBang("s6", why);
     setTextBang("gfd-note", why);
     gfdRenderConnectBang();
 }

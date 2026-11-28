@@ -30,10 +30,12 @@
 # UPDATE 2026-11-28 (SURVIVAL telecrystals, PARENA d75c3a8): netkit.wasm, netkit-lite.wasm (touch button 8 "Teleport" = G) and survival.wasm
 #   (stdlib/shankpit_survival/sv_crystal.prn: the WORLDMAP contract played inside SURVIVAL) regenerated; index.html edited by hand (the Teleport button).
 #   Others unchanged (brawlpit.wasm stays WOTAN's copy).
+# UPDATE 2026-11-28 (GFD link, PARENA dc7abab): nk-host.js, netkit.wasm, netkit-lite.wasm, survival.wasm regenerated: SURVIVAL's Chat log (any GFD command, over the live GFD connection) and
+#   server-settled telecrystal casts (svtravel). index.html and netkit.css edited by hand (Chat button, log, input, badge).
 # sha256  file
-52ef57e18fd37a266e6c7048567e824f7d6aa2df4c6d83561a449c1b72eee505  index.html
-c3d9fca22cc8f92d1d5076c848b09a3b293f4f9abdd409ebbf30fdcb12259579  netkit.css
-29c80d02158f119bb173e60801ae5de2ea3fa76260d75cd3e823cb6154f98663  nk-host.js
+4eea2fb57a9b8d2a37bb88ec2b144d0dc0e594507feec96e9a6284b9c9c03688  index.html
+0dedd633051c72b227d972c9074360a9afb2a1b9eb1b2c42b0dd0fbdf469e497  netkit.css
+ffa2d034f4b9156be53a23b1d7dd0d418d22d030ac541af27b5d16607b364405  nk-host.js
 8cc434fb093f39cdc2503516a9ddcfc97b3e17f0984ab785c5ce10add7bded97  netkit.wasm
 644c781c98553f598330141e16f2db1e1718e0fdaf2e142cfd407bb4b449efa3  netkit-lite.wasm
 71670ff4ea38a4b15a536bbb69d6ec743cff1109c1c3c66d6b1837e9d6b6051b  nkterm.wasm
@@ -42,4 +44,4 @@ c3d9fca22cc8f92d1d5076c848b09a3b293f4f9abdd409ebbf30fdcb12259579  netkit.css
 de9c4c6a7d91195216c56ba7002be6bafaf91dfdb9e205d1f8f8a32e9eebde7a  duck.png
 6326f18fd5fe4c4990cc54e3812880fd54dd149efe08b43a8a0dddf7292b8f98  sprites.png
 dd5d3cb819720b092de844b18fa59c84389b94e4d18615e031a8c313664036d4  kit/setup.bat
-4d81981cbf6d56abc255ef68a79d93a8608a30be71d04b3629a629beedd2f06f  survival.wasm
+4d15e07d7e73e1d061016fbd64fbb2c85e96449f6d50cc5987e0e572f1c327b7  survival.wasm
