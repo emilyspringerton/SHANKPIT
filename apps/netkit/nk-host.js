@@ -76,6 +76,10 @@ let survFromSso          = false;
 let survLinkCode         = -1;
 let survSeen         = 0;
 let survChatLines         = 0;
+let survMouseSeen          = false;
+let survCap          = false;
+let survCapOff          = false;
+let survMbtn         = 0;
 let survLive          = false;
 let gfd      = null;
 let gfdReady          = false;
@@ -3526,11 +3530,59 @@ export function onSvChatToggle(e     )       {
     }
 }
 
+export function survWantCaptureP()          {
+    return (survRun && ((survState === 2) && (survMouseSeen && ((!(survCapOff)) && ((survX.sp_phase() === 1) && ((survX.sp_third_person() === 0) && (!(arcTypingP()))))))));
+}
+
+export function survCaptureSyncBang()       {
+    if (haveNativeP()) {
+        {
+            let want          = survWantCaptureP();
+            if ((want !== survCap)) {
+                survCap = want;
+                if ((!(want))) {
+                    survMouseButtonsBang(0);
+                }
+                nat.mouseCapture((want ? 1 : 0));
+            }
+        }
+    }
+}
+
+export function survMouseButtonsBang(b        )       {
+    if (((b & 1) !== (survMbtn & 1))) {
+        survX.sp_button(0, (b & 1));
+    }
+    if (((b & 2) !== (survMbtn & 2))) {
+        survX.sp_button(2, (((b & 2) !== 0) ? 1 : 0));
+    }
+    survMbtn = b;
+}
+
+export function onNetkitMouse(json        )       {
+    if ((survRun && ((survState === 2) && survCap))) {
+        {
+            let ev      = JSON.parse(json);
+            let dx      = ev.dx;
+            let dy      = ev.dy;
+            let w      = ev.w;
+            if (((dx !== 0.0) || (dy !== 0.0))) {
+                survX.sp_mouse(dx, dy);
+            }
+            survMouseButtonsBang(ev.b);
+            if ((w !== 0.0)) {
+                survX.sp_zoom(((w > 0.0) ? 1 : -1));
+            }
+        }
+    }
+}
+
 export function survTick(t        )       {
     survLooping = false;
     if ((survRun && (survState === 2))) {
         survX.sp_pad(0, survLx, survLy, 0.0, 0.0, 0.0, 0.0, 0);
         survRelayBang();
+        survCaptureSyncBang();
         survX.sp_frame(t);
         survCtx.putImageData(survImg, 0, 0);
         survStartLoopBang();
@@ -3597,6 +3649,11 @@ export function survReleaseAllBang()       {
             survLy = 0.0;
             survKnobBang(0.0, 0.0);
             survLookId = -1;
+            if ((survCap && haveNativeP())) {
+                nat.mouseCapture(0);
+            }
+            survCap = false;
+            survMbtn = 0;
             if ((!((survX == null)))) {
                 if (survMenuDown) {
                     survX.sp_button(0, 0);
@@ -3758,6 +3815,10 @@ export function survFbY(e     )         {
 export function survCanvasDown(e     )       {
     if ((survState === 2)) {
         e.preventDefault();
+        if ((e.pointerType === "mouse")) {
+            survMouseSeen = true;
+            survCapOff = false;
+        }
         if ((survX.sp_phase() === 1)) {
             if (((e.pointerType === "mouse") && ((e.button === 2) && (survX.sp_third_person() === 0)))) {
                 survRmb = true;
@@ -3783,6 +3844,9 @@ export function survCanvasDown(e     )       {
 
 export function survCanvasMove(e     )       {
     if ((survState === 2)) {
+        if ((e.pointerType === "mouse")) {
+            survMouseSeen = true;
+        }
         if ((e.pointerId === survLookId)) {
             {
                 let per      = (scanX.nk_survival_look_per_100px() / 15.0);
@@ -3835,6 +3899,9 @@ export function survCanvasUp(e     )       {
 
 export function survOnKeydown(e     )       {
     if ((survRun && ((survState === 2) && (!(arcTypingP()))))) {
+        if ((e.keyCode === 27)) {
+            survCapOff = true;
+        }
         survX.sp_key(e.keyCode, 1);
         if (arcGameKeyP(e)) {
             e.preventDefault();
@@ -5084,6 +5151,7 @@ export function boot()       {
     nat = ((typeof NetkitNative !== "undefined") ? NetkitNative : null);
     win().netkitEvent = onNative;
     win().netkitBack = nkBack;
+    win().netkitMouse = onNetkitMouse;
     Promise.all([fetchModule("netkit.wasm"), fetchModule("netkit-lite.wasm"), fetchModule("nkterm.wasm")]).then(onModules).catch(failBootBang);
 }
 

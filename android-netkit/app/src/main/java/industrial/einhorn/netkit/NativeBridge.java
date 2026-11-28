@@ -4,6 +4,9 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.os.Build;
+import android.view.MotionEvent;
+import android.view.View;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
 
@@ -117,6 +120,58 @@ final class NativeBridge implements Sink {
     @JavascriptInterface public void driveList(String path) { drive.list(path); }
     @JavascriptInterface public void driveRead(String path) { drive.read(path); }
     @JavascriptInterface public void driveWrite(String path, String base64) { drive.write(path, base64); }
+
+    // ---- FPS-style mouse (the page asks for it while a first-person world is showing) -----------------------------------------------------------
+    // WebView has no Pointer Lock, so the app captures the pointer itself (API 26+): the mouse then stops moving a cursor and reports raw
+    // relative motion, buttons and the wheel, which go to window.netkitMouse as {"dx","dy","b","w"}, coalesced to one call per frame.
+    // Keyboard keys need nothing: a focused WebView already turns them into DOM key events (WASD, Space, 1-0, Tab ... all forwarded by the page).
+    private float mdx, mdy;
+    private int mbtn, mwheel;
+    private boolean mflushPending;
+    private final Runnable mflush = new Runnable() {
+        @Override public void run() {
+            mflushPending = false;
+            if (destroyed) return;
+            String js = "window.netkitMouse&&window.netkitMouse(" + Json.quote(
+                    "{\"dx\":" + mdx + ",\"dy\":" + mdy + ",\"b\":" + mbtn + ",\"w\":" + mwheel + "}") + ")";
+            mdx = 0f; mdy = 0f; mwheel = 0;
+            web.evaluateJavascript(js, null);
+        }
+    };
+
+    @JavascriptInterface public void mouseCapture(final int on) {
+        activity.runOnUiThread(new Runnable() {
+            @Override public void run() {
+                if (Build.VERSION.SDK_INT < 26 || destroyed) return;
+                if (on != 0) {
+                    web.setFocusable(true);
+                    web.setFocusableInTouchMode(true);
+                    web.requestFocus();
+                    web.setOnCapturedPointerListener(new View.OnCapturedPointerListener() {
+                        @Override public boolean onCapturedPointer(View v, MotionEvent e) { return capturedMouse(e); }
+                    });
+                    web.requestPointerCapture();
+                } else {
+                    web.releasePointerCapture();
+                    web.setOnCapturedPointerListener(null);
+                    mdx = 0f; mdy = 0f; mwheel = 0; mbtn = 0;
+                }
+            }
+        });
+    }
+
+    private boolean capturedMouse(MotionEvent e) {
+        if (e.getActionMasked() == MotionEvent.ACTION_SCROLL) {
+            float v = e.getAxisValue(MotionEvent.AXIS_VSCROLL);
+            if (v != 0f) mwheel = v > 0f ? 1 : -1;
+        } else {
+            mdx += e.getX();
+            mdy += e.getY();
+        }
+        mbtn = e.getButtonState() & 3;     // BUTTON_PRIMARY | BUTTON_SECONDARY
+        if (!mflushPending) { mflushPending = true; web.post(mflush); }
+        return true;
+    }
 
     // ---- clipboard (UI thread) --------------------------------------------------------------------------------------------------------------------
     @JavascriptInterface public void clipboardSet(final String text) {

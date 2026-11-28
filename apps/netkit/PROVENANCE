@@ -48,3 +48,4 @@ de9c4c6a7d91195216c56ba7002be6bafaf91dfdb9e205d1f8f8a32e9eebde7a  duck.png
 6326f18fd5fe4c4990cc54e3812880fd54dd149efe08b43a8a0dddf7292b8f98  sprites.png
 dd5d3cb819720b092de844b18fa59c84389b94e4d18615e031a8c313664036d4  kit/setup.bat
 d25bce4182ad1d65c5ce2f9eb7d52142460353915c022ede24595ead1d5fd53e  survival.wasm
+# UPDATE 2026-11-28 (mouse + keyboard like an FPS / WoW; PARENA after c5fd534): nk-host.js regenerated (netkitMouse, surv-capture-sync!); wasm files reproduced byte for byte.

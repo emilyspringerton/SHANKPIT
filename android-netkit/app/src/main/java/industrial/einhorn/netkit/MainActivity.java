@@ -57,7 +57,10 @@ public class MainActivity extends Activity {
         bridge = new NativeBridge(this, web);
         web.addJavascriptInterface(bridge, "NetkitNative");
         web.setWebViewClient(new BundleClient());
+        web.setFocusable(true);
+        web.setFocusableInTouchMode(true);
         setContentView(web);
+        web.requestFocus();      // a hardware keyboard / mouse goes straight to the page
 
         Log.i(TAG, "loading " + ORIGIN + "/index.html");
         web.loadUrl(ORIGIN + "/index.html");
@@ -103,7 +106,7 @@ public class MainActivity extends Activity {
     }
 
     @Override protected void onPause() { if (web != null) web.onPause(); super.onPause(); }
-    @Override protected void onResume() { super.onResume(); if (web != null) web.onResume(); }
+    @Override protected void onResume() { super.onResume(); if (web != null) { web.onResume(); web.requestFocus(); } }
 
     @Override
     protected void onDestroy() {
