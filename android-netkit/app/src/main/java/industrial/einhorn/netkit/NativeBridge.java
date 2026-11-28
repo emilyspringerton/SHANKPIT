@@ -143,21 +143,26 @@ final class NativeBridge implements Sink {
         activity.runOnUiThread(new Runnable() {
             @Override public void run() {
                 if (Build.VERSION.SDK_INT < 26 || destroyed) return;
-                if (on != 0) {
-                    web.setFocusable(true);
-                    web.setFocusableInTouchMode(true);
-                    web.requestFocus();
-                    web.setOnCapturedPointerListener(new View.OnCapturedPointerListener() {
-                        @Override public boolean onCapturedPointer(View v, MotionEvent e) { return capturedMouse(e); }
-                    });
-                    web.requestPointerCapture();
-                } else {
-                    web.releasePointerCapture();
-                    web.setOnCapturedPointerListener(null);
-                    mdx = 0f; mdy = 0f; mwheel = 0; mbtn = 0;
-                }
+                capture(on != 0);
             }
         });
+    }
+
+    @android.annotation.TargetApi(26)
+    private void capture(boolean on) {
+        if (on) {
+            web.setFocusable(true);
+            web.setFocusableInTouchMode(true);
+            web.requestFocus();
+            web.setOnCapturedPointerListener(new View.OnCapturedPointerListener() {
+                @Override public boolean onCapturedPointer(View v, MotionEvent e) { return capturedMouse(e); }
+            });
+            web.requestPointerCapture();
+        } else {
+            web.releasePointerCapture();
+            web.setOnCapturedPointerListener(null);
+            mdx = 0f; mdy = 0f; mwheel = 0; mbtn = 0;
+        }
     }
 
     private boolean capturedMouse(MotionEvent e) {
