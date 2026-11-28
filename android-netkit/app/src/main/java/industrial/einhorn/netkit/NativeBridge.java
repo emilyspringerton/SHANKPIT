@@ -93,8 +93,16 @@ final class NativeBridge implements Sink {
         activity.runOnUiThread(new Runnable() {
             @Override public void run() {
                 try {
-                    activity.startActivity(new android.content.Intent(android.content.Intent.ACTION_VIEW,
-                            android.net.Uri.parse(industrial.einhorn.netkit.shell.SsoLink.SIGN_IN_URL)));
+                    // a Custom Tab (Chrome's in-app tab, asked for with the bare extra: no androidx dependency): it opens in this task,
+                    // so when sso.html hands shankphone://sso back, the singleTask activity clears it and you are back in the app.
+                    android.content.Intent i = new android.content.Intent(android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse(industrial.einhorn.netkit.shell.SsoLink.SIGN_IN_URL));
+                    android.os.Bundle extras = new android.os.Bundle();
+                    extras.putBinder("android.support.customtabs.extra.SESSION", null);
+                    i.putExtras(extras);
+                    i.putExtra("android.support.customtabs.extra.TOOLBAR_COLOR", 0xFF0E1319);
+                    i.putExtra("android.support.customtabs.extra.TITLE_VISIBILITY", 1);
+                    activity.startActivity(i);
                 } catch (android.content.ActivityNotFoundException e) {
                     event(Json.obj("t", "sso", "e", "nobrowser"));
                 }

@@ -12,6 +12,11 @@ public class SsoLinkTest {
     @Test public void readsTheTokenAndPlayer() {
         assertArrayEquals(new String[] { T, "42" }, SsoLink.parse("shankphone://sso#sso_token=" + T + "&player_id=42"));
     }
+    @Test public void decodesAnEncodedPlayerAndIgnoresDisplayName() {
+        assertArrayEquals(new String[] { T, "google:1234" },
+                SsoLink.parse("shankphone://sso#sso_token=" + T + "&player_id=google%3A1234&display_name=Emily%20S"));
+        assertArrayEquals(new String[] { T, "" }, SsoLink.parse("shankphone://sso#sso_token=" + T + "&player_id=%ZZ"));
+    }
     @Test public void playerIsOptional() {
         assertArrayEquals(new String[] { T, "" }, SsoLink.parse("shankphone://sso#sso_token=" + T));
     }

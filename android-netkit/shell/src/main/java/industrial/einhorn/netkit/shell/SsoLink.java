@@ -13,6 +13,11 @@ public final class SsoLink {
     public static final String SIGN_IN_URL =
             "https://iam.okemily.com/api/v1/auth/sso/login?redirect_uri=https%3A%2F%2Fwotan.okemily.com%2Fshankphone%2Fsso.html";
 
+    /** %XX-decoded (sso.html URL-encodes the player id: "google:1" arrives as "google%3A1"); undecodable = "", which is then dropped. */
+    static String decode(String v) {
+        try { return java.net.URLDecoder.decode(v, "UTF-8"); } catch (java.io.UnsupportedEncodingException | IllegalArgumentException e) { return ""; }
+    }
+
     /** The token and the player id, or null when the link is not a well-formed sign-in return. */
     public static String[] parse(String uri) {
         if (uri == null || !uri.startsWith("shankphone://sso")) return null;
@@ -24,7 +29,7 @@ public final class SsoLink {
             if (eq <= 0) continue;
             String k = part.substring(0, eq), v = part.substring(eq + 1);
             if (k.equals("sso_token")) token = v;
-            else if (k.equals("player_id")) player = v;
+            else if (k.equals("player_id")) player = decode(v);
         }
         // a JWT is three base64url parts; anything else is not passed on
         if (token == null || token.length() < 20 || token.length() > 8192 || !token.matches("[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]+")) return null;

@@ -29,12 +29,14 @@
             android:exported="true"
             android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode"
-            android:launchMode="singleTop">
+            android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- IDUNA sign-in coming back (wotan.okemily.com/shankphone/sso.html forwards #sso_token=... here); see shell/SsoLink -->
+            <!-- IDUNA sign-in coming back (wotan.okemily.com/shankphone/sso.html forwards #sso_token=... here); see shell/SsoLink.
+                 singleTask: the sign-in runs in a Custom Tab on top of this activity, in this task, so the link coming back clears the tab
+                 away and lands here (onNewIntent) instead of stacking a second copy of the app on top of the browser. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
