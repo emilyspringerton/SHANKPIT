@@ -27,16 +27,19 @@
 #   garage object 6); index.html and netkit.css edited by hand (the GFD view and tab). Others unchanged.
 # UPDATE 2026-11-27 (terminal scrollback on touch + Git Bash key, PARENA 97f4bc0): nk-host.js regenerated (host only,
 #   every .wasm unchanged); index.html (Live and Bash buttons) and netkit.css (the terminal canvas always fits its box) edited by hand.
+# UPDATE 2026-11-28 (SURVIVAL telecrystals, PARENA d75c3a8): netkit.wasm, netkit-lite.wasm (touch button 8 "Teleport" = G) and survival.wasm
+#   (stdlib/shankpit_survival/sv_crystal.prn: the WORLDMAP contract played inside SURVIVAL) regenerated; index.html edited by hand (the Teleport button).
+#   Others unchanged (brawlpit.wasm stays WOTAN's copy).
 # sha256  file
-8a74f6e328c0c1abfc059a5014ba4d4c498c3e05021a4ef1a958be51c30899b3  index.html
+52ef57e18fd37a266e6c7048567e824f7d6aa2df4c6d83561a449c1b72eee505  index.html
 c3d9fca22cc8f92d1d5076c848b09a3b293f4f9abdd409ebbf30fdcb12259579  netkit.css
 29c80d02158f119bb173e60801ae5de2ea3fa76260d75cd3e823cb6154f98663  nk-host.js
-a018fa15d9b7a4e6097e3997a186a99ba38e695dfc3e81fce07582ab47ba7d42  netkit.wasm
-6655923dd62b45f299970e45bb76a7021a122af8a649b1add3cb5daac9987e67  netkit-lite.wasm
+8cc434fb093f39cdc2503516a9ddcfc97b3e17f0984ab785c5ce10add7bded97  netkit.wasm
+644c781c98553f598330141e16f2db1e1718e0fdaf2e142cfd407bb4b449efa3  netkit-lite.wasm
 71670ff4ea38a4b15a536bbb69d6ec743cff1109c1c3c66d6b1837e9d6b6051b  nkterm.wasm
 4e97ba74e6cc18a96016c977c26386ff913858c294482b5073825e38fc7720b7  brawlpit.wasm
 3c9330282ebd317bf2b8da01b9cce145802cd0fbf40c51f1156ba168e18eab82  oui.bin
 de9c4c6a7d91195216c56ba7002be6bafaf91dfdb9e205d1f8f8a32e9eebde7a  duck.png
 6326f18fd5fe4c4990cc54e3812880fd54dd149efe08b43a8a0dddf7292b8f98  sprites.png
 dd5d3cb819720b092de844b18fa59c84389b94e4d18615e031a8c313664036d4  kit/setup.bat
-21061bbe5651ae5b50f418fc70f6ba67dac576707ca41728f065ff7bb67cba6e  survival.wasm
+4d81981cbf6d56abc255ef68a79d93a8608a30be71d04b3629a629beedd2f06f  survival.wasm
