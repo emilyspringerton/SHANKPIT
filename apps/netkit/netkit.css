@@ -132,6 +132,7 @@ main:has(#view-survival:not([hidden])) { overflow: hidden; padding: 8px 8px calc
 #survival-msg { position: absolute; margin: 0; padding: 0 16px; }
 #sv-chat { position: absolute; z-index: 3; left: 8px; right: 8px; top: 34px; max-height: 46%; display: flex; flex-direction: column; gap: 6px; background: rgba(7, 10, 14, .86); border: 1px solid rgba(230, 237, 243, .2); border-radius: 8px; padding: 6px; touch-action: auto; user-select: text; -webkit-user-select: text; }
 #sv-chat[hidden] { display: none; }
+#sv-link { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 12px; } #sv-link #sv-who { flex: 1; min-width: 8rem; color: var(--muted); }
 #sv-log { flex: 1; min-height: 4.5rem; overflow-y: auto; font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
 #sv-chat-form { display: flex; gap: 6px; } #sv-chat-input { flex: 1; min-width: 0; font-size: 16px; }
 #sv-stick { position: absolute; left: calc(16px + var(--safe-l)); bottom: 16px; width: 132px; height: 132px; border-radius: 50%; background: rgba(230, 237, 243, .10); border: 2px solid rgba(230, 237, 243, .28); display: flex; align-items: center; justify-content: center; touch-action: none; }

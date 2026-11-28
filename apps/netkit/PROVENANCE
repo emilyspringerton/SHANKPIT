@@ -34,10 +34,11 @@
 #   server-settled telecrystal casts (svtravel). index.html and netkit.css edited by hand (Chat button, log, input, badge).
 # UPDATE 2026-11-28 (camera, PARENA d208768): nk-host.js, survival.wasm regenerated (netkit wasms rebuilt): SURVIVAL's mouse-wheel zoom, third-person orbit camera and click to move.
 # UPDATE 2026-11-28 (attack target + touch zoom, PARENA e2a37e4): nk-host.js, netkit.wasm, netkit-lite.wasm, survival.wasm regenerated; index.html / netkit.css edited by hand (Zoom - / Zoom + buttons).
+# UPDATE 2026-11-28 (SURVIVAL IDUNA sign-in, PARENA e2a37e4+): nk-host.js regenerated; index.html / netkit.css edited by hand (the sign-in row in SURVIVAL's chat panel).
 # sha256  file
-778f399d007648960d6a929e4f87350dd7255f31dfeba4d2ea244e46a27485a3  index.html
-75e9f4197cdbf16908828f7d55a9f65648b9715147eb8ad68f47d78f07d4fa7f  netkit.css
-7371d2d912c5ce881466a8166b5e40575bc7727bfc31938cb8be80c09b4167b7  nk-host.js
+729dc1d71f92b0bf136e1f64556d70c7a88ad5a9dc8d672ab6d9be34db7e4463  index.html
+c5f80737e3438a1160d1a28bf368db56fcb4c72e7aa57b82979be41fb1695e17  netkit.css
+14f49043146795feca77281cbb7a7246f3b3b74fce54f530ab225546248b39b1  nk-host.js
 2bf2a0ee6f7cdd821dcbf8a37911156618ef784e46d504abea751dea31c34c61  netkit.wasm
 9a1a8896cc20819b5a28ad2d4f4f982afce81a9ab24b1bcebfcab21eb228a768  netkit-lite.wasm
 71670ff4ea38a4b15a536bbb69d6ec743cff1109c1c3c66d6b1837e9d6b6051b  nkterm.wasm

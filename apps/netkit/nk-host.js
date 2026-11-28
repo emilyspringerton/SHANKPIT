@@ -72,6 +72,8 @@ let survDownX         = 0.0;
 let survDownY         = 0.0;
 let survDownTp          = false;
 let survRmb          = false;
+let survFromSso          = false;
+let survLinkCode         = -1;
 let survSeen         = 0;
 let survChatLines         = 0;
 let survLive          = false;
@@ -3389,10 +3391,52 @@ export function survGfdLiveP()          {
     return ((gfd == null) ? false : (gfd.up ? (gfd.x.nk_gfd_state() === 3) : false));
 }
 
+export function survLinkPaintBang()       {
+    {
+        let signed          = (!((gfdSso() == null)));
+        let live          = survGfdLiveP();
+        setTextBang("sv-who", (live ? ("" + "Connected to GoblinFoxDragon" + ((gfdSsoPlayer() === "") ? "" : ("" + " as player " + gfdSsoPlayer()))) : ((!((gfd == null))) ? "Connecting to GoblinFoxDragon..." : (signed ? "Signed in with IDUNA. Not connected." : "Not signed in. SURVIVAL is offline."))));
+        setHiddenBang("btn-sv-sso", (signed || live));
+        setHiddenBang("btn-sv-connect", ((!(signed)) || (live || (!((gfd == null))))));
+    }
+}
+
 export function survBadgeBang(live         )       {
     if ((live !== survLive)) {
         survLive = live;
         setTextBang("sv-badge", (live ? "GFD live" : "offline"));
+        survLinkPaintBang();
+    }
+}
+
+export function onSvSso(e     )       {
+    if (haveNativeP()) {
+        survFromSso = true;
+        survChatAddBang("s8", "IDUNA's sign-in page is open in your browser. Come back here when it is done.");
+        nat.ssoOpen();
+    } else {
+        survChatAddBang("s8", "Sign-in needs the SHANKPHONE app.");
+    }
+}
+
+export function onSvConnect(e     )       {
+    if ((gfd == null)) {
+        onGfdResume(null);
+    }
+}
+
+export function survAfterSsoBang(ok         )       {
+    if (survFromSso) {
+        survFromSso = false;
+        if (ok) {
+            showViewBang("survival");
+            survChatAddBang("s5", "Signed in with IDUNA. Connecting...");
+            if ((gfd == null)) {
+                onGfdResume(null);
+            }
+        } else {
+            survChatAddBang("s6", "No browser to sign in with.");
+        }
     }
 }
 
@@ -3433,6 +3477,13 @@ export function survRelayBang()       {
         dv.setInt32((b + 64), (live ? 1 : 0), true);
         survBadgeBang(live);
         {
+            let code         = ((live ? 2 : ((gfd == null) ? 0 : 1)) + ((gfdSso() == null) ? 0 : 3));
+            if ((code !== survLinkCode)) {
+                survLinkCode = code;
+                survLinkPaintBang();
+            }
+        }
+        {
             let seq      = dv.getInt32(b, true);
             if ((seq !== survSeen)) {
                 survSeen = seq;
@@ -3468,6 +3519,7 @@ export function onSvChatToggle(e     )       {
         let open      = box.hidden;
         setHiddenBang("sv-chat", (!(open)));
         el("btn-sv-chat").setAttribute("aria-expanded", (open ? "true" : "false"));
+        survLinkPaintBang();
         if (open) {
             el("sv-chat-input").focus();
         }
@@ -3824,6 +3876,8 @@ export function survInstallBang()       {
         survCanvas.addEventListener("wheel", survCanvasWheel, {"passive": false});
         onBang("sv-chat-form", "submit", onSvChatSend);
         onBang("btn-sv-chat", "click", onSvChatToggle);
+        onBang("btn-sv-sso", "click", onSvSso);
+        onBang("btn-sv-connect", "click", onSvConnect);
     }
 }
 
@@ -3882,6 +3936,7 @@ export function gfdFeedU8Bang(bytes     )       {
                 gfdSendTextBang(gfd.name);
             } else {
                 el("gfd-input").placeholder = "choose your permanent character name";
+                survChatAddBang("s8", "First visit: type your permanent character name here and send it.");
                 el("gfd-input").focus();
             }
         }
@@ -4248,7 +4303,7 @@ export function gfdOnSsoBang(ev     )       {
         setTextBang("gfd-note", "No browser to sign in with.");
     }
     gfdRenderConnectBang();
-    showViewBang("gfd");
+    (survFromSso ? survAfterSsoBang((ev.e === "ok")) : showViewBang("gfd"));
 }
 
 export function gfdEndedBang(why        )       {

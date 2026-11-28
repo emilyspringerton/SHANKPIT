@@ -277,6 +277,11 @@
       <canvas id="sv-canvas" width="640" height="360" tabindex="0" aria-label="SHANKPIT SURVIVAL: drag to look"></canvas>
       <p id="survival-msg" class="hint" hidden></p>
       <div id="sv-chat" hidden>
+        <div id="sv-link">
+          <span id="sv-who">Not connected to GoblinFoxDragon</span>
+          <button id="btn-sv-sso" type="button">Sign in with IDUNA</button>
+          <button id="btn-sv-connect" type="button" hidden>Connect</button>
+        </div>
         <div id="sv-log" aria-live="polite" aria-label="GoblinFoxDragon chat log"></div>
         <form id="sv-chat-form" autocomplete="off">
           <input id="sv-chat-input" type="text" enterkeyhint="send" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="a GFD command: look, who, crystals, say hi ..." aria-label="GoblinFoxDragon command">
