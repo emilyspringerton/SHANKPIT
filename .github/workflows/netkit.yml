@@ -21,7 +21,7 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  contents: read
+  contents: write   # the rolling release below (push to master only; pull requests only read)
 
 jobs:
   apk:
@@ -108,3 +108,28 @@ jobs:
           name: ShankPit_Netkit_${{ github.run_number }}_${{ github.sha }}
           path: ShankPit_Netkit_*.apk
           if-no-files-found: error
+
+      # The phone's download link. Android cannot install a CI artifact (those need a GitHub login), so every green push to master
+      # replaces the asset on one rolling release. The repo is public, so this works from a phone browser with no login:
+      #   https://github.com/emilyspringerton/SHANKPIT/releases/download/netkit-latest/SHANKPHONE.apk
+      # Signed with the stable release key (secrets SHANKPIT_ANDROID_*), so each build installs OVER the last one and keeps its data;
+      # versionCode is the run number, so it only ever goes up.
+      - name: Publish SHANKPHONE.apk to the rolling release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          APK="ShankPit_Netkit_${{ github.run_number }}.apk"
+          cp "$APK" SHANKPHONE.apk
+          CERT="$("$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --print-certs SHANKPHONE.apk | grep -m1 'SHA-256' || true)"
+          NOTES="Build ${{ github.run_number }} of ${GITHUB_SHA::7} -- sha256 $(sha256sum SHANKPHONE.apk | cut -d' ' -f1) -- $CERT"
+          if gh release view netkit-latest >/dev/null 2>&1; then
+            gh release edit netkit-latest --notes "$NOTES" --prerelease
+          else
+            gh release create netkit-latest --target "$GITHUB_SHA" --prerelease --title "SHANKPHONE (latest build)" --notes "$NOTES"
+          fi
+          gh release upload netkit-latest SHANKPHONE.apk --clobber
+          echo "### Install on a phone" >> "$GITHUB_STEP_SUMMARY"
+          echo "https://github.com/${GITHUB_REPOSITORY}/releases/download/netkit-latest/SHANKPHONE.apk ($CERT)" >> "$GITHUB_STEP_SUMMARY"
