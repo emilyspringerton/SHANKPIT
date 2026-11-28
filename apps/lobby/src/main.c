@@ -12209,6 +12209,7 @@ static void lobby_edu_widgets_init(const CustomLevelData *lvl) {
     for (int i = 0; i < EDU_MAX_WIDGETS; i++) { g_edu_widget_box[i] = -1; g_edu_widget_applied[i] = -1; }
     for (int i = 0; i < lvl->edu_widget_count; i++) {
         const LevelEduWidget *w = &lvl->edu_widgets[i];
+        if (w->machine_type == 9) continue;   /* TELECRYSTAL: not an EduVM machine (packages/simulation/crystal_widgets.h runs it) */
         float rad = w->radius > 0.0f ? w->radius : LOBBY_EDU_PLATE_DEFAULT_RADIUS;
         int slot = eduvm_host_widget_bind(w->entity_id, w->machine_type, w->initial_state, w->memory_address,
                                           w->x, w->y, w->z, rad);

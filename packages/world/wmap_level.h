@@ -107,6 +107,16 @@ static inline int wmap_level_parse(const char *buf, CustomLevelData *out) {
             size_t pl = strlen(c.prompt);
             while (pl && isspace((unsigned char)c.prompt[pl - 1])) c.prompt[--pl] = '\0';
             if (g_wmap_crystal_count < WMAP_MAX_CRYSTALS) g_wmap_crystals[g_wmap_crystal_count++] = c;
+            /* ...and the same crystal as a TELECRYSTAL widget (machine_type 9), so the widget system -- not a special case -- runs it. */
+            if (out->edu_widget_count < LEVEL_BOXES_MAX_EDU_WIDGETS) {
+                LevelEduWidget *w = &out->edu_widgets[out->edu_widget_count++];
+                memset(w, 0, sizeof *w);
+                snprintf(w->entity_id, sizeof w->entity_id, "%s", c.id[0] ? c.id + (strncmp(c.id, "TELECRYSTAL_ID_", 15) ? 0 : 15) : "crystal");
+                w->machine_type = 9; w->memory_address = -1; w->x = c.x; w->y = 0; w->z = c.z; w->radius = c.r;
+                w->box_index = w->input_pin = w->gate_pin = -1;
+                w->dest_zone = c.dest_zone; w->cost = c.cost; w->cast_total_ms = c.total_ms; w->cast_commit_ms = c.commit_ms;
+                snprintf(w->prompt, sizeof w->prompt, "%s", c.prompt);
+            }
         }
         /* poi / building / npc / exit / portal: GFD's server data; the client draws them from boxes. */
     }

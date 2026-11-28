@@ -461,6 +461,12 @@ test-mesh-asset:
 	$(CC) -std=gnu99 -O2 -Wall -Wextra -Werror -Ipackages/world -o /tmp/mesh_asset_test packages/world/mesh_asset_test.c -lm
 	/tmp/mesh_asset_test
 
+.PHONY: test-crystal-widgets
+# test-crystal-widgets -- telecrystals as NOCK widgets (machine_type 9): from city.wmap and from level JSON, cast over the shared rules.
+test-crystal-widgets:
+	$(CC) -std=gnu99 -O2 -Wall -Wextra -Werror -Ipackages/world -Ipackages/common -Ipackages/simulation -o /tmp/crystal_widgets_test packages/simulation/crystal_widgets_test.c -lm
+	/tmp/crystal_widgets_test
+
 .PHONY: test-wmap
 test-wmap:
 	$(CC) -std=gnu99 -O2 -Wall -Wextra -Werror -Ipackages/world -o /tmp/wmap_level_test packages/world/wmap_level_test.c -lm

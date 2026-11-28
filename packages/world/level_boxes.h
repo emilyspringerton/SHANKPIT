@@ -48,6 +48,7 @@
                                 already-enforced cap on the editor side, so a level saved there
                                 can never exceed what this loader is willing to read back */
 #define LEVEL_BOXES_MAX_NAME 64
+#define LEVEL_BOXES_CRYSTAL_PROMPT_LEN 48
 #define LEVEL_BOXES_ASSET_ID_LEN 40 /* a mesh / normal-map asset id: [A-Za-z0-9_.-], e.g. a 32-hex content hash or a NOCK name */
 
 /* S459-16, founder real-time: "i think it makes sense to abstract into material first so it
@@ -508,6 +509,12 @@ typedef struct {
     int input_pin;
     int gate_pin;
     int delay_ticks;
+    /* TELECRYSTAL (machine_type 9; founder 2026-11-28: telecrystals in the widget system). Stand in the ring (x,z,radius), press G, and at
+     * cast_commit_ms the cast asks to jump to dest_zone (+ dest_spawner, a spawner id in the destination; 0 = its default), costing `cost`.
+     * The CLIENT predicts; the GFD server owns the registry, the price and the destination (server/telecrystal). prompt is the HUD line.
+     * Unused (0 / "") by every other kind, so existing levels are unchanged. See packages/simulation/crystal_widgets.h. */
+    int dest_zone, dest_spawner, cost, cast_total_ms, cast_commit_ms;
+    char prompt[LEVEL_BOXES_CRYSTAL_PROMPT_LEN];
 } LevelEduWidget;
 
 #define LEVEL_BOXES_MAX_EDU_WIDGETS 16 /* == EDU_MAX_WIDGETS in packages/education/edu_bindings.h */
@@ -1745,10 +1752,16 @@ static inline int level_boxes_parse_json(const char *buf, CustomLevelData *out) 
                     if ((ev = level_boxes_find_key(eo_start, eo_end, "input_pin")) && level_boxes_parse_number(ev, &f)) tmp.input_pin = (int)f;
                     if ((ev = level_boxes_find_key(eo_start, eo_end, "gate_pin")) && level_boxes_parse_number(ev, &f)) tmp.gate_pin = (int)f;
                     if ((ev = level_boxes_find_key(eo_start, eo_end, "delay_ticks")) && level_boxes_parse_number(ev, &f)) tmp.delay_ticks = (int)f;
+                    if ((ev = level_boxes_find_key(eo_start, eo_end, "dest_zone")) && level_boxes_parse_number(ev, &f)) tmp.dest_zone = (int)f;
+                    if ((ev = level_boxes_find_key(eo_start, eo_end, "dest_spawner")) && level_boxes_parse_number(ev, &f)) tmp.dest_spawner = (int)f;
+                    if ((ev = level_boxes_find_key(eo_start, eo_end, "cost")) && level_boxes_parse_number(ev, &f)) tmp.cost = f < 0 ? 0 : (int)f;
+                    if ((ev = level_boxes_find_key(eo_start, eo_end, "cast_total_ms")) && level_boxes_parse_number(ev, &f)) tmp.cast_total_ms = f < 0 ? 0 : f > 60000 ? 60000 : (int)f;
+                    if ((ev = level_boxes_find_key(eo_start, eo_end, "cast_commit_ms")) && level_boxes_parse_number(ev, &f)) tmp.cast_commit_ms = f < 0 ? 0 : f > 60000 ? 60000 : (int)f;
+                    if ((ev = level_boxes_find_key(eo_start, eo_end, "prompt"))) level_boxes_parse_string(ev, tmp.prompt, sizeof tmp.prompt);
                     if (tmp.box_index >= out->count) tmp.box_index = -1;
                     /* 6 LEVER, 7 DELAY, 8 TRANSISTOR are circuit-only kinds (packages/simulation/
                        widget_circuit.h); 1..5 keep their original education-machine meaning. */
-                    if (ok && tmp.machine_type >= 1 && tmp.machine_type <= 8)
+                    if (ok && tmp.machine_type >= 1 && tmp.machine_type <= 9)
                         out->edu_widgets[out->edu_widget_count++] = tmp;
                     ewc = eo_end + 1;
                 }
@@ -1986,6 +1999,11 @@ static inline void level_boxes_write_json(FILE *f, const CustomLevelData *lvl) {
         if (ew->input_pin >= 0) fprintf(f, ", \"input_pin\": %d", ew->input_pin);
         if (ew->gate_pin >= 0) fprintf(f, ", \"gate_pin\": %d", ew->gate_pin);
         if (ew->delay_ticks > 0) fprintf(f, ", \"delay_ticks\": %d", ew->delay_ticks);
+        if (ew->machine_type == 9) {
+            fprintf(f, ", \"dest_zone\": %d, \"dest_spawner\": %d, \"cost\": %d, \"cast_total_ms\": %d, \"cast_commit_ms\": %d, \"prompt\": ",
+                    ew->dest_zone, ew->dest_spawner, ew->cost, ew->cast_total_ms, ew->cast_commit_ms);
+            level_boxes_put_json_string(f, ew->prompt);
+        }
         fprintf(f, " }");
     }
     fprintf(f, "\n ]");
