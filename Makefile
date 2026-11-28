@@ -444,6 +444,12 @@ bake-levels:
 # (doors, buttons, nav nodes, characters, exits, zones, edu widgets, lab stations, buggy spawns,
 # brick damage) must survive save -> load.
 # test-wmap -- the WORLDMAP contract's client reader: GFD's city.wmap loads through level_boxes_load_from_file.
+.PHONY: test-telecrystal
+# test-telecrystal -- the telecrystal cast state machine over the shared WORLDMAP rules (packages/common/wm_rules_gen.h).
+test-telecrystal:
+	$(CC) -std=gnu99 -O2 -Wall -Wextra -Werror -Ipackages/common -o /tmp/telecrystal_test packages/common/telecrystal_test.c
+	/tmp/telecrystal_test
+
 .PHONY: test-wmap
 test-wmap:
 	$(CC) -std=gnu99 -O2 -Wall -Wextra -Werror -Ipackages/world -o /tmp/wmap_level_test packages/world/wmap_level_test.c -lm
