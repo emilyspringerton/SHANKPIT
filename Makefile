@@ -455,6 +455,12 @@ test-level-mesh:
 	$(CC) -std=gnu99 -O2 -Wall -Wextra -Werror -Ipackages/world -o /tmp/level_mesh_schema_test packages/world/level_mesh_schema_test.c -lm
 	/tmp/level_mesh_schema_test
 
+.PHONY: test-mesh-asset
+# test-mesh-asset -- glTF -> LOD chain -> baked normal map -> .smsh (packages/world/mesh_asset.h), on a procedural sphere.
+test-mesh-asset:
+	$(CC) -std=gnu99 -O2 -Wall -Wextra -Werror -Ipackages/world -o /tmp/mesh_asset_test packages/world/mesh_asset_test.c -lm
+	/tmp/mesh_asset_test
+
 .PHONY: test-wmap
 test-wmap:
 	$(CC) -std=gnu99 -O2 -Wall -Wextra -Werror -Ipackages/world -o /tmp/wmap_level_test packages/world/wmap_level_test.c -lm
@@ -864,3 +870,8 @@ roblox-install:
 .PHONY: regen-roblox-rules
 regen-roblox-rules:
 	roblox/scripts/gen_460_rules.sh
+
+# mesh-bake -- the CLI behind NOCK's "add a mesh": glTF -> .smsh LOD chain + baked normal map. See packages/world/mesh_asset.h.
+.PHONY: mesh-bake
+mesh-bake:
+	$(CC) -std=gnu99 -O2 -Wall -Wextra -Werror -Ipackages/world -o bin/mesh_bake tools/mesh_bake.c -lm
