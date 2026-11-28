@@ -214,3 +214,15 @@ main:has(#view-gfd:not([hidden])) { overflow: hidden; padding: 8px 8px calc(8px 
 .steps li { margin: 6px 0; } kbd { padding: 1px 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel2); font: 13px ui-monospace, monospace; }
 .accent { color: var(--accent); }
 #ed > .viewbar { flex-wrap: wrap; row-gap: 6px; }
+
+/* SURVIVAL: the GoblinFoxDragon controls drawer (same buttons and codes as the GFD tab; the wasm decides which are enabled) */
+#sv-gfd { position: absolute; z-index: 3; right: 8px; top: 34px; width: min(330px, calc(100% - 16px)); max-height: calc(100% - 44px); overflow: auto; display: flex; flex-direction: column; gap: 6px; background: rgba(7, 10, 14, .88); border: 1px solid rgba(230, 237, 243, .2); border-radius: 8px; padding: 6px; touch-action: auto; }
+#sv-gfd[hidden] { display: none; }
+#sv-gfd .gtitle { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+#sv-gfd .gbars { display: grid; gap: 3px; }
+#sv-here { display: flex; flex-wrap: wrap; gap: 4px; }
+#sv-gcontrols { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; }
+#sv-compass { display: grid; grid-template-columns: repeat(3, 46px); grid-template-rows: repeat(3, 40px); gap: 4px; grid-template-areas: "up n dn" "w c e" ". s ."; }
+#sv-compass button { min-height: 40px; padding: 0; font-weight: 700; }
+#sv-actions { flex: 1; min-width: 150px; display: grid; grid-template-columns: repeat(auto-fill, minmax(58px, 1fr)); gap: 4px; align-content: start; }
+#sv-actions button { min-height: 36px; padding: 0 4px; font-size: 13px; }

@@ -76,6 +76,10 @@ let survFromSso          = false;
 let survLinkCode         = -1;
 let survSeen         = 0;
 let survChatLines         = 0;
+let survRoom         = "";
+let survDir         = 0;
+let survDirAt         = 0.0;
+let survExitAt         = -1.0;
 let survMouseSeen          = false;
 let survCap          = false;
 let survCapOff          = false;
@@ -3349,6 +3353,7 @@ export function survOnInstance(result     )       {
     survX.sp_init();
     survImg = new ImageData(new Uint8ClampedArray(survMem.buffer, survX.sp_fb_addr(), ((survX.sp_fb_w() * survX.sp_fb_h()) * 4)), survX.sp_fb_w(), survX.sp_fb_h());
     survInstallBang();
+    survX.sp_zone(survHash("meadow"), 0, 1);
     survState = 2;
     survSayBang("");
     if (survRun) {
@@ -3509,6 +3514,7 @@ export function onSvChatSend(e     )       {
         if ((t.length > 0)) {
             setValBang("sv-chat-input", "");
             if (survGfdLiveP()) {
+                survNoteDirBang(survDirOf(t));
                 gfdCommandBang(t);
             } else {
                 survChatAddBang("s8", "Not connected to GoblinFoxDragon. Open the GFD tab, sign in or play as a guest, and tap Play; this log then reaches the whole MUD.");
@@ -3577,11 +3583,113 @@ export function onNetkitMouse(json        )       {
     }
 }
 
+export function survHash(s        )         {
+    {
+        let h         = 5381.0;
+        let n      = s.length;
+        {
+            let i         = 0;
+            while (true) {
+                if ((i < n)) {
+                    h = Math.abs(Math.imul((Math.imul(h, 33) + s.charCodeAt(i)), 1));
+                    i = (i + 1);
+                    continue;
+                }
+                break;
+            }
+        }
+        return Math.max(1, Math.floor((h / 1.0)));
+    }
+}
+
+export function survDirWord(d        )         {
+    return ((d === 1) ? "north" : ((d === 2) ? "south" : ((d === 3) ? "east" : "west")));
+}
+
+export function survDirOf(t        )         {
+    {
+        let w      = t.trim().toLowerCase();
+        return (((w === "n") || (w === "north")) ? 1 : (((w === "s") || (w === "south")) ? 2 : (((w === "e") || (w === "east")) ? 3 : (((w === "w") || (w === "west")) ? 4 : 0))));
+    }
+}
+
+export function survNoteDirBang(d        )       {
+    if ((d > 0)) {
+        survDir = d;
+        survDirAt = performance.now();
+    }
+}
+
+export function survZoneSyncBang(t        )       {
+    {
+        let live          = survGfdLiveP();
+        if (live) {
+            {
+                let key         = ("" + gfdWord0("nk_gfd_room_addr") + "|" + gfdWord0("nk_gfd_zone_addr"));
+                if (((key !== "|") && (key !== survRoom))) {
+                    {
+                        let first          = (survRoom === "");
+                        let side         = (((!(first)) && ((t - survDirAt) < 6000.0)) ? survDir : 0);
+                        survRoom = key;
+                        survDir = 0;
+                        survX.sp_zone(survHash(key), side, 1);
+                        survExitAt = -1.0;
+                        survChatAddBang("s5", ("" + "Zone: " + gfdWord0("nk_gfd_room_addr")));
+                        el("sv-room").title = key;
+                    }
+                }
+            }
+        }
+        {
+            let d      = survX.sp_zone_exit();
+            if ((d === 0)) {
+                survExitAt = -1.0;
+            } else {
+                if ((live && (survExitAt < 0.0))) {
+                    survNoteDirBang(d);
+                    survExitAt = t;
+                    gfdCommandBang(survDirWord(d));
+                } else {
+                    if (((!(live)) || ((t - survExitAt) > 2500.0))) {
+                        survExitAt = -1.0;
+                        survX.sp_zone_ack();
+                        survChatAddBang("s8", (live ? "You cannot go that way." : "Not connected to GoblinFoxDragon: the edge of this zone is closed."));
+                    }
+                }
+            }
+        }
+    }
+}
+
+export function onSvGfdToggle(e     )       {
+    {
+        let box      = el("sv-gfd");
+        let open      = box.hidden;
+        setHiddenBang("sv-gfd", (!(open)));
+        el("btn-sv-gfd").setAttribute("aria-expanded", (open ? "true" : "false"));
+    }
+}
+
+export function survCompassCode(c        )         {
+    return (((c >= 1) && (c <= 4)) ? c : 0);
+}
+
+export function onSvGfdBtn(e     )       {
+    {
+        let b      = e.target.closest("[data-gb]");
+        if ((!((b == null)))) {
+            survNoteDirBang(survCompassCode(parseInt(b.dataset.gb, 10)));
+            onGfdButton(e);
+        }
+    }
+}
+
 export function survTick(t        )       {
     survLooping = false;
     if ((survRun && (survState === 2))) {
         survX.sp_pad(0, survLx, survLy, 0.0, 0.0, 0.0, 0.0, 0);
         survRelayBang();
+        survZoneSyncBang(t);
         survCaptureSyncBang();
         survX.sp_frame(t);
         survCtx.putImageData(survImg, 0, 0);
@@ -3943,6 +4051,10 @@ export function survInstallBang()       {
         survCanvas.addEventListener("wheel", survCanvasWheel, {"passive": false});
         onBang("sv-chat-form", "submit", onSvChatSend);
         onBang("btn-sv-chat", "click", onSvChatToggle);
+        onBang("btn-sv-gfd", "click", onSvGfdToggle);
+        onBang("sv-actions", "click", onSvGfdBtn);
+        onBang("sv-compass", "click", onSvGfdBtn);
+        onBang("sv-here", "click", onGfdHere);
         onBang("btn-sv-sso", "click", onSvSso);
         onBang("btn-sv-connect", "click", onSvConnect);
     }
@@ -4132,17 +4244,41 @@ export function gfdPaintBang()       {
             let x      = gfd.x;
             let room         = gfdWord0("nk_gfd_room_addr");
             let zone         = gfdWord0("nk_gfd_zone_addr");
-            setTextBang("gfd-room", ((room === "") ? "GoblinFoxDragon" : room));
-            setTextBang("gfd-zone", ((zone === "") ? "" : ("" + "Lv " + x.nk_gfd_vital(0) + " - " + zone)));
-            gfdBarBang("gfd-hp", x.nk_gfd_bar(0), ("" + "HP " + x.nk_gfd_vital(1) + "/" + x.nk_gfd_vital(2)));
-            gfdBarBang("gfd-mp", x.nk_gfd_bar(1), ("" + "MP " + x.nk_gfd_vital(3) + "/" + x.nk_gfd_vital(4)));
-            gfdBarBang("gfd-tp", x.nk_gfd_bar(2), ("" + "TP " + x.nk_gfd_vital(5)));
+            setTextBang("sv-room", ((room === "") ? "GoblinFoxDragon" : room));
+            setTextBang("sv-zone", ((zone === "") ? "" : ("" + "Lv " + x.nk_gfd_vital(0) + " - " + zone)));
+            gfdBarBang("sv-hp", x.nk_gfd_bar(0), ("" + "HP " + x.nk_gfd_vital(1) + "/" + x.nk_gfd_vital(2)));
+            gfdBarBang("sv-mp", x.nk_gfd_bar(1), ("" + "MP " + x.nk_gfd_vital(3) + "/" + x.nk_gfd_vital(4)));
+            gfdBarBang("sv-tp", x.nk_gfd_bar(2), ("" + "TP " + x.nk_gfd_vital(5)));
             {
                 let __dn6      = x.nk_gfd_buttons();
                 {
                     let i         = 0;
                     while (true) {
                         if ((i < __dn6)) {
+                            {
+                                let b      = el(("" + "sg-" + (i + 1)));
+                                if ((!((b == null)))) {
+                                    b.disabled = (x.nk_gfd_btn_enabled((i + 1)) === 0);
+                                }
+                            }
+                            i = (i + 1);
+                            continue;
+                        }
+                        break;
+                    }
+                }
+            }
+            setTextBang("gfd-room", ((room === "") ? "GoblinFoxDragon" : room));
+            setTextBang("gfd-zone", ((zone === "") ? "" : ("" + "Lv " + x.nk_gfd_vital(0) + " - " + zone)));
+            gfdBarBang("gfd-hp", x.nk_gfd_bar(0), ("" + "HP " + x.nk_gfd_vital(1) + "/" + x.nk_gfd_vital(2)));
+            gfdBarBang("gfd-mp", x.nk_gfd_bar(1), ("" + "MP " + x.nk_gfd_vital(3) + "/" + x.nk_gfd_vital(4)));
+            gfdBarBang("gfd-tp", x.nk_gfd_bar(2), ("" + "TP " + x.nk_gfd_vital(5)));
+            {
+                let __dn7      = x.nk_gfd_buttons();
+                {
+                    let i         = 0;
+                    while (true) {
+                        if ((i < __dn7)) {
                             {
                                 let b      = el(("" + "gb-" + (i + 1)));
                                 if ((!((b == null)))) {
@@ -4162,11 +4298,16 @@ export function gfdPaintBang()       {
 }
 
 export function gfdPaintHereBang()       {
+    gfdPaintHereInBang("gfd-here");
+    gfdPaintHereInBang("sv-here");
+}
+
+export function gfdPaintHereInBang(boxId        )       {
     {
         let x      = gfd.x;
         let n      = x.nk_gfd_creatures();
         let sel      = x.nk_gfd_selected();
-        let box      = el("gfd-here");
+        let box      = el(boxId);
         box.textContent = "";
         if ((n === 0)) {
             {
@@ -4544,11 +4685,11 @@ export function garCablesBang()       {
                     g.lineWidth = 4;
                     g.lineCap = "round";
                     {
-                        let __dn7      = scanX.nk_garage_cable_count();
+                        let __dn8      = scanX.nk_garage_cable_count();
                         {
                             let i         = 0;
                             while (true) {
-                                if ((i < __dn7)) {
+                                if ((i < __dn8)) {
                                     garCableBang(g, i, w, h);
                                     i = (i + 1);
                                     continue;
@@ -4569,11 +4710,11 @@ export function garRefreshBang()       {
         garVh = win().innerHeight;
         garBuildBang();
         {
-            let __dn8      = scanX.nk_garage_count();
+            let __dn9      = scanX.nk_garage_count();
             {
                 let i         = 0;
                 while (true) {
-                    if ((i < __dn8)) {
+                    if ((i < __dn9)) {
                         garPlaceBang((i + 1));
                         garLightBang((i + 1));
                         i = (i + 1);

@@ -270,12 +270,32 @@
       <button id="btn-survival-exit">Back to garage</button>
       <span class="title">SURVIVAL</span>
       <span class="grow"></span>
+      <button id="btn-sv-gfd" aria-controls="sv-gfd" aria-expanded="false" title="The GoblinFoxDragon controls: move between zones, attack, look, bag, map ...">GFD</button>
       <button id="btn-sv-chat" aria-controls="sv-chat" aria-expanded="false" title="The chat log: type any GoblinFoxDragon command">Chat</button>
       <span id="sv-badge" class="badge" title="SURVIVAL runs as WebAssembly built from PARENA, loaded from this app. Offline it needs no network; with a live GoblinFoxDragon connection its telecrystals are decided by the server">offline</span>
     </div>
     <div id="sv-stage">
       <canvas id="sv-canvas" width="640" height="360" tabindex="0" aria-label="SHANKPIT SURVIVAL: drag to look"></canvas>
       <p id="survival-msg" class="hint" hidden></p>
+      <div id="sv-gfd" hidden>
+        <div class="gtitle"><b id="sv-room">GoblinFoxDragon</b><span id="sv-zone" class="muted"></span></div>
+        <div class="gbars">
+          <div class="gbar hp"><i id="sv-hp"></i><span id="sv-hp-t"></span></div>
+          <div class="gbar mp"><i id="sv-mp"></i><span id="sv-mp-t"></span></div>
+          <div class="gbar tp"><i id="sv-tp"></i><span id="sv-tp-t"></span></div>
+        </div>
+        <div id="sv-here" role="group" aria-label="Who is here (tap to target)"></div>
+        <div id="sv-gcontrols">
+          <div id="sv-compass" role="group" aria-label="Move: leaving the zone by an edge does the same">
+            <button data-gb="5" id="sg-5" class="gk-up">Up</button><button data-gb="1" id="sg-1" class="gk-n">N</button><button data-gb="6" id="sg-6" class="gk-dn">Down</button>
+            <button data-gb="4" id="sg-4" class="gk-w">W</button><span class="gk-c" aria-hidden="true">&#9673;</span><button data-gb="3" id="sg-3" class="gk-e">E</button>
+            <button data-gb="2" id="sg-2" class="gk-s">S</button>
+          </div>
+          <div id="sv-actions" role="group" aria-label="Actions">
+            <button data-gb="12" id="sg-12" class="gb-hot">Attack</button><button data-gb="13" id="sg-13">Stop</button><button data-gb="14" id="sg-14">WS</button><button data-gb="7" id="sg-7">Look</button><button data-gb="8" id="sg-8">Status</button><button data-gb="9" id="sg-9">Bag</button><button data-gb="10" id="sg-10">Map</button><button data-gb="11" id="sg-11">Who</button><button data-gb="19" id="sg-19">Mobs</button><button data-gb="16" id="sg-16">Loot</button><button data-gb="17" id="sg-17">Mine</button><button data-gb="18" id="sg-18">Fish</button><button data-gb="20" id="sg-20">Party</button><button data-gb="15" id="sg-15">Home</button>
+          </div>
+        </div>
+      </div>
       <div id="sv-chat" hidden>
         <div id="sv-link">
           <span id="sv-who">Not connected to GoblinFoxDragon</span>
