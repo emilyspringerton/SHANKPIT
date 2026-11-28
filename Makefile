@@ -443,6 +443,12 @@ bake-levels:
 # test-level-save -- EDIT MAP's F6 writes a complete level JSON with no IDUNA: every parsed field
 # (doors, buttons, nav nodes, characters, exits, zones, edu widgets, lab stations, buggy spawns,
 # brick damage) must survive save -> load.
+# test-wmap -- the WORLDMAP contract's client reader: GFD's city.wmap loads through level_boxes_load_from_file.
+.PHONY: test-wmap
+test-wmap:
+	$(CC) -std=gnu99 -O2 -Wall -Wextra -Werror -Ipackages/world -o /tmp/wmap_level_test packages/world/wmap_level_test.c -lm
+	/tmp/wmap_level_test
+
 test-level-save:
 	$(CC) -std=gnu99 -O2 -Wall -Wextra -Werror -Ipackages/world -o /tmp/level_save_test packages/world/level_save_test.c -lm
 	/tmp/level_save_test

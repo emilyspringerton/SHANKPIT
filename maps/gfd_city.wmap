@@ -1,0 +1,95 @@
+# city.wmap -- the SHANKPIT-style Town (SCENE_CITY, telecrystal scene 0) in WORLDMAP v1.
+# Ported verbatim from packages/common/physics.h map_geo_city_base (54 boxes: foundation + shell, streets, civic core, institutions,
+# brush blocks, stadium / warehouse / financial districts, expansion districts). Box 0 is the floor slab. Spawns are physics.h's city_spawns.
+# Telecrystals are the live registry (server/telecrystal) rows whose source is this scene; `make` a test keeps them in sync.
+
+worldmap 1
+zone 0 town Town_City
+bound 1900
+
+
+# Town foundation + district shell (authoritative town world bounds)
+box 640.0 -6.0 640.0 2520.0 12.0 2520.0
+box 640.0 30.0 -620.0 2520.0 60.0 14.0
+box 640.0 30.0 1900.0 2520.0 60.0 14.0
+box -620.0 30.0 640.0 14.0 60.0 2520.0
+box 1900.0 30.0 640.0 14.0 60.0 2520.0
+
+# Primary streets and plazas (single coherent traversal grid)
+box 180.0 -0.6 180.0 120.0 1.2 820.0   # Grand Avenue spine
+box 180.0 -0.6 176.0 340.0 1.2 120.0   # Civic plaza east-west
+box 180.0 -0.6 300.0 760.0 1.2 96.0   # Midtown connector
+box 180.0 -0.6 424.0 760.0 1.2 96.0   # North connector
+box 60.0 -0.6 180.0 96.0 1.2 560.0   # West arterial
+box 300.0 -0.6 180.0 96.0 1.2 560.0   # East arterial
+box -70.0 -0.6 176.0 200.0 1.2 420.0   # Warehouse edge routes
+box 430.0 -0.6 82.0 220.0 1.2 240.0   # Financial edge routes
+
+# Civic core district
+box 180.0 8.0 176.0 40.0 16.0 40.0
+box 180.0 8.0 132.0 36.0 16.0 30.0
+box 180.0 8.0 220.0 36.0 16.0 30.0
+box 132.0 8.0 176.0 30.0 16.0 36.0
+box 228.0 8.0 176.0 30.0 16.0 36.0
+
+# Grand Avenue institutions
+box 138.0 9.0 258.0 44.0 18.0 34.0
+box 222.0 10.0 258.0 46.0 20.0 36.0
+box 138.0 10.0 338.0 40.0 20.0 34.0
+box 222.0 9.0 338.0 42.0 18.0 34.0
+
+# Brush blocks neighborhood (northwest)
+box 24.0 8.0 292.0 44.0 16.0 34.0
+box 86.0 8.0 292.0 44.0 16.0 34.0
+box 24.0 8.0 356.0 44.0 16.0 34.0
+box 86.0 8.0 356.0 44.0 16.0 34.0
+box 24.0 8.0 420.0 44.0 16.0 34.0
+box 86.0 8.0 420.0 44.0 16.0 34.0
+
+# Stadium district (north-east) as town district, not abstract platforms
+box 270.0 7.0 390.0 180.0 14.0 140.0
+box 270.0 14.0 390.0 120.0 12.0 86.0
+box 342.0 9.0 420.0 56.0 18.0 56.0
+box 200.0 9.0 420.0 56.0 18.0 56.0
+
+# Warehouse/harbor edge (west)
+box -112.0 8.0 156.0 96.0 16.0 62.0
+box -112.0 8.0 232.0 96.0 16.0 62.0
+box -46.0 7.0 194.0 34.0 14.0 116.0
+
+# Financial edge (east)
+box 334.0 20.0 62.0 70.0 40.0 52.0
+box 430.0 24.0 42.0 64.0 48.0 64.0
+box 398.0 12.0 118.0 110.0 24.0 56.0
+
+# Town expansion districts (south and far north), connected by streets
+box 180.0 -0.6 28.0 520.0 1.2 96.0
+box 48.0 8.0 20.0 56.0 16.0 40.0
+box 120.0 9.0 24.0 60.0 18.0 44.0
+box 240.0 9.0 24.0 60.0 18.0 44.0
+box 320.0 8.0 20.0 56.0 16.0 40.0
+box 180.0 -0.6 548.0 560.0 1.2 96.0
+box 72.0 8.0 548.0 56.0 16.0 44.0
+box 148.0 9.0 548.0 60.0 18.0 46.0
+box 228.0 9.0 548.0 60.0 18.0 46.0
+box 304.0 8.0 548.0 56.0 16.0 44.0
+
+# Route shaping walls for block readability (no platform test fragments)
+box 118.0 4.0 180.0 6.0 8.0 820.0
+box 242.0 4.0 180.0 6.0 8.0 820.0
+box -6.0 4.0 300.0 212.0 8.0 6.0
+box -6.0 4.0 424.0 212.0 8.0 6.0
+box 366.0 4.0 300.0 216.0 8.0 6.0
+box 366.0 4.0 424.0 216.0 8.0 6.0
+
+# spawns (round-robin by slot)
+spawn 180 8 176   # central plaza fountain
+spawn 160 8 176
+spawn 200 8 176
+spawn 180 8 150
+spawn 180 8 202
+
+# telecrystals (G to cast; cancels if you leave the ring)
+crystal TELECRYSTAL_ID_TOWN_TO_MINES 270 60 14 2 0 -92 0 1000 1000 600 G: TELEPORT MINES
+crystal TELECRYSTAL_ID_TOWN_TO_DOCKS 308 246 14 3 -178 -168 95 1000 1000 600 G: TELEPORT DOCKS
+crystal TELECRYSTAL_ID_MEADOW_RETURN_HANDINGTON 0 0 12 4 -40 -50 180 0 900 500 G: RETURN NEW HANDINGTON

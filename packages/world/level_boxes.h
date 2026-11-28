@@ -2003,7 +2003,9 @@ static inline int level_boxes_zone_for_position(const CustomLevelData *level, fl
 // file doesn't exist, can't be read, or fails to parse -- *out is left untouched on any failure
 // so a caller can safely fall back to a compiled-in default scene (matches
 // level_load_from_file's own established contract exactly).
+#include "wmap_level.h" /* the WORLDMAP contract's client reader; needs CustomLevelData above */
 static inline int level_boxes_load_from_file(const char *path, CustomLevelData *out) {
+    if (wmap_path_is_wmap(path)) return wmap_level_load(path, out);   /* *.wmap: GFD's maps, same contract */
     FILE *f = fopen(path, "rb");
     if (!f) return 0;
     fseek(f, 0, SEEK_END);
