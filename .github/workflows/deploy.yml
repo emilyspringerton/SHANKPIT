@@ -1,39 +1,58 @@
-name: Build and push image
+name: Deploy SHANKPIT to the game box
 
-# K8S-CD-01: pushes the shankpit server image via Cloud Build, auth via Workload Identity (no
-# stored key) -- see EMILY/gitops/CI_SETUP.md for the one-time GCP setup this depends on
-# (already done, 2026-10-05) and the two repo Variables this workflow needs. The in-cluster
-# gitops-autodeploy CronJob (EMILY/gitops/) notices the new tag on its own next poll and
-# redeploys -- this workflow does not need to talk to EMILY at all.
+# OG SHANKPIT auto-deploy on the Vultr infra (GCP gone 2026-11-26): shankpit-server, -zombie and -bots on play.okemily.com.
+# Every push to main builds on GitHub's runner and streams a release tarball over SSH to the box. The deploy key
+# (secret DEPLOY_SSH_KEY) is bound to a forced command, so all it can do is hand the receiver this one game's
+# files; the receiver installs them, restarts the units, health-checks and rolls back on failure
+# (WOTAN/ops/deploy/game-receive.sh; one-time wiring: WOTAN/ops/deploy/setup.sh and README.md).
 on:
   push:
     branches: [master]
     paths-ignore: ['**.md', 'docs/**', 'docs2/**']
   workflow_dispatch: {}
 
-# Scoped per-workflow-file -- see release.yml/tests.yml's own concurrency blocks for the real,
-# found-live bug (2026-08-25) a shared group key across sibling workflows causes.
 concurrency:
-  group: shankpit-deploy-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-deploy
+  cancel-in-progress: false
 
 permissions:
   contents: read
-  id-token: write
+
+env:
+  DEPLOY_HOST: ${{ vars.DEPLOY_HOST || 'play.okemily.com' }}
+  # Pinned host key; if the box is rebuilt update it here or set the DEPLOY_KNOWN_HOSTS repo variable.
+  DEPLOY_KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS || 'play.okemily.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGVVKN0aWONQE1pLdY1ij8GWMqS17Q2lZu9GdzvNE7y4' }}
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  deploy:
+    runs-on: ubuntu-24.04   # the box is Ubuntu 24.04 (dynamic libc/libm build; a static one warns about the story-door dlopen)
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: Auth to GCP (Workload Identity, no stored key)
-        uses: google-github-actions/auth@v2
+      - uses: actions/setup-go@v5
         with:
-          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_CI_SERVICE_ACCOUNT }}
+          go-version-file: go.mod
 
-      - uses: google-github-actions/setup-gcloud@v2
+      - name: Build the server and the emily-bot pool client
+        run: |
+          set -euo pipefail
+          rel="$RUNNER_TEMP/rel"; mkdir -p "$rel/bin"
+          make server
+          cp bin/shank_server "$rel/bin/shank_server"
+          (cd apps2/emily-bot && CGO_ENABLED=0 GOWORK=off go build -o "$rel/bin/emily-bot" .)
+          git rev-parse HEAD > "$rel/REVISION"
+          tar -czf "$RUNNER_TEMP/release.tgz" -C "$rel" .
+          ls -l "$RUNNER_TEMP/release.tgz"
 
-      - name: Build + push
-        run: scripts/build-image.sh "$(git rev-parse --short HEAD)"
+      - name: Ship to the game box
+        env:
+          DEPLOY_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DEPLOY_KEY" ]; then echo "::error::DEPLOY_SSH_KEY secret is not set -- see WOTAN/ops/deploy/README.md"; exit 1; fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh -T -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ServerAliveInterval=15 \
+              "root@$DEPLOY_HOST" < "$RUNNER_TEMP/release.tgz"

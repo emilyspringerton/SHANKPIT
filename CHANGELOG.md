@@ -1,3 +1,7 @@
+## 2026-11-28
+
+- ci(deploy): **auto-deploy to the Vultr game box** (GCP is gone, so the old Cloud Build deploy.yml was dead). Every push builds on the runner and streams a release tarball over SSH to play.okemily.com, where a forced-command receiver (WOTAN/ops/deploy/game-receive.sh) installs it, restarts the units, health-checks and rolls back on failure. Needs the DEPLOY_SSH_KEY repo secret (set 2026-11-28). Builds `make server` + apps2/emily-bot on ubuntu-24.04.
+
 ## 2026-11-26
 
 - **feat(netkit): GoblinFoxDragon in the SHANKPHONE.** Garage object 6 is the MUD with a GUI: room, HP/MP/TP bars, a coloured log,
