@@ -68,6 +68,10 @@ let survLookId         = -1;
 let survLookX         = 0.0;
 let survLookY         = 0.0;
 let survMenuDown          = false;
+let survDownX         = 0.0;
+let survDownY         = 0.0;
+let survDownTp          = false;
+let survRmb          = false;
 let survSeen         = 0;
 let survChatLines         = 0;
 let survLive          = false;
@@ -3545,6 +3549,10 @@ export function survReleaseAllBang()       {
                 if (survMenuDown) {
                     survX.sp_button(0, 0);
                 }
+                if (survRmb) {
+                    survRmb = false;
+                    survX.sp_button(2, 0);
+                }
                 survMenuDown = false;
                 survX.sp_pad_gone(0);
                 survX.sp_blur();
@@ -3685,11 +3693,19 @@ export function survCanvasDown(e     )       {
     if ((survState === 2)) {
         e.preventDefault();
         if ((survX.sp_phase() === 1)) {
-            if ((survLookId < 0)) {
-                survLookId = e.pointerId;
-                survLookX = e.clientX;
-                survLookY = e.clientY;
-                survCanvas.setPointerCapture(survLookId);
+            if (((e.pointerType === "mouse") && ((e.button === 2) && (survX.sp_third_person() === 0)))) {
+                survRmb = true;
+                survX.sp_button(2, 1);
+            } else {
+                if ((survLookId < 0)) {
+                    survLookId = e.pointerId;
+                    survLookX = e.clientX;
+                    survLookY = e.clientY;
+                    survDownX = e.clientX;
+                    survDownY = e.clientY;
+                    survDownTp = (survX.sp_third_person() === 1);
+                    survCanvas.setPointerCapture(survLookId);
+                }
             }
         } else {
             survX.sp_pointer(survFbX(e), survFbY(e));
@@ -3716,10 +3732,32 @@ export function survCanvasMove(e     )       {
     }
 }
 
+export function survAbs(v        )         {
+    return ((v < 0.0) ? (0.0 - v) : v);
+}
+
+export function survCanvasWheel(e     )       {
+    if ((survState === 2)) {
+        e.preventDefault();
+        if ((e.deltaY !== 0.0)) {
+            survX.sp_zoom(((e.deltaY > 0.0) ? -1 : 1));
+        }
+    }
+}
+
 export function survCanvasUp(e     )       {
     if ((survState === 2)) {
         if ((e.pointerId === survLookId)) {
             survLookId = -1;
+            if ((survDownTp && ((e.type === "pointerup") && (e.button === 0)))) {
+                if (((survAbs((e.clientX - survDownX)) + survAbs((e.clientY - survDownY))) < 8.0)) {
+                    survX.sp_click(survFbX(e), survFbY(e));
+                }
+            }
+        }
+        if ((survRmb && (e.button === 2))) {
+            survRmb = false;
+            survX.sp_button(2, 0);
         }
         if (survMenuDown) {
             survMenuDown = false;
@@ -3769,6 +3807,7 @@ export function survInstallBang()       {
         survCanvas.addEventListener("pointerup", survCanvasUp);
         survCanvas.addEventListener("pointercancel", survCanvasUp);
         survCanvas.addEventListener("contextmenu", arcNoMenu);
+        survCanvas.addEventListener("wheel", survCanvasWheel, {"passive": false});
         onBang("sv-chat-form", "submit", onSvChatSend);
         onBang("btn-sv-chat", "click", onSvChatToggle);
     }
