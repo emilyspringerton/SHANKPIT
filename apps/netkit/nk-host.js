@@ -3539,7 +3539,7 @@ export function survReleaseAllBang()       {
                 }
             }
             survHeld = {};
-            doc().querySelectorAll("#sv-pad .down").forEach(survUnpressBang);
+            doc().querySelectorAll("#sv-pad .down, #sv-zoom .down").forEach(survUnpressBang);
             survStickId = -1;
             survLx = 0.0;
             survLy = 0.0;
@@ -3566,10 +3566,18 @@ export function survCodeDownBang(code        )       {
         if ((code === 1000)) {
             survX.sp_wheel(1);
         } else {
-            if ((code === 1001)) {
-                survX.sp_button(0, 1);
+            if ((code === 1002)) {
+                survX.sp_zoom(-1);
             } else {
-                survX.sp_key(code, 1);
+                if ((code === 1003)) {
+                    survX.sp_zoom(1);
+                } else {
+                    if ((code === 1001)) {
+                        survX.sp_button(0, 1);
+                    } else {
+                        survX.sp_key(code, 1);
+                    }
+                }
             }
         }
     }
@@ -3579,10 +3587,16 @@ export function survCodeUpBang(code        )       {
     if (((!((survX == null))) && (code > 0))) {
         if ((code === 1000)) {
         } else {
-            if ((code === 1001)) {
-                survX.sp_button(0, 0);
+            if ((code === 1002)) {
             } else {
-                survX.sp_key(code, 0);
+                if ((code === 1003)) {
+                } else {
+                    if ((code === 1001)) {
+                        survX.sp_button(0, 0);
+                    } else {
+                        survX.sp_key(code, 0);
+                    }
+                }
             }
         }
     }
@@ -4921,6 +4935,11 @@ export function wireUiBang()       {
     onBang("sv-pad", "pointercancel", survPadUp);
     onBang("sv-pad", "lostpointercapture", survPadUp);
     onBang("sv-pad", "contextmenu", arcNoMenu);
+    onBang("sv-zoom", "pointerdown", survPadDown);
+    onBang("sv-zoom", "pointerup", survPadUp);
+    onBang("sv-zoom", "pointercancel", survPadUp);
+    onBang("sv-zoom", "lostpointercapture", survPadUp);
+    onBang("sv-zoom", "contextmenu", arcNoMenu);
     onBang("sv-stick", "pointerdown", survStickDown);
     onBang("sv-stick", "pointermove", survStickMove);
     onBang("sv-stick", "pointerup", survStickUp);

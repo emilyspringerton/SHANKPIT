@@ -33,16 +33,17 @@
 # UPDATE 2026-11-28 (GFD link, PARENA dc7abab): nk-host.js, netkit.wasm, netkit-lite.wasm, survival.wasm regenerated: SURVIVAL's Chat log (any GFD command, over the live GFD connection) and
 #   server-settled telecrystal casts (svtravel). index.html and netkit.css edited by hand (Chat button, log, input, badge).
 # UPDATE 2026-11-28 (camera, PARENA d208768): nk-host.js, survival.wasm regenerated (netkit wasms rebuilt): SURVIVAL's mouse-wheel zoom, third-person orbit camera and click to move.
+# UPDATE 2026-11-28 (attack target + touch zoom, PARENA e2a37e4): nk-host.js, netkit.wasm, netkit-lite.wasm, survival.wasm regenerated; index.html / netkit.css edited by hand (Zoom - / Zoom + buttons).
 # sha256  file
-4eea2fb57a9b8d2a37bb88ec2b144d0dc0e594507feec96e9a6284b9c9c03688  index.html
-0dedd633051c72b227d972c9074360a9afb2a1b9eb1b2c42b0dd0fbdf469e497  netkit.css
-82315e78fbcd5b9b2f020ef9436e55fb4054af48cdb03672275b61d9315e17de  nk-host.js
-8cc434fb093f39cdc2503516a9ddcfc97b3e17f0984ab785c5ce10add7bded97  netkit.wasm
-644c781c98553f598330141e16f2db1e1718e0fdaf2e142cfd407bb4b449efa3  netkit-lite.wasm
+778f399d007648960d6a929e4f87350dd7255f31dfeba4d2ea244e46a27485a3  index.html
+75e9f4197cdbf16908828f7d55a9f65648b9715147eb8ad68f47d78f07d4fa7f  netkit.css
+7371d2d912c5ce881466a8166b5e40575bc7727bfc31938cb8be80c09b4167b7  nk-host.js
+2bf2a0ee6f7cdd821dcbf8a37911156618ef784e46d504abea751dea31c34c61  netkit.wasm
+9a1a8896cc20819b5a28ad2d4f4f982afce81a9ab24b1bcebfcab21eb228a768  netkit-lite.wasm
 71670ff4ea38a4b15a536bbb69d6ec743cff1109c1c3c66d6b1837e9d6b6051b  nkterm.wasm
 4e97ba74e6cc18a96016c977c26386ff913858c294482b5073825e38fc7720b7  brawlpit.wasm
 3c9330282ebd317bf2b8da01b9cce145802cd0fbf40c51f1156ba168e18eab82  oui.bin
 de9c4c6a7d91195216c56ba7002be6bafaf91dfdb9e205d1f8f8a32e9eebde7a  duck.png
 6326f18fd5fe4c4990cc54e3812880fd54dd149efe08b43a8a0dddf7292b8f98  sprites.png
 dd5d3cb819720b092de844b18fa59c84389b94e4d18615e031a8c313664036d4  kit/setup.bat
-65624e7606f9e0d7ded79d1f752ab09799d5bf73b09717168233c33be0e0f319  survival.wasm
+d25bce4182ad1d65c5ce2f9eb7d52142460353915c022ede24595ead1d5fd53e  survival.wasm

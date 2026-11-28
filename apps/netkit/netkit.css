@@ -136,6 +136,8 @@ main:has(#view-survival:not([hidden])) { overflow: hidden; padding: 8px 8px calc
 #sv-chat-form { display: flex; gap: 6px; } #sv-chat-input { flex: 1; min-width: 0; font-size: 16px; }
 #sv-stick { position: absolute; left: calc(16px + var(--safe-l)); bottom: 16px; width: 132px; height: 132px; border-radius: 50%; background: rgba(230, 237, 243, .10); border: 2px solid rgba(230, 237, 243, .28); display: flex; align-items: center; justify-content: center; touch-action: none; }
 #sv-knob { width: 56px; height: 56px; border-radius: 50%; background: rgba(230, 237, 243, .45); pointer-events: none; }
+#sv-zoom { position: absolute; right: calc(12px + var(--safe-r)); top: 40px; display: flex; gap: 6px; touch-action: none; z-index: 2; }
+#sv-zoom .pb { opacity: .85; min-width: 64px; }
 #sv-pad { position: absolute; right: calc(12px + var(--safe-r)); bottom: 12px; display: grid; grid-template-columns: repeat(2, 76px); gap: 6px; touch-action: none; }
 #sv-pad .pb { opacity: .85; }
 #sv-pad .pb-fire { min-height: 76px; background: var(--bad); color: #2a0b0b; border-color: var(--bad); }
