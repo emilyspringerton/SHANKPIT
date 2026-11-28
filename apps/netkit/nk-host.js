@@ -4534,9 +4534,40 @@ export function onGfdLeave(e     )       {
     gfdEndedBang("You left the world.");
 }
 
+export function gfdTypingOkP()          {
+    return ((!(el("view-gfd").hidden)) && ((!(el("gfd-play").hidden)) && ((!((gfd == null))) && (!(arcTypingP())))));
+}
+
+export function gfdOnKeydown(e     )       {
+    if (gfdTypingOkP()) {
+        if ((!((e.ctrlKey || (e.metaKey || (e.altKey || e.isComposing)))))) {
+            {
+                let k      = e.key;
+                let box      = el("gfd-input");
+                if ((k === "Enter")) {
+                    e.preventDefault();
+                    box.focus();
+                } else {
+                    if ((k.length === 1)) {
+                        e.preventDefault();
+                        box.focus();
+                        setValBang("gfd-input", ("" + val("gfd-input") + k));
+                        {
+                            let n      = box.value.length;
+                            box.setSelectionRange(n, n);
+                        }
+                    } else {
+                    }
+                }
+            }
+        }
+    }
+}
+
 export function gfdEnterBang()       {
     if ((!(gfdReady))) {
         gfdReady = true;
+        win().addEventListener("keydown", gfdOnKeydown);
         onBang("gfd-actions", "click", onGfdButton);
         onBang("gfd-compass", "click", onGfdButton);
         onBang("gfd-here", "click", onGfdHere);
